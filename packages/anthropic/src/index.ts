@@ -1,16 +1,19 @@
+import { toJSONSchema } from "zod";
+
 import {
   ConfigurationError,
   ProviderHTTPError,
-  UnsupportedFeatureError,
+  normalizeFinishReason,
   streamSSE,
-  type EmbedInput,
-  type EmbeddingModel,
-  type EmbedResult,
+  withRetry,
+  withTimeoutSignal,
   type GenerateResult,
   type LanguageModel,
+  type ModelCapabilities,
   type ModelGenerateInput,
+  type ModelMessage,
   type ProviderAdapter,
-  type StreamChunk
+  type StreamEvent
 } from "@zhivex-ai/core";
 
 export interface AnthropicProviderOptions {
@@ -19,6 +22,15 @@ export interface AnthropicProviderOptions {
   anthropicVersion?: string;
   fetch?: typeof globalThis.fetch;
 }
+
+const capabilities: ModelCapabilities = {
+  streaming: true,
+  tools: true,
+  structuredOutput: false,
+  vision: true,
+  files: false,
+  embeddings: false
+};
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
@@ -30,26 +42,63 @@ const parseJson = async (response: Response) => {
   return response.json();
 };
 
-const mapMessages = (messages: ModelGenerateInput["messages"]) =>
+const mapBlockParts = (message: ModelMessage) =>
+  message.parts.map((part) => {
+    switch (part.type) {
+      case "text":
+        return { type: "text", text: part.text };
+      case "image":
+        return {
+          type: "image",
+          source: {
+            type: "url",
+            url: part.image
+          }
+        };
+      case "tool-call":
+        return {
+          type: "tool_use",
+          id: part.toolCall.id,
+          name: part.toolCall.name,
+          input: part.toolCall.input
+        };
+      case "tool-result":
+        return {
+          type: "tool_result",
+          tool_use_id: part.toolResult.toolCallId,
+          content: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output),
+          is_error: part.toolResult.isError
+        };
+      default:
+        return {
+          type: "text",
+          text: JSON.stringify(part)
+        };
+    }
+  });
+
+const systemPromptFromMessages = (messages: ModelMessage[]) =>
+  messages
+    .filter((message) => message.role === "system")
+    .flatMap((message) => message.parts)
+    .filter((part): part is Extract<ModelMessage["parts"][number], { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+
+const mapMessages = (messages: ModelMessage[]) =>
   messages
     .filter((message) => message.role !== "system")
     .map((message) => {
       if (message.role === "tool") {
         return {
           role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: message.toolCallId,
-              content: message.content
-            }
-          ]
+          content: mapBlockParts(message)
         };
       }
 
       return {
         role: message.role === "assistant" ? "assistant" : "user",
-        content: message.content
+        content: mapBlockParts(message)
       };
     });
 
@@ -58,12 +107,36 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
     ? Object.values(tools).map((tool) => ({
         name: tool.name,
         description: tool.description,
-        input_schema: tool.schema
+        input_schema: toJSONSchema(tool.schema)
       }))
     : undefined;
 
+const parseAssistantMessage = (json: any): ModelMessage => ({
+  role: "assistant",
+  parts:
+    json.content?.map((block: any) => {
+      if (block.type === "text") {
+        return { type: "text", text: block.text } as const;
+      }
+
+      if (block.type === "tool_use") {
+        return {
+          type: "tool-call" as const,
+          toolCall: {
+            id: block.id,
+            name: block.name,
+            input: block.input
+          }
+        };
+      }
+
+      return { type: "text", text: JSON.stringify(block) } as const;
+    }) ?? []
+});
+
 class AnthropicLanguageModel implements LanguageModel {
   readonly provider = "anthropic";
+  readonly capabilities = capabilities;
 
   constructor(
     readonly modelId: string,
@@ -82,119 +155,125 @@ class AnthropicLanguageModel implements LanguageModel {
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
-    const system = input.messages.find((message) => message.role === "system")?.content;
-    const response = await this.fetcher(`${this.baseURL}/messages`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({
-        model: this.modelId,
-        system,
-        messages: mapMessages(input.messages),
-        tools: mapTools(input.tools),
-        temperature: input.temperature,
-        max_tokens: input.maxTokens ?? 1024,
-        ...input.providerOptions
-      })
-    });
+    const { signal, cleanup } = withTimeoutSignal(input);
 
-    const json = await parseJson(response);
-    const textBlocks = json.content?.filter((block: any) => block.type === "text") ?? [];
-    const toolCalls =
-      json.content
-        ?.filter((block: any) => block.type === "tool_use")
-        .map((block: any) => ({
-          id: block.id,
-          name: block.name,
-          input: block.input
-        })) ?? [];
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/messages`, {
+            method: "POST",
+            headers: this.headers(),
+            signal,
+            body: JSON.stringify({
+              model: this.modelId,
+              system: systemPromptFromMessages(input.messages),
+              messages: mapMessages(input.messages),
+              tools: mapTools(input.tools),
+              temperature: input.temperature,
+              max_tokens: input.maxTokens ?? 1024,
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
 
-    return {
-      text: textBlocks.map((block: any) => block.text).join(""),
-      finishReason: json.stop_reason,
-      usage: {
-        inputTokens: json.usage?.input_tokens,
-        outputTokens: json.usage?.output_tokens,
-        totalTokens: (json.usage?.input_tokens ?? 0) + (json.usage?.output_tokens ?? 0)
-      },
-      toolCalls,
-      rawResponse: json
-    };
+      const json = await parseJson(response);
+      const assistantMessage = parseAssistantMessage(json);
+
+      return {
+        messages: [assistantMessage],
+        text: assistantMessage.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join(""),
+        finishReason: normalizeFinishReason(json.stop_reason),
+        providerFinishReason: json.stop_reason,
+        usage: {
+          inputTokens: json.usage?.input_tokens,
+          outputTokens: json.usage?.output_tokens,
+          totalTokens: (json.usage?.input_tokens ?? 0) + (json.usage?.output_tokens ?? 0)
+        },
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
   }
 
-  async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamChunk>> {
-    const system = input.messages.find((message) => message.role === "system")?.content;
-    const response = await this.fetcher(`${this.baseURL}/messages`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({
-        model: this.modelId,
-        system,
-        messages: mapMessages(input.messages),
-        tools: mapTools(input.tools),
-        temperature: input.temperature,
-        max_tokens: input.maxTokens ?? 1024,
-        stream: true,
-        ...input.providerOptions
-      })
-    });
+  async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const response = await withRetry(
+      () =>
+        this.fetcher(`${this.baseURL}/messages`, {
+          method: "POST",
+          headers: this.headers(),
+          signal,
+          body: JSON.stringify({
+            model: this.modelId,
+            system: systemPromptFromMessages(input.messages),
+            messages: mapMessages(input.messages),
+            tools: mapTools(input.tools),
+            temperature: input.temperature,
+            max_tokens: input.maxTokens ?? 1024,
+            stream: true,
+            ...input.providerOptions
+          })
+        }),
+      input
+    );
 
     return (async function* () {
-      const toolBuffers = new Map<number, { id: string; name: string; input: string }>();
+      try {
+        const toolBuffers = new Map<number, { id: string; name: string; input: string }>();
 
-      for await (const event of streamSSE(response)) {
-        const json = JSON.parse(event.data);
+        for await (const event of streamSSE(response)) {
+          const json = JSON.parse(event.data);
 
-        if (event.event === "content_block_delta" && json.delta?.type === "text_delta") {
-          yield { type: "text-delta", textDelta: json.delta.text } satisfies StreamChunk;
-        }
-
-        if (event.event === "content_block_start" && json.content_block?.type === "tool_use") {
-          toolBuffers.set(json.index, {
-            id: json.content_block.id,
-            name: json.content_block.name,
-            input: ""
-          });
-        }
-
-        if (event.event === "content_block_delta" && json.delta?.type === "input_json_delta") {
-          const current = toolBuffers.get(json.index);
-          if (current) {
-            current.input += json.delta.partial_json;
+          if (event.event === "content_block_delta" && json.delta?.type === "text_delta") {
+            yield { type: "text-delta", textDelta: json.delta.text } satisfies StreamEvent;
           }
-        }
 
-        if (event.event === "content_block_stop") {
-          const current = toolBuffers.get(json.index);
-          if (current) {
+          if (event.event === "content_block_start" && json.content_block?.type === "tool_use") {
+            toolBuffers.set(json.index, {
+              id: json.content_block.id,
+              name: json.content_block.name,
+              input: ""
+            });
+          }
+
+          if (event.event === "content_block_delta" && json.delta?.type === "input_json_delta") {
+            const current = toolBuffers.get(json.index);
+            if (current) {
+              current.input += json.delta.partial_json;
+            }
+          }
+
+          if (event.event === "content_block_stop") {
+            const current = toolBuffers.get(json.index);
+            if (current) {
+              yield {
+                type: "tool-call",
+                toolCall: {
+                  id: current.id,
+                  name: current.name,
+                  input: JSON.parse(current.input || "{}")
+                }
+              } satisfies StreamEvent;
+            }
+          }
+
+          if (event.event === "message_stop") {
             yield {
-              type: "tool-call",
-              toolCall: {
-                id: current.id,
-                name: current.name,
-                input: JSON.parse(current.input || "{}")
-              }
-            } satisfies StreamChunk;
+              type: "finish",
+              finishReason: normalizeFinishReason(json.stop_reason),
+              providerFinishReason: json.stop_reason
+            } satisfies StreamEvent;
           }
         }
-
-        if (event.event === "message_stop") {
-          yield {
-            type: "finish",
-            finishReason: json.stop_reason
-          } satisfies StreamChunk;
-        }
+      } finally {
+        cleanup();
       }
     })();
-  }
-}
-
-class AnthropicEmbeddingModel implements EmbeddingModel {
-  readonly provider = "anthropic";
-
-  constructor(readonly modelId: string) {}
-
-  async embed(_input: EmbedInput): Promise<EmbedResult> {
-    throw new UnsupportedFeatureError(`Anthropic does not expose embeddings via this adapter for model "${this.modelId}".`);
   }
 }
 
@@ -213,7 +292,6 @@ export const createAnthropic = (
   return {
     name: "anthropic",
     languageModel: (modelId) => new AnthropicLanguageModel(modelId, apiKey, baseURL, anthropicVersion, fetcher),
-    embeddingModel: (modelId) => new AnthropicEmbeddingModel(modelId),
     rawFetch: fetcher
   };
 };

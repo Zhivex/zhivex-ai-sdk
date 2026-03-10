@@ -4,13 +4,8 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
 export type MessageRole = "system" | "user" | "assistant" | "tool";
-
-export interface ModelMessage {
-  role: MessageRole;
-  content: string;
-  toolCallId?: string;
-  toolName?: string;
-}
+export type FinishReason = "stop" | "length" | "tool-calls" | "content-filter" | "error" | "unknown";
+export type StructuredOutputMode = "auto" | "native" | "prompted";
 
 export interface TokenUsage {
   inputTokens?: number;
@@ -24,44 +19,115 @@ export interface ToolCall {
   input: JsonValue;
 }
 
-export interface ToolResult {
+export interface ToolExecutionResult {
   toolCallId: string;
   toolName: string;
-  output: JsonValue;
+  output?: JsonValue;
+  error?: {
+    message: string;
+  };
+  isError: boolean;
 }
 
-export interface StreamTextDeltaChunk {
-  type: "text-delta";
-  textDelta: string;
+export interface TextPart {
+  type: "text";
+  text: string;
 }
 
-export interface StreamToolCallChunk {
+export interface ImagePart {
+  type: "image";
+  image: string;
+  mediaType?: string;
+}
+
+export interface FilePart {
+  type: "file";
+  data: string;
+  mediaType: string;
+  filename?: string;
+}
+
+export interface ToolCallPart {
   type: "tool-call";
   toolCall: ToolCall;
 }
 
-export interface StreamFinishChunk {
+export interface ToolResultPart {
+  type: "tool-result";
+  toolResult: ToolExecutionResult;
+}
+
+export type ContentPart = TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart;
+
+export interface ModelMessage {
+  role: MessageRole;
+  parts: ContentPart[];
+}
+
+export interface ModelCapabilities {
+  streaming: boolean;
+  tools: boolean;
+  structuredOutput: boolean;
+  vision: boolean;
+  files: boolean;
+  embeddings: boolean;
+}
+
+export interface RetryOptions {
+  abortSignal?: AbortSignal;
+  timeoutMs?: number;
+  maxRetries?: number;
+  retryBackoffMs?: number;
+}
+
+export interface StructuredOutputConfig<TSchema extends ZodTypeAny = ZodTypeAny> {
+  schema: TSchema;
+  mode: StructuredOutputMode;
+  name?: string;
+  description?: string;
+}
+
+export interface StreamTextDeltaEvent {
+  type: "text-delta";
+  textDelta: string;
+}
+
+export interface StreamToolCallEvent {
+  type: "tool-call";
+  toolCall: ToolCall;
+}
+
+export interface StreamToolResultEvent {
+  type: "tool-result";
+  toolResult: ToolExecutionResult;
+}
+
+export interface StreamFinishEvent {
   type: "finish";
-  finishReason?: string;
+  finishReason?: FinishReason;
+  providerFinishReason?: string;
   usage?: TokenUsage;
 }
 
-export interface StreamErrorChunk {
+export interface StreamErrorEvent {
   type: "error";
   error: Error;
 }
 
-export type StreamChunk =
-  | StreamTextDeltaChunk
-  | StreamToolCallChunk
-  | StreamFinishChunk
-  | StreamErrorChunk;
+export type StreamEvent =
+  | StreamTextDeltaEvent
+  | StreamToolCallEvent
+  | StreamToolResultEvent
+  | StreamFinishEvent
+  | StreamErrorEvent;
 
 export interface GenerateResult {
-  text: string;
-  finishReason?: string;
+  message?: ModelMessage;
+  messages?: ModelMessage[];
+  text?: string;
+  finishReason?: FinishReason;
+  providerFinishReason?: string;
   usage?: TokenUsage;
-  toolCalls?: ToolCall[];
   rawResponse?: unknown;
 }
 
@@ -71,23 +137,34 @@ export interface EmbedResult {
   rawResponse?: unknown;
 }
 
+export interface ModelGenerateInput extends RetryOptions {
+  messages: ModelMessage[];
+  tools?: ToolSet;
+  temperature?: number;
+  maxTokens?: number;
+  providerOptions?: Record<string, unknown>;
+  structuredOutput?: StructuredOutputConfig;
+}
+
 export interface LanguageModel {
   readonly provider: string;
   readonly modelId: string;
+  readonly capabilities: ModelCapabilities;
   generate(input: ModelGenerateInput): Promise<GenerateResult>;
-  stream?(input: ModelGenerateInput): Promise<AsyncIterable<StreamChunk>>;
+  stream?(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>>;
 }
 
 export interface EmbeddingModel {
   readonly provider: string;
   readonly modelId: string;
-  embed(input: EmbedInput): Promise<EmbedResult>;
+  readonly capabilities: ModelCapabilities;
+  embed(input: EmbedInput & RetryOptions): Promise<EmbedResult>;
 }
 
 export interface ProviderAdapter {
   readonly name: string;
   languageModel(modelId: string): LanguageModel;
-  embeddingModel(modelId: string): EmbeddingModel;
+  embeddingModel?: (modelId: string) => EmbeddingModel;
 }
 
 export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny, TResult = JsonValue> {
@@ -99,15 +176,7 @@ export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny, TResult
 
 export type ToolSet = Record<string, ToolDefinition>;
 
-export interface ModelGenerateInput {
-  messages: ModelMessage[];
-  tools?: ToolSet;
-  temperature?: number;
-  maxTokens?: number;
-  providerOptions?: Record<string, unknown>;
-}
-
-export interface GenerateTextOptions {
+export interface GenerateTextOptions extends RetryOptions {
   model: LanguageModel;
   prompt?: string;
   messages?: ModelMessage[];
@@ -126,26 +195,31 @@ export interface GenerateTextStep {
 
 export interface GenerateTextOutput {
   text: string;
-  finishReason?: string;
+  finishReason?: FinishReason;
+  providerFinishReason?: string;
   usage?: TokenUsage;
   steps: GenerateTextStep[];
   messages: ModelMessage[];
-  toolResults: ToolResult[];
+  toolResults: ToolExecutionResult[];
 }
 
 export interface GenerateObjectOptions<TSchema extends ZodTypeAny> extends GenerateTextOptions {
   schema: TSchema;
+  mode?: StructuredOutputMode;
+  schemaName?: string;
+  schemaDescription?: string;
 }
 
 export interface GenerateObjectOutput<TSchema extends ZodTypeAny> extends GenerateTextOutput {
   object: z.infer<TSchema>;
+  objectMode: Exclude<StructuredOutputMode, "auto">;
 }
 
 export interface EmbedInput {
   values: string[];
 }
 
-export interface EmbedOptions {
+export interface EmbedOptions extends RetryOptions {
   model: EmbeddingModel;
   value: string | string[];
 }

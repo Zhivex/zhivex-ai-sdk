@@ -1,15 +1,22 @@
+import { toJSONSchema } from "zod";
+
 import {
   ConfigurationError,
   ProviderHTTPError,
+  normalizeFinishReason,
   streamSSE,
+  withRetry,
+  withTimeoutSignal,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
   type GenerateResult,
   type LanguageModel,
+  type ModelCapabilities,
   type ModelGenerateInput,
+  type ModelMessage,
   type ProviderAdapter,
-  type StreamChunk
+  type StreamEvent
 } from "@zhivex-ai/core";
 
 export interface GeminiProviderOptions {
@@ -17,6 +24,15 @@ export interface GeminiProviderOptions {
   baseURL?: string;
   fetch?: typeof globalThis.fetch;
 }
+
+const capabilities: ModelCapabilities = {
+  streaming: true,
+  tools: true,
+  structuredOutput: true,
+  vision: true,
+  files: false,
+  embeddings: true
+};
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
@@ -28,39 +44,59 @@ const parseJson = async (response: Response) => {
   return response.json();
 };
 
-const mapMessages = (messages: ModelGenerateInput["messages"]) => {
-  const contents: Array<{ role: string; parts: Array<Record<string, unknown>> }> = [];
-  for (const message of messages) {
-    if (message.role === "system") {
-      contents.push({ role: "user", parts: [{ text: `System: ${message.content}` }] });
-      continue;
-    }
+const systemInstruction = (messages: ModelMessage[]) => {
+  const text = messages
+    .filter((message) => message.role === "system")
+    .flatMap((message) => message.parts)
+    .filter((part): part is Extract<ModelMessage["parts"][number], { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
 
-    if (message.role === "tool") {
-      contents.push({
-        role: "user",
-        parts: [
-          {
-            functionResponse: {
-              name: message.toolName,
-              response: {
-                name: message.toolName,
-                content: JSON.parse(message.content)
-              }
-            }
-          }
-        ]
-      });
-      continue;
-    }
-
-    contents.push({
-      role: message.role === "assistant" ? "model" : "user",
-      parts: [{ text: message.content }]
-    });
-  }
-  return contents;
+  return text ? { parts: [{ text }] } : undefined;
 };
+
+const mapPart = (part: ModelMessage["parts"][number]) => {
+  switch (part.type) {
+    case "text":
+      return { text: part.text };
+    case "image":
+      return {
+        inlineData: {
+          mimeType: part.mediaType ?? "image/jpeg",
+          data: part.image
+        }
+      };
+    case "tool-call":
+      return {
+        functionCall: {
+          name: part.toolCall.name,
+          args: part.toolCall.input
+        }
+      };
+    case "tool-result":
+      return {
+        functionResponse: {
+          name: part.toolResult.toolName,
+          response: {
+            name: part.toolResult.toolName,
+            content: part.toolResult.isError ? part.toolResult.error : part.toolResult.output
+          }
+        }
+      };
+    default:
+      return {
+        text: JSON.stringify(part)
+      };
+  }
+};
+
+const mapMessages = (messages: ModelMessage[]) =>
+  messages
+    .filter((message) => message.role !== "system")
+    .map((message) => ({
+      role: message.role === "assistant" ? "model" : "user",
+      parts: message.parts.map(mapPart)
+    }));
 
 const mapTools = (tools: ModelGenerateInput["tools"]) =>
   tools
@@ -69,14 +105,47 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           functionDeclarations: Object.values(tools).map((tool) => ({
             name: tool.name,
             description: tool.description,
-            parameters: tool.schema
+            parameters: toJSONSchema(tool.schema)
           }))
         }
       ]
     : undefined;
 
+const generationConfig = (input: ModelGenerateInput) => ({
+  temperature: input.temperature,
+  maxOutputTokens: input.maxTokens,
+  ...(input.structuredOutput?.mode === "native"
+    ? {
+        responseMimeType: "application/json",
+        responseSchema: toJSONSchema(input.structuredOutput.schema)
+      }
+    : {})
+});
+
+const parseAssistantMessage = (candidate: any): ModelMessage => ({
+  role: "assistant",
+  parts:
+    candidate?.content?.parts?.map((part: any) => {
+      if (part.text) {
+        return { type: "text", text: part.text } as const;
+      }
+      if (part.functionCall) {
+        return {
+          type: "tool-call" as const,
+          toolCall: {
+            id: `${part.functionCall.name}-0`,
+            name: part.functionCall.name,
+            input: part.functionCall.args ?? {}
+          }
+        };
+      }
+      return { type: "text", text: JSON.stringify(part) } as const;
+    }) ?? []
+});
+
 class GeminiLanguageModel implements LanguageModel {
   readonly provider = "gemini";
+  readonly capabilities = capabilities;
 
   constructor(
     readonly modelId: string,
@@ -90,79 +159,98 @@ class GeminiLanguageModel implements LanguageModel {
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
-    const response = await this.fetcher(this.url("generateContent"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: mapMessages(input.messages),
-        generationConfig: {
-          temperature: input.temperature,
-          maxOutputTokens: input.maxTokens
-        },
-        tools: mapTools(input.tools),
-        ...input.providerOptions
-      })
-    });
+    const { signal, cleanup } = withTimeoutSignal(input);
 
-    const json = await parseJson(response);
-    const candidate = json.candidates?.[0];
-    const parts = candidate?.content?.parts ?? [];
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url("generateContent"), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              contents: mapMessages(input.messages),
+              systemInstruction: systemInstruction(input.messages),
+              generationConfig: generationConfig(input),
+              tools: mapTools(input.tools),
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
 
-    return {
-      text: parts.filter((part: any) => part.text).map((part: any) => part.text).join(""),
-      finishReason: candidate?.finishReason,
-      toolCalls: parts
-        .filter((part: any) => part.functionCall)
-        .map((part: any) => ({
-          id: `${part.functionCall.name}-0`,
-          name: part.functionCall.name,
-          input: part.functionCall.args ?? {}
-        })),
-      rawResponse: json
-    };
+      const json = await parseJson(response);
+      const candidate = json.candidates?.[0];
+      const assistantMessage = parseAssistantMessage(candidate);
+
+      return {
+        messages: [assistantMessage],
+        text: assistantMessage.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join(""),
+        finishReason: normalizeFinishReason(candidate?.finishReason),
+        providerFinishReason: candidate?.finishReason,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
   }
 
-  async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamChunk>> {
-    const response = await this.fetcher(this.url("streamGenerateContent&alt=sse"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: mapMessages(input.messages),
-        generationConfig: {
-          temperature: input.temperature,
-          maxOutputTokens: input.maxTokens
-        },
-        tools: mapTools(input.tools),
-        ...input.providerOptions
-      })
-    });
+  async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const response = await withRetry(
+      () =>
+        this.fetcher(this.url("streamGenerateContent&alt=sse"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          signal,
+          body: JSON.stringify({
+            contents: mapMessages(input.messages),
+            systemInstruction: systemInstruction(input.messages),
+            generationConfig: generationConfig(input),
+            tools: mapTools(input.tools),
+            ...input.providerOptions
+          })
+        }),
+      input
+    );
 
     return (async function* () {
-      for await (const event of streamSSE(response)) {
-        const json = JSON.parse(event.data);
-        const candidate = json.candidates?.[0];
-        const parts = candidate?.content?.parts ?? [];
+      try {
+        for await (const event of streamSSE(response)) {
+          const json = JSON.parse(event.data);
+          const candidate = json.candidates?.[0];
+          const parts = candidate?.content?.parts ?? [];
 
-        for (const part of parts) {
-          if (part.text) {
-            yield { type: "text-delta", textDelta: part.text } satisfies StreamChunk;
+          for (const part of parts) {
+            if (part.text) {
+              yield { type: "text-delta", textDelta: part.text } satisfies StreamEvent;
+            }
+
+            if (part.functionCall) {
+              yield {
+                type: "tool-call",
+                toolCall: {
+                  id: `${part.functionCall.name}-0`,
+                  name: part.functionCall.name,
+                  input: part.functionCall.args ?? {}
+                }
+              } satisfies StreamEvent;
+            }
           }
 
-          if (part.functionCall) {
+          if (candidate?.finishReason) {
             yield {
-              type: "tool-call",
-              toolCall: {
-                id: `${part.functionCall.name}-0`,
-                name: part.functionCall.name,
-                input: part.functionCall.args ?? {}
-              }
-            } satisfies StreamChunk;
+              type: "finish",
+              finishReason: normalizeFinishReason(candidate.finishReason),
+              providerFinishReason: candidate.finishReason
+            } satisfies StreamEvent;
           }
         }
-
-        if (candidate?.finishReason) {
-          yield { type: "finish", finishReason: candidate.finishReason } satisfies StreamChunk;
-        }
+      } finally {
+        cleanup();
       }
     })();
   }
@@ -170,6 +258,7 @@ class GeminiLanguageModel implements LanguageModel {
 
 class GeminiEmbeddingModel implements EmbeddingModel {
   readonly provider = "gemini";
+  readonly capabilities = capabilities;
 
   constructor(
     readonly modelId: string,
@@ -178,26 +267,35 @@ class GeminiEmbeddingModel implements EmbeddingModel {
     private readonly fetcher: typeof globalThis.fetch
   ) {}
 
-  async embed(input: EmbedInput): Promise<EmbedResult> {
-    const embeddings: number[][] = [];
-    for (const value of input.values) {
-      const response = await this.fetcher(
-        `${this.baseURL}/models/${this.modelId}:embedContent?key=${this.apiKey}`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            content: { parts: [{ text: value }] }
-          })
-        }
-      );
-      const json = await parseJson(response);
-      embeddings.push(json.embedding.values);
-    }
+  async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
 
-    return {
-      embeddings
-    };
+    try {
+      const embeddings = await Promise.all(
+        input.values.map(async (value) => {
+          const response = await withRetry(
+            () =>
+              this.fetcher(`${this.baseURL}/models/${this.modelId}:embedContent?key=${this.apiKey}`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                signal,
+                body: JSON.stringify({
+                  content: { parts: [{ text: value }] }
+                })
+              }),
+            input
+          );
+          const json = await parseJson(response);
+          return json.embedding.values;
+        })
+      );
+
+      return {
+        embeddings
+      };
+    } finally {
+      cleanup();
+    }
   }
 }
 

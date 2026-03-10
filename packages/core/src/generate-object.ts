@@ -1,13 +1,37 @@
 import type { ZodTypeAny } from "zod";
 
-import { ParseError, ValidationError } from "./errors.js";
-import { generateText } from "./generate-text.js";
+import { ParseError, UnsupportedFeatureError, ValidationError } from "./errors.js";
+import { createTextMessage } from "./messages.js";
+import { generateText, normalizeMessages } from "./generate-text.js";
 import type { GenerateObjectOptions, GenerateObjectOutput } from "./types.js";
 
 export const generateObject = async <TSchema extends ZodTypeAny>(
   options: GenerateObjectOptions<TSchema>
 ): Promise<GenerateObjectOutput<TSchema>> => {
-  const textResult = await generateText(options);
+  const requestedMode = options.mode ?? "auto";
+  const nativeAllowed = options.model.capabilities.structuredOutput;
+  const objectMode = requestedMode === "auto" ? (nativeAllowed ? "native" : "prompted") : requestedMode;
+
+  if (objectMode === "native" && !nativeAllowed) {
+    throw new UnsupportedFeatureError(
+      `Model "${options.model.provider}/${options.model.modelId}" does not support native structured output.`
+    );
+  }
+
+  const textResult = await generateText({
+    ...options,
+    prompt:
+      objectMode === "prompted" && options.prompt
+        ? `${options.prompt}\n\nReturn only valid JSON matching the requested schema.`
+        : options.prompt,
+    messages:
+      objectMode === "prompted" && options.messages
+        ? [
+            ...options.messages,
+            createTextMessage("system", "Return only valid JSON matching the requested schema.")
+          ]
+        : options.messages
+  });
 
   let parsedJson: unknown;
   try {
@@ -23,6 +47,7 @@ export const generateObject = async <TSchema extends ZodTypeAny>(
 
   return {
     ...textResult,
-    object: parsed.data
+    object: parsed.data,
+    objectMode
   };
 };

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
-import { embed, generateText, streamText } from "@zhivex-ai/core";
+import { createTextMessage, embed, generateObject, generateText, streamText } from "@zhivex-ai/core";
 import { createOpenAI } from "../src/index.js";
 
 describe("openai adapter", () => {
@@ -26,6 +27,7 @@ describe("openai adapter", () => {
 
     expect(result.text).toBe("hello from openai");
     expect(result.usage?.totalTokens).toBe(7);
+    expect(result.messages.at(-1)?.parts[0]).toMatchObject({ type: "text", text: "hello from openai" });
   });
 
   it("streams incremental text", async () => {
@@ -55,7 +57,64 @@ describe("openai adapter", () => {
       prompt: "hello"
     });
 
-    expect(await result.collect()).toBe("hello world");
+    expect((await result.collect()).text).toBe("hello world");
+  });
+
+  it("supports tool calls and native structured output", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              content: "",
+              tool_calls: [
+                {
+                  id: "tool-1",
+                  function: {
+                    name: "weather",
+                    arguments: JSON.stringify({ city: "Madrid" })
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { content: JSON.stringify({ city: "Madrid", forecast: "sunny" }) }
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateObject({
+      model: provider.languageModel("gpt-4o-mini"),
+      messages: [createTextMessage("user", "Use weather tool and return JSON.")],
+      maxSteps: 2,
+      schema: z.object({
+        city: z.string(),
+        forecast: z.string()
+      }),
+      tools: {
+        weather: {
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        }
+      },
+      mode: "native"
+    });
+
+    expect(result.object.forecast).toBe("sunny");
+    expect(result.objectMode).toBe("native");
+    expect(result.toolResults[0]?.toolName).toBe("weather");
   });
 
   it("embeds values", async () => {

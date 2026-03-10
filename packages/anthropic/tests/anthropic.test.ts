@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { embed, generateText, UnsupportedFeatureError } from "@zhivex-ai/core";
+import { generateObject, generateText } from "@zhivex-ai/core";
 import { createAnthropic } from "../src/index.js";
 
 describe("anthropic adapter", () => {
@@ -27,6 +27,7 @@ describe("anthropic adapter", () => {
     });
 
     expect(result.text).toBe("hello from anthropic");
+    expect(result.finishReason).toBe("stop");
   });
 
   it("supports tool calls", async () => {
@@ -61,16 +62,28 @@ describe("anthropic adapter", () => {
 
     expect(result.text).toBe("result is 4");
     expect(result.toolResults[0]?.toolName).toBe("math");
+    expect(provider.embeddingModel).toBeUndefined();
   });
 
-  it("reports unsupported embeddings", async () => {
-    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
-
-    await expect(
-      embed({
-        model: provider.embeddingModel("unsupported"),
-        value: "hello"
+  it("falls back to prompted structured output", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: JSON.stringify({ title: "Soup" }) }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 4, output_tokens: 4 }
       })
-    ).rejects.toBeInstanceOf(UnsupportedFeatureError);
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateObject({
+      model: provider.languageModel("claude-3-5-sonnet"),
+      prompt: "Return JSON",
+      schema: z.object({
+        title: z.string()
+      })
+    });
+
+    expect(result.object.title).toBe("Soup");
+    expect(result.objectMode).toBe("prompted");
   });
 });

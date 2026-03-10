@@ -1,15 +1,22 @@
+import { toJSONSchema } from "zod";
+
 import {
   ConfigurationError,
   ProviderHTTPError,
+  normalizeFinishReason,
   streamSSE,
+  withRetry,
+  withTimeoutSignal,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
   type GenerateResult,
   type LanguageModel,
+  type ModelCapabilities,
   type ModelGenerateInput,
+  type ModelMessage,
   type ProviderAdapter,
-  type StreamChunk
+  type StreamEvent
 } from "@zhivex-ai/core";
 
 export interface OpenAIProviderOptions {
@@ -18,10 +25,21 @@ export interface OpenAIProviderOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+const capabilities: ModelCapabilities = {
+  streaming: true,
+  tools: true,
+  structuredOutput: true,
+  vision: true,
+  files: false,
+  embeddings: true
+};
+
 const jsonHeaders = (apiKey: string) => ({
   "content-type": "application/json",
   authorization: `Bearer ${apiKey}`
 });
+
+const getRequestOptions = (input: Pick<ModelGenerateInput, "abortSignal" | "timeoutMs">) => withTimeoutSignal(input);
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
@@ -33,20 +51,63 @@ const parseJson = async (response: Response) => {
   return response.json();
 };
 
-const mapMessages = (messages: ModelGenerateInput["messages"]) =>
+const mapContentParts = (message: ModelMessage) => {
+  const textParts = message.parts.filter((part) => part.type === "text");
+  const imageParts = message.parts.filter((part) => part.type === "image");
+
+  if (!imageParts.length) {
+    return textParts.map((part) => part.text).join("");
+  }
+
+  return [
+    ...textParts.map((part) => ({
+      type: "text",
+      text: part.text
+    })),
+    ...imageParts.map((part) => ({
+      type: "image_url",
+      image_url: {
+        url: part.image
+      }
+    }))
+  ];
+};
+
+const mapMessages = (messages: ModelMessage[]) =>
   messages.map((message) => {
     if (message.role === "tool") {
+      const toolResult = message.parts.find((part) => part.type === "tool-result");
       return {
         role: "tool",
-        tool_call_id: message.toolCallId,
-        content: message.content
+        tool_call_id: toolResult?.type === "tool-result" ? toolResult.toolResult.toolCallId : undefined,
+        content:
+          toolResult?.type === "tool-result"
+            ? JSON.stringify(toolResult.toolResult.isError ? toolResult.toolResult.error : toolResult.toolResult.output)
+            : ""
       };
     }
 
-    return {
+    const toolCalls = message.parts
+      .filter((part) => part.type === "tool-call")
+      .map((part) => ({
+        id: part.toolCall.id,
+        type: "function",
+        function: {
+          name: part.toolCall.name,
+          arguments: JSON.stringify(part.toolCall.input)
+        }
+      }));
+
+    const payload: Record<string, unknown> = {
       role: message.role,
-      content: message.content
+      content: mapContentParts(message)
     };
+
+    if (toolCalls.length) {
+      payload.tool_calls = toolCalls;
+    }
+
+    return payload;
   });
 
 const mapTools = (input: ModelGenerateInput["tools"]) =>
@@ -56,13 +117,46 @@ const mapTools = (input: ModelGenerateInput["tools"]) =>
         function: {
           name: tool.name,
           description: tool.description,
-          parameters: tool.schema
+          parameters: toJSONSchema(tool.schema)
         }
       }))
     : undefined;
 
+const mapStructuredOutput = (input: ModelGenerateInput) => {
+  if (!input.structuredOutput || input.structuredOutput.mode !== "native") {
+    return undefined;
+  }
+
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: input.structuredOutput.name ?? "response",
+      strict: true,
+      schema: toJSONSchema(input.structuredOutput.schema)
+    }
+  };
+};
+
+const parseAssistantMessage = (message: any): ModelMessage => ({
+  role: "assistant",
+  parts: [
+    ...(typeof message.content === "string" && message.content
+      ? [{ type: "text", text: message.content } as const]
+      : []),
+    ...((message.tool_calls ?? []).map((call: any) => ({
+      type: "tool-call" as const,
+      toolCall: {
+        id: call.id,
+        name: call.function.name,
+        input: JSON.parse(call.function.arguments ?? "{}")
+      }
+    })) ?? [])
+  ]
+});
+
 class OpenAILanguageModel implements LanguageModel {
   readonly provider = "openai";
+  readonly capabilities = capabilities;
 
   constructor(
     readonly modelId: string,
@@ -72,108 +166,133 @@ class OpenAILanguageModel implements LanguageModel {
   ) {}
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
-    const response = await this.fetcher(`${this.baseURL}/chat/completions`, {
-      method: "POST",
-      headers: jsonHeaders(this.apiKey),
-      body: JSON.stringify({
-        model: this.modelId,
-        messages: mapMessages(input.messages),
-        tools: mapTools(input.tools),
-        temperature: input.temperature,
-        max_tokens: input.maxTokens,
-        stream: false,
-        ...input.providerOptions
-      })
-    });
+    const { signal, cleanup } = getRequestOptions(input);
 
-    const json = await parseJson(response);
-    const choice = json.choices?.[0];
-    const message = choice?.message ?? {};
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/chat/completions`, {
+            method: "POST",
+            headers: jsonHeaders(this.apiKey),
+            signal,
+            body: JSON.stringify({
+              model: this.modelId,
+              messages: mapMessages(input.messages),
+              tools: mapTools(input.tools),
+              response_format: mapStructuredOutput(input),
+              temperature: input.temperature,
+              max_tokens: input.maxTokens,
+              stream: false,
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
 
-    return {
-      text: message.content ?? "",
-      finishReason: choice?.finish_reason,
-      usage: {
-        inputTokens: json.usage?.prompt_tokens,
-        outputTokens: json.usage?.completion_tokens,
-        totalTokens: json.usage?.total_tokens
-      },
-      toolCalls: message.tool_calls?.map((call: any) => ({
-        id: call.id,
-        name: call.function.name,
-        input: JSON.parse(call.function.arguments ?? "{}")
-      })),
-      rawResponse: json
-    };
+      const json = await parseJson(response);
+      const choice = json.choices?.[0];
+      const message = choice?.message ?? {};
+      const assistantMessage = parseAssistantMessage(message);
+
+      return {
+        messages: [assistantMessage],
+        text: assistantMessage.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join(""),
+        finishReason: normalizeFinishReason(choice?.finish_reason),
+        providerFinishReason: choice?.finish_reason,
+        usage: {
+          inputTokens: json.usage?.prompt_tokens,
+          outputTokens: json.usage?.completion_tokens,
+          totalTokens: json.usage?.total_tokens
+        },
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
   }
 
-  async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamChunk>> {
-    const response = await this.fetcher(`${this.baseURL}/chat/completions`, {
-      method: "POST",
-      headers: jsonHeaders(this.apiKey),
-      body: JSON.stringify({
-        model: this.modelId,
-        messages: mapMessages(input.messages),
-        tools: mapTools(input.tools),
-        temperature: input.temperature,
-        max_tokens: input.maxTokens,
-        stream: true,
-        stream_options: { include_usage: true },
-        ...input.providerOptions
-      })
-    });
+  async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
+    const { signal, cleanup } = getRequestOptions(input);
+    const response = await withRetry(
+      () =>
+        this.fetcher(`${this.baseURL}/chat/completions`, {
+          method: "POST",
+          headers: jsonHeaders(this.apiKey),
+          signal,
+          body: JSON.stringify({
+            model: this.modelId,
+            messages: mapMessages(input.messages),
+            tools: mapTools(input.tools),
+            response_format: mapStructuredOutput(input),
+            temperature: input.temperature,
+            max_tokens: input.maxTokens,
+            stream: true,
+            stream_options: { include_usage: true },
+            ...input.providerOptions
+          })
+        }),
+      input
+    );
 
     return (async function* () {
-      const toolBuffers = new Map<string, { name: string; args: string }>();
+      try {
+        const toolBuffers = new Map<string, { name: string; args: string }>();
 
-      for await (const event of streamSSE(response)) {
-        if (event.data === "[DONE]") {
-          yield { type: "finish", finishReason: "stop" } satisfies StreamChunk;
-          return;
-        }
+        for await (const event of streamSSE(response)) {
+          if (event.data === "[DONE]") {
+            return;
+          }
 
-        const json = JSON.parse(event.data);
-        const choice = json.choices?.[0];
-        const delta = choice?.delta;
+          const json = JSON.parse(event.data);
+          const choice = json.choices?.[0];
+          const delta = choice?.delta;
 
-        if (delta?.content) {
-          yield { type: "text-delta", textDelta: delta.content } satisfies StreamChunk;
-        }
+          if (delta?.content) {
+            yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;
+          }
 
-        for (const toolCall of delta?.tool_calls ?? []) {
-          const existing = toolBuffers.get(toolCall.id ?? `${toolCall.index}`) ?? {
-            name: toolCall.function?.name ?? "",
-            args: ""
-          };
-          existing.name ||= toolCall.function?.name ?? "";
-          existing.args += toolCall.function?.arguments ?? "";
-          toolBuffers.set(toolCall.id ?? `${toolCall.index}`, existing);
+          for (const toolCall of delta?.tool_calls ?? []) {
+            const id = toolCall.id ?? `${toolCall.index}`;
+            const existing = toolBuffers.get(id) ?? {
+              name: toolCall.function?.name ?? "",
+              args: ""
+            };
+            existing.name ||= toolCall.function?.name ?? "";
+            existing.args += toolCall.function?.arguments ?? "";
+            toolBuffers.set(id, existing);
 
-          if (choice?.finish_reason === "tool_calls") {
+            if (choice?.finish_reason === "tool_calls") {
+              yield {
+                type: "tool-call",
+                toolCall: {
+                  id,
+                  name: existing.name,
+                  input: JSON.parse(existing.args || "{}")
+                }
+              } satisfies StreamEvent;
+            }
+          }
+
+          if (choice?.finish_reason) {
             yield {
-              type: "tool-call",
-              toolCall: {
-                id: toolCall.id ?? `${toolCall.index}`,
-                name: existing.name,
-                input: JSON.parse(existing.args || "{}")
-              }
-            } satisfies StreamChunk;
+              type: "finish",
+              finishReason: normalizeFinishReason(choice.finish_reason),
+              providerFinishReason: choice.finish_reason,
+              usage: json.usage
+                ? {
+                    inputTokens: json.usage.prompt_tokens,
+                    outputTokens: json.usage.completion_tokens,
+                    totalTokens: json.usage.total_tokens
+                  }
+                : undefined
+            } satisfies StreamEvent;
           }
         }
-
-        if (choice?.finish_reason && choice.finish_reason !== "tool_calls") {
-          yield {
-            type: "finish",
-            finishReason: choice.finish_reason,
-            usage: json.usage
-              ? {
-                  inputTokens: json.usage.prompt_tokens,
-                  outputTokens: json.usage.completion_tokens,
-                  totalTokens: json.usage.total_tokens
-                }
-              : undefined
-          } satisfies StreamChunk;
-        }
+      } finally {
+        cleanup();
       }
     })();
   }
@@ -181,6 +300,7 @@ class OpenAILanguageModel implements LanguageModel {
 
 class OpenAIEmbeddingModel implements EmbeddingModel {
   readonly provider = "openai";
+  readonly capabilities = capabilities;
 
   constructor(
     readonly modelId: string,
@@ -189,25 +309,36 @@ class OpenAIEmbeddingModel implements EmbeddingModel {
     private readonly fetcher: typeof globalThis.fetch
   ) {}
 
-  async embed(input: EmbedInput): Promise<EmbedResult> {
-    const response = await this.fetcher(`${this.baseURL}/embeddings`, {
-      method: "POST",
-      headers: jsonHeaders(this.apiKey),
-      body: JSON.stringify({
-        model: this.modelId,
-        input: input.values
-      })
-    });
+  async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
 
-    const json = await parseJson(response);
-    return {
-      embeddings: json.data.map((entry: any) => entry.embedding),
-      usage: {
-        inputTokens: json.usage?.prompt_tokens,
-        totalTokens: json.usage?.total_tokens
-      },
-      rawResponse: json
-    };
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/embeddings`, {
+            method: "POST",
+            headers: jsonHeaders(this.apiKey),
+            signal,
+            body: JSON.stringify({
+              model: this.modelId,
+              input: input.values
+            })
+          }),
+        input
+      );
+
+      const json = await parseJson(response);
+      return {
+        embeddings: json.data.map((entry: any) => entry.embedding),
+        usage: {
+          inputTokens: json.usage?.prompt_tokens,
+          totalTokens: json.usage?.total_tokens
+        },
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
   }
 }
 

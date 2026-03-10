@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { embed, generateObject, generateText } from "@zhivex-ai/core";
+import { embedMany, generateObject, generateText } from "@zhivex-ai/core";
 import { createGemini } from "../src/index.js";
 
 describe("gemini adapter", () => {
@@ -30,6 +30,7 @@ describe("gemini adapter", () => {
     });
 
     expect(result.text).toBe("hello from gemini");
+    expect(result.finishReason).toBe("stop");
   });
 
   it("supports structured output on top of provider text", async () => {
@@ -51,25 +52,35 @@ describe("gemini adapter", () => {
       schema: z.object({
         title: z.string(),
         servings: z.number()
-      })
+      }),
+      mode: "native"
     });
 
     expect(result.object.title).toBe("Tea");
+    expect(result.objectMode).toBe("native");
   });
 
-  it("embeds content", async () => {
+  it("embeds content in batches", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
         embedding: { values: [0.5, 0.6] }
       })
     );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        embedding: { values: [0.7, 0.8] }
+      })
+    );
 
     const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
-    const result = await embed({
+    const result = await embedMany({
       model: provider.embeddingModel("text-embedding-004"),
-      value: "hello"
+      value: ["hello", "world"]
     });
 
-    expect(result.embeddings[0]).toEqual([0.5, 0.6]);
+    expect(result.embeddings).toEqual([
+      [0.5, 0.6],
+      [0.7, 0.8]
+    ]);
   });
 });

@@ -1,24 +1,32 @@
-import { ParseError, ValidationError } from "./errors.js";
+import { ParseError, UnsupportedFeatureError, ValidationError } from "./errors.js";
+import {
+  createTextMessage,
+  getTextFromMessages,
+  normalizeFinishReason,
+  resultMessages,
+  serializeJsonValue,
+  toolCallPart,
+  toolResultPart,
+  validateMessageParts
+} from "./messages.js";
 import type {
   GenerateResult,
   GenerateTextOptions,
   GenerateTextOutput,
   ModelGenerateInput,
   ModelMessage,
-  StreamChunk,
+  StreamEvent,
   ToolCall,
-  ToolResult
+  ToolExecutionResult
 } from "./types.js";
-
-const stringifyJson = (value: unknown): string => JSON.stringify(value);
 
 const buildMessages = (options: Pick<GenerateTextOptions, "prompt" | "messages" | "system">): ModelMessage[] => {
   const messages = [...(options.messages ?? [])];
   if (options.system) {
-    messages.unshift({ role: "system", content: options.system });
+    messages.unshift(createTextMessage("system", options.system));
   }
   if (options.prompt) {
-    messages.push({ role: "user", content: options.prompt });
+    messages.push(createTextMessage("user", options.prompt));
   }
   return messages;
 };
@@ -28,24 +36,15 @@ const toRequest = (options: GenerateTextOptions, messages: ModelMessage[]): Mode
   tools: options.tools,
   temperature: options.temperature,
   maxTokens: options.maxTokens,
-  providerOptions: options.providerOptions
+  providerOptions: options.providerOptions,
+  abortSignal: options.abortSignal,
+  timeoutMs: options.timeoutMs,
+  maxRetries: options.maxRetries,
+  retryBackoffMs: options.retryBackoffMs
 });
 
-const assistantMessageFromResult = (result: GenerateResult): ModelMessage | null => {
-  if (!result.text) {
-    return null;
-  }
-
-  return {
-    role: "assistant",
-    content: result.text
-  };
-};
-
-const ensureJsonValue = (value: unknown) => JSON.parse(stringifyJson(value)) as ToolResult["output"];
-
-const executeTools = async (toolCalls: ToolCall[], options: GenerateTextOptions): Promise<ToolResult[]> => {
-  const results: ToolResult[] = [];
+const executeTools = async (toolCalls: ToolCall[], options: GenerateTextOptions): Promise<ToolExecutionResult[]> => {
+  const results: ToolExecutionResult[] = [];
 
   for (const call of toolCalls) {
     const tool = options.tools?.[call.name];
@@ -58,12 +57,22 @@ const executeTools = async (toolCalls: ToolCall[], options: GenerateTextOptions)
       throw new ValidationError(`Invalid input for tool "${call.name}": ${parsed.error.message}`);
     }
 
-    const output = ensureJsonValue(await tool.execute(parsed.data));
-    results.push({
-      toolCallId: call.id,
-      toolName: call.name,
-      output
-    });
+    try {
+      const output = serializeJsonValue(await tool.execute(parsed.data));
+      results.push({
+        toolCallId: call.id,
+        toolName: call.name,
+        output,
+        isError: false
+      });
+    } catch (error) {
+      results.push({
+        toolCallId: call.id,
+        toolName: call.name,
+        error: { message: error instanceof Error ? error.message : "Tool execution failed." },
+        isError: true
+      });
+    }
   }
 
   return results;
@@ -71,12 +80,24 @@ const executeTools = async (toolCalls: ToolCall[], options: GenerateTextOptions)
 
 export const normalizeMessages = buildMessages;
 
+const extractToolCalls = (messages: ModelMessage[]): ToolCall[] =>
+  messages.flatMap((message) =>
+    message.parts
+      .filter((part): part is Extract<ModelMessage["parts"][number], { type: "tool-call" }> => part.type === "tool-call")
+      .map((part) => part.toolCall)
+  );
+
 export const generateText = async (options: GenerateTextOptions): Promise<GenerateTextOutput> => {
   const maxSteps = Math.max(1, options.maxSteps ?? 1);
   const allMessages = buildMessages(options);
   const steps: GenerateTextOutput["steps"] = [];
-  const toolResults: ToolResult[] = [];
-  let finalText = "";
+  validateMessageParts(options.model, allMessages);
+
+  if (options.tools && !options.model.capabilities.tools) {
+    throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
+  }
+
+  const toolResults: ToolExecutionResult[] = [];
   let finalResult: GenerateResult | undefined;
 
   for (let step = 0; step < maxSteps; step += 1) {
@@ -85,25 +106,23 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
     steps.push({ request, response });
     finalResult = response;
 
-    const assistantMessage = assistantMessageFromResult(response);
-    if (assistantMessage) {
-      allMessages.push(assistantMessage);
-      finalText = response.text;
+    const responseMessages = resultMessages(response);
+    if (responseMessages.length) {
+      allMessages.push(...responseMessages);
     }
 
-    if (!response.toolCalls?.length) {
+    const toolCalls = extractToolCalls(responseMessages);
+    if (!toolCalls.length) {
       break;
     }
 
-    const currentToolResults = await executeTools(response.toolCalls, options);
+    const currentToolResults = await executeTools(toolCalls, options);
     toolResults.push(...currentToolResults);
 
     for (const result of currentToolResults) {
       allMessages.push({
         role: "tool",
-        toolCallId: result.toolCallId,
-        toolName: result.toolName,
-        content: stringifyJson(result.output)
+        parts: [toolResultPart(result)]
       });
     }
   }
@@ -113,8 +132,9 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
   }
 
   return {
-    text: finalText,
+    text: getTextFromMessages(allMessages),
     finishReason: finalResult.finishReason,
+    providerFinishReason: finalResult.providerFinishReason,
     usage: finalResult.usage,
     steps,
     messages: allMessages,
@@ -123,42 +143,181 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
 };
 
 export const streamText = (options: GenerateTextOptions) => {
-  const request = toRequest(options, buildMessages(options));
-  let streamPromise: Promise<AsyncIterable<StreamChunk>> | undefined;
+  const maxSteps = Math.max(1, options.maxSteps ?? 1);
+  const baseMessages = buildMessages(options);
+  validateMessageParts(options.model, baseMessages);
 
-  const getStream = async () => {
-    if (!options.model.stream) {
-      throw new ValidationError(`Model "${options.model.provider}/${options.model.modelId}" does not support streaming.`);
+  if (!options.model.stream) {
+    throw new ValidationError(`Model "${options.model.provider}/${options.model.modelId}" does not support streaming.`);
+  }
+  const streamModel = options.model.stream.bind(options.model);
+
+  if (options.tools && !options.model.capabilities.tools) {
+    throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
+  }
+
+  const subscribers = new Set<(value: IteratorResult<StreamEvent>) => void>();
+  const history: IteratorResult<StreamEvent>[] = [];
+  let done = false;
+  let finalResultPromise: Promise<GenerateTextOutput> | undefined;
+
+  const publish = (value: IteratorResult<StreamEvent>) => {
+    history.push(value);
+    for (const subscriber of subscribers) {
+      subscriber(value);
     }
-    if (!streamPromise) {
-      streamPromise = options.model.stream(request);
+    if (value.done) {
+      done = true;
     }
-    return streamPromise;
   };
 
-  const textStream = (async function* () {
-    for await (const chunk of await getStream()) {
-      if (chunk.type === "text-delta") {
-        yield chunk.textDelta;
-      }
-    }
-  })();
+  const createEventStream = async function* () {
+    let cursor = 0;
 
-  return {
-    stream: (async function* () {
-      for await (const chunk of await getStream()) {
-        yield chunk;
+    while (cursor < history.length) {
+      const item = history[cursor];
+      cursor += 1;
+      if (item.done) {
+        return;
       }
-    })(),
-    textStream,
-    collect: async () => {
-      let text = "";
-      for await (const chunk of await getStream()) {
-        if (chunk.type === "text-delta") {
-          text += chunk.textDelta;
+      yield item.value;
+    }
+
+    while (!done) {
+      const item = await new Promise<IteratorResult<StreamEvent>>((resolve) => {
+        const subscriber = (value: IteratorResult<StreamEvent>) => {
+          subscribers.delete(subscriber);
+          resolve(value);
+        };
+        subscribers.add(subscriber);
+      });
+      cursor += 1;
+      if (item.done) {
+        return;
+      }
+      yield item.value;
+    }
+  };
+
+  const runner = async (): Promise<GenerateTextOutput> => {
+    const allMessages = [...baseMessages];
+    const steps: GenerateTextOutput["steps"] = [];
+    const toolResults: ToolExecutionResult[] = [];
+    let finalResult: GenerateResult | undefined;
+
+    for (let step = 0; step < maxSteps; step += 1) {
+      const request = toRequest(options, allMessages);
+      const stream = await streamModel(request);
+      const stepMessages: ModelMessage[] = [];
+      let textBuffer = "";
+      let finishReason = normalizeFinishReason("stop");
+      let providerFinishReason: string | undefined;
+      let usage = undefined;
+
+      for await (const event of stream) {
+        publish({ done: false, value: event });
+
+        if (event.type === "text-delta") {
+          textBuffer += event.textDelta;
+        }
+
+        if (event.type === "tool-call") {
+          const existingAssistant = stepMessages.find((message) => message.role === "assistant");
+          if (existingAssistant) {
+            existingAssistant.parts.push(toolCallPart(event.toolCall));
+          } else {
+            stepMessages.push({
+              role: "assistant",
+              parts: [toolCallPart(event.toolCall)]
+            });
+          }
+        }
+
+        if (event.type === "finish") {
+          finishReason = event.finishReason;
+          providerFinishReason = event.providerFinishReason;
+          usage = event.usage;
         }
       }
-      return text;
+
+      if (textBuffer) {
+        const assistant = stepMessages.find((message) => message.role === "assistant");
+        if (assistant) {
+          assistant.parts.unshift({ type: "text", text: textBuffer });
+        } else {
+          stepMessages.unshift(createTextMessage("assistant", textBuffer));
+        }
+      }
+
+      finalResult = {
+        messages: stepMessages,
+        text: textBuffer,
+        finishReason,
+        providerFinishReason,
+        usage
+      };
+
+      steps.push({ request, response: finalResult });
+      allMessages.push(...stepMessages);
+
+      const toolCalls = extractToolCalls(stepMessages);
+      if (!toolCalls.length) {
+        break;
+      }
+
+      const currentToolResults = await executeTools(toolCalls, options);
+      toolResults.push(...currentToolResults);
+
+      for (const toolResult of currentToolResults) {
+        publish({ done: false, value: { type: "tool-result", toolResult } });
+        allMessages.push({
+          role: "tool",
+          parts: [toolResultPart(toolResult)]
+        });
+      }
     }
+
+    if (!finalResult) {
+      throw new ParseError("Model did not return a result.");
+    }
+
+    publish({
+      done: false,
+      value: {
+        type: "finish",
+        finishReason: finalResult.finishReason,
+        providerFinishReason: finalResult.providerFinishReason,
+        usage: finalResult.usage
+      }
+    });
+    publish({ done: true, value: undefined });
+
+    return {
+      text: getTextFromMessages(allMessages),
+      finishReason: finalResult.finishReason,
+      providerFinishReason: finalResult.providerFinishReason,
+      usage: finalResult.usage,
+      steps,
+      messages: allMessages,
+      toolResults
+    };
+  };
+
+  finalResultPromise = runner().catch((error) => {
+    publish({ done: false, value: { type: "error", error: error instanceof Error ? error : new Error(String(error)) } });
+    publish({ done: true, value: undefined });
+    throw error;
+  });
+
+  return {
+    eventStream: createEventStream(),
+    textStream: (async function* () {
+      for await (const event of createEventStream()) {
+        if (event.type === "text-delta") {
+          yield event.textDelta;
+        }
+      }
+    })(),
+    collect: async () => finalResultPromise
   };
 };
