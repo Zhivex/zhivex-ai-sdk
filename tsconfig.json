@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/openai" },
+    { "path": "./packages/anthropic" },
+    { "path": "./packages/gemini" },
+    { "path": "./packages/sdk" }
+  ]
+}
