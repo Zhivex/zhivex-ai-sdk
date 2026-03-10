@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createTextMessage, embed, embedMany, generateObject, generateText, streamText } from "../src/index.js";
+import { createTextMessage, embed, embedMany, generateObject, generateText, streamObject, streamText } from "../src/index.js";
 import type { EmbeddingModel, LanguageModel, StreamEvent, ToolSet } from "../src/index.js";
 import { UnsupportedFeatureError, ValidationError } from "../src/index.js";
 
@@ -104,7 +104,8 @@ describe("core helpers", () => {
   it("validates structured output in native mode", async () => {
     const result = await generateObject({
       model: createLanguageModel({
-        async generate() {
+        async generate(input) {
+          expect(input.structuredOutput).toMatchObject({ mode: "native", name: "recipe" });
           return {
             messages: [createTextMessage("assistant", JSON.stringify({ title: "Soup", servings: 2 }))],
             text: JSON.stringify({ title: "Soup", servings: 2 })
@@ -116,6 +117,7 @@ describe("core helpers", () => {
         title: z.string(),
         servings: z.number()
       }),
+      schemaName: "recipe",
       mode: "native"
     });
 
@@ -134,7 +136,12 @@ describe("core helpers", () => {
           files: false,
           embeddings: false
         },
-        async generate() {
+        async generate(input) {
+          expect(input.structuredOutput).toBeUndefined();
+          expect(input.messages.at(-1)).toMatchObject({
+            role: "user",
+            parts: [{ type: "text", text: "Generate JSON\n\nReturn only valid JSON matching the requested schema." }]
+          });
           return {
             messages: [createTextMessage("assistant", JSON.stringify({ title: "Soup" }))],
             text: JSON.stringify({ title: "Soup" })
@@ -148,6 +155,82 @@ describe("core helpers", () => {
     });
 
     expect(result.objectMode).toBe("prompted");
+  });
+
+  it("streams structured output with partial object events", async () => {
+    let requestMode: string | undefined;
+    const result = streamObject({
+      model: createLanguageModel({
+        async stream(input) {
+          requestMode = input.structuredOutput?.mode;
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "{\"title\":\"Soup\"" };
+            yield { type: "text-delta", textDelta: ",\"servings\":2}" };
+            yield { type: "finish", finishReason: "stop" };
+          })();
+        }
+      }),
+      prompt: "Generate recipe JSON",
+      schema: z.object({
+        title: z.string(),
+        servings: z.number()
+      }),
+      mode: "native"
+    });
+
+    const partials: Array<Partial<{ title: string; servings: number }>> = [];
+    let completedObject: { title: string; servings: number } | undefined;
+
+    for await (const event of result.eventStream) {
+      if (event.type === "object-partial") {
+        partials.push(event.partialObject);
+      }
+
+      if (event.type === "object-complete") {
+        completedObject = event.object;
+      }
+    }
+
+    const final = await result.collect();
+
+    expect(requestMode).toBe("native");
+    expect(partials).toContainEqual({ title: "Soup" });
+    expect(completedObject).toEqual({ title: "Soup", servings: 2 });
+    expect(final.object).toEqual({ title: "Soup", servings: 2 });
+  });
+
+  it("streams structured output in prompted mode when native is unavailable", async () => {
+    let firstMessageText = "";
+    const result = streamObject({
+      model: createLanguageModel({
+        capabilities: {
+          streaming: true,
+          tools: true,
+          structuredOutput: false,
+          vision: false,
+          files: false,
+          embeddings: false
+        },
+        async stream(input) {
+          firstMessageText = input.messages[0]?.parts[0]?.type === "text" ? input.messages[0].parts[0].text : "";
+          expect(input.structuredOutput).toBeUndefined();
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "{\"title\":\"Soup\"}" };
+            yield { type: "finish", finishReason: "stop" };
+          })();
+        }
+      }),
+      prompt: "Generate recipe JSON",
+      schema: z.object({
+        title: z.string()
+      })
+    });
+
+    const final = await result.collect();
+
+    expect(firstMessageText).toBe("Generate recipe JSON\n\nReturn only valid JSON matching the requested schema.");
+    expect(final.objectMode).toBe("prompted");
+    expect(final.object).toEqual({ title: "Soup" });
   });
 
   it("rejects invalid structured output", async () => {

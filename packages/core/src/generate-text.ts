@@ -37,6 +37,7 @@ const toRequest = (options: GenerateTextOptions, messages: ModelMessage[]): Mode
   temperature: options.temperature,
   maxTokens: options.maxTokens,
   providerOptions: options.providerOptions,
+  structuredOutput: options.structuredOutput,
   abortSignal: options.abortSignal,
   timeoutMs: options.timeoutMs,
   maxRetries: options.maxRetries,
@@ -174,28 +175,27 @@ export const streamText = (options: GenerateTextOptions) => {
   const createEventStream = async function* () {
     let cursor = 0;
 
-    while (cursor < history.length) {
-      const item = history[cursor];
-      cursor += 1;
-      if (item.done) {
+    while (true) {
+      while (cursor < history.length) {
+        const item = history[cursor];
+        cursor += 1;
+        if (item.done) {
+          return;
+        }
+        yield item.value;
+      }
+
+      if (done) {
         return;
       }
-      yield item.value;
-    }
 
-    while (!done) {
-      const item = await new Promise<IteratorResult<StreamEvent>>((resolve) => {
+      await new Promise<IteratorResult<StreamEvent>>((resolve) => {
         const subscriber = (value: IteratorResult<StreamEvent>) => {
           subscribers.delete(subscriber);
           resolve(value);
         };
         subscribers.add(subscriber);
       });
-      cursor += 1;
-      if (item.done) {
-        return;
-      }
-      yield item.value;
     }
   };
 

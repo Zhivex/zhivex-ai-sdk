@@ -7,6 +7,7 @@ El objetivo es ofrecer una API de alto nivel para:
 - generar texto,
 - streamear respuestas multi-step,
 - producir objetos validados con Zod,
+- producir objetos validados con Zod, incluso en streaming,
 - ejecutar tools con loop automático,
 - enviar mensajes multimodales,
 - generar embeddings,
@@ -150,6 +151,36 @@ const recipe = await generateObject({
 console.log(recipe.object);
 ```
 
+## Structured output en streaming
+
+```ts
+import { createOpenAI, streamObject } from "@zhivex-ai/sdk";
+import { z } from "zod";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY!
+});
+
+const result = streamObject({
+  model: openai.languageModel("gpt-4o-mini"),
+  prompt: "Return JSON with title and servings.",
+  mode: "native",
+  schema: z.object({
+    title: z.string(),
+    servings: z.number()
+  })
+});
+
+for await (const event of result.eventStream) {
+  if (event.type === "object-partial") {
+    console.log(event.partialObject);
+  }
+}
+
+const final = await result.collect();
+console.log(final.object);
+```
+
 ## Tools
 
 ```ts
@@ -231,6 +262,7 @@ Helpers de alto nivel:
 - `generateText(...)`
 - `streamText(...)`
 - `generateObject(...)`
+- `streamObject(...)`
 - `embed(...)`
 - `embedMany(...)`
 - `createTextMessage(...)`

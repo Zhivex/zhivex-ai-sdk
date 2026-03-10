@@ -2,6 +2,12 @@ import type { z, ZodTypeAny } from "zod";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+export type PartialJsonValue =
+  | JsonPrimitive
+  | PartialJsonValue[]
+  | {
+      [key: string]: PartialJsonValue | undefined;
+    };
 
 export type MessageRole = "system" | "user" | "assistant" | "tool";
 export type FinishReason = "stop" | "length" | "tool-calls" | "content-filter" | "error" | "unknown";
@@ -121,6 +127,28 @@ export type StreamEvent =
   | StreamFinishEvent
   | StreamErrorEvent;
 
+export interface StreamObjectDeltaEvent {
+  type: "object-delta";
+  textDelta: string;
+  partialText: string;
+}
+
+export interface StreamObjectPartialEvent<TObject = PartialJsonValue> {
+  type: "object-partial";
+  partialObject: TObject;
+}
+
+export interface StreamObjectCompleteEvent<TObject = JsonValue> {
+  type: "object-complete";
+  object: TObject;
+}
+
+export type ObjectStreamEvent<TObject = JsonValue, TPartialObject = PartialJsonValue> =
+  | StreamEvent
+  | StreamObjectDeltaEvent
+  | StreamObjectPartialEvent<TPartialObject>
+  | StreamObjectCompleteEvent<TObject>;
+
 export interface GenerateResult {
   message?: ModelMessage;
   messages?: ModelMessage[];
@@ -186,6 +214,7 @@ export interface GenerateTextOptions extends RetryOptions {
   temperature?: number;
   maxTokens?: number;
   providerOptions?: Record<string, unknown>;
+  structuredOutput?: StructuredOutputConfig;
 }
 
 export interface GenerateTextStep {
@@ -213,6 +242,13 @@ export interface GenerateObjectOptions<TSchema extends ZodTypeAny> extends Gener
 export interface GenerateObjectOutput<TSchema extends ZodTypeAny> extends GenerateTextOutput {
   object: z.infer<TSchema>;
   objectMode: Exclude<StructuredOutputMode, "auto">;
+}
+
+export interface StreamObjectResult<TSchema extends ZodTypeAny> {
+  eventStream: AsyncIterable<ObjectStreamEvent<z.infer<TSchema>, Partial<z.infer<TSchema>>>>;
+  partialObjectStream: AsyncIterable<Partial<z.infer<TSchema>>>;
+  textStream: AsyncIterable<string>;
+  collect: () => Promise<GenerateObjectOutput<TSchema>>;
 }
 
 export interface EmbedInput {
