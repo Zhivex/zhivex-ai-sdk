@@ -19,6 +19,7 @@ export {
   user,
   validateMessageParts
 } from "./messages.js";
+export * from "./middleware.js";
 export { createProviderAdapter, mergeAbortSignals, withRetry, withTimeoutSignal } from "./runtime.js";
 export * from "./stream.js";
 export * from "./types.js";

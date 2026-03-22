@@ -12,6 +12,9 @@ export {
   deserializeUIMessage,
   fromUIMessage,
   fromUIMessages,
+  createCachedGenerateMiddleware,
+  createInMemoryGenerateCache,
+  createTelemetryMiddleware,
   serializeUIMessage,
   toSSEStream,
   toSSEResponse,
@@ -21,6 +24,7 @@ export {
   toUIMessageStream,
   toUIMessageStreamResponse,
   toUIMessages,
+  wrapLanguageModel,
   tool,
   user
 } from "@zhivex-ai/core";
@@ -34,6 +38,8 @@ export type {
   GenerateTextOptions,
   GenerateTextOutput,
   LanguageModel,
+  LanguageModelMiddleware,
+  LanguageModelTelemetryEvent,
   ModelMessage,
   ObjectStreamEvent,
   ProviderAdapter,

@@ -426,6 +426,55 @@ The repo now includes a shared provider contract harness for adapters. New provi
 - provider option passthrough,
 - behavior coverage for text, streaming, tools, and structured output where applicable.
 
+## Middleware and observability
+
+You can add operational behavior by wrapping a model before passing it to `generateText()` or `generateObject()`.
+
+```ts
+import {
+  createInMemoryGenerateCache,
+  createOpenAI,
+  createTelemetryMiddleware,
+  generateText,
+  wrapLanguageModel
+} from "@zhivex-ai/sdk";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const cache = createInMemoryGenerateCache();
+
+const model = wrapLanguageModel(openai("gpt-4o-mini"), [
+  createTelemetryMiddleware({
+    onEvent(event) {
+      console.log(event.type, event.model.modelId);
+    }
+  })
+]);
+
+const result = await generateText({
+  model,
+  prompt: "Say hello"
+});
+
+console.log(result.text);
+```
+
+Built-in helpers:
+
+- `wrapLanguageModel(...)`
+- `createTelemetryMiddleware(...)`
+- `createCachedGenerateMiddleware(...)`
+- `createInMemoryGenerateCache(...)`
+
+## Gateway policies
+
+The gateway now supports higher-level operational routing:
+
+- required capabilities via `requiredCapabilities`
+- cost budgets via `maxCostPer1kTokens`
+- provider cost hints via `providerCostsPer1kTokens`
+- latency bias via `latencyBiasMs`
+- attempt telemetry with `onAttempt`
+
 ## Public API
 
 Recommended helpers:

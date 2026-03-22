@@ -3,6 +3,9 @@ import { z } from "zod";
 
 import {
   assistant,
+  createCachedGenerateMiddleware,
+  createInMemoryGenerateCache,
+  createTelemetryMiddleware,
   createTextMessage,
   embed,
   embedMany,
@@ -16,6 +19,7 @@ import {
   toUIMessage,
   toUIMessageStream,
   toUIMessageStreamResponse,
+  wrapLanguageModel,
   tool,
   user
 } from "../src/index.js";
@@ -496,5 +500,44 @@ describe("core helpers", () => {
         value: "x"
       })
     ).rejects.toBeInstanceOf(UnsupportedFeatureError);
+  });
+
+  it("wraps language models with a cache middleware", async () => {
+    let calls = 0;
+    const cache = createInMemoryGenerateCache();
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async generate() {
+          calls += 1;
+          return { messages: [createTextMessage("assistant", "cached hello")], text: "cached hello" };
+        }
+      }),
+      [createCachedGenerateMiddleware({ cache })]
+    );
+
+    const first = await generateText({ model: wrapped, prompt: "hello" });
+    const second = await generateText({ model: wrapped, prompt: "hello" });
+
+    expect(first.text).toBe("cached hello");
+    expect(second.text).toBe("cached hello");
+    expect(calls).toBe(1);
+  });
+
+  it("emits telemetry events through middleware", async () => {
+    const events: string[] = [];
+    const wrapped = wrapLanguageModel(createLanguageModel(), [
+      createTelemetryMiddleware({
+        onEvent(event) {
+          events.push(event.type);
+        }
+      })
+    ]);
+
+    await generateText({
+      model: wrapped,
+      prompt: "hello"
+    });
+
+    expect(events).toEqual(["generate-start", "generate-finish"]);
   });
 });

@@ -1,29 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ProviderAdapter } from "@zhivex-ai/core";
-import { createGateway } from "../src/index.js";
+import type { ModelCapabilities, ProviderAdapter } from "@zhivex-ai/core";
+import { createGateway } from "../src/index.ts";
 
-const createAdapter = (generateImpl: () => Promise<{ text: string; usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } }>): ProviderAdapter => ({
+const createAdapter = (
+  generateImpl: () => Promise<{ text: string; usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } }>,
+  capabilities: ModelCapabilities = {
+    streaming: false,
+    tools: false,
+    structuredOutput: false,
+    jsonMode: false,
+    toolChoice: false,
+    parallelToolCalls: false,
+    vision: true,
+    files: false,
+    audioInput: false,
+    audioOutput: false,
+    embeddings: false,
+    reasoning: false,
+    webSearch: false
+  }
+): ProviderAdapter => ({
   name: "test",
   languageModel(modelId) {
     return {
       provider: "test",
       modelId,
-      capabilities: {
-        streaming: false,
-        tools: false,
-        structuredOutput: false,
-        jsonMode: false,
-        toolChoice: false,
-        parallelToolCalls: false,
-        vision: true,
-        files: false,
-        audioInput: false,
-        audioOutput: false,
-        embeddings: false,
-        reasoning: false,
-        webSearch: false
-      },
+      capabilities,
       async generate() {
         const result = await generateImpl();
         return {
@@ -140,5 +143,82 @@ describe("gateway", () => {
 
     expect(result.usage.estimated).toBe(true);
     expect(result.usage.totalTokens).toBeGreaterThan(0);
+  });
+
+  it("skips targets that do not satisfy required capabilities", async () => {
+    const gateway = createGateway({
+      adapters: {
+        bedrock: createAdapter(async () => ({ text: "from bedrock" })),
+        gemini: createAdapter(async () => ({ text: "from gemini" }), {
+          streaming: true,
+          tools: true,
+          structuredOutput: true,
+          jsonMode: true,
+          toolChoice: false,
+          parallelToolCalls: false,
+          vision: true,
+          files: false,
+          audioInput: false,
+          audioOutput: false,
+          embeddings: false,
+          reasoning: true,
+          webSearch: false
+        })
+      }
+    });
+
+    const result = await gateway.generate({
+      primary: { provider: "bedrock", modelId: "anthropic.claude-v2" },
+      fallbacks: [{ provider: "gemini", modelId: "gemini-2.0-flash" }],
+      messages: [{ role: "user", content: "hello" }],
+      requiredCapabilities: {
+        tools: true
+      }
+    });
+
+    expect(result.providerUsed).toBe("gemini");
+    expect(result.attempts[0]?.errorMessage).toContain("capabilities");
+  });
+
+  it("skips targets that exceed the configured cost budget", async () => {
+    const gateway = createGateway({
+      adapters: {
+        openai: createAdapter(async () => ({ text: "expensive" })),
+        ollama: createAdapter(async () => ({ text: "cheap" }))
+      },
+      providerCostsPer1kTokens: {
+        openai: 2,
+        ollama: 0
+      }
+    });
+
+    const result = await gateway.generate({
+      primary: { provider: "openai", modelId: "gpt-4o-mini" },
+      fallbacks: [{ provider: "ollama", modelId: "llama3.2" }],
+      messages: [{ role: "user", content: "hello" }],
+      maxCostPer1kTokens: 0.5
+    });
+
+    expect(result.providerUsed).toBe("ollama");
+    expect(result.attempts[0]?.errorMessage).toContain("cost");
+  });
+
+  it("emits attempt callbacks for observability", async () => {
+    const attempts: string[] = [];
+    const gateway = createGateway({
+      adapters: {
+        ollama: createAdapter(async () => ({ text: "hello world" }))
+      },
+      onAttempt(attempt) {
+        attempts.push(`${attempt.provider}:${attempt.retry}:${attempt.targetRank}`);
+      }
+    });
+
+    await gateway.generate({
+      primary: { provider: "ollama", modelId: "llama3.2" },
+      messages: [{ role: "user", content: "hello" }]
+    });
+
+    expect(attempts).toEqual(["ollama:0:0"]);
   });
 });
