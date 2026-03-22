@@ -63,6 +63,38 @@ const final = await result.collect();
 console.log(final.finishReason);
 ```
 
+## HTTP and Web Streams
+
+You can turn SDK streams into Web `Response` objects directly.
+
+```ts
+import { createOpenAI, streamText, toTextStreamResponse } from "@zhivex-ai/sdk";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+const result = streamText({
+  model: openai("gpt-4o-mini"),
+  prompt: "Stream a short answer."
+});
+
+return toTextStreamResponse(result);
+```
+
+For SSE or richer payloads:
+
+```ts
+import { createOpenAI, streamText, toUIMessageStreamResponse } from "@zhivex-ai/sdk";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+const result = streamText({
+  model: openai("gpt-4o-mini"),
+  prompt: "Stream a short answer."
+});
+
+return toUIMessageStreamResponse(result);
+```
+
 ## Structured output
 
 ```ts
@@ -363,6 +395,27 @@ Exported provider option types:
 - `BedrockLanguageModelOptions`
 - `OllamaLanguageModelOptions`
 
+## UI message helpers
+
+`UIMessage` gives you a serializable message shape for client/server boundaries, persistence, and chat UIs.
+
+```ts
+import { toUIMessage, user } from "@zhivex-ai/sdk";
+
+const uiMessage = toUIMessage(user("Hello"), "msg_1");
+```
+
+Useful helpers:
+
+- `toUIMessage(...)`
+- `toUIMessages(...)`
+- `fromUIMessage(...)`
+- `fromUIMessages(...)`
+- `serializeUIMessage(...)`
+- `deserializeUIMessage(...)`
+- `toUIMessageStream(...)`
+- `toUIMessageStreamResponse(...)`
+
 ## Provider conformance
 
 The repo now includes a shared provider contract harness for adapters. New providers should verify:
@@ -383,6 +436,9 @@ Recommended helpers:
 - `streamObject(...)`
 - `embed(...)`
 - `embedMany(...)`
+- `toTextStreamResponse(...)`
+- `toSSEResponse(...)`
+- `toUIMessageStreamResponse(...)`
 - `tool(...)`
 - `system(...)`
 - `user(...)`

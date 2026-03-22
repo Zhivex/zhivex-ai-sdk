@@ -11,6 +11,11 @@ import {
   streamObject,
   streamText,
   system,
+  toSSEResponse,
+  toTextStreamResponse,
+  toUIMessage,
+  toUIMessageStream,
+  toUIMessageStreamResponse,
   tool,
   user
 } from "../src/index.js";
@@ -335,6 +340,81 @@ describe("core helpers", () => {
     }
 
     expect(chunks).toEqual(["hello", " world"]);
+  });
+
+  it("converts streamText into a text Response", async () => {
+    const result = streamText({
+      model: createLanguageModel(),
+      prompt: "Stream"
+    });
+
+    const response = toTextStreamResponse(result);
+
+    expect(response.headers.get("content-type")).toContain("text/plain");
+    expect(await response.text()).toBe("hello world");
+  });
+
+  it("serializes arbitrary async iterables as SSE", async () => {
+    const response = toSSEResponse(
+      (async function* () {
+        yield { hello: "world" };
+      })(),
+      { event: "message" }
+    );
+    const body = await response.text();
+
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(body).toContain("event: message");
+    expect(body).toContain('data: {"hello":"world"}');
+  });
+
+  it("maps model messages into UI messages", () => {
+    const message = toUIMessage(createTextMessage("assistant", "hello"), "assistant-1");
+
+    expect(message).toEqual({
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{ type: "text", text: "hello" }]
+    });
+  });
+
+  it("maps stream events into UI message chunks", async () => {
+    const result = streamText({
+      model: createLanguageModel(),
+      prompt: "Stream"
+    });
+
+    const chunks = [];
+    for await (const chunk of toUIMessageStream(result, "assistant-1")) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks[0]).toMatchObject({
+      type: "text-delta",
+      messageId: "assistant-1",
+      role: "assistant",
+      textDelta: "hello"
+    });
+    expect(chunks.at(-1)).toMatchObject({
+      type: "finish",
+      messageId: "assistant-1"
+    });
+  });
+
+  it("converts UI message chunks into an SSE response", async () => {
+    const response = toUIMessageStreamResponse(
+      (async function* () {
+        yield {
+          type: "text-delta" as const,
+          messageId: "assistant-1",
+          role: "assistant" as const,
+          textDelta: "hello"
+        };
+      })()
+    );
+
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(await response.text()).toContain("event: text-delta");
   });
 
   it("streams tools across multiple steps", async () => {

@@ -9,6 +9,18 @@ export {
   streamText,
   system,
   textPart,
+  deserializeUIMessage,
+  fromUIMessage,
+  fromUIMessages,
+  serializeUIMessage,
+  toSSEStream,
+  toSSEResponse,
+  toTextReadableStream,
+  toTextStreamResponse,
+  toUIMessage,
+  toUIMessageStream,
+  toUIMessageStreamResponse,
+  toUIMessages,
   tool,
   user
 } from "@zhivex-ai/core";
@@ -32,7 +44,9 @@ export type {
   StreamTextResult,
   ToolDefinition,
   ToolExecutionResult,
-  ToolSet
+  ToolSet,
+  UIMessage,
+  UIMessageChunk
 } from "@zhivex-ai/core";
 export { createOpenAI } from "@zhivex-ai/openai";
 export type { OpenAILanguageModelOptions, OpenAIProviderOptions } from "@zhivex-ai/openai";

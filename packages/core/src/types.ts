@@ -288,6 +288,56 @@ export interface StreamTextResult {
   collect: () => Promise<GenerateTextOutput>;
 }
 
+export interface UIMessage {
+  id: string;
+  role: MessageRole;
+  parts: ContentPart[];
+}
+
+export interface UIMessageTextChunk {
+  type: "text-delta";
+  messageId: string;
+  role: "assistant";
+  textDelta: string;
+}
+
+export interface UIMessageToolCallChunk {
+  type: "tool-call";
+  messageId: string;
+  role: "assistant";
+  toolCall: ToolCall;
+}
+
+export interface UIMessageToolResultChunk {
+  type: "tool-result";
+  messageId: string;
+  role: "tool";
+  toolResult: ToolExecutionResult;
+}
+
+export interface UIMessageFinishChunk {
+  type: "finish";
+  messageId: string;
+  finishReason?: FinishReason;
+  providerFinishReason?: string;
+  usage?: TokenUsage;
+}
+
+export interface UIMessageErrorChunk {
+  type: "error";
+  messageId: string;
+  error: {
+    message: string;
+  };
+}
+
+export type UIMessageChunk =
+  | UIMessageTextChunk
+  | UIMessageToolCallChunk
+  | UIMessageToolResultChunk
+  | UIMessageFinishChunk
+  | UIMessageErrorChunk;
+
 export interface EmbedInput {
   values: string[];
 }
