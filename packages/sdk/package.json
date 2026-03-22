@@ -14,11 +14,13 @@
   "sideEffects": false,
   "dependencies": {
     "@zhivex-ai/anthropic": "workspace:*",
+    "@zhivex-ai/azure-openai": "workspace:*",
     "@zhivex-ai/bedrock": "workspace:*",
     "@zhivex-ai/core": "workspace:*",
     "@zhivex-ai/gateway": "workspace:*",
     "@zhivex-ai/gemini": "workspace:*",
     "@zhivex-ai/ollama": "workspace:*",
-    "@zhivex-ai/openai": "workspace:*"
+    "@zhivex-ai/openai": "workspace:*",
+    "@zhivex-ai/openrouter": "workspace:*"
   }
 }

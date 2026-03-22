@@ -1,15 +1,15 @@
 # Zhivex AI SDK
 
-SDK TypeScript para Node y Bun con una API unificada para trabajar con OpenAI, Anthropic, Gemini, Bedrock y Ollama sin reescribir la lógica principal de tu aplicación.
+TypeScript SDK for Node and Bun with a unified API for OpenAI, Azure OpenAI, Anthropic, Gemini, Bedrock, Ollama, and OpenRouter.
 
-La experiencia recomendada vive en `@zhivex-ai/sdk`:
+The recommended experience lives in `@zhivex-ai/sdk`:
 
-- texto y streaming,
-- structured output con Zod,
-- tools con loop automático,
-- mensajes multimodales,
+- text generation and streaming,
+- structured output with Zod,
+- automatic tool loops,
+- multimodal messages,
 - embeddings,
-- cambio de provider sin cambiar la capa de negocio.
+- provider switching without rewriting app logic.
 
 ## Quickstart
 
@@ -20,30 +20,30 @@ const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const result = await generateText({
   model: openai("gpt-4o-mini"),
-  prompt: "Describe Zhivex AI SDK en una frase."
+  prompt: "Describe Zhivex AI SDK in one sentence."
 });
 
 console.log(result.text);
 ```
 
-## Instalación
+## Installation
 
-Mientras el paquete no esté publicado, podés consumirlo por ruta local:
+Until the packages are published, you can consume them from a local path:
 
 ```bash
 bun add /Users/mikeortiz/dev/zhivex-ai-sdk/packages/sdk
 ```
 
-Paquetes individuales:
+Individual packages:
 
 ```bash
 bun add /Users/mikeortiz/dev/zhivex-ai-sdk/packages/core
 bun add /Users/mikeortiz/dev/zhivex-ai-sdk/packages/openai
 ```
 
-## Streaming simple
+## Simple streaming
 
-`streamText()` expone `textStream` como camino principal para casos simples y `eventStream` para casos avanzados.
+`streamText()` exposes `textStream` as the happy path for simple cases and `eventStream` for advanced flows.
 
 ```ts
 import { createOpenAI, streamText } from "@zhivex-ai/sdk";
@@ -52,7 +52,7 @@ const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const result = streamText({
   model: openai("gpt-4o-mini"),
-  prompt: "Respondé en dos oraciones cortas."
+  prompt: "Answer in two short sentences."
 });
 
 for await (const chunk of result.textStream) {
@@ -84,7 +84,7 @@ const recipe = await generateObject({
 console.log(recipe.object);
 ```
 
-## Structured output en streaming
+## Structured output streaming
 
 ```ts
 import { createOpenAI, streamObject } from "@zhivex-ai/sdk";
@@ -138,9 +138,9 @@ console.log(result.text);
 console.log(result.toolResults);
 ```
 
-## Cambiar de provider
+## Switch providers
 
-La API de alto nivel no cambia. Solo cambia la factory del provider:
+Your high-level app code stays the same. Only the provider factory changes:
 
 ```ts
 import { createAnthropic, createOpenAI, generateText } from "@zhivex-ai/sdk";
@@ -166,7 +166,7 @@ console.log(fromAnthropic.text);
 
 ## Multimodal
 
-Usá `messages` cuando necesites control fino, multimodalidad o contexto avanzado:
+Use `messages` when you need fine-grained control, multimodal input, or richer conversation state:
 
 ```ts
 import { createOpenAI, generateText, user } from "@zhivex-ai/sdk";
@@ -177,7 +177,7 @@ const result = await generateText({
   model: openai("gpt-4o-mini"),
   messages: [
     user([
-      { type: "text", text: "Describe esta imagen." },
+      { type: "text", text: "Describe this image." },
       { type: "image", image: "https://example.com/cat.jpg" }
     ])
   ]
@@ -201,7 +201,44 @@ const result = await embedMany({
 console.log(result.embeddings.length);
 ```
 
-## Otros providers
+## Additional providers
+
+### Azure OpenAI
+
+```ts
+import { createAzureOpenAI, generateText } from "@zhivex-ai/sdk";
+
+const azure = createAzureOpenAI({
+  apiKey: process.env.AZURE_OPENAI_API_KEY!,
+  endpoint: process.env.AZURE_OPENAI_ENDPOINT!
+});
+
+const result = await generateText({
+  model: azure("gpt-4o-mini"),
+  prompt: "Respond in one sentence."
+});
+
+console.log(result.text);
+```
+
+### OpenRouter
+
+```ts
+import { createOpenRouter, generateText } from "@zhivex-ai/sdk";
+
+const openrouter = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  appName: "Zhivex Demo",
+  appURL: "https://example.com"
+});
+
+const result = await generateText({
+  model: openrouter("openai/gpt-4o-mini"),
+  prompt: "Respond in one sentence."
+});
+
+console.log(result.text);
+```
 
 ### Bedrock
 
@@ -233,22 +270,22 @@ const result = await generateText({
 console.log(result.text);
 ```
 
-## Gateway multi-provider
+## Gateway
 
 ```ts
-import { createBedrock, createGateway, createGemini, createOllama } from "@zhivex-ai/sdk";
+import { createBedrock, createGateway, createGemini, createOpenRouter } from "@zhivex-ai/sdk";
 
 const gateway = createGateway({
   adapters: {
     gemini: createGemini({ apiKey: process.env.GEMINI_API_KEY! }),
     bedrock: createBedrock({ region: process.env.AWS_REGION! }),
-    ollama: createOllama({ baseURL: process.env.OLLAMA_HOST })
+    openrouter: createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY! })
   }
 });
 
 const result = await gateway.generate({
   primary: { provider: "gemini", modelId: "gemini-2.0-flash" },
-  fallbacks: [{ provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet-20240620-v1:0" }],
+  fallbacks: [{ provider: "openrouter", modelId: "openai/gpt-4o-mini" }],
   messages: [{ role: "user", content: "Say hello in Spanish." }],
   routingMode: "balanced"
 });
@@ -257,35 +294,37 @@ console.log(result.text);
 console.log(result.attempts);
 ```
 
-## Prompt vs messages
+## `prompt` vs `messages`
 
-Usá `prompt` cuando:
+Use `prompt` when:
 
-- querés la ruta más corta,
-- el input es solo texto,
-- no necesitás controlar roles ni parts.
+- you want the shortest path,
+- the input is plain text,
+- you do not need explicit roles or parts.
 
-Usá `messages` cuando:
+Use `messages` when:
 
-- necesitás multimodalidad,
-- querés contexto completo por rol,
-- trabajás con tools o parts de forma explícita.
+- you need multimodal input,
+- you want full role-based control,
+- you are working directly with tools or parts.
 
-`prompt` y `messages` son excluyentes. Si pasás ambos, el SDK falla con un error claro.
+`prompt` and `messages` are mutually exclusive. If you pass both, the SDK throws a clear error.
 
-## Providers y capacidades
+## Providers and capabilities
 
 | Provider | Streaming | Tools | Tool Choice | JSON Mode | Structured Output | Vision | Reasoning | Embeddings |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Azure OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Anthropic | Yes | Yes | Yes | No | Prompted | Yes | Yes | No |
 | Gemini | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes |
+| OpenRouter | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No |
 | Bedrock | No | No | No | No | No | Yes | No | No |
 | Ollama | No | No | No | No | No | Yes | No | No |
 
-`Prompted` significa que el SDK puede producir objetos usando prompting y validación, aunque el provider no tenga modo nativo.
+`Prompted` means the SDK can still generate validated objects through prompting and schema validation even if the provider does not expose native structured output.
 
-Cada `LanguageModel` ahora expone un contrato de capacidades más fino en `model.capabilities`, incluyendo:
+Every `LanguageModel` now exposes a richer `model.capabilities` contract, including:
 
 - `jsonMode`
 - `toolChoice`
@@ -295,9 +334,9 @@ Cada `LanguageModel` ahora expone un contrato de capacidades más fino en `model
 - `reasoning`
 - `webSearch`
 
-## Provider options tipadas
+## Typed provider options
 
-`providerOptions` sigue siendo passthrough al provider, pero ahora queda tipado según el modelo que uses.
+`providerOptions` remains a provider passthrough, but it is now typed from the selected model.
 
 ```ts
 import { createOpenAI, generateText } from "@zhivex-ai/sdk";
@@ -314,17 +353,29 @@ await generateText({
 });
 ```
 
-Tipos exportados por provider:
+Exported provider option types:
 
 - `OpenAILanguageModelOptions`
+- `AzureOpenAILanguageModelOptions`
 - `AnthropicLanguageModelOptions`
 - `GeminiLanguageModelOptions`
+- `OpenRouterLanguageModelOptions`
 - `BedrockLanguageModelOptions`
 - `OllamaLanguageModelOptions`
 
-## API principal
+## Provider conformance
 
-Helpers recomendados:
+The repo now includes a shared provider contract harness for adapters. New providers should verify:
+
+- stable model identity,
+- declared capabilities,
+- embedding identity when supported,
+- provider option passthrough,
+- behavior coverage for text, streaming, tools, and structured output where applicable.
+
+## Public API
+
+Recommended helpers:
 
 - `generateText(...)`
 - `streamText(...)`
@@ -337,52 +388,54 @@ Helpers recomendados:
 - `user(...)`
 - `assistant(...)`
 
-Factories de provider:
+Provider factories:
 
 - `createOpenAI(...)`
+- `createAzureOpenAI(...)`
 - `createAnthropic(...)`
 - `createGemini(...)`
+- `createOpenRouter(...)`
 - `createBedrock(...)`
 - `createOllama(...)`
 
-## Migración desde la API anterior
+## Migration from the previous API
 
-Antes:
+Before:
 
 ```ts
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const model = openai.languageModel("gpt-4o-mini");
 ```
 
-Ahora:
+Now:
 
 ```ts
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const model = openai("gpt-4o-mini");
 ```
 
-Antes:
+Before:
 
 ```ts
 messages: [createTextMessage("user", "Hello")]
 ```
 
-Ahora:
+Now:
 
 ```ts
 messages: [user("Hello")]
 ```
 
-La forma `.languageModel(...)` sigue disponible, pero la forma recomendada es invocar el provider directamente.
+`.languageModel(...)` still works, but directly invoking the provider is the recommended style.
 
-## Desarrollo local
+## Local development
 
-Requisitos:
+Requirements:
 
 - Bun 1.3+
 - Node 20+
 
-Comandos base:
+Core commands:
 
 ```bash
 bun install

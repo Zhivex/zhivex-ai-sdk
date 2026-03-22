@@ -11,6 +11,8 @@
     { "path": "../gemini" },
     { "path": "../bedrock" },
     { "path": "../ollama" },
+    { "path": "../azure-openai" },
+    { "path": "../openrouter" },
     { "path": "../gateway" }
   ],
   "include": ["src"]

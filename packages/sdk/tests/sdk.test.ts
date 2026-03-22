@@ -18,8 +18,10 @@ describe("sdk public surface", () => {
 
   it("exports the provider factories used by the README", () => {
     expect(sdk.createOpenAI).toBeTypeOf("function");
+    expect(sdk.createAzureOpenAI).toBeTypeOf("function");
     expect(sdk.createAnthropic).toBeTypeOf("function");
     expect(sdk.createGemini).toBeTypeOf("function");
+    expect(sdk.createOpenRouter).toBeTypeOf("function");
     expect(sdk.createBedrock).toBeTypeOf("function");
     expect(sdk.createOllama).toBeTypeOf("function");
     expect(sdk.createGateway).toBeTypeOf("function");

@@ -7,6 +7,8 @@
     { "path": "./packages/gemini" },
     { "path": "./packages/bedrock" },
     { "path": "./packages/ollama" },
+    { "path": "./packages/azure-openai" },
+    { "path": "./packages/openrouter" },
     { "path": "./packages/gateway" },
     { "path": "./packages/sdk" }
   ]

@@ -44,6 +44,10 @@ export { createBedrock } from "@zhivex-ai/bedrock";
 export type { BedrockLanguageModelOptions, BedrockProviderOptions } from "@zhivex-ai/bedrock";
 export { createOllama } from "@zhivex-ai/ollama";
 export type { OllamaLanguageModelOptions, OllamaProviderOptions } from "@zhivex-ai/ollama";
+export { createAzureOpenAI } from "@zhivex-ai/azure-openai";
+export type { AzureOpenAILanguageModelOptions, AzureOpenAIProviderOptions } from "@zhivex-ai/azure-openai";
+export { createOpenRouter } from "@zhivex-ai/openrouter";
+export type { OpenRouterLanguageModelOptions, OpenRouterProviderOptions } from "@zhivex-ai/openrouter";
 export { createGateway } from "@zhivex-ai/gateway";
 export type {
   GatewayAttempt,

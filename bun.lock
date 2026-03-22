@@ -18,6 +18,14 @@
         "@zhivex-ai/core": "workspace:*",
       },
     },
+    "packages/azure-openai": {
+      "name": "@zhivex-ai/azure-openai",
+      "version": "0.1.0",
+      "dependencies": {
+        "@zhivex-ai/core": "workspace:*",
+        "zod": "^4.3.6",
+      },
+    },
     "packages/bedrock": {
       "name": "@zhivex-ai/bedrock",
       "version": "0.1.0",
@@ -61,17 +69,27 @@
         "@zhivex-ai/core": "workspace:*",
       },
     },
+    "packages/openrouter": {
+      "name": "@zhivex-ai/openrouter",
+      "version": "0.1.0",
+      "dependencies": {
+        "@zhivex-ai/core": "workspace:*",
+        "zod": "^4.3.6",
+      },
+    },
     "packages/sdk": {
       "name": "@zhivex-ai/sdk",
       "version": "0.1.0",
       "dependencies": {
         "@zhivex-ai/anthropic": "workspace:*",
+        "@zhivex-ai/azure-openai": "workspace:*",
         "@zhivex-ai/bedrock": "workspace:*",
         "@zhivex-ai/core": "workspace:*",
         "@zhivex-ai/gateway": "workspace:*",
         "@zhivex-ai/gemini": "workspace:*",
         "@zhivex-ai/ollama": "workspace:*",
         "@zhivex-ai/openai": "workspace:*",
+        "@zhivex-ai/openrouter": "workspace:*",
       },
     },
   },
@@ -362,6 +380,8 @@
 
     "@zhivex-ai/anthropic": ["@zhivex-ai/anthropic@workspace:packages/anthropic"],
 
+    "@zhivex-ai/azure-openai": ["@zhivex-ai/azure-openai@workspace:packages/azure-openai"],
+
     "@zhivex-ai/bedrock": ["@zhivex-ai/bedrock@workspace:packages/bedrock"],
 
     "@zhivex-ai/core": ["@zhivex-ai/core@workspace:packages/core"],
@@ -373,6 +393,8 @@
     "@zhivex-ai/ollama": ["@zhivex-ai/ollama@workspace:packages/ollama"],
 
     "@zhivex-ai/openai": ["@zhivex-ai/openai@workspace:packages/openai"],
+
+    "@zhivex-ai/openrouter": ["@zhivex-ai/openrouter@workspace:packages/openrouter"],
 
     "@zhivex-ai/sdk": ["@zhivex-ai/sdk@workspace:packages/sdk"],
 
