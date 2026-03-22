@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ModelCapabilities, ProviderAdapter } from "@zhivex-ai/core";
+import { defaultModelCatalog, type ModelCapabilities, type ProviderAdapter } from "@zhivex-ai/core";
 import { createGateway } from "../src/index.ts";
 
 const createAdapter = (
@@ -220,5 +220,24 @@ describe("gateway", () => {
     });
 
     expect(attempts).toEqual(["ollama:0:0"]);
+  });
+
+  it("uses model catalog costs when no explicit provider cost is configured", async () => {
+    const gateway = createGateway({
+      adapters: {
+        openai: createAdapter(async () => ({ text: "expensive" })),
+        ollama: createAdapter(async () => ({ text: "cheap" }))
+      },
+      modelCatalog: defaultModelCatalog
+    });
+
+    const result = await gateway.generate({
+      primary: { provider: "openai", modelId: "gpt-4o-mini" },
+      fallbacks: [{ provider: "ollama", modelId: "llama3.2" }],
+      messages: [{ role: "user", content: "hello" }],
+      maxCostPer1kTokens: 0.2
+    });
+
+    expect(result.providerUsed).toBe("ollama");
   });
 });

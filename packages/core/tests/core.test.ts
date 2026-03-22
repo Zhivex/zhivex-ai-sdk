@@ -1,14 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import os from "node:os";
+import path from "node:path";
+import { promises as fs } from "node:fs";
 
 import {
   assistant,
   createCachedGenerateMiddleware,
+  createCircuitBreakerMiddleware,
+  createFileGenerateCache,
   createInMemoryGenerateCache,
+  createModelCatalog,
   createTelemetryMiddleware,
   createTextMessage,
+  createUIMessageJsonResponse,
+  createUIMessageLinesResponse,
   embed,
   embedMany,
+  parseUIMessageRequest,
   generateObject,
   generateText,
   streamObject,
@@ -539,5 +548,79 @@ describe("core helpers", () => {
     });
 
     expect(events).toEqual(["generate-start", "generate-finish"]);
+  });
+
+  it("persists cached generate results to the filesystem", async () => {
+    let calls = 0;
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-cache-"));
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async generate() {
+          calls += 1;
+          return { messages: [createTextMessage("assistant", "disk hello")], text: "disk hello" };
+        }
+      }),
+      [createCachedGenerateMiddleware({ cache: createFileGenerateCache({ dir }) })]
+    );
+
+    const first = await generateText({ model: wrapped, prompt: "hello" });
+    const second = await generateText({ model: wrapped, prompt: "hello" });
+
+    expect(first.text).toBe("disk hello");
+    expect(second.text).toBe("disk hello");
+    expect(calls).toBe(1);
+  });
+
+  it("opens a circuit breaker after repeated failures", async () => {
+    const states: string[] = [];
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async generate() {
+          throw new Error("upstream failed");
+        }
+      }),
+      [
+        createCircuitBreakerMiddleware({
+          failureThreshold: 2,
+          cooldownMs: 60_000,
+          onStateChange(state) {
+            states.push(state.status);
+          }
+        })
+      ]
+    );
+
+    await expect(generateText({ model: wrapped, prompt: "hello" })).rejects.toThrow("upstream failed");
+    await expect(generateText({ model: wrapped, prompt: "hello" })).rejects.toThrow("upstream failed");
+    await expect(generateText({ model: wrapped, prompt: "hello" })).rejects.toThrow("Circuit breaker open");
+    expect(states).toContain("open");
+  });
+
+  it("parses and returns UI messages through fetch helpers", async () => {
+    const messages = [toUIMessage(user("Hello"), "msg_1")];
+    const request = new Request("https://example.com", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(messages)
+    });
+
+    const parsed = await parseUIMessageRequest(request);
+    expect(parsed).toEqual(messages);
+
+    const jsonResponse = createUIMessageJsonResponse(messages);
+    expect(await jsonResponse.json()).toEqual(messages);
+
+    const linesResponse = createUIMessageLinesResponse(messages);
+    expect(await linesResponse.text()).toContain("\"id\":\"msg_1\"");
+  });
+
+  it("creates a searchable model catalog", () => {
+    const catalog = createModelCatalog([
+      { provider: "openai", modelId: "gpt-4o-mini", aliases: ["fast-openai"], costPer1kTokens: 0.6 }
+    ]);
+
+    expect(catalog.find("openai", "gpt-4o-mini")?.costPer1kTokens).toBe(0.6);
+    expect(catalog.find("openai", "fast-openai")?.modelId).toBe("gpt-4o-mini");
+    expect(catalog.list()).toHaveLength(1);
   });
 });

@@ -305,6 +305,11 @@ export interface LanguageModelMiddleware<TProviderOptions extends ProviderOption
   ) => Promise<GenerateResult>;
 }
 
+export interface CircuitBreakerState {
+  failures: number;
+  openedAt?: number;
+}
+
 export interface TelemetryGenerateStartEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
   type: "generate-start";
   model: LanguageModel<TProviderOptions>;

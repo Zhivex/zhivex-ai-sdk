@@ -1,5 +1,7 @@
 export {
   assistant,
+  createFileGenerateCache,
+  createModelCatalog,
   createTextMessage,
   embed,
   embedMany,
@@ -10,11 +12,16 @@ export {
   system,
   textPart,
   deserializeUIMessage,
+  defaultModelCatalog,
   fromUIMessage,
   fromUIMessages,
   createCachedGenerateMiddleware,
+  createCircuitBreakerMiddleware,
   createInMemoryGenerateCache,
   createTelemetryMiddleware,
+  createUIMessageJsonResponse,
+  createUIMessageLinesResponse,
+  parseUIMessageRequest,
   serializeUIMessage,
   toSSEStream,
   toSSEResponse,
@@ -29,7 +36,9 @@ export {
   user
 } from "@zhivex-ai/core";
 export type {
+  CatalogProviderId,
   CallableProviderAdapter,
+  CircuitBreakerState,
   ContentPart,
   EmbedOutput,
   FinishReason,
@@ -40,6 +49,8 @@ export type {
   LanguageModel,
   LanguageModelMiddleware,
   LanguageModelTelemetryEvent,
+  ModelCatalog,
+  ModelCatalogEntry,
   ModelMessage,
   ObjectStreamEvent,
   ProviderAdapter,

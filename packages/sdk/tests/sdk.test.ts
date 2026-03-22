@@ -16,6 +16,10 @@ describe("sdk public surface", () => {
     expect(sdk.wrapLanguageModel).toBeTypeOf("function");
     expect(sdk.createTelemetryMiddleware).toBeTypeOf("function");
     expect(sdk.createCachedGenerateMiddleware).toBeTypeOf("function");
+    expect(sdk.createCircuitBreakerMiddleware).toBeTypeOf("function");
+    expect(sdk.createFileGenerateCache).toBeTypeOf("function");
+    expect(sdk.createModelCatalog).toBeTypeOf("function");
+    expect(sdk.parseUIMessageRequest).toBeTypeOf("function");
     expect(sdk.tool).toBeTypeOf("function");
     expect(sdk.system).toBeTypeOf("function");
     expect(sdk.user).toBeTypeOf("function");

@@ -1,4 +1,8 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
 import type {
+  CircuitBreakerState,
   GenerateResult,
   LanguageModel,
   LanguageModelMiddleware,
@@ -124,6 +128,88 @@ export const createInMemoryGenerateCache = (): GenerateCache => {
     },
     set(key, value) {
       store.set(key, value);
+    }
+  };
+};
+
+export const createFileGenerateCache = (options: { dir: string }): GenerateCache => {
+  const getPath = (key: string) => path.join(options.dir, `${Buffer.from(key).toString("base64url")}.json`);
+
+  return {
+    async get(key) {
+      try {
+        const file = await fs.readFile(getPath(key), "utf8");
+        return JSON.parse(file) as GenerateResult;
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err?.code === "ENOENT") {
+          return undefined;
+        }
+        throw error;
+      }
+    },
+    async set(key, value) {
+      await fs.mkdir(options.dir, { recursive: true });
+      await fs.writeFile(getPath(key), JSON.stringify(value), "utf8");
+    }
+  };
+};
+
+export const createCircuitBreakerMiddleware = <TProviderOptions extends ProviderOptions>(options: {
+  failureThreshold?: number;
+  cooldownMs?: number;
+  isFailure?: (error: Error) => boolean;
+  onStateChange?: (state: CircuitBreakerState & { model: LanguageModel<TProviderOptions>; status: "open" | "half-open" | "closed" }) => void | Promise<void>;
+}): LanguageModelMiddleware<TProviderOptions> => {
+  const failureThreshold = Math.max(1, options.failureThreshold ?? 3);
+  const cooldownMs = Math.max(0, options.cooldownMs ?? 30_000);
+  const state: CircuitBreakerState = { failures: 0 };
+
+  return {
+    name: "circuit-breaker",
+    async wrapGenerate(context, next) {
+      const now = Date.now();
+      if (state.openedAt && now - state.openedAt < cooldownMs) {
+        throw new Error(`Circuit breaker open for model "${context.model.provider}/${context.model.modelId}".`);
+      }
+
+      if (state.openedAt && now - state.openedAt >= cooldownMs) {
+        await options.onStateChange?.({
+          ...state,
+          model: context.model,
+          status: "half-open"
+        });
+      }
+
+      try {
+        const result = await next();
+        state.failures = 0;
+        state.openedAt = undefined;
+        await options.onStateChange?.({
+          ...state,
+          model: context.model,
+          status: "closed"
+        });
+        return result;
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        const isFailure = options.isFailure?.(err) ?? true;
+        if (!isFailure) {
+          throw error;
+        }
+
+        state.failures += 1;
+        if (state.failures >= failureThreshold) {
+          state.openedAt = Date.now();
+          await options.onStateChange?.({
+            ...state,
+            model: context.model,
+            status: "open"
+          });
+        }
+
+        throw error;
+      }
     }
   };
 };

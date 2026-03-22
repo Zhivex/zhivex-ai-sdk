@@ -24,7 +24,8 @@ const scoreTarget = (
   const qualityBoost = model.includes("pro") || model.includes("claude") ? 2 : 0;
   const speedBoost = model.includes("flash") || model.includes("lite") ? 2 : 0;
   const reasoningBoost = model.includes("pro") || model.includes("claude") ? 2 : 0;
-  const costPenalty = config.providerCostsPer1kTokens?.[target.provider] ?? 0;
+  const catalogCost = config.modelCatalog?.find(target.provider, target.modelId)?.costPer1kTokens;
+  const costPenalty = config.providerCostsPer1kTokens?.[target.provider] ?? catalogCost ?? 0;
   const latencyPenalty = (config.latencyBiasMs?.[target.provider] ?? 0) / 100;
 
   if (mode === "speed") {
@@ -69,11 +70,13 @@ const withinCostBudget = (config: GatewayConfig, request: GatewayRequest, target
   }
 
   const configuredCost = config.providerCostsPer1kTokens?.[target.provider];
-  if (configuredCost == null) {
+  const catalogCost = config.modelCatalog?.find(target.provider, target.modelId)?.costPer1kTokens;
+  const effectiveCost = configuredCost ?? catalogCost;
+  if (effectiveCost == null) {
     return true;
   }
 
-  return configuredCost <= request.maxCostPer1kTokens;
+  return effectiveCost <= request.maxCostPer1kTokens;
 };
 
 const estimateTokens = (text: string) => Math.max(1, Math.ceil(text.trim().length / 4));

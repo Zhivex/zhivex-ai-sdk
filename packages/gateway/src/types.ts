@@ -1,4 +1,4 @@
-import type { ProviderAdapter, TokenUsage } from "@zhivex-ai/core";
+import type { ModelCatalog, ProviderAdapter, TokenUsage } from "@zhivex-ai/core";
 
 export type GatewayProviderId = "openai" | "anthropic" | "gemini" | "bedrock" | "ollama" | "azure-openai" | "openrouter";
 export type GatewayRoutingMode = "speed" | "balanced" | "quality";
@@ -59,6 +59,7 @@ export interface GatewayResponse {
 
 export interface GatewayConfig {
   adapters: Partial<Record<GatewayProviderId, ProviderAdapter>>;
+  modelCatalog?: ModelCatalog;
   providerCostsPer1kTokens?: Partial<Record<GatewayProviderId, number>>;
   latencyBiasMs?: Partial<Record<GatewayProviderId, number>>;
   maxRetries?: number;
