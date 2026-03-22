@@ -27,13 +27,26 @@ export interface BedrockProviderOptions {
   region?: string;
 }
 
+export interface BedrockLanguageModelOptions {
+  additionalModelRequestFields?: Record<string, unknown>;
+  additionalModelResponseFieldPaths?: string[];
+  [key: string]: unknown;
+}
+
 const capabilities: ModelCapabilities = {
   streaming: false,
   tools: false,
   structuredOutput: false,
+  jsonMode: false,
+  toolChoice: false,
+  parallelToolCalls: false,
   vision: true,
   files: false,
-  embeddings: false
+  audioInput: false,
+  audioOutput: false,
+  embeddings: false,
+  reasoning: false,
+  webSearch: false
 };
 
 const supportedImageFormats = new Set(["png", "jpeg", "gif", "webp"]);
@@ -116,7 +129,7 @@ const normalizeBedrockError = (error: unknown) => {
   return error instanceof Error ? error : new Error(message);
 };
 
-class BedrockLanguageModel implements LanguageModel {
+class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions> {
   readonly provider = "bedrock";
   readonly capabilities = capabilities;
 

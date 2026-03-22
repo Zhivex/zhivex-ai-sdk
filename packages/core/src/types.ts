@@ -74,9 +74,16 @@ export interface ModelCapabilities {
   streaming: boolean;
   tools: boolean;
   structuredOutput: boolean;
+  jsonMode: boolean;
+  toolChoice: boolean;
+  parallelToolCalls: boolean;
   vision: boolean;
   files: boolean;
+  audioInput: boolean;
+  audioOutput: boolean;
   embeddings: boolean;
+  reasoning: boolean;
+  webSearch: boolean;
 }
 
 export interface RetryOptions {
@@ -179,21 +186,23 @@ export type GenerateInputSource =
       messages?: undefined;
     };
 
-export interface ModelGenerateInput extends RetryOptions {
+export type ProviderOptions = Record<string, unknown>;
+
+export interface ModelGenerateInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
   messages: ModelMessage[];
   tools?: ToolSet;
   temperature?: number;
   maxTokens?: number;
-  providerOptions?: Record<string, unknown>;
+  providerOptions?: TProviderOptions;
   structuredOutput?: StructuredOutputConfig;
 }
 
-export interface LanguageModel {
+export interface LanguageModel<TProviderOptions extends ProviderOptions = ProviderOptions> {
   readonly provider: string;
   readonly modelId: string;
   readonly capabilities: ModelCapabilities;
-  generate(input: ModelGenerateInput): Promise<GenerateResult>;
-  stream?(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>>;
+  generate(input: ModelGenerateInput<TProviderOptions>): Promise<GenerateResult>;
+  stream?(input: ModelGenerateInput<TProviderOptions>): Promise<AsyncIterable<StreamEvent>>;
 }
 
 export interface EmbeddingModel {
@@ -220,15 +229,19 @@ export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny, TResult
 
 export type ToolSet = Record<string, ToolDefinition>;
 
-export type GenerateTextOptions = RetryOptions &
+export type ProviderOptionsOf<TModel extends LanguageModel> = TModel extends LanguageModel<infer TProviderOptions>
+  ? TProviderOptions
+  : ProviderOptions;
+
+export type GenerateTextOptions<TModel extends LanguageModel = LanguageModel> = RetryOptions &
   GenerateInputSource & {
-    model: LanguageModel;
+    model: TModel;
     system?: string;
     tools?: ToolSet;
     maxSteps?: number;
     temperature?: number;
     maxTokens?: number;
-    providerOptions?: Record<string, unknown>;
+    providerOptions?: ProviderOptionsOf<TModel>;
     structuredOutput?: StructuredOutputConfig;
   };
 
@@ -247,7 +260,10 @@ export interface GenerateTextOutput {
   toolResults: ToolExecutionResult[];
 }
 
-export type GenerateObjectOptions<TSchema extends ZodTypeAny> = GenerateTextOptions & {
+export type GenerateObjectOptions<
+  TSchema extends ZodTypeAny,
+  TModel extends LanguageModel = LanguageModel
+> = GenerateTextOptions<TModel> & {
   schema: TSchema;
   mode?: StructuredOutputMode;
   schemaName?: string;

@@ -2,10 +2,32 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { generateObject, generateText, tool } from "@zhivex-ai/core";
+import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createAnthropic } from "../src/index.js";
 
 describe("anthropic adapter", () => {
   const fetchMock = vi.fn();
+
+  runLanguageModelContractSuite({
+    providerName: "anthropic",
+    modelId: "claude-3-5-sonnet",
+    createModel: () => createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch })("claude-3-5-sonnet"),
+    expectedCapabilities: {
+      streaming: true,
+      tools: true,
+      structuredOutput: false,
+      jsonMode: false,
+      toolChoice: true,
+      parallelToolCalls: false,
+      vision: true,
+      files: false,
+      audioInput: false,
+      audioOutput: false,
+      embeddings: false,
+      reasoning: true,
+      webSearch: false
+    }
+  });
 
   beforeEach(() => {
     fetchMock.mockReset();
@@ -91,5 +113,30 @@ describe("anthropic adapter", () => {
 
     expect(result.object.title).toBe("Soup");
     expect(result.objectMode).toBe("prompted");
+  });
+
+  it("passes provider-specific options through to the Anthropic API", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      providerOptions: {
+        top_p: 0.9,
+        metadata: { source: "test" }
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as { top_p: number; metadata: { source: string } };
+    expect(body.top_p).toBe(0.9);
+    expect(body.metadata.source).toBe("test");
   });
 });

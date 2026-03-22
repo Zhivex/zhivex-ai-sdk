@@ -13,9 +13,16 @@ const createAdapter = (generateImpl: () => Promise<{ text: string; usage?: { inp
         streaming: false,
         tools: false,
         structuredOutput: false,
+        jsonMode: false,
+        toolChoice: false,
+        parallelToolCalls: false,
         vision: true,
         files: false,
-        embeddings: false
+        audioInput: false,
+        audioOutput: false,
+        embeddings: false,
+        reasoning: false,
+        webSearch: false
       },
       async generate() {
         const result = await generateImpl();
@@ -80,9 +87,16 @@ describe("gateway", () => {
                 streaming: false,
                 tools: false,
                 structuredOutput: false,
+                jsonMode: false,
+                toolChoice: false,
+                parallelToolCalls: false,
                 vision: true,
                 files: false,
-                embeddings: false
+                audioInput: false,
+                audioOutput: false,
+                embeddings: false,
+                reasoning: false,
+                webSearch: false
               },
               async generate(input) {
                 inspect(input.messages);

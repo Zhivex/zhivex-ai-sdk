@@ -24,9 +24,16 @@ const createLanguageModel = (overrides?: Partial<LanguageModel>): LanguageModel 
     streaming: true,
     tools: true,
     structuredOutput: true,
+    jsonMode: true,
+    toolChoice: true,
+    parallelToolCalls: false,
     vision: true,
     files: false,
-    embeddings: false
+    audioInput: false,
+    audioOutput: false,
+    embeddings: false,
+    reasoning: false,
+    webSearch: false
   },
   async generate() {
     return { messages: [createTextMessage("assistant", "hello world")], text: "hello world" };
@@ -48,9 +55,16 @@ const createEmbeddingModel = (overrides?: Partial<EmbeddingModel>): EmbeddingMod
     streaming: false,
     tools: false,
     structuredOutput: false,
+    jsonMode: false,
+    toolChoice: false,
+    parallelToolCalls: false,
     vision: false,
     files: false,
-    embeddings: true
+    audioInput: false,
+    audioOutput: false,
+    embeddings: true,
+    reasoning: false,
+    webSearch: false
   },
   async embed() {
     return {
@@ -166,9 +180,16 @@ describe("core helpers", () => {
           streaming: true,
           tools: true,
           structuredOutput: false,
+          jsonMode: false,
+          toolChoice: true,
+          parallelToolCalls: false,
           vision: false,
           files: false,
-          embeddings: false
+          audioInput: false,
+          audioOutput: false,
+          embeddings: false,
+          reasoning: false,
+          webSearch: false
         },
         async generate(input) {
           expect(input.structuredOutput).toBeUndefined();
@@ -241,9 +262,16 @@ describe("core helpers", () => {
           streaming: true,
           tools: true,
           structuredOutput: false,
+          jsonMode: false,
+          toolChoice: true,
+          parallelToolCalls: false,
           vision: false,
           files: false,
-          embeddings: false
+          audioInput: false,
+          audioOutput: false,
+          embeddings: false,
+          reasoning: false,
+          webSearch: false
         },
         async stream(input) {
           firstMessageText = input.messages[0]?.parts[0]?.type === "text" ? input.messages[0].parts[0].text : "";

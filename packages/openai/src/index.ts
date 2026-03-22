@@ -27,13 +27,31 @@ export interface OpenAIProviderOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+export interface OpenAILanguageModelOptions {
+  top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  stop?: string | string[];
+  seed?: number;
+  user?: string;
+  tool_choice?: "none" | "auto" | "required" | { type: "function"; function: { name: string } };
+  [key: string]: unknown;
+}
+
 const capabilities: ModelCapabilities = {
   streaming: true,
   tools: true,
   structuredOutput: true,
+  jsonMode: true,
+  toolChoice: true,
+  parallelToolCalls: true,
   vision: true,
   files: false,
-  embeddings: true
+  audioInput: false,
+  audioOutput: false,
+  embeddings: true,
+  reasoning: true,
+  webSearch: false
 };
 
 const jsonHeaders = (apiKey: string) => ({
@@ -156,7 +174,7 @@ const parseAssistantMessage = (message: any): ModelMessage => ({
   ]
 });
 
-class OpenAILanguageModel implements LanguageModel {
+class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
   readonly provider = "openai";
   readonly capabilities = capabilities;
 

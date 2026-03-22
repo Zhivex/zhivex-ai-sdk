@@ -25,6 +25,8 @@ export type {
   ModelMessage,
   ObjectStreamEvent,
   ProviderAdapter,
+  ProviderOptions,
+  ProviderOptionsOf,
   StreamEvent,
   StreamObjectResult,
   StreamTextResult,
@@ -33,15 +35,15 @@ export type {
   ToolSet
 } from "@zhivex-ai/core";
 export { createOpenAI } from "@zhivex-ai/openai";
-export type { OpenAIProviderOptions } from "@zhivex-ai/openai";
+export type { OpenAILanguageModelOptions, OpenAIProviderOptions } from "@zhivex-ai/openai";
 export { createAnthropic } from "@zhivex-ai/anthropic";
-export type { AnthropicProviderOptions } from "@zhivex-ai/anthropic";
+export type { AnthropicLanguageModelOptions, AnthropicProviderOptions } from "@zhivex-ai/anthropic";
 export { createGemini } from "@zhivex-ai/gemini";
-export type { GeminiProviderOptions } from "@zhivex-ai/gemini";
+export type { GeminiLanguageModelOptions, GeminiProviderOptions } from "@zhivex-ai/gemini";
 export { createBedrock } from "@zhivex-ai/bedrock";
-export type { BedrockProviderOptions } from "@zhivex-ai/bedrock";
+export type { BedrockLanguageModelOptions, BedrockProviderOptions } from "@zhivex-ai/bedrock";
 export { createOllama } from "@zhivex-ai/ollama";
-export type { OllamaProviderOptions } from "@zhivex-ai/ollama";
+export type { OllamaLanguageModelOptions, OllamaProviderOptions } from "@zhivex-ai/ollama";
 export { createGateway } from "@zhivex-ai/gateway";
 export type {
   GatewayAttempt,

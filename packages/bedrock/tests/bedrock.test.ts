@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTextMessage, generateText } from "@zhivex-ai/core";
+import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 
 const { sendMock, clientMock } = vi.hoisted(() => ({
   sendMock: vi.fn(),
@@ -29,6 +30,27 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 import { createBedrock } from "../src/index.ts";
 
 describe("bedrock adapter", () => {
+  runLanguageModelContractSuite({
+    providerName: "bedrock",
+    modelId: "anthropic.claude-3-5-sonnet",
+    createModel: () => createBedrock({ region: "us-east-1" })("anthropic.claude-3-5-sonnet"),
+    expectedCapabilities: {
+      streaming: false,
+      tools: false,
+      structuredOutput: false,
+      jsonMode: false,
+      toolChoice: false,
+      parallelToolCalls: false,
+      vision: true,
+      files: false,
+      audioInput: false,
+      audioOutput: false,
+      embeddings: false,
+      reasoning: false,
+      webSearch: false
+    }
+  });
+
   beforeEach(() => {
     sendMock.mockReset();
     clientMock.mockClear();
@@ -108,5 +130,28 @@ describe("bedrock adapter", () => {
         messages: [createTextMessage("user", "hello")]
       })
     ).rejects.toThrow("invalid");
+  });
+
+  it("passes provider-specific options through to Bedrock", async () => {
+    sendMock.mockResolvedValueOnce({
+      stopReason: "end_turn",
+      output: {
+        message: {
+          content: [{ text: "hello from bedrock" }]
+        }
+      }
+    });
+
+    const provider = createBedrock({ region: "us-east-1" });
+    await generateText({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "hello",
+      providerOptions: {
+        additionalModelResponseFieldPaths: ["/stop_sequence"]
+      }
+    });
+
+    const command = sendMock.mock.calls[0]?.[0] as { input: { additionalModelResponseFieldPaths?: string[] } };
+    expect(command.input.additionalModelResponseFieldPaths).toEqual(["/stop_sequence"]);
   });
 });

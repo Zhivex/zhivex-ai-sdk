@@ -2,10 +2,34 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createTextMessage, embed, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createOpenAI } from "../src/index.js";
 
 describe("openai adapter", () => {
   const fetchMock = vi.fn();
+
+  runLanguageModelContractSuite({
+    providerName: "openai",
+    modelId: "gpt-4o-mini",
+    createModel: () => createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("gpt-4o-mini"),
+    createEmbeddingModel: () =>
+      createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch }).embeddingModel("text-embedding-3-small"),
+    expectedCapabilities: {
+      streaming: true,
+      tools: true,
+      structuredOutput: true,
+      jsonMode: true,
+      toolChoice: true,
+      parallelToolCalls: true,
+      vision: true,
+      files: false,
+      audioInput: false,
+      audioOutput: false,
+      embeddings: true,
+      reasoning: true,
+      webSearch: false
+    }
+  });
 
   beforeEach(() => {
     fetchMock.mockReset();
@@ -137,5 +161,28 @@ describe("openai adapter", () => {
     });
 
     expect(result.embeddings[0]).toEqual([0.1, 0.2, 0.3]);
+  });
+
+  it("passes provider-specific options through to the OpenAI API", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "hello from openai" } }]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-4o-mini"),
+      prompt: "hello",
+      providerOptions: {
+        top_p: 0.8,
+        user: "test-user"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as { top_p: number; user: string };
+    expect(body.top_p).toBe(0.8);
+    expect(body.user).toBe("test-user");
   });
 });

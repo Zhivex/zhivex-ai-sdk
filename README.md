@@ -275,15 +275,52 @@ Usá `messages` cuando:
 
 ## Providers y capacidades
 
-| Provider | Streaming | Tools | Structured Output | Vision | Embeddings |
-| --- | --- | --- | --- | --- | --- |
-| OpenAI | Yes | Yes | Yes | Yes | Yes |
-| Anthropic | Yes | Yes | Prompted | Yes | No |
-| Gemini | Yes | Yes | Yes | Yes | Yes |
-| Bedrock | No | No | No | Yes | No |
-| Ollama | No | No | No | Yes | No |
+| Provider | Streaming | Tools | Tool Choice | JSON Mode | Structured Output | Vision | Reasoning | Embeddings |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Anthropic | Yes | Yes | Yes | No | Prompted | Yes | Yes | No |
+| Gemini | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes |
+| Bedrock | No | No | No | No | No | Yes | No | No |
+| Ollama | No | No | No | No | No | Yes | No | No |
 
 `Prompted` significa que el SDK puede producir objetos usando prompting y validación, aunque el provider no tenga modo nativo.
+
+Cada `LanguageModel` ahora expone un contrato de capacidades más fino en `model.capabilities`, incluyendo:
+
+- `jsonMode`
+- `toolChoice`
+- `parallelToolCalls`
+- `audioInput`
+- `audioOutput`
+- `reasoning`
+- `webSearch`
+
+## Provider options tipadas
+
+`providerOptions` sigue siendo passthrough al provider, pero ahora queda tipado según el modelo que uses.
+
+```ts
+import { createOpenAI, generateText } from "@zhivex-ai/sdk";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+await generateText({
+  model: openai("gpt-4o-mini"),
+  prompt: "Say hello",
+  providerOptions: {
+    top_p: 0.8,
+    user: "demo-user"
+  }
+});
+```
+
+Tipos exportados por provider:
+
+- `OpenAILanguageModelOptions`
+- `AnthropicLanguageModelOptions`
+- `GeminiLanguageModelOptions`
+- `BedrockLanguageModelOptions`
+- `OllamaLanguageModelOptions`
 
 ## API principal
 

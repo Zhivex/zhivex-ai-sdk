@@ -2,10 +2,34 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { embedMany, generateObject, generateText } from "@zhivex-ai/core";
+import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createGemini } from "../src/index.js";
 
 describe("gemini adapter", () => {
   const fetchMock = vi.fn();
+
+  runLanguageModelContractSuite({
+    providerName: "gemini",
+    modelId: "gemini-2.0-flash",
+    createModel: () => createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch })("gemini-2.0-flash"),
+    createEmbeddingModel: () =>
+      createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch }).embeddingModel("text-embedding-004"),
+    expectedCapabilities: {
+      streaming: true,
+      tools: true,
+      structuredOutput: true,
+      jsonMode: true,
+      toolChoice: false,
+      parallelToolCalls: false,
+      vision: true,
+      files: false,
+      audioInput: false,
+      audioOutput: false,
+      embeddings: true,
+      reasoning: true,
+      webSearch: false
+    }
+  });
 
   beforeEach(() => {
     fetchMock.mockReset();
@@ -88,5 +112,33 @@ describe("gemini adapter", () => {
       [0.5, 0.6],
       [0.7, 0.8]
     ]);
+  });
+
+  it("passes provider-specific options through to the Gemini API", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "hello from gemini" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello",
+      providerOptions: {
+        topP: 0.95,
+        candidateCount: 1
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as { topP: number; candidateCount: number };
+    expect(body.topP).toBe(0.95);
+    expect(body.candidateCount).toBe(1);
   });
 });

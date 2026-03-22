@@ -25,13 +25,29 @@ export interface AnthropicProviderOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+export interface AnthropicLanguageModelOptions {
+  top_p?: number;
+  top_k?: number;
+  stop_sequences?: string[];
+  metadata?: Record<string, unknown>;
+  tool_choice?: { type: "auto" | "any" | "tool"; name?: string };
+  [key: string]: unknown;
+}
+
 const capabilities: ModelCapabilities = {
   streaming: true,
   tools: true,
   structuredOutput: false,
+  jsonMode: false,
+  toolChoice: true,
+  parallelToolCalls: false,
   vision: true,
   files: false,
-  embeddings: false
+  audioInput: false,
+  audioOutput: false,
+  embeddings: false,
+  reasoning: true,
+  webSearch: false
 };
 
 const parseJson = async (response: Response) => {
@@ -136,7 +152,7 @@ const parseAssistantMessage = (json: any): ModelMessage => ({
     }) ?? []
 });
 
-class AnthropicLanguageModel implements LanguageModel {
+class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOptions> {
   readonly provider = "anthropic";
   readonly capabilities = capabilities;
 

@@ -19,13 +19,29 @@ export interface OllamaProviderOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+export interface OllamaLanguageModelOptions {
+  format?: "json" | Record<string, unknown> | string;
+  keep_alive?: string | number;
+  raw?: boolean;
+  template?: string;
+  options?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 const capabilities: ModelCapabilities = {
   streaming: false,
   tools: false,
   structuredOutput: false,
+  jsonMode: false,
+  toolChoice: false,
+  parallelToolCalls: false,
   vision: true,
   files: false,
-  embeddings: false
+  audioInput: false,
+  audioOutput: false,
+  embeddings: false,
+  reasoning: false,
+  webSearch: false
 };
 
 const parseDataUrl = (value: string) => {
@@ -76,7 +92,7 @@ const parseJson = async (response: Response) => {
   return response.json();
 };
 
-class OllamaLanguageModel implements LanguageModel {
+class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
   readonly provider = "ollama";
   readonly capabilities = capabilities;
 

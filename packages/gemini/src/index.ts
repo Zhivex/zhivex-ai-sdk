@@ -27,13 +27,29 @@ export interface GeminiProviderOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+export interface GeminiLanguageModelOptions {
+  topP?: number;
+  topK?: number;
+  stopSequences?: string[];
+  candidateCount?: number;
+  responseMimeType?: string;
+  [key: string]: unknown;
+}
+
 const capabilities: ModelCapabilities = {
   streaming: true,
   tools: true,
   structuredOutput: true,
+  jsonMode: true,
+  toolChoice: false,
+  parallelToolCalls: false,
   vision: true,
   files: false,
-  embeddings: true
+  audioInput: false,
+  audioOutput: false,
+  embeddings: true,
+  reasoning: true,
+  webSearch: false
 };
 
 const parseJson = async (response: Response) => {
@@ -145,7 +161,7 @@ const parseAssistantMessage = (candidate: any): ModelMessage => ({
     }) ?? []
 });
 
-class GeminiLanguageModel implements LanguageModel {
+class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
   readonly provider = "gemini";
   readonly capabilities = capabilities;
 
