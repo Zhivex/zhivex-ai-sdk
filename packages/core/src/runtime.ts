@@ -1,5 +1,5 @@
 import { ProviderHTTPError } from "./errors.js";
-import type { RetryOptions } from "./types.js";
+import type { CallableProviderAdapter, ProviderAdapter, RetryOptions } from "./types.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -63,4 +63,14 @@ export const withRetry = async <T>(operation: () => Promise<T>, options: RetryOp
   }
 
   throw lastError;
+};
+
+export const createProviderAdapter = <TAdapter extends ProviderAdapter>(adapter: TAdapter): CallableProviderAdapter & TAdapter => {
+  const callable = ((modelId: string) => adapter.languageModel(modelId)) as CallableProviderAdapter & TAdapter;
+
+  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(adapter))) {
+    Object.defineProperty(callable, key, descriptor);
+  }
+
+  return callable;
 };

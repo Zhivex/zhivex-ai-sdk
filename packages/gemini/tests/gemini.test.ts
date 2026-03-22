@@ -25,12 +25,18 @@ describe("gemini adapter", () => {
 
     const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await generateText({
-      model: provider.languageModel("gemini-2.0-flash"),
+      model: provider("gemini-2.0-flash"),
       prompt: "hello"
     });
 
     expect(result.text).toBe("hello from gemini");
     expect(result.finishReason).toBe("stop");
+  });
+
+  it("creates equivalent language models from the callable provider", () => {
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    expect(provider("gemini-2.0-flash")).toMatchObject(provider.languageModel("gemini-2.0-flash"));
   });
 
   it("supports structured output on top of provider text", async () => {
@@ -47,7 +53,7 @@ describe("gemini adapter", () => {
 
     const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await generateObject({
-      model: provider.languageModel("gemini-2.0-flash"),
+      model: provider("gemini-2.0-flash"),
       prompt: "Return JSON",
       schema: z.object({
         title: z.string(),

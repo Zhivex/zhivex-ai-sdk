@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createTextMessage, embed, embedMany, generateObject, generateText, streamObject, streamText } from "../src/index.js";
+import {
+  assistant,
+  createTextMessage,
+  embed,
+  embedMany,
+  generateObject,
+  generateText,
+  streamObject,
+  streamText,
+  system,
+  tool,
+  user
+} from "../src/index.js";
 import type { EmbeddingModel, LanguageModel, StreamEvent, ToolSet } from "../src/index.js";
 import { UnsupportedFeatureError, ValidationError } from "../src/index.js";
 
@@ -59,14 +71,24 @@ describe("core helpers", () => {
     expect(result.messages.at(-1)?.role).toBe("assistant");
   });
 
+  it("rejects prompt and messages used together", async () => {
+    await expect(
+      generateText({
+        model: createLanguageModel(),
+        prompt: "Say hi",
+        messages: [user("Hello")]
+      })
+    ).rejects.toThrow('Pass either "prompt" or "messages", but not both.');
+  });
+
   it("executes tools across multiple steps", async () => {
     let call = 0;
     const tools: ToolSet = {
-      weather: {
+      weather: tool({
         name: "weather",
         schema: z.object({ city: z.string() }),
         execute: ({ city }) => ({ city, forecast: "sunny" })
-      }
+      })
     };
 
     const model = createLanguageModel({
@@ -99,6 +121,18 @@ describe("core helpers", () => {
     expect(result.messages.at(-3)?.role).toBe("assistant");
     expect(result.messages.at(-2)?.role).toBe("tool");
     expect(result.messages.at(-1)?.role).toBe("assistant");
+  });
+
+  it("builds ergonomic messages", () => {
+    expect(system("You are helpful")).toEqual({
+      role: "system",
+      parts: [{ type: "text", text: "You are helpful" }]
+    });
+    expect(user("Hello")).toEqual(createTextMessage("user", "Hello"));
+    expect(assistant([{ type: "text", text: "Hi" }])).toEqual({
+      role: "assistant",
+      parts: [{ type: "text", text: "Hi" }]
+    });
   });
 
   it("validates structured output in native mode", async () => {
@@ -261,6 +295,20 @@ describe("core helpers", () => {
     expect(await result.collect()).toMatchObject({ text: "hello world" });
   });
 
+  it("streams plain text through textStream", async () => {
+    const result = streamText({
+      model: createLanguageModel(),
+      prompt: "Stream"
+    });
+
+    const chunks: string[] = [];
+    for await (const chunk of result.textStream) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual(["hello", " world"]);
+  });
+
   it("streams tools across multiple steps", async () => {
     let call = 0;
     const result = streamText({
@@ -283,11 +331,11 @@ describe("core helpers", () => {
       prompt: "Weather?",
       maxSteps: 2,
       tools: {
-        weather: {
+        weather: tool({
           name: "weather",
           schema: z.object({ city: z.string() }),
           execute: ({ city }) => ({ city, forecast: "sunny" })
-        }
+        })
       }
     });
 

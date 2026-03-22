@@ -15,12 +15,20 @@ import type {
   GenerateTextOutput,
   ModelGenerateInput,
   ModelMessage,
+  StreamTextResult,
   StreamEvent,
   ToolCall,
   ToolExecutionResult
 } from "./types.js";
 
+const validateInputSource = (options: Pick<GenerateTextOptions, "prompt" | "messages">) => {
+  if (options.prompt !== undefined && options.messages !== undefined) {
+    throw new ValidationError('Pass either "prompt" or "messages", but not both.');
+  }
+};
+
 const buildMessages = (options: Pick<GenerateTextOptions, "prompt" | "messages" | "system">): ModelMessage[] => {
+  validateInputSource(options);
   const messages = [...(options.messages ?? [])];
   if (options.system) {
     messages.unshift(createTextMessage("system", options.system));
@@ -143,7 +151,7 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
   };
 };
 
-export const streamText = (options: GenerateTextOptions) => {
+export const streamText = (options: GenerateTextOptions): StreamTextResult => {
   const maxSteps = Math.max(1, options.maxSteps ?? 1);
   const baseMessages = buildMessages(options);
   validateMessageParts(options.model, baseMessages);

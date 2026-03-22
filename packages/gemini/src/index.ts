@@ -3,10 +3,12 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  createProviderAdapter,
   normalizeFinishReason,
   streamSSE,
   withRetry,
   withTimeoutSignal,
+  type CallableProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
@@ -299,7 +301,9 @@ class GeminiEmbeddingModel implements EmbeddingModel {
   }
 }
 
-export const createGemini = (options: GeminiProviderOptions = {}): ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
+export const createGemini = (
+  options: GeminiProviderOptions = {}
+): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
   const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing Gemini API key.");
@@ -308,10 +312,10 @@ export const createGemini = (options: GeminiProviderOptions = {}): ProviderAdapt
   const baseURL = options.baseURL ?? "https://generativelanguage.googleapis.com/v1beta";
   const fetcher = options.fetch ?? globalThis.fetch;
 
-  return {
+  return createProviderAdapter({
     name: "gemini",
     languageModel: (modelId) => new GeminiLanguageModel(modelId, apiKey, baseURL, fetcher),
     embeddingModel: (modelId) => new GeminiEmbeddingModel(modelId, apiKey, baseURL, fetcher),
     rawFetch: fetcher
-  };
+  });
 };

@@ -5,6 +5,9 @@
     { "path": "./packages/openai" },
     { "path": "./packages/anthropic" },
     { "path": "./packages/gemini" },
+    { "path": "./packages/bedrock" },
+    { "path": "./packages/ollama" },
+    { "path": "./packages/gateway" },
     { "path": "./packages/sdk" }
   ]
 }

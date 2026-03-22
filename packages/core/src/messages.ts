@@ -8,10 +8,13 @@ import type {
   ModelMessage,
   StreamEvent,
   ToolCall,
+  ToolDefinition,
   ToolExecutionResult
 } from "./types.js";
 
 export const textPart = (text: string): ContentPart => ({ type: "text", text });
+
+const normalizeMessageParts = (input: string | ContentPart[]): ContentPart[] => (typeof input === "string" ? [textPart(input)] : input);
 
 export const toolCallPart = (toolCall: ToolCall): ContentPart => ({
   type: "tool-call",
@@ -28,6 +31,21 @@ export const createTextMessage = (role: ModelMessage["role"], text: string): Mod
   parts: [textPart(text)]
 });
 
+export const system = (text: string): ModelMessage => ({
+  role: "system",
+  parts: [textPart(text)]
+});
+
+export const user = (input: string | ContentPart[]): ModelMessage => ({
+  role: "user",
+  parts: normalizeMessageParts(input)
+});
+
+export const assistant = (input: string | ContentPart[]): ModelMessage => ({
+  role: "assistant",
+  parts: normalizeMessageParts(input)
+});
+
 export const getTextFromParts = (parts: ContentPart[]): string =>
   parts
     .filter((part): part is Extract<ContentPart, { type: "text" }> => part.type === "text")
@@ -41,6 +59,8 @@ export const getTextFromMessages = (messages: ModelMessage[]): string =>
     .join("");
 
 export const serializeJsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
+
+export const tool = <TTool extends ToolDefinition>(definition: TTool): TTool => definition;
 
 export const normalizeFinishReason = (reason: string | undefined | null): FinishReason | undefined => {
   if (!reason) {

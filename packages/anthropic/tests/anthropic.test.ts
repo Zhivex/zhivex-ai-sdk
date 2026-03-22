@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { generateObject, generateText } from "@zhivex-ai/core";
+import { generateObject, generateText, tool } from "@zhivex-ai/core";
 import { createAnthropic } from "../src/index.js";
 
 describe("anthropic adapter", () => {
@@ -22,12 +22,18 @@ describe("anthropic adapter", () => {
 
     const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await generateText({
-      model: provider.languageModel("claude-3-5-sonnet"),
+      model: provider("claude-3-5-sonnet"),
       prompt: "hello"
     });
 
     expect(result.text).toBe("hello from anthropic");
     expect(result.finishReason).toBe("stop");
+  });
+
+  it("creates equivalent language models from the callable provider", () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    expect(provider("claude-3-5-sonnet")).toMatchObject(provider.languageModel("claude-3-5-sonnet"));
   });
 
   it("supports tool calls", async () => {
@@ -48,15 +54,15 @@ describe("anthropic adapter", () => {
 
     const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await generateText({
-      model: provider.languageModel("claude-3-5-sonnet"),
+      model: provider("claude-3-5-sonnet"),
       prompt: "double 2",
       maxSteps: 2,
       tools: {
-        math: {
+        math: tool({
           name: "math",
           schema: z.object({ value: z.number() }),
           execute: ({ value }) => ({ result: value * 2 })
-        }
+        })
       }
     });
 
@@ -76,7 +82,7 @@ describe("anthropic adapter", () => {
 
     const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await generateObject({
-      model: provider.languageModel("claude-3-5-sonnet"),
+      model: provider("claude-3-5-sonnet"),
       prompt: "Return JSON",
       schema: z.object({
         title: z.string()

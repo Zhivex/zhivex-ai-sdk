@@ -8,7 +8,10 @@
     { "path": "../core" },
     { "path": "../openai" },
     { "path": "../anthropic" },
-    { "path": "../gemini" }
+    { "path": "../gemini" },
+    { "path": "../bedrock" },
+    { "path": "../ollama" },
+    { "path": "../gateway" }
   ],
   "include": ["src"]
 }

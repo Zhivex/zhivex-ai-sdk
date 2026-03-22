@@ -6,10 +6,17 @@ import { generateText, streamText } from "./generate-text.js";
 import type {
   GenerateObjectOptions,
   GenerateObjectOutput,
+  GenerateTextOptions,
+  ModelMessage,
   ObjectStreamEvent,
   StreamObjectResult,
   StructuredOutputMode
 } from "./types.js";
+
+type StructuredPromptConfig =
+  | { messages: ModelMessage[] }
+  | { prompt: string }
+  | {};
 
 const resolveObjectMode = (requestedMode: StructuredOutputMode, nativeAllowed: boolean): Exclude<StructuredOutputMode, "auto"> => {
   const objectMode = requestedMode === "auto" ? (nativeAllowed ? "native" : "prompted") : requestedMode;
@@ -26,20 +33,28 @@ const resolveObjectMode = (requestedMode: StructuredOutputMode, nativeAllowed: b
 const withStructuredPrompt = <TSchema extends ZodTypeAny>(
   options: GenerateObjectOptions<TSchema>,
   objectMode: Exclude<StructuredOutputMode, "auto">
-) => {
+): StructuredPromptConfig => {
   if (objectMode !== "prompted") {
-    return {
-      prompt: options.prompt,
-      messages: options.messages
-    };
+    if (options.messages !== undefined) {
+      return { messages: options.messages };
+    }
+    if (options.prompt !== undefined) {
+      return { prompt: options.prompt };
+    }
+    return {};
   }
 
-  return {
-    prompt: options.prompt ? `${options.prompt}\n\nReturn only valid JSON matching the requested schema.` : options.prompt,
-    messages: options.messages
-      ? [...options.messages, createTextMessage("system", "Return only valid JSON matching the requested schema.")]
-      : options.messages
-  };
+  if (options.messages !== undefined) {
+    return {
+      messages: [...options.messages, createTextMessage("system", "Return only valid JSON matching the requested schema.")]
+    };
+  }
+  if (options.prompt !== undefined) {
+    return {
+      prompt: `${options.prompt}\n\nReturn only valid JSON matching the requested schema.`
+    };
+  }
+  return {};
 };
 
 const parseObject = <TSchema extends ZodTypeAny>(
@@ -186,14 +201,44 @@ const createObjectOptions = <TSchema extends ZodTypeAny>(options: GenerateObject
   const requestedMode = options.mode ?? "auto";
   const objectMode = resolveObjectMode(requestedMode, options.model.capabilities.structuredOutput);
   const promptConfig = withStructuredPrompt(options, objectMode);
+  const structuredOutput = getStructuredOutput(options, objectMode);
+  const requestBase = {
+    model: options.model,
+    system: options.system,
+    tools: options.tools,
+    maxSteps: options.maxSteps,
+    temperature: options.temperature,
+    maxTokens: options.maxTokens,
+    providerOptions: options.providerOptions,
+    abortSignal: options.abortSignal,
+    timeoutMs: options.timeoutMs,
+    maxRetries: options.maxRetries,
+    retryBackoffMs: options.retryBackoffMs
+  };
+
+  let request: GenerateTextOptions;
+  if ("messages" in promptConfig) {
+    request = {
+      ...requestBase,
+      messages: promptConfig.messages,
+      structuredOutput
+    };
+  } else if ("prompt" in promptConfig) {
+    request = {
+      ...requestBase,
+      prompt: promptConfig.prompt,
+      structuredOutput
+    };
+  } else {
+    request = {
+      ...requestBase,
+      structuredOutput
+    };
+  }
 
   return {
     objectMode,
-    request: {
-      ...options,
-      ...promptConfig,
-      structuredOutput: getStructuredOutput(options, objectMode)
-    }
+    request
   };
 };
 

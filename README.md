@@ -1,145 +1,78 @@
 # Zhivex AI SDK
 
-SDK TypeScript modular para Node y Bun con una capa unificada para OpenAI, Anthropic y Gemini.
+SDK TypeScript para Node y Bun con una API unificada para trabajar con OpenAI, Anthropic, Gemini, Bedrock y Ollama sin reescribir la lógica principal de tu aplicación.
 
-El objetivo es ofrecer una API de alto nivel para:
+La experiencia recomendada vive en `@zhivex-ai/sdk`:
 
-- generar texto,
-- streamear respuestas multi-step,
-- producir objetos validados con Zod,
-- producir objetos validados con Zod, incluso en streaming,
-- ejecutar tools con loop automático,
-- enviar mensajes multimodales,
-- generar embeddings,
-- cambiar de provider sin reescribir la lógica de aplicación.
+- texto y streaming,
+- structured output con Zod,
+- tools con loop automático,
+- mensajes multimodales,
+- embeddings,
+- cambio de provider sin cambiar la capa de negocio.
 
-## Estado actual
+## Quickstart
 
-El proyecto ya incluye:
+```ts
+import { createOpenAI, generateText } from "@zhivex-ai/sdk";
 
-- monorepo con paquetes separados por provider,
-- API unificada en `@zhivex-ai/core`,
-- paquete agregador `@zhivex-ai/sdk`,
-- tests unitarios e integraciones mockeadas,
-- build con TypeScript project references.
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-La v2 introduce un contrato común basado en `messages + parts`, capacidades declarativas por modelo y structured output nativo cuando el provider lo soporta.
+const result = await generateText({
+  model: openai("gpt-4o-mini"),
+  prompt: "Describe Zhivex AI SDK en una frase."
+});
 
-## Paquetes
-
-- `@zhivex-ai/core`: tipos, errores, helpers y contratos comunes.
-- `@zhivex-ai/openai`: adapter para OpenAI.
-- `@zhivex-ai/anthropic`: adapter para Anthropic.
-- `@zhivex-ai/gemini`: adapter para Gemini.
-- `@zhivex-ai/sdk`: reexports para usar todo desde un solo punto.
-
-## Estructura
-
-```text
-packages/
-  core/
-  openai/
-  anthropic/
-  gemini/
-  sdk/
+console.log(result.text);
 ```
 
-## Requisitos
+## Instalación
 
-- Bun 1.3+
-- Node 20+
-
-## Desarrollo local
-
-Instalar dependencias:
-
-```bash
-bun install
-```
-
-Compilar todos los paquetes:
-
-```bash
-bun run build
-```
-
-Ejecutar tests:
-
-```bash
-bun run test
-```
-
-## Uso desde otro proyecto
-
-Mientras el paquete no esté publicado, podés consumirlo por ruta local.
-
-Instalación del paquete agregador:
+Mientras el paquete no esté publicado, podés consumirlo por ruta local:
 
 ```bash
 bun add /Users/mikeortiz/dev/zhivex-ai-sdk/packages/sdk
 ```
 
-O por paquetes individuales:
+Paquetes individuales:
 
 ```bash
 bun add /Users/mikeortiz/dev/zhivex-ai-sdk/packages/core
 bun add /Users/mikeortiz/dev/zhivex-ai-sdk/packages/openai
 ```
 
-## Ejemplo básico
+## Streaming simple
 
-```ts
-import { createOpenAI, createTextMessage, generateText } from "@zhivex-ai/sdk";
-
-const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY!
-});
-
-const result = await generateText({
-  model: openai.languageModel("gpt-4o-mini"),
-  messages: [createTextMessage("user", "Describe Zhivex AI SDK en una frase.")]
-});
-
-console.log(result.text);
-console.log(result.messages.at(-1));
-```
-
-## Streaming
+`streamText()` expone `textStream` como camino principal para casos simples y `eventStream` para casos avanzados.
 
 ```ts
 import { createOpenAI, streamText } from "@zhivex-ai/sdk";
 
-const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY!
-});
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const result = streamText({
-  model: openai.languageModel("gpt-4o-mini"),
+  model: openai("gpt-4o-mini"),
   prompt: "Respondé en dos oraciones cortas."
 });
 
-for await (const event of result.eventStream) {
-  if (event.type === "text-delta") {
-    process.stdout.write(event.textDelta);
-  }
+for await (const chunk of result.textStream) {
+  process.stdout.write(chunk);
 }
 
 const final = await result.collect();
 console.log(final.finishReason);
 ```
 
-## Structured output con Zod
+## Structured output
 
 ```ts
 import { createGemini, generateObject } from "@zhivex-ai/sdk";
 import { z } from "zod";
 
-const gemini = createGemini({
-  apiKey: process.env.GEMINI_API_KEY!
-});
+const gemini = createGemini({ apiKey: process.env.GEMINI_API_KEY! });
 
 const recipe = await generateObject({
-  model: gemini.languageModel("gemini-2.0-flash"),
+  model: gemini("gemini-2.0-flash"),
   prompt: "Return JSON with title and servings.",
   mode: "native",
   schema: z.object({
@@ -157,12 +90,10 @@ console.log(recipe.object);
 import { createOpenAI, streamObject } from "@zhivex-ai/sdk";
 import { z } from "zod";
 
-const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY!
-});
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const result = streamObject({
-  model: openai.languageModel("gpt-4o-mini"),
+  model: openai("gpt-4o-mini"),
   prompt: "Return JSON with title and servings.",
   mode: "native",
   schema: z.object({
@@ -171,10 +102,8 @@ const result = streamObject({
   })
 });
 
-for await (const event of result.eventStream) {
-  if (event.type === "object-partial") {
-    console.log(event.partialObject);
-  }
+for await (const partial of result.partialObjectStream) {
+  console.log(partial);
 }
 
 const final = await result.collect();
@@ -184,28 +113,24 @@ console.log(final.object);
 ## Tools
 
 ```ts
-import { createAnthropic, createTextMessage, generateText } from "@zhivex-ai/sdk";
+import { createAnthropic, generateText, tool, user } from "@zhivex-ai/sdk";
 import { z } from "zod";
 
-const anthropic = createAnthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY!
-});
+const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 const result = await generateText({
-  model: anthropic.languageModel("claude-3-5-sonnet"),
-  messages: [createTextMessage("user", "What is the weather in Madrid?")],
+  model: anthropic("claude-3-5-sonnet"),
+  messages: [user("What is the weather in Madrid?")],
   maxSteps: 2,
   tools: {
-    weather: {
+    weather: tool({
       name: "weather",
       description: "Get weather by city",
       schema: z.object({
         city: z.string()
       }),
-      execute: async ({ city }) => {
-        return { city, forecast: "sunny" };
-      }
-    }
+      execute: async ({ city }) => ({ city, forecast: "sunny" })
+    })
   }
 });
 
@@ -213,25 +138,48 @@ console.log(result.text);
 console.log(result.toolResults);
 ```
 
-## Mensajes multimodales
+## Cambiar de provider
+
+La API de alto nivel no cambia. Solo cambia la factory del provider:
 
 ```ts
-import { createOpenAI, generateText } from "@zhivex-ai/sdk";
+import { createAnthropic, createOpenAI, generateText } from "@zhivex-ai/sdk";
 
-const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY!
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+
+const prompt = "Respond in one short sentence.";
+
+const fromOpenAI = await generateText({
+  model: openai("gpt-4o-mini"),
+  prompt
 });
 
+const fromAnthropic = await generateText({
+  model: anthropic("claude-3-5-sonnet"),
+  prompt
+});
+
+console.log(fromOpenAI.text);
+console.log(fromAnthropic.text);
+```
+
+## Multimodal
+
+Usá `messages` cuando necesites control fino, multimodalidad o contexto avanzado:
+
+```ts
+import { createOpenAI, generateText, user } from "@zhivex-ai/sdk";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
 const result = await generateText({
-  model: openai.languageModel("gpt-4o-mini"),
+  model: openai("gpt-4o-mini"),
   messages: [
-    {
-      role: "user",
-      parts: [
-        { type: "text", text: "Describe esta imagen." },
-        { type: "image", image: "https://example.com/cat.jpg" }
-      ]
-    }
+    user([
+      { type: "text", text: "Describe esta imagen." },
+      { type: "image", image: "https://example.com/cat.jpg" }
+    ])
   ]
 });
 
@@ -243,9 +191,7 @@ console.log(result.text);
 ```ts
 import { createOpenAI, embedMany } from "@zhivex-ai/sdk";
 
-const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY!
-});
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const result = await embedMany({
   model: openai.embeddingModel("text-embedding-3-small"),
@@ -255,9 +201,93 @@ const result = await embedMany({
 console.log(result.embeddings.length);
 ```
 
+## Otros providers
+
+### Bedrock
+
+```ts
+import { createBedrock, generateText } from "@zhivex-ai/sdk";
+
+const bedrock = createBedrock({ region: process.env.AWS_REGION! });
+
+const result = await generateText({
+  model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
+  prompt: "Respond in one sentence."
+});
+
+console.log(result.text);
+```
+
+### Ollama
+
+```ts
+import { createOllama, generateText } from "@zhivex-ai/sdk";
+
+const ollama = createOllama({ baseURL: process.env.OLLAMA_HOST });
+
+const result = await generateText({
+  model: ollama("llama3.2"),
+  prompt: "Summarize this in one line."
+});
+
+console.log(result.text);
+```
+
+## Gateway multi-provider
+
+```ts
+import { createBedrock, createGateway, createGemini, createOllama } from "@zhivex-ai/sdk";
+
+const gateway = createGateway({
+  adapters: {
+    gemini: createGemini({ apiKey: process.env.GEMINI_API_KEY! }),
+    bedrock: createBedrock({ region: process.env.AWS_REGION! }),
+    ollama: createOllama({ baseURL: process.env.OLLAMA_HOST })
+  }
+});
+
+const result = await gateway.generate({
+  primary: { provider: "gemini", modelId: "gemini-2.0-flash" },
+  fallbacks: [{ provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet-20240620-v1:0" }],
+  messages: [{ role: "user", content: "Say hello in Spanish." }],
+  routingMode: "balanced"
+});
+
+console.log(result.text);
+console.log(result.attempts);
+```
+
+## Prompt vs messages
+
+Usá `prompt` cuando:
+
+- querés la ruta más corta,
+- el input es solo texto,
+- no necesitás controlar roles ni parts.
+
+Usá `messages` cuando:
+
+- necesitás multimodalidad,
+- querés contexto completo por rol,
+- trabajás con tools o parts de forma explícita.
+
+`prompt` y `messages` son excluyentes. Si pasás ambos, el SDK falla con un error claro.
+
+## Providers y capacidades
+
+| Provider | Streaming | Tools | Structured Output | Vision | Embeddings |
+| --- | --- | --- | --- | --- | --- |
+| OpenAI | Yes | Yes | Yes | Yes | Yes |
+| Anthropic | Yes | Yes | Prompted | Yes | No |
+| Gemini | Yes | Yes | Yes | Yes | Yes |
+| Bedrock | No | No | No | Yes | No |
+| Ollama | No | No | No | Yes | No |
+
+`Prompted` significa que el SDK puede producir objetos usando prompting y validación, aunque el provider no tenga modo nativo.
+
 ## API principal
 
-Helpers de alto nivel:
+Helpers recomendados:
 
 - `generateText(...)`
 - `streamText(...)`
@@ -265,33 +295,61 @@ Helpers de alto nivel:
 - `streamObject(...)`
 - `embed(...)`
 - `embedMany(...)`
-- `createTextMessage(...)`
+- `tool(...)`
+- `system(...)`
+- `user(...)`
+- `assistant(...)`
 
 Factories de provider:
 
 - `createOpenAI(...)`
 - `createAnthropic(...)`
 - `createGemini(...)`
+- `createBedrock(...)`
+- `createOllama(...)`
 
-## Notas de diseño
+## Migración desde la API anterior
 
-- La API unificada vive en `@zhivex-ai/core`.
-- Cada provider traduce requests y responses al mismo contrato rico de mensajes.
-- Los providers se implementan sobre `fetch`, sin depender de SDKs oficiales externos.
-- Los modelos exponen `capabilities` para detectar soporte de streaming, tools, vision, structured output y embeddings.
-- Anthropic, en esta versión, no expone embeddings desde el adapter.
+Antes:
 
-## Publicación
+```ts
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const model = openai.languageModel("gpt-4o-mini");
+```
 
-La base del monorepo ya está preparada para publicar los paquetes a npm:
+Ahora:
 
-- cada paquete tiene `package.json`,
-- cada paquete exporta `dist`,
-- el build genera tipos y JavaScript ESM.
+```ts
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const model = openai("gpt-4o-mini");
+```
 
-Antes de publicar conviene definir:
+Antes:
 
-- nombres finales de paquetes,
-- estrategia de versionado,
-- changelog,
-- pipeline de release.
+```ts
+messages: [createTextMessage("user", "Hello")]
+```
+
+Ahora:
+
+```ts
+messages: [user("Hello")]
+```
+
+La forma `.languageModel(...)` sigue disponible, pero la forma recomendada es invocar el provider directamente.
+
+## Desarrollo local
+
+Requisitos:
+
+- Bun 1.3+
+- Node 20+
+
+Comandos base:
+
+```bash
+bun install
+bun run typecheck
+bun run test
+bun run build
+```

@@ -3,10 +3,12 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  createProviderAdapter,
   normalizeFinishReason,
   streamSSE,
   withRetry,
   withTimeoutSignal,
+  type CallableProviderAdapter,
   type GenerateResult,
   type LanguageModel,
   type ModelCapabilities,
@@ -279,7 +281,7 @@ class AnthropicLanguageModel implements LanguageModel {
 
 export const createAnthropic = (
   options: AnthropicProviderOptions = {}
-): ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
+): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
   const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing Anthropic API key.");
@@ -289,9 +291,9 @@ export const createAnthropic = (
   const anthropicVersion = options.anthropicVersion ?? "2023-06-01";
   const fetcher = options.fetch ?? globalThis.fetch;
 
-  return {
+  return createProviderAdapter({
     name: "anthropic",
     languageModel: (modelId) => new AnthropicLanguageModel(modelId, apiKey, baseURL, anthropicVersion, fetcher),
     rawFetch: fetcher
-  };
+  });
 };

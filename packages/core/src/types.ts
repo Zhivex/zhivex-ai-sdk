@@ -165,6 +165,20 @@ export interface EmbedResult {
   rawResponse?: unknown;
 }
 
+export type GenerateInputSource =
+  | {
+      prompt: string;
+      messages?: never;
+    }
+  | {
+      prompt?: never;
+      messages: ModelMessage[];
+    }
+  | {
+      prompt?: undefined;
+      messages?: undefined;
+    };
+
 export interface ModelGenerateInput extends RetryOptions {
   messages: ModelMessage[];
   tools?: ToolSet;
@@ -195,6 +209,8 @@ export interface ProviderAdapter {
   embeddingModel?: (modelId: string) => EmbeddingModel;
 }
 
+export type CallableProviderAdapter = ProviderAdapter & ((modelId: string) => LanguageModel);
+
 export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny, TResult = JsonValue> {
   name: string;
   description?: string;
@@ -204,18 +220,17 @@ export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny, TResult
 
 export type ToolSet = Record<string, ToolDefinition>;
 
-export interface GenerateTextOptions extends RetryOptions {
-  model: LanguageModel;
-  prompt?: string;
-  messages?: ModelMessage[];
-  system?: string;
-  tools?: ToolSet;
-  maxSteps?: number;
-  temperature?: number;
-  maxTokens?: number;
-  providerOptions?: Record<string, unknown>;
-  structuredOutput?: StructuredOutputConfig;
-}
+export type GenerateTextOptions = RetryOptions &
+  GenerateInputSource & {
+    model: LanguageModel;
+    system?: string;
+    tools?: ToolSet;
+    maxSteps?: number;
+    temperature?: number;
+    maxTokens?: number;
+    providerOptions?: Record<string, unknown>;
+    structuredOutput?: StructuredOutputConfig;
+  };
 
 export interface GenerateTextStep {
   request: ModelGenerateInput;
@@ -232,12 +247,12 @@ export interface GenerateTextOutput {
   toolResults: ToolExecutionResult[];
 }
 
-export interface GenerateObjectOptions<TSchema extends ZodTypeAny> extends GenerateTextOptions {
+export type GenerateObjectOptions<TSchema extends ZodTypeAny> = GenerateTextOptions & {
   schema: TSchema;
   mode?: StructuredOutputMode;
   schemaName?: string;
   schemaDescription?: string;
-}
+};
 
 export interface GenerateObjectOutput<TSchema extends ZodTypeAny> extends GenerateTextOutput {
   object: z.infer<TSchema>;
@@ -249,6 +264,12 @@ export interface StreamObjectResult<TSchema extends ZodTypeAny> {
   partialObjectStream: AsyncIterable<Partial<z.infer<TSchema>>>;
   textStream: AsyncIterable<string>;
   collect: () => Promise<GenerateObjectOutput<TSchema>>;
+}
+
+export interface StreamTextResult {
+  eventStream: AsyncIterable<StreamEvent>;
+  textStream: AsyncIterable<string>;
+  collect: () => Promise<GenerateTextOutput>;
 }
 
 export interface EmbedInput {

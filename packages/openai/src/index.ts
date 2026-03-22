@@ -3,10 +3,12 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  createProviderAdapter,
   normalizeFinishReason,
   streamSSE,
   withRetry,
   withTimeoutSignal,
+  type CallableProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
@@ -342,7 +344,9 @@ class OpenAIEmbeddingModel implements EmbeddingModel {
   }
 }
 
-export const createOpenAI = (options: OpenAIProviderOptions = {}): ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
+export const createOpenAI = (
+  options: OpenAIProviderOptions = {}
+): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing OpenAI API key.");
@@ -351,10 +355,10 @@ export const createOpenAI = (options: OpenAIProviderOptions = {}): ProviderAdapt
   const baseURL = options.baseURL ?? "https://api.openai.com/v1";
   const fetcher = options.fetch ?? globalThis.fetch;
 
-  return {
+  return createProviderAdapter({
     name: "openai",
     languageModel: (modelId) => new OpenAILanguageModel(modelId, apiKey, baseURL, fetcher),
     embeddingModel: (modelId) => new OpenAIEmbeddingModel(modelId, apiKey, baseURL, fetcher),
     rawFetch: fetcher
-  };
+  });
 };

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createTextMessage, embed, generateObject, generateText, streamText } from "@zhivex-ai/core";
+import { createTextMessage, embed, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
 import { createOpenAI } from "../src/index.js";
 
 describe("openai adapter", () => {
@@ -21,13 +21,19 @@ describe("openai adapter", () => {
 
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await generateText({
-      model: provider.languageModel("gpt-4o-mini"),
+      model: provider("gpt-4o-mini"),
       prompt: "hello"
     });
 
     expect(result.text).toBe("hello from openai");
     expect(result.usage?.totalTokens).toBe(7);
     expect(result.messages.at(-1)?.parts[0]).toMatchObject({ type: "text", text: "hello from openai" });
+  });
+
+  it("creates equivalent language models from the callable provider", () => {
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    expect(provider("gpt-4o-mini")).toMatchObject(provider.languageModel("gpt-4o-mini"));
   });
 
   it("streams incremental text", async () => {
@@ -53,7 +59,7 @@ describe("openai adapter", () => {
 
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = streamText({
-      model: provider.languageModel("gpt-4o-mini"),
+      model: provider("gpt-4o-mini"),
       prompt: "hello"
     });
 
@@ -95,7 +101,7 @@ describe("openai adapter", () => {
 
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await generateObject({
-      model: provider.languageModel("gpt-4o-mini"),
+      model: provider("gpt-4o-mini"),
       messages: [createTextMessage("user", "Use weather tool and return JSON.")],
       maxSteps: 2,
       schema: z.object({
@@ -103,11 +109,11 @@ describe("openai adapter", () => {
         forecast: z.string()
       }),
       tools: {
-        weather: {
+        weather: tool({
           name: "weather",
           schema: z.object({ city: z.string() }),
           execute: ({ city }) => ({ city, forecast: "sunny" })
-        }
+        })
       },
       mode: "native"
     });
