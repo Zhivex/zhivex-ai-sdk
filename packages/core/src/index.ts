@@ -1,5 +1,7 @@
 export { embed, embedMany } from "./embed.js";
+export * from "./catalog.js";
 export * from "./errors.js";
+export * from "./fetch.js";
 export { generateObject, streamObject } from "./generate-object.js";
 export { generateText, normalizeMessages, streamText } from "./generate-text.js";
 export {
@@ -19,6 +21,7 @@ export {
   user,
   validateMessageParts
 } from "./messages.js";
+export * from "./middleware.js";
 export { createProviderAdapter, mergeAbortSignals, withRetry, withTimeoutSignal } from "./runtime.js";
 export * from "./stream.js";
 export * from "./types.js";

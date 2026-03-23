@@ -13,6 +13,13 @@ describe("sdk public surface", () => {
     expect(sdk.toTextStreamResponse).toBeTypeOf("function");
     expect(sdk.toUIMessageStreamResponse).toBeTypeOf("function");
     expect(sdk.toUIMessage).toBeTypeOf("function");
+    expect(sdk.wrapLanguageModel).toBeTypeOf("function");
+    expect(sdk.createTelemetryMiddleware).toBeTypeOf("function");
+    expect(sdk.createCachedGenerateMiddleware).toBeTypeOf("function");
+    expect(sdk.createCircuitBreakerMiddleware).toBeTypeOf("function");
+    expect(sdk.createFileGenerateCache).toBeTypeOf("function");
+    expect(sdk.createModelCatalog).toBeTypeOf("function");
+    expect(sdk.parseUIMessageRequest).toBeTypeOf("function");
     expect(sdk.tool).toBeTypeOf("function");
     expect(sdk.system).toBeTypeOf("function");
     expect(sdk.user).toBeTypeOf("function");

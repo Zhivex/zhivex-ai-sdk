@@ -13,29 +13,71 @@ import {
   type GatewayTaskIntent
 } from "./types.js";
 
-const scoreTarget = (mode: GatewayRoutingMode, intent: GatewayTaskIntent, target: GatewayModelTarget) => {
+const scoreTarget = (
+  mode: GatewayRoutingMode,
+  intent: GatewayTaskIntent,
+  target: GatewayModelTarget,
+  config: GatewayConfig
+) => {
   const model = target.modelId.toLowerCase();
   const localBoost = target.provider === "ollama" ? -2 : 0;
   const qualityBoost = model.includes("pro") || model.includes("claude") ? 2 : 0;
   const speedBoost = model.includes("flash") || model.includes("lite") ? 2 : 0;
   const reasoningBoost = model.includes("pro") || model.includes("claude") ? 2 : 0;
+  const catalogCost = config.modelCatalog?.find(target.provider, target.modelId)?.costPer1kTokens;
+  const costPenalty = config.providerCostsPer1kTokens?.[target.provider] ?? catalogCost ?? 0;
+  const latencyPenalty = (config.latencyBiasMs?.[target.provider] ?? 0) / 100;
 
   if (mode === "speed") {
-    return speedBoost + localBoost;
+    return speedBoost + localBoost - latencyPenalty;
   }
   if (mode === "quality") {
-    return qualityBoost + (intent === "reasoning" ? reasoningBoost : 0);
+    return qualityBoost + (intent === "reasoning" ? reasoningBoost : 0) - costPenalty;
   }
-  return speedBoost + qualityBoost + localBoost + (intent === "reasoning" ? 1 : 0);
+  return speedBoost + qualityBoost + localBoost + (intent === "reasoning" ? 1 : 0) - costPenalty - latencyPenalty;
 };
 
-const orderTargets = (mode: GatewayRoutingMode, intent: GatewayTaskIntent, primary: GatewayModelTarget, fallbacks: GatewayModelTarget[]) =>
+const orderTargets = (
+  mode: GatewayRoutingMode,
+  intent: GatewayTaskIntent,
+  primary: GatewayModelTarget,
+  fallbacks: GatewayModelTarget[],
+  config: GatewayConfig
+) =>
   [primary, ...fallbacks]
     .filter(
       (target, index, list) =>
         list.findIndex((candidate) => candidate.provider === target.provider && candidate.modelId === target.modelId) === index
     )
-    .sort((left, right) => scoreTarget(mode, intent, right) - scoreTarget(mode, intent, left));
+    .sort((left, right) => scoreTarget(mode, intent, right, config) - scoreTarget(mode, intent, left, config));
+
+const supportsRequiredCapabilities = (
+  adapter: ProviderAdapter,
+  target: GatewayModelTarget,
+  requiredCapabilities: GatewayRequest["requiredCapabilities"]
+) => {
+  if (!requiredCapabilities) {
+    return true;
+  }
+
+  const capabilities = adapter.languageModel(target.modelId).capabilities;
+  return Object.entries(requiredCapabilities).every(([key, required]) => required !== true || capabilities[key as keyof typeof capabilities] === true);
+};
+
+const withinCostBudget = (config: GatewayConfig, request: GatewayRequest, target: GatewayModelTarget) => {
+  if (request.maxCostPer1kTokens == null) {
+    return true;
+  }
+
+  const configuredCost = config.providerCostsPer1kTokens?.[target.provider];
+  const catalogCost = config.modelCatalog?.find(target.provider, target.modelId)?.costPer1kTokens;
+  const effectiveCost = configuredCost ?? catalogCost;
+  if (effectiveCost == null) {
+    return true;
+  }
+
+  return effectiveCost <= request.maxCostPer1kTokens;
+};
 
 const estimateTokens = (text: string) => Math.max(1, Math.ceil(text.trim().length / 4));
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -110,17 +152,48 @@ export const createGateway = (config: GatewayConfig) => {
       const startedAt = Date.now();
       const mode = request.routingMode ?? "balanced";
       const intent = request.taskIntent ?? "chat";
-      const orderedTargets = orderTargets(mode, intent, request.primary, request.fallbacks ?? []);
+      const orderedTargets = orderTargets(mode, intent, request.primary, request.fallbacks ?? [], config);
       const routeDecision = createRouteDecision(mode, intent, orderedTargets);
       const maxRetries = Math.max(0, config.maxRetries ?? 2);
 
-      for (const target of orderedTargets) {
+      for (const [targetIndex, target] of orderedTargets.entries()) {
+        const adapter = getAdapter(target.provider);
+
+        if (!supportsRequiredCapabilities(adapter, target, request.requiredCapabilities)) {
+          attempts.push({
+            provider: target.provider,
+            modelId: target.modelId,
+            ok: false,
+            latencyMs: 0,
+            errorMessage: "Skipped because model capabilities do not satisfy the request."
+          });
+          continue;
+        }
+
+        if (!withinCostBudget(config, request, target)) {
+          attempts.push({
+            provider: target.provider,
+            modelId: target.modelId,
+            ok: false,
+            latencyMs: 0,
+            errorMessage: "Skipped because provider cost exceeds the configured budget."
+          });
+          continue;
+        }
+
         for (let retry = 0; retry <= maxRetries; retry += 1) {
           const attemptStartedAt = Date.now();
 
           try {
-            const adapter = getAdapter(target.provider);
             const providerMessages = stripImagesForUnsupportedModel(request.messages, target.provider, target.modelId);
+            await config.onAttempt?.({
+              provider: target.provider,
+              modelId: target.modelId,
+              ok: true,
+              latencyMs: 0,
+              retry,
+              targetRank: targetIndex
+            });
             const result = await withTimeout(
               generateText({
                 model: adapter.languageModel(target.modelId),
@@ -159,6 +232,16 @@ export const createGateway = (config: GatewayConfig) => {
               ok: false,
               latencyMs: Date.now() - attemptStartedAt,
               errorMessage: normalized.message
+            });
+
+            await config.onAttempt?.({
+              provider: target.provider,
+              modelId: target.modelId,
+              ok: false,
+              latencyMs: Date.now() - attemptStartedAt,
+              errorMessage: normalized.message,
+              retry,
+              targetRank: targetIndex
             });
 
             if (retry < maxRetries && normalized.retryable) {

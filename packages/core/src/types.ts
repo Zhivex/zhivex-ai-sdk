@@ -288,6 +288,60 @@ export interface StreamTextResult {
   collect: () => Promise<GenerateTextOutput>;
 }
 
+export interface LanguageModelMiddlewareContext<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+}
+
+export interface LanguageModelMiddlewareNext<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  (): Promise<GenerateResult>;
+}
+
+export interface LanguageModelMiddleware<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  name?: string;
+  wrapGenerate?: (
+    context: LanguageModelMiddlewareContext<TProviderOptions>,
+    next: LanguageModelMiddlewareNext<TProviderOptions>
+  ) => Promise<GenerateResult>;
+}
+
+export interface CircuitBreakerState {
+  failures: number;
+  openedAt?: number;
+}
+
+export interface TelemetryGenerateStartEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  type: "generate-start";
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+  startedAt: number;
+}
+
+export interface TelemetryGenerateFinishEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  type: "generate-finish";
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+  output: GenerateResult;
+  startedAt: number;
+  finishedAt: number;
+  latencyMs: number;
+}
+
+export interface TelemetryGenerateErrorEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  type: "generate-error";
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+  error: Error;
+  startedAt: number;
+  finishedAt: number;
+  latencyMs: number;
+}
+
+export type LanguageModelTelemetryEvent<TProviderOptions extends ProviderOptions = ProviderOptions> =
+  | TelemetryGenerateStartEvent<TProviderOptions>
+  | TelemetryGenerateFinishEvent<TProviderOptions>
+  | TelemetryGenerateErrorEvent<TProviderOptions>;
+
 export interface UIMessage {
   id: string;
   role: MessageRole;

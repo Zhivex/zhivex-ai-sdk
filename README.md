@@ -426,6 +426,100 @@ The repo now includes a shared provider contract harness for adapters. New provi
 - provider option passthrough,
 - behavior coverage for text, streaming, tools, and structured output where applicable.
 
+## Middleware and observability
+
+You can add operational behavior by wrapping a model before passing it to `generateText()` or `generateObject()`.
+
+```ts
+import {
+  createInMemoryGenerateCache,
+  createOpenAI,
+  createTelemetryMiddleware,
+  generateText,
+  wrapLanguageModel
+} from "@zhivex-ai/sdk";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const cache = createInMemoryGenerateCache();
+
+const model = wrapLanguageModel(openai("gpt-4o-mini"), [
+  createTelemetryMiddleware({
+    onEvent(event) {
+      console.log(event.type, event.model.modelId);
+    }
+  })
+]);
+
+const result = await generateText({
+  model,
+  prompt: "Say hello"
+});
+
+console.log(result.text);
+```
+
+Built-in helpers:
+
+- `wrapLanguageModel(...)`
+- `createTelemetryMiddleware(...)`
+- `createCachedGenerateMiddleware(...)`
+- `createInMemoryGenerateCache(...)`
+- `createFileGenerateCache(...)`
+- `createCircuitBreakerMiddleware(...)`
+
+## Gateway policies
+
+The gateway now supports higher-level operational routing:
+
+- required capabilities via `requiredCapabilities`
+- cost budgets via `maxCostPer1kTokens`
+- provider cost hints via `providerCostsPer1kTokens`
+- latency bias via `latencyBiasMs`
+- attempt telemetry with `onAttempt`
+- catalog-aware cost hints with `modelCatalog`
+
+## Durable cache and request helpers
+
+Use a filesystem-backed cache when you want generate caching to survive process restarts:
+
+```ts
+import {
+  createCachedGenerateMiddleware,
+  createFileGenerateCache,
+  createOpenAI,
+  generateText,
+  wrapLanguageModel
+} from "@zhivex-ai/sdk";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+const model = wrapLanguageModel(openai("gpt-4o-mini"), [
+  createCachedGenerateMiddleware({
+    cache: createFileGenerateCache({ dir: ".cache/zhivex" })
+  })
+]);
+
+const result = await generateText({
+  model,
+  prompt: "Say hello"
+});
+```
+
+Fetch-first helpers are also available for `UIMessage[]` request/response handling:
+
+- `parseUIMessageRequest(...)`
+- `createUIMessageJsonResponse(...)`
+- `createUIMessageLinesResponse(...)`
+
+## Model catalog
+
+The SDK now ships a lightweight model catalog utility:
+
+- `createModelCatalog(...)`
+- `defaultModelCatalog`
+
+This can be used directly, or plugged into the gateway to inform routing and cost policies.
+
 ## Public API
 
 Recommended helpers:

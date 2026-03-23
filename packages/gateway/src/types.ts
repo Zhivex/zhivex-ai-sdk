@@ -1,4 +1,4 @@
-import type { ProviderAdapter, TokenUsage } from "@zhivex-ai/core";
+import type { ModelCatalog, ProviderAdapter, TokenUsage } from "@zhivex-ai/core";
 
 export type GatewayProviderId = "openai" | "anthropic" | "gemini" | "bedrock" | "ollama" | "azure-openai" | "openrouter";
 export type GatewayRoutingMode = "speed" | "balanced" | "quality";
@@ -25,6 +25,8 @@ export interface GatewayRequest {
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
+  requiredCapabilities?: Partial<Record<"streaming" | "tools" | "structuredOutput" | "jsonMode" | "vision" | "reasoning", boolean>>;
+  maxCostPer1kTokens?: number;
   routingMode?: GatewayRoutingMode;
   taskIntent?: GatewayTaskIntent;
   abortSignal?: AbortSignal;
@@ -57,10 +59,14 @@ export interface GatewayResponse {
 
 export interface GatewayConfig {
   adapters: Partial<Record<GatewayProviderId, ProviderAdapter>>;
+  modelCatalog?: ModelCatalog;
+  providerCostsPer1kTokens?: Partial<Record<GatewayProviderId, number>>;
+  latencyBiasMs?: Partial<Record<GatewayProviderId, number>>;
   maxRetries?: number;
   attemptTimeoutMs?: number;
   attemptTimeoutsMs?: Partial<Record<GatewayProviderId, number>>;
   retryBackoffMs?: number;
+  onAttempt?: (attempt: GatewayAttempt & { retry: number; targetRank: number }) => void | Promise<void>;
 }
 
 export class GatewayError extends Error {
