@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import * as sdk from "../src/index.js";
 
 describe("sdk public surface", () => {
-  it("exports the main quickstart helpers", () => {
+  it("exports the shared helpers from core", () => {
     expect(sdk.generateText).toBeTypeOf("function");
     expect(sdk.streamText).toBeTypeOf("function");
     expect(sdk.generateObject).toBeTypeOf("function");
@@ -26,14 +26,14 @@ describe("sdk public surface", () => {
     expect(sdk.assistant).toBeTypeOf("function");
   });
 
-  it("exports the provider factories used by the README", () => {
-    expect(sdk.createOpenAI).toBeTypeOf("function");
-    expect(sdk.createAzureOpenAI).toBeTypeOf("function");
-    expect(sdk.createAnthropic).toBeTypeOf("function");
-    expect(sdk.createGemini).toBeTypeOf("function");
-    expect(sdk.createOpenRouter).toBeTypeOf("function");
-    expect(sdk.createBedrock).toBeTypeOf("function");
-    expect(sdk.createOllama).toBeTypeOf("function");
-    expect(sdk.createGateway).toBeTypeOf("function");
+  it("does not re-export provider factories", () => {
+    expect("createOpenAI" in sdk).toBe(false);
+    expect("createAzureOpenAI" in sdk).toBe(false);
+    expect("createAnthropic" in sdk).toBe(false);
+    expect("createGemini" in sdk).toBe(false);
+    expect("createOpenRouter" in sdk).toBe(false);
+    expect("createBedrock" in sdk).toBe(false);
+    expect("createOllama" in sdk).toBe(false);
+    expect("createGateway" in sdk).toBe(false);
   });
 });

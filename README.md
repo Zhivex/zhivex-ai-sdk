@@ -14,7 +14,8 @@ The recommended experience lives in `@zhivex-ai/sdk`:
 ## Quickstart
 
 ```ts
-import { createOpenAI, generateText } from "@zhivex-ai/sdk";
+import { generateText } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -28,29 +29,29 @@ console.log(result.text);
 
 ## Installation
 
-Until the packages are published, you can consume the SDK from the repository root:
+Install the lightweight SDK plus only the providers you need:
 
 ```bash
-bun add /Users/mikeortiz/dev/zhivex-ai-sdk
+bun add @zhivex-ai/sdk @zhivex-ai/openai
 ```
 
-To install it from a private Git repository, use the repo URL directly:
+Additional providers are opt-in:
 
 ```bash
-bun add git+ssh://git@github.com/your-org/zhivex-ai-sdk.git
-```
-
-If you prefer to be explicit about the package name:
-
-```bash
-bun add @zhivex-ai/sdk@git+ssh://git@github.com/your-org/zhivex-ai-sdk.git
+bun add @zhivex-ai/anthropic
+bun add @zhivex-ai/gemini
+bun add @zhivex-ai/openrouter
+bun add @zhivex-ai/azure-openai
+bun add @zhivex-ai/bedrock
+bun add @zhivex-ai/ollama
+bun add @zhivex-ai/gateway
 ```
 
 Individual packages:
 
 ```bash
-bun add /Users/mikeortiz/dev/zhivex-ai-sdk/packages/core
-bun add /Users/mikeortiz/dev/zhivex-ai-sdk/packages/openai
+bun add @zhivex-ai/core
+bun add @zhivex-ai/openai
 ```
 
 ## Simple streaming
@@ -58,7 +59,8 @@ bun add /Users/mikeortiz/dev/zhivex-ai-sdk/packages/openai
 `streamText()` exposes `textStream` as the happy path for simple cases and `eventStream` for advanced flows.
 
 ```ts
-import { createOpenAI, streamText } from "@zhivex-ai/sdk";
+import { streamText } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -80,7 +82,8 @@ console.log(final.finishReason);
 You can turn SDK streams into Web `Response` objects directly.
 
 ```ts
-import { createOpenAI, streamText, toTextStreamResponse } from "@zhivex-ai/sdk";
+import { streamText, toTextStreamResponse } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -95,7 +98,8 @@ return toTextStreamResponse(result);
 For SSE or richer payloads:
 
 ```ts
-import { createOpenAI, streamText, toUIMessageStreamResponse } from "@zhivex-ai/sdk";
+import { streamText, toUIMessageStreamResponse } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -110,7 +114,8 @@ return toUIMessageStreamResponse(result);
 ## Structured output
 
 ```ts
-import { createGemini, generateObject } from "@zhivex-ai/sdk";
+import { generateObject } from "@zhivex-ai/sdk";
+import { createGemini } from "@zhivex-ai/gemini";
 import { z } from "zod";
 
 const gemini = createGemini({ apiKey: process.env.GEMINI_API_KEY! });
@@ -131,7 +136,8 @@ console.log(recipe.object);
 ## Structured output streaming
 
 ```ts
-import { createOpenAI, streamObject } from "@zhivex-ai/sdk";
+import { streamObject } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
 import { z } from "zod";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
@@ -157,7 +163,8 @@ console.log(final.object);
 ## Tools
 
 ```ts
-import { createAnthropic, generateText, tool, user } from "@zhivex-ai/sdk";
+import { generateText, tool, user } from "@zhivex-ai/sdk";
+import { createAnthropic } from "@zhivex-ai/anthropic";
 import { z } from "zod";
 
 const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
@@ -187,7 +194,9 @@ console.log(result.toolResults);
 Your high-level app code stays the same. Only the provider factory changes:
 
 ```ts
-import { createAnthropic, createOpenAI, generateText } from "@zhivex-ai/sdk";
+import { generateText } from "@zhivex-ai/sdk";
+import { createAnthropic } from "@zhivex-ai/anthropic";
+import { createOpenAI } from "@zhivex-ai/openai";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
@@ -213,7 +222,8 @@ console.log(fromAnthropic.text);
 Use `messages` when you need fine-grained control, multimodal input, or richer conversation state:
 
 ```ts
-import { createOpenAI, generateText, user } from "@zhivex-ai/sdk";
+import { generateText, user } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -233,7 +243,8 @@ console.log(result.text);
 ## Embeddings
 
 ```ts
-import { createOpenAI, embedMany } from "@zhivex-ai/sdk";
+import { embedMany } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -250,7 +261,8 @@ console.log(result.embeddings.length);
 ### Azure OpenAI
 
 ```ts
-import { createAzureOpenAI, generateText } from "@zhivex-ai/sdk";
+import { generateText } from "@zhivex-ai/sdk";
+import { createAzureOpenAI } from "@zhivex-ai/azure-openai";
 
 const azure = createAzureOpenAI({
   apiKey: process.env.AZURE_OPENAI_API_KEY!,
@@ -268,7 +280,8 @@ console.log(result.text);
 ### OpenRouter
 
 ```ts
-import { createOpenRouter, generateText } from "@zhivex-ai/sdk";
+import { generateText } from "@zhivex-ai/sdk";
+import { createOpenRouter } from "@zhivex-ai/openrouter";
 
 const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY!,
@@ -287,7 +300,8 @@ console.log(result.text);
 ### Bedrock
 
 ```ts
-import { createBedrock, generateText } from "@zhivex-ai/sdk";
+import { generateText } from "@zhivex-ai/sdk";
+import { createBedrock } from "@zhivex-ai/bedrock";
 
 const bedrock = createBedrock({ region: process.env.AWS_REGION! });
 
@@ -302,7 +316,8 @@ console.log(result.text);
 ### Ollama
 
 ```ts
-import { createOllama, generateText } from "@zhivex-ai/sdk";
+import { generateText } from "@zhivex-ai/sdk";
+import { createOllama } from "@zhivex-ai/ollama";
 
 const ollama = createOllama({ baseURL: process.env.OLLAMA_HOST });
 
@@ -317,7 +332,10 @@ console.log(result.text);
 ## Gateway
 
 ```ts
-import { createBedrock, createGateway, createGemini, createOpenRouter } from "@zhivex-ai/sdk";
+import { createBedrock } from "@zhivex-ai/bedrock";
+import { createGateway } from "@zhivex-ai/gateway";
+import { createGemini } from "@zhivex-ai/gemini";
+import { createOpenRouter } from "@zhivex-ai/openrouter";
 
 const gateway = createGateway({
   adapters: {
@@ -383,7 +401,8 @@ Every `LanguageModel` now exposes a richer `model.capabilities` contract, includ
 `providerOptions` remains a provider passthrough, but it is now typed from the selected model.
 
 ```ts
-import { createOpenAI, generateText } from "@zhivex-ai/sdk";
+import { generateText } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -399,13 +418,13 @@ await generateText({
 
 Exported provider option types:
 
-- `OpenAILanguageModelOptions`
-- `AzureOpenAILanguageModelOptions`
-- `AnthropicLanguageModelOptions`
-- `GeminiLanguageModelOptions`
-- `OpenRouterLanguageModelOptions`
-- `BedrockLanguageModelOptions`
-- `OllamaLanguageModelOptions`
+- `@zhivex-ai/openai`: `OpenAILanguageModelOptions`
+- `@zhivex-ai/azure-openai`: `AzureOpenAILanguageModelOptions`
+- `@zhivex-ai/anthropic`: `AnthropicLanguageModelOptions`
+- `@zhivex-ai/gemini`: `GeminiLanguageModelOptions`
+- `@zhivex-ai/openrouter`: `OpenRouterLanguageModelOptions`
+- `@zhivex-ai/bedrock`: `BedrockLanguageModelOptions`
+- `@zhivex-ai/ollama`: `OllamaLanguageModelOptions`
 
 ## UI message helpers
 
@@ -445,11 +464,11 @@ You can add operational behavior by wrapping a model before passing it to `gener
 ```ts
 import {
   createInMemoryGenerateCache,
-  createOpenAI,
   createTelemetryMiddleware,
   generateText,
   wrapLanguageModel
 } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const cache = createInMemoryGenerateCache();
@@ -498,10 +517,10 @@ Use a filesystem-backed cache when you want generate caching to survive process 
 import {
   createCachedGenerateMiddleware,
   createFileGenerateCache,
-  createOpenAI,
   generateText,
   wrapLanguageModel
 } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -552,19 +571,22 @@ Recommended helpers:
 
 Provider factories:
 
-- `createOpenAI(...)`
-- `createAzureOpenAI(...)`
-- `createAnthropic(...)`
-- `createGemini(...)`
-- `createOpenRouter(...)`
-- `createBedrock(...)`
-- `createOllama(...)`
+- `@zhivex-ai/openai`: `createOpenAI(...)`
+- `@zhivex-ai/azure-openai`: `createAzureOpenAI(...)`
+- `@zhivex-ai/anthropic`: `createAnthropic(...)`
+- `@zhivex-ai/gemini`: `createGemini(...)`
+- `@zhivex-ai/openrouter`: `createOpenRouter(...)`
+- `@zhivex-ai/bedrock`: `createBedrock(...)`
+- `@zhivex-ai/ollama`: `createOllama(...)`
+- `@zhivex-ai/gateway`: `createGateway(...)`
 
 ## Migration from the previous API
 
 Before:
 
 ```ts
+import { createOpenAI } from "@zhivex-ai/openai";
+
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const model = openai.languageModel("gpt-4o-mini");
 ```
@@ -572,6 +594,8 @@ const model = openai.languageModel("gpt-4o-mini");
 Now:
 
 ```ts
+import { createOpenAI } from "@zhivex-ai/openai";
+
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const model = openai("gpt-4o-mini");
 ```

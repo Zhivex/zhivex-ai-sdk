@@ -1,6 +1,7 @@
 {
   "name": "@zhivex-ai/gateway",
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,7 +13,20 @@
   },
   "files": ["dist"],
   "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zhivex/zhivex-ai-sdk.git",
+    "directory": "packages/gateway"
+  },
+  "homepage": "https://github.com/Zhivex/zhivex-ai-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/Zhivex/zhivex-ai-sdk/issues"
+  },
+  "keywords": ["ai", "sdk", "gateway", "routing", "typescript"],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@zhivex-ai/core": "file:../core"
+    "@zhivex-ai/core": "^0.1.0"
   }
 }

@@ -1,6 +1,7 @@
 {
   "name": "@zhivex-ai/core",
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,6 +13,19 @@
   },
   "files": ["dist"],
   "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zhivex/zhivex-ai-sdk.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/Zhivex/zhivex-ai-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/Zhivex/zhivex-ai-sdk/issues"
+  },
+  "keywords": ["ai", "sdk", "llm", "core", "typescript"],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "zod": "^4.3.6"
   }
