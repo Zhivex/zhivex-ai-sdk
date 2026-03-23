@@ -1,6 +1,7 @@
 {
-  "name": "@zhivex-ai/sdk",
+  "name": "@zhivex-ai/sdk-workspace",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,14 +14,14 @@
   "files": ["dist"],
   "sideEffects": false,
   "dependencies": {
-    "@zhivex-ai/anthropic": "workspace:*",
-    "@zhivex-ai/azure-openai": "workspace:*",
-    "@zhivex-ai/bedrock": "workspace:*",
-    "@zhivex-ai/core": "workspace:*",
-    "@zhivex-ai/gateway": "workspace:*",
-    "@zhivex-ai/gemini": "workspace:*",
-    "@zhivex-ai/ollama": "workspace:*",
-    "@zhivex-ai/openai": "workspace:*",
-    "@zhivex-ai/openrouter": "workspace:*"
+    "@zhivex-ai/anthropic": "file:../anthropic",
+    "@zhivex-ai/azure-openai": "file:../azure-openai",
+    "@zhivex-ai/bedrock": "file:../bedrock",
+    "@zhivex-ai/core": "file:../core",
+    "@zhivex-ai/gateway": "file:../gateway",
+    "@zhivex-ai/gemini": "file:../gemini",
+    "@zhivex-ai/ollama": "file:../ollama",
+    "@zhivex-ai/openai": "file:../openai",
+    "@zhivex-ai/openrouter": "file:../openrouter"
   }
 }

@@ -4,6 +4,17 @@
   "workspaces": {
     "": {
       "name": "zhivex-ai-sdk",
+      "dependencies": {
+        "@zhivex-ai/anthropic": "file:packages/anthropic",
+        "@zhivex-ai/azure-openai": "file:packages/azure-openai",
+        "@zhivex-ai/bedrock": "file:packages/bedrock",
+        "@zhivex-ai/core": "file:packages/core",
+        "@zhivex-ai/gateway": "file:packages/gateway",
+        "@zhivex-ai/gemini": "file:packages/gemini",
+        "@zhivex-ai/ollama": "file:packages/ollama",
+        "@zhivex-ai/openai": "file:packages/openai",
+        "@zhivex-ai/openrouter": "file:packages/openrouter",
+      },
       "devDependencies": {
         "@types/node": "^25.4.0",
         "typescript": "^5.9.3",
@@ -15,14 +26,14 @@
       "name": "@zhivex-ai/anthropic",
       "version": "0.1.0",
       "dependencies": {
-        "@zhivex-ai/core": "workspace:*",
+        "@zhivex-ai/core": "file:../core",
       },
     },
     "packages/azure-openai": {
       "name": "@zhivex-ai/azure-openai",
       "version": "0.1.0",
       "dependencies": {
-        "@zhivex-ai/core": "workspace:*",
+        "@zhivex-ai/core": "file:../core",
         "zod": "^4.3.6",
       },
     },
@@ -31,7 +42,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@aws-sdk/client-bedrock-runtime": "^3.999.0",
-        "@zhivex-ai/core": "workspace:*",
+        "@zhivex-ai/core": "file:../core",
       },
     },
     "packages/core": {
@@ -45,51 +56,51 @@
       "name": "@zhivex-ai/gateway",
       "version": "0.1.0",
       "dependencies": {
-        "@zhivex-ai/core": "workspace:*",
+        "@zhivex-ai/core": "file:../core",
       },
     },
     "packages/gemini": {
       "name": "@zhivex-ai/gemini",
       "version": "0.1.0",
       "dependencies": {
-        "@zhivex-ai/core": "workspace:*",
+        "@zhivex-ai/core": "file:../core",
       },
     },
     "packages/ollama": {
       "name": "@zhivex-ai/ollama",
       "version": "0.1.0",
       "dependencies": {
-        "@zhivex-ai/core": "workspace:*",
+        "@zhivex-ai/core": "file:../core",
       },
     },
     "packages/openai": {
       "name": "@zhivex-ai/openai",
       "version": "0.1.0",
       "dependencies": {
-        "@zhivex-ai/core": "workspace:*",
+        "@zhivex-ai/core": "file:../core",
       },
     },
     "packages/openrouter": {
       "name": "@zhivex-ai/openrouter",
       "version": "0.1.0",
       "dependencies": {
-        "@zhivex-ai/core": "workspace:*",
+        "@zhivex-ai/core": "file:../core",
         "zod": "^4.3.6",
       },
     },
     "packages/sdk": {
-      "name": "@zhivex-ai/sdk",
+      "name": "@zhivex-ai/sdk-workspace",
       "version": "0.1.0",
       "dependencies": {
-        "@zhivex-ai/anthropic": "workspace:*",
-        "@zhivex-ai/azure-openai": "workspace:*",
-        "@zhivex-ai/bedrock": "workspace:*",
-        "@zhivex-ai/core": "workspace:*",
-        "@zhivex-ai/gateway": "workspace:*",
-        "@zhivex-ai/gemini": "workspace:*",
-        "@zhivex-ai/ollama": "workspace:*",
-        "@zhivex-ai/openai": "workspace:*",
-        "@zhivex-ai/openrouter": "workspace:*",
+        "@zhivex-ai/anthropic": "file:../anthropic",
+        "@zhivex-ai/azure-openai": "file:../azure-openai",
+        "@zhivex-ai/bedrock": "file:../bedrock",
+        "@zhivex-ai/core": "file:../core",
+        "@zhivex-ai/gateway": "file:../gateway",
+        "@zhivex-ai/gemini": "file:../gemini",
+        "@zhivex-ai/ollama": "file:../ollama",
+        "@zhivex-ai/openai": "file:../openai",
+        "@zhivex-ai/openrouter": "file:../openrouter",
       },
     },
   },
@@ -384,6 +395,8 @@
 
     "@zhivex-ai/bedrock": ["@zhivex-ai/bedrock@workspace:packages/bedrock"],
 
+    "@zhivex-ai/core": ["@zhivex-ai/core@file:packages/core", { "dependencies": { "zod": "^4.3.6" } }],
+
     "@zhivex-ai/core": ["@zhivex-ai/core@workspace:packages/core"],
 
     "@zhivex-ai/gateway": ["@zhivex-ai/gateway@workspace:packages/gateway"],
@@ -396,7 +409,7 @@
 
     "@zhivex-ai/openrouter": ["@zhivex-ai/openrouter@workspace:packages/openrouter"],
 
-    "@zhivex-ai/sdk": ["@zhivex-ai/sdk@workspace:packages/sdk"],
+    "@zhivex-ai/sdk-workspace": ["@zhivex-ai/sdk-workspace@workspace:packages/sdk"],
 
     "assertion-error": ["assertion-error@2.0.1", "", {}, "sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA=="],
 
@@ -473,6 +486,24 @@
     "@aws-crypto/sha256-browser/@smithy/util-utf8": ["@smithy/util-utf8@2.3.0", "", { "dependencies": { "@smithy/util-buffer-from": "^2.2.0", "tslib": "^2.6.2" } }, "sha512-R8Rdn8Hy72KKcebgLiv8jQcQkXoLMOGGv5uI1/k0l+snqkOzQ1R0ChUBCxWMlBsFMekWjq0wRudIweFs7sKT5A=="],
 
     "@aws-crypto/util/@smithy/util-utf8": ["@smithy/util-utf8@2.3.0", "", { "dependencies": { "@smithy/util-buffer-from": "^2.2.0", "tslib": "^2.6.2" } }, "sha512-R8Rdn8Hy72KKcebgLiv8jQcQkXoLMOGGv5uI1/k0l+snqkOzQ1R0ChUBCxWMlBsFMekWjq0wRudIweFs7sKT5A=="],
+
+    "@zhivex-ai/anthropic/@zhivex-ai/core": ["@zhivex-ai/core@file:packages/core", { "dependencies": { "zod": "^4.3.6" } }],
+
+    "@zhivex-ai/azure-openai/@zhivex-ai/core": ["@zhivex-ai/core@file:packages/core", { "dependencies": { "zod": "^4.3.6" } }],
+
+    "@zhivex-ai/bedrock/@zhivex-ai/core": ["@zhivex-ai/core@file:packages/core", { "dependencies": { "zod": "^4.3.6" } }],
+
+    "@zhivex-ai/gateway/@zhivex-ai/core": ["@zhivex-ai/core@file:packages/core", { "dependencies": { "zod": "^4.3.6" } }],
+
+    "@zhivex-ai/gemini/@zhivex-ai/core": ["@zhivex-ai/core@file:packages/core", { "dependencies": { "zod": "^4.3.6" } }],
+
+    "@zhivex-ai/ollama/@zhivex-ai/core": ["@zhivex-ai/core@file:packages/core", { "dependencies": { "zod": "^4.3.6" } }],
+
+    "@zhivex-ai/openai/@zhivex-ai/core": ["@zhivex-ai/core@file:packages/core", { "dependencies": { "zod": "^4.3.6" } }],
+
+    "@zhivex-ai/openrouter/@zhivex-ai/core": ["@zhivex-ai/core@file:packages/core", { "dependencies": { "zod": "^4.3.6" } }],
+
+    "@zhivex-ai/sdk-workspace/@zhivex-ai/core": ["@zhivex-ai/core@file:packages/core", { "dependencies": { "zod": "^4.3.6" } }],
 
     "@aws-crypto/sha256-browser/@smithy/util-utf8/@smithy/util-buffer-from": ["@smithy/util-buffer-from@2.2.0", "", { "dependencies": { "@smithy/is-array-buffer": "^2.2.0", "tslib": "^2.6.2" } }, "sha512-IJdWBbTcMQ6DA0gdNhh/BwrLkDR+ADW5Kr1aZmd4k3DIF6ezMV4R2NIAmT08wQJ3yUK82thHWmC/TnK/wpMMIA=="],
 

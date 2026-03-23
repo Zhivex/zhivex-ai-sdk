@@ -28,10 +28,22 @@ console.log(result.text);
 
 ## Installation
 
-Until the packages are published, you can consume them from a local path:
+Until the packages are published, you can consume the SDK from the repository root:
 
 ```bash
-bun add /Users/mikeortiz/dev/zhivex-ai-sdk/packages/sdk
+bun add /Users/mikeortiz/dev/zhivex-ai-sdk
+```
+
+To install it from a private Git repository, use the repo URL directly:
+
+```bash
+bun add git+ssh://git@github.com/your-org/zhivex-ai-sdk.git
+```
+
+If you prefer to be explicit about the package name:
+
+```bash
+bun add @zhivex-ai/sdk@git+ssh://git@github.com/your-org/zhivex-ai-sdk.git
 ```
 
 Individual packages:

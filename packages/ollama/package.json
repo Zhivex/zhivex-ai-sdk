@@ -13,6 +13,6 @@
   "files": ["dist"],
   "sideEffects": false,
   "dependencies": {
-    "@zhivex-ai/core": "workspace:*"
+    "@zhivex-ai/core": "file:../core"
   }
 }

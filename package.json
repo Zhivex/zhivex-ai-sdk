@@ -1,15 +1,41 @@
 {
-  "name": "zhivex-ai-sdk",
-  "private": true,
+  "name": "@zhivex-ai/sdk",
+  "private": false,
   "type": "module",
   "packageManager": "bun@1.3.7",
+  "main": "./packages/sdk/dist/index.js",
+  "types": "./packages/sdk/dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./packages/sdk/dist/index.d.ts",
+      "import": "./packages/sdk/dist/index.js"
+    }
+  },
+  "files": [
+    "README.md",
+    "packages/*/dist",
+    "packages/*/package.json"
+  ],
+  "sideEffects": false,
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
     "build": "tsc -b",
+    "prepare": "bun run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@zhivex-ai/anthropic": "file:packages/anthropic",
+    "@zhivex-ai/azure-openai": "file:packages/azure-openai",
+    "@zhivex-ai/bedrock": "file:packages/bedrock",
+    "@zhivex-ai/core": "file:packages/core",
+    "@zhivex-ai/gateway": "file:packages/gateway",
+    "@zhivex-ai/gemini": "file:packages/gemini",
+    "@zhivex-ai/ollama": "file:packages/ollama",
+    "@zhivex-ai/openai": "file:packages/openai",
+    "@zhivex-ai/openrouter": "file:packages/openrouter"
   },
   "devDependencies": {
     "@types/node": "^25.4.0",
