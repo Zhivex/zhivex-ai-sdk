@@ -1,6 +1,16 @@
 import type { ModelCatalog, ProviderAdapter, TokenUsage } from "@zhivex-ai/core";
 
-export type GatewayProviderId = "openai" | "anthropic" | "gemini" | "bedrock" | "ollama" | "azure-openai" | "openrouter";
+export type GatewayProviderId =
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "vertex"
+  | "qwen"
+  | "kimi"
+  | "bedrock"
+  | "ollama"
+  | "azure-openai"
+  | "openrouter";
 export type GatewayRoutingMode = "speed" | "balanced" | "quality";
 export type GatewayTaskIntent = "chat" | "reasoning" | "tool-heavy";
 

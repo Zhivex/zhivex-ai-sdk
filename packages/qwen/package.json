@@ -1,6 +1,6 @@
 {
-  "name": "@zhivex-ai/sdk",
-  "version": "0.1.1",
+  "name": "@zhivex-ai/qwen",
+  "version": "0.2.0",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,7 +18,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Zhivex/zhivex-ai-sdk.git",
-    "directory": "packages/sdk"
+    "directory": "packages/qwen"
   },
   "homepage": "https://github.com/Zhivex/zhivex-ai-sdk#readme",
   "bugs": {
@@ -27,8 +27,8 @@
   "keywords": [
     "ai",
     "sdk",
+    "qwen",
     "llm",
-    "providers",
     "typescript"
   ],
   "publishConfig": {
