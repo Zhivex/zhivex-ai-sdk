@@ -157,6 +157,52 @@ bun run build
 bun run release
 ```
 
+### Manual Stable Release Workflow
+
+When publishing manually to npm instead of relying on GitHub Actions, use this sequence:
+
+1. Ensure npm authentication and scope access are correct:
+
+```bash
+npm whoami
+```
+
+2. Confirm the working tree and branch are correct for the release.
+3. Create or review the pending changesets in `.changeset/`.
+4. Validate before versioning:
+
+```bash
+bun run typecheck
+bun run test
+bun run build
+```
+
+5. Apply versioning locally:
+
+```bash
+bun run version-packages
+```
+
+6. Review the generated version bumps and internal dependency updates.
+7. Validate again after versioning:
+
+```bash
+bun run typecheck
+bun run test
+bun run build
+```
+
+8. Publish the stable release:
+
+```bash
+bun run release
+```
+
+Notes:
+
+- `bun run release` publishes with the default npm dist-tag, which is appropriate for stable releases.
+- Do not use this stable flow for prereleases such as `next`, `alpha`, `beta`, or `rc`.
+
 ### Pre-release Workflow
 
 If you are preparing an `alpha`, `beta`, or `rc` release, use `changesets` pre-release mode instead of publishing directly to `latest`.
@@ -222,6 +268,37 @@ bun run version-packages
 ```bash
 bun run release
 ```
+
+### Manual Prerelease Workflow
+
+If you are publishing a prerelease manually, always publish with an explicit npm dist-tag.
+
+Recommended `next` flow:
+
+```bash
+bunx changeset pre enter next
+bun run version-packages
+bun run typecheck
+bun run test
+bun run build
+bunx changeset publish --tag next
+bunx changeset pre exit
+```
+
+After exiting prerelease mode, regenerate stable versions before the final stable publish:
+
+```bash
+bun run version-packages
+bun run typecheck
+bun run test
+bun run build
+bun run release
+```
+
+Notes:
+
+- Do not run `bun run release` directly while in prerelease mode unless the publish step is explicitly configured to use the intended dist-tag.
+- Keep the dist-tag aligned with the prerelease channel, for example `next`, `alpha`, `beta`, or `rc`.
 
 ### Pre-release Rules
 

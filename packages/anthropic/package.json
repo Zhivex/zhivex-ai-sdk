@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/anthropic",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Anthropic adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
