@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/kimi",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Kimi adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
