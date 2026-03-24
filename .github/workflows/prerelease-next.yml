@@ -48,6 +48,7 @@ jobs:
         run: bun run release
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_TAG: next
 
       - name: Exit prerelease mode
         run: bunx changeset pre exit
