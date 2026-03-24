@@ -14,14 +14,14 @@
     },
     "packages/anthropic": {
       "name": "@zhivex-ai/anthropic",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@zhivex-ai/core": "^0.1.0",
       },
     },
     "packages/azure-openai": {
       "name": "@zhivex-ai/azure-openai",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@zhivex-ai/core": "^0.1.0",
         "zod": "^4.3.6",
@@ -29,7 +29,7 @@
     },
     "packages/bedrock": {
       "name": "@zhivex-ai/bedrock",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@aws-sdk/client-bedrock-runtime": "^3.999.0",
         "@zhivex-ai/core": "^0.1.0",
@@ -37,52 +37,73 @@
     },
     "packages/core": {
       "name": "@zhivex-ai/core",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "zod": "^4.3.6",
       },
     },
     "packages/gateway": {
       "name": "@zhivex-ai/gateway",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@zhivex-ai/core": "^0.1.0",
       },
     },
     "packages/gemini": {
       "name": "@zhivex-ai/gemini",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@zhivex-ai/core": "^0.1.0",
       },
     },
+    "packages/kimi": {
+      "name": "@zhivex-ai/kimi",
+      "version": "0.2.0",
+      "dependencies": {
+        "@zhivex-ai/core": "^0.2.0",
+      },
+    },
     "packages/ollama": {
       "name": "@zhivex-ai/ollama",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@zhivex-ai/core": "^0.1.0",
       },
     },
     "packages/openai": {
       "name": "@zhivex-ai/openai",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@zhivex-ai/core": "^0.1.0",
       },
     },
     "packages/openrouter": {
       "name": "@zhivex-ai/openrouter",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@zhivex-ai/core": "^0.1.0",
         "zod": "^4.3.6",
       },
     },
+    "packages/qwen": {
+      "name": "@zhivex-ai/qwen",
+      "version": "0.2.0",
+      "dependencies": {
+        "@zhivex-ai/core": "^0.2.0",
+      },
+    },
     "packages/sdk": {
       "name": "@zhivex-ai/sdk",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@zhivex-ai/core": "^0.1.0",
+      },
+    },
+    "packages/vertex": {
+      "name": "@zhivex-ai/vertex",
+      "version": "0.2.0",
+      "dependencies": {
+        "@zhivex-ai/core": "^0.2.0",
       },
     },
   },
@@ -373,13 +394,19 @@
 
     "@zhivex-ai/gemini": ["@zhivex-ai/gemini@workspace:packages/gemini"],
 
+    "@zhivex-ai/kimi": ["@zhivex-ai/kimi@workspace:packages/kimi"],
+
     "@zhivex-ai/ollama": ["@zhivex-ai/ollama@workspace:packages/ollama"],
 
     "@zhivex-ai/openai": ["@zhivex-ai/openai@workspace:packages/openai"],
 
     "@zhivex-ai/openrouter": ["@zhivex-ai/openrouter@workspace:packages/openrouter"],
 
+    "@zhivex-ai/qwen": ["@zhivex-ai/qwen@workspace:packages/qwen"],
+
     "@zhivex-ai/sdk": ["@zhivex-ai/sdk@workspace:packages/sdk"],
+
+    "@zhivex-ai/vertex": ["@zhivex-ai/vertex@workspace:packages/vertex"],
 
     "ansi-colors": ["ansi-colors@4.1.3", "", {}, "sha512-/6w/C21Pm1A7aZitlI5Ni/2J6FFQN8i1Cvz3kHABAAbw93v/NlvKdVOqz7CCWz/3iv/JplRSEEZ83XION15ovw=="],
 

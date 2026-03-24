@@ -1,38 +1,56 @@
 # Zhivex AI SDK
 
-TypeScript SDK for Node and Bun with a unified API for OpenAI, Azure OpenAI, Anthropic, Gemini, Bedrock, Ollama, and OpenRouter.
+Zhivex AI SDK is a TypeScript monorepo for Bun and Node that provides a unified, provider-agnostic API for modern LLM workflows.
 
-The recommended experience lives in `@zhivex-ai/sdk`:
+It is designed around a small shared contract in `@zhivex-ai/core` and thin provider adapters on top of it, so application code can stay stable while models and vendors change underneath.
 
-- text generation and streaming,
-- structured output with Zod,
-- automatic tool loops,
-- multimodal messages,
-- embeddings,
-- provider switching without rewriting app logic.
+## Why Zhivex AI SDK
 
-## Quickstart
+- Unified primitives for text generation, streaming, structured output, tools, multimodal messages, and embeddings.
+- Consistent message and event contracts across providers.
+- Provider adapters that focus on API translation instead of re-implementing business logic.
+- ESM-first TypeScript packages intended for server runtimes such as Bun and modern Node.js.
+- Incremental adoption: install only the providers your application uses.
 
-```ts
-import { generateText } from "@zhivex-ai/sdk";
-import { createOpenAI } from "@zhivex-ai/openai";
+## Supported Packages
 
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+### Aggregator
 
-const result = await generateText({
-  model: openai("gpt-4o-mini"),
-  prompt: "Describe Zhivex AI SDK in one sentence."
-});
+- `@zhivex-ai/sdk`: recommended entry point for most applications. Re-exports the public high-level API from `core`.
 
-console.log(result.text);
-```
+### Core
+
+- `@zhivex-ai/core`: shared types, message helpers, runtime utilities, stream helpers, middleware, model catalog, and generation primitives.
+
+### Providers
+
+- `@zhivex-ai/openai`
+- `@zhivex-ai/azure-openai`
+- `@zhivex-ai/anthropic`
+- `@zhivex-ai/gemini`
+- `@zhivex-ai/vertex`
+- `@zhivex-ai/qwen`
+- `@zhivex-ai/kimi`
+- `@zhivex-ai/openrouter`
+- `@zhivex-ai/bedrock`
+- `@zhivex-ai/ollama`
+
+### Routing
+
+- `@zhivex-ai/gateway`: policy-based routing and fallback layer across registered provider adapters.
 
 ## Installation
 
-Install the lightweight SDK plus only the providers you need:
+Install the SDK plus the provider packages you need:
 
 ```bash
 bun add @zhivex-ai/sdk @zhivex-ai/openai
+```
+
+If you use structured output or tool schemas in your application code, install `zod` as well:
+
+```bash
+bun add zod
 ```
 
 Additional providers are opt-in:
@@ -40,6 +58,9 @@ Additional providers are opt-in:
 ```bash
 bun add @zhivex-ai/anthropic
 bun add @zhivex-ai/gemini
+bun add @zhivex-ai/vertex
+bun add @zhivex-ai/qwen
+bun add @zhivex-ai/kimi
 bun add @zhivex-ai/openrouter
 bun add @zhivex-ai/azure-openai
 bun add @zhivex-ai/bedrock
@@ -47,22 +68,65 @@ bun add @zhivex-ai/ollama
 bun add @zhivex-ai/gateway
 ```
 
-Individual packages:
+If you prefer working directly with the shared contract:
 
 ```bash
-bun add @zhivex-ai/core
-bun add @zhivex-ai/openai
+bun add @zhivex-ai/core @zhivex-ai/openai
 ```
 
-## Simple streaming
+## Quick Start
 
-`streamText()` exposes `textStream` as the happy path for simple cases and `eventStream` for advanced flows.
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const result = await generateText({
+  model: openai("gpt-4o-mini"),
+  prompt: "Describe Zhivex AI SDK in one sentence."
+});
+
+console.log(result.text);
+console.log(result.usage);
+```
+
+The high-level API accepts either a `prompt` or explicit `messages`, and returns normalized output including text, messages, finish reason, usage, tool results, and execution steps.
+
+## Core Capabilities
+
+### Text Generation
+
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { createAnthropic } from "@zhivex-ai/anthropic";
+
+const anthropic = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY
+});
+
+const result = await generateText({
+  model: anthropic("claude-3-5-sonnet"),
+  system: "Be concise and technical.",
+  prompt: "Explain what a provider adapter does."
+});
+
+console.log(result.text);
+```
+
+### Streaming
+
+`streamText()` exposes both a text-only stream for simple UX flows and a lower-level event stream for advanced handling.
 
 ```ts
 import { streamText } from "@zhivex-ai/sdk";
 import { createOpenAI } from "@zhivex-ai/openai";
 
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 const result = streamText({
   model: openai("gpt-4o-mini"),
@@ -77,15 +141,17 @@ const final = await result.collect();
 console.log(final.finishReason);
 ```
 
-## HTTP and Web Streams
+### HTTP Responses and UI Streams
 
-You can turn SDK streams into Web `Response` objects directly.
+The SDK can convert streaming results into Web `Response` objects for server frameworks and edge runtimes.
 
 ```ts
 import { streamText, toTextStreamResponse } from "@zhivex-ai/sdk";
 import { createOpenAI } from "@zhivex-ai/openai";
 
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 const result = streamText({
   model: openai("gpt-4o-mini"),
@@ -95,13 +161,15 @@ const result = streamText({
 return toTextStreamResponse(result);
 ```
 
-For SSE or richer payloads:
+For richer event payloads and UI-oriented transport:
 
 ```ts
 import { streamText, toUIMessageStreamResponse } from "@zhivex-ai/sdk";
 import { createOpenAI } from "@zhivex-ai/openai";
 
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 const result = streamText({
   model: openai("gpt-4o-mini"),
@@ -111,14 +179,18 @@ const result = streamText({
 return toUIMessageStreamResponse(result);
 ```
 
-## Structured output
+### Structured Output
+
+Structured generation supports `native`, `prompted`, and `auto` modes. `native` should be preferred when the selected provider/model supports schema-constrained responses.
 
 ```ts
 import { generateObject } from "@zhivex-ai/sdk";
 import { createGemini } from "@zhivex-ai/gemini";
 import { z } from "zod";
 
-const gemini = createGemini({ apiKey: process.env.GEMINI_API_KEY! });
+const gemini = createGemini({
+  apiKey: process.env.GEMINI_API_KEY
+});
 
 const recipe = await generateObject({
   model: gemini("gemini-2.0-flash"),
@@ -131,16 +203,19 @@ const recipe = await generateObject({
 });
 
 console.log(recipe.object);
+console.log(recipe.objectMode);
 ```
 
-## Structured output streaming
+### Structured Output Streaming
 
 ```ts
 import { streamObject } from "@zhivex-ai/sdk";
 import { createOpenAI } from "@zhivex-ai/openai";
 import { z } from "zod";
 
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 const result = streamObject({
   model: openai("gpt-4o-mini"),
@@ -160,14 +235,18 @@ const final = await result.collect();
 console.log(final.object);
 ```
 
-## Tools
+### Tool Calling
+
+Tools are modeled in the shared contract, and the SDK preserves a multi-step loop through `maxSteps`.
 
 ```ts
 import { generateText, tool, user } from "@zhivex-ai/sdk";
 import { createAnthropic } from "@zhivex-ai/anthropic";
 import { z } from "zod";
 
-const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+const anthropic = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY
+});
 
 const result = await generateText({
   model: anthropic("claude-3-5-sonnet"),
@@ -180,7 +259,10 @@ const result = await generateText({
       schema: z.object({
         city: z.string()
       }),
-      execute: async ({ city }) => ({ city, forecast: "sunny" })
+      execute: async ({ city }) => ({
+        city,
+        forecast: "sunny"
+      })
     })
   }
 });
@@ -189,17 +271,65 @@ console.log(result.text);
 console.log(result.toolResults);
 ```
 
-## Switch providers
+### Multimodal Messages
 
-Your high-level app code stays the same. Only the provider factory changes:
+Use explicit messages when you need full control over roles, parts, or multimodal inputs.
+
+```ts
+import { generateText, user } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const result = await generateText({
+  model: openai("gpt-4o-mini"),
+  messages: [
+    user([
+      { type: "text", text: "Describe this image." },
+      { type: "image", image: "https://example.com/cat.jpg" }
+    ])
+  ]
+});
+
+console.log(result.text);
+```
+
+### Embeddings
+
+```ts
+import { embedMany } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const result = await embedMany({
+  model: openai.embeddingModel("text-embedding-3-small"),
+  value: ["Zhivex AI SDK", "Unified providers"]
+});
+
+console.log(result.embeddings.length);
+```
+
+## Switching Providers
+
+The application-facing API remains the same. In most cases, switching providers only requires replacing the adapter factory and model identifier.
 
 ```ts
 import { generateText } from "@zhivex-ai/sdk";
 import { createAnthropic } from "@zhivex-ai/anthropic";
 import { createOpenAI } from "@zhivex-ai/openai";
 
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const anthropic = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY
+});
 
 const prompt = "Respond in one short sentence.";
 
@@ -217,411 +347,70 @@ console.log(fromOpenAI.text);
 console.log(fromAnthropic.text);
 ```
 
-## Multimodal
+## Gateway Routing
 
-Use `messages` when you need fine-grained control, multimodal input, or richer conversation state:
-
-```ts
-import { generateText, user } from "@zhivex-ai/sdk";
-import { createOpenAI } from "@zhivex-ai/openai";
-
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-
-const result = await generateText({
-  model: openai("gpt-4o-mini"),
-  messages: [
-    user([
-      { type: "text", text: "Describe this image." },
-      { type: "image", image: "https://example.com/cat.jpg" }
-    ])
-  ]
-});
-
-console.log(result.text);
-```
-
-## Embeddings
+`@zhivex-ai/gateway` provides a lightweight routing layer for multi-provider setups, including fallback ordering, capability filtering, retry handling, and optional cost-aware decisions.
 
 ```ts
-import { embedMany } from "@zhivex-ai/sdk";
-import { createOpenAI } from "@zhivex-ai/openai";
-
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-
-const result = await embedMany({
-  model: openai.embeddingModel("text-embedding-3-small"),
-  value: ["Zhivex AI SDK", "Unified providers"]
-});
-
-console.log(result.embeddings.length);
-```
-
-## Additional providers
-
-### Azure OpenAI
-
-```ts
-import { generateText } from "@zhivex-ai/sdk";
-import { createAzureOpenAI } from "@zhivex-ai/azure-openai";
-
-const azure = createAzureOpenAI({
-  apiKey: process.env.AZURE_OPENAI_API_KEY!,
-  endpoint: process.env.AZURE_OPENAI_ENDPOINT!
-});
-
-const result = await generateText({
-  model: azure("gpt-4o-mini"),
-  prompt: "Respond in one sentence."
-});
-
-console.log(result.text);
-```
-
-### OpenRouter
-
-```ts
-import { generateText } from "@zhivex-ai/sdk";
-import { createOpenRouter } from "@zhivex-ai/openrouter";
-
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY!,
-  appName: "Zhivex Demo",
-  appURL: "https://example.com"
-});
-
-const result = await generateText({
-  model: openrouter("openai/gpt-4o-mini"),
-  prompt: "Respond in one sentence."
-});
-
-console.log(result.text);
-```
-
-### Bedrock
-
-```ts
-import { generateText } from "@zhivex-ai/sdk";
-import { createBedrock } from "@zhivex-ai/bedrock";
-
-const bedrock = createBedrock({ region: process.env.AWS_REGION! });
-
-const result = await generateText({
-  model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
-  prompt: "Respond in one sentence."
-});
-
-console.log(result.text);
-```
-
-### Ollama
-
-```ts
-import { generateText } from "@zhivex-ai/sdk";
-import { createOllama } from "@zhivex-ai/ollama";
-
-const ollama = createOllama({ baseURL: process.env.OLLAMA_HOST });
-
-const result = await generateText({
-  model: ollama("llama3.2"),
-  prompt: "Summarize this in one line."
-});
-
-console.log(result.text);
-```
-
-## Gateway
-
-```ts
-import { createBedrock } from "@zhivex-ai/bedrock";
 import { createGateway } from "@zhivex-ai/gateway";
-import { createGemini } from "@zhivex-ai/gemini";
-import { createOpenRouter } from "@zhivex-ai/openrouter";
+import { createOpenAI } from "@zhivex-ai/openai";
+import { createOllama } from "@zhivex-ai/ollama";
 
 const gateway = createGateway({
   adapters: {
-    gemini: createGemini({ apiKey: process.env.GEMINI_API_KEY! }),
-    bedrock: createBedrock({ region: process.env.AWS_REGION! }),
-    openrouter: createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY! })
-  }
+    openai: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+    ollama: createOllama()
+  },
+  maxRetries: 1
 });
 
 const result = await gateway.generate({
-  primary: { provider: "gemini", modelId: "gemini-2.0-flash" },
-  fallbacks: [{ provider: "openrouter", modelId: "openai/gpt-4o-mini" }],
-  messages: [{ role: "user", content: "Say hello in Spanish." }],
+  primary: { provider: "openai", modelId: "gpt-4o-mini" },
+  fallbacks: [{ provider: "ollama", modelId: "llama3.2" }],
+  messages: [{ role: "user", content: "Summarize the benefits of fallback routing." }],
   routingMode: "balanced"
 });
 
 console.log(result.text);
+console.log(result.providerUsed);
 console.log(result.attempts);
 ```
 
-## `prompt` vs `messages`
+## Public API Surface
 
-Use `prompt` when:
+The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives from `core`, including:
 
-- you want the shortest path,
-- the input is plain text,
-- you do not need explicit roles or parts.
+- `generateText`, `streamText`
+- `generateObject`, `streamObject`
+- `embed`, `embedMany`
+- message helpers such as `system`, `user`, `assistant`, `tool`, `textPart`
+- stream and HTTP helpers such as `toTextStreamResponse`, `toUIMessageStreamResponse`, `toSSEStream`, and related UI serialization utilities
+- middleware and runtime helpers such as telemetry, caching, circuit breakers, and `wrapLanguageModel`
 
-Use `messages` when:
+If you are building custom adapters or lower-level integrations, use `@zhivex-ai/core` directly.
 
-- you need multimodal input,
-- you want full role-based control,
-- you are working directly with tools or parts.
+## Repository Layout
 
-`prompt` and `messages` are mutually exclusive. If you pass both, the SDK throws a clear error.
-
-## Providers and capabilities
-
-| Provider | Streaming | Tools | Tool Choice | JSON Mode | Structured Output | Vision | Reasoning | Embeddings |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Azure OpenAI | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Anthropic | Yes | Yes | Yes | No | Prompted | Yes | Yes | No |
-| Gemini | Yes | Yes | No | Yes | Yes | Yes | Yes | Yes |
-| OpenRouter | Yes | Yes | Yes | Yes | Yes | Yes | Yes | No |
-| Bedrock | No | No | No | No | No | Yes | No | No |
-| Ollama | No | No | No | No | No | Yes | No | No |
-
-`Prompted` means the SDK can still generate validated objects through prompting and schema validation even if the provider does not expose native structured output.
-
-Every `LanguageModel` now exposes a richer `model.capabilities` contract, including:
-
-- `jsonMode`
-- `toolChoice`
-- `parallelToolCalls`
-- `audioInput`
-- `audioOutput`
-- `reasoning`
-- `webSearch`
-
-## Typed provider options
-
-`providerOptions` remains a provider passthrough, but it is now typed from the selected model.
-
-```ts
-import { generateText } from "@zhivex-ai/sdk";
-import { createOpenAI } from "@zhivex-ai/openai";
-
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-
-await generateText({
-  model: openai("gpt-4o-mini"),
-  prompt: "Say hello",
-  providerOptions: {
-    top_p: 0.8,
-    user: "demo-user"
-  }
-});
+```text
+packages/
+  core/           Shared contracts, runtime helpers, streams, middleware, catalog
+  sdk/            Aggregated public API
+  openai/         OpenAI adapter
+  azure-openai/   Azure OpenAI adapter
+  anthropic/      Anthropic adapter
+  gemini/         Gemini adapter
+  vertex/         Vertex AI adapter
+  qwen/           Qwen adapter
+  kimi/           Kimi adapter
+  openrouter/     OpenRouter adapter
+  bedrock/        AWS Bedrock adapter
+  ollama/         Ollama adapter
+  gateway/        Routing and fallback package
 ```
 
-Exported provider option types:
+## Development
 
-- `@zhivex-ai/openai`: `OpenAILanguageModelOptions`
-- `@zhivex-ai/azure-openai`: `AzureOpenAILanguageModelOptions`
-- `@zhivex-ai/anthropic`: `AnthropicLanguageModelOptions`
-- `@zhivex-ai/gemini`: `GeminiLanguageModelOptions`
-- `@zhivex-ai/openrouter`: `OpenRouterLanguageModelOptions`
-- `@zhivex-ai/bedrock`: `BedrockLanguageModelOptions`
-- `@zhivex-ai/ollama`: `OllamaLanguageModelOptions`
-
-## UI message helpers
-
-`UIMessage` gives you a serializable message shape for client/server boundaries, persistence, and chat UIs.
-
-```ts
-import { toUIMessage, user } from "@zhivex-ai/sdk";
-
-const uiMessage = toUIMessage(user("Hello"), "msg_1");
-```
-
-Useful helpers:
-
-- `toUIMessage(...)`
-- `toUIMessages(...)`
-- `fromUIMessage(...)`
-- `fromUIMessages(...)`
-- `serializeUIMessage(...)`
-- `deserializeUIMessage(...)`
-- `toUIMessageStream(...)`
-- `toUIMessageStreamResponse(...)`
-
-## Provider conformance
-
-The repo now includes a shared provider contract harness for adapters. New providers should verify:
-
-- stable model identity,
-- declared capabilities,
-- embedding identity when supported,
-- provider option passthrough,
-- behavior coverage for text, streaming, tools, and structured output where applicable.
-
-## Middleware and observability
-
-You can add operational behavior by wrapping a model before passing it to `generateText()` or `generateObject()`.
-
-```ts
-import {
-  createInMemoryGenerateCache,
-  createTelemetryMiddleware,
-  generateText,
-  wrapLanguageModel
-} from "@zhivex-ai/sdk";
-import { createOpenAI } from "@zhivex-ai/openai";
-
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-const cache = createInMemoryGenerateCache();
-
-const model = wrapLanguageModel(openai("gpt-4o-mini"), [
-  createTelemetryMiddleware({
-    onEvent(event) {
-      console.log(event.type, event.model.modelId);
-    }
-  })
-]);
-
-const result = await generateText({
-  model,
-  prompt: "Say hello"
-});
-
-console.log(result.text);
-```
-
-Built-in helpers:
-
-- `wrapLanguageModel(...)`
-- `createTelemetryMiddleware(...)`
-- `createCachedGenerateMiddleware(...)`
-- `createInMemoryGenerateCache(...)`
-- `createFileGenerateCache(...)`
-- `createCircuitBreakerMiddleware(...)`
-
-## Gateway policies
-
-The gateway now supports higher-level operational routing:
-
-- required capabilities via `requiredCapabilities`
-- cost budgets via `maxCostPer1kTokens`
-- provider cost hints via `providerCostsPer1kTokens`
-- latency bias via `latencyBiasMs`
-- attempt telemetry with `onAttempt`
-- catalog-aware cost hints with `modelCatalog`
-
-## Durable cache and request helpers
-
-Use a filesystem-backed cache when you want generate caching to survive process restarts:
-
-```ts
-import {
-  createCachedGenerateMiddleware,
-  createFileGenerateCache,
-  generateText,
-  wrapLanguageModel
-} from "@zhivex-ai/sdk";
-import { createOpenAI } from "@zhivex-ai/openai";
-
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-
-const model = wrapLanguageModel(openai("gpt-4o-mini"), [
-  createCachedGenerateMiddleware({
-    cache: createFileGenerateCache({ dir: ".cache/zhivex" })
-  })
-]);
-
-const result = await generateText({
-  model,
-  prompt: "Say hello"
-});
-```
-
-Fetch-first helpers are also available for `UIMessage[]` request/response handling:
-
-- `parseUIMessageRequest(...)`
-- `createUIMessageJsonResponse(...)`
-- `createUIMessageLinesResponse(...)`
-
-## Model catalog
-
-The SDK now ships a lightweight model catalog utility:
-
-- `createModelCatalog(...)`
-- `defaultModelCatalog`
-
-This can be used directly, or plugged into the gateway to inform routing and cost policies.
-
-## Public API
-
-Recommended helpers:
-
-- `generateText(...)`
-- `streamText(...)`
-- `generateObject(...)`
-- `streamObject(...)`
-- `embed(...)`
-- `embedMany(...)`
-- `toTextStreamResponse(...)`
-- `toSSEResponse(...)`
-- `toUIMessageStreamResponse(...)`
-- `tool(...)`
-- `system(...)`
-- `user(...)`
-- `assistant(...)`
-
-Provider factories:
-
-- `@zhivex-ai/openai`: `createOpenAI(...)`
-- `@zhivex-ai/azure-openai`: `createAzureOpenAI(...)`
-- `@zhivex-ai/anthropic`: `createAnthropic(...)`
-- `@zhivex-ai/gemini`: `createGemini(...)`
-- `@zhivex-ai/openrouter`: `createOpenRouter(...)`
-- `@zhivex-ai/bedrock`: `createBedrock(...)`
-- `@zhivex-ai/ollama`: `createOllama(...)`
-- `@zhivex-ai/gateway`: `createGateway(...)`
-
-## Migration from the previous API
-
-Before:
-
-```ts
-import { createOpenAI } from "@zhivex-ai/openai";
-
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-const model = openai.languageModel("gpt-4o-mini");
-```
-
-Now:
-
-```ts
-import { createOpenAI } from "@zhivex-ai/openai";
-
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-const model = openai("gpt-4o-mini");
-```
-
-Before:
-
-```ts
-messages: [createTextMessage("user", "Hello")]
-```
-
-Now:
-
-```ts
-messages: [user("Hello")]
-```
-
-`.languageModel(...)` still works, but directly invoking the provider is the recommended style.
-
-## Local development
-
-Requirements:
-
-- Bun 1.3+
-- Node 20+
-
-Core commands:
+The repository uses Bun workspaces, TypeScript project references, and Vitest.
 
 ```bash
 bun install
@@ -629,3 +418,14 @@ bun run typecheck
 bun run test
 bun run build
 ```
+
+## Design Principles
+
+- `core` is the single source of truth for shared contracts, capabilities, errors, and high-level helpers.
+- Provider packages should translate between external APIs and the shared contract, while keeping provider-specific behavior explicit.
+- New capabilities should be introduced in the shared contract first, then implemented by adapters as supported.
+- Unsupported features should be represented through capabilities or explicit errors rather than implicit behavior.
+
+## License
+
+MIT

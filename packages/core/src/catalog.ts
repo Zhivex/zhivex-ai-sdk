@@ -30,6 +30,9 @@ export const defaultModelCatalog = createModelCatalog([
   { provider: "azure-openai", modelId: "gpt-4o-mini", costPer1kTokens: 0.6, recommendedFor: ["chat", "tools"] },
   { provider: "anthropic", modelId: "claude-3-5-sonnet", costPer1kTokens: 3, recommendedFor: ["reasoning", "tools"] },
   { provider: "gemini", modelId: "gemini-2.0-flash", costPer1kTokens: 0.35, recommendedFor: ["speed", "vision"] },
+  { provider: "vertex", modelId: "gemini-2.0-flash", costPer1kTokens: 0.35, recommendedFor: ["speed", "vision"] },
+  { provider: "qwen", modelId: "qwen-plus", costPer1kTokens: 0.8, recommendedFor: ["chat", "tools", "reasoning"] },
+  { provider: "kimi", modelId: "kimi-k2-0905-preview", costPer1kTokens: 2, recommendedFor: ["reasoning", "tools"] },
   { provider: "openrouter", modelId: "openai/gpt-4o-mini", costPer1kTokens: 0.7, recommendedFor: ["chat", "tools"] },
   { provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet", costPer1kTokens: 3, recommendedFor: ["reasoning"] },
   { provider: "ollama", modelId: "llama3.2", costPer1kTokens: 0, recommendedFor: ["chat", "speed"] }

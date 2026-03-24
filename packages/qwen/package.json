@@ -1,7 +1,7 @@
 {
-  "name": "@zhivex-ai/openai",
-  "version": "0.1.1",
-  "description": "OpenAI adapter for Zhivex AI SDK.",
+  "name": "@zhivex-ai/qwen",
+  "version": "0.2.0",
+  "description": "Qwen adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,7 +24,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Zhivex/zhivex-ai-sdk.git",
-    "directory": "packages/openai"
+    "directory": "packages/qwen"
   },
   "homepage": "https://github.com/Zhivex/zhivex-ai-sdk#readme",
   "bugs": {
@@ -33,7 +33,7 @@
   "keywords": [
     "ai",
     "sdk",
-    "openai",
+    "qwen",
     "llm",
     "typescript"
   ],
