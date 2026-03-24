@@ -1,8 +1,13 @@
 {
   "name": "zhivex-ai-sdk",
   "private": true,
+  "description": "TypeScript monorepo for a unified AI provider SDK for Bun and Node.",
   "type": "module",
   "packageManager": "bun@1.3.7",
+  "engines": {
+    "node": ">=18.18.0",
+    "bun": ">=1.3.7"
+  },
   "workspaces": [
     "packages/*"
   ],
