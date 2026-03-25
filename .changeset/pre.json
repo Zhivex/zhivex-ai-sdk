@@ -1,0 +1,22 @@
+{
+  "mode": "pre",
+  "tag": "beta",
+  "initialVersions": {
+    "@zhivex-ai/anthropic": "0.1.2",
+    "@zhivex-ai/azure-openai": "0.1.1",
+    "@zhivex-ai/bedrock": "0.1.1",
+    "@zhivex-ai/core": "0.2.0",
+    "@zhivex-ai/gateway": "0.2.0",
+    "@zhivex-ai/gemini": "0.1.2",
+    "@zhivex-ai/kimi": "0.2.1",
+    "@zhivex-ai/ollama": "0.1.1",
+    "@zhivex-ai/openai": "0.1.2",
+    "@zhivex-ai/openrouter": "0.1.1",
+    "@zhivex-ai/qwen": "0.2.1",
+    "@zhivex-ai/sdk": "0.1.1",
+    "@zhivex-ai/vertex": "0.2.1"
+  },
+  "changesets": [
+    "itchy-windows-buy"
+  ]
+}

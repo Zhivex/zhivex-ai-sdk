@@ -173,7 +173,8 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
   ) {}
 
   private url(action: string) {
-    return `${this.baseURL}/models/${this.modelId}:${action}?key=${this.apiKey}`;
+    const separator = action.includes("?") ? "&" : "?";
+    return `${this.baseURL}/models/${this.modelId}:${action}${separator}key=${this.apiKey}`;
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
@@ -220,7 +221,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const response = await withRetry(
       () =>
-        this.fetcher(this.url("streamGenerateContent&alt=sse"), {
+        this.fetcher(this.url("streamGenerateContent?alt=sse"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           signal,
