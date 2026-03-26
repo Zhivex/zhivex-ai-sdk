@@ -174,4 +174,39 @@ describe("gemini adapter", () => {
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=test"
     );
   });
+
+  it("parses Gemini SSE streams with CRLF separators across chunk boundaries", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\r")
+        );
+        controller.enqueue(
+          encoder.encode(
+            "\n\r\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" world\"}]},\"finishReason\":\"STOP\"}]}\r\n\r\n"
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello"
+    });
+
+    await expect(result.collect()).resolves.toMatchObject({
+      text: "hello world",
+      finishReason: "stop"
+    });
+  });
 });
