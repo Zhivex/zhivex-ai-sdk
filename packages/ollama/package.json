@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/ollama",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Ollama adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -41,6 +41,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^0.2.0"
+    "@zhivex-ai/core": "^0.2.1"
   }
 }

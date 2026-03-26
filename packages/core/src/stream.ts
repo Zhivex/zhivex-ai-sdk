@@ -22,38 +22,47 @@ export async function* streamSSE(
   let buffer = "";
   const reader = response.body.getReader();
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
+  const parseEvent = (rawEvent: string) => {
+    let event: string | undefined;
+    const dataLines: string[] = [];
+
+    for (const line of rawEvent.split(/\r?\n/)) {
+      if (line.startsWith("event:")) {
+        event = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).trim());
+      }
     }
 
-    buffer += decoder.decode(value, { stream: true });
+    const data = dataLines.join("\n");
+    return data.length ? { event, data } : undefined;
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
 
     while (true) {
-      const separatorIndex = buffer.indexOf("\n\n");
-      if (separatorIndex === -1) {
+      const separatorMatch = buffer.match(/\r?\n\r?\n/);
+      if (!separatorMatch) {
         break;
       }
 
+      const separatorIndex = separatorMatch.index ?? 0;
       const rawEvent = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-
-      let event: string | undefined;
-      const dataLines: string[] = [];
-
-      for (const line of rawEvent.split("\n")) {
-        if (line.startsWith("event:")) {
-          event = line.slice(6).trim();
-        } else if (line.startsWith("data:")) {
-          dataLines.push(line.slice(5).trim());
-        }
+      buffer = buffer.slice(separatorIndex + separatorMatch[0].length);
+      const parsed = parseEvent(rawEvent);
+      if (parsed) {
+        yield parsed;
       }
+    }
 
-      const data = dataLines.join("\n");
-      if (data.length) {
-        yield { event, data };
+    if (done) {
+      const parsed = parseEvent(buffer);
+      if (parsed) {
+        yield parsed;
       }
+      break;
     }
   }
 }

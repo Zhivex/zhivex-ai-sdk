@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { embedMany, generateObject, generateText } from "@zhivex-ai/core";
+import { embedMany, generateObject, generateText, streamText } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createGemini } from "../src/index.js";
 
@@ -140,5 +140,73 @@ describe("gemini adapter", () => {
     const body = JSON.parse(String(requestInit.body)) as { topP: number; candidateCount: number };
     expect(body.topP).toBe(0.95);
     expect(body.candidateCount).toBe(1);
+  });
+
+  it("uses the Gemini streaming endpoint with alt=sse before the api key", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\n\n" +
+              "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" world\"}]},\"finishReason\":\"STOP\"}]}\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello"
+    });
+
+    expect((await result.collect()).text).toBe("hello world");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=test"
+    );
+  });
+
+  it("parses Gemini SSE streams with CRLF separators across chunk boundaries", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\r")
+        );
+        controller.enqueue(
+          encoder.encode(
+            "\n\r\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" world\"}]},\"finishReason\":\"STOP\"}]}\r\n\r\n"
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello"
+    });
+
+    await expect(result.collect()).resolves.toMatchObject({
+      text: "hello world",
+      finishReason: "stop"
+    });
   });
 });
