@@ -3,6 +3,7 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  UnsupportedFeatureError,
   createProviderAdapter,
   normalizeFinishReason,
   streamSSE,
@@ -186,6 +187,10 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
+      if (input.reasoning) {
+        throw new UnsupportedFeatureError('Provider "kimi" does not support the common "reasoning" config yet.');
+      }
+
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
@@ -233,6 +238,11 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
 
   async stream(input: ModelGenerateInput<KimiLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
+
+    if (input.reasoning) {
+      throw new UnsupportedFeatureError('Provider "kimi" does not support the common "reasoning" config yet.');
+    }
+
     const response = await withRetry(
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {

@@ -185,4 +185,18 @@ describe("qwen adapter", () => {
     expect(body.top_p).toBe(0.8);
     expect(body.user).toBe("test-user");
   });
+
+  it("rejects common reasoning config for Qwen until it is mapped", async () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("qwen-plus"),
+        prompt: "hello",
+        reasoning: {
+          effort: "medium"
+        }
+      })
+    ).rejects.toThrow('Provider "qwen" does not support the common "reasoning" config yet.');
+  });
 });

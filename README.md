@@ -141,6 +141,43 @@ const final = await result.collect();
 console.log(final.finishReason);
 ```
 
+### Reasoning Configuration
+
+Use the shared `reasoning` option when you want to control reasoning behavior without coupling your app to provider-specific request fields.
+
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const result = await generateText({
+  model: openai("gpt-5"),
+  prompt: "Compare BFS and DFS for pathfinding.",
+  maxTokens: 600,
+  reasoning: {
+    effort: "high"
+  }
+});
+
+console.log(result.text);
+```
+
+Provider compatibility for the common `reasoning` option:
+
+- OpenAI and Azure OpenAI: support `effort`
+- OpenRouter: supports `effort` and `budgetTokens`
+- Anthropic: supports `budgetTokens`
+- Gemini and Vertex:
+  - Gemini 3 models support `effort`
+  - Gemini 2.5 and earlier models support `budgetTokens`
+- Ollama and Bedrock: not supported
+- Qwen and Kimi: currently reject the common config until a provider mapping is added
+
+When a provider or model does not support the requested `reasoning` field, the SDK throws an explicit error instead of silently ignoring it.
+
 ### HTTP Responses and UI Streams
 
 The SDK can convert streaming results into Web `Response` objects for server frameworks and edge runtimes.
@@ -384,6 +421,7 @@ The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives 
 - `generateObject`, `streamObject`
 - `embed`, `embedMany`
 - message helpers such as `system`, `user`, `assistant`, `tool`, `textPart`
+- shared types such as `ReasoningConfig`, `GenerateTextOptions`, and `GenerateObjectOptions`
 - stream and HTTP helpers such as `toTextStreamResponse`, `toUIMessageStreamResponse`, `toSSEStream`, and related UI serialization utilities
 - middleware and runtime helpers such as telemetry, caching, circuit breakers, and `wrapLanguageModel`
 

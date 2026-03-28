@@ -142,6 +142,96 @@ describe("gemini adapter", () => {
     expect(body.candidateCount).toBe(1);
   });
 
+  it("maps reasoning budget tokens to Gemini thinking config", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "hello from gemini" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello",
+      reasoning: {
+        budgetTokens: 512
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      generationConfig: { thinkingConfig: { thinkingBudget: number } };
+    };
+    expect(body.generationConfig.thinkingConfig).toEqual({
+      thinkingBudget: 512
+    });
+  });
+
+  it("rejects reasoning effort for Gemini models earlier than Gemini 3", async () => {
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("gemini-2.0-flash"),
+        prompt: "hello",
+        reasoning: {
+          effort: "low"
+        }
+      })
+    ).rejects.toThrow('Provider "gemini" does not support "reasoning.effort" for models earlier than Gemini 3.');
+  });
+
+  it("maps reasoning effort to Gemini 3 thinking level", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "hello from gemini" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gemini-3-flash-preview"),
+      prompt: "hello",
+      reasoning: {
+        effort: "low"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      generationConfig: { thinkingConfig: { thinkingLevel: string } };
+    };
+    expect(body.generationConfig.thinkingConfig).toEqual({
+      thinkingLevel: "low"
+    });
+  });
+
+  it("rejects legacy reasoning budget tokens for Gemini 3 models", async () => {
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("gemini-3-flash-preview"),
+        prompt: "hello",
+        reasoning: {
+          budgetTokens: 512
+        }
+      })
+    ).rejects.toThrow(
+      'Provider "gemini" uses "reasoning.effort" for Gemini 3 models and does not support "reasoning.budgetTokens".'
+    );
+  });
+
   it("uses the Gemini streaming endpoint with alt=sse before the api key", async () => {
     const body = new ReadableStream({
       start(controller) {

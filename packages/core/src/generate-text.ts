@@ -21,6 +21,30 @@ import type {
   ToolExecutionResult
 } from "./types.js";
 
+const validateReasoning = (options: Pick<GenerateTextOptions, "model" | "reasoning">) => {
+  const { reasoning } = options;
+  if (!reasoning) {
+    return;
+  }
+
+  if (!options.model.capabilities.reasoning) {
+    throw new UnsupportedFeatureError(
+      `Model "${options.model.provider}/${options.model.modelId}" does not support reasoning.`
+    );
+  }
+
+  if (reasoning.effort === undefined && reasoning.budgetTokens === undefined) {
+    throw new ValidationError('The "reasoning" config must include at least one supported field.');
+  }
+
+  if (
+    reasoning.budgetTokens !== undefined &&
+    (!Number.isInteger(reasoning.budgetTokens) || reasoning.budgetTokens <= 0)
+  ) {
+    throw new ValidationError('The "reasoning.budgetTokens" field must be a positive integer.');
+  }
+};
+
 const validateInputSource = (options: Pick<GenerateTextOptions, "prompt" | "messages">) => {
   if (options.prompt !== undefined && options.messages !== undefined) {
     throw new ValidationError('Pass either "prompt" or "messages", but not both.');
@@ -44,6 +68,7 @@ const toRequest = (options: GenerateTextOptions, messages: ModelMessage[]): Mode
   tools: options.tools,
   temperature: options.temperature,
   maxTokens: options.maxTokens,
+  reasoning: options.reasoning,
   providerOptions: options.providerOptions,
   structuredOutput: options.structuredOutput,
   abortSignal: options.abortSignal,
@@ -101,6 +126,7 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
   const allMessages = buildMessages(options);
   const steps: GenerateTextOutput["steps"] = [];
   validateMessageParts(options.model, allMessages);
+  validateReasoning(options);
 
   if (options.tools && !options.model.capabilities.tools) {
     throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
@@ -155,6 +181,7 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
   const maxSteps = Math.max(1, options.maxSteps ?? 1);
   const baseMessages = buildMessages(options);
   validateMessageParts(options.model, baseMessages);
+  validateReasoning(options);
 
   if (!options.model.stream) {
     throw new ValidationError(`Model "${options.model.provider}/${options.model.modelId}" does not support streaming.`);

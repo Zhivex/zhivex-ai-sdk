@@ -56,6 +56,7 @@ export type {
   ProviderAdapter,
   ProviderOptions,
   ProviderOptionsOf,
+  ReasoningConfig,
   StreamEvent,
   StreamObjectResult,
   StreamTextResult,

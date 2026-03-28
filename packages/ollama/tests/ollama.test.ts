@@ -112,4 +112,18 @@ describe("ollama adapter", () => {
     expect(body.keep_alive).toBe("5m");
     expect(body.raw).toBe(true);
   });
+
+  it("rejects common reasoning config for Ollama", async () => {
+    const provider = createOllama({ fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("llama3.2"),
+        prompt: "hello",
+        reasoning: {
+          effort: "low"
+        }
+      })
+    ).rejects.toThrow('Model "ollama/llama3.2" does not support reasoning.');
+  });
 });

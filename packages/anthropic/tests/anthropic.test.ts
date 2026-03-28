@@ -139,4 +139,46 @@ describe("anthropic adapter", () => {
     expect(body.top_p).toBe(0.9);
     expect(body.metadata.source).toBe("test");
   });
+
+  it("maps reasoning budget tokens to Anthropic thinking", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      reasoning: {
+        budgetTokens: 1024
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      thinking: { type: string; budget_tokens: number };
+    };
+    expect(body.thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 1024
+    });
+  });
+
+  it("rejects unsupported reasoning effort for Anthropic", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("claude-3-5-sonnet"),
+        prompt: "hello",
+        reasoning: {
+          effort: "medium"
+        }
+      })
+    ).rejects.toThrow('Provider "anthropic" does not support "reasoning.effort".');
+  });
 });

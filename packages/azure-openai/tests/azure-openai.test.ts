@@ -118,4 +118,54 @@ describe("azure openai adapter", () => {
 
     expect(result.embeddings[0]).toEqual([0.1, 0.2, 0.3]);
   });
+
+  it("maps common reasoning config to Azure OpenAI request fields", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "reasoned" } }]
+      })
+    );
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("gpt-5"),
+      prompt: "hello",
+      maxTokens: 256,
+      reasoning: {
+        effort: "high"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      reasoning_effort: string;
+      max_completion_tokens: number;
+      max_tokens?: number;
+    };
+    expect(body.reasoning_effort).toBe("high");
+    expect(body.max_completion_tokens).toBe(256);
+    expect(body.max_tokens).toBeUndefined();
+  });
+
+  it("rejects unsupported reasoning budget tokens for Azure OpenAI", async () => {
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(
+      generateText({
+        model: provider("gpt-5"),
+        prompt: "hello",
+        reasoning: {
+          budgetTokens: 256
+        }
+      })
+    ).rejects.toThrow('Provider "azure-openai" does not support "reasoning.budgetTokens".');
+  });
 });
