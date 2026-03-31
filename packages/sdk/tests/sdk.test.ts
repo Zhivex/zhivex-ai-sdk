@@ -10,6 +10,9 @@ describe("sdk public surface", () => {
     expect(sdk.streamObject).toBeTypeOf("function");
     expect(sdk.embed).toBeTypeOf("function");
     expect(sdk.embedMany).toBeTypeOf("function");
+    expect(sdk.transcribeAudio).toBeTypeOf("function");
+    expect(sdk.generateSpeech).toBeTypeOf("function");
+    expect(sdk.generateGroundedText).toBeTypeOf("function");
     expect(sdk.toTextStreamResponse).toBeTypeOf("function");
     expect(sdk.toUIMessageStreamResponse).toBeTypeOf("function");
     expect(sdk.toUIMessage).toBeTypeOf("function");

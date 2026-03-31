@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { embed, generateText, streamText, tool } from "@zhivex-ai/core";
+import { embed, generateGroundedText, generateSpeech, generateText, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
 import { z } from "zod";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createAzureOpenAI } from "../src/index.js";
@@ -208,5 +208,68 @@ describe("azure openai adapter", () => {
         }
       })
     ).rejects.toThrow('Provider "azure-openai" does not support "reasoning.budgetTokens".');
+  });
+
+  it("transcribes audio through the shared contract", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ text: "hello from azure audio" }));
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await transcribeAudio({
+      model: provider.transcriptionModel!("gpt-4o-mini-transcribe"),
+      audio: {
+        data: "aGVsbG8=",
+        mediaType: "audio/wav"
+      }
+    });
+
+    expect(result.text).toBe("hello from azure audio");
+  });
+
+  it("generates speech through the shared contract", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(new Uint8Array([4, 5, 6]), {
+        status: 200,
+        headers: { "content-type": "audio/mpeg" }
+      })
+    );
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await generateSpeech({
+      model: provider.speechModel!("gpt-4o-mini-tts"),
+      input: "hello azure"
+    });
+
+    expect(Array.from(result.audio)).toEqual([4, 5, 6]);
+  });
+
+  it("generates grounded text with sources", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        status: "completed",
+        output_text: "fresh azure answer",
+        output: [{ content: [{ annotations: [{ title: "Azure Source", url: "https://example.com/azure" }] }] }]
+      })
+    );
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await generateGroundedText({
+      model: provider.groundedLanguageModel!("gpt-4o-search-preview"),
+      prompt: "What happened today?"
+    });
+
+    expect(result.text).toBe("fresh azure answer");
+    expect(result.sources[0]?.url).toBe("https://example.com/azure");
   });
 });

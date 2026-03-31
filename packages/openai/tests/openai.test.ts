@@ -1,7 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createTextMessage, embed, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import {
+  createTextMessage,
+  embed,
+  generateGroundedText,
+  generateObject,
+  generateSpeech,
+  generateText,
+  streamText,
+  tool,
+  transcribeAudio
+} from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createOpenAI } from "../src/index.js";
 
@@ -262,5 +272,76 @@ describe("openai adapter", () => {
         }
       })
     ).rejects.toThrow('Provider "openai" does not support "reasoning.budgetTokens".');
+  });
+
+  it("transcribes audio through the shared contract", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ text: "hello transcript" }));
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await transcribeAudio({
+      model: provider.transcriptionModel!("gpt-4o-mini-transcribe"),
+      audio: {
+        data: "aGVsbG8=",
+        mediaType: "audio/wav",
+        filename: "clip.wav"
+      }
+    });
+
+    expect(result.text).toBe("hello transcript");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/audio/transcriptions");
+  });
+
+  it("generates speech through the shared contract", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { "content-type": "audio/mpeg" }
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateSpeech({
+      model: provider.speechModel!("gpt-4o-mini-tts"),
+      input: "hello there"
+    });
+
+    expect(result.mediaType).toBe("audio/mpeg");
+    expect(Array.from(result.audio)).toEqual([1, 2, 3]);
+  });
+
+  it("generates grounded text with normalized sources", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        status: "completed",
+        output_text: "fresh answer",
+        output: [
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                annotations: [{ title: "Source", url: "https://example.com", snippet: "Snippet" }]
+              }
+            ]
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateGroundedText({
+      model: provider.groundedLanguageModel!("gpt-4o-search-preview"),
+      prompt: "What happened today?"
+    });
+
+    expect(result.text).toBe("fresh answer");
+    expect(result.sources).toEqual([
+      {
+        title: "Source",
+        url: "https://example.com",
+        snippet: "Snippet",
+        providerMetadata: expect.any(Object)
+      }
+    ]);
   });
 });

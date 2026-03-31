@@ -22,6 +22,25 @@ import type {
   ToolExecutionResult
 } from "./types.js";
 
+const withToolTimeout = async <T>(operation: Promise<T>, timeoutMs?: number): Promise<T> => {
+  if (!timeoutMs) {
+    return operation;
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Tool execution timed out after ${timeoutMs}ms.`)), timeoutMs);
+    operation
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+};
+
 const validateReasoning = (options: Pick<GenerateTextOptions, "model" | "reasoning">) => {
   const { reasoning } = options;
   if (!reasoning) {
@@ -68,6 +87,7 @@ const toRequest = (options: GenerateTextOptions, messages: ModelMessage[]): Mode
   messages,
   tools: options.tools,
   toolChoice: options.toolChoice,
+  toolExecution: options.toolExecution,
   temperature: options.temperature,
   maxTokens: options.maxTokens,
   reasoning: options.reasoning,
@@ -87,9 +107,35 @@ const executeTools = async (
     step: number;
   }
 ): Promise<ToolExecutionResult[]> => {
-  const results: ToolExecutionResult[] = [];
+  const validatedCalls = toolCalls.map((call) => {
+    const tool = options.tools?.[call.name];
+    if (!tool) {
+      throw new ValidationError(`Tool "${call.name}" was requested by the model but is not registered.`);
+    }
 
-  for (const call of toolCalls) {
+    const parsed = tool.schema.safeParse(call.input);
+    if (!parsed.success) {
+      throw new ValidationError(`Invalid input for tool "${call.name}": ${parsed.error.message}`);
+    }
+
+    return {
+      call,
+      tool,
+      parsedInput: parsed.data
+    };
+  });
+
+  const parallel = options.toolExecution?.parallel ?? options.model.capabilities.parallelToolCalls;
+  const maxConcurrency = Math.max(1, options.toolExecution?.maxConcurrency ?? validatedCalls.length ?? 1);
+  const timeoutMs = options.toolExecution?.timeoutMs;
+  const stopOnError = options.toolExecution?.stopOnError ?? false;
+  const results = new Array<ToolExecutionResult>(validatedCalls.length);
+
+  const executeSingleTool = async (
+    item: (typeof validatedCalls)[number],
+    index: number
+  ): Promise<void> => {
+    const { call, tool, parsedInput } = item;
     const startedAt = Date.now();
     await emitLanguageModelTelemetryEvent(options.model, {
       type: "tool-execution-start",
@@ -100,51 +146,15 @@ const executeTools = async (
       startedAt
     });
 
-    const tool = options.tools?.[call.name];
-    if (!tool) {
-      const finishedAt = Date.now();
-      const error = new ValidationError(`Tool "${call.name}" was requested by the model but is not registered.`);
-      await emitLanguageModelTelemetryEvent(options.model, {
-        type: "tool-execution-error",
-        model: options.model,
-        input: context.request,
-        step: context.step,
-        toolCall: call,
-        error,
-        startedAt,
-        finishedAt,
-        latencyMs: finishedAt - startedAt
-      });
-      throw error;
-    }
-
-    const parsed = tool.schema.safeParse(call.input);
-    if (!parsed.success) {
-      const finishedAt = Date.now();
-      const error = new ValidationError(`Invalid input for tool "${call.name}": ${parsed.error.message}`);
-      await emitLanguageModelTelemetryEvent(options.model, {
-        type: "tool-execution-error",
-        model: options.model,
-        input: context.request,
-        step: context.step,
-        toolCall: call,
-        error,
-        startedAt,
-        finishedAt,
-        latencyMs: finishedAt - startedAt
-      });
-      throw error;
-    }
-
     try {
-      const output = serializeJsonValue(await tool.execute(parsed.data));
+      const output = serializeJsonValue(await withToolTimeout(Promise.resolve(tool.execute(parsedInput)), timeoutMs));
       const result = {
         toolCallId: call.id,
         toolName: call.name,
         output,
         isError: false
       } satisfies ToolExecutionResult;
-      results.push(result);
+      results[index] = result;
 
       const finishedAt = Date.now();
       await emitLanguageModelTelemetryEvent(options.model, {
@@ -165,7 +175,7 @@ const executeTools = async (
         error: { message: error instanceof Error ? error.message : "Tool execution failed." },
         isError: true
       } satisfies ToolExecutionResult;
-      results.push(result);
+      results[index] = result;
 
       const finishedAt = Date.now();
       await emitLanguageModelTelemetryEvent(options.model, {
@@ -179,6 +189,35 @@ const executeTools = async (
         finishedAt,
         latencyMs: finishedAt - startedAt
       });
+    }
+  };
+
+  if (!parallel || validatedCalls.length <= 1) {
+    for (const [index, item] of validatedCalls.entries()) {
+      await executeSingleTool(item, index);
+      if (stopOnError && results[index]?.isError) {
+        throw new Error(`Tool "${item.call.name}" failed: ${results[index]?.error?.message ?? "Unknown tool error."}`);
+      }
+    }
+
+    return results;
+  }
+
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(maxConcurrency, validatedCalls.length) }, async () => {
+    while (cursor < validatedCalls.length) {
+      const index = cursor;
+      cursor += 1;
+      await executeSingleTool(validatedCalls[index], index);
+    }
+  });
+
+  await Promise.all(workers);
+
+  if (stopOnError) {
+    const firstError = results.find((result) => result?.isError);
+    if (firstError) {
+      throw new Error(`Tool "${firstError.toolName}" failed: ${firstError.error?.message ?? "Unknown tool error."}`);
     }
   }
 

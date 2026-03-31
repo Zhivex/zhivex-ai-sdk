@@ -206,6 +206,7 @@ const createObjectOptions = <TSchema extends ZodTypeAny>(options: GenerateObject
     model: options.model,
     system: options.system,
     tools: options.tools,
+    toolExecution: options.toolExecution,
     maxSteps: options.maxSteps,
     temperature: options.temperature,
     maxTokens: options.maxTokens,

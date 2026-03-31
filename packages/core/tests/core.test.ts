@@ -345,6 +345,241 @@ describe("core helpers", () => {
     expect(result.messages.at(-1)?.role).toBe("assistant");
   });
 
+  it("executes tool calls in parallel while preserving result order", async () => {
+    let call = 0;
+    let active = 0;
+    let maxActive = 0;
+
+    const model = createLanguageModel({
+      capabilities: {
+        streaming: true,
+        tools: true,
+        structuredOutput: true,
+        jsonMode: true,
+        toolChoice: true,
+        parallelToolCalls: true,
+        vision: true,
+        files: false,
+        audioInput: false,
+        audioOutput: false,
+        embeddings: false,
+        reasoning: false,
+        webSearch: false
+      },
+      async generate() {
+        call += 1;
+        if (call === 1) {
+          return {
+            messages: [
+              {
+                role: "assistant",
+                parts: [
+                  { type: "tool-call", toolCall: { id: "1", name: "slow", input: { value: 1 } } },
+                  { type: "tool-call", toolCall: { id: "2", name: "fast", input: { value: 2 } } }
+                ]
+              }
+            ]
+          };
+        }
+
+        return { messages: [createTextMessage("assistant", "done")], text: "done" };
+      }
+    });
+
+    const result = await generateText({
+      model,
+      prompt: "Run both tools",
+      maxSteps: 2,
+      tools: {
+        slow: tool({
+          name: "slow",
+          schema: z.object({ value: z.number() }),
+          async execute({ value }) {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            active -= 1;
+            return { value };
+          }
+        }),
+        fast: tool({
+          name: "fast",
+          schema: z.object({ value: z.number() }),
+          async execute({ value }) {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            active -= 1;
+            return { value };
+          }
+        })
+      }
+    });
+
+    expect(maxActive).toBeGreaterThan(1);
+    expect(result.toolResults.map((entry) => entry.toolName)).toEqual(["slow", "fast"]);
+  });
+
+  it("limits parallel tool execution with maxConcurrency", async () => {
+    let call = 0;
+    let active = 0;
+    let maxActive = 0;
+
+    const model = createLanguageModel({
+      capabilities: {
+        streaming: true,
+        tools: true,
+        structuredOutput: true,
+        jsonMode: true,
+        toolChoice: true,
+        parallelToolCalls: true,
+        vision: true,
+        files: false,
+        audioInput: false,
+        audioOutput: false,
+        embeddings: false,
+        reasoning: false,
+        webSearch: false
+      },
+      async generate() {
+        call += 1;
+        if (call === 1) {
+          return {
+            messages: [
+              {
+                role: "assistant",
+                parts: [
+                  { type: "tool-call", toolCall: { id: "1", name: "one", input: {} } },
+                  { type: "tool-call", toolCall: { id: "2", name: "two", input: {} } }
+                ]
+              }
+            ]
+          };
+        }
+
+        return { messages: [createTextMessage("assistant", "done")], text: "done" };
+      }
+    });
+
+    await generateText({
+      model,
+      prompt: "Run tools",
+      maxSteps: 2,
+      toolExecution: {
+        maxConcurrency: 1
+      },
+      tools: {
+        one: tool({
+          name: "one",
+          schema: z.object({}),
+          async execute() {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            active -= 1;
+            return { ok: true };
+          }
+        }),
+        two: tool({
+          name: "two",
+          schema: z.object({}),
+          async execute() {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            active -= 1;
+            return { ok: true };
+          }
+        })
+      }
+    });
+
+    expect(maxActive).toBe(1);
+  });
+
+  it("turns tool timeouts into error results and can stop on tool error", async () => {
+    let call = 0;
+    const model = createLanguageModel({
+      capabilities: {
+        streaming: true,
+        tools: true,
+        structuredOutput: true,
+        jsonMode: true,
+        toolChoice: true,
+        parallelToolCalls: true,
+        vision: true,
+        files: false,
+        audioInput: false,
+        audioOutput: false,
+        embeddings: false,
+        reasoning: false,
+        webSearch: false
+      },
+      async generate() {
+        call += 1;
+        if (call === 1) {
+          return {
+            messages: [
+              {
+                role: "assistant",
+                parts: [{ type: "tool-call", toolCall: { id: "1", name: "slow", input: {} } }]
+              }
+            ]
+          };
+        }
+
+        return { messages: [createTextMessage("assistant", "done")], text: "done" };
+      }
+    });
+
+    const timeoutResult = await generateText({
+      model,
+      prompt: "Run slow tool",
+      maxSteps: 2,
+      toolExecution: {
+        timeoutMs: 5
+      },
+      tools: {
+        slow: tool({
+          name: "slow",
+          schema: z.object({}),
+          async execute() {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            return { ok: true };
+          }
+        })
+      }
+    });
+
+    expect(timeoutResult.toolResults[0]).toMatchObject({
+      toolName: "slow",
+      isError: true
+    });
+
+    call = 0;
+    await expect(
+      generateText({
+        model,
+        prompt: "Run slow tool",
+        maxSteps: 2,
+        toolExecution: {
+          timeoutMs: 5,
+          stopOnError: true
+        },
+        tools: {
+          slow: tool({
+            name: "slow",
+            schema: z.object({}),
+            async execute() {
+              await new Promise((resolve) => setTimeout(resolve, 20));
+              return { ok: true };
+            }
+          })
+        }
+      })
+    ).rejects.toThrow('Tool "slow" failed: Tool execution timed out after 5ms.');
+  });
+
   it("builds ergonomic messages", () => {
     expect(system("You are helpful")).toEqual({
       role: "system",

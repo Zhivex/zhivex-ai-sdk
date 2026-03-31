@@ -9,17 +9,24 @@ import {
   streamSSE,
   withRetry,
   withTimeoutSignal,
+  type AudioInput,
   type CallableProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
   type GenerateResult,
+  type GroundedGenerateResult,
+  type GroundedLanguageModel,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
   type ProviderAdapter,
-  type StreamEvent
+  type SpeechModel,
+  type SpeechResult,
+  type StreamEvent,
+  type TranscriptionModel,
+  type TranscriptionResult
 } from "@zhivex-ai/core";
 
 export interface VertexProviderOptions {
@@ -56,6 +63,32 @@ const capabilities: ModelCapabilities = {
   webSearch: false
 };
 
+const transcriptionCapabilities: ModelCapabilities = {
+  ...capabilities,
+  streaming: false,
+  tools: false,
+  structuredOutput: false,
+  jsonMode: false,
+  toolChoice: false,
+  parallelToolCalls: false,
+  audioInput: true,
+  audioOutput: false,
+  embeddings: false,
+  reasoning: false,
+  webSearch: false
+};
+
+const speechCapabilities: ModelCapabilities = {
+  ...transcriptionCapabilities,
+  audioInput: false,
+  audioOutput: true
+};
+
+const groundedCapabilities: ModelCapabilities = {
+  ...capabilities,
+  webSearch: true
+};
+
 const parseJson = async (response: Response) => {
   if (!response.ok) {
     const body = await response.text();
@@ -65,6 +98,15 @@ const parseJson = async (response: Response) => {
   }
 
   return response.json();
+};
+
+const toBase64 = (data: AudioInput["data"]) => {
+  if (typeof data === "string") {
+    return data;
+  }
+
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  return Buffer.from(bytes).toString("base64");
 };
 
 const systemInstruction = (messages: ModelMessage[]) => {
@@ -218,6 +260,16 @@ const parseAssistantMessage = (candidate: any): ModelMessage => ({
       return { type: "text", text: JSON.stringify(part) } as const;
     }) ?? []
 });
+
+const extractGroundingSources = (candidate: any): GroundedGenerateResult["sources"] =>
+  (candidate?.groundingMetadata?.groundingChunks ?? [])
+    .map((chunk: any) => ({
+      title: chunk.web?.title,
+      url: chunk.web?.uri,
+      snippet: chunk.web?.snippet,
+      providerMetadata: chunk
+    }))
+    .filter((source: GroundedGenerateResult["sources"][number]) => typeof source.url === "string");
 
 class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
   readonly provider = "vertex";
@@ -391,6 +443,232 @@ class VertexEmbeddingModel implements EmbeddingModel {
   }
 }
 
+class VertexTranscriptionModel implements TranscriptionModel {
+  readonly provider = "vertex";
+  readonly capabilities = transcriptionCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly baseURL: string,
+    private readonly accessToken: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  private url() {
+    return `${this.baseURL}/publishers/google/models/${this.modelId}:generateContent`;
+  }
+
+  private headers() {
+    return {
+      "content-type": "application/json",
+      authorization: `Bearer ${this.accessToken}`
+    };
+  }
+
+  async transcribe(input: {
+    audio: AudioInput;
+    prompt?: string;
+    language?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<TranscriptionResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url(), {
+            method: "POST",
+            headers: this.headers(),
+            signal,
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    {
+                      inlineData: {
+                        mimeType: input.audio.mediaType,
+                        data: toBase64(input.audio.data)
+                      }
+                    },
+                    {
+                      text:
+                        input.prompt ??
+                        `Transcribe this audio${input.language ? ` in ${input.language}` : ""}. Return only the transcript.`
+                    }
+                  ]
+                }
+              ],
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
+
+      const json = await parseJson(response);
+      const text = json.candidates?.[0]?.content?.parts?.find((part: any) => typeof part.text === "string")?.text ?? "";
+      return {
+        text,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class VertexSpeechModel implements SpeechModel {
+  readonly provider = "vertex";
+  readonly capabilities = speechCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly baseURL: string,
+    private readonly accessToken: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  private url() {
+    return `${this.baseURL}/publishers/google/models/${this.modelId}:generateContent`;
+  }
+
+  private headers() {
+    return {
+      "content-type": "application/json",
+      authorization: `Bearer ${this.accessToken}`
+    };
+  }
+
+  async generateSpeech(input: {
+    input: string;
+    voice?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<SpeechResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url(), {
+            method: "POST",
+            headers: this.headers(),
+            signal,
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: input.input }] }],
+              generationConfig: {
+                responseModalities: ["AUDIO"]
+              },
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: input.voice ?? "Kore"
+                  }
+                }
+              },
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
+
+      const json = await parseJson(response);
+      const audioPart = json.candidates?.[0]?.content?.parts?.find((part: any) => part.inlineData?.data);
+      return {
+        audio: Uint8Array.from(Buffer.from(audioPart?.inlineData?.data ?? "", "base64")),
+        mediaType: audioPart?.inlineData?.mimeType ?? "audio/wav",
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class VertexGroundedLanguageModel implements GroundedLanguageModel {
+  readonly provider = "vertex";
+  readonly capabilities = groundedCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly baseURL: string,
+    private readonly accessToken: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  private url() {
+    return `${this.baseURL}/publishers/google/models/${this.modelId}:generateContent`;
+  }
+
+  private headers() {
+    return {
+      "content-type": "application/json",
+      authorization: `Bearer ${this.accessToken}`
+    };
+  }
+
+  async generate(input: {
+    messages: ModelMessage[];
+    temperature?: number;
+    maxTokens?: number;
+    reasoning?: ModelGenerateInput["reasoning"];
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<GroundedGenerateResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url(), {
+            method: "POST",
+            headers: this.headers(),
+            signal,
+            body: JSON.stringify({
+              contents: mapMessages(input.messages),
+              systemInstruction: systemInstruction(input.messages),
+              tools: [{ googleSearch: {} }],
+              generationConfig: generationConfig(this.modelId, {
+                messages: input.messages,
+                temperature: input.temperature,
+                maxTokens: input.maxTokens,
+                reasoning: input.reasoning
+              } as ModelGenerateInput),
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
+
+      const json = await parseJson(response);
+      const candidate = json.candidates?.[0];
+      const assistantMessage = parseAssistantMessage(candidate);
+      return {
+        text: assistantMessage.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join(""),
+        sources: extractGroundingSources(candidate),
+        finishReason: normalizeFinishReason(candidate?.finishReason),
+        providerFinishReason: candidate?.finishReason,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
 export const createVertex = (
   options: VertexProviderOptions = {}
 ): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
@@ -415,6 +693,9 @@ export const createVertex = (
     name: "vertex",
     languageModel: (modelId) => new VertexLanguageModel(modelId, baseURL, accessToken, fetcher),
     embeddingModel: (modelId) => new VertexEmbeddingModel(modelId, baseURL, accessToken, fetcher),
+    transcriptionModel: (modelId) => new VertexTranscriptionModel(modelId, baseURL, accessToken, fetcher),
+    speechModel: (modelId) => new VertexSpeechModel(modelId, baseURL, accessToken, fetcher),
+    groundedLanguageModel: (modelId) => new VertexGroundedLanguageModel(modelId, baseURL, accessToken, fetcher),
     rawFetch: fetcher
   });
 };

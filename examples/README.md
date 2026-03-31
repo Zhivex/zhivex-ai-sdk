@@ -24,8 +24,13 @@ Typical examples:
 ```bash
 bun run examples/sdk/stream-text.ts
 bun run examples/sdk/generate-object.ts
-bun run examples/sdk/tools-and-messages.ts
+bun run examples/sdk/messages-and-tools.ts
+bun run examples/sdk/transcribe-audio.ts
+bun run examples/sdk/generate-speech.ts
+bun run examples/sdk/grounded-text.ts
 bun run examples/gateway/basic-routing.ts
+bun run examples/gateway/stream-routing.ts
+bun run examples/gateway/object-routing.ts
 bun run examples/providers/openai.ts
 ```
 

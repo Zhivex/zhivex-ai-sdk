@@ -2,6 +2,15 @@
 
 Routing and fallback package for Zhivex AI SDK.
 
+The gateway now supports:
+
+- `generate()`
+- `streamText()`
+- `generateObject()`
+- `streamObject()`
+
+Tool loops continue to run on the selected target after routing, and streaming fallbacks are resolved before the first chunk is emitted.
+
 ## Install
 
 ```bash

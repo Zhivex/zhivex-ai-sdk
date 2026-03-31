@@ -1,15 +1,33 @@
-import { generateText, type ProviderAdapter } from "@zhivex-ai/core";
+import {
+  generateObject,
+  generateText,
+  streamObject,
+  streamText,
+  type GenerateObjectOptions,
+  type GenerateObjectOutput,
+  type GenerateTextOptions,
+  type GenerateTextOutput,
+  type StreamEvent,
+  type StreamObjectResult,
+  type StreamTextResult,
+  type ProviderAdapter
+} from "@zhivex-ai/core";
+import type { ZodTypeAny } from "zod";
 
 import { createRouteDecision, gatewayMessagesToModelMessages, stripImagesForUnsupportedModel } from "./compat.js";
 import {
   GatewayError,
   type GatewayAttempt,
   type GatewayConfig,
+  type GatewayGenerateObjectRequest,
   type GatewayModelTarget,
+  type GatewayObjectResponse,
   type GatewayProviderId,
   type GatewayRequest,
   type GatewayResponse,
   type GatewayRoutingMode,
+  type GatewayStreamObjectResult,
+  type GatewayStreamTextResult,
   type GatewayTaskIntent
 } from "./types.js";
 
@@ -61,7 +79,9 @@ const supportsRequiredCapabilities = (
   }
 
   const capabilities = adapter.languageModel(target.modelId).capabilities;
-  return Object.entries(requiredCapabilities).every(([key, required]) => required !== true || capabilities[key as keyof typeof capabilities] === true);
+  return Object.entries(requiredCapabilities).every(
+    ([key, required]) => required !== true || capabilities[key as keyof typeof capabilities] === true
+  );
 };
 
 const withinCostBudget = (config: GatewayConfig, request: GatewayRequest, target: GatewayModelTarget) => {
@@ -137,6 +157,80 @@ const normalizeUsage = (
   };
 };
 
+const requestMessages = (request: GatewayRequest) =>
+  gatewayMessagesToModelMessages(
+    stripImagesForUnsupportedModel(request.messages, request.primary.provider, request.primary.modelId),
+    request.systemPrompt
+  );
+
+const getInputText = (request: GatewayRequest) =>
+  `${request.systemPrompt ?? ""}\n${request.messages.map((message) => message.content).join("\n")}`.trim();
+
+const buildRequiredCapabilities = (
+  request: GatewayRequest,
+  extra: NonNullable<GatewayRequest["requiredCapabilities"]> = {}
+): GatewayRequest["requiredCapabilities"] => ({
+  ...(request.requiredCapabilities ?? {}),
+  ...(request.tools ? { tools: true } : {}),
+  ...(request.reasoning ? { reasoning: true } : {}),
+  ...extra
+});
+
+const createTextOptions = (
+  adapter: ProviderAdapter,
+  target: GatewayModelTarget,
+  request: GatewayRequest
+): GenerateTextOptions => ({
+  model: adapter.languageModel(target.modelId),
+  messages: gatewayMessagesToModelMessages(
+    stripImagesForUnsupportedModel(request.messages, target.provider, target.modelId),
+    request.systemPrompt
+  ),
+  tools: request.tools,
+  toolChoice: request.toolChoice,
+  toolExecution: request.toolExecution,
+  maxSteps: request.maxSteps,
+  temperature: request.temperature,
+  maxTokens: request.maxTokens,
+  reasoning: request.reasoning,
+  providerOptions: request.providerOptions,
+  abortSignal: request.abortSignal
+});
+
+const enrichTextResult = (
+  request: GatewayRequest,
+  target: GatewayModelTarget,
+  attempts: GatewayAttempt[],
+  routeDecision: GatewayResponse["routeDecision"],
+  startedAt: number,
+  result: GenerateTextOutput
+): GatewayResponse => ({
+  ...result,
+  providerUsed: target.provider,
+  modelUsed: target.modelId,
+  latencyMs: Date.now() - startedAt,
+  attempts,
+  usage: normalizeUsage(result.usage, getInputText(request), result.text),
+  routeDecision
+});
+
+const enrichObjectResult = <TSchema extends ZodTypeAny>(
+  request: GatewayRequest,
+  target: GatewayModelTarget,
+  attempts: GatewayAttempt[],
+  routeDecision: GatewayResponse["routeDecision"],
+  startedAt: number,
+  result: GenerateObjectOutput<TSchema>
+): GatewayObjectResponse<TSchema> => ({
+  ...result,
+  providerUsed: target.provider,
+  modelUsed: target.modelId,
+  latencyMs: Date.now() - startedAt,
+  attempts,
+  usage: normalizeUsage(result.usage, getInputText(request), result.text),
+  routeDecision
+});
+
 export const createGateway = (config: GatewayConfig) => {
   const getAdapter = (provider: GatewayProviderId): ProviderAdapter => {
     const adapter = config.adapters[provider];
@@ -146,119 +240,351 @@ export const createGateway = (config: GatewayConfig) => {
     return adapter;
   };
 
-  return {
-    async generate(request: GatewayRequest): Promise<GatewayResponse> {
-      const attempts: GatewayAttempt[] = [];
-      const startedAt = Date.now();
-      const mode = request.routingMode ?? "balanced";
-      const intent = request.taskIntent ?? "chat";
-      const orderedTargets = orderTargets(mode, intent, request.primary, request.fallbacks ?? [], config);
-      const routeDecision = createRouteDecision(mode, intent, orderedTargets);
-      const maxRetries = Math.max(0, config.maxRetries ?? 2);
+  const routeDecisionFor = (request: GatewayRequest) => {
+    const mode = request.routingMode ?? "balanced";
+    const intent = request.taskIntent ?? "chat";
+    const orderedTargets = orderTargets(mode, intent, request.primary, request.fallbacks ?? [], config);
+    return {
+      mode,
+      intent,
+      orderedTargets,
+      routeDecision: createRouteDecision(mode, intent, orderedTargets)
+    };
+  };
 
-      for (const [targetIndex, target] of orderedTargets.entries()) {
-        const adapter = getAdapter(target.provider);
+  const runGenerate = async <TResult extends GenerateTextOutput>(
+    request: GatewayRequest,
+    operation: (adapter: ProviderAdapter, target: GatewayModelTarget) => Promise<TResult>,
+    extraRequiredCapabilities: NonNullable<GatewayRequest["requiredCapabilities"]> = {}
+  ) => {
+    const attempts: GatewayAttempt[] = [];
+    const startedAt = Date.now();
+    const { orderedTargets, routeDecision } = routeDecisionFor(request);
+    const maxRetries = Math.max(0, config.maxRetries ?? 2);
+    const requiredCapabilities = buildRequiredCapabilities(request, extraRequiredCapabilities);
 
-        if (!supportsRequiredCapabilities(adapter, target, request.requiredCapabilities)) {
-          attempts.push({
-            provider: target.provider,
-            modelId: target.modelId,
-            ok: false,
-            latencyMs: 0,
-            errorMessage: "Skipped because model capabilities do not satisfy the request."
-          });
-          continue;
-        }
+    for (const [targetIndex, target] of orderedTargets.entries()) {
+      const adapter = getAdapter(target.provider);
 
-        if (!withinCostBudget(config, request, target)) {
-          attempts.push({
-            provider: target.provider,
-            modelId: target.modelId,
-            ok: false,
-            latencyMs: 0,
-            errorMessage: "Skipped because provider cost exceeds the configured budget."
-          });
-          continue;
-        }
-
-        for (let retry = 0; retry <= maxRetries; retry += 1) {
-          const attemptStartedAt = Date.now();
-
-          try {
-            const providerMessages = stripImagesForUnsupportedModel(request.messages, target.provider, target.modelId);
-            await config.onAttempt?.({
-              provider: target.provider,
-              modelId: target.modelId,
-              ok: true,
-              latencyMs: 0,
-              retry,
-              targetRank: targetIndex
-            });
-            const result = await withTimeout(
-              generateText({
-                model: adapter.languageModel(target.modelId),
-                messages: gatewayMessagesToModelMessages(providerMessages, request.systemPrompt),
-                temperature: request.temperature,
-                maxTokens: request.maxTokens,
-                abortSignal: request.abortSignal
-              }),
-              getAttemptTimeoutMs(config, target.provider)
-            );
-
-            attempts.push({
-              provider: target.provider,
-              modelId: target.modelId,
-              ok: true,
-              latencyMs: Date.now() - attemptStartedAt
-            });
-
-            const inputText = `${request.systemPrompt ?? ""}\n${providerMessages.map((message) => message.content).join("\n")}`.trim();
-
-            return {
-              text: result.text,
-              providerUsed: target.provider,
-              modelUsed: target.modelId,
-              latencyMs: Date.now() - startedAt,
-              attempts,
-              usage: normalizeUsage(result.usage, inputText, result.text),
-              routeDecision
-            };
-          } catch (error) {
-            const normalized = normalizeError(error);
-
-            attempts.push({
-              provider: target.provider,
-              modelId: target.modelId,
-              ok: false,
-              latencyMs: Date.now() - attemptStartedAt,
-              errorMessage: normalized.message
-            });
-
-            await config.onAttempt?.({
-              provider: target.provider,
-              modelId: target.modelId,
-              ok: false,
-              latencyMs: Date.now() - attemptStartedAt,
-              errorMessage: normalized.message,
-              retry,
-              targetRank: targetIndex
-            });
-
-            if (retry < maxRetries && normalized.retryable) {
-              await sleep(retryBackoffMs(config, retry));
-              continue;
-            }
-
-            break;
-          }
-        }
+      if (!supportsRequiredCapabilities(adapter, target, requiredCapabilities)) {
+        attempts.push({
+          provider: target.provider,
+          modelId: target.modelId,
+          ok: false,
+          latencyMs: 0,
+          errorMessage: "Skipped because model capabilities do not satisfy the request."
+        });
+        continue;
       }
 
-      const finalError = attempts.at(-1)?.errorMessage ?? "All gateway attempts failed.";
-      throw new GatewayError(finalError, false);
+      if (!withinCostBudget(config, request, target)) {
+        attempts.push({
+          provider: target.provider,
+          modelId: target.modelId,
+          ok: false,
+          latencyMs: 0,
+          errorMessage: "Skipped because provider cost exceeds the configured budget."
+        });
+        continue;
+      }
+
+      for (let retry = 0; retry <= maxRetries; retry += 1) {
+        const attemptStartedAt = Date.now();
+
+        try {
+          await config.onAttempt?.({
+            provider: target.provider,
+            modelId: target.modelId,
+            ok: true,
+            latencyMs: 0,
+            retry,
+            targetRank: targetIndex
+          });
+
+          const result = await withTimeout(operation(adapter, target), getAttemptTimeoutMs(config, target.provider));
+          attempts.push({
+            provider: target.provider,
+            modelId: target.modelId,
+            ok: true,
+            latencyMs: Date.now() - attemptStartedAt
+          });
+
+          return {
+            attempts,
+            target,
+            startedAt,
+            routeDecision,
+            result
+          };
+        } catch (error) {
+          const normalized = normalizeError(error);
+
+          attempts.push({
+            provider: target.provider,
+            modelId: target.modelId,
+            ok: false,
+            latencyMs: Date.now() - attemptStartedAt,
+            errorMessage: normalized.message
+          });
+
+          await config.onAttempt?.({
+            provider: target.provider,
+            modelId: target.modelId,
+            ok: false,
+            latencyMs: Date.now() - attemptStartedAt,
+            errorMessage: normalized.message,
+            retry,
+            targetRank: targetIndex
+          });
+
+          if (retry < maxRetries && normalized.retryable) {
+            await sleep(retryBackoffMs(config, retry));
+            continue;
+          }
+
+          break;
+        }
+      }
+    }
+
+    const finalError = attempts.at(-1)?.errorMessage ?? "All gateway attempts failed.";
+    throw new GatewayError(finalError, false);
+  };
+
+  const runStream = async <TStreamResult extends StreamTextResult | StreamObjectResult<any>>(
+    request: GatewayRequest,
+    operation: (adapter: ProviderAdapter, target: GatewayModelTarget) => TStreamResult,
+    extraRequiredCapabilities: NonNullable<GatewayRequest["requiredCapabilities"]> = {}
+  ) => {
+    const attempts: GatewayAttempt[] = [];
+    const startedAt = Date.now();
+    const { orderedTargets, routeDecision } = routeDecisionFor(request);
+    const maxRetries = Math.max(0, config.maxRetries ?? 2);
+    const requiredCapabilities = buildRequiredCapabilities(request, { streaming: true, ...extraRequiredCapabilities });
+
+    for (const [targetIndex, target] of orderedTargets.entries()) {
+      const adapter = getAdapter(target.provider);
+
+      if (!supportsRequiredCapabilities(adapter, target, requiredCapabilities)) {
+        attempts.push({
+          provider: target.provider,
+          modelId: target.modelId,
+          ok: false,
+          latencyMs: 0,
+          errorMessage: "Skipped because model capabilities do not satisfy the request."
+        });
+        continue;
+      }
+
+      if (!withinCostBudget(config, request, target)) {
+        attempts.push({
+          provider: target.provider,
+          modelId: target.modelId,
+          ok: false,
+          latencyMs: 0,
+          errorMessage: "Skipped because provider cost exceeds the configured budget."
+        });
+        continue;
+      }
+
+      for (let retry = 0; retry <= maxRetries; retry += 1) {
+        const attemptStartedAt = Date.now();
+
+        try {
+          await config.onAttempt?.({
+            provider: target.provider,
+            modelId: target.modelId,
+            ok: true,
+            latencyMs: 0,
+            retry,
+            targetRank: targetIndex
+          });
+
+          const streamResult = operation(adapter, target);
+          const iterator = streamResult.eventStream[Symbol.asyncIterator]();
+          const first = await withTimeout(iterator.next(), getAttemptTimeoutMs(config, target.provider));
+
+          if (!first.done && first.value.type === "error") {
+            throw first.value.error;
+          }
+
+          attempts.push({
+            provider: target.provider,
+            modelId: target.modelId,
+            ok: true,
+            latencyMs: Date.now() - attemptStartedAt
+          });
+
+          return {
+            attempts,
+            target,
+            startedAt,
+            routeDecision,
+            streamResult
+          };
+        } catch (error) {
+          const normalized = normalizeError(error);
+          attempts.push({
+            provider: target.provider,
+            modelId: target.modelId,
+            ok: false,
+            latencyMs: Date.now() - attemptStartedAt,
+            errorMessage: normalized.message
+          });
+
+          await config.onAttempt?.({
+            provider: target.provider,
+            modelId: target.modelId,
+            ok: false,
+            latencyMs: Date.now() - attemptStartedAt,
+            errorMessage: normalized.message,
+            retry,
+            targetRank: targetIndex
+          });
+
+          if (retry < maxRetries && normalized.retryable) {
+            await sleep(retryBackoffMs(config, retry));
+            continue;
+          }
+
+          break;
+        }
+      }
+    }
+
+    const finalError = attempts.at(-1)?.errorMessage ?? "All gateway attempts failed.";
+    throw new GatewayError(finalError, false);
+  };
+
+  return {
+    async generate(request: GatewayRequest): Promise<GatewayResponse> {
+      const routed = await runGenerate(request, (adapter, target) => generateText(createTextOptions(adapter, target, request)));
+      return enrichTextResult(request, routed.target, routed.attempts, routed.routeDecision, routed.startedAt, routed.result);
+    },
+
+    streamText(request: GatewayRequest): GatewayStreamTextResult {
+      const selected = runStream(request, (adapter, target) => streamText(createTextOptions(adapter, target, request)));
+      let relayPromise: Promise<{
+        collect: () => Promise<GatewayResponse>;
+      }> | undefined;
+
+      const ensureRelay = async () => {
+        if (!relayPromise) {
+          relayPromise = selected.then((routed) => ({
+            collect: async () =>
+              enrichTextResult(
+                request,
+                routed.target,
+                routed.attempts,
+                routed.routeDecision,
+                routed.startedAt,
+                await routed.streamResult.collect()
+              )
+          }));
+        }
+
+        return relayPromise;
+      };
+
+      return {
+        eventStream: (async function* () {
+          const { streamResult } = await selected;
+          for await (const event of streamResult.eventStream) {
+            yield event;
+          }
+        })(),
+        textStream: (async function* () {
+          const { streamResult } = await selected;
+          for await (const chunk of streamResult.textStream) {
+            yield chunk;
+          }
+        })(),
+        collect: async () => (await ensureRelay()).collect()
+      };
+    },
+
+    async generateObject<TSchema extends ZodTypeAny>(
+      request: GatewayGenerateObjectRequest<TSchema>
+    ): Promise<GatewayObjectResponse<TSchema>> {
+      const routed = await runGenerate(
+        request,
+        (adapter, target) =>
+          generateObject({
+            ...createTextOptions(adapter, target, request),
+            schema: request.schema,
+            mode: request.mode,
+            schemaName: request.schemaName,
+            schemaDescription: request.schemaDescription
+          } as GenerateObjectOptions<TSchema>)
+      );
+
+      return enrichObjectResult(
+        request,
+        routed.target,
+        routed.attempts,
+        routed.routeDecision,
+        routed.startedAt,
+        routed.result as GenerateObjectOutput<TSchema>
+      );
+    },
+
+    streamObject<TSchema extends ZodTypeAny>(request: GatewayGenerateObjectRequest<TSchema>): GatewayStreamObjectResult<TSchema> {
+      const selected = runStream(
+        request,
+        (adapter, target) =>
+          streamObject({
+            ...createTextOptions(adapter, target, request),
+            schema: request.schema,
+            mode: request.mode,
+            schemaName: request.schemaName,
+            schemaDescription: request.schemaDescription
+          } as GenerateObjectOptions<TSchema>)
+      );
+      let relayPromise: Promise<{
+        streamResult: StreamObjectResult<TSchema>;
+        collect: () => Promise<GatewayObjectResponse<TSchema>>;
+      }> | undefined;
+
+      const ensureRelay = async () => {
+        if (!relayPromise) {
+          relayPromise = selected.then((routed) => ({
+            streamResult: routed.streamResult as StreamObjectResult<TSchema>,
+            collect: async () =>
+              enrichObjectResult(
+                request,
+                routed.target,
+                routed.attempts,
+                routed.routeDecision,
+                routed.startedAt,
+                await (routed.streamResult as StreamObjectResult<TSchema>).collect()
+              )
+          }));
+        }
+
+        return relayPromise;
+      };
+
+      return {
+        eventStream: (async function* () {
+          const { streamResult } = await selected;
+          for await (const event of streamResult.eventStream) {
+            yield event;
+          }
+        })(),
+        partialObjectStream: (async function* () {
+          const relay = await ensureRelay();
+          for await (const partial of relay.streamResult.partialObjectStream) {
+            yield partial;
+          }
+        })(),
+        textStream: (async function* () {
+          const relay = await ensureRelay();
+          for await (const chunk of relay.streamResult.textStream) {
+            yield chunk;
+          }
+        })(),
+        collect: async () => (await ensureRelay()).collect()
+      };
     }
   };
 };
-
-export * from "./compat.js";
-export * from "./types.js";

@@ -1,4 +1,19 @@
-import type { ModelCatalog, ProviderAdapter, TokenUsage } from "@zhivex-ai/core";
+import type {
+  GenerateGroundedTextOptions,
+  GenerateObjectOutput,
+  GenerateTextOutput,
+  GroundedLanguageModel,
+  ModelCatalog,
+  ProviderAdapter,
+  ReasoningConfig,
+  StreamObjectResult,
+  StreamTextResult,
+  TokenUsage,
+  ToolChoice,
+  ToolExecutionOptions,
+  ToolSet
+} from "@zhivex-ai/core";
+import type { ZodTypeAny } from "zod";
 
 export type GatewayProviderId =
   | "openai"
@@ -35,6 +50,12 @@ export interface GatewayRequest {
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
+  tools?: ToolSet;
+  toolChoice?: ToolChoice;
+  toolExecution?: ToolExecutionOptions;
+  maxSteps?: number;
+  reasoning?: ReasoningConfig;
+  providerOptions?: Record<string, unknown>;
   requiredCapabilities?: Partial<Record<"streaming" | "tools" | "structuredOutput" | "jsonMode" | "vision" | "reasoning", boolean>>;
   maxCostPer1kTokens?: number;
   routingMode?: GatewayRoutingMode;
@@ -54,6 +75,8 @@ export interface GatewayAttempt {
 
 export interface GatewayResponse {
   text: string;
+  finishReason?: GenerateTextOutput["finishReason"];
+  providerFinishReason?: GenerateTextOutput["providerFinishReason"];
   providerUsed: GatewayProviderId;
   modelUsed: string;
   latencyMs: number;
@@ -65,10 +88,36 @@ export interface GatewayResponse {
     orderedTargets: GatewayModelTarget[];
     reason: string;
   };
+  steps: GenerateTextOutput["steps"];
+  messages: GenerateTextOutput["messages"];
+  toolResults: GenerateTextOutput["toolResults"];
+}
+
+export interface GatewayGenerateObjectRequest<TSchema extends ZodTypeAny> extends GatewayRequest {
+  schema: TSchema;
+  mode?: "auto" | "native" | "prompted";
+  schemaName?: string;
+  schemaDescription?: string;
+}
+
+export interface GatewayObjectResponse<TSchema extends ZodTypeAny>
+  extends Omit<GatewayResponse, "text" | "usage">,
+    Omit<GenerateObjectOutput<TSchema>, "usage"> {
+  text: string;
+  usage: GatewayResponse["usage"];
+}
+
+export interface GatewayStreamTextResult extends Omit<StreamTextResult, "collect"> {
+  collect: () => Promise<GatewayResponse>;
+}
+
+export interface GatewayStreamObjectResult<TSchema extends ZodTypeAny> extends Omit<StreamObjectResult<TSchema>, "collect"> {
+  collect: () => Promise<GatewayObjectResponse<TSchema>>;
 }
 
 export interface GatewayConfig {
   adapters: Partial<Record<GatewayProviderId, ProviderAdapter>>;
+  groundedAdapters?: Partial<Record<GatewayProviderId, Pick<ProviderAdapter, "groundedLanguageModel">>>;
   modelCatalog?: ModelCatalog;
   providerCostsPer1kTokens?: Partial<Record<GatewayProviderId, number>>;
   latencyBiasMs?: Partial<Record<GatewayProviderId, number>>;
