@@ -1,4 +1,5 @@
 import { ParseError, UnsupportedFeatureError, ValidationError } from "./errors.js";
+import { emitLanguageModelTelemetryEvent } from "./middleware.js";
 import {
   createTextMessage,
   getTextFromMessages,
@@ -78,34 +79,105 @@ const toRequest = (options: GenerateTextOptions, messages: ModelMessage[]): Mode
   retryBackoffMs: options.retryBackoffMs
 });
 
-const executeTools = async (toolCalls: ToolCall[], options: GenerateTextOptions): Promise<ToolExecutionResult[]> => {
+const executeTools = async (
+  toolCalls: ToolCall[],
+  options: GenerateTextOptions,
+  context: {
+    request: ModelGenerateInput;
+    step: number;
+  }
+): Promise<ToolExecutionResult[]> => {
   const results: ToolExecutionResult[] = [];
 
   for (const call of toolCalls) {
+    const startedAt = Date.now();
+    await emitLanguageModelTelemetryEvent(options.model, {
+      type: "tool-execution-start",
+      model: options.model,
+      input: context.request,
+      step: context.step,
+      toolCall: call,
+      startedAt
+    });
+
     const tool = options.tools?.[call.name];
     if (!tool) {
-      throw new ValidationError(`Tool "${call.name}" was requested by the model but is not registered.`);
+      const finishedAt = Date.now();
+      const error = new ValidationError(`Tool "${call.name}" was requested by the model but is not registered.`);
+      await emitLanguageModelTelemetryEvent(options.model, {
+        type: "tool-execution-error",
+        model: options.model,
+        input: context.request,
+        step: context.step,
+        toolCall: call,
+        error,
+        startedAt,
+        finishedAt,
+        latencyMs: finishedAt - startedAt
+      });
+      throw error;
     }
 
     const parsed = tool.schema.safeParse(call.input);
     if (!parsed.success) {
-      throw new ValidationError(`Invalid input for tool "${call.name}": ${parsed.error.message}`);
+      const finishedAt = Date.now();
+      const error = new ValidationError(`Invalid input for tool "${call.name}": ${parsed.error.message}`);
+      await emitLanguageModelTelemetryEvent(options.model, {
+        type: "tool-execution-error",
+        model: options.model,
+        input: context.request,
+        step: context.step,
+        toolCall: call,
+        error,
+        startedAt,
+        finishedAt,
+        latencyMs: finishedAt - startedAt
+      });
+      throw error;
     }
 
     try {
       const output = serializeJsonValue(await tool.execute(parsed.data));
-      results.push({
+      const result = {
         toolCallId: call.id,
         toolName: call.name,
         output,
         isError: false
+      } satisfies ToolExecutionResult;
+      results.push(result);
+
+      const finishedAt = Date.now();
+      await emitLanguageModelTelemetryEvent(options.model, {
+        type: "tool-execution-finish",
+        model: options.model,
+        input: context.request,
+        step: context.step,
+        toolCall: call,
+        toolResult: result,
+        startedAt,
+        finishedAt,
+        latencyMs: finishedAt - startedAt
       });
     } catch (error) {
-      results.push({
+      const result = {
         toolCallId: call.id,
         toolName: call.name,
         error: { message: error instanceof Error ? error.message : "Tool execution failed." },
         isError: true
+      } satisfies ToolExecutionResult;
+      results.push(result);
+
+      const finishedAt = Date.now();
+      await emitLanguageModelTelemetryEvent(options.model, {
+        type: "tool-execution-error",
+        model: options.model,
+        input: context.request,
+        step: context.step,
+        toolCall: call,
+        error: error instanceof Error ? error : new Error(String(error)),
+        startedAt,
+        finishedAt,
+        latencyMs: finishedAt - startedAt
       });
     }
   }
@@ -177,7 +249,10 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
       break;
     }
 
-    const currentToolResults = await executeTools(toolCalls, options);
+    const currentToolResults = await executeTools(toolCalls, options, {
+      request,
+      step: step + 1
+    });
     toolResults.push(...currentToolResults);
 
     for (const result of currentToolResults) {
@@ -327,7 +402,10 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
         break;
       }
 
-      const currentToolResults = await executeTools(toolCalls, options);
+      const currentToolResults = await executeTools(toolCalls, options, {
+        request,
+        step: step + 1
+      });
       toolResults.push(...currentToolResults);
 
       for (const toolResult of currentToolResults) {

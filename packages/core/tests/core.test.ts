@@ -740,6 +740,75 @@ describe("core helpers", () => {
     expect(events).toEqual(["generate-start", "generate-finish"]);
   });
 
+  it("emits tool execution telemetry during generateText", async () => {
+    const events: any[] = [];
+    let call = 0;
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async generate() {
+          call += 1;
+          if (call === 1) {
+            return {
+              messages: [
+                {
+                  role: "assistant",
+                  parts: [{ type: "tool-call", toolCall: { id: "1", name: "weather", input: { city: "Madrid" } } }]
+                }
+              ]
+            };
+          }
+
+          return { messages: [createTextMessage("assistant", "Madrid is sunny.")], text: "Madrid is sunny." };
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event);
+          }
+        })
+      ]
+    );
+
+    const result = await generateText({
+      model: wrapped,
+      prompt: "Weather?",
+      maxSteps: 2,
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      }
+    });
+
+    expect(result.text).toBe("Madrid is sunny.");
+    expect(events.map((event) => event.type)).toEqual([
+      "generate-start",
+      "generate-finish",
+      "tool-execution-start",
+      "tool-execution-finish",
+      "generate-start",
+      "generate-finish"
+    ]);
+    expect(events[2]).toMatchObject({
+      type: "tool-execution-start",
+      step: 1,
+      toolCall: { id: "1", name: "weather", input: { city: "Madrid" } }
+    });
+    expect(events[3]).toMatchObject({
+      type: "tool-execution-finish",
+      step: 1,
+      toolResult: {
+        toolCallId: "1",
+        toolName: "weather",
+        output: { city: "Madrid", forecast: "sunny" },
+        isError: false
+      }
+    });
+  });
+
   it("applies streaming middleware in order", async () => {
     const calls: string[] = [];
     const wrapped = wrapLanguageModel(createLanguageModel(), [
@@ -987,7 +1056,68 @@ describe("core helpers", () => {
     });
 
     expect((await result.collect()).text).toBe("Madrid is sunny.");
-    expect(events).toEqual(["stream-start", "stream-finish", "stream-start", "stream-finish"]);
+    expect(events).toEqual([
+      "stream-start",
+      "stream-finish",
+      "tool-execution-start",
+      "tool-execution-finish",
+      "stream-start",
+      "stream-finish"
+    ]);
+  });
+
+  it("emits tool execution error telemetry when a tool fails during streamText", async () => {
+    const events: any[] = [];
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async stream() {
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "tool-call", toolCall: { id: "1", name: "weather", input: { city: "Madrid" } } };
+            yield { type: "finish", finishReason: "tool-calls" };
+          })();
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event);
+          }
+        })
+      ]
+    );
+
+    const result = streamText({
+      model: wrapped,
+      prompt: "Weather?",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: () => {
+            throw new Error("weather offline");
+          }
+        })
+      }
+    });
+
+    expect((await result.collect()).toolResults).toMatchObject([
+      {
+        toolCallId: "1",
+        toolName: "weather",
+        isError: true
+      }
+    ]);
+    expect(events.map((event) => event.type)).toEqual([
+      "stream-start",
+      "stream-finish",
+      "tool-execution-start",
+      "tool-execution-error"
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: "tool-execution-error",
+      step: 1,
+      toolCall: { id: "1", name: "weather", input: { city: "Madrid" } }
+    });
   });
 
   it("persists cached generate results to the filesystem", async () => {

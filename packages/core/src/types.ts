@@ -397,13 +397,49 @@ export interface TelemetryStreamErrorEvent<TProviderOptions extends ProviderOpti
   latencyMs: number;
 }
 
+export interface TelemetryToolExecutionStartEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  type: "tool-execution-start";
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+  step: number;
+  toolCall: ToolCall;
+  startedAt: number;
+}
+
+export interface TelemetryToolExecutionFinishEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  type: "tool-execution-finish";
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+  step: number;
+  toolCall: ToolCall;
+  toolResult: ToolExecutionResult;
+  startedAt: number;
+  finishedAt: number;
+  latencyMs: number;
+}
+
+export interface TelemetryToolExecutionErrorEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  type: "tool-execution-error";
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+  step: number;
+  toolCall: ToolCall;
+  error: Error;
+  startedAt: number;
+  finishedAt: number;
+  latencyMs: number;
+}
+
 export type LanguageModelTelemetryEvent<TProviderOptions extends ProviderOptions = ProviderOptions> =
   | TelemetryGenerateStartEvent<TProviderOptions>
   | TelemetryGenerateFinishEvent<TProviderOptions>
   | TelemetryGenerateErrorEvent<TProviderOptions>
   | TelemetryStreamStartEvent<TProviderOptions>
   | TelemetryStreamFinishEvent<TProviderOptions>
-  | TelemetryStreamErrorEvent<TProviderOptions>;
+  | TelemetryStreamErrorEvent<TProviderOptions>
+  | TelemetryToolExecutionStartEvent<TProviderOptions>
+  | TelemetryToolExecutionFinishEvent<TProviderOptions>
+  | TelemetryToolExecutionErrorEvent<TProviderOptions>;
 
 export interface UIMessage {
   id: string;

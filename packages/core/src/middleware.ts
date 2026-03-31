@@ -14,11 +14,35 @@ import type {
 } from "./types.js";
 
 const serializeInput = (input: unknown) => JSON.stringify(input);
+const telemetryObserversSymbol = Symbol("zhivex-ai.telemetry-observers");
+
+type TelemetryObserver<TProviderOptions extends ProviderOptions = ProviderOptions> = (
+  event: LanguageModelTelemetryEvent<TProviderOptions>
+) => void | Promise<void>;
+
+type LanguageModelWithTelemetry<TProviderOptions extends ProviderOptions = ProviderOptions> = LanguageModel<TProviderOptions> & {
+  [telemetryObserversSymbol]?: TelemetryObserver<TProviderOptions>[];
+};
 
 export interface GenerateCache {
   get(key: string): Promise<GenerateResult | undefined> | GenerateResult | undefined;
   set(key: string, value: GenerateResult): Promise<void> | void;
 }
+
+const getTelemetryObservers = <TProviderOptions extends ProviderOptions>(
+  model: LanguageModel<TProviderOptions>
+): TelemetryObserver<TProviderOptions>[] =>
+  [...(((model as LanguageModelWithTelemetry<TProviderOptions>)[telemetryObserversSymbol] ?? []) as TelemetryObserver<TProviderOptions>[])];
+
+export const emitLanguageModelTelemetryEvent = async <TProviderOptions extends ProviderOptions>(
+  model: LanguageModel<TProviderOptions>,
+  event: LanguageModelTelemetryEvent<TProviderOptions>
+) => {
+  const observers = getTelemetryObservers(model);
+  for (const observer of observers) {
+    await observer(event);
+  }
+};
 
 export const wrapLanguageModel = <TProviderOptions extends ProviderOptions>(
   model: LanguageModel<TProviderOptions>,
@@ -72,7 +96,7 @@ export const wrapLanguageModel = <TProviderOptions extends ProviderOptions>(
     return run(0);
   };
 
-  return {
+  const wrappedModel: LanguageModelWithTelemetry<TProviderOptions> = {
     ...model,
     generate(input: ModelGenerateInput<TProviderOptions>): Promise<GenerateResult> {
       return runGenerate(input);
@@ -81,13 +105,40 @@ export const wrapLanguageModel = <TProviderOptions extends ProviderOptions>(
       ? (input: ModelGenerateInput<TProviderOptions>) => runStream(input)
       : undefined
   };
+
+  const telemetryObservers = [
+    ...getTelemetryObservers(model),
+    ...middlewares
+      .filter((middleware) => middleware.name === "telemetry")
+      .map((middleware) => (event: LanguageModelTelemetryEvent<TProviderOptions>) => {
+        const telemetryMiddleware = middleware as LanguageModelMiddleware<TProviderOptions> & {
+          onTelemetryEvent?: TelemetryObserver<TProviderOptions>;
+        };
+        return telemetryMiddleware.onTelemetryEvent?.(event);
+      })
+      .filter(Boolean)
+  ];
+
+  if (telemetryObservers.length) {
+    Object.defineProperty(wrappedModel, telemetryObserversSymbol, {
+      value: telemetryObservers,
+      enumerable: false,
+      configurable: false
+    });
+  }
+
+  return wrappedModel;
 };
 
 export const createTelemetryMiddleware = <TProviderOptions extends ProviderOptions>(options: {
   onEvent: (event: LanguageModelTelemetryEvent<TProviderOptions>) => void | Promise<void>;
-}): LanguageModelMiddleware<TProviderOptions> => ({
-  name: "telemetry",
-  async wrapGenerate(context, next) {
+}): LanguageModelMiddleware<TProviderOptions> => {
+  const middleware: LanguageModelMiddleware<TProviderOptions> & {
+    onTelemetryEvent?: TelemetryObserver<TProviderOptions>;
+  } = {
+    name: "telemetry",
+    onTelemetryEvent: options.onEvent,
+    async wrapGenerate(context, next) {
     const startedAt = Date.now();
     await options.onEvent({
       type: "generate-start",
@@ -194,7 +245,10 @@ export const createTelemetryMiddleware = <TProviderOptions extends ProviderOptio
       throw error;
     }
   }
-});
+  };
+
+  return middleware;
+};
 
 export const createCachedGenerateMiddleware = <TProviderOptions extends ProviderOptions>(options: {
   cache: GenerateCache;
