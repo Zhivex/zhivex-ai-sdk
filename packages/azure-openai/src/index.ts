@@ -142,6 +142,23 @@ const mapTools = (input: ModelGenerateInput["tools"]) =>
       }))
     : undefined;
 
+const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
+  if (!toolChoice) {
+    return undefined;
+  }
+
+  if (typeof toolChoice === "string") {
+    return toolChoice;
+  }
+
+  return {
+    type: "function",
+    function: {
+      name: toolChoice.toolName
+    }
+  };
+};
+
 const mapStructuredOutput = (input: ModelGenerateInput) => {
   if (!input.structuredOutput || input.structuredOutput.mode !== "native") {
     return undefined;
@@ -419,6 +436,7 @@ export const createAzureOpenAI = (
                     model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
                     messages: mapMessages(input.messages),
                     tools: mapTools(input.tools),
+                    tool_choice: mapToolChoice(input.toolChoice),
                     response_format: mapStructuredOutput(input),
                     temperature: input.temperature,
                     ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
@@ -460,12 +478,13 @@ export const createAzureOpenAI = (
                 method: "POST",
                 headers: jsonHeaders(apiKey),
                 signal,
-                body: JSON.stringify({
-                  model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
-                  messages: mapMessages(input.messages),
-                  tools: mapTools(input.tools),
-                  response_format: mapStructuredOutput(input),
-                  temperature: input.temperature,
+                  body: JSON.stringify({
+                    model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
+                    messages: mapMessages(input.messages),
+                    tools: mapTools(input.tools),
+                    tool_choice: mapToolChoice(input.toolChoice),
+                    response_format: mapStructuredOutput(input),
+                    temperature: input.temperature,
                   ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
                   ...input.providerOptions,
                   ...mapReasoning(input),

@@ -2,6 +2,7 @@
 "@zhivex-ai/core": minor
 "@zhivex-ai/sdk": minor
 "@zhivex-ai/openai": minor
+"@zhivex-ai/azure-openai": minor
 "@zhivex-ai/anthropic": minor
 "@zhivex-ai/openrouter": minor
 "@zhivex-ai/qwen": minor
