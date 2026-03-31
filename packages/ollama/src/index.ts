@@ -1,6 +1,7 @@
 import {
   ConfigurationError,
   ProviderHTTPError,
+  UnsupportedFeatureError,
   ValidationError,
   createProviderAdapter,
   withRetry,
@@ -106,6 +107,10 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
+      if (input.reasoning) {
+        throw new UnsupportedFeatureError('Provider "ollama" does not support "reasoning".');
+      }
+
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/api/generate`, {

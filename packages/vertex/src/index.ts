@@ -3,6 +3,7 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  UnsupportedFeatureError,
   createProviderAdapter,
   normalizeFinishReason,
   streamSSE,
@@ -131,9 +132,64 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
       ]
     : undefined;
 
-const generationConfig = (input: ModelGenerateInput) => ({
+const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
+
+const isGemini3ProModel = (modelId: string) => /^gemini-3([.-].*)?pro([.-]|$)/.test(modelId);
+
+const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
+  if (!input.reasoning) {
+    return undefined;
+  }
+
+  if (isGemini3Model(modelId)) {
+    if (input.reasoning.budgetTokens !== undefined) {
+      throw new UnsupportedFeatureError(
+        'Provider "vertex" uses "reasoning.effort" for Gemini 3 models and does not support "reasoning.budgetTokens".'
+      );
+    }
+
+    if (input.reasoning.effort === "none") {
+      throw new UnsupportedFeatureError('Provider "vertex" does not support "reasoning.effort=none" for Gemini 3 models.');
+    }
+
+    if (input.reasoning.effort === "xhigh") {
+      throw new UnsupportedFeatureError('Provider "vertex" does not support "reasoning.effort=xhigh".');
+    }
+
+    if (input.reasoning.effort === "minimal" && isGemini3ProModel(modelId)) {
+      throw new UnsupportedFeatureError(
+        'Provider "vertex" does not support "reasoning.effort=minimal" for Gemini 3 Pro models.'
+      );
+    }
+
+    return input.reasoning.effort !== undefined
+      ? {
+          thinkingLevel: input.reasoning.effort
+        }
+      : undefined;
+  }
+
+  if (input.reasoning.effort !== undefined) {
+    throw new UnsupportedFeatureError(
+      'Provider "vertex" does not support "reasoning.effort" for models earlier than Gemini 3.'
+    );
+  }
+
+  return input.reasoning.budgetTokens !== undefined
+    ? {
+        thinkingBudget: input.reasoning.budgetTokens
+      }
+    : undefined;
+};
+
+const generationConfig = (modelId: string, input: ModelGenerateInput) => ({
   temperature: input.temperature,
   maxOutputTokens: input.maxTokens,
+  ...(input.reasoning
+    ? {
+        thinkingConfig: mapReasoning(modelId, input)
+      }
+    : {}),
   ...(input.structuredOutput?.mode === "native"
     ? {
         responseMimeType: "application/json",
@@ -198,9 +254,9 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
             body: JSON.stringify({
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
-              generationConfig: generationConfig(input),
               tools: mapTools(input.tools),
-              ...input.providerOptions
+              ...input.providerOptions,
+              generationConfig: generationConfig(this.modelId, input)
             })
           }),
         input
@@ -236,9 +292,9 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
           body: JSON.stringify({
             contents: mapMessages(input.messages),
             systemInstruction: systemInstruction(input.messages),
-            generationConfig: generationConfig(input),
             tools: mapTools(input.tools),
-            ...input.providerOptions
+            ...input.providerOptions,
+            generationConfig: generationConfig(this.modelId, input)
           })
         }),
       input

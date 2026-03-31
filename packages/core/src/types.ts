@@ -100,6 +100,11 @@ export interface StructuredOutputConfig<TSchema extends ZodTypeAny = ZodTypeAny>
   description?: string;
 }
 
+export interface ReasoningConfig {
+  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  budgetTokens?: number;
+}
+
 export interface StreamTextDeltaEvent {
   type: "text-delta";
   textDelta: string;
@@ -193,6 +198,7 @@ export interface ModelGenerateInput<TProviderOptions extends ProviderOptions = P
   tools?: ToolSet;
   temperature?: number;
   maxTokens?: number;
+  reasoning?: ReasoningConfig;
   providerOptions?: TProviderOptions;
   structuredOutput?: StructuredOutputConfig;
 }
@@ -241,6 +247,7 @@ export type GenerateTextOptions<TModel extends LanguageModel = LanguageModel> = 
     maxSteps?: number;
     temperature?: number;
     maxTokens?: number;
+    reasoning?: ReasoningConfig;
     providerOptions?: ProviderOptionsOf<TModel>;
     structuredOutput?: StructuredOutputConfig;
   };

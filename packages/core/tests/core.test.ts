@@ -103,6 +103,39 @@ describe("core helpers", () => {
     expect(result.messages.at(-1)?.role).toBe("assistant");
   });
 
+  it("passes reasoning config to the common request", async () => {
+    const result = await generateText({
+      model: createLanguageModel({
+        capabilities: {
+          streaming: true,
+          tools: true,
+          structuredOutput: true,
+          jsonMode: true,
+          toolChoice: true,
+          parallelToolCalls: false,
+          vision: true,
+          files: false,
+          audioInput: false,
+          audioOutput: false,
+          embeddings: false,
+          reasoning: true,
+          webSearch: false
+        },
+        async generate(input) {
+          expect(input.reasoning).toEqual({ effort: "medium", budgetTokens: 512 });
+          return { messages: [createTextMessage("assistant", "reasoned")], text: "reasoned" };
+        }
+      }),
+      prompt: "Think carefully",
+      reasoning: {
+        effort: "medium",
+        budgetTokens: 512
+      }
+    });
+
+    expect(result.text).toBe("reasoned");
+  });
+
   it("rejects prompt and messages used together", async () => {
     await expect(
       generateText({
@@ -111,6 +144,72 @@ describe("core helpers", () => {
         messages: [user("Hello")]
       })
     ).rejects.toThrow('Pass either "prompt" or "messages", but not both.');
+  });
+
+  it("rejects reasoning for models without reasoning support", async () => {
+    await expect(
+      generateText({
+        model: createLanguageModel(),
+        prompt: "Say hi",
+        reasoning: {
+          effort: "low"
+        }
+      })
+    ).rejects.toThrow('Model "test/model" does not support reasoning.');
+  });
+
+  it("rejects empty reasoning config", async () => {
+    await expect(
+      generateText({
+        model: createLanguageModel({
+          capabilities: {
+            streaming: true,
+            tools: true,
+            structuredOutput: true,
+            jsonMode: true,
+            toolChoice: true,
+            parallelToolCalls: false,
+            vision: true,
+            files: false,
+            audioInput: false,
+            audioOutput: false,
+            embeddings: false,
+            reasoning: true,
+            webSearch: false
+          }
+        }),
+        prompt: "Say hi",
+        reasoning: {}
+      })
+    ).rejects.toThrow('The "reasoning" config must include at least one supported field.');
+  });
+
+  it("rejects invalid reasoning budget tokens", async () => {
+    await expect(
+      generateText({
+        model: createLanguageModel({
+          capabilities: {
+            streaming: true,
+            tools: true,
+            structuredOutput: true,
+            jsonMode: true,
+            toolChoice: true,
+            parallelToolCalls: false,
+            vision: true,
+            files: false,
+            audioInput: false,
+            audioOutput: false,
+            embeddings: false,
+            reasoning: true,
+            webSearch: false
+          }
+        }),
+        prompt: "Say hi",
+        reasoning: {
+          budgetTokens: 0
+        }
+      })
+    ).rejects.toThrow('The "reasoning.budgetTokens" field must be a positive integer.');
   });
 
   it("executes tools across multiple steps", async () => {

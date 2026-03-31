@@ -185,4 +185,46 @@ describe("openai adapter", () => {
     expect(body.top_p).toBe(0.8);
     expect(body.user).toBe("test-user");
   });
+
+  it("maps common reasoning config to OpenAI request fields", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "reasoned" } }]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-5"),
+      prompt: "hello",
+      maxTokens: 256,
+      reasoning: {
+        effort: "high"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      reasoning_effort: string;
+      max_completion_tokens: number;
+      max_tokens?: number;
+    };
+    expect(body.reasoning_effort).toBe("high");
+    expect(body.max_completion_tokens).toBe(256);
+    expect(body.max_tokens).toBeUndefined();
+  });
+
+  it("rejects unsupported reasoning budget tokens for OpenAI", async () => {
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("gpt-5"),
+        prompt: "hello",
+        reasoning: {
+          budgetTokens: 256
+        }
+      })
+    ).rejects.toThrow('Provider "openai" does not support "reasoning.budgetTokens".');
+  });
 });

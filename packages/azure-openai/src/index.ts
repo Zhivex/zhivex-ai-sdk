@@ -3,6 +3,7 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  UnsupportedFeatureError,
   createProviderAdapter,
   normalizeFinishReason,
   streamSSE,
@@ -156,6 +157,21 @@ const mapStructuredOutput = (input: ModelGenerateInput) => {
   };
 };
 
+const mapReasoning = (input: ModelGenerateInput) => {
+  if (!input.reasoning) {
+    return {};
+  }
+
+  if (input.reasoning.budgetTokens !== undefined) {
+    throw new UnsupportedFeatureError('Provider "azure-openai" does not support "reasoning.budgetTokens".');
+  }
+
+  return {
+    reasoning_effort: input.reasoning.effort,
+    max_completion_tokens: input.maxTokens
+  };
+};
+
 const parseAssistantMessage = (message: any): ModelMessage => ({
   role: "assistant",
   parts: [
@@ -200,9 +216,10 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
               tools: mapTools(input.tools),
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
-              max_tokens: input.maxTokens,
-              stream: false,
-              ...input.providerOptions
+              ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
+              ...input.providerOptions,
+              ...mapReasoning(input),
+              stream: false
             })
           }),
         input
@@ -247,10 +264,11 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
             tools: mapTools(input.tools),
             response_format: mapStructuredOutput(input),
             temperature: input.temperature,
-            max_tokens: input.maxTokens,
+            ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
+            ...input.providerOptions,
+            ...mapReasoning(input),
             stream: true,
-            stream_options: { include_usage: true },
-            ...input.providerOptions
+            stream_options: { include_usage: true }
           })
         }),
       input
@@ -403,9 +421,10 @@ export const createAzureOpenAI = (
                     tools: mapTools(input.tools),
                     response_format: mapStructuredOutput(input),
                     temperature: input.temperature,
-                    max_tokens: input.maxTokens,
-                    stream: false,
-                    ...input.providerOptions
+                    ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
+                    ...input.providerOptions,
+                    ...mapReasoning(input),
+                    stream: false
                   })
                 }),
               input
@@ -447,10 +466,11 @@ export const createAzureOpenAI = (
                   tools: mapTools(input.tools),
                   response_format: mapStructuredOutput(input),
                   temperature: input.temperature,
-                  max_tokens: input.maxTokens,
+                  ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
+                  ...input.providerOptions,
+                  ...mapReasoning(input),
                   stream: true,
-                  stream_options: { include_usage: true },
-                  ...input.providerOptions
+                  stream_options: { include_usage: true }
                 })
               }),
             input

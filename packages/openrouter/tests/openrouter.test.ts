@@ -136,4 +136,31 @@ describe("openrouter adapter", () => {
     expect(result.object.forecast).toBe("sunny");
     expect(result.toolResults[0]?.toolName).toBe("weather");
   });
+
+  it("maps common reasoning config to OpenRouter reasoning fields", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "reasoned" } }]
+      })
+    );
+
+    const provider = createOpenRouter({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("openai/gpt-4o-mini"),
+      prompt: "hello",
+      reasoning: {
+        effort: "medium",
+        budgetTokens: 512
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      reasoning: { effort: string; max_tokens: number };
+    };
+    expect(body.reasoning).toEqual({
+      effort: "medium",
+      max_tokens: 512
+    });
+  });
 });

@@ -163,6 +163,17 @@ const mapStructuredOutput = (input: ModelGenerateInput) => {
   };
 };
 
+const mapReasoning = (input: ModelGenerateInput) => {
+  if (!input.reasoning) {
+    return undefined;
+  }
+
+  return {
+    effort: input.reasoning.effort,
+    ...(input.reasoning.budgetTokens !== undefined ? { max_tokens: input.reasoning.budgetTokens } : {})
+  };
+};
+
 const parseAssistantMessage = (message: any): ModelMessage => ({
   role: "assistant",
   parts: [
@@ -211,7 +222,8 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
               temperature: input.temperature,
               max_tokens: input.maxTokens,
               stream: false,
-              ...input.providerOptions
+              ...input.providerOptions,
+              reasoning: mapReasoning(input)
             })
           }),
         input
@@ -259,7 +271,8 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
             max_tokens: input.maxTokens,
             stream: true,
             stream_options: { include_usage: true },
-            ...input.providerOptions
+            ...input.providerOptions,
+            reasoning: mapReasoning(input)
           })
         }),
       input

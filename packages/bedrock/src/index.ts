@@ -8,6 +8,7 @@ import {
 
 import {
   ConfigurationError,
+  UnsupportedFeatureError,
   ValidationError,
   createProviderAdapter,
   normalizeFinishReason,
@@ -142,6 +143,10 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
     const { cleanup } = withTimeoutSignal(input);
 
     try {
+      if (input.reasoning) {
+        throw new UnsupportedFeatureError('Provider "bedrock" does not support "reasoning".');
+      }
+
       const commandInput: ConverseCommandInput = {
         modelId: this.modelId,
         messages: mapMessages(input.messages),

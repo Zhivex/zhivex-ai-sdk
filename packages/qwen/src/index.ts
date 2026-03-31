@@ -3,6 +3,7 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  UnsupportedFeatureError,
   createProviderAdapter,
   normalizeFinishReason,
   streamSSE,
@@ -189,6 +190,10 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
+      if (input.reasoning) {
+        throw new UnsupportedFeatureError('Provider "qwen" does not support the common "reasoning" config yet.');
+      }
+
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
@@ -236,6 +241,11 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
 
   async stream(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
+
+    if (input.reasoning) {
+      throw new UnsupportedFeatureError('Provider "qwen" does not support the common "reasoning" config yet.');
+    }
+
     const response = await withRetry(
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {

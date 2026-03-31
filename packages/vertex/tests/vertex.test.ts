@@ -172,4 +172,114 @@ describe("vertex adapter", () => {
     expect(body.topP).toBe(0.95);
     expect(body.candidateCount).toBe(1);
   });
+
+  it("maps reasoning budget tokens to Vertex thinking config", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "hello from vertex" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello",
+      reasoning: {
+        budgetTokens: 512
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      generationConfig: { thinkingConfig: { thinkingBudget: number } };
+    };
+    expect(body.generationConfig.thinkingConfig).toEqual({
+      thinkingBudget: 512
+    });
+  });
+
+  it("rejects reasoning effort for Vertex models earlier than Gemini 3", async () => {
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(
+      generateText({
+        model: provider("gemini-2.0-flash"),
+        prompt: "hello",
+        reasoning: {
+          effort: "low"
+        }
+      })
+    ).rejects.toThrow('Provider "vertex" does not support "reasoning.effort" for models earlier than Gemini 3.');
+  });
+
+  it("maps reasoning effort to Vertex Gemini 3 thinking level", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "hello from vertex" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("gemini-3.1-pro-preview"),
+      prompt: "hello",
+      reasoning: {
+        effort: "low"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      generationConfig: { thinkingConfig: { thinkingLevel: string } };
+    };
+    expect(body.generationConfig.thinkingConfig).toEqual({
+      thinkingLevel: "low"
+    });
+  });
+
+  it("rejects legacy reasoning budget tokens for Vertex Gemini 3 models", async () => {
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(
+      generateText({
+        model: provider("gemini-3.1-pro-preview"),
+        prompt: "hello",
+        reasoning: {
+          budgetTokens: 512
+        }
+      })
+    ).rejects.toThrow(
+      'Provider "vertex" uses "reasoning.effort" for Gemini 3 models and does not support "reasoning.budgetTokens".'
+    );
+  });
 });

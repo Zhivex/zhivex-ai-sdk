@@ -165,4 +165,18 @@ describe("kimi adapter", () => {
     expect(body.top_p).toBe(0.8);
     expect(body.user).toBe("test-user");
   });
+
+  it("rejects common reasoning config for Kimi until it is mapped", async () => {
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("kimi-k2-0905-preview"),
+        prompt: "hello",
+        reasoning: {
+          effort: "medium"
+        }
+      })
+    ).rejects.toThrow('Provider "kimi" does not support the common "reasoning" config yet.');
+  });
 });

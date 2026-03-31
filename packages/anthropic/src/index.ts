@@ -3,6 +3,7 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  UnsupportedFeatureError,
   createProviderAdapter,
   normalizeFinishReason,
   streamSSE,
@@ -129,6 +130,25 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
       }))
     : undefined;
 
+const mapReasoning = (input: ModelGenerateInput) => {
+  if (!input.reasoning) {
+    return undefined;
+  }
+
+  if (input.reasoning.effort !== undefined) {
+    throw new UnsupportedFeatureError('Provider "anthropic" does not support "reasoning.effort".');
+  }
+
+  if (input.reasoning.budgetTokens === undefined) {
+    return undefined;
+  }
+
+  return {
+    type: "enabled",
+    budget_tokens: input.reasoning.budgetTokens
+  };
+};
+
 const parseAssistantMessage = (json: any): ModelMessage => ({
   role: "assistant",
   parts:
@@ -189,7 +209,8 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
               tools: mapTools(input.tools),
               temperature: input.temperature,
               max_tokens: input.maxTokens ?? 1024,
-              ...input.providerOptions
+              ...input.providerOptions,
+              thinking: mapReasoning(input)
             })
           }),
         input

@@ -154,4 +154,18 @@ describe("bedrock adapter", () => {
     const command = sendMock.mock.calls[0]?.[0] as { input: { additionalModelResponseFieldPaths?: string[] } };
     expect(command.input.additionalModelResponseFieldPaths).toEqual(["/stop_sequence"]);
   });
+
+  it("rejects common reasoning config for Bedrock", async () => {
+    const provider = createBedrock({ region: "us-east-1" });
+
+    await expect(
+      generateText({
+        model: provider("anthropic.claude-3-5-sonnet"),
+        prompt: "hello",
+        reasoning: {
+          effort: "low"
+        }
+      })
+    ).rejects.toThrow('Model "bedrock/anthropic.claude-3-5-sonnet" does not support reasoning.');
+  });
 });
