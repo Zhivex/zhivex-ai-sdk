@@ -3,7 +3,7 @@ import {
   createCircuitBreakerMiddleware,
   createInMemoryGenerateCache,
   createTelemetryMiddleware,
-  generateText,
+  streamText,
   wrapLanguageModel
 } from "@zhivex-ai/sdk";
 import { createOpenAI } from "@zhivex-ai/openai";
@@ -34,9 +34,14 @@ const wrappedModel = wrapLanguageModel(openai("gpt-4o-mini"), [
   })
 ]);
 
-const result = await generateText({
+const result = streamText({
   model: wrappedModel,
   prompt: "Explain middleware composition for a language model SDK."
 });
 
-console.log(result.text);
+for await (const chunk of result.textStream) {
+  process.stdout.write(chunk);
+}
+
+const final = await result.collect();
+console.log("\nfinish:", final.finishReason);

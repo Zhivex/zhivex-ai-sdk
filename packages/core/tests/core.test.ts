@@ -740,6 +740,256 @@ describe("core helpers", () => {
     expect(events).toEqual(["generate-start", "generate-finish"]);
   });
 
+  it("applies streaming middleware in order", async () => {
+    const calls: string[] = [];
+    const wrapped = wrapLanguageModel(createLanguageModel(), [
+      {
+        name: "first",
+        async wrapStream(_context, next) {
+          calls.push("first:before");
+          const stream = await next();
+
+          return (async function* () {
+            for await (const event of stream) {
+              yield event;
+            }
+            calls.push("first:after");
+          })();
+        }
+      },
+      {
+        name: "second",
+        async wrapStream(_context, next) {
+          calls.push("second:before");
+          const stream = await next();
+
+          return (async function* () {
+            for await (const event of stream) {
+              yield event;
+            }
+            calls.push("second:after");
+          })();
+        }
+      }
+    ]);
+
+    const stream = await wrapped.stream!({
+      messages: [user("hello")]
+    });
+
+    const events: StreamEvent[] = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    expect(events.at(-1)).toMatchObject({ type: "finish", finishReason: "stop" });
+    expect(calls).toEqual(["first:before", "second:before", "second:after", "first:after"]);
+  });
+
+  it("rejects when streaming middleware calls next multiple times", async () => {
+    const wrapped = wrapLanguageModel(createLanguageModel(), [
+      {
+        async wrapStream(_context, next) {
+          await next();
+          return next();
+        }
+      }
+    ]);
+
+    await expect(
+      wrapped.stream!({
+        messages: [user("hello")]
+      })
+    ).rejects.toThrow("Language model middleware called next() multiple times.");
+  });
+
+  it("preserves streaming for middlewares that only wrap generate", async () => {
+    const wrapped = wrapLanguageModel(createLanguageModel(), [
+      {
+        async wrapGenerate(context, next) {
+          expect(context.model.provider).toBe("test");
+          return next();
+        }
+      }
+    ]);
+
+    const result = streamText({
+      model: wrapped,
+      prompt: "Stream"
+    });
+
+    expect(await result.collect()).toMatchObject({ text: "hello world" });
+  });
+
+  it("emits stream telemetry events through middleware", async () => {
+    const events: string[] = [];
+    const wrapped = wrapLanguageModel(createLanguageModel(), [
+      createTelemetryMiddleware({
+        onEvent(event) {
+          events.push(event.type);
+        }
+      })
+    ]);
+
+    const stream = await wrapped.stream!({
+      messages: [user("hello")]
+    });
+
+    for await (const _event of stream) {
+      // drain stream
+    }
+
+    expect(events).toEqual(["stream-start", "stream-finish"]);
+  });
+
+  it("includes finish metadata in stream telemetry", async () => {
+    const events: any[] = [];
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async stream() {
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "hello" };
+            yield {
+              type: "finish",
+              finishReason: "stop",
+              providerFinishReason: "completed",
+              usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 }
+            };
+          })();
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event);
+          }
+        })
+      ]
+    );
+
+    const stream = await wrapped.stream!({
+      messages: [user("hello")]
+    });
+
+    for await (const _event of stream) {
+      // drain stream
+    }
+
+    expect(events.at(-1)).toMatchObject({
+      type: "stream-finish",
+      finishReason: "stop",
+      providerFinishReason: "completed",
+      usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 }
+    });
+  });
+
+  it("emits stream error telemetry when iteration fails", async () => {
+    const events: string[] = [];
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async stream() {
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "hello" };
+            throw new Error("stream failed");
+          })();
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event.type);
+          }
+        })
+      ]
+    );
+
+    const stream = await wrapped.stream!({
+      messages: [user("hello")]
+    });
+
+    await expect(
+      (async () => {
+        for await (const _event of stream) {
+          // drain stream
+        }
+      })()
+    ).rejects.toThrow("stream failed");
+
+    expect(events).toEqual(["stream-start", "stream-error"]);
+  });
+
+  it("emits stream error telemetry when the provider stream setup fails", async () => {
+    const events: string[] = [];
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async stream() {
+          throw new Error("setup failed");
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event.type);
+          }
+        })
+      ]
+    );
+
+    await expect(
+      wrapped.stream!({
+        messages: [user("hello")]
+      })
+    ).rejects.toThrow("setup failed");
+
+    expect(events).toEqual(["stream-start", "stream-error"]);
+  });
+
+  it("keeps streamText working with wrapped streaming middleware and tools", async () => {
+    const events: string[] = [];
+    let call = 0;
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async stream() {
+          call += 1;
+          if (call === 1) {
+            return (async function* (): AsyncGenerator<StreamEvent> {
+              yield { type: "tool-call", toolCall: { id: "1", name: "weather", input: { city: "Madrid" } } };
+              yield { type: "finish", finishReason: "tool-calls" };
+            })();
+          }
+
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "Madrid is sunny." };
+            yield { type: "finish", finishReason: "stop" };
+          })();
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event.type);
+          }
+        })
+      ]
+    );
+
+    const result = streamText({
+      model: wrapped,
+      prompt: "Weather?",
+      maxSteps: 2,
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      }
+    });
+
+    expect((await result.collect()).text).toBe("Madrid is sunny.");
+    expect(events).toEqual(["stream-start", "stream-finish", "stream-start", "stream-finish"]);
+  });
+
   it("persists cached generate results to the filesystem", async () => {
     let calls = 0;
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-cache-"));

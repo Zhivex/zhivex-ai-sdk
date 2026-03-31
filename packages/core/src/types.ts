@@ -315,12 +315,25 @@ export interface LanguageModelMiddlewareNext<TProviderOptions extends ProviderOp
   (): Promise<GenerateResult>;
 }
 
+export interface LanguageModelStreamMiddlewareContext<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+}
+
+export interface LanguageModelStreamMiddlewareNext<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  (): Promise<AsyncIterable<StreamEvent>>;
+}
+
 export interface LanguageModelMiddleware<TProviderOptions extends ProviderOptions = ProviderOptions> {
   name?: string;
   wrapGenerate?: (
     context: LanguageModelMiddlewareContext<TProviderOptions>,
     next: LanguageModelMiddlewareNext<TProviderOptions>
   ) => Promise<GenerateResult>;
+  wrapStream?: (
+    context: LanguageModelStreamMiddlewareContext<TProviderOptions>,
+    next: LanguageModelStreamMiddlewareNext<TProviderOptions>
+  ) => Promise<AsyncIterable<StreamEvent>>;
 }
 
 export interface CircuitBreakerState {
@@ -355,10 +368,42 @@ export interface TelemetryGenerateErrorEvent<TProviderOptions extends ProviderOp
   latencyMs: number;
 }
 
+export interface TelemetryStreamStartEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  type: "stream-start";
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+  startedAt: number;
+}
+
+export interface TelemetryStreamFinishEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  type: "stream-finish";
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+  startedAt: number;
+  finishedAt: number;
+  latencyMs: number;
+  finishReason?: FinishReason;
+  providerFinishReason?: string;
+  usage?: TokenUsage;
+}
+
+export interface TelemetryStreamErrorEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  type: "stream-error";
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+  error: Error;
+  startedAt: number;
+  finishedAt: number;
+  latencyMs: number;
+}
+
 export type LanguageModelTelemetryEvent<TProviderOptions extends ProviderOptions = ProviderOptions> =
   | TelemetryGenerateStartEvent<TProviderOptions>
   | TelemetryGenerateFinishEvent<TProviderOptions>
-  | TelemetryGenerateErrorEvent<TProviderOptions>;
+  | TelemetryGenerateErrorEvent<TProviderOptions>
+  | TelemetryStreamStartEvent<TProviderOptions>
+  | TelemetryStreamFinishEvent<TProviderOptions>
+  | TelemetryStreamErrorEvent<TProviderOptions>;
 
 export interface UIMessage {
   id: string;
