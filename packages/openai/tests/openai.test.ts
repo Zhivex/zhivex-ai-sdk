@@ -186,6 +186,42 @@ describe("openai adapter", () => {
     expect(body.user).toBe("test-user");
   });
 
+  it("maps common tool choice to OpenAI tool_choice", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "hello from openai" } }]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-4o-mini"),
+      prompt: "hello",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      },
+      toolChoice: {
+        type: "tool",
+        toolName: "weather"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tool_choice: { type: string; function: { name: string } };
+    };
+    expect(body.tool_choice).toEqual({
+      type: "function",
+      function: {
+        name: "weather"
+      }
+    });
+  });
+
   it("maps common reasoning config to OpenAI request fields", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({

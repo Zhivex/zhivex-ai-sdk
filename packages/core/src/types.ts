@@ -35,6 +35,15 @@ export interface ToolExecutionResult {
   isError: boolean;
 }
 
+export type ToolChoice =
+  | "auto"
+  | "none"
+  | "required"
+  | {
+      type: "tool";
+      toolName: string;
+    };
+
 export interface TextPart {
   type: "text";
   text: string;
@@ -196,6 +205,7 @@ export type ProviderOptions = Record<string, unknown>;
 export interface ModelGenerateInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
   messages: ModelMessage[];
   tools?: ToolSet;
+  toolChoice?: ToolChoice;
   temperature?: number;
   maxTokens?: number;
   reasoning?: ReasoningConfig;
@@ -244,6 +254,7 @@ export type GenerateTextOptions<TModel extends LanguageModel = LanguageModel> = 
     model: TModel;
     system?: string;
     tools?: ToolSet;
+    toolChoice?: ToolChoice;
     maxSteps?: number;
     temperature?: number;
     maxTokens?: number;

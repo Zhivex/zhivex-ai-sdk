@@ -317,6 +317,31 @@ console.log(result.text);
 console.log(result.toolResults);
 ```
 
+When the selected model supports tool selection, you can control it through the common `toolChoice` option instead of dropping to provider-specific request fields.
+
+```ts
+const forcedToolResult = await generateText({
+  model: anthropic("claude-3-5-sonnet"),
+  messages: [user("What is the weather in Madrid?")],
+  tools: {
+    weather: tool({
+      name: "weather",
+      schema: z.object({
+        city: z.string()
+      }),
+      execute: async ({ city }) => ({
+        city,
+        forecast: "sunny"
+      })
+    })
+  },
+  toolChoice: {
+    type: "tool",
+    toolName: "weather"
+  }
+});
+```
+
 ### Multimodal Messages
 
 Use explicit messages when you need full control over roles, parts, or multimodal inputs.

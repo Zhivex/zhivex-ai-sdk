@@ -212,6 +212,97 @@ describe("core helpers", () => {
     ).rejects.toThrow('The "reasoning.budgetTokens" field must be a positive integer.');
   });
 
+  it("passes tool choice through to the common request", async () => {
+    const result = await generateText({
+      model: createLanguageModel({
+        async generate(input) {
+          expect(input.toolChoice).toEqual({
+            type: "tool",
+            toolName: "weather"
+          });
+          return { messages: [createTextMessage("assistant", "tool selected")], text: "tool selected" };
+        }
+      }),
+      prompt: "Weather?",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      },
+      toolChoice: {
+        type: "tool",
+        toolName: "weather"
+      }
+    });
+
+    expect(result.text).toBe("tool selected");
+  });
+
+  it("rejects tool choice for models without tool choice support", async () => {
+    await expect(
+      generateText({
+        model: createLanguageModel({
+          capabilities: {
+            streaming: true,
+            tools: true,
+            structuredOutput: true,
+            jsonMode: true,
+            toolChoice: false,
+            parallelToolCalls: false,
+            vision: true,
+            files: false,
+            audioInput: false,
+            audioOutput: false,
+            embeddings: false,
+            reasoning: false,
+            webSearch: false
+          }
+        }),
+        prompt: "Weather?",
+        tools: {
+          weather: tool({
+            name: "weather",
+            schema: z.object({ city: z.string() }),
+            execute: ({ city }) => ({ city, forecast: "sunny" })
+          })
+        },
+        toolChoice: "required"
+      })
+    ).rejects.toThrow('Model "test/model" does not support tool choice.');
+  });
+
+  it("rejects tool choice without registered tools", async () => {
+    await expect(
+      generateText({
+        model: createLanguageModel(),
+        prompt: "Weather?",
+        toolChoice: "required"
+      })
+    ).rejects.toThrow('The "toolChoice" option requires at least one registered tool.');
+  });
+
+  it("rejects selecting an unregistered tool", async () => {
+    await expect(
+      generateText({
+        model: createLanguageModel(),
+        prompt: "Weather?",
+        tools: {
+          weather: tool({
+            name: "weather",
+            schema: z.object({ city: z.string() }),
+            execute: ({ city }) => ({ city, forecast: "sunny" })
+          })
+        },
+        toolChoice: {
+          type: "tool",
+          toolName: "news"
+        }
+      })
+    ).rejects.toThrow('The selected tool "news" is not registered.');
+  });
+
   it("executes tools across multiple steps", async () => {
     let call = 0;
     const tools: ToolSet = {

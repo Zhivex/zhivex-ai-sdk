@@ -66,6 +66,7 @@ const buildMessages = (options: Pick<GenerateTextOptions, "prompt" | "messages" 
 const toRequest = (options: GenerateTextOptions, messages: ModelMessage[]): ModelGenerateInput => ({
   messages,
   tools: options.tools,
+  toolChoice: options.toolChoice,
   temperature: options.temperature,
   maxTokens: options.maxTokens,
   reasoning: options.reasoning,
@@ -121,12 +122,37 @@ const extractToolCalls = (messages: ModelMessage[]): ToolCall[] =>
       .map((part) => part.toolCall)
   );
 
+const validateToolChoice = (options: Pick<GenerateTextOptions, "model" | "tools" | "toolChoice">) => {
+  if (!options.toolChoice) {
+    return;
+  }
+
+  if (!options.model.capabilities.tools) {
+    throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
+  }
+
+  if (!options.model.capabilities.toolChoice) {
+    throw new UnsupportedFeatureError(
+      `Model "${options.model.provider}/${options.model.modelId}" does not support tool choice.`
+    );
+  }
+
+  if (!options.tools || Object.keys(options.tools).length === 0) {
+    throw new ValidationError('The "toolChoice" option requires at least one registered tool.');
+  }
+
+  if (typeof options.toolChoice === "object" && !options.tools[options.toolChoice.toolName]) {
+    throw new ValidationError(`The selected tool "${options.toolChoice.toolName}" is not registered.`);
+  }
+};
+
 export const generateText = async (options: GenerateTextOptions): Promise<GenerateTextOutput> => {
   const maxSteps = Math.max(1, options.maxSteps ?? 1);
   const allMessages = buildMessages(options);
   const steps: GenerateTextOutput["steps"] = [];
   validateMessageParts(options.model, allMessages);
   validateReasoning(options);
+  validateToolChoice(options);
 
   if (options.tools && !options.model.capabilities.tools) {
     throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
@@ -182,6 +208,7 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
   const baseMessages = buildMessages(options);
   validateMessageParts(options.model, baseMessages);
   validateReasoning(options);
+  validateToolChoice(options);
 
   if (!options.model.stream) {
     throw new ValidationError(`Model "${options.model.provider}/${options.model.modelId}" does not support streaming.`);

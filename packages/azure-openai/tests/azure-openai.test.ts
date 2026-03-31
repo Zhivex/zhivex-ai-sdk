@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { embed, generateText, streamText } from "@zhivex-ai/core";
+import { embed, generateText, streamText, tool } from "@zhivex-ai/core";
+import { z } from "zod";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createAzureOpenAI } from "../src/index.js";
 
