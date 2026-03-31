@@ -74,6 +74,15 @@ If you prefer working directly with the shared contract:
 bun add @zhivex-ai/core @zhivex-ai/openai
 ```
 
+## Examples
+
+The repository includes runnable examples under [`examples/`](/Users/mikeortiz/dev/zhivex-ai-sdk/examples/README.md) covering:
+
+- high-level SDK flows
+- structured output, tools, embeddings, UI helpers, and middleware
+- provider-specific setup for each adapter package
+- gateway routing and fallback
+
 ## Quick Start
 
 ```ts
