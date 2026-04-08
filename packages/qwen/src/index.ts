@@ -143,6 +143,23 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
       }))
     : undefined;
 
+const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
+  if (!toolChoice) {
+    return undefined;
+  }
+
+  if (typeof toolChoice === "string") {
+    return toolChoice;
+  }
+
+  return {
+    type: "function",
+    function: {
+      name: toolChoice.toolName
+    }
+  };
+};
+
 const mapStructuredOutput = (input: ModelGenerateInput) => {
   if (!input.structuredOutput || input.structuredOutput.mode !== "native") {
     return undefined;
@@ -204,6 +221,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               model: this.modelId,
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
+              tool_choice: mapToolChoice(input.toolChoice),
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
               max_tokens: input.maxTokens,
@@ -256,6 +274,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             model: this.modelId,
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
+            tool_choice: mapToolChoice(input.toolChoice),
             response_format: mapStructuredOutput(input),
             temperature: input.temperature,
             max_tokens: input.maxTokens,

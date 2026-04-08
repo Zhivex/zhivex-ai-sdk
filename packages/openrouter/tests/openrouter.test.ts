@@ -163,4 +163,40 @@ describe("openrouter adapter", () => {
       max_tokens: 512
     });
   });
+
+  it("maps common tool choice to OpenRouter tool_choice", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "hello from openrouter" } }]
+      })
+    );
+
+    const provider = createOpenRouter({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("openai/gpt-4o-mini"),
+      prompt: "hello",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      },
+      toolChoice: {
+        type: "tool",
+        toolName: "weather"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tool_choice: { type: string; function: { name: string } };
+    };
+    expect(body.tool_choice).toEqual({
+      type: "function",
+      function: {
+        name: "weather"
+      }
+    });
+  });
 });

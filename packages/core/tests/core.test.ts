@@ -212,6 +212,97 @@ describe("core helpers", () => {
     ).rejects.toThrow('The "reasoning.budgetTokens" field must be a positive integer.');
   });
 
+  it("passes tool choice through to the common request", async () => {
+    const result = await generateText({
+      model: createLanguageModel({
+        async generate(input) {
+          expect(input.toolChoice).toEqual({
+            type: "tool",
+            toolName: "weather"
+          });
+          return { messages: [createTextMessage("assistant", "tool selected")], text: "tool selected" };
+        }
+      }),
+      prompt: "Weather?",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      },
+      toolChoice: {
+        type: "tool",
+        toolName: "weather"
+      }
+    });
+
+    expect(result.text).toBe("tool selected");
+  });
+
+  it("rejects tool choice for models without tool choice support", async () => {
+    await expect(
+      generateText({
+        model: createLanguageModel({
+          capabilities: {
+            streaming: true,
+            tools: true,
+            structuredOutput: true,
+            jsonMode: true,
+            toolChoice: false,
+            parallelToolCalls: false,
+            vision: true,
+            files: false,
+            audioInput: false,
+            audioOutput: false,
+            embeddings: false,
+            reasoning: false,
+            webSearch: false
+          }
+        }),
+        prompt: "Weather?",
+        tools: {
+          weather: tool({
+            name: "weather",
+            schema: z.object({ city: z.string() }),
+            execute: ({ city }) => ({ city, forecast: "sunny" })
+          })
+        },
+        toolChoice: "required"
+      })
+    ).rejects.toThrow('Model "test/model" does not support tool choice.');
+  });
+
+  it("rejects tool choice without registered tools", async () => {
+    await expect(
+      generateText({
+        model: createLanguageModel(),
+        prompt: "Weather?",
+        toolChoice: "required"
+      })
+    ).rejects.toThrow('The "toolChoice" option requires at least one registered tool.');
+  });
+
+  it("rejects selecting an unregistered tool", async () => {
+    await expect(
+      generateText({
+        model: createLanguageModel(),
+        prompt: "Weather?",
+        tools: {
+          weather: tool({
+            name: "weather",
+            schema: z.object({ city: z.string() }),
+            execute: ({ city }) => ({ city, forecast: "sunny" })
+          })
+        },
+        toolChoice: {
+          type: "tool",
+          toolName: "news"
+        }
+      })
+    ).rejects.toThrow('The selected tool "news" is not registered.');
+  });
+
   it("executes tools across multiple steps", async () => {
     let call = 0;
     const tools: ToolSet = {
@@ -252,6 +343,241 @@ describe("core helpers", () => {
     expect(result.messages.at(-3)?.role).toBe("assistant");
     expect(result.messages.at(-2)?.role).toBe("tool");
     expect(result.messages.at(-1)?.role).toBe("assistant");
+  });
+
+  it("executes tool calls in parallel while preserving result order", async () => {
+    let call = 0;
+    let active = 0;
+    let maxActive = 0;
+
+    const model = createLanguageModel({
+      capabilities: {
+        streaming: true,
+        tools: true,
+        structuredOutput: true,
+        jsonMode: true,
+        toolChoice: true,
+        parallelToolCalls: true,
+        vision: true,
+        files: false,
+        audioInput: false,
+        audioOutput: false,
+        embeddings: false,
+        reasoning: false,
+        webSearch: false
+      },
+      async generate() {
+        call += 1;
+        if (call === 1) {
+          return {
+            messages: [
+              {
+                role: "assistant",
+                parts: [
+                  { type: "tool-call", toolCall: { id: "1", name: "slow", input: { value: 1 } } },
+                  { type: "tool-call", toolCall: { id: "2", name: "fast", input: { value: 2 } } }
+                ]
+              }
+            ]
+          };
+        }
+
+        return { messages: [createTextMessage("assistant", "done")], text: "done" };
+      }
+    });
+
+    const result = await generateText({
+      model,
+      prompt: "Run both tools",
+      maxSteps: 2,
+      tools: {
+        slow: tool({
+          name: "slow",
+          schema: z.object({ value: z.number() }),
+          async execute({ value }) {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            active -= 1;
+            return { value };
+          }
+        }),
+        fast: tool({
+          name: "fast",
+          schema: z.object({ value: z.number() }),
+          async execute({ value }) {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            active -= 1;
+            return { value };
+          }
+        })
+      }
+    });
+
+    expect(maxActive).toBeGreaterThan(1);
+    expect(result.toolResults.map((entry) => entry.toolName)).toEqual(["slow", "fast"]);
+  });
+
+  it("limits parallel tool execution with maxConcurrency", async () => {
+    let call = 0;
+    let active = 0;
+    let maxActive = 0;
+
+    const model = createLanguageModel({
+      capabilities: {
+        streaming: true,
+        tools: true,
+        structuredOutput: true,
+        jsonMode: true,
+        toolChoice: true,
+        parallelToolCalls: true,
+        vision: true,
+        files: false,
+        audioInput: false,
+        audioOutput: false,
+        embeddings: false,
+        reasoning: false,
+        webSearch: false
+      },
+      async generate() {
+        call += 1;
+        if (call === 1) {
+          return {
+            messages: [
+              {
+                role: "assistant",
+                parts: [
+                  { type: "tool-call", toolCall: { id: "1", name: "one", input: {} } },
+                  { type: "tool-call", toolCall: { id: "2", name: "two", input: {} } }
+                ]
+              }
+            ]
+          };
+        }
+
+        return { messages: [createTextMessage("assistant", "done")], text: "done" };
+      }
+    });
+
+    await generateText({
+      model,
+      prompt: "Run tools",
+      maxSteps: 2,
+      toolExecution: {
+        maxConcurrency: 1
+      },
+      tools: {
+        one: tool({
+          name: "one",
+          schema: z.object({}),
+          async execute() {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            active -= 1;
+            return { ok: true };
+          }
+        }),
+        two: tool({
+          name: "two",
+          schema: z.object({}),
+          async execute() {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            active -= 1;
+            return { ok: true };
+          }
+        })
+      }
+    });
+
+    expect(maxActive).toBe(1);
+  });
+
+  it("turns tool timeouts into error results and can stop on tool error", async () => {
+    let call = 0;
+    const model = createLanguageModel({
+      capabilities: {
+        streaming: true,
+        tools: true,
+        structuredOutput: true,
+        jsonMode: true,
+        toolChoice: true,
+        parallelToolCalls: true,
+        vision: true,
+        files: false,
+        audioInput: false,
+        audioOutput: false,
+        embeddings: false,
+        reasoning: false,
+        webSearch: false
+      },
+      async generate() {
+        call += 1;
+        if (call === 1) {
+          return {
+            messages: [
+              {
+                role: "assistant",
+                parts: [{ type: "tool-call", toolCall: { id: "1", name: "slow", input: {} } }]
+              }
+            ]
+          };
+        }
+
+        return { messages: [createTextMessage("assistant", "done")], text: "done" };
+      }
+    });
+
+    const timeoutResult = await generateText({
+      model,
+      prompt: "Run slow tool",
+      maxSteps: 2,
+      toolExecution: {
+        timeoutMs: 5
+      },
+      tools: {
+        slow: tool({
+          name: "slow",
+          schema: z.object({}),
+          async execute() {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            return { ok: true };
+          }
+        })
+      }
+    });
+
+    expect(timeoutResult.toolResults[0]).toMatchObject({
+      toolName: "slow",
+      isError: true
+    });
+
+    call = 0;
+    await expect(
+      generateText({
+        model,
+        prompt: "Run slow tool",
+        maxSteps: 2,
+        toolExecution: {
+          timeoutMs: 5,
+          stopOnError: true
+        },
+        tools: {
+          slow: tool({
+            name: "slow",
+            schema: z.object({}),
+            async execute() {
+              await new Promise((resolve) => setTimeout(resolve, 20));
+              return { ok: true };
+            }
+          })
+        }
+      })
+    ).rejects.toThrow('Tool "slow" failed: Tool execution timed out after 5ms.');
   });
 
   it("builds ergonomic messages", () => {
@@ -647,6 +973,386 @@ describe("core helpers", () => {
     });
 
     expect(events).toEqual(["generate-start", "generate-finish"]);
+  });
+
+  it("emits tool execution telemetry during generateText", async () => {
+    const events: any[] = [];
+    let call = 0;
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async generate() {
+          call += 1;
+          if (call === 1) {
+            return {
+              messages: [
+                {
+                  role: "assistant",
+                  parts: [{ type: "tool-call", toolCall: { id: "1", name: "weather", input: { city: "Madrid" } } }]
+                }
+              ]
+            };
+          }
+
+          return { messages: [createTextMessage("assistant", "Madrid is sunny.")], text: "Madrid is sunny." };
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event);
+          }
+        })
+      ]
+    );
+
+    const result = await generateText({
+      model: wrapped,
+      prompt: "Weather?",
+      maxSteps: 2,
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      }
+    });
+
+    expect(result.text).toBe("Madrid is sunny.");
+    expect(events.map((event) => event.type)).toEqual([
+      "generate-start",
+      "generate-finish",
+      "tool-execution-start",
+      "tool-execution-finish",
+      "generate-start",
+      "generate-finish"
+    ]);
+    expect(events[2]).toMatchObject({
+      type: "tool-execution-start",
+      step: 1,
+      toolCall: { id: "1", name: "weather", input: { city: "Madrid" } }
+    });
+    expect(events[3]).toMatchObject({
+      type: "tool-execution-finish",
+      step: 1,
+      toolResult: {
+        toolCallId: "1",
+        toolName: "weather",
+        output: { city: "Madrid", forecast: "sunny" },
+        isError: false
+      }
+    });
+  });
+
+  it("applies streaming middleware in order", async () => {
+    const calls: string[] = [];
+    const wrapped = wrapLanguageModel(createLanguageModel(), [
+      {
+        name: "first",
+        async wrapStream(_context, next) {
+          calls.push("first:before");
+          const stream = await next();
+
+          return (async function* () {
+            for await (const event of stream) {
+              yield event;
+            }
+            calls.push("first:after");
+          })();
+        }
+      },
+      {
+        name: "second",
+        async wrapStream(_context, next) {
+          calls.push("second:before");
+          const stream = await next();
+
+          return (async function* () {
+            for await (const event of stream) {
+              yield event;
+            }
+            calls.push("second:after");
+          })();
+        }
+      }
+    ]);
+
+    const stream = await wrapped.stream!({
+      messages: [user("hello")]
+    });
+
+    const events: StreamEvent[] = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    expect(events.at(-1)).toMatchObject({ type: "finish", finishReason: "stop" });
+    expect(calls).toEqual(["first:before", "second:before", "second:after", "first:after"]);
+  });
+
+  it("rejects when streaming middleware calls next multiple times", async () => {
+    const wrapped = wrapLanguageModel(createLanguageModel(), [
+      {
+        async wrapStream(_context, next) {
+          await next();
+          return next();
+        }
+      }
+    ]);
+
+    await expect(
+      wrapped.stream!({
+        messages: [user("hello")]
+      })
+    ).rejects.toThrow("Language model middleware called next() multiple times.");
+  });
+
+  it("preserves streaming for middlewares that only wrap generate", async () => {
+    const wrapped = wrapLanguageModel(createLanguageModel(), [
+      {
+        async wrapGenerate(context, next) {
+          expect(context.model.provider).toBe("test");
+          return next();
+        }
+      }
+    ]);
+
+    const result = streamText({
+      model: wrapped,
+      prompt: "Stream"
+    });
+
+    expect(await result.collect()).toMatchObject({ text: "hello world" });
+  });
+
+  it("emits stream telemetry events through middleware", async () => {
+    const events: string[] = [];
+    const wrapped = wrapLanguageModel(createLanguageModel(), [
+      createTelemetryMiddleware({
+        onEvent(event) {
+          events.push(event.type);
+        }
+      })
+    ]);
+
+    const stream = await wrapped.stream!({
+      messages: [user("hello")]
+    });
+
+    for await (const _event of stream) {
+      // drain stream
+    }
+
+    expect(events).toEqual(["stream-start", "stream-finish"]);
+  });
+
+  it("includes finish metadata in stream telemetry", async () => {
+    const events: any[] = [];
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async stream() {
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "hello" };
+            yield {
+              type: "finish",
+              finishReason: "stop",
+              providerFinishReason: "completed",
+              usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 }
+            };
+          })();
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event);
+          }
+        })
+      ]
+    );
+
+    const stream = await wrapped.stream!({
+      messages: [user("hello")]
+    });
+
+    for await (const _event of stream) {
+      // drain stream
+    }
+
+    expect(events.at(-1)).toMatchObject({
+      type: "stream-finish",
+      finishReason: "stop",
+      providerFinishReason: "completed",
+      usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 }
+    });
+  });
+
+  it("emits stream error telemetry when iteration fails", async () => {
+    const events: string[] = [];
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async stream() {
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "hello" };
+            throw new Error("stream failed");
+          })();
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event.type);
+          }
+        })
+      ]
+    );
+
+    const stream = await wrapped.stream!({
+      messages: [user("hello")]
+    });
+
+    await expect(
+      (async () => {
+        for await (const _event of stream) {
+          // drain stream
+        }
+      })()
+    ).rejects.toThrow("stream failed");
+
+    expect(events).toEqual(["stream-start", "stream-error"]);
+  });
+
+  it("emits stream error telemetry when the provider stream setup fails", async () => {
+    const events: string[] = [];
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async stream() {
+          throw new Error("setup failed");
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event.type);
+          }
+        })
+      ]
+    );
+
+    await expect(
+      wrapped.stream!({
+        messages: [user("hello")]
+      })
+    ).rejects.toThrow("setup failed");
+
+    expect(events).toEqual(["stream-start", "stream-error"]);
+  });
+
+  it("keeps streamText working with wrapped streaming middleware and tools", async () => {
+    const events: string[] = [];
+    let call = 0;
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async stream() {
+          call += 1;
+          if (call === 1) {
+            return (async function* (): AsyncGenerator<StreamEvent> {
+              yield { type: "tool-call", toolCall: { id: "1", name: "weather", input: { city: "Madrid" } } };
+              yield { type: "finish", finishReason: "tool-calls" };
+            })();
+          }
+
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "Madrid is sunny." };
+            yield { type: "finish", finishReason: "stop" };
+          })();
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event.type);
+          }
+        })
+      ]
+    );
+
+    const result = streamText({
+      model: wrapped,
+      prompt: "Weather?",
+      maxSteps: 2,
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      }
+    });
+
+    expect((await result.collect()).text).toBe("Madrid is sunny.");
+    expect(events).toEqual([
+      "stream-start",
+      "stream-finish",
+      "tool-execution-start",
+      "tool-execution-finish",
+      "stream-start",
+      "stream-finish"
+    ]);
+  });
+
+  it("emits tool execution error telemetry when a tool fails during streamText", async () => {
+    const events: any[] = [];
+    const wrapped = wrapLanguageModel(
+      createLanguageModel({
+        async stream() {
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "tool-call", toolCall: { id: "1", name: "weather", input: { city: "Madrid" } } };
+            yield { type: "finish", finishReason: "tool-calls" };
+          })();
+        }
+      }),
+      [
+        createTelemetryMiddleware({
+          onEvent(event) {
+            events.push(event);
+          }
+        })
+      ]
+    );
+
+    const result = streamText({
+      model: wrapped,
+      prompt: "Weather?",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: () => {
+            throw new Error("weather offline");
+          }
+        })
+      }
+    });
+
+    expect((await result.collect()).toolResults).toMatchObject([
+      {
+        toolCallId: "1",
+        toolName: "weather",
+        isError: true
+      }
+    ]);
+    expect(events.map((event) => event.type)).toEqual([
+      "stream-start",
+      "stream-finish",
+      "tool-execution-start",
+      "tool-execution-error"
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: "tool-execution-error",
+      step: 1,
+      toolCall: { id: "1", name: "weather", input: { city: "Madrid" } }
+    });
   });
 
   it("persists cached generate results to the filesystem", async () => {

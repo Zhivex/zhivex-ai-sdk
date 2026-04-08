@@ -166,6 +166,42 @@ describe("kimi adapter", () => {
     expect(body.user).toBe("test-user");
   });
 
+  it("maps common tool choice to Kimi tool_choice", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "hello from kimi" } }]
+      })
+    );
+
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("kimi-k2-0905-preview"),
+      prompt: "hello",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      },
+      toolChoice: {
+        type: "tool",
+        toolName: "weather"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tool_choice: { type: string; function: { name: string } };
+    };
+    expect(body.tool_choice).toEqual({
+      type: "function",
+      function: {
+        name: "weather"
+      }
+    });
+  });
+
   it("rejects common reasoning config for Kimi until it is mapped", async () => {
     const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
 

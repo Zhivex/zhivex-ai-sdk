@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { defaultModelCatalog, type ModelCapabilities, type ProviderAdapter } from "@zhivex-ai/core";
 import { createGateway } from "../src/index.ts";
@@ -39,6 +40,40 @@ const createAdapter = (
           text: result.text,
           usage: result.usage
         };
+      }
+    };
+  }
+});
+
+const createStreamingAdapter = (
+  streamImpl: () => Promise<AsyncIterable<{ type: "text-delta"; textDelta: string } | { type: "finish"; finishReason: "stop" }>>,
+  capabilities: ModelCapabilities = {
+    streaming: true,
+    tools: false,
+    structuredOutput: false,
+    jsonMode: false,
+    toolChoice: false,
+    parallelToolCalls: false,
+    vision: true,
+    files: false,
+    audioInput: false,
+    audioOutput: false,
+    embeddings: false,
+    reasoning: false,
+    webSearch: false
+  }
+): ProviderAdapter => ({
+  name: "stream-test",
+  languageModel(modelId) {
+    return {
+      provider: "stream-test",
+      modelId,
+      capabilities,
+      async generate() {
+        return { messages: [{ role: "assistant", parts: [{ type: "text", text: "unused" }] }], text: "unused" };
+      },
+      async stream() {
+        return streamImpl();
       }
     };
   }
@@ -239,5 +274,81 @@ describe("gateway", () => {
     });
 
     expect(result.providerUsed).toBe("ollama");
+  });
+
+  it("falls back before streaming starts", async () => {
+    const gateway = createGateway({
+      adapters: {
+        openai: createStreamingAdapter(async () => {
+          throw new Error("429 rate limited");
+        }),
+        gemini: createStreamingAdapter(async () =>
+          (async function* () {
+            yield { type: "text-delta" as const, textDelta: "hello" };
+            yield { type: "finish" as const, finishReason: "stop" as const };
+          })()
+        )
+      },
+      maxRetries: 0
+    });
+
+    const result = gateway.streamText({
+      primary: { provider: "openai", modelId: "gpt-4o-mini" },
+      fallbacks: [{ provider: "gemini", modelId: "gemini-2.0-flash" }],
+      messages: [{ role: "user", content: "hello" }]
+    });
+
+    expect(await result.collect()).toMatchObject({
+      text: "hello",
+      providerUsed: "gemini"
+    });
+  });
+
+  it("routes generateObject through the chosen provider", async () => {
+    const gateway = createGateway({
+      adapters: {
+        gemini: {
+          name: "gemini",
+          languageModel(modelId) {
+            return {
+              provider: "gemini",
+              modelId,
+              capabilities: {
+                streaming: true,
+                tools: false,
+                structuredOutput: true,
+                jsonMode: true,
+                toolChoice: false,
+                parallelToolCalls: false,
+                vision: true,
+                files: false,
+                audioInput: false,
+                audioOutput: false,
+                embeddings: false,
+                reasoning: false,
+                webSearch: false
+              },
+              async generate() {
+                return {
+                  messages: [{ role: "assistant", parts: [{ type: "text", text: "{\"answer\":\"ok\"}" }] }],
+                  text: "{\"answer\":\"ok\"}"
+                };
+              }
+            };
+          }
+        }
+      }
+    });
+
+    const result = await gateway.generateObject({
+      primary: { provider: "gemini", modelId: "gemini-2.0-flash" },
+      messages: [{ role: "user", content: "hello" }],
+      schema: z.object({
+        answer: z.string()
+      })
+    });
+
+    expect(result.object).toEqual({ answer: "ok" });
+    expect(result.providerUsed).toBe("gemini");
   });
 });

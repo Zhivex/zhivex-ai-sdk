@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { embedMany, generateObject, generateText, streamText } from "@zhivex-ai/core";
+import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, streamText, transcribeAudio } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createGemini } from "../src/index.js";
 
@@ -298,5 +298,91 @@ describe("gemini adapter", () => {
       text: "hello world",
       finishReason: "stop"
     });
+  });
+
+  it("transcribes audio through the shared contract", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            content: { parts: [{ text: "hello from gemini audio" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await transcribeAudio({
+      model: provider.transcriptionModel!("gemini-2.0-flash"),
+      audio: {
+        data: "aGVsbG8=",
+        mediaType: "audio/wav"
+      }
+    });
+
+    expect(result.text).toBe("hello from gemini audio");
+  });
+
+  it("generates speech through the shared contract", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: "audio/wav",
+                    data: "AQID"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateSpeech({
+      model: provider.speechModel!("gemini-2.5-flash-preview-tts"),
+      input: "hello there"
+    });
+
+    expect(Array.from(result.audio)).toEqual([1, 2, 3]);
+    expect(result.mediaType).toBe("audio/wav");
+  });
+
+  it("generates grounded text with sources", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "fresh grounded answer" }] },
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    title: "Gemini Source",
+                    uri: "https://example.com/gemini",
+                    snippet: "Snippet"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateGroundedText({
+      model: provider.groundedLanguageModel!("gemini-2.0-flash"),
+      prompt: "What happened today?"
+    });
+
+    expect(result.text).toBe("fresh grounded answer");
+    expect(result.sources[0]?.url).toBe("https://example.com/gemini");
   });
 });

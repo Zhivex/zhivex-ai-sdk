@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { embedMany, generateObject, generateText } from "@zhivex-ai/core";
+import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, transcribeAudio } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createVertex } from "../src/index.js";
 
@@ -281,5 +281,106 @@ describe("vertex adapter", () => {
     ).rejects.toThrow(
       'Provider "vertex" uses "reasoning.effort" for Gemini 3 models and does not support "reasoning.budgetTokens".'
     );
+  });
+
+  it("transcribes audio through the shared contract", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            content: { parts: [{ text: "hello from vertex audio" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await transcribeAudio({
+      model: provider.transcriptionModel!("gemini-2.0-flash"),
+      audio: {
+        data: "aGVsbG8=",
+        mediaType: "audio/wav"
+      }
+    });
+
+    expect(result.text).toBe("hello from vertex audio");
+  });
+
+  it("generates speech through the shared contract", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: "audio/wav",
+                    data: "AQID"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await generateSpeech({
+      model: provider.speechModel!("gemini-2.5-flash-preview-tts"),
+      input: "hello there"
+    });
+
+    expect(Array.from(result.audio)).toEqual([1, 2, 3]);
+    expect(result.mediaType).toBe("audio/wav");
+  });
+
+  it("generates grounded text with sources", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "fresh vertex answer" }] },
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  web: {
+                    title: "Vertex Source",
+                    uri: "https://example.com/vertex",
+                    snippet: "Snippet"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await generateGroundedText({
+      model: provider.groundedLanguageModel!("gemini-2.0-flash"),
+      prompt: "What happened today?"
+    });
+
+    expect(result.text).toBe("fresh vertex answer");
+    expect(result.sources[0]?.url).toBe("https://example.com/vertex");
   });
 });

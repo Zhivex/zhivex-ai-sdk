@@ -140,6 +140,61 @@ describe("anthropic adapter", () => {
     expect(body.metadata.source).toBe("test");
   });
 
+  it("maps common tool choice to Anthropic tool_choice", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      },
+      toolChoice: {
+        type: "tool",
+        toolName: "weather"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tool_choice: { type: string; name: string };
+    };
+    expect(body.tool_choice).toEqual({
+      type: "tool",
+      name: "weather"
+    });
+  });
+
+  it("rejects unsupported toolChoice none for Anthropic", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("claude-3-5-sonnet"),
+        prompt: "hello",
+        tools: {
+          weather: tool({
+            name: "weather",
+            schema: z.object({ city: z.string() }),
+            execute: ({ city }) => ({ city })
+          })
+        },
+        toolChoice: "none"
+      })
+    ).rejects.toThrow('Provider "anthropic" does not support "toolChoice=none".');
+  });
+
   it("maps reasoning budget tokens to Anthropic thinking", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({

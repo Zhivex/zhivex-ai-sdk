@@ -3,20 +3,46 @@ import path from "node:path";
 
 import type {
   CircuitBreakerState,
+  FinishReason,
   GenerateResult,
   LanguageModel,
   LanguageModelMiddleware,
   LanguageModelTelemetryEvent,
   ModelGenerateInput,
-  ProviderOptions
+  ProviderOptions,
+  StreamEvent
 } from "./types.js";
 
 const serializeInput = (input: unknown) => JSON.stringify(input);
+const telemetryObserversSymbol = Symbol("zhivex-ai.telemetry-observers");
+
+type TelemetryObserver<TProviderOptions extends ProviderOptions = ProviderOptions> = (
+  event: LanguageModelTelemetryEvent<TProviderOptions>
+) => void | Promise<void>;
+
+type LanguageModelWithTelemetry<TProviderOptions extends ProviderOptions = ProviderOptions> = LanguageModel<TProviderOptions> & {
+  [telemetryObserversSymbol]?: TelemetryObserver<TProviderOptions>[];
+};
 
 export interface GenerateCache {
   get(key: string): Promise<GenerateResult | undefined> | GenerateResult | undefined;
   set(key: string, value: GenerateResult): Promise<void> | void;
 }
+
+const getTelemetryObservers = <TProviderOptions extends ProviderOptions>(
+  model: LanguageModel<TProviderOptions>
+): TelemetryObserver<TProviderOptions>[] =>
+  [...(((model as LanguageModelWithTelemetry<TProviderOptions>)[telemetryObserversSymbol] ?? []) as TelemetryObserver<TProviderOptions>[])];
+
+export const emitLanguageModelTelemetryEvent = async <TProviderOptions extends ProviderOptions>(
+  model: LanguageModel<TProviderOptions>,
+  event: LanguageModelTelemetryEvent<TProviderOptions>
+) => {
+  const observers = getTelemetryObservers(model);
+  for (const observer of observers) {
+    await observer(event);
+  }
+};
 
 export const wrapLanguageModel = <TProviderOptions extends ProviderOptions>(
   model: LanguageModel<TProviderOptions>,
@@ -26,36 +52,93 @@ export const wrapLanguageModel = <TProviderOptions extends ProviderOptions>(
     return model;
   }
 
-  return {
-    ...model,
-    async generate(input: ModelGenerateInput<TProviderOptions>): Promise<GenerateResult> {
-      let index = -1;
+  const runGenerate = async (input: ModelGenerateInput<TProviderOptions>): Promise<GenerateResult> => {
+    let index = -1;
 
-      const run = async (position: number): Promise<GenerateResult> => {
-        if (position <= index) {
-          throw new Error("Language model middleware called next() multiple times.");
-        }
+    const run = async (position: number): Promise<GenerateResult> => {
+      if (position <= index) {
+        throw new Error("Language model middleware called next() multiple times.");
+      }
 
-        index = position;
-        const middleware = middlewares[position];
-        if (!middleware?.wrapGenerate) {
-          return position >= middlewares.length ? model.generate(input) : run(position + 1);
-        }
+      index = position;
+      const middleware = middlewares[position];
+      if (!middleware?.wrapGenerate) {
+        return position >= middlewares.length ? model.generate(input) : run(position + 1);
+      }
 
-        return middleware.wrapGenerate({ model, input }, () => run(position + 1));
-      };
+      return middleware.wrapGenerate({ model, input }, () => run(position + 1));
+    };
 
-      return run(0);
-    },
-    stream: model.stream?.bind(model)
+    return run(0);
   };
+
+  const runStream = async (input: ModelGenerateInput<TProviderOptions>): Promise<AsyncIterable<StreamEvent>> => {
+    if (!model.stream) {
+      throw new Error(`Language model "${model.provider}/${model.modelId}" does not support streaming.`);
+    }
+
+    let index = -1;
+
+    const run = async (position: number): Promise<AsyncIterable<StreamEvent>> => {
+      if (position <= index) {
+        throw new Error("Language model middleware called next() multiple times.");
+      }
+
+      index = position;
+      const middleware = middlewares[position];
+      if (!middleware?.wrapStream) {
+        return position >= middlewares.length ? model.stream!(input) : run(position + 1);
+      }
+
+      return middleware.wrapStream({ model, input }, () => run(position + 1));
+    };
+
+    return run(0);
+  };
+
+  const wrappedModel: LanguageModelWithTelemetry<TProviderOptions> = {
+    ...model,
+    generate(input: ModelGenerateInput<TProviderOptions>): Promise<GenerateResult> {
+      return runGenerate(input);
+    },
+    stream: model.stream
+      ? (input: ModelGenerateInput<TProviderOptions>) => runStream(input)
+      : undefined
+  };
+
+  const telemetryObservers = [
+    ...getTelemetryObservers(model),
+    ...middlewares
+      .filter((middleware) => middleware.name === "telemetry")
+      .map((middleware) => (event: LanguageModelTelemetryEvent<TProviderOptions>) => {
+        const telemetryMiddleware = middleware as LanguageModelMiddleware<TProviderOptions> & {
+          onTelemetryEvent?: TelemetryObserver<TProviderOptions>;
+        };
+        return telemetryMiddleware.onTelemetryEvent?.(event);
+      })
+      .filter(Boolean)
+  ];
+
+  if (telemetryObservers.length) {
+    Object.defineProperty(wrappedModel, telemetryObserversSymbol, {
+      value: telemetryObservers,
+      enumerable: false,
+      configurable: false
+    });
+  }
+
+  return wrappedModel;
 };
 
 export const createTelemetryMiddleware = <TProviderOptions extends ProviderOptions>(options: {
   onEvent: (event: LanguageModelTelemetryEvent<TProviderOptions>) => void | Promise<void>;
-}): LanguageModelMiddleware<TProviderOptions> => ({
-  name: "telemetry",
-  async wrapGenerate(context, next) {
+}): LanguageModelMiddleware<TProviderOptions> => {
+  const middleware: LanguageModelMiddleware<TProviderOptions> & {
+    onTelemetryEvent?: TelemetryObserver<TProviderOptions>;
+  } = {
+    name: "telemetry",
+    onTelemetryEvent: options.onEvent,
+    async wrapGenerate(context, next) {
     const startedAt = Date.now();
     await options.onEvent({
       type: "generate-start",
@@ -91,8 +174,81 @@ export const createTelemetryMiddleware = <TProviderOptions extends ProviderOptio
       });
       throw error;
     }
+  },
+  async wrapStream(context, next) {
+    const startedAt = Date.now();
+    await options.onEvent({
+      type: "stream-start",
+      model: context.model,
+      input: context.input,
+      startedAt
+    });
+
+    try {
+      const stream = await next();
+
+      return (async function* () {
+        let finishReason: FinishReason | undefined;
+        let providerFinishReason: string | undefined;
+        let usage: Extract<StreamEvent, { type: "finish" }>["usage"];
+
+        try {
+          for await (const event of stream) {
+            if (event.type === "finish") {
+              finishReason = event.finishReason;
+              providerFinishReason = event.providerFinishReason;
+              usage = event.usage;
+            }
+
+            yield event;
+          }
+
+          const finishedAt = Date.now();
+          await options.onEvent({
+            type: "stream-finish",
+            model: context.model,
+            input: context.input,
+            startedAt,
+            finishedAt,
+            latencyMs: finishedAt - startedAt,
+            finishReason,
+            providerFinishReason,
+            usage
+          });
+        } catch (error) {
+          const finishedAt = Date.now();
+          const err = error instanceof Error ? error : new Error(String(error));
+          await options.onEvent({
+            type: "stream-error",
+            model: context.model,
+            input: context.input,
+            error: err,
+            startedAt,
+            finishedAt,
+            latencyMs: finishedAt - startedAt
+          });
+          throw error;
+        }
+      })();
+    } catch (error) {
+      const finishedAt = Date.now();
+      const err = error instanceof Error ? error : new Error(String(error));
+      await options.onEvent({
+        type: "stream-error",
+        model: context.model,
+        input: context.input,
+        error: err,
+        startedAt,
+        finishedAt,
+        latencyMs: finishedAt - startedAt
+      });
+      throw error;
+    }
   }
-});
+  };
+
+  return middleware;
+};
 
 export const createCachedGenerateMiddleware = <TProviderOptions extends ProviderOptions>(options: {
   cache: GenerateCache;

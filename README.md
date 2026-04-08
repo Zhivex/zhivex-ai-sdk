@@ -317,6 +317,31 @@ console.log(result.text);
 console.log(result.toolResults);
 ```
 
+When the selected model supports tool selection, you can control it through the common `toolChoice` option instead of dropping to provider-specific request fields.
+
+```ts
+const forcedToolResult = await generateText({
+  model: anthropic("claude-3-5-sonnet"),
+  messages: [user("What is the weather in Madrid?")],
+  tools: {
+    weather: tool({
+      name: "weather",
+      schema: z.object({
+        city: z.string()
+      }),
+      execute: async ({ city }) => ({
+        city,
+        forecast: "sunny"
+      })
+    })
+  },
+  toolChoice: {
+    type: "tool",
+    toolName: "weather"
+  }
+});
+```
+
 ### Multimodal Messages
 
 Use explicit messages when you need full control over roles, parts, or multimodal inputs.
@@ -358,6 +383,57 @@ const result = await embedMany({
 });
 
 console.log(result.embeddings.length);
+```
+
+### Audio
+
+Use the shared audio primitives when you want a provider-agnostic contract for transcription or text-to-speech.
+
+```ts
+import { generateSpeech, transcribeAudio } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const transcript = await transcribeAudio({
+  model: openai.transcriptionModel("gpt-4o-mini-transcribe"),
+  audio: {
+    data: "BASE64_AUDIO",
+    mediaType: "audio/wav",
+    filename: "sample.wav"
+  }
+});
+
+const speech = await generateSpeech({
+  model: openai.speechModel("gpt-4o-mini-tts"),
+  input: transcript.text
+});
+
+console.log(transcript.text);
+console.log(speech.mediaType, speech.audio.length);
+```
+
+### Grounded Web Search
+
+`generateGroundedText()` runs a grounded generation request and returns normalized sources alongside the final answer.
+
+```ts
+import { generateGroundedText } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const result = await generateGroundedText({
+  model: openai.groundedLanguageModel("gpt-4o-search-preview"),
+  prompt: "What changed recently in multi-provider AI SDKs?"
+});
+
+console.log(result.text);
+console.log(result.sources);
 ```
 
 ## Switching Providers
@@ -422,12 +498,16 @@ console.log(result.providerUsed);
 console.log(result.attempts);
 ```
 
+The gateway also supports `streamText()`, `generateObject()`, and `streamObject()` while preserving the selected target for the full request lifecycle, including tool loops.
+
 ## Public API Surface
 
 The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives from `core`, including:
 
 - `generateText`, `streamText`
 - `generateObject`, `streamObject`
+- `transcribeAudio`, `generateSpeech`
+- `generateGroundedText`
 - `embed`, `embedMany`
 - message helpers such as `system`, `user`, `assistant`, `tool`, `textPart`
 - shared types such as `ReasoningConfig`, `GenerateTextOptions`, and `GenerateObjectOptions`

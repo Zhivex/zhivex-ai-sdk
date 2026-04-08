@@ -1,4 +1,5 @@
 import { ParseError, UnsupportedFeatureError, ValidationError } from "./errors.js";
+import { emitLanguageModelTelemetryEvent } from "./middleware.js";
 import {
   createTextMessage,
   getTextFromMessages,
@@ -20,6 +21,25 @@ import type {
   ToolCall,
   ToolExecutionResult
 } from "./types.js";
+
+const withToolTimeout = async <T>(operation: Promise<T>, timeoutMs?: number): Promise<T> => {
+  if (!timeoutMs) {
+    return operation;
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Tool execution timed out after ${timeoutMs}ms.`)), timeoutMs);
+    operation
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+};
 
 const validateReasoning = (options: Pick<GenerateTextOptions, "model" | "reasoning">) => {
   const { reasoning } = options;
@@ -66,6 +86,8 @@ const buildMessages = (options: Pick<GenerateTextOptions, "prompt" | "messages" 
 const toRequest = (options: GenerateTextOptions, messages: ModelMessage[]): ModelGenerateInput => ({
   messages,
   tools: options.tools,
+  toolChoice: options.toolChoice,
+  toolExecution: options.toolExecution,
   temperature: options.temperature,
   maxTokens: options.maxTokens,
   reasoning: options.reasoning,
@@ -77,10 +99,15 @@ const toRequest = (options: GenerateTextOptions, messages: ModelMessage[]): Mode
   retryBackoffMs: options.retryBackoffMs
 });
 
-const executeTools = async (toolCalls: ToolCall[], options: GenerateTextOptions): Promise<ToolExecutionResult[]> => {
-  const results: ToolExecutionResult[] = [];
-
-  for (const call of toolCalls) {
+const executeTools = async (
+  toolCalls: ToolCall[],
+  options: GenerateTextOptions,
+  context: {
+    request: ModelGenerateInput;
+    step: number;
+  }
+): Promise<ToolExecutionResult[]> => {
+  const validatedCalls = toolCalls.map((call) => {
     const tool = options.tools?.[call.name];
     if (!tool) {
       throw new ValidationError(`Tool "${call.name}" was requested by the model but is not registered.`);
@@ -91,21 +118,106 @@ const executeTools = async (toolCalls: ToolCall[], options: GenerateTextOptions)
       throw new ValidationError(`Invalid input for tool "${call.name}": ${parsed.error.message}`);
     }
 
+    return {
+      call,
+      tool,
+      parsedInput: parsed.data
+    };
+  });
+
+  const parallel = options.toolExecution?.parallel ?? options.model.capabilities.parallelToolCalls;
+  const maxConcurrency = Math.max(1, options.toolExecution?.maxConcurrency ?? validatedCalls.length ?? 1);
+  const timeoutMs = options.toolExecution?.timeoutMs;
+  const stopOnError = options.toolExecution?.stopOnError ?? false;
+  const results = new Array<ToolExecutionResult>(validatedCalls.length);
+
+  const executeSingleTool = async (
+    item: (typeof validatedCalls)[number],
+    index: number
+  ): Promise<void> => {
+    const { call, tool, parsedInput } = item;
+    const startedAt = Date.now();
+    await emitLanguageModelTelemetryEvent(options.model, {
+      type: "tool-execution-start",
+      model: options.model,
+      input: context.request,
+      step: context.step,
+      toolCall: call,
+      startedAt
+    });
+
     try {
-      const output = serializeJsonValue(await tool.execute(parsed.data));
-      results.push({
+      const output = serializeJsonValue(await withToolTimeout(Promise.resolve(tool.execute(parsedInput)), timeoutMs));
+      const result = {
         toolCallId: call.id,
         toolName: call.name,
         output,
         isError: false
+      } satisfies ToolExecutionResult;
+      results[index] = result;
+
+      const finishedAt = Date.now();
+      await emitLanguageModelTelemetryEvent(options.model, {
+        type: "tool-execution-finish",
+        model: options.model,
+        input: context.request,
+        step: context.step,
+        toolCall: call,
+        toolResult: result,
+        startedAt,
+        finishedAt,
+        latencyMs: finishedAt - startedAt
       });
     } catch (error) {
-      results.push({
+      const result = {
         toolCallId: call.id,
         toolName: call.name,
         error: { message: error instanceof Error ? error.message : "Tool execution failed." },
         isError: true
+      } satisfies ToolExecutionResult;
+      results[index] = result;
+
+      const finishedAt = Date.now();
+      await emitLanguageModelTelemetryEvent(options.model, {
+        type: "tool-execution-error",
+        model: options.model,
+        input: context.request,
+        step: context.step,
+        toolCall: call,
+        error: error instanceof Error ? error : new Error(String(error)),
+        startedAt,
+        finishedAt,
+        latencyMs: finishedAt - startedAt
       });
+    }
+  };
+
+  if (!parallel || validatedCalls.length <= 1) {
+    for (const [index, item] of validatedCalls.entries()) {
+      await executeSingleTool(item, index);
+      if (stopOnError && results[index]?.isError) {
+        throw new Error(`Tool "${item.call.name}" failed: ${results[index]?.error?.message ?? "Unknown tool error."}`);
+      }
+    }
+
+    return results;
+  }
+
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(maxConcurrency, validatedCalls.length) }, async () => {
+    while (cursor < validatedCalls.length) {
+      const index = cursor;
+      cursor += 1;
+      await executeSingleTool(validatedCalls[index], index);
+    }
+  });
+
+  await Promise.all(workers);
+
+  if (stopOnError) {
+    const firstError = results.find((result) => result?.isError);
+    if (firstError) {
+      throw new Error(`Tool "${firstError.toolName}" failed: ${firstError.error?.message ?? "Unknown tool error."}`);
     }
   }
 
@@ -121,12 +233,37 @@ const extractToolCalls = (messages: ModelMessage[]): ToolCall[] =>
       .map((part) => part.toolCall)
   );
 
+const validateToolChoice = (options: Pick<GenerateTextOptions, "model" | "tools" | "toolChoice">) => {
+  if (!options.toolChoice) {
+    return;
+  }
+
+  if (!options.model.capabilities.tools) {
+    throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
+  }
+
+  if (!options.model.capabilities.toolChoice) {
+    throw new UnsupportedFeatureError(
+      `Model "${options.model.provider}/${options.model.modelId}" does not support tool choice.`
+    );
+  }
+
+  if (!options.tools || Object.keys(options.tools).length === 0) {
+    throw new ValidationError('The "toolChoice" option requires at least one registered tool.');
+  }
+
+  if (typeof options.toolChoice === "object" && !options.tools[options.toolChoice.toolName]) {
+    throw new ValidationError(`The selected tool "${options.toolChoice.toolName}" is not registered.`);
+  }
+};
+
 export const generateText = async (options: GenerateTextOptions): Promise<GenerateTextOutput> => {
   const maxSteps = Math.max(1, options.maxSteps ?? 1);
   const allMessages = buildMessages(options);
   const steps: GenerateTextOutput["steps"] = [];
   validateMessageParts(options.model, allMessages);
   validateReasoning(options);
+  validateToolChoice(options);
 
   if (options.tools && !options.model.capabilities.tools) {
     throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
@@ -151,7 +288,10 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
       break;
     }
 
-    const currentToolResults = await executeTools(toolCalls, options);
+    const currentToolResults = await executeTools(toolCalls, options, {
+      request,
+      step: step + 1
+    });
     toolResults.push(...currentToolResults);
 
     for (const result of currentToolResults) {
@@ -182,6 +322,7 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
   const baseMessages = buildMessages(options);
   validateMessageParts(options.model, baseMessages);
   validateReasoning(options);
+  validateToolChoice(options);
 
   if (!options.model.stream) {
     throw new ValidationError(`Model "${options.model.provider}/${options.model.modelId}" does not support streaming.`);
@@ -300,7 +441,10 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
         break;
       }
 
-      const currentToolResults = await executeTools(toolCalls, options);
+      const currentToolResults = await executeTools(toolCalls, options, {
+        request,
+        step: step + 1
+      });
       toolResults.push(...currentToolResults);
 
       for (const toolResult of currentToolResults) {

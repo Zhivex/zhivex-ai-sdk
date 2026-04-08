@@ -9,17 +9,24 @@ import {
   streamSSE,
   withRetry,
   withTimeoutSignal,
+  type AudioInput,
   type CallableProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
   type GenerateResult,
+  type GroundedGenerateResult,
+  type GroundedLanguageModel,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
   type ProviderAdapter,
-  type StreamEvent
+  type SpeechModel,
+  type SpeechResult,
+  type StreamEvent,
+  type TranscriptionModel,
+  type TranscriptionResult
 } from "@zhivex-ai/core";
 
 export interface GeminiProviderOptions {
@@ -53,6 +60,32 @@ const capabilities: ModelCapabilities = {
   webSearch: false
 };
 
+const transcriptionCapabilities: ModelCapabilities = {
+  ...capabilities,
+  streaming: false,
+  tools: false,
+  structuredOutput: false,
+  jsonMode: false,
+  toolChoice: false,
+  parallelToolCalls: false,
+  audioInput: true,
+  audioOutput: false,
+  embeddings: false,
+  reasoning: false,
+  webSearch: false
+};
+
+const speechCapabilities: ModelCapabilities = {
+  ...transcriptionCapabilities,
+  audioInput: false,
+  audioOutput: true
+};
+
+const groundedCapabilities: ModelCapabilities = {
+  ...capabilities,
+  webSearch: true
+};
+
 const parseJson = async (response: Response) => {
   if (!response.ok) {
     const body = await response.text();
@@ -61,6 +94,15 @@ const parseJson = async (response: Response) => {
     });
   }
   return response.json();
+};
+
+const toBase64 = (data: AudioInput["data"]) => {
+  if (typeof data === "string") {
+    return data;
+  }
+
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  return Buffer.from(bytes).toString("base64");
 };
 
 const systemInstruction = (messages: ModelMessage[]) => {
@@ -216,6 +258,16 @@ const parseAssistantMessage = (candidate: any): ModelMessage => ({
       return { type: "text", text: JSON.stringify(part) } as const;
     }) ?? []
 });
+
+const extractGroundingSources = (candidate: any): GroundedGenerateResult["sources"] =>
+  (candidate?.groundingMetadata?.groundingChunks ?? [])
+    .map((chunk: any) => ({
+      title: chunk.web?.title,
+      url: chunk.web?.uri,
+      snippet: chunk.web?.snippet,
+      providerMetadata: chunk
+    }))
+    .filter((source: GroundedGenerateResult["sources"][number]) => typeof source.url === "string");
 
 class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
   readonly provider = "gemini";
@@ -374,6 +426,200 @@ class GeminiEmbeddingModel implements EmbeddingModel {
   }
 }
 
+class GeminiTranscriptionModel implements TranscriptionModel {
+  readonly provider = "gemini";
+  readonly capabilities = transcriptionCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async transcribe(input: {
+    audio: AudioInput;
+    prompt?: string;
+    language?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<TranscriptionResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/models/${this.modelId}:generateContent?key=${this.apiKey}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    {
+                      inlineData: {
+                        mimeType: input.audio.mediaType,
+                        data: toBase64(input.audio.data)
+                      }
+                    },
+                    {
+                      text:
+                        input.prompt ??
+                        `Transcribe this audio${input.language ? ` in ${input.language}` : ""}. Return only the transcript.`
+                    }
+                  ]
+                }
+              ],
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
+
+      const json = await parseJson(response);
+      const candidate = json.candidates?.[0];
+      const text = candidate?.content?.parts?.find((part: any) => typeof part.text === "string")?.text ?? "";
+      return {
+        text,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class GeminiSpeechModel implements SpeechModel {
+  readonly provider = "gemini";
+  readonly capabilities = speechCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async generateSpeech(input: {
+    input: string;
+    voice?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<SpeechResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/models/${this.modelId}:generateContent?key=${this.apiKey}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: input.input }] }],
+              generationConfig: {
+                responseModalities: ["AUDIO"]
+              },
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: input.voice ?? "Kore"
+                  }
+                }
+              },
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
+
+      const json = await parseJson(response);
+      const audioPart = json.candidates?.[0]?.content?.parts?.find((part: any) => part.inlineData?.data);
+      return {
+        audio: Uint8Array.from(Buffer.from(audioPart?.inlineData?.data ?? "", "base64")),
+        mediaType: audioPart?.inlineData?.mimeType ?? "audio/wav",
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class GeminiGroundedLanguageModel implements GroundedLanguageModel {
+  readonly provider = "gemini";
+  readonly capabilities = groundedCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async generate(input: {
+    messages: ModelMessage[];
+    temperature?: number;
+    maxTokens?: number;
+    reasoning?: ModelGenerateInput["reasoning"];
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<GroundedGenerateResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/models/${this.modelId}:generateContent?key=${this.apiKey}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              contents: mapMessages(input.messages),
+              systemInstruction: systemInstruction(input.messages),
+              tools: [{ googleSearch: {} }],
+              generationConfig: generationConfig(this.modelId, {
+                messages: input.messages,
+                temperature: input.temperature,
+                maxTokens: input.maxTokens,
+                reasoning: input.reasoning
+              } as ModelGenerateInput),
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
+
+      const json = await parseJson(response);
+      const candidate = json.candidates?.[0];
+      const assistantMessage = parseAssistantMessage(candidate);
+      return {
+        text: assistantMessage.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join(""),
+        sources: extractGroundingSources(candidate),
+        finishReason: normalizeFinishReason(candidate?.finishReason),
+        providerFinishReason: candidate?.finishReason,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
 export const createGemini = (
   options: GeminiProviderOptions = {}
 ): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
@@ -389,6 +635,9 @@ export const createGemini = (
     name: "gemini",
     languageModel: (modelId) => new GeminiLanguageModel(modelId, apiKey, baseURL, fetcher),
     embeddingModel: (modelId) => new GeminiEmbeddingModel(modelId, apiKey, baseURL, fetcher),
+    transcriptionModel: (modelId) => new GeminiTranscriptionModel(modelId, apiKey, baseURL, fetcher),
+    speechModel: (modelId) => new GeminiSpeechModel(modelId, apiKey, baseURL, fetcher),
+    groundedLanguageModel: (modelId) => new GeminiGroundedLanguageModel(modelId, apiKey, baseURL, fetcher),
     rawFetch: fetcher
   });
 };

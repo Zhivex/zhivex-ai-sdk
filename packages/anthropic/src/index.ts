@@ -130,6 +130,27 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
       }))
     : undefined;
 
+const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
+  if (!toolChoice || toolChoice === "auto") {
+    return undefined;
+  }
+
+  if (toolChoice === "none") {
+    throw new UnsupportedFeatureError('Provider "anthropic" does not support "toolChoice=none".');
+  }
+
+  if (toolChoice === "required") {
+    return {
+      type: "any"
+    };
+  }
+
+  return {
+    type: "tool",
+    name: toolChoice.toolName
+  };
+};
+
 const mapReasoning = (input: ModelGenerateInput) => {
   if (!input.reasoning) {
     return undefined;
@@ -207,6 +228,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
               system: systemPromptFromMessages(input.messages),
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
+              tool_choice: mapToolChoice(input.toolChoice),
               temperature: input.temperature,
               max_tokens: input.maxTokens ?? 1024,
               ...input.providerOptions,
@@ -252,6 +274,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
             system: systemPromptFromMessages(input.messages),
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
+            tool_choice: mapToolChoice(input.toolChoice),
             temperature: input.temperature,
             max_tokens: input.maxTokens ?? 1024,
             stream: true,
