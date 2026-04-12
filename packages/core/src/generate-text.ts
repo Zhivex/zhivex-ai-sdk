@@ -5,6 +5,7 @@ import {
   getTextFromMessages,
   isCallableToolDefinition,
   normalizeFinishReason,
+  providerDataPart,
   resultMessages,
   serializeJsonValue,
   toolCallPart,
@@ -412,6 +413,18 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
             stepMessages.push({
               role: "assistant",
               parts: [toolCallPart(event.toolCall)]
+            });
+          }
+        }
+
+        if (event.type === "provider-data") {
+          const existingAssistant = stepMessages.find((message) => message.role === "assistant");
+          if (existingAssistant) {
+            existingAssistant.parts.push(providerDataPart(event.provider, event.data));
+          } else {
+            stepMessages.push({
+              role: "assistant",
+              parts: [providerDataPart(event.provider, event.data)]
             });
           }
         }

@@ -4,6 +4,7 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   hostedTool,
+  providerDataPart,
   UnsupportedFeatureError,
   createProviderAdapter,
   isCallableToolDefinition,
@@ -41,7 +42,8 @@ export interface AzureOpenAIProviderOptions {
 }
 
 export interface AzureOpenAIWebSearchToolConfig {
-  search_context_size?: "small" | "medium" | "large";
+  type?: "web_search_preview";
+  search_context_size?: "small" | "medium" | "large" | "low" | "high";
   user_location?: {
     type: "approximate";
     city?: string;
@@ -58,19 +60,94 @@ export interface AzureOpenAIFileSearchToolConfig {
   filters?: Record<string, unknown>;
 }
 
-export interface AzureOpenAIRemoteMcpToolConfig {
-  server_label?: string;
-  server_url: string;
-  headers?: Record<string, string>;
-  require_approval?: "never" | "always";
-  allowed_tools?: string[];
+export interface AzureOpenAIMcpToolFilter {
+  read_only?: boolean;
+  tool_names?: string[];
 }
 
+export type AzureOpenAIMcpAllowedTools = string[] | AzureOpenAIMcpToolFilter;
+export type AzureOpenAIMcpRequireApproval =
+  | "never"
+  | "always"
+  | {
+      always?: AzureOpenAIMcpToolFilter;
+      never?: AzureOpenAIMcpToolFilter;
+    };
+
+type AzureOpenAIRemoteMcpToolSharedConfig = {
+  server_label?: string;
+  server_description?: string;
+  headers?: Record<string, string>;
+  authorization?: string;
+  require_approval?: AzureOpenAIMcpRequireApproval;
+  allowed_tools?: AzureOpenAIMcpAllowedTools;
+};
+
+export type AzureOpenAIRemoteMcpToolConfig =
+  | (AzureOpenAIRemoteMcpToolSharedConfig & {
+      server_url: string;
+      connector_id?: never;
+    })
+  | (AzureOpenAIRemoteMcpToolSharedConfig & {
+      server_url?: never;
+      connector_id:
+        | "connector_dropbox"
+        | "connector_gmail"
+        | "connector_googlecalendar"
+        | "connector_googledrive"
+        | "connector_microsoftteams"
+        | "connector_outlookcalendar"
+        | "connector_outlookemail"
+        | "connector_sharepoint";
+    });
+
 export interface AzureOpenAIComputerUseToolConfig {
-  environment: "browser" | "mac" | "windows" | "ubuntu";
+  environment: "browser" | "mac" | "windows" | "linux" | "ubuntu";
   display_width?: number;
   display_height?: number;
 }
+
+export interface AzureOpenAIMcpApprovalRequest {
+  type: "mcp_approval_request";
+  id: string;
+  arguments: string;
+  name: string;
+  server_label: string;
+}
+
+export interface AzureOpenAIMcpApprovalResponse {
+  type: "mcp_approval_response";
+  approval_request_id: string;
+  approve: boolean;
+  id?: string;
+  reason?: string;
+}
+
+export interface AzureOpenAIMcpCall {
+  type: "mcp_call";
+  id: string;
+  arguments: string;
+  name: string;
+  server_label: string;
+  approval_request_id?: string;
+  error?: string;
+  output?: string;
+  status?: "in_progress" | "completed" | "incomplete" | "calling" | "failed";
+}
+
+export interface AzureOpenAIMcpListTools {
+  type: "mcp_list_tools";
+  id?: string;
+  server_label?: string;
+  tools?: JsonValue;
+}
+
+export type AzureOpenAIProviderData =
+  | { responseId: string }
+  | AzureOpenAIMcpApprovalRequest
+  | AzureOpenAIMcpApprovalResponse
+  | AzureOpenAIMcpCall
+  | AzureOpenAIMcpListTools;
 
 export interface AzureOpenAILanguageModelOptions {
   top_p?: number;
@@ -219,6 +296,12 @@ const mapMessages = (messages: ModelMessage[]) =>
 
 const hasHostedTools = (tools: ModelGenerateInput["tools"]) =>
   Object.values(tools ?? {}).some((tool) => isHostedToolDefinition(tool));
+
+const normalizeWebSearchConfig = (config: AzureOpenAIWebSearchToolConfig = {}) => ({
+  ...config,
+  ...(config.search_context_size === "small" ? { search_context_size: "low" } : {}),
+  ...(config.search_context_size === "large" ? { search_context_size: "high" } : {})
+});
 
 const mapTools = (input: ModelGenerateInput["tools"]) =>
   input
@@ -370,6 +453,31 @@ const serializeToolOutput = (message: ModelMessage) =>
       output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
     }));
 
+const serializeProviderDataInput = (message: ModelMessage) =>
+  message.parts
+    .filter(
+      (part): part is Extract<ModelMessage["parts"][number], { type: "provider-data" }> =>
+        part.type === "provider-data" &&
+        part.provider === "azure-openai" &&
+        part.data !== null &&
+        typeof part.data === "object" &&
+        (part.data as Record<string, unknown>).type === "mcp_approval_response"
+    )
+    .map((part) => part.data as Record<string, unknown>);
+
+const parseResponsesProviderData = (item: unknown) => {
+  if (!item || typeof item !== "object") {
+    return undefined;
+  }
+
+  const typedItem = item as Record<string, unknown>;
+  if (typeof typedItem.type !== "string" || !typedItem.type.startsWith("mcp_")) {
+    return undefined;
+  }
+
+  return item as JsonValue;
+};
+
 const parseAssistantMessage = (message: any): ModelMessage => ({
   role: "assistant",
   parts: [
@@ -395,6 +503,8 @@ const toResponsesInput = (messages: ModelMessage[]) => {
       input.push(...serializeToolOutput(message));
       continue;
     }
+
+    input.push(...serializeProviderDataInput(message));
 
     const content: Array<Record<string, unknown>> = [];
     for (const part of message.parts) {
@@ -451,6 +561,12 @@ const parseResponsesAssistantMessage = (json: any): ModelMessage => {
           input: JSON.parse(item.arguments ?? "{}")
         }
       });
+      continue;
+    }
+
+    const providerData = parseResponsesProviderData(item);
+    if (providerData) {
+      parts.push(providerDataPart("azure-openai", providerData));
     }
   }
 
@@ -551,6 +667,15 @@ const streamResponses = async function* (
             yield emitted;
           }
         }
+      }
+
+      const providerData = parseResponsesProviderData(item);
+      if (providerData && type === "response.output_item.done") {
+        yield {
+          type: "provider-data",
+          provider: "azure-openai",
+          data: providerData
+        } satisfies StreamEvent;
       }
       continue;
     }
@@ -1286,8 +1411,8 @@ export const azureOpenAIWebSearchTool = (config: AzureOpenAIWebSearchToolConfig 
   hostedTool({
     name: "web_search",
     provider: "azure-openai",
-    type: "web_search_preview",
-    config: config as unknown as JsonValue
+    type: config.type ?? "web_search_preview",
+    config: normalizeWebSearchConfig(config) as unknown as JsonValue
   });
 
 export const azureOpenAIFileSearchTool = (config: AzureOpenAIFileSearchToolConfig = {}) =>
@@ -1304,6 +1429,12 @@ export const azureOpenAIRemoteMcpTool = (config: AzureOpenAIRemoteMcpToolConfig)
     provider: "azure-openai",
     type: "mcp",
     config: config as unknown as JsonValue
+  });
+
+export const azureOpenAIMcpApprovalResponse = (response: Omit<AzureOpenAIMcpApprovalResponse, "type">) =>
+  providerDataPart("azure-openai", {
+    type: "mcp_approval_response",
+    ...response
   });
 
 export const azureOpenAIComputerUseTool = (config: AzureOpenAIComputerUseToolConfig) =>

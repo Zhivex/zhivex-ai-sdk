@@ -319,6 +319,84 @@ console.log(result.toolResults);
 
 Provider-hosted tools use the same `tools` registry through `hostedTool`. This lets providers expose native capabilities such as OpenAI/Azure Responses tools or Gemini/Vertex built-ins without breaking the common contract.
 
+### MCP
+
+The SDK now exposes MCP helpers across the providers that support it:
+
+- `@zhivex-ai/core` and `@zhivex-ai/sdk`: `createMcpToolSet()` wraps an MCP client that can `listTools()` and `callTool()` into local callable tools.
+- `@zhivex-ai/openai` and `@zhivex-ai/azure-openai`: remote MCP servers map to native Responses API MCP tools, including approval request/response flow.
+- `@zhivex-ai/anthropic`: MCP toolsets map to Anthropic `mcp_servers` plus `mcp_toolset`.
+- `@zhivex-ai/gemini` and `@zhivex-ai/vertex`: `geminiMcpTools()` and `vertexMcpTools()` re-export the shared MCP wrapper for SDK-managed MCP clients.
+
+Use the shared helper when you already have an MCP client in-process:
+
+```ts
+import { createMcpToolSet, generateText } from "@zhivex-ai/sdk";
+import { createGemini } from "@zhivex-ai/gemini";
+
+const gemini = createGemini({
+  apiKey: process.env.GEMINI_API_KEY
+});
+
+const tools = await createMcpToolSet(myMcpClient);
+
+const result = await generateText({
+  model: gemini("gemini-2.0-flash"),
+  prompt: "Use the MCP tools if needed.",
+  tools
+});
+```
+
+For OpenAI and Azure OpenAI remote MCP servers, use the provider helpers and pass approval responses back as `provider-data` parts:
+
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { createOpenAI, openAIMcpApprovalResponse, openAIRemoteMcpTool } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const result = await generateText({
+  model: openai("gpt-5"),
+  prompt: "Search the docs through MCP.",
+  tools: {
+    docs: openAIRemoteMcpTool({
+      server_label: "docs",
+      server_url: "https://example.com/mcp"
+    })
+  }
+});
+
+const approval = result.messages
+  .at(-1)
+  ?.parts.find((part) => part.type === "provider-data" && part.provider === "openai");
+
+if (approval) {
+  await generateText({
+    model: openai("gpt-5"),
+    messages: [
+      ...result.messages,
+      {
+        role: "user",
+        parts: [
+          openAIMcpApprovalResponse({
+            approval_request_id: "mcpr_123",
+            approve: true
+          })
+        ]
+      }
+    ],
+    tools: {
+      docs: openAIRemoteMcpTool({
+        server_label: "docs",
+        server_url: "https://example.com/mcp"
+      })
+    }
+  });
+}
+```
+
 ```ts
 import { generateText, hostedTool, user } from "@zhivex-ai/sdk";
 import { createOpenAI } from "@zhivex-ai/openai";

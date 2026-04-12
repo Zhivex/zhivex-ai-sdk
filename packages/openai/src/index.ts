@@ -4,6 +4,7 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   hostedTool,
+  providerDataPart,
   UnsupportedFeatureError,
   createProviderAdapter,
   isCallableToolDefinition,
@@ -40,7 +41,8 @@ export interface OpenAIProviderOptions {
 }
 
 export interface OpenAIWebSearchToolConfig {
-  search_context_size?: "small" | "medium" | "large";
+  type?: "web_search" | "web_search_2025_08_26";
+  search_context_size?: "small" | "medium" | "large" | "low" | "high";
   user_location?: {
     type: "approximate";
     city?: string;
@@ -62,19 +64,91 @@ export interface OpenAIFileSearchToolConfig {
   filters?: Record<string, unknown>;
 }
 
-export interface OpenAIRemoteMcpToolConfig {
-  server_label?: string;
-  server_url: string;
-  headers?: Record<string, string>;
-  require_approval?: "never" | "always";
-  allowed_tools?: string[];
+export interface OpenAIMcpToolFilter {
+  read_only?: boolean;
+  tool_names?: string[];
 }
 
+export type OpenAIMcpAllowedTools = string[] | OpenAIMcpToolFilter;
+export type OpenAIMcpRequireApproval =
+  | "never"
+  | "always"
+  | {
+      always?: OpenAIMcpToolFilter;
+      never?: OpenAIMcpToolFilter;
+    };
+
+export type OpenAIConnectorId =
+  | "connector_dropbox"
+  | "connector_gmail"
+  | "connector_googlecalendar"
+  | "connector_googledrive"
+  | "connector_microsoftteams"
+  | "connector_outlookcalendar"
+  | "connector_outlookemail"
+  | "connector_sharepoint";
+
+type OpenAIRemoteMcpToolSharedConfig = {
+  server_label?: string;
+  server_description?: string;
+  headers?: Record<string, string>;
+  authorization?: string;
+  require_approval?: OpenAIMcpRequireApproval;
+  allowed_tools?: OpenAIMcpAllowedTools;
+};
+
+export type OpenAIRemoteMcpToolConfig =
+  | (OpenAIRemoteMcpToolSharedConfig & {
+      server_url: string;
+      connector_id?: never;
+    })
+  | (OpenAIRemoteMcpToolSharedConfig & {
+      server_url?: never;
+      connector_id: OpenAIConnectorId;
+    });
+
 export interface OpenAIComputerUseToolConfig {
-  environment: "browser" | "mac" | "windows" | "ubuntu";
+  environment: "browser" | "mac" | "windows" | "linux" | "ubuntu";
   display_width?: number;
   display_height?: number;
 }
+
+export interface OpenAIMcpApprovalRequest {
+  type: "mcp_approval_request";
+  id: string;
+  arguments: string;
+  name: string;
+  server_label: string;
+}
+
+export interface OpenAIMcpApprovalResponse {
+  type: "mcp_approval_response";
+  approval_request_id: string;
+  approve: boolean;
+  id?: string;
+  reason?: string;
+}
+
+export interface OpenAIMcpCall {
+  type: "mcp_call";
+  id: string;
+  arguments: string;
+  name: string;
+  server_label: string;
+  approval_request_id?: string;
+  error?: string;
+  output?: string;
+  status?: "in_progress" | "completed" | "incomplete" | "calling" | "failed";
+}
+
+export interface OpenAIMcpListTools {
+  type: "mcp_list_tools";
+  id?: string;
+  server_label?: string;
+  tools?: JsonValue;
+}
+
+export type OpenAIProviderData = { responseId: string } | OpenAIMcpApprovalRequest | OpenAIMcpApprovalResponse | OpenAIMcpCall | OpenAIMcpListTools;
 
 export interface OpenAILanguageModelOptions {
   top_p?: number;
@@ -226,6 +300,12 @@ const mapMessages = (messages: ModelMessage[]) =>
 const hasHostedTools = (tools: ModelGenerateInput["tools"]) =>
   Object.values(tools ?? {}).some((tool) => isHostedToolDefinition(tool));
 
+const normalizeWebSearchConfig = (config: OpenAIWebSearchToolConfig = {}) => ({
+  ...config,
+  ...(config.search_context_size === "small" ? { search_context_size: "low" } : {}),
+  ...(config.search_context_size === "large" ? { search_context_size: "high" } : {})
+});
+
 const mapTools = (input: ModelGenerateInput["tools"]) =>
   input
     ? Object.values(input).map((tool) => {
@@ -376,6 +456,31 @@ const serializeToolOutput = (message: ModelMessage) =>
       output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
     }));
 
+const serializeProviderDataInput = (message: ModelMessage) =>
+  message.parts
+    .filter(
+      (part): part is Extract<ModelMessage["parts"][number], { type: "provider-data" }> =>
+        part.type === "provider-data" &&
+        part.provider === "openai" &&
+        part.data !== null &&
+        typeof part.data === "object" &&
+        (part.data as Record<string, unknown>).type === "mcp_approval_response"
+    )
+    .map((part) => part.data as Record<string, unknown>);
+
+const parseResponsesProviderData = (item: unknown) => {
+  if (!item || typeof item !== "object") {
+    return undefined;
+  }
+
+  const typedItem = item as Record<string, unknown>;
+  if (typeof typedItem.type !== "string" || !typedItem.type.startsWith("mcp_")) {
+    return undefined;
+  }
+
+  return item as JsonValue;
+};
+
 const parseAssistantMessage = (message: any): ModelMessage => ({
   role: "assistant",
   parts: [
@@ -401,6 +506,8 @@ const toResponsesInput = (messages: ModelMessage[]) => {
       input.push(...serializeToolOutput(message));
       continue;
     }
+
+    input.push(...serializeProviderDataInput(message));
 
     const content: Array<Record<string, unknown>> = [];
     for (const part of message.parts) {
@@ -457,6 +564,12 @@ const parseResponsesAssistantMessage = (json: any): ModelMessage => {
           input: JSON.parse(item.arguments ?? "{}")
         }
       });
+      continue;
+    }
+
+    const providerData = parseResponsesProviderData(item);
+    if (providerData) {
+      parts.push(providerDataPart("openai", providerData));
     }
   }
 
@@ -557,6 +670,15 @@ const streamResponses = async function* (
             yield emitted;
           }
         }
+      }
+
+      const providerData = parseResponsesProviderData(item);
+      if (providerData && type === "response.output_item.done") {
+        yield {
+          type: "provider-data",
+          provider: "openai",
+          data: providerData
+        } satisfies StreamEvent;
       }
       continue;
     }
@@ -1128,8 +1250,8 @@ export const openAIWebSearchTool = (config: OpenAIWebSearchToolConfig = {}) =>
   hostedTool({
     name: "web_search",
     provider: "openai",
-    type: "web_search",
-    config: config as unknown as JsonValue
+    type: config.type ?? "web_search",
+    config: normalizeWebSearchConfig(config) as unknown as JsonValue
   });
 
 export const openAIFileSearchTool = (config: OpenAIFileSearchToolConfig = {}) =>
@@ -1146,6 +1268,12 @@ export const openAIRemoteMcpTool = (config: OpenAIRemoteMcpToolConfig) =>
     provider: "openai",
     type: "mcp",
     config: config as unknown as JsonValue
+  });
+
+export const openAIMcpApprovalResponse = (response: Omit<OpenAIMcpApprovalResponse, "type">) =>
+  providerDataPart("openai", {
+    type: "mcp_approval_response",
+    ...response
   });
 
 export const openAIComputerUseTool = (config: OpenAIComputerUseToolConfig) =>

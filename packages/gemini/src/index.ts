@@ -4,6 +4,7 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
+  createMcpToolSet,
   createProviderAdapter,
   isCallableToolDefinition,
   isHostedToolDefinition,
@@ -698,3 +699,5 @@ export const createGemini = (
     rawFetch: fetcher
   });
 };
+
+export const geminiMcpTools = createMcpToolSet;

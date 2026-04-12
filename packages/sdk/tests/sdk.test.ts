@@ -21,6 +21,7 @@ describe("sdk public surface", () => {
     expect(sdk.createCachedGenerateMiddleware).toBeTypeOf("function");
     expect(sdk.createCircuitBreakerMiddleware).toBeTypeOf("function");
     expect(sdk.createFileGenerateCache).toBeTypeOf("function");
+    expect(sdk.createMcpToolSet).toBeTypeOf("function");
     expect(sdk.createModelCatalog).toBeTypeOf("function");
     expect(sdk.parseUIMessageRequest).toBeTypeOf("function");
     expect(sdk.tool).toBeTypeOf("function");

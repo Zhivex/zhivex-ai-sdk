@@ -14,7 +14,7 @@ import {
   transcribeAudio
 } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createOpenAI, openAIWebSearchTool } from "../src/index.js";
+import { createOpenAI, openAIMcpApprovalResponse, openAIRemoteMcpTool, openAIWebSearchTool } from "../src/index.js";
 
 describe("openai adapter", () => {
   const fetchMock = vi.fn();
@@ -195,6 +195,131 @@ describe("openai adapter", () => {
     ]);
   });
 
+  it("parses remote MCP approval requests from the Responses API", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "mcp_approval_request",
+            id: "mcpr_1",
+            arguments: "{}",
+            name: "fetch_docs",
+            server_label: "github"
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-5"),
+      prompt: "Use MCP",
+      tools: {
+        github: openAIRemoteMcpTool({
+          server_label: "github",
+          server_url: "https://example.com/mcp"
+        })
+      }
+    });
+
+    expect(result.messages.at(-1)?.parts).toContainEqual({
+      type: "provider-data",
+      provider: "openai",
+      data: {
+        type: "mcp_approval_request",
+        id: "mcpr_1",
+        arguments: "{}",
+        name: "fetch_docs",
+        server_label: "github"
+      }
+    });
+  });
+
+  it("serializes MCP approval responses back into Responses API input", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: []
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-5"),
+      messages: [
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "provider-data",
+              provider: "openai",
+              data: {
+                responseId: "resp_prev"
+              }
+            }
+          ]
+        },
+        {
+          role: "user",
+          parts: [
+            openAIMcpApprovalResponse({
+              approval_request_id: "mcpr_1",
+              approve: true
+            })
+          ]
+        }
+      ],
+      tools: {
+        github: openAIRemoteMcpTool({
+          server_label: "github",
+          server_url: "https://example.com/mcp",
+          authorization: "Bearer token",
+          server_description: "Docs server",
+          allowed_tools: {
+            read_only: true,
+            tool_names: ["fetch_docs"]
+          },
+          require_approval: {
+            never: {
+              read_only: true
+            }
+          }
+        })
+      }
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      previous_response_id: string;
+      input: Array<Record<string, unknown>>;
+      tools: Array<Record<string, unknown>>;
+    };
+    expect(body.previous_response_id).toBe("resp_prev");
+    expect(body.input).toContainEqual({
+      type: "mcp_approval_response",
+      approval_request_id: "mcpr_1",
+      approve: true
+    });
+    expect(body.tools[0]).toMatchObject({
+      type: "mcp",
+      server_label: "github",
+      server_url: "https://example.com/mcp",
+      authorization: "Bearer token",
+      server_description: "Docs server",
+      allowed_tools: {
+        read_only: true,
+        tool_names: ["fetch_docs"]
+      },
+      require_approval: {
+        never: {
+          read_only: true
+        }
+      }
+    });
+  });
+
   it("supports tool calls and native structured output", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -360,7 +485,7 @@ describe("openai adapter", () => {
     expect(body.tools).toEqual([
       {
         type: "web_search",
-        search_context_size: "small"
+        search_context_size: "low"
       }
     ]);
   });

@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, hostedTool, tool, transcribeAudio } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createVertex } from "../src/index.js";
+import { createVertex, vertexMcpTools } from "../src/index.js";
 
 describe("vertex adapter", () => {
   const fetchMock = vi.fn();
@@ -259,6 +259,41 @@ describe("vertex adapter", () => {
       tools: Array<Record<string, unknown>>;
     };
     expect(body.tools).toEqual([{ googleSearch: {} }, { codeExecution: {} }]);
+  });
+
+  it("builds callable tools from an MCP client", async () => {
+    const tools = await vertexMcpTools({
+      async listTools() {
+        return {
+          tools: [
+            {
+              name: "echo",
+              description: "Echo a value"
+            }
+          ]
+        };
+      },
+      async callTool(input) {
+        return {
+          content: [{ type: "text", text: "ok" }],
+          structuredContent: {
+            echoed: input.arguments
+          }
+        };
+      }
+    });
+
+    const echo = tools.echo;
+    if (!echo || !("execute" in echo)) {
+      throw new Error("Expected MCP tool to be callable.");
+    }
+
+    await expect(echo.execute({ value: 42 })).resolves.toEqual({
+      content: [{ type: "text", text: "ok" }],
+      structuredContent: {
+        echoed: { value: 42 }
+      }
+    });
   });
 
   it("maps reasoning budget tokens to Vertex thinking config", async () => {

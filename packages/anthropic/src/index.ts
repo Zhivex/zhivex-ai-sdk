@@ -8,6 +8,7 @@ import {
   isCallableToolDefinition,
   hostedTool,
   normalizeFinishReason,
+  providerDataPart,
   streamSSE,
   withRetry,
   withTimeoutSignal,
@@ -141,6 +142,21 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           );
         }
 
+        if (tool.type === "mcp_toolset") {
+          const config = tool.config as AnthropicMcpToolsetConfig | undefined;
+          if (!config?.server?.name) {
+            throw new UnsupportedFeatureError('Provider "anthropic" requires a named MCP server.');
+          }
+
+          return {
+            type: "mcp_toolset",
+            mcp_server_name: config.server.name,
+            ...(config.default_config ? { default_config: config.default_config } : {}),
+            ...(config.configs ? { configs: config.configs } : {}),
+            ...(config.cache_control ? { cache_control: config.cache_control } : {})
+          };
+        }
+
         return {
           type: tool.type,
           name: tool.name,
@@ -148,6 +164,51 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
         };
       })
     : undefined;
+
+const mapMcpServers = (tools: ModelGenerateInput["tools"]) => {
+  if (!tools) {
+    return undefined;
+  }
+
+  const servers = new Map<string, AnthropicMcpServerConfig>();
+
+  for (const tool of Object.values(tools)) {
+    if (isCallableToolDefinition(tool)) {
+      continue;
+    }
+
+    if (tool.provider && tool.provider !== "anthropic") {
+      throw new UnsupportedFeatureError(
+        `Provider "anthropic" does not support hosted tools declared for provider "${tool.provider}".`
+      );
+    }
+
+    if (tool.type !== "mcp_toolset") {
+      continue;
+    }
+
+    const config = tool.config as AnthropicMcpToolsetConfig | undefined;
+    if (!config?.server?.name || !config.server.url) {
+      throw new UnsupportedFeatureError('Provider "anthropic" requires MCP toolsets to declare "server.name" and "server.url".');
+    }
+
+    const normalizedServer = {
+      type: config.server.type ?? "url",
+      url: config.server.url,
+      name: config.server.name,
+      ...(config.server.authorization_token ? { authorization_token: config.server.authorization_token } : {})
+    } satisfies AnthropicMcpServerConfig;
+
+    const existing = servers.get(normalizedServer.name);
+    if (existing && JSON.stringify(existing) !== JSON.stringify(normalizedServer)) {
+      throw new UnsupportedFeatureError(`Provider "anthropic" received conflicting MCP server definitions for "${normalizedServer.name}".`);
+    }
+
+    servers.set(normalizedServer.name, normalizedServer);
+  }
+
+  return servers.size ? Array.from(servers.values()) : undefined;
+};
 
 const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
   if (!toolChoice || toolChoice === "auto") {
@@ -210,6 +271,10 @@ const parseAssistantMessage = (json: any): ModelMessage => ({
         };
       }
 
+      if (typeof block?.type === "string" && block.type.startsWith("mcp_")) {
+        return providerDataPart("anthropic", block as JsonValue);
+      }
+
       return { type: "text", text: JSON.stringify(block) } as const;
     }) ?? []
 });
@@ -226,28 +291,31 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     private readonly fetcher: typeof globalThis.fetch
   ) {}
 
-  private headers() {
+  private headers(withMcpToolset: boolean) {
     return {
       "content-type": "application/json",
       "x-api-key": this.apiKey,
-      "anthropic-version": this.anthropicVersion
+      "anthropic-version": this.anthropicVersion,
+      ...(withMcpToolset ? { "anthropic-beta": "mcp-client-2025-11-20" } : {})
     };
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
+    const mcpServers = mapMcpServers(input.tools);
 
     try {
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/messages`, {
             method: "POST",
-            headers: this.headers(),
+            headers: this.headers(Boolean(mcpServers?.length)),
             signal,
             body: JSON.stringify({
               model: this.modelId,
               system: systemPromptFromMessages(input.messages),
               messages: mapMessages(input.messages),
+              ...(mcpServers ? { mcp_servers: mcpServers } : {}),
               tools: mapTools(input.tools),
               tool_choice: mapToolChoice(input.toolChoice),
               temperature: input.temperature,
@@ -284,16 +352,18 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
 
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
+    const mcpServers = mapMcpServers(input.tools);
     const response = await withRetry(
       () =>
         this.fetcher(`${this.baseURL}/messages`, {
           method: "POST",
-          headers: this.headers(),
+          headers: this.headers(Boolean(mcpServers?.length)),
           signal,
           body: JSON.stringify({
             model: this.modelId,
             system: systemPromptFromMessages(input.messages),
             messages: mapMessages(input.messages),
+            ...(mcpServers ? { mcp_servers: mcpServers } : {}),
             tools: mapTools(input.tools),
             tool_choice: mapToolChoice(input.toolChoice),
             temperature: input.temperature,
@@ -322,6 +392,18 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
               name: json.content_block.name,
               input: ""
             });
+          }
+
+          if (
+            event.event === "content_block_start" &&
+            typeof json.content_block?.type === "string" &&
+            json.content_block.type.startsWith("mcp_")
+          ) {
+            yield {
+              type: "provider-data",
+              provider: "anthropic",
+              data: json.content_block as JsonValue
+            } satisfies StreamEvent;
           }
 
           if (event.event === "content_block_delta" && json.delta?.type === "input_json_delta") {
@@ -392,10 +474,53 @@ export interface AnthropicWebSearchToolConfig {
   };
 }
 
+export interface AnthropicMcpServerConfig {
+  type?: "url";
+  url: string;
+  name: string;
+  authorization_token?: string;
+}
+
+export interface AnthropicMcpToolConfig {
+  enabled?: boolean;
+  defer_loading?: boolean;
+}
+
+export interface AnthropicMcpToolsetConfig {
+  server: AnthropicMcpServerConfig;
+  default_config?: AnthropicMcpToolConfig;
+  configs?: Record<string, AnthropicMcpToolConfig>;
+  cache_control?: Record<string, unknown>;
+}
+
+export interface AnthropicMcpToolUseBlock {
+  type: "mcp_tool_use";
+  id: string;
+  name: string;
+  server_name: string;
+  input: JsonValue;
+}
+
+export interface AnthropicMcpToolResultBlock {
+  type: "mcp_tool_result";
+  tool_use_id: string;
+  is_error?: boolean;
+  content: JsonValue;
+  server_name?: string;
+}
+
 export const anthropicWebSearchTool = (config: AnthropicWebSearchToolConfig = {}) =>
   hostedTool({
     name: "web_search",
     provider: "anthropic",
     type: "web_search_20250305",
+    config: config as unknown as JsonValue
+  });
+
+export const anthropicMcpToolset = (config: AnthropicMcpToolsetConfig) =>
+  hostedTool({
+    name: config.server.name,
+    provider: "anthropic",
+    type: "mcp_toolset",
     config: config as unknown as JsonValue
   });

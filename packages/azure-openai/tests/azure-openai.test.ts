@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { embed, generateGroundedText, generateSpeech, generateText, hostedTool, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
 import { z } from "zod";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { azureOpenAIWebSearchTool, createAzureOpenAI } from "../src/index.js";
+import {
+  azureOpenAIMcpApprovalResponse,
+  azureOpenAIRemoteMcpTool,
+  azureOpenAIWebSearchTool,
+  createAzureOpenAI
+} from "../src/index.js";
 
 describe("azure openai adapter", () => {
   const fetchMock = vi.fn();
@@ -196,6 +201,130 @@ describe("azure openai adapter", () => {
         output: JSON.stringify({ city: "Madrid", forecast: "sunny" })
       }
     ]);
+  });
+
+  it("parses remote MCP approval requests from Azure Responses API", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "mcp_approval_request",
+            id: "mcpr_1",
+            arguments: "{}",
+            name: "fetch_docs",
+            server_label: "github"
+          }
+        ]
+      })
+    );
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await generateText({
+      model: provider("gpt-5"),
+      prompt: "Use MCP",
+      tools: {
+        github: azureOpenAIRemoteMcpTool({
+          server_label: "github",
+          server_url: "https://example.com/mcp"
+        })
+      }
+    });
+
+    expect(result.messages.at(-1)?.parts).toContainEqual({
+      type: "provider-data",
+      provider: "azure-openai",
+      data: {
+        type: "mcp_approval_request",
+        id: "mcpr_1",
+        arguments: "{}",
+        name: "fetch_docs",
+        server_label: "github"
+      }
+    });
+  });
+
+  it("serializes MCP approval responses back into Azure Responses API input", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: []
+      })
+    );
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("gpt-5"),
+      messages: [
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "provider-data",
+              provider: "azure-openai",
+              data: {
+                responseId: "resp_prev"
+              }
+            }
+          ]
+        },
+        {
+          role: "user",
+          parts: [
+            azureOpenAIMcpApprovalResponse({
+              approval_request_id: "mcpr_1",
+              approve: true
+            })
+          ]
+        }
+      ],
+      tools: {
+        github: azureOpenAIRemoteMcpTool({
+          server_label: "github",
+          server_url: "https://example.com/mcp",
+          authorization: "Bearer token",
+          server_description: "Docs server",
+          allowed_tools: {
+            read_only: true,
+            tool_names: ["fetch_docs"]
+          },
+          require_approval: {
+            never: {
+              read_only: true
+            }
+          }
+        })
+      }
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      previous_response_id: string;
+      input: Array<Record<string, unknown>>;
+      tools: Array<Record<string, unknown>>;
+    };
+    expect(body.previous_response_id).toBe("resp_prev");
+    expect(body.input).toContainEqual({
+      type: "mcp_approval_response",
+      approval_request_id: "mcpr_1",
+      approve: true
+    });
+    expect(body.tools[0]).toMatchObject({
+      type: "mcp",
+      server_label: "github",
+      server_url: "https://example.com/mcp",
+      authorization: "Bearer token",
+      server_description: "Docs server"
+    });
   });
 
   it("embeds values", async () => {

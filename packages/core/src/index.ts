@@ -5,6 +5,8 @@ export * from "./errors.js";
 export * from "./fetch.js";
 export { generateObject, streamObject } from "./generate-object.js";
 export { generateGroundedText } from "./grounded-text.js";
+export { createMcpToolSet } from "./mcp.js";
+export type { McpCallToolRequest, McpCallToolResponse, McpClient, McpListedTool, McpListToolsResponse, McpToolAnnotations, McpToolSetOptions } from "./mcp.js";
 export { generateText, normalizeMessages, streamText } from "./generate-text.js";
 export {
   createCachedGenerateMiddleware,

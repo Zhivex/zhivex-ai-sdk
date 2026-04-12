@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, hostedTool, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createGemini } from "../src/index.js";
+import { createGemini, geminiMcpTools } from "../src/index.js";
 
 describe("gemini adapter", () => {
   const fetchMock = vi.fn();
@@ -218,6 +218,41 @@ describe("gemini adapter", () => {
       tools: Array<Record<string, unknown>>;
     };
     expect(body.tools).toEqual([{ googleSearch: {} }, { codeExecution: {} }]);
+  });
+
+  it("builds callable tools from an MCP client", async () => {
+    const tools = await geminiMcpTools({
+      async listTools() {
+        return {
+          tools: [
+            {
+              name: "echo",
+              description: "Echo a value"
+            }
+          ]
+        };
+      },
+      async callTool(input) {
+        return {
+          content: [{ type: "text", text: "ok" }],
+          structuredContent: {
+            echoed: input.arguments
+          }
+        };
+      }
+    });
+
+    const echo = tools.echo;
+    if (!echo || !("execute" in echo)) {
+      throw new Error("Expected MCP tool to be callable.");
+    }
+
+    await expect(echo.execute({ value: 42 })).resolves.toEqual({
+      content: [{ type: "text", text: "ok" }],
+      structuredContent: {
+        echoed: { value: 42 }
+      }
+    });
   });
 
   it("maps reasoning budget tokens to Gemini thinking config", async () => {

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { generateObject, generateText, tool } from "@zhivex-ai/core";
+import { generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { anthropicWebSearchTool, createAnthropic } from "../src/index.js";
+import { anthropicMcpToolset, anthropicWebSearchTool, createAnthropic } from "../src/index.js";
 
 describe("anthropic adapter", () => {
   const fetchMock = vi.fn();
@@ -266,6 +266,181 @@ describe("anthropic adapter", () => {
     expect(body.thinking).toEqual({
       type: "enabled",
       budget_tokens: 1024
+    });
+  });
+
+  it("maps Anthropic MCP toolsets into native request fields", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        github: anthropicMcpToolset({
+          server: {
+            name: "github",
+            url: "https://example.com/mcp",
+            authorization_token: "secret"
+          },
+          default_config: {
+            enabled: true
+          }
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
+    const body = JSON.parse(String(requestInit.body)) as {
+      mcp_servers: Array<Record<string, unknown>>;
+      tools: Array<Record<string, unknown>>;
+    };
+
+    expect(headers["anthropic-beta"]).toBe("mcp-client-2025-11-20");
+    expect(body.mcp_servers).toEqual([
+      {
+        type: "url",
+        name: "github",
+        url: "https://example.com/mcp",
+        authorization_token: "secret"
+      }
+    ]);
+    expect(body.tools).toEqual([
+      {
+        type: "mcp_toolset",
+        mcp_server_name: "github",
+        default_config: {
+          enabled: true
+        }
+      }
+    ]);
+  });
+
+  it("parses Anthropic MCP blocks into provider-data parts", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [
+          {
+            type: "mcp_tool_use",
+            id: "mcpu_1",
+            name: "fetch_docs",
+            server_name: "github",
+            input: { path: "README.md" }
+          },
+          {
+            type: "mcp_tool_result",
+            tool_use_id: "mcpu_1",
+            server_name: "github",
+            content: { text: "ok" }
+          }
+        ],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        github: anthropicMcpToolset({
+          server: {
+            name: "github",
+            url: "https://example.com/mcp"
+          }
+        })
+      }
+    });
+
+    expect(result.messages.at(-1)?.parts).toEqual([
+      {
+        type: "provider-data",
+        provider: "anthropic",
+        data: {
+          type: "mcp_tool_use",
+          id: "mcpu_1",
+          name: "fetch_docs",
+          server_name: "github",
+          input: {
+            path: "README.md"
+          }
+        }
+      },
+      {
+        type: "provider-data",
+        provider: "anthropic",
+        data: {
+          type: "mcp_tool_result",
+          tool_use_id: "mcpu_1",
+          server_name: "github",
+          content: {
+            text: "ok"
+          }
+        }
+      }
+    ]);
+  });
+
+  it("streams Anthropic MCP blocks as provider-data events", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "event: content_block_start\n" +
+              'data: {"index":0,"content_block":{"type":"mcp_tool_use","id":"mcpu_1","name":"fetch_docs","server_name":"github","input":{"path":"README.md"}}}\n\n' +
+              "event: content_block_delta\n" +
+              'data: {"index":1,"delta":{"type":"text_delta","text":"approved"}}\n\n' +
+              "event: message_stop\n" +
+              'data: {"stop_reason":"end_turn"}\n\n'
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        github: anthropicMcpToolset({
+          server: {
+            name: "github",
+            url: "https://example.com/mcp"
+          }
+        })
+      }
+    });
+
+    const final = await result.collect();
+    expect(final.text).toBe("approved");
+    expect(final.messages.at(-1)?.parts).toContainEqual({
+      type: "provider-data",
+      provider: "anthropic",
+      data: {
+        type: "mcp_tool_use",
+        id: "mcpu_1",
+        name: "fetch_docs",
+        server_name: "github",
+        input: {
+          path: "README.md"
+        }
+      }
     });
   });
 

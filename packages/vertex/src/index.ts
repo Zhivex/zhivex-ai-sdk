@@ -4,6 +4,7 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
+  createMcpToolSet,
   createProviderAdapter,
   isCallableToolDefinition,
   isHostedToolDefinition,
@@ -756,3 +757,5 @@ export const createVertex = (
     rawFetch: fetcher
   });
 };
+
+export const vertexMcpTools = createMcpToolSet;

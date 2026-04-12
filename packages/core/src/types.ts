@@ -142,6 +142,12 @@ export interface StreamToolResultEvent {
   toolResult: ToolExecutionResult;
 }
 
+export interface StreamProviderDataEvent {
+  type: "provider-data";
+  provider: string;
+  data: JsonValue;
+}
+
 export interface StreamFinishEvent {
   type: "finish";
   finishReason?: FinishReason;
@@ -158,6 +164,7 @@ export type StreamEvent =
   | StreamTextDeltaEvent
   | StreamToolCallEvent
   | StreamToolResultEvent
+  | StreamProviderDataEvent
   | StreamFinishEvent
   | StreamErrorEvent;
 
