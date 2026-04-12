@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
+import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, hostedTool, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createGemini } from "../src/index.js";
 
@@ -27,7 +27,7 @@ describe("gemini adapter", () => {
       audioOutput: false,
       embeddings: true,
       reasoning: true,
-      webSearch: false
+      webSearch: true
     }
   });
 
@@ -181,6 +181,43 @@ describe("gemini adapter", () => {
         allowedFunctionNames: ["weather"]
       }
     });
+  });
+
+  it("maps hosted Gemini tools into native tool declarations", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "hello from gemini" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello",
+      tools: {
+        google: hostedTool({
+          name: "google",
+          provider: "gemini",
+          type: "googleSearch"
+        }),
+        code: hostedTool({
+          name: "code",
+          provider: "gemini",
+          type: "codeExecution"
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tools: Array<Record<string, unknown>>;
+    };
+    expect(body.tools).toEqual([{ googleSearch: {} }, { codeExecution: {} }]);
   });
 
   it("maps reasoning budget tokens to Gemini thinking config", async () => {

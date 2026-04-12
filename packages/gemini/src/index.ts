@@ -5,6 +5,8 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   createProviderAdapter,
+  isCallableToolDefinition,
+  isHostedToolDefinition,
   normalizeFinishReason,
   streamSSE,
   withRetry,
@@ -57,7 +59,7 @@ const capabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: true,
   reasoning: true,
-  webSearch: false
+  webSearch: true
 };
 
 const transcriptionCapabilities: ModelCapabilities = {
@@ -161,18 +163,37 @@ const mapMessages = (messages: ModelMessage[]) =>
 
 const mapTools = (tools: ModelGenerateInput["tools"]) =>
   tools
-    ? [
-        {
-          functionDeclarations: Object.values(tools).map((tool) => ({
+    ? (() => {
+        const mappedTools: Array<Record<string, unknown>> = [];
+        const functionDeclarations = Object.values(tools)
+          .filter(isCallableToolDefinition)
+          .map((tool) => ({
             name: tool.name,
             description: tool.description,
             parameters: toJSONSchema(tool.schema)
-          }))
+          }));
+
+        if (functionDeclarations.length) {
+          mappedTools.push({ functionDeclarations });
         }
-      ]
+
+        for (const tool of Object.values(tools).filter(isHostedToolDefinition)) {
+          if (tool.provider && tool.provider !== "gemini") {
+            throw new UnsupportedFeatureError(
+              `Provider "gemini" does not support hosted tools declared for provider "${tool.provider}".`
+            );
+          }
+
+          mappedTools.push({
+            [tool.type]: tool.config && typeof tool.config === "object" ? tool.config : {}
+          });
+        }
+
+        return mappedTools.length ? mappedTools : undefined;
+      })()
     : undefined;
 
-const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"]) => {
+const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"], tools: ModelGenerateInput["tools"]) => {
   if (!toolChoice || toolChoice === "auto") {
     return undefined;
   }
@@ -191,6 +212,11 @@ const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"]) => {
         mode: "ANY"
       }
     };
+  }
+
+  const selectedTool = tools?.[toolChoice.toolName];
+  if (selectedTool && isHostedToolDefinition(selectedTool)) {
+    throw new UnsupportedFeatureError('Provider "gemini" does not support selecting a hosted tool by name.');
   }
 
   return {
@@ -329,7 +355,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
               systemInstruction: systemInstruction(input.messages),
               tools: mapTools(input.tools),
               ...input.providerOptions,
-              toolConfig: mapToolConfig(input.toolChoice),
+              toolConfig: mapToolConfig(input.toolChoice, input.tools),
               generationConfig: generationConfig(this.modelId, input)
             })
           }),
@@ -368,7 +394,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
             systemInstruction: systemInstruction(input.messages),
             tools: mapTools(input.tools),
             ...input.providerOptions,
-            toolConfig: mapToolConfig(input.toolChoice),
+            toolConfig: mapToolConfig(input.toolChoice, input.tools),
             generationConfig: generationConfig(this.modelId, input)
           })
         }),

@@ -10,6 +10,7 @@ import {
 
 import {
   ConfigurationError,
+  isCallableToolDefinition,
   UnsupportedFeatureError,
   ValidationError,
   createProviderAdapter,
@@ -158,15 +159,23 @@ const mapMessages = (messages: ModelMessage[]): Message[] =>
 
 const mapTools = (tools: ModelGenerateInput["tools"]) =>
   tools
-    ? (Object.values(tools).map((tool) => ({
-        toolSpec: {
-          name: tool.name,
-          description: tool.description,
-          inputSchema: {
-            json: toJSONSchema(tool.schema)
-          }
+    ? (() => {
+        const toolDefinitions = Object.values(tools);
+        const callableTools = toolDefinitions.filter(isCallableToolDefinition);
+        if (callableTools.length !== toolDefinitions.length) {
+          throw new UnsupportedFeatureError('Provider "bedrock" does not support hosted tools.');
         }
-      })) as unknown as NonNullable<ConverseCommandInput["toolConfig"]>["tools"])
+
+        return callableTools.map((tool) => ({
+          toolSpec: {
+            name: tool.name,
+            description: tool.description,
+            inputSchema: {
+              json: toJSONSchema(tool.schema)
+            }
+          }
+        })) as unknown as NonNullable<ConverseCommandInput["toolConfig"]>["tools"];
+      })()
     : undefined;
 
 const mapToolChoice = (

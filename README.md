@@ -317,6 +317,31 @@ console.log(result.text);
 console.log(result.toolResults);
 ```
 
+Provider-hosted tools use the same `tools` registry through `hostedTool`. This lets providers expose native capabilities such as OpenAI/Azure Responses tools or Gemini/Vertex built-ins without breaking the common contract.
+
+```ts
+import { generateText, hostedTool, user } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const result = await generateText({
+  model: openai("gpt-5"),
+  messages: [user("Summarize today's AI news and cite sources.")],
+  tools: {
+    web: hostedTool({
+      name: "web",
+      provider: "openai",
+      type: "web_search"
+    })
+  }
+});
+
+console.log(result.text);
+```
+
 When the selected model supports tool selection, you can control it through the common `toolChoice` option instead of dropping to provider-specific request fields.
 
 ```ts

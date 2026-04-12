@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, tool, transcribeAudio } from "@zhivex-ai/core";
+import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, hostedTool, tool, transcribeAudio } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createVertex } from "../src/index.js";
 
@@ -38,7 +38,7 @@ describe("vertex adapter", () => {
       audioOutput: false,
       embeddings: true,
       reasoning: true,
-      webSearch: false
+      webSearch: true
     }
   });
 
@@ -217,6 +217,48 @@ describe("vertex adapter", () => {
         allowedFunctionNames: ["weather"]
       }
     });
+  });
+
+  it("maps hosted Vertex tools into native tool declarations", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "hello from vertex" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello",
+      tools: {
+        google: hostedTool({
+          name: "google",
+          provider: "vertex",
+          type: "googleSearch"
+        }),
+        code: hostedTool({
+          name: "code",
+          provider: "vertex",
+          type: "codeExecution"
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tools: Array<Record<string, unknown>>;
+    };
+    expect(body.tools).toEqual([{ googleSearch: {} }, { codeExecution: {} }]);
   });
 
   it("maps reasoning budget tokens to Vertex thinking config", async () => {

@@ -9,6 +9,7 @@ export {
   generateSpeech,
   generateObject,
   generateText,
+  hostedTool,
   streamObject,
   streamText,
   system,
@@ -39,6 +40,7 @@ export {
   user
 } from "@zhivex-ai/core";
 export type {
+  AnyToolDefinition,
   AudioInput,
   CatalogProviderId,
   CallableProviderAdapter,
@@ -66,6 +68,7 @@ export type {
   ModelMessage,
   ObjectStreamEvent,
   ProviderAdapter,
+  ProviderDataPart,
   ProviderOptions,
   ProviderOptionsOf,
   ReasoningConfig,
@@ -83,6 +86,7 @@ export type {
   ToolExecutionOptions,
   ToolDefinition,
   ToolExecutionResult,
+  HostedToolDefinition,
   ToolSet,
   TranscribeAudioOptions,
   TranscriptionModel,

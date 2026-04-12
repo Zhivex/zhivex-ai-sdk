@@ -5,6 +5,7 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   createProviderAdapter,
+  isCallableToolDefinition,
   normalizeFinishReason,
   streamSSE,
   withRetry,
@@ -133,14 +134,22 @@ const mapMessages = (messages: ModelMessage[]) =>
 
 const mapTools = (tools: ModelGenerateInput["tools"]) =>
   tools
-    ? Object.values(tools).map((tool) => ({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: toJSONSchema(tool.schema)
+    ? (() => {
+        const toolDefinitions = Object.values(tools);
+        const callableTools = toolDefinitions.filter(isCallableToolDefinition);
+        if (callableTools.length !== toolDefinitions.length) {
+          throw new UnsupportedFeatureError('Provider "qwen" does not support hosted tools.');
         }
-      }))
+
+        return callableTools.map((tool) => ({
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: toJSONSchema(tool.schema)
+          }
+        }));
+      })()
     : undefined;
 
 const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {

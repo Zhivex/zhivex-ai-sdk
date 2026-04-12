@@ -3,6 +3,7 @@ import { emitLanguageModelTelemetryEvent } from "./middleware.js";
 import {
   createTextMessage,
   getTextFromMessages,
+  isCallableToolDefinition,
   normalizeFinishReason,
   resultMessages,
   serializeJsonValue,
@@ -111,6 +112,12 @@ const executeTools = async (
     const tool = options.tools?.[call.name];
     if (!tool) {
       throw new ValidationError(`Tool "${call.name}" was requested by the model but is not registered.`);
+    }
+
+    if (!isCallableToolDefinition(tool)) {
+      throw new ValidationError(
+        `Tool "${call.name}" is provider-hosted and cannot be executed by the local tool loop.`
+      );
     }
 
     const parsed = tool.schema.safeParse(call.input);

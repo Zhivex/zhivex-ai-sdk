@@ -72,7 +72,13 @@ export interface ToolResultPart {
   toolResult: ToolExecutionResult;
 }
 
-export type ContentPart = TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart;
+export interface ProviderDataPart {
+  type: "provider-data";
+  provider: string;
+  data: JsonValue;
+}
+
+export type ContentPart = TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart | ProviderDataPart;
 
 export interface ModelMessage {
   role: MessageRole;
@@ -330,7 +336,17 @@ export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny, TResult
   execute: (input: z.infer<TSchema>) => Promise<TResult> | TResult;
 }
 
-export type ToolSet = Record<string, ToolDefinition>;
+export interface HostedToolDefinition<TConfig extends JsonValue = JsonValue> {
+  kind: "hosted";
+  name: string;
+  provider?: string;
+  type: string;
+  config?: TConfig;
+}
+
+export type AnyToolDefinition = ToolDefinition | HostedToolDefinition;
+
+export type ToolSet = Record<string, AnyToolDefinition>;
 
 export type ProviderOptionsOf<TModel extends LanguageModel> = TModel extends LanguageModel<infer TProviderOptions>
   ? TProviderOptions

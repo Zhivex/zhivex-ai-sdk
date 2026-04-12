@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { embed, generateGroundedText, generateSpeech, generateText, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
+import { embed, generateGroundedText, generateSpeech, generateText, hostedTool, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
 import { z } from "zod";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createAzureOpenAI } from "../src/index.js";
@@ -36,7 +36,7 @@ describe("azure openai adapter", () => {
       audioOutput: false,
       embeddings: true,
       reasoning: true,
-      webSearch: false
+      webSearch: true
     }
   });
 
@@ -98,6 +98,104 @@ describe("azure openai adapter", () => {
     });
 
     expect((await result.collect()).text).toBe("hello azure");
+  });
+
+  it("streams Responses API events for hosted tools", async () => {
+    const firstBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"item_1\",\"call_id\":\"call_1\",\"name\":\"weather\",\"arguments\":\"\"}}\n\n" +
+              "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item_1\",\"delta\":\"{\\\"city\\\":\\\"Mad\"}\n\n" +
+              "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item_1\",\"delta\":\"rid\\\"}\"}\n\n" +
+              "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"item_1\",\"arguments\":\"{\\\"city\\\":\\\"Madrid\\\"}\"}\n\n" +
+              "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2,\"total_tokens\":6}}}\n\n" +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    const secondBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Madrid \"}\n\n" +
+              "data: {\"type\":\"response.output_text.delta\",\"delta\":\"is sunny.\"}\n\n" +
+              "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_2\",\"status\":\"completed\",\"usage\":{\"input_tokens\":2,\"output_tokens\":3,\"total_tokens\":5}}}\n\n" +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(firstBody, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      new Response(secondBody, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = streamText({
+      model: provider("gpt-5"),
+      prompt: "Use hosted web search if needed, then weather.",
+      maxSteps: 2,
+      tools: {
+        web: hostedTool({
+          name: "web",
+          provider: "azure-openai",
+          type: "web_search"
+        }),
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      }
+    });
+
+    expect((await result.collect()).text).toBe("Madrid is sunny.");
+
+    const firstRequest = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { stream: boolean };
+    expect(firstRequest.stream).toBe(true);
+
+    const secondRequest = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)) as {
+      input: Array<Record<string, unknown>>;
+    };
+    expect(secondRequest.input).toEqual([
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "Use hosted web search if needed, then weather." }]
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "function_call",
+            call_id: "call_1",
+            name: "weather",
+            arguments: JSON.stringify({ city: "Madrid" })
+          }
+        ]
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: JSON.stringify({ city: "Madrid", forecast: "sunny" })
+      }
+    ]);
   });
 
   it("embeds values", async () => {
@@ -190,6 +288,86 @@ describe("azure openai adapter", () => {
     expect(body.reasoning_effort).toBe("high");
     expect(body.max_completion_tokens).toBe(256);
     expect(body.max_tokens).toBeUndefined();
+  });
+
+  it("uses the Responses API for hosted tools and continues local function loops", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call_1",
+            name: "weather",
+            arguments: JSON.stringify({ city: "Madrid" })
+          }
+        ],
+        usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_2",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "Madrid is sunny." }]
+          }
+        ],
+        usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 }
+      })
+    );
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await generateText({
+      model: provider("gpt-5"),
+      prompt: "Use hosted web search if needed, then weather.",
+      maxSteps: 2,
+      tools: {
+        web: hostedTool({
+          name: "web",
+          provider: "azure-openai",
+          type: "web_search"
+        }),
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      }
+    });
+
+    expect(result.text).toBe("Madrid is sunny.");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/responses");
+
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      tools: Array<{ type: string }>;
+    };
+    expect(firstBody.tools).toEqual(
+      expect.arrayContaining([
+        { type: "web_search" },
+        expect.objectContaining({ type: "function", name: "weather" })
+      ])
+    );
+
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)) as {
+      previous_response_id: string;
+      input: Array<{ type: string; call_id?: string; output?: string }>;
+    };
+    expect(secondBody.previous_response_id).toBe("resp_1");
+    expect(secondBody.input).toEqual([
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: JSON.stringify({ city: "Madrid", forecast: "sunny" })
+      }
+    ]);
   });
 
   it("rejects unsupported reasoning budget tokens for Azure OpenAI", async () => {

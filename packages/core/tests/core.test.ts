@@ -20,6 +20,7 @@ import {
   parseUIMessageRequest,
   generateObject,
   generateText,
+  hostedTool,
   streamObject,
   streamText,
   system,
@@ -301,6 +302,36 @@ describe("core helpers", () => {
         }
       })
     ).rejects.toThrow('The selected tool "news" is not registered.');
+  });
+
+  it("rejects executing provider-hosted tools in the local tool loop", async () => {
+    const model = createLanguageModel({
+      async generate() {
+        return {
+          messages: [
+            {
+              role: "assistant",
+              parts: [{ type: "tool-call", toolCall: { id: "1", name: "web", input: { query: "weather" } } }]
+            }
+          ]
+        };
+      }
+    });
+
+    await expect(
+      generateText({
+        model,
+        prompt: "Search the web",
+        maxSteps: 2,
+        tools: {
+          web: hostedTool({
+            name: "web",
+            provider: "openai",
+            type: "web_search"
+          })
+        }
+      })
+    ).rejects.toThrow('Tool "web" is provider-hosted and cannot be executed by the local tool loop.');
   });
 
   it("executes tools across multiple steps", async () => {

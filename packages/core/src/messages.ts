@@ -3,6 +3,7 @@ import type {
   ContentPart,
   FinishReason,
   GenerateResult,
+  HostedToolDefinition,
   JsonValue,
   LanguageModel,
   ModelMessage,
@@ -24,6 +25,12 @@ export const toolCallPart = (toolCall: ToolCall): ContentPart => ({
 export const toolResultPart = (toolResult: ToolExecutionResult): ContentPart => ({
   type: "tool-result",
   toolResult
+});
+
+export const providerDataPart = (provider: string, data: JsonValue): ContentPart => ({
+  type: "provider-data",
+  provider,
+  data
 });
 
 export const createTextMessage = (role: ModelMessage["role"], text: string): ModelMessage => ({
@@ -61,6 +68,20 @@ export const getTextFromMessages = (messages: ModelMessage[]): string =>
 export const serializeJsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 
 export const tool = <TTool extends ToolDefinition>(definition: TTool): TTool => definition;
+
+export const hostedTool = <TTool extends HostedToolDefinition>(definition: Omit<TTool, "kind">): TTool =>
+  ({
+    kind: "hosted",
+    ...definition
+  }) as TTool;
+
+export const isHostedToolDefinition = (
+  toolDefinition: ToolDefinition | HostedToolDefinition
+): toolDefinition is HostedToolDefinition => "kind" in toolDefinition && toolDefinition.kind === "hosted";
+
+export const isCallableToolDefinition = (
+  toolDefinition: ToolDefinition | HostedToolDefinition
+): toolDefinition is ToolDefinition => !isHostedToolDefinition(toolDefinition);
 
 export const normalizeFinishReason = (reason: string | undefined | null): FinishReason | undefined => {
   if (!reason) {

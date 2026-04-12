@@ -3,7 +3,9 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  UnsupportedFeatureError,
   createProviderAdapter,
+  isCallableToolDefinition,
   normalizeFinishReason,
   streamSSE,
   withRetry,
@@ -138,14 +140,22 @@ const mapMessages = (messages: ModelMessage[]) =>
 
 const mapTools = (input: ModelGenerateInput["tools"]) =>
   input
-    ? Object.values(input).map((tool) => ({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: toJSONSchema(tool.schema)
+    ? (() => {
+        const toolDefinitions = Object.values(input);
+        const callableTools = toolDefinitions.filter(isCallableToolDefinition);
+        if (callableTools.length !== toolDefinitions.length) {
+          throw new UnsupportedFeatureError('Provider "openrouter" does not support hosted tools.');
         }
-      }))
+
+        return callableTools.map((tool) => ({
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: toJSONSchema(tool.schema)
+          }
+        }));
+      })()
     : undefined;
 
 const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {

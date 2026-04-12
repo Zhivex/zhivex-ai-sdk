@@ -3,6 +3,7 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  isCallableToolDefinition,
   UnsupportedFeatureError,
   ValidationError,
   createProviderAdapter,
@@ -98,14 +99,22 @@ const mapMessages = (messages: ModelMessage[]) =>
 
 const mapTools = (tools: ModelGenerateInput["tools"]) =>
   tools
-    ? Object.values(tools).map((tool) => ({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: toJSONSchema(tool.schema)
+    ? (() => {
+        const toolDefinitions = Object.values(tools);
+        const callableTools = toolDefinitions.filter(isCallableToolDefinition);
+        if (callableTools.length !== toolDefinitions.length) {
+          throw new UnsupportedFeatureError('Provider "ollama" does not support hosted tools.');
         }
-      }))
+
+        return callableTools.map((tool) => ({
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: toJSONSchema(tool.schema)
+          }
+        }));
+      })()
     : undefined;
 
 const mapFormat = (input: ModelGenerateInput) => {
