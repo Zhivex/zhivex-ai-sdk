@@ -3,6 +3,7 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  hostedTool,
   UnsupportedFeatureError,
   createProviderAdapter,
   isCallableToolDefinition,
@@ -19,6 +20,7 @@ import {
   type GenerateResult,
   type GroundedGenerateResult,
   type GroundedLanguageModel,
+  type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
@@ -35,6 +37,43 @@ export interface OpenAIProviderOptions {
   apiKey?: string;
   baseURL?: string;
   fetch?: typeof globalThis.fetch;
+}
+
+export interface OpenAIWebSearchToolConfig {
+  search_context_size?: "small" | "medium" | "large";
+  user_location?: {
+    type: "approximate";
+    city?: string;
+    region?: string;
+    country?: string;
+    timezone?: string;
+  };
+  filters?: {
+    allowed_domains?: string[];
+    blocked_domains?: string[];
+  };
+  external_web_access?: boolean;
+}
+
+export interface OpenAIFileSearchToolConfig {
+  vector_store_ids?: string[];
+  max_num_results?: number;
+  ranking_options?: Record<string, unknown>;
+  filters?: Record<string, unknown>;
+}
+
+export interface OpenAIRemoteMcpToolConfig {
+  server_label?: string;
+  server_url: string;
+  headers?: Record<string, string>;
+  require_approval?: "never" | "always";
+  allowed_tools?: string[];
+}
+
+export interface OpenAIComputerUseToolConfig {
+  environment: "browser" | "mac" | "windows" | "ubuntu";
+  display_width?: number;
+  display_height?: number;
 }
 
 export interface OpenAILanguageModelOptions {
@@ -1084,3 +1123,35 @@ export const createOpenAI = (
     rawFetch: fetcher
   });
 };
+
+export const openAIWebSearchTool = (config: OpenAIWebSearchToolConfig = {}) =>
+  hostedTool({
+    name: "web_search",
+    provider: "openai",
+    type: "web_search",
+    config: config as unknown as JsonValue
+  });
+
+export const openAIFileSearchTool = (config: OpenAIFileSearchToolConfig = {}) =>
+  hostedTool({
+    name: "file_search",
+    provider: "openai",
+    type: "file_search",
+    config: config as unknown as JsonValue
+  });
+
+export const openAIRemoteMcpTool = (config: OpenAIRemoteMcpToolConfig) =>
+  hostedTool({
+    name: config.server_label ?? "mcp",
+    provider: "openai",
+    type: "mcp",
+    config: config as unknown as JsonValue
+  });
+
+export const openAIComputerUseTool = (config: OpenAIComputerUseToolConfig) =>
+  hostedTool({
+    name: "computer",
+    provider: "openai",
+    type: "computer_use_preview",
+    config: config as unknown as JsonValue
+  });

@@ -3,6 +3,7 @@ import { toJSONSchema } from "zod";
 import {
   ConfigurationError,
   ProviderHTTPError,
+  hostedTool,
   UnsupportedFeatureError,
   createProviderAdapter,
   isCallableToolDefinition,
@@ -19,6 +20,7 @@ import {
   type GenerateResult,
   type GroundedGenerateResult,
   type GroundedLanguageModel,
+  type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
@@ -36,6 +38,38 @@ export interface AzureOpenAIProviderOptions {
   endpoint?: string;
   apiVersion?: string;
   fetch?: typeof globalThis.fetch;
+}
+
+export interface AzureOpenAIWebSearchToolConfig {
+  search_context_size?: "small" | "medium" | "large";
+  user_location?: {
+    type: "approximate";
+    city?: string;
+    region?: string;
+    country?: string;
+    timezone?: string;
+  };
+}
+
+export interface AzureOpenAIFileSearchToolConfig {
+  vector_store_ids?: string[];
+  max_num_results?: number;
+  ranking_options?: Record<string, unknown>;
+  filters?: Record<string, unknown>;
+}
+
+export interface AzureOpenAIRemoteMcpToolConfig {
+  server_label?: string;
+  server_url: string;
+  headers?: Record<string, string>;
+  require_approval?: "never" | "always";
+  allowed_tools?: string[];
+}
+
+export interface AzureOpenAIComputerUseToolConfig {
+  environment: "browser" | "mac" | "windows" | "ubuntu";
+  display_width?: number;
+  display_height?: number;
 }
 
 export interface AzureOpenAILanguageModelOptions {
@@ -1247,3 +1281,35 @@ export const createAzureOpenAI = (
     rawFetch: fetcher
   });
 };
+
+export const azureOpenAIWebSearchTool = (config: AzureOpenAIWebSearchToolConfig = {}) =>
+  hostedTool({
+    name: "web_search",
+    provider: "azure-openai",
+    type: "web_search_preview",
+    config: config as unknown as JsonValue
+  });
+
+export const azureOpenAIFileSearchTool = (config: AzureOpenAIFileSearchToolConfig = {}) =>
+  hostedTool({
+    name: "file_search",
+    provider: "azure-openai",
+    type: "file_search",
+    config: config as unknown as JsonValue
+  });
+
+export const azureOpenAIRemoteMcpTool = (config: AzureOpenAIRemoteMcpToolConfig) =>
+  hostedTool({
+    name: config.server_label ?? "mcp",
+    provider: "azure-openai",
+    type: "mcp",
+    config: config as unknown as JsonValue
+  });
+
+export const azureOpenAIComputerUseTool = (config: AzureOpenAIComputerUseToolConfig) =>
+  hostedTool({
+    name: "computer",
+    provider: "azure-openai",
+    type: "computer_use_preview",
+    config: config as unknown as JsonValue
+  });

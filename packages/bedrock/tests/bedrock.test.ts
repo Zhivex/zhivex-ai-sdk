@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createTextMessage, generateText, tool } from "@zhivex-ai/core";
+import { createTextMessage, generateText, streamText, tool } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 
 const sendMock = vi.fn();
@@ -20,9 +20,14 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
     constructor(readonly input: unknown) {}
   }
 
+  class ConverseStreamCommand {
+    constructor(readonly input: unknown) {}
+  }
+
   return {
     BedrockRuntimeClient,
-    ConverseCommand
+    ConverseCommand,
+    ConverseStreamCommand
   };
 });
 
@@ -34,7 +39,7 @@ describe("bedrock adapter", () => {
     modelId: "anthropic.claude-3-5-sonnet",
     createModel: () => createBedrock({ region: "us-east-1" })("anthropic.claude-3-5-sonnet"),
     expectedCapabilities: {
-      streaming: false,
+      streaming: true,
       tools: true,
       structuredOutput: false,
       jsonMode: false,
@@ -257,5 +262,76 @@ describe("bedrock adapter", () => {
         }
       })
     ).rejects.toThrow('Model "bedrock/anthropic.claude-3-5-sonnet" does not support reasoning.');
+  });
+
+  it("streams tool calls and text through ConverseStream", async () => {
+    sendMock.mockResolvedValueOnce({
+      stream: (async function* () {
+        yield {
+          contentBlockStart: {
+            contentBlockIndex: 0,
+            start: {
+              toolUse: {
+                toolUseId: "tool-1",
+                name: "weather"
+              }
+            }
+          }
+        };
+        yield {
+          contentBlockDelta: {
+            contentBlockIndex: 0,
+            delta: {
+              toolUse: {
+                input: "{\"city\":\"Madrid\"}"
+              }
+            }
+          }
+        };
+        yield {
+          contentBlockStop: {
+            contentBlockIndex: 0
+          }
+        };
+        yield {
+          messageStop: {
+            stopReason: "tool_use"
+          }
+        };
+      })()
+    });
+    sendMock.mockResolvedValueOnce({
+      stream: (async function* () {
+        yield {
+          contentBlockDelta: {
+            contentBlockIndex: 0,
+            delta: {
+              text: "Sunny in Madrid"
+            }
+          }
+        };
+        yield {
+          messageStop: {
+            stopReason: "end_turn"
+          }
+        };
+      })()
+    });
+
+    const provider = createBedrock({ region: "us-east-1" });
+    const result = streamText({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "weather",
+      maxSteps: 2,
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, temperatureC: 26 })
+        })
+      }
+    });
+
+    expect((await result.collect()).text).toBe("Sunny in Madrid");
   });
 });

@@ -3,6 +3,7 @@ import { toJSONSchema } from "zod";
 import {
   BedrockRuntimeClient,
   ConverseCommand,
+  ConverseStreamCommand,
   type ContentBlock,
   type ConverseCommandInput,
   type Message
@@ -24,6 +25,7 @@ import {
   type ModelGenerateInput,
   type ModelMessage,
   type ProviderAdapter
+  , type StreamEvent
 } from "@zhivex-ai/core";
 
 export interface BedrockProviderOptions {
@@ -38,7 +40,7 @@ export interface BedrockLanguageModelOptions {
 }
 
 const capabilities: ModelCapabilities = {
-  streaming: false,
+  streaming: true,
   tools: true,
   structuredOutput: false,
   jsonMode: false,
@@ -257,6 +259,27 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
     private readonly client: BedrockRuntimeClient
   ) {}
 
+  private toCommandInput(input: ModelGenerateInput): ConverseCommandInput {
+    return {
+      modelId: this.modelId,
+      messages: mapMessages(input.messages),
+      system: systemBlocksFromMessages(input.messages),
+      inferenceConfig: {
+        temperature: input.temperature,
+        maxTokens: input.maxTokens
+      },
+      ...(input.tools || input.toolChoice
+        ? {
+            toolConfig: {
+              ...(input.tools ? { tools: mapTools(input.tools) } : {}),
+              ...(input.toolChoice ? { toolChoice: mapToolChoice(input.toolChoice) } : {})
+            } as ConverseCommandInput["toolConfig"]
+          }
+        : {}),
+      ...input.providerOptions
+    };
+  }
+
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     const { cleanup } = withTimeoutSignal(input);
 
@@ -265,24 +288,7 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
         throw new UnsupportedFeatureError('Provider "bedrock" does not support "reasoning".');
       }
 
-      const commandInput: ConverseCommandInput = {
-        modelId: this.modelId,
-        messages: mapMessages(input.messages),
-        system: systemBlocksFromMessages(input.messages),
-        inferenceConfig: {
-          temperature: input.temperature,
-          maxTokens: input.maxTokens
-        },
-        ...(input.tools || input.toolChoice
-          ? {
-              toolConfig: {
-                ...(input.tools ? { tools: mapTools(input.tools) } : {}),
-                ...(input.toolChoice ? { toolChoice: mapToolChoice(input.toolChoice) } : {})
-              } as ConverseCommandInput["toolConfig"]
-            }
-          : {}),
-        ...input.providerOptions
-      };
+      const commandInput = this.toCommandInput(input);
 
       const response = await withRetry(() => this.client.send(new ConverseCommand(commandInput)), input).catch((error) => {
         throw normalizeBedrockError(error);
@@ -310,6 +316,101 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
     } finally {
       cleanup();
     }
+  }
+
+  async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
+    const { cleanup } = withTimeoutSignal(input);
+
+    if (input.reasoning) {
+      throw new UnsupportedFeatureError('Provider "bedrock" does not support "reasoning".');
+    }
+
+    const commandInput = this.toCommandInput(input);
+    const response = await withRetry(() => this.client.send(new ConverseStreamCommand(commandInput)), input).catch(
+      (error) => {
+        throw normalizeBedrockError(error);
+      }
+    );
+
+    return (async function* () {
+      try {
+        const toolBuffers = new Map<number, { id: string; name: string; input: string }>();
+        const stream = response.stream;
+        if (!stream) {
+          throw new ValidationError("Bedrock streaming response did not include a stream.");
+        }
+
+        for await (const event of stream as AsyncIterable<Record<string, any>>) {
+          if (event.contentBlockStart?.start?.toolUse) {
+            toolBuffers.set(event.contentBlockStart.contentBlockIndex, {
+              id: event.contentBlockStart.start.toolUse.toolUseId,
+              name: event.contentBlockStart.start.toolUse.name,
+              input: ""
+            });
+            continue;
+          }
+
+          if (event.contentBlockDelta?.delta?.text) {
+            yield {
+              type: "text-delta",
+              textDelta: event.contentBlockDelta.delta.text
+            } satisfies StreamEvent;
+            continue;
+          }
+
+          if (event.contentBlockDelta?.delta?.toolUse) {
+            const index = event.contentBlockDelta.contentBlockIndex;
+            const current = toolBuffers.get(index) ?? {
+              id: `${index}`,
+              name: "",
+              input: ""
+            };
+            current.input += event.contentBlockDelta.delta.toolUse.input ?? "";
+            toolBuffers.set(index, current);
+            continue;
+          }
+
+          if (event.contentBlockStop) {
+            const current = toolBuffers.get(event.contentBlockStop.contentBlockIndex);
+            if (current) {
+              yield {
+                type: "tool-call",
+                toolCall: {
+                  id: current.id,
+                  name: current.name,
+                  input: JSON.parse(current.input || "{}")
+                }
+              } satisfies StreamEvent;
+            }
+            continue;
+          }
+
+          if (event.messageStop) {
+            yield {
+              type: "finish",
+              finishReason: normalizeFinishReason(event.messageStop.stopReason),
+              providerFinishReason: event.messageStop.stopReason
+            } satisfies StreamEvent;
+            continue;
+          }
+
+          if (event.metadata?.usage) {
+            yield {
+              type: "finish",
+              usage: {
+                inputTokens: event.metadata.usage.inputTokens,
+                outputTokens: event.metadata.usage.outputTokens,
+                totalTokens:
+                  event.metadata.usage.totalTokens ??
+                  ((event.metadata.usage.inputTokens ?? 0) + (event.metadata.usage.outputTokens ?? 0))
+              }
+            } satisfies StreamEvent;
+          }
+        }
+      } finally {
+        cleanup();
+      }
+    })();
   }
 }
 

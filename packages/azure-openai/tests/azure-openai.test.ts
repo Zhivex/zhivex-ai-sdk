@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { embed, generateGroundedText, generateSpeech, generateText, hostedTool, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
 import { z } from "zod";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createAzureOpenAI } from "../src/index.js";
+import { azureOpenAIWebSearchTool, createAzureOpenAI } from "../src/index.js";
 
 describe("azure openai adapter", () => {
   const fetchMock = vi.fn();
@@ -288,6 +288,45 @@ describe("azure openai adapter", () => {
     expect(body.reasoning_effort).toBe("high");
     expect(body.max_completion_tokens).toBe(256);
     expect(body.max_tokens).toBeUndefined();
+  });
+
+  it("maps typed Azure OpenAI hosted tool helpers", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "hello from azure" }]
+          }
+        ]
+      })
+    );
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("gpt-4o-mini"),
+      prompt: "hello",
+      tools: {
+        web: azureOpenAIWebSearchTool()
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tools: Array<{ type: string }>;
+    };
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/responses");
+    expect(body.tools).toEqual([
+      {
+        type: "web_search_preview"
+      }
+    ]);
   });
 
   it("uses the Responses API for hosted tools and continues local function loops", async () => {

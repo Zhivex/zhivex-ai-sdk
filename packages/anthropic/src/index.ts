@@ -6,12 +6,14 @@ import {
   UnsupportedFeatureError,
   createProviderAdapter,
   isCallableToolDefinition,
+  hostedTool,
   normalizeFinishReason,
   streamSSE,
   withRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
+  type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
@@ -49,7 +51,7 @@ const capabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: false,
   reasoning: true,
-  webSearch: false
+  webSearch: true
 };
 
 const parseJson = async (response: Response) => {
@@ -124,19 +126,27 @@ const mapMessages = (messages: ModelMessage[]) =>
 
 const mapTools = (tools: ModelGenerateInput["tools"]) =>
   tools
-    ? (() => {
-        const toolDefinitions = Object.values(tools);
-        const callableTools = toolDefinitions.filter(isCallableToolDefinition);
-        if (callableTools.length !== toolDefinitions.length) {
-          throw new UnsupportedFeatureError('Provider "anthropic" does not support hosted tools.');
+    ? Object.values(tools).map((tool) => {
+        if (isCallableToolDefinition(tool)) {
+          return {
+            name: tool.name,
+            description: tool.description,
+            input_schema: toJSONSchema(tool.schema)
+          };
         }
 
-        return callableTools.map((tool) => ({
+        if (tool.provider && tool.provider !== "anthropic") {
+          throw new UnsupportedFeatureError(
+            `Provider "anthropic" does not support hosted tools declared for provider "${tool.provider}".`
+          );
+        }
+
+        return {
+          type: tool.type,
           name: tool.name,
-          description: tool.description,
-          input_schema: toJSONSchema(tool.schema)
-        }));
-      })()
+          ...(tool.config && typeof tool.config === "object" ? tool.config : {})
+        };
+      })
     : undefined;
 
 const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
@@ -368,3 +378,24 @@ export const createAnthropic = (
     rawFetch: fetcher
   });
 };
+
+export interface AnthropicWebSearchToolConfig {
+  max_uses?: number;
+  allowed_domains?: string[];
+  blocked_domains?: string[];
+  user_location?: {
+    type: "approximate";
+    city?: string;
+    region?: string;
+    country?: string;
+    timezone?: string;
+  };
+}
+
+export const anthropicWebSearchTool = (config: AnthropicWebSearchToolConfig = {}) =>
+  hostedTool({
+    name: "web_search",
+    provider: "anthropic",
+    type: "web_search_20250305",
+    config: config as unknown as JsonValue
+  });

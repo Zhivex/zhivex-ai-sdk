@@ -14,7 +14,7 @@ import {
   transcribeAudio
 } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createOpenAI } from "../src/index.js";
+import { createOpenAI, openAIWebSearchTool } from "../src/index.js";
 
 describe("openai adapter", () => {
   const fetchMock = vi.fn();
@@ -325,6 +325,44 @@ describe("openai adapter", () => {
         name: "weather"
       }
     });
+  });
+
+  it("maps typed OpenAI hosted tool helpers", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "hello from openai" }]
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-4o-mini"),
+      prompt: "hello",
+      tools: {
+        web: openAIWebSearchTool({
+          search_context_size: "small"
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tools: Array<{ type: string; search_context_size?: string }>;
+    };
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.openai.com/v1/responses");
+    expect(body.tools).toEqual([
+      {
+        type: "web_search",
+        search_context_size: "small"
+      }
+    ]);
   });
 
   it("uses the Responses API for hosted tools and continues local function loops", async () => {

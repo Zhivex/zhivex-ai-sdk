@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { generateObject, generateText, tool } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createAnthropic } from "../src/index.js";
+import { anthropicWebSearchTool, createAnthropic } from "../src/index.js";
 
 describe("anthropic adapter", () => {
   const fetchMock = vi.fn();
@@ -25,7 +25,7 @@ describe("anthropic adapter", () => {
       audioOutput: false,
       embeddings: false,
       reasoning: true,
-      webSearch: false
+      webSearch: true
     }
   });
 
@@ -206,6 +206,39 @@ describe("anthropic adapter", () => {
     expect(body.tool_choice).toEqual({
       type: "none"
     });
+  });
+
+  it("maps hosted Anthropic web search tools into native tool definitions", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        web: anthropicWebSearchTool({
+          max_uses: 3
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tools: Array<{ type: string; name: string; max_uses: number }>;
+    };
+    expect(body.tools).toEqual([
+      {
+        type: "web_search_20250305",
+        name: "web_search",
+        max_uses: 3
+      }
+    ]);
   });
 
   it("maps reasoning budget tokens to Anthropic thinking", async () => {
