@@ -1,12 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
-import { createTextMessage, generateText } from "@zhivex-ai/core";
+import { createTextMessage, generateText, tool } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 
-const { sendMock, clientMock } = vi.hoisted(() => ({
-  sendMock: vi.fn(),
-  clientMock: vi.fn()
-}));
+const sendMock = vi.fn();
+const clientMock = vi.fn();
 
 vi.mock("@aws-sdk/client-bedrock-runtime", () => {
   class BedrockRuntimeClient {
@@ -36,10 +35,10 @@ describe("bedrock adapter", () => {
     createModel: () => createBedrock({ region: "us-east-1" })("anthropic.claude-3-5-sonnet"),
     expectedCapabilities: {
       streaming: false,
-      tools: false,
+      tools: true,
       structuredOutput: false,
       jsonMode: false,
-      toolChoice: false,
+      toolChoice: true,
       parallelToolCalls: false,
       vision: true,
       files: false,
@@ -153,6 +152,97 @@ describe("bedrock adapter", () => {
 
     const command = sendMock.mock.calls[0]?.[0] as { input: { additionalModelResponseFieldPaths?: string[] } };
     expect(command.input.additionalModelResponseFieldPaths).toEqual(["/stop_sequence"]);
+  });
+
+  it("supports tool calls through the common multi-step loop", async () => {
+    sendMock.mockResolvedValueOnce({
+      stopReason: "tool_use",
+      output: {
+        message: {
+          content: [
+            {
+              toolUse: {
+                toolUseId: "tool-1",
+                name: "weather",
+                input: { city: "Madrid" }
+              }
+            }
+          ]
+        }
+      }
+    });
+    sendMock.mockResolvedValueOnce({
+      stopReason: "end_turn",
+      output: {
+        message: {
+          content: [{ text: "Sunny in Madrid" }]
+        }
+      }
+    });
+
+    const provider = createBedrock({ region: "us-east-1" });
+    const result = await generateText({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "weather",
+      maxSteps: 2,
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, temperatureC: 26 })
+        })
+      }
+    });
+
+    expect(result.text).toBe("Sunny in Madrid");
+    expect(result.toolResults[0]?.toolName).toBe("weather");
+
+    const secondCommand = sendMock.mock.calls[1]?.[0] as {
+      input: { messages: Array<{ role: string; content: Array<Record<string, unknown>> }> };
+    };
+    expect(secondCommand.input.messages.at(-1)?.role).toBe("user");
+    expect(secondCommand.input.messages.at(-1)?.content[0]).toMatchObject({
+      toolResult: {
+        toolUseId: "tool-1"
+      }
+    });
+  });
+
+  it("maps common tool choice to Bedrock toolConfig", async () => {
+    sendMock.mockResolvedValueOnce({
+      stopReason: "end_turn",
+      output: {
+        message: {
+          content: [{ text: "hello from bedrock" }]
+        }
+      }
+    });
+
+    const provider = createBedrock({ region: "us-east-1" });
+    await generateText({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      },
+      toolChoice: {
+        type: "tool",
+        toolName: "weather"
+      }
+    });
+
+    const command = sendMock.mock.calls[0]?.[0] as {
+      input: { toolConfig?: { toolChoice?: { tool: { name: string } } } };
+    };
+    expect(command.input.toolConfig?.toolChoice).toEqual({
+      tool: {
+        name: "weather"
+      }
+    });
   });
 
   it("rejects common reasoning config for Bedrock", async () => {

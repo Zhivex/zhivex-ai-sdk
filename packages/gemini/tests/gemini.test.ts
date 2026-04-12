@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, streamText, transcribeAudio } from "@zhivex-ai/core";
+import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createGemini } from "../src/index.js";
 
@@ -19,7 +19,7 @@ describe("gemini adapter", () => {
       tools: true,
       structuredOutput: true,
       jsonMode: true,
-      toolChoice: false,
+      toolChoice: true,
       parallelToolCalls: false,
       vision: true,
       files: false,
@@ -140,6 +140,47 @@ describe("gemini adapter", () => {
     const body = JSON.parse(String(requestInit.body)) as { topP: number; candidateCount: number };
     expect(body.topP).toBe(0.95);
     expect(body.candidateCount).toBe(1);
+  });
+
+  it("maps common tool choice to Gemini toolConfig", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "hello from gemini" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      },
+      toolChoice: {
+        type: "tool",
+        toolName: "weather"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      toolConfig: { functionCallingConfig: { mode: string; allowedFunctionNames: string[] } };
+    };
+    expect(body.toolConfig).toEqual({
+      functionCallingConfig: {
+        mode: "ANY",
+        allowedFunctionNames: ["weather"]
+      }
+    });
   });
 
   it("maps reasoning budget tokens to Gemini thinking config", async () => {

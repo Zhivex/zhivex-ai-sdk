@@ -1,9 +1,12 @@
+import { toJSONSchema } from "zod";
+
 import {
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
   ValidationError,
   createProviderAdapter,
+  normalizeFinishReason,
   withRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
@@ -31,11 +34,11 @@ export interface OllamaLanguageModelOptions {
 
 const capabilities: ModelCapabilities = {
   streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
+  tools: true,
+  structuredOutput: true,
+  jsonMode: true,
   toolChoice: false,
-  parallelToolCalls: false,
+  parallelToolCalls: true,
   vision: true,
   files: false,
   audioInput: false,
@@ -53,35 +56,80 @@ const parseDataUrl = (value: string) => {
   return match[2];
 };
 
-const mapPrompt = (messages: ModelMessage[]) =>
-  messages
-    .filter((message) => message.role !== "system")
-    .map((message) => {
-      const text = message.parts
-        .filter((part): part is Extract<ModelMessage["parts"][number], { type: "text" }> => part.type === "text")
-        .map((part) => part.text)
-        .join("\n");
+const mapMessages = (messages: ModelMessage[]) =>
+  messages.map((message) => {
+    if (message.role === "tool") {
+      const toolResult = message.parts.find((part) => part.type === "tool-result");
+      return {
+        role: "tool",
+        tool_name: toolResult?.type === "tool-result" ? toolResult.toolResult.toolName : undefined,
+        content:
+          toolResult?.type === "tool-result"
+            ? JSON.stringify(toolResult.toolResult.isError ? toolResult.toolResult.error : toolResult.toolResult.output)
+            : ""
+      };
+    }
 
-      return `${message.role.toUpperCase()}: ${text}`;
-    })
-    .join("\n\n");
-
-const systemPrompt = (messages: ModelMessage[]) =>
-  messages
-    .filter((message) => message.role === "system")
-    .flatMap((message) => message.parts)
-    .filter((part): part is Extract<ModelMessage["parts"][number], { type: "text" }> => part.type === "text")
-    .map((part) => part.text)
-    .join("\n");
-
-const lastUserImages = (messages: ModelMessage[]) => {
-  const lastUser = [...messages].reverse().find((message) => message.role === "user");
-  return (
-    lastUser?.parts
+    const text = message.parts
+      .filter((part): part is Extract<ModelMessage["parts"][number], { type: "text" }> => part.type === "text")
+      .map((part) => part.text)
+      .join("\n");
+    const images = message.parts
       .filter((part): part is Extract<ModelMessage["parts"][number], { type: "image" }> => part.type === "image")
-      .map((part) => parseDataUrl(part.image)) ?? []
-  );
+      .map((part) => parseDataUrl(part.image));
+    const toolCalls = message.parts
+      .filter((part): part is Extract<ModelMessage["parts"][number], { type: "tool-call" }> => part.type === "tool-call")
+      .map((part, index) => ({
+        id: part.toolCall.id ?? `${part.toolCall.name}-${index}`,
+        type: "function",
+        function: {
+          name: part.toolCall.name,
+          arguments: JSON.stringify(part.toolCall.input)
+        }
+      }));
+
+    return {
+      role: message.role,
+      content: text,
+      ...(images.length ? { images } : {}),
+      ...(toolCalls.length ? { tool_calls: toolCalls } : {})
+    };
+  });
+
+const mapTools = (tools: ModelGenerateInput["tools"]) =>
+  tools
+    ? Object.values(tools).map((tool) => ({
+        type: "function",
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: toJSONSchema(tool.schema)
+        }
+      }))
+    : undefined;
+
+const mapFormat = (input: ModelGenerateInput) => {
+  if (input.structuredOutput?.mode === "native") {
+    return toJSONSchema(input.structuredOutput.schema);
+  }
+
+  return undefined;
 };
+
+const parseAssistantMessage = (message: any) => ({
+  role: "assistant" as const,
+  parts: [
+    ...(typeof message?.content === "string" && message.content ? [{ type: "text" as const, text: message.content }] : []),
+    ...((message?.tool_calls ?? []).map((call: any, index: number) => ({
+      type: "tool-call" as const,
+      toolCall: {
+        id: call.id ?? `${call.function?.name ?? "tool"}-${index}`,
+        name: call.function?.name ?? "tool",
+        input: JSON.parse(call.function?.arguments ?? "{}")
+      }
+    })) ?? [])
+  ]
+});
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
@@ -113,40 +161,40 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
 
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/api/generate`, {
+          this.fetcher(`${this.baseURL}/api/chat`, {
             method: "POST",
             headers: { "content-type": "application/json" },
             signal,
             body: JSON.stringify({
               model: this.modelId,
-              system: systemPrompt(input.messages) || undefined,
-              prompt: mapPrompt(input.messages),
-              images: lastUserImages(input.messages),
+              messages: mapMessages(input.messages),
+              tools: mapTools(input.tools),
+              ...input.providerOptions,
+              format: mapFormat(input) ?? input.providerOptions?.format,
               options: {
+                ...(typeof input.providerOptions?.options === "object" && input.providerOptions?.options
+                  ? input.providerOptions.options
+                  : {}),
                 num_predict: input.maxTokens,
                 temperature: input.temperature
               },
-              stream: false,
-              ...input.providerOptions
+              stream: false
             })
           }),
         input
       );
 
       const json = await parseJson(response);
-      const text = json.response || "";
+      const assistantMessage = parseAssistantMessage(json.message);
+      const text = assistantMessage.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("");
 
       return {
-        messages: text
-          ? [
-              {
-                role: "assistant",
-                parts: [{ type: "text", text }]
-              }
-            ]
-          : [],
+        messages: [assistantMessage],
         text,
-        finishReason: "stop",
+        finishReason: normalizeFinishReason(json.done_reason),
         providerFinishReason: json.done_reason,
         usage: {
           inputTokens: json.prompt_eval_count,

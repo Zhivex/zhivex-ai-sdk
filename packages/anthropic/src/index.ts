@@ -31,7 +31,7 @@ export interface AnthropicLanguageModelOptions {
   top_k?: number;
   stop_sequences?: string[];
   metadata?: Record<string, unknown>;
-  tool_choice?: { type: "auto" | "any" | "tool"; name?: string };
+  tool_choice?: { type: "auto" | "none" | "any" | "tool"; name?: string };
   [key: string]: unknown;
 }
 
@@ -41,7 +41,7 @@ const capabilities: ModelCapabilities = {
   structuredOutput: false,
   jsonMode: false,
   toolChoice: true,
-  parallelToolCalls: false,
+  parallelToolCalls: true,
   vision: true,
   files: false,
   audioInput: false,
@@ -136,7 +136,9 @@ const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
   }
 
   if (toolChoice === "none") {
-    throw new UnsupportedFeatureError('Provider "anthropic" does not support "toolChoice=none".');
+    return {
+      type: "none"
+    };
   }
 
   if (toolChoice === "required") {

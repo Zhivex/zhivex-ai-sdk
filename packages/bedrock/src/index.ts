@@ -1,3 +1,5 @@
+import { toJSONSchema } from "zod";
+
 import {
   BedrockRuntimeClient,
   ConverseCommand,
@@ -36,10 +38,10 @@ export interface BedrockLanguageModelOptions {
 
 const capabilities: ModelCapabilities = {
   streaming: false,
-  tools: false,
+  tools: true,
   structuredOutput: false,
   jsonMode: false,
-  toolChoice: false,
+  toolChoice: true,
   parallelToolCalls: false,
   vision: true,
   files: false,
@@ -89,9 +91,29 @@ const mapMessagePart = (part: ModelMessage["parts"][number]): ContentBlock[] => 
         }
       ];
     }
+    case "tool-call":
+      return [
+        {
+          toolUse: {
+            toolUseId: part.toolCall.id,
+            name: part.toolCall.name,
+            input: part.toolCall.input
+          }
+        }
+      ];
     default:
       return [];
   }
+};
+
+const mapToolResultContent = (toolResult: Extract<ModelMessage["parts"][number], { type: "tool-result" }>["toolResult"]) => {
+  const value = toolResult.isError ? toolResult.error : toolResult.output;
+
+  if (typeof value === "string") {
+    return [{ text: value }];
+  }
+
+  return [{ json: value ?? null }];
 };
 
 const systemBlocksFromMessages = (messages: ModelMessage[]) => {
@@ -108,10 +130,97 @@ const systemBlocksFromMessages = (messages: ModelMessage[]) => {
 const mapMessages = (messages: ModelMessage[]): Message[] =>
   messages
     .filter((message) => message.role !== "system")
-    .map((message) => ({
-      role: message.role === "assistant" ? "assistant" : "user",
-      content: message.parts.flatMap(mapMessagePart)
-    }));
+    .map((message) => {
+      if (message.role === "tool") {
+        return {
+          role: "user",
+          content: message.parts.flatMap((part) =>
+            part.type === "tool-result"
+              ? [
+                  {
+                    toolResult: {
+                      toolUseId: part.toolResult.toolCallId,
+                      content: mapToolResultContent(part.toolResult),
+                      ...(part.toolResult.isError ? { status: "error" as const } : {})
+                    }
+                  }
+                ]
+              : []
+          )
+        };
+      }
+
+      return {
+        role: message.role === "assistant" ? "assistant" : "user",
+        content: message.parts.flatMap(mapMessagePart)
+      };
+    });
+
+const mapTools = (tools: ModelGenerateInput["tools"]) =>
+  tools
+    ? (Object.values(tools).map((tool) => ({
+        toolSpec: {
+          name: tool.name,
+          description: tool.description,
+          inputSchema: {
+            json: toJSONSchema(tool.schema)
+          }
+        }
+      })) as unknown as NonNullable<ConverseCommandInput["toolConfig"]>["tools"])
+    : undefined;
+
+const mapToolChoice = (
+  toolChoice: ModelGenerateInput["toolChoice"]
+): NonNullable<ConverseCommandInput["toolConfig"]>["toolChoice"] | undefined => {
+  if (!toolChoice || toolChoice === "auto") {
+    return undefined;
+  }
+
+  if (toolChoice === "none") {
+    throw new UnsupportedFeatureError('Provider "bedrock" does not support "toolChoice=none".');
+  }
+
+  if (toolChoice === "required") {
+    return {
+      any: {}
+    };
+  }
+
+  return {
+    tool: {
+      name: toolChoice.toolName
+    }
+  } as unknown as NonNullable<ConverseCommandInput["toolConfig"]>["toolChoice"];
+};
+
+const parseAssistantMessage = (message: { content?: ContentBlock[] } | undefined): ModelMessage => {
+  const parts: ModelMessage["parts"] = [];
+
+  for (const block of message?.content ?? []) {
+    const chunk = block as any;
+
+    if (chunk.text) {
+      parts.push({ type: "text", text: chunk.text });
+      continue;
+    }
+
+    if (chunk.toolUse) {
+      parts.push({
+        type: "tool-call",
+        toolCall: {
+          id: chunk.toolUse.toolUseId,
+          name: chunk.toolUse.name,
+          input: chunk.toolUse.input ?? {}
+        }
+      });
+    }
+  }
+
+  return {
+    role: "assistant",
+    parts
+  };
+};
 
 const normalizeBedrockError = (error: unknown) => {
   const err = error as { name?: string; message?: string; $metadata?: { httpStatusCode?: number } };
@@ -155,6 +264,14 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
           temperature: input.temperature,
           maxTokens: input.maxTokens
         },
+        ...(input.tools || input.toolChoice
+          ? {
+              toolConfig: {
+                ...(input.tools ? { tools: mapTools(input.tools) } : {}),
+                ...(input.toolChoice ? { toolChoice: mapToolChoice(input.toolChoice) } : {})
+              } as ConverseCommandInput["toolConfig"]
+            }
+          : {}),
         ...input.providerOptions
       };
 
@@ -162,20 +279,14 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
         throw normalizeBedrockError(error);
       });
 
-      const text =
-        response.output?.message?.content
-          ?.map((chunk) => ("text" in chunk && chunk.text ? chunk.text : ""))
-          .join("") ?? "";
+      const assistantMessage = parseAssistantMessage(response.output?.message);
+      const text = assistantMessage.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("");
 
       return {
-        messages: text
-          ? [
-              {
-                role: "assistant",
-                parts: [{ type: "text", text }]
-              }
-            ]
-          : [],
+        messages: [assistantMessage],
         text,
         finishReason: normalizeFinishReason(response.stopReason),
         providerFinishReason: response.stopReason,

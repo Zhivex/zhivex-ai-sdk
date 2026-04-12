@@ -49,7 +49,7 @@ const capabilities: ModelCapabilities = {
   tools: true,
   structuredOutput: true,
   jsonMode: true,
-  toolChoice: false,
+  toolChoice: true,
   parallelToolCalls: false,
   vision: true,
   files: false,
@@ -172,6 +172,35 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
       ]
     : undefined;
 
+const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"]) => {
+  if (!toolChoice || toolChoice === "auto") {
+    return undefined;
+  }
+
+  if (toolChoice === "none") {
+    return {
+      functionCallingConfig: {
+        mode: "NONE"
+      }
+    };
+  }
+
+  if (toolChoice === "required") {
+    return {
+      functionCallingConfig: {
+        mode: "ANY"
+      }
+    };
+  }
+
+  return {
+    functionCallingConfig: {
+      mode: "ANY",
+      allowedFunctionNames: [toolChoice.toolName]
+    }
+  };
+};
+
 const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
 
 const isGemini3ProModel = (modelId: string) => /^gemini-3([.-].*)?pro([.-]|$)/.test(modelId);
@@ -241,7 +270,7 @@ const generationConfig = (modelId: string, input: ModelGenerateInput) => ({
 const parseAssistantMessage = (candidate: any): ModelMessage => ({
   role: "assistant",
   parts:
-    candidate?.content?.parts?.map((part: any) => {
+    candidate?.content?.parts?.map((part: any, index: number) => {
       if (part.text) {
         return { type: "text", text: part.text } as const;
       }
@@ -249,7 +278,7 @@ const parseAssistantMessage = (candidate: any): ModelMessage => ({
         return {
           type: "tool-call" as const,
           toolCall: {
-            id: `${part.functionCall.name}-0`,
+            id: part.functionCall.id ?? `${part.functionCall.name}-${index}`,
             name: part.functionCall.name,
             input: part.functionCall.args ?? {}
           }
@@ -300,6 +329,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
               systemInstruction: systemInstruction(input.messages),
               tools: mapTools(input.tools),
               ...input.providerOptions,
+              toolConfig: mapToolConfig(input.toolChoice),
               generationConfig: generationConfig(this.modelId, input)
             })
           }),
@@ -338,6 +368,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
             systemInstruction: systemInstruction(input.messages),
             tools: mapTools(input.tools),
             ...input.providerOptions,
+            toolConfig: mapToolConfig(input.toolChoice),
             generationConfig: generationConfig(this.modelId, input)
           })
         }),
@@ -351,7 +382,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
           const candidate = json.candidates?.[0];
           const parts = candidate?.content?.parts ?? [];
 
-          for (const part of parts) {
+          for (const [index, part] of parts.entries()) {
             if (part.text) {
               yield { type: "text-delta", textDelta: part.text } satisfies StreamEvent;
             }
@@ -360,7 +391,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
               yield {
                 type: "tool-call",
                 toolCall: {
-                  id: `${part.functionCall.name}-0`,
+                  id: part.functionCall.id ?? `${part.functionCall.name}-${index}`,
                   name: part.functionCall.name,
                   input: part.functionCall.args ?? {}
                 }
