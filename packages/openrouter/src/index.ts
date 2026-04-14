@@ -5,13 +5,16 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   createProviderAdapter,
+  hostedTool,
   isCallableToolDefinition,
+  isHostedToolDefinition,
   normalizeFinishReason,
   streamSSE,
   withRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
+  type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
@@ -46,6 +49,22 @@ export interface OpenRouterLanguageModelOptions {
   [key: string]: unknown;
 }
 
+export interface OpenRouterWebSearchToolConfig {
+  engine?: "auto" | "native" | "exa" | "firecrawl" | "parallel";
+  max_results?: number;
+  max_total_results?: number;
+  search_context_size?: "low" | "medium" | "high";
+  user_location?: {
+    type: "approximate";
+    city?: string;
+    region?: string;
+    country?: string;
+    timezone?: string;
+  };
+  allowed_domains?: string[];
+  excluded_domains?: string[];
+}
+
 const capabilities: ModelCapabilities = {
   streaming: true,
   tools: true,
@@ -59,7 +78,7 @@ const capabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: false,
   reasoning: true,
-  webSearch: false
+  webSearch: true
 };
 
 const jsonHeaders = (apiKey: string, appName?: string, appURL?: string) => ({
@@ -141,20 +160,29 @@ const mapMessages = (messages: ModelMessage[]) =>
 const mapTools = (input: ModelGenerateInput["tools"]) =>
   input
     ? (() => {
-        const toolDefinitions = Object.values(input);
-        const callableTools = toolDefinitions.filter(isCallableToolDefinition);
-        if (callableTools.length !== toolDefinitions.length) {
-          throw new UnsupportedFeatureError('Provider "openrouter" does not support hosted tools.');
-        }
-
-        return callableTools.map((tool) => ({
-          type: "function",
-          function: {
-            name: tool.name,
-            description: tool.description,
-            parameters: toJSONSchema(tool.schema)
+        return Object.values(input).map((tool) => {
+          if (isCallableToolDefinition(tool)) {
+            return {
+              type: "function",
+              function: {
+                name: tool.name,
+                description: tool.description,
+                parameters: toJSONSchema(tool.schema)
+              }
+            };
           }
-        }));
+
+          if (tool.provider && tool.provider !== "openrouter") {
+            throw new UnsupportedFeatureError(
+              `Provider "openrouter" does not support hosted tools declared for provider "${tool.provider}".`
+            );
+          }
+
+          return {
+            type: tool.type,
+            ...(tool.config && typeof tool.config === "object" ? tool.config : {})
+          };
+        });
       })()
     : undefined;
 
@@ -382,3 +410,11 @@ export const createOpenRouter = (
     rawFetch: fetcher
   });
 };
+
+export const openRouterWebSearchTool = (config: OpenRouterWebSearchToolConfig = {}) =>
+  hostedTool({
+    name: "web_search",
+    provider: "openrouter",
+    type: "openrouter:web_search",
+    config: (Object.keys(config).length ? { parameters: config } : {}) as unknown as JsonValue
+  });

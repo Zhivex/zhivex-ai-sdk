@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createTextMessage, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { createTextMessage, embed, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createOllama } from "../src/index.ts";
 
@@ -12,6 +12,7 @@ describe("ollama adapter", () => {
     providerName: "ollama",
     modelId: "llama3.2",
     createModel: () => createOllama({ fetch: fetchMock as typeof fetch })("llama3.2"),
+    createEmbeddingModel: () => createOllama({ fetch: fetchMock as typeof fetch }).embeddingModel("embeddinggemma"),
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -23,7 +24,7 @@ describe("ollama adapter", () => {
       files: false,
       audioInput: false,
       audioOutput: false,
-      embeddings: false,
+      embeddings: true,
       reasoning: false,
       webSearch: false
     }
@@ -237,6 +238,29 @@ describe("ollama adapter", () => {
     expect(body.format).toMatchObject({
       type: "object"
     });
+  });
+
+  it("embeds values through the Ollama embed endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        embeddings: [[0.1, 0.2, 0.3]],
+        prompt_eval_count: 8
+      })
+    );
+
+    const provider = createOllama({ fetch: fetchMock as typeof fetch });
+    const result = await embed({
+      model: provider.embeddingModel("embeddinggemma"),
+      value: "hello"
+    });
+
+    expect(result.embeddings[0]).toEqual([0.1, 0.2, 0.3]);
+    expect(result.usage?.totalTokens).toBe(8);
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as { model: string; input: string[] };
+    expect(body.model).toBe("embeddinggemma");
+    expect(body.input).toEqual(["hello"]);
   });
 
   it("rejects common reasoning config for Ollama", async () => {

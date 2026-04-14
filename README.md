@@ -104,6 +104,30 @@ console.log(result.usage);
 
 The high-level API accepts either a `prompt` or explicit `messages`, and returns normalized output including text, messages, finish reason, usage, tool results, and execution steps.
 
+## Provider Compatibility
+
+The SDK aims to keep the application-facing contract stable, but capability parity is not identical across providers yet. Use this matrix as the source of truth for the currently implemented SDK behavior.
+
+| Provider | `streamText` | Tools | `toolChoice` | Structured output | Embeddings | Audio in | Audio out | Reasoning | Web search | Hosted tools / MCP |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| OpenAI | yes | yes | yes | native | yes | yes | yes | `effort` | yes | yes |
+| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | `effort` | yes | yes |
+| Anthropic | yes | yes | yes | prompted | no | no | no | `budgetTokens` | yes | native MCP + web search |
+| Gemini | yes | yes | yes | native | yes | yes | yes | model-dependent | yes | native |
+| Vertex | yes | yes | yes | native | yes | yes | yes | model-dependent | yes | native |
+| OpenRouter | yes | yes | yes | native | no | no | no | `effort` + `budgetTokens` | yes | server tools |
+| Qwen | yes | yes | yes | native | yes | no | no | no | no | no |
+| Kimi | yes | yes | yes | native | no | no | no | no | no | no |
+| Bedrock | yes | yes | partial | native | no | no | no | no | no | no |
+| Ollama | yes | yes | no | native | yes | no | no | no | no | no |
+
+Compatibility notes:
+
+- `structured output` means the SDK can use the shared `generateObject()` / `streamObject()` contract. `native` means schema-aware provider support; `prompted` means SDK fallback prompting instead of provider-native schema enforcement.
+- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models.
+- `partial` for Bedrock `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`.
+- `Hosted tools / MCP` refers to provider-native hosted tools or SDK-level MCP mappings, not local callable tools defined with `tool()`. For OpenRouter this currently means server tools such as `openrouter:web_search`.
+
 ## Core Capabilities
 
 ### Text Generation
@@ -185,7 +209,7 @@ Provider compatibility for the common `reasoning` option:
 - Ollama and Bedrock: not supported
 - Qwen and Kimi: not supported yet in the common SDK config
 
-When a provider or model does not support the requested `reasoning` field, the SDK throws an explicit error instead of silently ignoring it.
+When a provider or model does not support the requested `reasoning` field, the SDK throws an explicit error instead of silently ignoring it. For the broader matrix, see [Provider Compatibility](#provider-compatibility).
 
 ### HTTP Responses and UI Streams
 
@@ -318,6 +342,30 @@ console.log(result.toolResults);
 ```
 
 Provider-hosted tools use the same `tools` registry through `hostedTool`. This lets providers expose native capabilities such as OpenAI/Azure Responses tools or Gemini/Vertex built-ins without breaking the common contract.
+
+OpenRouter server tools are available through the same hosted-tool mechanism:
+
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { createOpenRouter, openRouterWebSearchTool } from "@zhivex-ai/openrouter";
+
+const openrouter = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY
+});
+
+const result = await generateText({
+  model: openrouter("openai/gpt-4o-mini"),
+  prompt: "What were the major AI announcements this week?",
+  tools: {
+    web: openRouterWebSearchTool({
+      max_results: 5,
+      allowed_domains: ["openai.com", "anthropic.com"]
+    })
+  }
+});
+
+console.log(result.text);
+```
 
 ### MCP
 
@@ -488,6 +536,22 @@ const result = await embedMany({
 console.log(result.embeddings.length);
 ```
 
+Ollama also supports the shared embeddings contract through its `/api/embed` endpoint:
+
+```ts
+import { embed } from "@zhivex-ai/sdk";
+import { createOllama } from "@zhivex-ai/ollama";
+
+const ollama = createOllama();
+
+const result = await embed({
+  model: ollama.embeddingModel("embeddinggemma"),
+  value: "Zhivex AI SDK"
+});
+
+console.log(result.embeddings[0]?.length);
+```
+
 ### Audio
 
 Use the shared audio primitives when you want a provider-agnostic contract for transcription or text-to-speech.
@@ -648,6 +712,8 @@ bun run typecheck
 bun run test
 bun run build
 ```
+
+The integration layer now includes provider-specific tests plus capability-first suites under [`packages/core/tests/`](/Users/mikeortiz/dev/zhivex-ai-sdk/packages/core/tests). These capability suites exercise the shared contract across any providers that have credentials available in the current environment.
 
 ## Design Principles
 

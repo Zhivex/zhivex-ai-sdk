@@ -2,6 +2,9 @@ import { toJSONSchema } from "zod";
 
 import {
   ConfigurationError,
+  type EmbedInput,
+  type EmbeddingModel,
+  type EmbedResult,
   ProviderHTTPError,
   isCallableToolDefinition,
   UnsupportedFeatureError,
@@ -45,7 +48,7 @@ const capabilities: ModelCapabilities = {
   files: false,
   audioInput: false,
   audioOutput: false,
-  embeddings: false,
+  embeddings: true,
   reasoning: false,
   webSearch: false
 };
@@ -358,12 +361,58 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
   }
 }
 
+class OllamaEmbeddingModel implements EmbeddingModel {
+  readonly provider = "ollama";
+  readonly capabilities = capabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/api/embed`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              model: this.modelId,
+              input: input.values
+            })
+          }),
+        input
+      );
+
+      const json = await parseJson(response);
+      return {
+        embeddings: json.embeddings ?? [],
+        usage: {
+          inputTokens: json.prompt_eval_count,
+          totalTokens: json.prompt_eval_count
+        },
+        rawResponse: json
+      };
+    } catch (error) {
+      throw normalizeOllamaError(error);
+    } finally {
+      cleanup();
+    }
+  }
+}
+
 export const createOllama = (options: OllamaProviderOptions = {}): CallableProviderAdapter & ProviderAdapter => {
   const baseURL = options.baseURL ?? process.env.OLLAMA_HOST ?? "http://localhost:11434";
   const fetcher = options.fetch ?? globalThis.fetch;
 
   return createProviderAdapter({
     name: "ollama",
-    languageModel: (modelId) => new OllamaLanguageModel(modelId, baseURL, fetcher)
+    languageModel: (modelId) => new OllamaLanguageModel(modelId, baseURL, fetcher),
+    embeddingModel: (modelId) => new OllamaEmbeddingModel(modelId, baseURL, fetcher)
   });
 };
