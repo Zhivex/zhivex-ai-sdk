@@ -1,17 +1,21 @@
 import { createAgentApprovalMessage, getAgentApprovalRequests } from "./agent-approval.js";
+import { createAgentHandoffMessage } from "./agent-handoff.js";
 import { ValidationError } from "./errors.js";
 import { generateText, normalizeMessages, streamText } from "./generate-text.js";
 import type {
+  AgentApprovalRequest,
   AgentApprovalResponse,
   AgentDefinition,
-  AgentStreamEvent,
   AgentRunInput,
   AgentRunOutput,
   AgentRunState,
   AgentStep,
   AgentStepRequest,
   AgentStepResponse,
+  AgentStatus,
+  AgentStreamEvent,
   AgentStreamResult,
+  AgentTelemetryEvent,
   GenerateTextOptions,
   GenerateTextOutput,
   GenerateTextStep,
@@ -22,6 +26,8 @@ import type {
   ProviderOptions,
   ToolExecutionResult
 } from "./types.js";
+
+const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 
 const joinInstructions = (...parts: Array<string | undefined>): string | undefined => {
   const content = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
@@ -66,10 +72,13 @@ const mapSteps = (steps: GenerateTextStep[], offset: number, toolResults: ToolEx
     const toolCallCount = countToolCalls(response.messages);
     const stepToolResults = toolResults.slice(toolResultCursor, toolResultCursor + toolCallCount);
     toolResultCursor += toolCallCount;
+    const finishedAt = Date.now();
 
     return {
       index: offset + index + 1,
       status: "completed",
+      startedAt: finishedAt,
+      finishedAt,
       request: snapshotRequest(step.request),
       response,
       toolResults: stepToolResults
@@ -95,27 +104,40 @@ const toOutput = (state: AgentRunState): AgentRunOutput => ({
   error: state.error
 });
 
+const cloneState = (state: AgentRunState): AgentRunState => JSON.parse(JSON.stringify(state)) as AgentRunState;
+
 const createBaseState = (
   provider: string,
   modelId: string,
   initialMessages: ModelMessage[],
   maxSteps: number,
-  metadata?: Record<string, JsonValue>,
-  agentId?: string
-): AgentRunState => ({
-  agentId,
-  provider,
-  modelId,
-  status: "running",
-  messages: initialMessages,
-  steps: [],
-  toolResults: [],
-  currentStep: 0,
-  maxSteps,
-  outputText: "",
-  pendingApprovals: [],
-  metadata
-});
+  metadata: Record<string, JsonValue> | undefined,
+  agentId: string | undefined,
+  runId: string,
+  handoff: AgentRunInput["handoff"]
+): AgentRunState => {
+  const startedAt = Date.now();
+
+  return {
+    runId,
+    agentId,
+    parentRunId: handoff?.fromRunId,
+    provider,
+    modelId,
+    status: "running",
+    messages: initialMessages,
+    steps: [],
+    toolResults: [],
+    currentStep: 0,
+    maxSteps,
+    outputText: "",
+    pendingApprovals: [],
+    metadata,
+    handoff,
+    startedAt,
+    updatedAt: startedAt
+  };
+};
 
 const ensureValidStateInput = (input: AgentRunInput) => {
   if (input.approvals?.length && !input.state) {
@@ -126,20 +148,54 @@ const ensureValidStateInput = (input: AgentRunInput) => {
     return;
   }
 
-  if (input.prompt !== undefined || input.messages !== undefined || input.system !== undefined) {
+  if (input.prompt !== undefined || input.messages !== undefined || input.system !== undefined || input.handoff !== undefined) {
     throw new ValidationError('Pass either "state" or a fresh "prompt"/"messages" input, but not both.');
   }
 };
 
-const prepareFreshMessages = <TModel extends AgentDefinition["model"]>(
+const injectContextMessages = (messages: ModelMessage[], extraMessages: ModelMessage[]): ModelMessage[] => {
+  if (!extraMessages.length) {
+    return messages;
+  }
+
+  if (messages[0]?.role === "system") {
+    return [messages[0], ...extraMessages, ...messages.slice(1)];
+  }
+
+  return [...extraMessages, ...messages];
+};
+
+const prepareFreshMessages = async <TModel extends AgentDefinition["model"]>(
   agent: AgentDefinition<TModel>,
-  input: AgentRunInput<TModel>
-) =>
-  normalizeMessages({
+  input: AgentRunInput<TModel>,
+  runId: string
+): Promise<{ messages: ModelMessage[]; memoryMessages: ModelMessage[] }> => {
+  let messages = normalizeMessages({
     prompt: input.prompt,
     messages: input.messages,
     system: joinInstructions(agent.instructions, input.system)
   });
+
+  const handoffMessages = input.handoff
+    ? [createAgentHandoffMessage(input.handoff), ...input.handoff.contextMessages.filter((message) => message.role !== "system")]
+    : [];
+  messages = injectContextMessages(messages, handoffMessages);
+
+  const memoryMessages = agent.memory
+    ? await agent.memory.load({
+        runId,
+        agentId: agent.id,
+        metadata: cloneMetadata(agent.metadata, input.metadata)
+      })
+    : [];
+
+  messages = injectContextMessages(messages, memoryMessages);
+
+  return {
+    messages,
+    memoryMessages
+  };
+};
 
 const applyApprovalResponses = (
   messages: ModelMessage[],
@@ -185,9 +241,7 @@ const finalizeState = (
   const exhausted = nextCurrentStep >= state.maxSteps;
   const lastStep = newSteps.at(-1);
   const unresolvedToolCalls = lastStep?.response ? hasToolCalls(lastStep.response.messages) : false;
-  const pendingApprovals = getAgentApprovalRequests(
-    newSteps.flatMap((step) => step.response?.messages ?? [])
-  );
+  const pendingApprovals = getAgentApprovalRequests(newSteps.flatMap((step) => step.response?.messages ?? []));
 
   if (pendingApprovals.length) {
     state.status = "suspended";
@@ -218,43 +272,111 @@ const finalizeState = (
   state.providerFinishReason = result.providerFinishReason;
   state.usage = result.usage;
   state.pendingApprovals = pendingApprovals;
+  state.updatedAt = Date.now();
 
   return toOutput(state);
 };
 
-const resolveContext = <TModel extends LanguageModel>(
+const emitTelemetryEvent = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  event: AgentTelemetryEvent
+) => {
+  await agent.onTelemetryEvent?.(event);
+};
+
+const persistState = async <TModel extends LanguageModel>(agent: AgentDefinition<TModel>, state: AgentRunState) => {
+  state.updatedAt = Date.now();
+  await agent.store?.save(cloneState(state));
+  await emitTelemetryEvent(agent, {
+    type: "state-saved",
+    runId: state.runId,
+    agentId: state.agentId,
+    status: state.status
+  });
+  await agent.memory?.save?.({
+    runId: state.runId,
+    agentId: state.agentId,
+    state: cloneState(state),
+    metadata: state.metadata
+  });
+};
+
+const approvalsFromEvents = (messages: ModelMessage[]): AgentApprovalRequest[] => getAgentApprovalRequests(messages);
+
+const emitFinalizedStepTelemetry = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  state: AgentRunState,
+  steps: AgentStep[]
+) => {
+  for (const step of steps) {
+    await emitTelemetryEvent(agent, {
+      type: "step-finish",
+      runId: state.runId,
+      agentId: state.agentId,
+      step
+    });
+  }
+};
+
+const emitApprovalTelemetry = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  state: AgentRunState,
+  approvals: AgentApprovalRequest[]
+) => {
+  for (const approval of approvals) {
+    await emitTelemetryEvent(agent, {
+      type: "approval-request",
+      runId: state.runId,
+      agentId: state.agentId,
+      approval
+    });
+  }
+};
+
+const resolveContext = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   input: AgentRunInput<TModel>
 ) => {
-  ensureValidStateInput(input);
+  let loadedState = input.state;
+  if (!loadedState && input.runId && agent.store) {
+    loadedState = await agent.store.load(input.runId);
+  }
 
-  const metadata = cloneMetadata(agent.metadata, input.state?.metadata, input.metadata);
-  if (input.state) {
-    const maxSteps = input.maxSteps ?? input.state.maxSteps;
-    const resumed = applyApprovalResponses(input.state.messages, input.approvals, input.state.pendingApprovals);
+  const normalizedInput = loadedState ? { ...input, state: loadedState } : input;
+  ensureValidStateInput(normalizedInput);
+
+  const metadata = cloneMetadata(agent.metadata, loadedState?.metadata, input.metadata, input.handoff?.metadata);
+  if (loadedState) {
+    const maxSteps = input.maxSteps ?? loadedState.maxSteps;
+    const resumed = applyApprovalResponses(loadedState.messages, input.approvals, loadedState.pendingApprovals);
+
     return {
       state: {
-        ...input.state,
-        agentId: input.state.agentId ?? agent.id,
+        ...loadedState,
+        agentId: loadedState.agentId ?? agent.id,
         provider: agent.model.provider,
         modelId: agent.model.modelId,
         maxSteps,
         messages: resumed.messages,
         pendingApprovals: resumed.pendingApprovals,
-        metadata
+        metadata,
+        updatedAt: Date.now()
       } satisfies AgentRunState,
       messages: resumed.messages,
-      remainingSteps: Math.max(0, maxSteps - input.state.currentStep)
+      remainingSteps: Math.max(0, maxSteps - loadedState.currentStep),
+      memoryMessages: [] as ModelMessage[]
     };
   }
 
+  const runId = input.runId ?? randomId("run");
   const maxSteps = Math.max(1, input.maxSteps ?? agent.maxSteps ?? 1);
-  const initialMessages = prepareFreshMessages(agent, input);
+  const prepared = await prepareFreshMessages(agent, input, runId);
 
   return {
-    state: createBaseState(agent.model.provider, agent.model.modelId, initialMessages, maxSteps, metadata, agent.id),
-    messages: initialMessages,
-    remainingSteps: maxSteps
+    state: createBaseState(agent.model.provider, agent.model.modelId, prepared.messages, maxSteps, metadata, agent.id, runId, input.handoff),
+    messages: prepared.messages,
+    remainingSteps: maxSteps,
+    memoryMessages: prepared.memoryMessages
   };
 };
 
@@ -284,6 +406,71 @@ const emptyAsyncIterable = async function* () {
   return;
 };
 
+const createFailedState = (state: AgentRunState, message: string): AgentRunState => ({
+  ...state,
+  status: "failed",
+  error: {
+    message
+  },
+  updatedAt: Date.now()
+});
+
+const emitRunStartTelemetry = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  state: AgentRunState,
+  memoryMessages: ModelMessage[],
+  approvals: AgentApprovalResponse[] | undefined
+) => {
+  await emitTelemetryEvent(agent, {
+    type: "run-start",
+    runId: state.runId,
+    agentId: state.agentId,
+    provider: state.provider,
+    modelId: state.modelId,
+    maxSteps: state.maxSteps
+  });
+
+  if (state.handoff) {
+    await emitTelemetryEvent(agent, {
+      type: "handoff",
+      runId: state.runId,
+      agentId: state.agentId,
+      handoff: state.handoff
+    });
+  }
+
+  if (memoryMessages.length) {
+    await emitTelemetryEvent(agent, {
+      type: "memory-loaded",
+      runId: state.runId,
+      agentId: state.agentId,
+      messageCount: memoryMessages.length
+    });
+  }
+
+  for (const approval of approvals ?? []) {
+    await emitTelemetryEvent(agent, {
+      type: "approval-resolved",
+      runId: state.runId,
+      agentId: state.agentId,
+      approval
+    });
+  }
+};
+
+const emitRunFinishTelemetry = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  state: AgentRunState
+) => {
+  await emitTelemetryEvent(agent, {
+    type: "run-finish",
+    runId: state.runId,
+    agentId: state.agentId,
+    status: state.status,
+    state: cloneState(state)
+  });
+};
+
 export const createAgent = <TModel extends AgentDefinition["model"]>(
   definition: AgentDefinition<TModel>
 ): AgentDefinition<TModel> => ({
@@ -295,7 +482,8 @@ export const runAgent = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   input: AgentRunInput<TModel> = {}
 ): Promise<AgentRunOutput> => {
-  const context = resolveContext(agent, input);
+  const context = await resolveContext(agent, input);
+  await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
 
   if (context.state.status === "completed" || context.state.status === "cancelled") {
     return toOutput(context.state);
@@ -306,61 +494,48 @@ export const runAgent = async <TModel extends LanguageModel>(
   }
 
   if (context.remainingSteps === 0) {
-    const state: AgentRunState = {
-      ...context.state,
-      status: "failed",
-      error: { message: "Agent exhausted maxSteps before reaching a terminal response." }
-    };
+    const state = createFailedState(context.state, "Agent exhausted maxSteps before reaching a terminal response.");
+    await persistState(agent, state);
+    await emitRunFinishTelemetry(agent, state);
     return toOutput(state);
   }
 
-  const result = await generateText(createGenerateOptions(agent, input, context.messages, context.remainingSteps));
-  const newSteps = mapSteps(result.steps, context.state.currentStep, result.toolResults);
+  await emitTelemetryEvent(agent, {
+    type: "step-start",
+    runId: context.state.runId,
+    agentId: context.state.agentId,
+    stepIndex: context.state.currentStep + 1
+  });
 
-  return finalizeState(context.state, result, newSteps, result.toolResults);
+  try {
+    const result = await generateText(createGenerateOptions(agent, input, context.messages, context.remainingSteps));
+    const newSteps = mapSteps(result.steps, context.state.currentStep, result.toolResults);
+    const output = finalizeState(context.state, result, newSteps, result.toolResults);
+
+    await emitFinalizedStepTelemetry(agent, output.state, newSteps);
+    await emitApprovalTelemetry(agent, output.state, approvalsFromEvents(newSteps.flatMap((step) => step.response?.messages ?? [])));
+    await persistState(agent, output.state);
+    await emitRunFinishTelemetry(agent, output.state);
+
+    return output;
+  } catch (error) {
+    const failedState = createFailedState(
+      context.state,
+      error instanceof Error ? error.message : String(error)
+    );
+    await persistState(agent, failedState);
+    await emitRunFinishTelemetry(agent, failedState);
+    throw error;
+  }
 };
 
 export const streamAgent = <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   input: AgentRunInput<TModel> = {}
 ): AgentStreamResult => {
-  const context = resolveContext(agent, input);
-
-  if (context.state.status === "completed" || context.state.status === "cancelled") {
-    return {
-      eventStream: emptyAsyncIterable(),
-      textStream: emptyAsyncIterable(),
-      collect: async () => toOutput(context.state)
-    };
-  }
-
-  if (context.state.status === "suspended" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
-    return {
-      eventStream: emptyAsyncIterable(),
-      textStream: emptyAsyncIterable(),
-      collect: async () => toOutput(context.state)
-    };
-  }
-
-  if (context.remainingSteps === 0) {
-    const state: AgentRunState = {
-      ...context.state,
-      status: "failed",
-      error: { message: "Agent exhausted maxSteps before reaching a terminal response." }
-    };
-
-    return {
-      eventStream: emptyAsyncIterable(),
-      textStream: emptyAsyncIterable(),
-      collect: async () => toOutput(state)
-    };
-  }
-
-  const result = streamText(createGenerateOptions(agent, input, context.messages, context.remainingSteps));
   const subscribers = new Set<(value: IteratorResult<AgentStreamEvent>) => void>();
   const history: IteratorResult<AgentStreamEvent>[] = [];
   let done = false;
-  let finalResultPromise: Promise<AgentRunOutput> | undefined;
 
   const publish = (value: IteratorResult<AgentStreamEvent>) => {
     history.push(value);
@@ -399,7 +574,37 @@ export const streamAgent = <TModel extends LanguageModel>(
     }
   };
 
-  const runner = async (): Promise<AgentRunOutput> => {
+  const runner = (async () => {
+    const context = await resolveContext(agent, input);
+    await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
+
+    if (context.state.status === "completed" || context.state.status === "cancelled") {
+      publish({ done: true, value: undefined });
+      return {
+        output: toOutput(context.state),
+        textStream: emptyAsyncIterable()
+      };
+    }
+
+    if (context.state.status === "suspended" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
+      publish({ done: true, value: undefined });
+      return {
+        output: toOutput(context.state),
+        textStream: emptyAsyncIterable()
+      };
+    }
+
+    if (context.remainingSteps === 0) {
+      const state = createFailedState(context.state, "Agent exhausted maxSteps before reaching a terminal response.");
+      await persistState(agent, state);
+      await emitRunFinishTelemetry(agent, state);
+      publish({ done: true, value: undefined });
+      return {
+        output: toOutput(state),
+        textStream: emptyAsyncIterable()
+      };
+    }
+
     publish({
       done: false,
       value: {
@@ -409,16 +614,14 @@ export const streamAgent = <TModel extends LanguageModel>(
       }
     });
 
-    if (input.approvals?.length) {
-      for (const approval of input.approvals) {
-        publish({
-          done: false,
-          value: {
-            type: "agent-approval-resolved",
-            approval
-          }
-        });
-      }
+    for (const approval of input.approvals ?? []) {
+      publish({
+        done: false,
+        value: {
+          type: "agent-approval-resolved",
+          approval
+        }
+      });
     }
 
     publish({
@@ -429,8 +632,18 @@ export const streamAgent = <TModel extends LanguageModel>(
       }
     });
 
-    try {
-      for await (const event of result.eventStream) {
+    await emitTelemetryEvent(agent, {
+      type: "step-start",
+      runId: context.state.runId,
+      agentId: context.state.agentId,
+      stepIndex: context.state.currentStep + 1
+    });
+
+    const streamResult = streamText(createGenerateOptions(agent, input, context.messages, context.remainingSteps));
+    const approvalRequests: AgentApprovalRequest[] = [];
+
+    const eventRelay = (async () => {
+      for await (const event of streamResult.eventStream) {
         publish({ done: false, value: event });
 
         if (
@@ -443,82 +656,105 @@ export const streamAgent = <TModel extends LanguageModel>(
           typeof event.data.name === "string" &&
           typeof event.data.arguments === "string"
         ) {
+          const approval = {
+            provider: event.provider,
+            id: event.data.id,
+            name: event.data.name,
+            arguments: event.data.arguments,
+            serverLabel: typeof event.data.server_label === "string" ? event.data.server_label : undefined,
+            rawData: event.data
+          } satisfies AgentApprovalRequest;
+          approvalRequests.push(approval);
           publish({
             done: false,
             value: {
               type: "agent-approval-request",
-              approval: {
-                provider: event.provider,
-                id: event.data.id,
-                name: event.data.name,
-                arguments: event.data.arguments,
-                serverLabel: typeof event.data.server_label === "string" ? event.data.server_label : undefined,
-                rawData: event.data
-              }
+              approval
             }
+          });
+          await emitTelemetryEvent(agent, {
+            type: "approval-request",
+            runId: context.state.runId,
+            agentId: context.state.agentId,
+            approval
           });
         }
       }
+    })();
 
-      const final = await result.collect();
-      const newSteps = mapSteps(final.steps, context.state.currentStep, final.toolResults);
-      const output = finalizeState(context.state, final, newSteps, final.toolResults);
+    const output = (async () => {
+      try {
+        await eventRelay;
+        const final = await streamResult.collect();
+        const newSteps = mapSteps(final.steps, context.state.currentStep, final.toolResults);
+        const result = finalizeState(context.state, final, newSteps, final.toolResults);
 
-      for (const step of newSteps) {
+        for (const step of newSteps) {
+          publish({
+            done: false,
+            value: {
+              type: "agent-step-finish",
+              step
+            }
+          });
+        }
+
+        await emitFinalizedStepTelemetry(agent, result.state, newSteps);
+        if (!approvalRequests.length) {
+          await emitApprovalTelemetry(agent, result.state, approvalsFromEvents(newSteps.flatMap((step) => step.response?.messages ?? [])));
+        }
+        await persistState(agent, result.state);
+        await emitRunFinishTelemetry(agent, result.state);
+
         publish({
           done: false,
           value: {
-            type: "agent-step-finish",
-            step
+            type: "agent-run-finish",
+            status: result.status,
+            state: result.state
           }
         });
+        publish({ done: true, value: undefined });
+        return result;
+      } catch (error) {
+        const failedState = createFailedState(context.state, error instanceof Error ? error.message : String(error));
+        await persistState(agent, failedState);
+        await emitRunFinishTelemetry(agent, failedState);
+        publish({
+          done: false,
+          value: {
+            type: "error",
+            error: error instanceof Error ? error : new Error(String(error))
+          }
+        });
+        publish({
+          done: false,
+          value: {
+            type: "agent-run-finish",
+            status: failedState.status,
+            state: failedState
+          }
+        });
+        publish({ done: true, value: undefined });
+        throw error;
       }
+    })();
 
-      publish({
-        done: false,
-        value: {
-          type: "agent-run-finish",
-          status: output.status,
-          state: output.state
-        }
-      });
-      publish({ done: true, value: undefined });
-      return output;
-    } catch (error) {
-      const failedState: AgentRunState = {
-        ...context.state,
-        status: "failed",
-        error: {
-          message: error instanceof Error ? error.message : String(error)
-        }
-      };
-
-      publish({
-        done: false,
-        value: {
-          type: "error",
-          error: error instanceof Error ? error : new Error(String(error))
-        }
-      });
-      publish({
-        done: false,
-        value: {
-          type: "agent-run-finish",
-          status: failedState.status,
-          state: failedState
-        }
-      });
-      publish({ done: true, value: undefined });
-      throw error;
-    }
-  };
-
-  finalResultPromise = runner();
+    return {
+      output,
+      textStream: streamResult.textStream
+    };
+  })();
 
   return {
     eventStream: createEventStream(),
-    textStream: result.textStream,
-    collect: async () => finalResultPromise
+    textStream: (async function* () {
+      const started = await runner;
+      for await (const chunk of started.textStream) {
+        yield chunk;
+      }
+    })(),
+    collect: async () => (await runner).output
   };
 };
 

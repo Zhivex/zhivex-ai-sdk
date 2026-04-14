@@ -6,10 +6,16 @@ describe("sdk public surface", () => {
   it("exports the shared helpers from core", () => {
     expect(sdk.generateText).toBeTypeOf("function");
     expect(sdk.createAgent).toBeTypeOf("function");
+    expect(sdk.createAgentHandoff).toBeTypeOf("function");
     expect(sdk.resumeAgent).toBeTypeOf("function");
     expect(sdk.streamText).toBeTypeOf("function");
     expect(sdk.runAgent).toBeTypeOf("function");
+    expect(sdk.runAgentHandoff).toBeTypeOf("function");
     expect(sdk.streamAgent).toBeTypeOf("function");
+    expect(sdk.createInMemoryAgentRunStore).toBeTypeOf("function");
+    expect(sdk.createFileAgentRunStore).toBeTypeOf("function");
+    expect(sdk.createInMemoryAgentMemoryStore).toBeTypeOf("function");
+    expect(sdk.createFileAgentMemoryStore).toBeTypeOf("function");
     expect(sdk.getAgentApprovalRequests).toBeTypeOf("function");
     expect(sdk.getAgentApprovalRequestFromPart).toBeTypeOf("function");
     expect(sdk.createAgentApprovalMessage).toBeTypeOf("function");

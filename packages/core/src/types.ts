@@ -497,7 +497,9 @@ export interface AgentStep {
 }
 
 export interface AgentRunState {
+  runId: string;
   agentId?: string;
+  parentRunId?: string;
   provider: string;
   modelId: string;
   status: AgentStatus;
@@ -512,10 +514,122 @@ export interface AgentRunState {
   usage?: TokenUsage;
   pendingApprovals: AgentApprovalRequest[];
   metadata?: Record<string, JsonValue>;
+  handoff?: AgentHandoff;
+  startedAt?: number;
+  updatedAt?: number;
   error?: {
     message: string;
   };
 }
+
+export interface AgentRunStore {
+  load(runId: string): Promise<AgentRunState | undefined> | AgentRunState | undefined;
+  save(state: AgentRunState): Promise<void> | void;
+  delete?(runId: string): Promise<void> | void;
+}
+
+export interface AgentMemoryContext {
+  runId: string;
+  agentId?: string;
+  state?: AgentRunState;
+  metadata?: Record<string, JsonValue>;
+}
+
+export interface AgentMemoryStore {
+  load(context: AgentMemoryContext): Promise<ModelMessage[]> | ModelMessage[];
+  save?(context: AgentMemoryContext & { state: AgentRunState }): Promise<void> | void;
+}
+
+export interface AgentHandoff {
+  id: string;
+  fromRunId: string;
+  fromAgentId?: string;
+  toAgentId?: string;
+  summary: string;
+  contextMessages: ModelMessage[];
+  metadata?: Record<string, JsonValue>;
+}
+
+export interface AgentTelemetryRunStartEvent {
+  type: "run-start";
+  runId: string;
+  agentId?: string;
+  provider: string;
+  modelId: string;
+  maxSteps: number;
+}
+
+export interface AgentTelemetryStepStartEvent {
+  type: "step-start";
+  runId: string;
+  agentId?: string;
+  stepIndex: number;
+}
+
+export interface AgentTelemetryStepFinishEvent {
+  type: "step-finish";
+  runId: string;
+  agentId?: string;
+  step: AgentStep;
+}
+
+export interface AgentTelemetryApprovalRequestEvent {
+  type: "approval-request";
+  runId: string;
+  agentId?: string;
+  approval: AgentApprovalRequest;
+}
+
+export interface AgentTelemetryApprovalResolvedEvent {
+  type: "approval-resolved";
+  runId: string;
+  agentId?: string;
+  approval: AgentApprovalResponse;
+}
+
+export interface AgentTelemetryMemoryLoadedEvent {
+  type: "memory-loaded";
+  runId: string;
+  agentId?: string;
+  messageCount: number;
+}
+
+export interface AgentTelemetryStateSavedEvent {
+  type: "state-saved";
+  runId: string;
+  agentId?: string;
+  status: AgentStatus;
+}
+
+export interface AgentTelemetryHandoffEvent {
+  type: "handoff";
+  runId: string;
+  agentId?: string;
+  handoff: AgentHandoff;
+}
+
+export interface AgentTelemetryRunFinishEvent {
+  type: "run-finish";
+  runId: string;
+  agentId?: string;
+  status: AgentStatus;
+  state: AgentRunState;
+}
+
+export type AgentTelemetryEvent =
+  | AgentTelemetryRunStartEvent
+  | AgentTelemetryStepStartEvent
+  | AgentTelemetryStepFinishEvent
+  | AgentTelemetryApprovalRequestEvent
+  | AgentTelemetryApprovalResolvedEvent
+  | AgentTelemetryMemoryLoadedEvent
+  | AgentTelemetryStateSavedEvent
+  | AgentTelemetryHandoffEvent
+  | AgentTelemetryRunFinishEvent;
+
+export type AgentTelemetryObserver = (
+  event: AgentTelemetryEvent
+) => void | Promise<void>;
 
 export interface AgentDefinition<TModel extends LanguageModel = LanguageModel> {
   id?: string;
@@ -529,6 +643,9 @@ export interface AgentDefinition<TModel extends LanguageModel = LanguageModel> {
   toolExecution?: ToolExecutionOptions;
   providerOptions?: ProviderOptionsOf<TModel>;
   metadata?: Record<string, JsonValue>;
+  store?: AgentRunStore;
+  memory?: AgentMemoryStore;
+  onTelemetryEvent?: AgentTelemetryObserver;
 }
 
 export interface AgentApprovalRequest {
@@ -550,8 +667,10 @@ export interface AgentApprovalResponse {
 
 export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryOptions &
   GenerateInputSource & {
+    runId?: string;
     state?: AgentRunState;
     approvals?: AgentApprovalResponse[];
+    handoff?: AgentHandoff;
     system?: string;
     tools?: ToolSet;
     toolChoice?: ToolChoice;

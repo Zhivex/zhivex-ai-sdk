@@ -1,14 +1,22 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
   agentApprovalResponsePart,
   createAgent,
+  createAgentHandoff,
   createAgentApprovalMessage,
+  createFileAgentRunStore,
+  createInMemoryAgentMemoryStore,
+  createInMemoryAgentRunStore,
   createTextMessage,
   getAgentApprovalRequests,
   resumeAgent,
   runAgent,
+  runAgentHandoff,
   streamAgent,
   toUIAgentStreamResponse,
   toUIMessageStream,
@@ -530,5 +538,199 @@ describe("agent runtime", () => {
 
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     expect(await response.text()).toContain("event: agent-run-start");
+  });
+
+  it("persists and reloads agent state through the run store", async () => {
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({
+      id: "persisted-agent",
+      model: createLanguageModel(),
+      store
+    });
+
+    const first = await runAgent(agent, {
+      prompt: "Say hello"
+    });
+
+    const reloaded = await runAgent(agent, {
+      runId: first.state.runId
+    });
+
+    expect(first.state.runId).toBeDefined();
+    expect(reloaded.state.runId).toBe(first.state.runId);
+    expect(store.load(first.state.runId)).toBeDefined();
+    expect(reloaded.outputText).toBe("hello world");
+  });
+
+  it("writes serialized run state to the file-backed store", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-store-"));
+    const store = createFileAgentRunStore({ directory });
+    const agent = createAgent({
+      id: "file-agent",
+      model: createLanguageModel(),
+      store
+    });
+
+    const result = await runAgent(agent, {
+      prompt: "Persist this"
+    });
+
+    const saved = JSON.parse(await readFile(path.join(directory, `${result.state.runId}.json`), "utf8")) as {
+      runId: string;
+      outputText: string;
+    };
+    expect(saved.runId).toBe(result.state.runId);
+    expect(saved.outputText).toBe("hello world");
+  });
+
+  it("loads memory into fresh runs and saves the latest assistant context", async () => {
+    const memory = createInMemoryAgentMemoryStore({
+      initialMessages: {
+        "memory-agent": [createTextMessage("assistant", "Remember that the user likes Madrid.")]
+      }
+    });
+
+    let firstRequestMessages = [] as ReturnType<typeof createTextMessage>[];
+    const agent = createAgent({
+      id: "memory-agent",
+      memory,
+      model: createLanguageModel({
+        async generate(input) {
+          firstRequestMessages = input.messages as ReturnType<typeof createTextMessage>[];
+          return {
+            messages: [createTextMessage("assistant", "Memory updated")],
+            text: "Memory updated",
+            finishReason: "stop"
+          };
+        }
+      })
+    });
+
+    await runAgent(agent, {
+      prompt: "What city do I like?"
+    });
+
+    expect(firstRequestMessages.some((message) => message.parts.some((part) => part.type === "text" && part.text.includes("likes Madrid")))).toBe(true);
+
+    const stored = await memory.load({
+      runId: "ignored",
+      agentId: "memory-agent"
+    });
+    expect(stored.at(-1)?.parts[0]).toMatchObject({
+      type: "text",
+      text: "Memory updated"
+    });
+  });
+
+  it("creates handoffs and runs downstream agents with transferred context", async () => {
+    const source = await runAgent(
+      createAgent({
+        id: "planner",
+        model: createLanguageModel({
+          async generate() {
+            return {
+              messages: [createTextMessage("assistant", "Plan a museum visit in Madrid")],
+              text: "Plan a museum visit in Madrid",
+              finishReason: "stop"
+            };
+          }
+        })
+      }),
+      {
+        prompt: "Plan something"
+      }
+    );
+
+    let seenHandoff = false;
+    const specialist = createAgent({
+      id: "booking",
+      model: createLanguageModel({
+        async generate(input) {
+          seenHandoff = input.messages.some(
+            (message) =>
+              message.role === "user" &&
+              message.parts.some((part) => part.type === "text" && part.text.includes("Handoff from planner"))
+          );
+          return {
+            messages: [createTextMessage("assistant", "Booked the museum visit")],
+            text: "Booked the museum visit",
+            finishReason: "stop"
+          };
+        }
+      })
+    });
+
+    const handoff = createAgentHandoff({
+      source,
+      toAgentId: "booking"
+    });
+    const result = await runAgentHandoff(specialist, handoff);
+
+    expect(seenHandoff).toBe(true);
+    expect(result.state.parentRunId).toBe(source.state.runId);
+    expect(result.state.handoff?.toAgentId).toBe("booking");
+  });
+
+  it("emits agent telemetry for lifecycle, memory, approvals, and handoffs", async () => {
+    const events: string[] = [];
+    const memory = createInMemoryAgentMemoryStore({
+      initialMessages: {
+        telemetry: [createTextMessage("assistant", "Previous context")]
+      }
+    });
+
+    const source = await runAgent(
+      createAgent({
+        id: "source",
+        model: createLanguageModel()
+      }),
+      { prompt: "hello" }
+    );
+
+    const handoff = createAgentHandoff({
+      source,
+      toAgentId: "telemetry"
+    });
+
+    const agent = createAgent({
+      id: "telemetry",
+      memory,
+      onTelemetryEvent(event) {
+        events.push(event.type);
+      },
+      model: createLanguageModel({
+        async generate() {
+          return {
+            messages: [
+              {
+                role: "assistant",
+                parts: [
+                  {
+                    type: "provider-data",
+                    provider: "openai",
+                    data: {
+                      type: "mcp_approval_request",
+                      id: "mcpr_1",
+                      arguments: "{}",
+                      name: "fetch_docs"
+                    }
+                  }
+                ]
+              }
+            ],
+            finishReason: "stop"
+          };
+        }
+      })
+    });
+
+    await runAgent(agent, {
+      prompt: "Use MCP",
+      handoff
+    });
+
+    expect(events).toEqual(
+      expect.arrayContaining(["run-start", "memory-loaded", "handoff", "step-start", "approval-request", "run-finish"])
+    );
   });
 });

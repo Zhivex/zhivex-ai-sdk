@@ -202,6 +202,72 @@ What the runtime guarantees:
 - `createAgent()` keeps reusable defaults such as `instructions`, `tools`, `maxSteps`, `reasoning`, and provider options in one place.
 - `resumeAgent()` continues from a previous `state` instead of rebuilding the run manually.
 
+### Agent Persistence And Memory
+
+The agent runtime now supports pluggable run stores and memory stores. Use a run store when you want to save and reload full `AgentRunState` snapshots by `runId`, and use a memory store when you want fresh runs to inherit compact prior context automatically.
+
+```ts
+import {
+  createAgent,
+  createFileAgentRunStore,
+  createInMemoryAgentMemoryStore,
+  runAgent
+} from "@zhivex-ai/sdk";
+
+const agent = createAgent({
+  model: openai("gpt-5"),
+  store: createFileAgentRunStore({
+    directory: "./tmp/agent-runs"
+  }),
+  memory: createInMemoryAgentMemoryStore()
+});
+
+const first = await runAgent(agent, {
+  prompt: "Remember that I prefer museums in Madrid."
+});
+
+const resumed = await runAgent(agent, {
+  runId: first.state.runId
+});
+
+console.log(resumed.state.runId);
+```
+
+The default in-memory and file-backed helpers are intentionally small. They are meant to give applications a stable contract they can later replace with Redis, Postgres, S3, or any other storage layer.
+
+### Agent Handoffs
+
+For multi-agent workflows, create a handoff from one completed run and pass it into another agent. The runtime preserves the parent run relationship in `state.parentRunId` and records the handoff on the downstream state.
+
+```ts
+import { createAgentHandoff, runAgent, runAgentHandoff } from "@zhivex-ai/sdk";
+
+const plannerResult = await runAgent(plannerAgent, {
+  prompt: "Plan a museum afternoon in Madrid."
+});
+
+const handoff = createAgentHandoff({
+  source: plannerResult,
+  toAgentId: "booking-agent"
+});
+
+const bookingResult = await runAgentHandoff(bookingAgent, handoff);
+console.log(bookingResult.state.parentRunId);
+```
+
+### Agent Telemetry
+
+Agents can now emit lifecycle telemetry without wrapping the underlying language model yourself. Attach `onTelemetryEvent` to an agent definition when you want hooks for run start/finish, step start/finish, approval requests, memory loads, state saves, and handoffs.
+
+```ts
+const agent = createAgent({
+  model: openai("gpt-5"),
+  onTelemetryEvent(event) {
+    console.log(event.type);
+  }
+});
+```
+
 If a provider emits an MCP approval request, the run is suspended instead of failing. You can inspect pending approvals with `getAgentApprovalRequests()` and continue with `resumeAgent()`:
 
 ```ts
@@ -799,6 +865,23 @@ console.log(result.attempts);
 ```
 
 The gateway also supports `streamText()`, `generateObject()`, and `streamObject()` while preserving the selected target for the full request lifecycle, including tool loops.
+
+For agent workloads, the gateway now also supports `runAgent()` and `streamAgent()`. That lets you route by both regular model capabilities and agent-specific capabilities such as `supportTier`, `approvalRequests`, or `remoteMcp`, then execute the whole agent run on the selected provider.
+
+```ts
+const agentResult = await gateway.runAgent({
+  primary: { provider: "bedrock", modelId: "anthropic.claude-v2" },
+  fallbacks: [{ provider: "openai", modelId: "gpt-5" }],
+  prompt: "Use the strongest available agent provider.",
+  requiredAgentCapabilities: {
+    supportTier: "tier-a",
+    approvalRequests: true
+  }
+});
+
+console.log(agentResult.providerUsed);
+console.log(agentResult.routeDecision);
+```
 
 ## Public API Surface
 

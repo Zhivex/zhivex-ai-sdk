@@ -5,6 +5,8 @@ export {
   getAgentApprovalRequestFromPart,
   getAgentApprovalRequests
 } from "./agent-approval.js";
+export { createAgentHandoff, createAgentHandoffMessage, runAgentHandoff } from "./agent-handoff.js";
+export { createFileAgentMemoryStore, createFileAgentRunStore, createInMemoryAgentMemoryStore, createInMemoryAgentRunStore } from "./agent-store.js";
 export { generateSpeech, transcribeAudio } from "./audio.js";
 export { embed, embedMany } from "./embed.js";
 export * from "./catalog.js";

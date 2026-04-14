@@ -1,9 +1,22 @@
 import type {
+  AgentApprovalResponse,
+  AgentCapabilities,
+  AgentDefinition,
+  AgentHandoff,
+  AgentMemoryStore,
+  AgentRunOutput,
+  AgentRunState,
+  AgentRunStore,
+  AgentStreamResult,
+  AgentSupportTier,
+  AgentTelemetryObserver,
   GenerateGroundedTextOptions,
   GenerateObjectOutput,
   GenerateTextOutput,
   GroundedLanguageModel,
+  JsonValue,
   ModelCatalog,
+  ModelMessage,
   ProviderAdapter,
   ReasoningConfig,
   StreamObjectResult,
@@ -65,6 +78,24 @@ export interface GatewayRequest {
   fallbacks?: GatewayModelTarget[];
 }
 
+export interface GatewayAgentRequest extends Omit<GatewayRequest, "messages" | "systemPrompt"> {
+  prompt?: string;
+  messages?: GatewayMessage[];
+  system?: string;
+  instructions?: string;
+  agentId?: string;
+  state?: AgentRunState;
+  approvals?: AgentApprovalResponse[];
+  handoff?: AgentHandoff;
+  metadata?: Record<string, JsonValue>;
+  store?: AgentRunStore;
+  memory?: AgentMemoryStore;
+  onTelemetryEvent?: AgentTelemetryObserver;
+  requiredAgentCapabilities?: Partial<Omit<AgentCapabilities, "supportTier">> & {
+    supportTier?: AgentSupportTier;
+  };
+}
+
 export interface GatewayAttempt {
   provider: GatewayProviderId;
   modelId: string;
@@ -111,6 +142,21 @@ export interface GatewayStreamTextResult extends Omit<StreamTextResult, "collect
   collect: () => Promise<GatewayResponse>;
 }
 
+export interface GatewayAgentResponse extends Omit<AgentRunOutput, "state"> {
+  state: AgentRunState & {
+    routeDecision: GatewayResponse["routeDecision"];
+  };
+  providerUsed: GatewayProviderId;
+  modelUsed: string;
+  latencyMs: number;
+  attempts: GatewayAttempt[];
+  routeDecision: GatewayResponse["routeDecision"];
+}
+
+export interface GatewayAgentStreamResult extends Omit<AgentStreamResult, "collect"> {
+  collect: () => Promise<GatewayAgentResponse>;
+}
+
 export interface GatewayStreamObjectResult<TSchema extends ZodTypeAny> extends Omit<StreamObjectResult<TSchema>, "collect"> {
   collect: () => Promise<GatewayObjectResponse<TSchema>>;
 }
@@ -126,6 +172,11 @@ export interface GatewayConfig {
   attemptTimeoutsMs?: Partial<Record<GatewayProviderId, number>>;
   retryBackoffMs?: number;
   onAttempt?: (attempt: GatewayAttempt & { retry: number; targetRank: number }) => void | Promise<void>;
+  onAgentRoute?: (selection: {
+    provider: GatewayProviderId;
+    modelId: string;
+    routeDecision: GatewayResponse["routeDecision"];
+  }) => void | Promise<void>;
 }
 
 export class GatewayError extends Error {
