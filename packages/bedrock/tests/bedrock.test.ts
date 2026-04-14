@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createTextMessage, generateText, streamText, tool } from "@zhivex-ai/core";
+import { createTextMessage, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 
 const sendMock = vi.fn();
@@ -41,8 +41,8 @@ describe("bedrock adapter", () => {
     expectedCapabilities: {
       streaming: true,
       tools: true,
-      structuredOutput: false,
-      jsonMode: false,
+      structuredOutput: true,
+      jsonMode: true,
       toolChoice: true,
       parallelToolCalls: false,
       vision: true,
@@ -210,6 +210,57 @@ describe("bedrock adapter", () => {
       toolResult: {
         toolUseId: "tool-1"
       }
+    });
+  });
+
+  it("supports native structured output through Bedrock outputConfig", async () => {
+    sendMock.mockResolvedValueOnce({
+      stopReason: "end_turn",
+      output: {
+        message: {
+          content: [{ text: JSON.stringify({ title: "Soup" }) }]
+        }
+      }
+    });
+
+    const provider = createBedrock({ region: "us-east-1" });
+    const result = await generateObject({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "Return JSON",
+      schema: z.object({
+        title: z.string()
+      }),
+      mode: "native"
+    });
+
+    expect(result.object).toEqual({ title: "Soup" });
+    expect(result.objectMode).toBe("native");
+
+    const command = sendMock.mock.calls[0]?.[0] as {
+      input: {
+        outputConfig?: {
+          textFormat?: {
+            type: string;
+            structure: {
+              jsonSchema: {
+                schema: string;
+                name: string;
+              };
+            };
+          };
+        };
+      };
+    };
+    expect(command.input.outputConfig?.textFormat).toMatchObject({
+      type: "json_schema",
+      structure: {
+        jsonSchema: {
+          name: "response"
+        }
+      }
+    });
+    expect(JSON.parse(command.input.outputConfig?.textFormat?.structure.jsonSchema.schema ?? "{}")).toMatchObject({
+      type: "object"
     });
   });
 

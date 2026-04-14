@@ -52,7 +52,7 @@ const capabilities: ModelCapabilities = {
   audioInput: false,
   audioOutput: false,
   embeddings: true,
-  reasoning: true,
+  reasoning: false,
   webSearch: false
 };
 
@@ -217,7 +217,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
 
     try {
       if (input.reasoning) {
-        throw new UnsupportedFeatureError('Provider "qwen" does not support the common "reasoning" config yet.');
+        throw new UnsupportedFeatureError('Provider "qwen" does not support "reasoning".');
       }
 
       const response = await withRetry(
@@ -270,7 +270,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     if (input.reasoning) {
-      throw new UnsupportedFeatureError('Provider "qwen" does not support the common "reasoning" config yet.');
+      throw new UnsupportedFeatureError('Provider "qwen" does not support "reasoning".');
     }
 
     const response = await withRetry(

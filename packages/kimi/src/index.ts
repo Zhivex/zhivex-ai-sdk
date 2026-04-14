@@ -49,7 +49,7 @@ const capabilities: ModelCapabilities = {
   audioInput: false,
   audioOutput: false,
   embeddings: false,
-  reasoning: true,
+  reasoning: false,
   webSearch: false
 };
 
@@ -214,7 +214,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
 
     try {
       if (input.reasoning) {
-        throw new UnsupportedFeatureError('Provider "kimi" does not support the common "reasoning" config yet.');
+        throw new UnsupportedFeatureError('Provider "kimi" does not support "reasoning".');
       }
 
       const response = await withRetry(
@@ -267,7 +267,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     if (input.reasoning) {
-      throw new UnsupportedFeatureError('Provider "kimi" does not support the common "reasoning" config yet.');
+      throw new UnsupportedFeatureError('Provider "kimi" does not support "reasoning".');
     }
 
     const response = await withRetry(

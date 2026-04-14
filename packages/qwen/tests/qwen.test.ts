@@ -26,7 +26,7 @@ describe("qwen adapter", () => {
       audioInput: false,
       audioOutput: false,
       embeddings: true,
-      reasoning: true,
+      reasoning: false,
       webSearch: false
     }
   });
@@ -222,7 +222,7 @@ describe("qwen adapter", () => {
     });
   });
 
-  it("rejects common reasoning config for Qwen until it is mapped", async () => {
+  it("rejects common reasoning config for Qwen through the shared capabilities contract", async () => {
     const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
     await expect(
@@ -233,6 +233,6 @@ describe("qwen adapter", () => {
           effort: "medium"
         }
       })
-    ).rejects.toThrow('Provider "qwen" does not support the common "reasoning" config yet.');
+    ).rejects.toThrow('Model "qwen/qwen-plus" does not support reasoning.');
   });
 });

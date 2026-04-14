@@ -42,8 +42,8 @@ export interface BedrockLanguageModelOptions {
 const capabilities: ModelCapabilities = {
   streaming: true,
   tools: true,
-  structuredOutput: false,
-  jsonMode: false,
+  structuredOutput: true,
+  jsonMode: true,
   toolChoice: true,
   parallelToolCalls: false,
   vision: true,
@@ -204,6 +204,23 @@ const mapToolChoice = (
   } as unknown as NonNullable<ConverseCommandInput["toolConfig"]>["toolChoice"];
 };
 
+const mapStructuredOutput = (structuredOutput: ModelGenerateInput["structuredOutput"]) => {
+  if (!structuredOutput || structuredOutput.mode !== "native") {
+    return undefined;
+  }
+
+  return {
+    type: "json_schema",
+    structure: {
+      jsonSchema: {
+        schema: JSON.stringify(toJSONSchema(structuredOutput.schema)),
+        name: structuredOutput.name ?? "response",
+        ...(structuredOutput.description ? { description: structuredOutput.description } : {})
+      }
+    }
+  };
+};
+
 const parseAssistantMessage = (message: { content?: ContentBlock[] } | undefined): ModelMessage => {
   const parts: ModelMessage["parts"] = [];
 
@@ -260,6 +277,14 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
   ) {}
 
   private toCommandInput(input: ModelGenerateInput): ConverseCommandInput {
+    const providerOptions = (input.providerOptions ?? {}) as Record<string, unknown>;
+    const outputConfigFromProviderOptions =
+      typeof providerOptions.outputConfig === "object" && providerOptions.outputConfig
+        ? (providerOptions.outputConfig as Record<string, unknown>)
+        : undefined;
+    const { outputConfig: _outputConfig, ...otherProviderOptions } = providerOptions;
+    const textFormat = mapStructuredOutput(input.structuredOutput);
+
     return {
       modelId: this.modelId,
       messages: mapMessages(input.messages),
@@ -276,7 +301,15 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
             } as ConverseCommandInput["toolConfig"]
           }
         : {}),
-      ...input.providerOptions
+      ...(textFormat || outputConfigFromProviderOptions
+        ? {
+            outputConfig: {
+              ...(outputConfigFromProviderOptions ?? {}),
+              ...(textFormat ? { textFormat } : {})
+            } as ConverseCommandInput["outputConfig"]
+          }
+        : {}),
+      ...otherProviderOptions
     };
   }
 

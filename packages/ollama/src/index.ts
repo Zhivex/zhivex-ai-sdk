@@ -16,7 +16,8 @@ import {
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
-  type ProviderAdapter
+  type ProviderAdapter,
+  type StreamEvent
 } from "@zhivex-ai/core";
 
 export interface OllamaProviderOptions {
@@ -34,7 +35,7 @@ export interface OllamaLanguageModelOptions {
 }
 
 const capabilities: ModelCapabilities = {
-  streaming: false,
+  streaming: true,
   tools: true,
   structuredOutput: true,
   jsonMode: true,
@@ -150,6 +151,76 @@ const parseJson = async (response: Response) => {
   return response.json();
 };
 
+const parseJsonLines = async function* (response: Response): AsyncGenerator<any> {
+  if (!response.ok) {
+    const body = await response.text();
+    throw new ProviderHTTPError(`Ollama request failed with status ${response.status}.`, response.status, {
+      responseBody: body
+    });
+  }
+
+  if (!response.body) {
+    throw new ValidationError("Ollama streaming response did not include a body.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+
+      let newlineIndex = buffer.indexOf("\n");
+      while (newlineIndex !== -1) {
+        const line = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
+
+        if (line) {
+          yield JSON.parse(line);
+        }
+
+        newlineIndex = buffer.indexOf("\n");
+      }
+    }
+
+    buffer += decoder.decode();
+    const finalLine = buffer.trim();
+    if (finalLine) {
+      yield JSON.parse(finalLine);
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new ValidationError("Ollama streaming response contained invalid JSON.", { cause: error });
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+};
+
+const normalizeOllamaError = (error: unknown) => {
+  if (error instanceof ProviderHTTPError) {
+    return error;
+  }
+
+  const message = error instanceof Error ? error.message : "Ollama request failed.";
+  if (message.toLowerCase().includes("model") && message.toLowerCase().includes("not found")) {
+    return new ValidationError(message, { cause: error });
+  }
+  if (message.toLowerCase().includes("connect") || message.toLowerCase().includes("econnrefused")) {
+    return new ConfigurationError(message, { cause: error });
+  }
+
+  return error instanceof Error ? error : new Error(message);
+};
+
 class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
   readonly provider = "ollama";
   readonly capabilities = capabilities;
@@ -159,6 +230,24 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {}
+
+  private toRequestBody(input: ModelGenerateInput, stream: boolean) {
+    return {
+      model: this.modelId,
+      messages: mapMessages(input.messages),
+      tools: mapTools(input.tools),
+      ...input.providerOptions,
+      format: mapFormat(input) ?? input.providerOptions?.format,
+      options: {
+        ...(typeof input.providerOptions?.options === "object" && input.providerOptions?.options
+          ? input.providerOptions.options
+          : {}),
+        num_predict: input.maxTokens,
+        temperature: input.temperature
+      },
+      stream
+    };
+  }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
@@ -174,21 +263,7 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
             method: "POST",
             headers: { "content-type": "application/json" },
             signal,
-            body: JSON.stringify({
-              model: this.modelId,
-              messages: mapMessages(input.messages),
-              tools: mapTools(input.tools),
-              ...input.providerOptions,
-              format: mapFormat(input) ?? input.providerOptions?.format,
-              options: {
-                ...(typeof input.providerOptions?.options === "object" && input.providerOptions?.options
-                  ? input.providerOptions.options
-                  : {}),
-                num_predict: input.maxTokens,
-                temperature: input.temperature
-              },
-              stream: false
-            })
+            body: JSON.stringify(this.toRequestBody(input, false))
           }),
         input
       );
@@ -213,20 +288,72 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
         rawResponse: json
       };
     } catch (error) {
-      if (error instanceof ProviderHTTPError) {
-        throw error;
-      }
-
-      const message = error instanceof Error ? error.message : "Ollama request failed.";
-      if (message.toLowerCase().includes("model") && message.toLowerCase().includes("not found")) {
-        throw new ValidationError(message, { cause: error });
-      }
-      if (message.toLowerCase().includes("connect") || message.toLowerCase().includes("econnrefused")) {
-        throw new ConfigurationError(message, { cause: error });
-      }
-      throw error instanceof Error ? error : new Error(message);
+      throw normalizeOllamaError(error);
     } finally {
       cleanup();
+    }
+  }
+
+  async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+
+    try {
+      if (input.reasoning) {
+        throw new UnsupportedFeatureError('Provider "ollama" does not support "reasoning".');
+      }
+
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/api/chat`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify(this.toRequestBody(input, true))
+          }),
+        input
+      );
+
+      return (async function* () {
+        try {
+          for await (const json of parseJsonLines(response)) {
+            const assistantMessage = parseAssistantMessage(json.message);
+
+            for (const part of assistantMessage.parts) {
+              if (part.type === "text" && part.text) {
+                yield {
+                  type: "text-delta",
+                  textDelta: part.text
+                } satisfies StreamEvent;
+              }
+
+              if (part.type === "tool-call") {
+                yield {
+                  type: "tool-call",
+                  toolCall: part.toolCall
+                } satisfies StreamEvent;
+              }
+            }
+
+            if (json.done) {
+              yield {
+                type: "finish",
+                finishReason: normalizeFinishReason(json.done_reason),
+                providerFinishReason: json.done_reason,
+                usage: {
+                  inputTokens: json.prompt_eval_count,
+                  outputTokens: json.eval_count,
+                  totalTokens: (json.prompt_eval_count ?? 0) + (json.eval_count ?? 0)
+                }
+              } satisfies StreamEvent;
+            }
+          }
+        } finally {
+          cleanup();
+        }
+      })();
+    } catch (error) {
+      cleanup();
+      throw normalizeOllamaError(error);
     }
   }
 }

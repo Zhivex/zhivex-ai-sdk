@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createTextMessage, generateObject, generateText, tool } from "@zhivex-ai/core";
+import { createTextMessage, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createOllama } from "../src/index.ts";
 
@@ -13,7 +13,7 @@ describe("ollama adapter", () => {
     modelId: "llama3.2",
     createModel: () => createOllama({ fetch: fetchMock as typeof fetch })("llama3.2"),
     expectedCapabilities: {
-      streaming: false,
+      streaming: true,
       tools: true,
       structuredOutput: true,
       jsonMode: true,
@@ -112,6 +112,53 @@ describe("ollama adapter", () => {
     const body = JSON.parse(String(requestInit.body)) as { keep_alive: string; raw: boolean };
     expect(body.keep_alive).toBe("5m");
     expect(body.raw).toBe(true);
+  });
+
+  it("streams incremental text through the common streaming contract", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            `${JSON.stringify({ message: { content: "hello" }, done: false })}\n` +
+              `${JSON.stringify({
+                message: { content: " world" },
+                done: true,
+                done_reason: "stop",
+                prompt_eval_count: 5,
+                eval_count: 4
+              })}\n`
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "application/x-ndjson" }
+      })
+    );
+
+    const provider = createOllama({ fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("llama3.2"),
+      prompt: "hello"
+    });
+
+    const chunks: string[] = [];
+    for await (const chunk of result.textStream) {
+      chunks.push(chunk);
+    }
+
+    const final = await result.collect();
+    expect(chunks.join("")).toBe("hello world");
+    expect(final.text).toBe("hello world");
+    expect(final.usage?.totalTokens).toBe(9);
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const requestBody = JSON.parse(String(requestInit.body)) as { stream: boolean };
+    expect(requestBody.stream).toBe(true);
   });
 
   it("supports tool calls through the common multi-step loop", async () => {

@@ -183,7 +183,7 @@ Provider compatibility for the common `reasoning` option:
   - Gemini 3 models support `effort`
   - Gemini 2.5 and earlier models support `budgetTokens`
 - Ollama and Bedrock: not supported
-- Qwen and Kimi: currently reject the common config until a provider mapping is added
+- Qwen and Kimi: not supported yet in the common SDK config
 
 When a provider or model does not support the requested `reasoning` field, the SDK throws an explicit error instead of silently ignoring it.
 

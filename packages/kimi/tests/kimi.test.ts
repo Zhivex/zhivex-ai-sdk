@@ -24,7 +24,7 @@ describe("kimi adapter", () => {
       audioInput: false,
       audioOutput: false,
       embeddings: false,
-      reasoning: true,
+      reasoning: false,
       webSearch: false
     }
   });
@@ -202,7 +202,7 @@ describe("kimi adapter", () => {
     });
   });
 
-  it("rejects common reasoning config for Kimi until it is mapped", async () => {
+  it("rejects common reasoning config for Kimi through the shared capabilities contract", async () => {
     const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
     await expect(
@@ -213,6 +213,6 @@ describe("kimi adapter", () => {
           effort: "medium"
         }
       })
-    ).rejects.toThrow('Provider "kimi" does not support the common "reasoning" config yet.');
+    ).rejects.toThrow('Model "kimi/kimi-k2-0905-preview" does not support reasoning.');
   });
 });
