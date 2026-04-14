@@ -60,7 +60,18 @@ const capabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: true,
   reasoning: true,
-  webSearch: true
+  webSearch: true,
+  agentCapabilities: {
+    supportTier: "tier-b",
+    toolChoiceNone: true,
+    approvalRequests: false,
+    hostedWebSearch: true,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: true,
+    toolsets: false
+  }
 };
 
 const transcriptionCapabilities: ModelCapabilities = {
@@ -75,7 +86,18 @@ const transcriptionCapabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: false,
   reasoning: false,
-  webSearch: false
+  webSearch: false,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: false,
+    approvalRequests: false,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
 };
 
 const speechCapabilities: ModelCapabilities = {

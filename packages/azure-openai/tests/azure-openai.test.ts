@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { embed, generateGroundedText, generateSpeech, generateText, hostedTool, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
+import { embed, generateGroundedText, generateSpeech, generateText, getAgentCapabilities, hostedTool, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
 import { z } from "zod";
+import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import {
   azureOpenAIMcpApprovalResponse,
@@ -28,6 +29,7 @@ describe("azure openai adapter", () => {
         endpoint: "https://example.openai.azure.com",
         fetch: fetchMock as typeof fetch
       }).embeddingModel("text-embedding-3-small"),
+    expectedAgentTier: "tier-a",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -43,6 +45,111 @@ describe("azure openai adapter", () => {
       reasoning: true,
       webSearch: true
     }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "azure-openai",
+    modelId: "gpt-4o-mini",
+    expectedAgentTier: "tier-a",
+    createModel: () =>
+      createAzureOpenAI({
+        apiKey: "test",
+        endpoint: "https://example.openai.azure.com",
+        fetch: fetchMock as typeof fetch
+      })("gpt-4o-mini"),
+    mockSimpleRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "hello from azure agent" } }]
+        })
+      );
+    },
+    mockToolRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                content: "",
+                tool_calls: [
+                  {
+                    id: "tool-1",
+                    function: {
+                      name: "weather",
+                      arguments: JSON.stringify({ city: "Madrid" })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      );
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "Madrid is sunny" } }]
+        })
+      );
+    },
+    mockStreamRun: () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n" +
+                "data: {\"choices\":[{\"delta\":{\"content\":\" azure\"},\"finish_reason\":\"stop\"}]}\n\n" +
+                "data: [DONE]\n\n"
+            )
+          );
+          controller.close();
+        }
+      });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
+    },
+    mockApprovalRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          id: "resp_1",
+          status: "completed",
+          output: [
+            {
+              type: "mcp_approval_request",
+              id: "mcpr_1",
+              arguments: "{}",
+              name: "fetch_docs",
+              server_label: "github"
+            }
+          ]
+        })
+      );
+    },
+    mockApprovalResume: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          id: "resp_2",
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "approved by azure" }]
+            }
+          ]
+        })
+      );
+    },
+    createApprovalTools: () => ({
+      github: azureOpenAIRemoteMcpTool({
+        server_label: "github",
+        server_url: "https://example.com/mcp"
+      })
+    })
   });
 
   beforeEach(() => {
@@ -456,6 +563,16 @@ describe("azure openai adapter", () => {
         type: "web_search_preview"
       }
     ]);
+
+    const webTool = azureOpenAIWebSearchTool();
+    const mcpTool = azureOpenAIRemoteMcpTool({
+      server_label: "docs",
+      server_url: "https://example.com/mcp"
+    });
+    expect(webTool.toolClass).toBe("web-search");
+    expect(mcpTool.toolClass).toBe("remote-mcp");
+    expect(mcpTool.requiresApproval).toBe(true);
+    expect(getAgentCapabilities(provider("gpt-4o-mini")).remoteMcp).toBe(true);
   });
 
   it("uses the Responses API for hosted tools and continues local function loops", async () => {

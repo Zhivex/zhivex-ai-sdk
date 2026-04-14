@@ -45,6 +45,167 @@ export interface McpToolSetOptions {
   excludeTools?: string[];
 }
 
+type JsonSchemaObject = {
+  type?: JsonValue;
+  properties?: JsonValue;
+  required?: JsonValue;
+  additionalProperties?: JsonValue;
+  items?: JsonValue;
+  enum?: JsonValue;
+  const?: JsonValue;
+  anyOf?: JsonValue;
+  oneOf?: JsonValue;
+  description?: JsonValue;
+  minimum?: JsonValue;
+  maximum?: JsonValue;
+  minLength?: JsonValue;
+  maxLength?: JsonValue;
+  minItems?: JsonValue;
+  maxItems?: JsonValue;
+  default?: JsonValue;
+};
+
+const isRecord = (value: JsonValue | undefined): value is Record<string, JsonValue> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const toZodLiteral = (value: JsonValue) => {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return z.literal(value);
+  }
+
+  return z.unknown();
+};
+
+const toZodUnion = (schemas: JsonValue[] | undefined): z.ZodTypeAny => {
+  if (!schemas?.length) {
+    return z.unknown();
+  }
+
+  const parsed = schemas.map((schema) => jsonSchemaToZod(schema));
+  if (parsed.length === 1) {
+    return parsed[0];
+  }
+
+  return z.union(parsed as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
+};
+
+const applyCommonConstraints = (schema: z.ZodTypeAny, jsonSchema: JsonSchemaObject): z.ZodTypeAny => {
+  if (schema instanceof z.ZodString) {
+    let next = schema;
+    if (typeof jsonSchema.minLength === "number") {
+      next = next.min(jsonSchema.minLength);
+    }
+    if (typeof jsonSchema.maxLength === "number") {
+      next = next.max(jsonSchema.maxLength);
+    }
+    return next.describe(typeof jsonSchema.description === "string" ? jsonSchema.description : "");
+  }
+
+  if (schema instanceof z.ZodNumber) {
+    let next = schema;
+    if (typeof jsonSchema.minimum === "number") {
+      next = next.gte(jsonSchema.minimum);
+    }
+    if (typeof jsonSchema.maximum === "number") {
+      next = next.lte(jsonSchema.maximum);
+    }
+    return next.describe(typeof jsonSchema.description === "string" ? jsonSchema.description : "");
+  }
+
+  if (schema instanceof z.ZodArray) {
+    let next = schema;
+    if (typeof jsonSchema.minItems === "number") {
+      next = next.min(jsonSchema.minItems);
+    }
+    if (typeof jsonSchema.maxItems === "number") {
+      next = next.max(jsonSchema.maxItems);
+    }
+    return next.describe(typeof jsonSchema.description === "string" ? jsonSchema.description : "");
+  }
+
+  return typeof jsonSchema.description === "string" ? schema.describe(jsonSchema.description) : schema;
+};
+
+const jsonSchemaToZod = (schema: JsonValue | undefined): z.ZodTypeAny => {
+  if (!schema) {
+    return z.unknown();
+  }
+
+  if (!isRecord(schema)) {
+    return z.unknown();
+  }
+
+  const jsonSchema = schema as JsonSchemaObject;
+
+  if (jsonSchema.const !== undefined) {
+    return toZodLiteral(jsonSchema.const);
+  }
+
+  if (Array.isArray(jsonSchema.enum) && jsonSchema.enum.length > 0) {
+    return toZodUnion(jsonSchema.enum);
+  }
+
+  if (Array.isArray(jsonSchema.oneOf)) {
+    return toZodUnion(jsonSchema.oneOf);
+  }
+
+  if (Array.isArray(jsonSchema.anyOf)) {
+    return toZodUnion(jsonSchema.anyOf);
+  }
+
+  if (Array.isArray(jsonSchema.type)) {
+    return toZodUnion(
+      jsonSchema.type.map((type) => ({
+        ...jsonSchema,
+        type
+      }))
+    );
+  }
+
+  switch (jsonSchema.type) {
+    case "string":
+      return applyCommonConstraints(z.string(), jsonSchema);
+    case "number":
+      return applyCommonConstraints(z.number(), jsonSchema);
+    case "integer":
+      return applyCommonConstraints(z.number().int(), jsonSchema);
+    case "boolean":
+      return applyCommonConstraints(z.boolean(), jsonSchema);
+    case "null":
+      return z.null();
+    case "array":
+      return applyCommonConstraints(z.array(jsonSchemaToZod(jsonSchema.items)), jsonSchema);
+    case "object": {
+      const properties = isRecord(jsonSchema.properties) ? jsonSchema.properties : {};
+      const required = Array.isArray(jsonSchema.required)
+        ? new Set(jsonSchema.required.filter((value): value is string => typeof value === "string"))
+        : new Set<string>();
+
+      const shape = Object.fromEntries(
+        Object.entries(properties).map(([key, value]) => {
+          const propertySchema = jsonSchemaToZod(value);
+          return [key, required.has(key) ? propertySchema : propertySchema.optional()];
+        })
+      );
+
+      let objectSchema = z.object(shape);
+      if (jsonSchema.additionalProperties === true) {
+        objectSchema = objectSchema.passthrough();
+      } else if (jsonSchema.additionalProperties === false) {
+        objectSchema = objectSchema.strict();
+      } else if (isRecord(jsonSchema.additionalProperties)) {
+        objectSchema = objectSchema.catchall(jsonSchemaToZod(jsonSchema.additionalProperties));
+      } else {
+        objectSchema = objectSchema.passthrough();
+      }
+
+      return applyCommonConstraints(objectSchema, jsonSchema);
+    }
+    default:
+      return z.unknown();
+  }
+};
+
 const normalizeListedTools = async (client: McpClient): Promise<McpListedTool[]> => {
   const listed = await client.listTools();
   return Array.isArray(listed) ? listed : listed.tools;
@@ -84,7 +245,13 @@ export const createMcpToolSet = async (client: McpClient, options: McpToolSetOpt
         tool({
           name: toolName,
           description: listedTool.description,
-          schema: z.any(),
+          schema: jsonSchemaToZod(listedTool.inputSchema),
+          metadata: serializeJsonValue({
+            source: "mcp",
+            originalName: listedTool.name,
+            inputSchema: listedTool.inputSchema ?? null,
+            annotations: listedTool.annotations ?? null
+          }) as Record<string, JsonValue>,
           execute: async (input) =>
             serializeJsonValue(
               await client.callTool({

@@ -79,6 +79,7 @@ bun add @zhivex-ai/core @zhivex-ai/openai
 The repository includes runnable examples under [`examples/`](/Users/mikeortiz/dev/zhivex-ai-sdk/examples/README.md) covering:
 
 - high-level SDK flows
+- agent runtime, lifecycle streaming, and UI/SSE transport
 - structured output, tools, embeddings, UI helpers, and middleware
 - provider-specific setup for each adapter package
 - gateway routing and fallback
@@ -108,18 +109,18 @@ The high-level API accepts either a `prompt` or explicit `messages`, and returns
 
 The SDK aims to keep the application-facing contract stable, but capability parity is not identical across providers yet. Use this matrix as the source of truth for the currently implemented SDK behavior.
 
-| Provider | `streamText` | Tools | `toolChoice` | Structured output | Embeddings | Audio in | Audio out | Reasoning | Web search | Hosted tools / MCP |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | yes | yes | yes | native | yes | yes | yes | `effort` | yes | yes |
-| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | `effort` | yes | yes |
-| Anthropic | yes | yes | yes | prompted | no | no | no | `budgetTokens` | yes | native MCP + web search |
-| Gemini | yes | yes | yes | native | yes | yes | yes | model-dependent | yes | native |
-| Vertex | yes | yes | yes | native | yes | yes | yes | model-dependent | yes | native |
-| OpenRouter | yes | yes | yes | native | no | no | no | `effort` + `budgetTokens` | yes | server tools |
-| Qwen | yes | yes | yes | native | yes | no | no | model-dependent | no | no |
-| Kimi | yes | yes | yes | native | no | no | no | model-dependent | no | no |
-| Bedrock | yes | yes | partial | native | no | no | no | no | no | no |
-| Ollama | yes | yes | no | native | yes | no | no | no | no | no |
+| Provider | `streamText` | Tools | `toolChoice` | Structured output | Embeddings | Audio in | Audio out | Reasoning | Web search | Hosted tools / MCP | Agent tier |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| OpenAI | yes | yes | yes | native | yes | yes | yes | `effort` | yes | yes | Tier A |
+| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | `effort` | yes | yes | Tier A |
+| Anthropic | yes | yes | yes | prompted | no | no | no | `budgetTokens` | yes | native MCP + web search | Tier B |
+| Gemini | yes | yes | yes | native | yes | yes | yes | model-dependent | yes | native | Tier B |
+| Vertex | yes | yes | yes | native | yes | yes | yes | model-dependent | yes | native | Tier B |
+| OpenRouter | yes | yes | yes | native | no | no | no | `effort` + `budgetTokens` | yes | server tools | Tier C |
+| Qwen | yes | yes | yes | native | yes | no | no | model-dependent | no | no | Tier C |
+| Kimi | yes | yes | yes | native | no | no | no | model-dependent | no | no | Tier C |
+| Bedrock | yes | yes | partial | native | no | no | no | no | no | no | Tier C |
+| Ollama | yes | yes | no | native | yes | no | no | no | no | no | Tier C |
 
 Compatibility notes:
 
@@ -128,6 +129,10 @@ Compatibility notes:
 - `partial` for Bedrock `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - `Hosted tools / MCP` refers to provider-native hosted tools or SDK-level MCP mappings, not local callable tools defined with `tool()`. For OpenRouter this currently means server tools such as `openrouter:web_search`.
+- `Agent tier` summarizes how far the provider currently goes for the agent runtime:
+- `Tier A`: native agent building blocks including approval-capable remote MCP or equivalent hosted tools.
+- `Tier B`: strong tool-using agent support, but with more provider-specific gaps or fewer hosted-agent features.
+- `Tier C`: usable for basic tool loops, but not yet something the SDK should market as full agent support.
 
 ## Core Capabilities
 
@@ -149,6 +154,122 @@ const result = await generateText({
 
 console.log(result.text);
 ```
+
+### Agent Runtime
+
+For reusable multi-step assistants, `createAgent()` and `runAgent()` provide a small agent runtime on top of the shared tool loop. Agent runs return a serializable `state` object so you can inspect or resume the run later.
+
+Relevant runnable examples:
+
+- [`examples/sdk/agent-runtime.ts`](/Users/mikeortiz/dev/zhivex-ai-sdk/examples/sdk/agent-runtime.ts)
+- [`examples/sdk/agent-stream.ts`](/Users/mikeortiz/dev/zhivex-ai-sdk/examples/sdk/agent-stream.ts)
+
+```ts
+import { createAgent, runAgent, tool } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+import { z } from "zod";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const weatherAgent = createAgent({
+  model: openai("gpt-5"),
+  instructions: "Be concise and use tools when they help.",
+  maxSteps: 4,
+  tools: {
+    weather: tool({
+      name: "weather",
+      schema: z.object({ city: z.string() }),
+      execute: async ({ city }) => ({ city, forecast: "sunny" })
+    })
+  }
+});
+
+const run = await runAgent(weatherAgent, {
+  prompt: "How's the weather in Madrid?"
+});
+
+console.log(run.status);
+console.log(run.outputText);
+console.log(run.state);
+```
+
+What the runtime guarantees:
+
+- `runAgent()` always returns the final `state`, including `steps`, `toolResults`, `messages`, `usage`, and `pendingApprovals`.
+- `state` is JSON-serializable and can be persisted by your app.
+- `createAgent()` keeps reusable defaults such as `instructions`, `tools`, `maxSteps`, `reasoning`, and provider options in one place.
+- `resumeAgent()` continues from a previous `state` instead of rebuilding the run manually.
+
+If a provider emits an MCP approval request, the run is suspended instead of failing. You can inspect pending approvals with `getAgentApprovalRequests()` and continue with `resumeAgent()`:
+
+```ts
+import { createAgent, getAgentApprovalRequests, resumeAgent, runAgent } from "@zhivex-ai/sdk";
+
+const suspended = await runAgent(weatherAgent, {
+  prompt: "Search the docs through MCP."
+});
+
+if (suspended.status === "suspended") {
+  const [approval] = getAgentApprovalRequests(suspended.messages);
+
+  const resumed = await resumeAgent(weatherAgent, {
+    state: suspended.state,
+    approvals: [
+      {
+        provider: approval.provider,
+        approvalRequestId: approval.id,
+        approve: true
+      }
+    ]
+  });
+
+  console.log(resumed.outputText);
+}
+```
+
+This approval flow currently matters most for `Tier A` providers such as OpenAI and Azure OpenAI, where remote MCP servers can request explicit user approval mid-run.
+
+For UI transport, `streamAgent()` now emits agent lifecycle events as well as the underlying text/tool/provider-data stream. You can send that directly over SSE with `toUIAgentStreamResponse()`:
+
+```ts
+import { streamAgent, toUIAgentStreamResponse } from "@zhivex-ai/sdk";
+
+const result = streamAgent(weatherAgent, {
+  prompt: "Search the docs through MCP."
+});
+
+return toUIAgentStreamResponse(result);
+```
+
+Agent stream events currently include:
+
+- `agent-run-start`
+- `agent-step-start`
+- `agent-step-finish`
+- `agent-approval-request`
+- `agent-approval-resolved`
+- `agent-run-finish`
+
+Those events are exposed both through `streamAgent().eventStream` and through UI/SSE helpers such as `toUIAgentStreamResponse()` and `toUIMessageStream()`.
+
+When you need to reason about provider-specific agent features at runtime, inspect `model.capabilities.agentCapabilities` or use helpers such as `getAgentCapabilities()`, `getAgentSupportTier()`, and `getHostedToolClass()`. Hosted tools now carry a normalized `toolClass` like `web-search`, `file-search`, `remote-mcp`, or `computer-use`.
+
+```ts
+import { getAgentCapabilities, getAgentSupportTier } from "@zhivex-ai/sdk";
+
+const capabilities = getAgentCapabilities(openai("gpt-5"));
+
+console.log(getAgentSupportTier(openai("gpt-5")));
+console.log(capabilities);
+```
+
+Use the agent tiers as release guidance, not just metadata:
+
+- `Tier A`: choose this when you need approvals, remote MCP, or the strongest hosted-agent story.
+- `Tier B`: good default for portable tool-using agents, especially with local tools or SDK-managed MCP clients.
+- `Tier C`: keep expectations narrower; these providers work well for basic loops, but you should avoid marketing them as full hosted-agent support.
 
 ### Streaming
 
@@ -454,6 +575,8 @@ if (approval) {
   });
 }
 ```
+
+If you are already on the shared agent runtime, prefer `runAgent()` / `resumeAgent()` for the same flow. That keeps approvals in `state.pendingApprovals` and avoids rebuilding the follow-up message yourself.
 
 ```ts
 import { generateText, hostedTool, user } from "@zhivex-ai/sdk";

@@ -99,7 +99,22 @@ export interface ModelCapabilities {
   embeddings: boolean;
   reasoning: boolean;
   webSearch: boolean;
+  agentCapabilities?: AgentCapabilities;
 }
+
+export interface AgentCapabilities {
+  supportTier: AgentSupportTier;
+  toolChoiceNone: boolean;
+  approvalRequests: boolean;
+  hostedWebSearch: boolean;
+  hostedFileSearch: boolean;
+  remoteMcp: boolean;
+  computerUse: boolean;
+  codeExecution: boolean;
+  toolsets: boolean;
+}
+
+export type AgentSupportTier = "tier-a" | "tier-b" | "tier-c";
 
 export interface RetryOptions {
   abortSignal?: AbortSignal;
@@ -167,6 +182,47 @@ export type StreamEvent =
   | StreamProviderDataEvent
   | StreamFinishEvent
   | StreamErrorEvent;
+
+export interface AgentRunStartEvent {
+  type: "agent-run-start";
+  currentStep: number;
+  maxSteps: number;
+}
+
+export interface AgentStepStartEvent {
+  type: "agent-step-start";
+  stepIndex: number;
+}
+
+export interface AgentStepFinishEvent {
+  type: "agent-step-finish";
+  step: AgentStep;
+}
+
+export interface AgentApprovalRequestEvent {
+  type: "agent-approval-request";
+  approval: AgentApprovalRequest;
+}
+
+export interface AgentApprovalResolvedEvent {
+  type: "agent-approval-resolved";
+  approval: AgentApprovalResponse;
+}
+
+export interface AgentRunFinishEvent {
+  type: "agent-run-finish";
+  status: AgentStatus;
+  state: AgentRunState;
+}
+
+export type AgentStreamEvent =
+  | StreamEvent
+  | AgentRunStartEvent
+  | AgentStepStartEvent
+  | AgentStepFinishEvent
+  | AgentApprovalRequestEvent
+  | AgentApprovalResolvedEvent
+  | AgentRunFinishEvent;
 
 export interface StreamObjectDeltaEvent {
   type: "object-delta";
@@ -340,8 +396,18 @@ export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny, TResult
   name: string;
   description?: string;
   schema: TSchema;
+  metadata?: Record<string, JsonValue>;
   execute: (input: z.infer<TSchema>) => Promise<TResult> | TResult;
 }
+
+export type HostedToolClass =
+  | "web-search"
+  | "file-search"
+  | "remote-mcp"
+  | "computer-use"
+  | "code-execution"
+  | "toolset"
+  | "custom";
 
 export interface HostedToolDefinition<TConfig extends JsonValue = JsonValue> {
   kind: "hosted";
@@ -349,6 +415,9 @@ export interface HostedToolDefinition<TConfig extends JsonValue = JsonValue> {
   provider?: string;
   type: string;
   config?: TConfig;
+  toolClass?: HostedToolClass;
+  requiresApproval?: boolean;
+  metadata?: Record<string, JsonValue>;
 }
 
 export type AnyToolDefinition = ToolDefinition | HostedToolDefinition;
@@ -387,6 +456,133 @@ export interface GenerateTextOutput {
   steps: GenerateTextStep[];
   messages: ModelMessage[];
   toolResults: ToolExecutionResult[];
+}
+
+export type AgentStatus = "running" | "completed" | "suspended" | "failed" | "cancelled";
+
+export type AgentStepStatus = "running" | "completed" | "suspended" | "failed";
+
+export interface AgentStepRequest {
+  messages: ModelMessage[];
+  toolChoice?: ToolChoice;
+  toolExecution?: ToolExecutionOptions;
+  temperature?: number;
+  maxTokens?: number;
+  reasoning?: ReasoningConfig;
+  providerOptions?: ProviderOptions;
+  timeoutMs?: number;
+  maxRetries?: number;
+  retryBackoffMs?: number;
+}
+
+export interface AgentStepResponse {
+  messages: ModelMessage[];
+  text?: string;
+  finishReason?: FinishReason;
+  providerFinishReason?: string;
+  usage?: TokenUsage;
+}
+
+export interface AgentStep {
+  index: number;
+  status: AgentStepStatus;
+  startedAt?: number;
+  finishedAt?: number;
+  request: AgentStepRequest;
+  response?: AgentStepResponse;
+  toolResults: ToolExecutionResult[];
+  error?: {
+    message: string;
+  };
+}
+
+export interface AgentRunState {
+  agentId?: string;
+  provider: string;
+  modelId: string;
+  status: AgentStatus;
+  messages: ModelMessage[];
+  steps: AgentStep[];
+  toolResults: ToolExecutionResult[];
+  currentStep: number;
+  maxSteps: number;
+  outputText: string;
+  finishReason?: FinishReason;
+  providerFinishReason?: string;
+  usage?: TokenUsage;
+  pendingApprovals: AgentApprovalRequest[];
+  metadata?: Record<string, JsonValue>;
+  error?: {
+    message: string;
+  };
+}
+
+export interface AgentDefinition<TModel extends LanguageModel = LanguageModel> {
+  id?: string;
+  model: TModel;
+  instructions?: string;
+  tools?: ToolSet;
+  maxSteps?: number;
+  temperature?: number;
+  maxTokens?: number;
+  reasoning?: ReasoningConfig;
+  toolExecution?: ToolExecutionOptions;
+  providerOptions?: ProviderOptionsOf<TModel>;
+  metadata?: Record<string, JsonValue>;
+}
+
+export interface AgentApprovalRequest {
+  provider: string;
+  id: string;
+  name: string;
+  arguments: string;
+  serverLabel?: string;
+  rawData: JsonValue;
+}
+
+export interface AgentApprovalResponse {
+  provider: string;
+  approvalRequestId: string;
+  approve: boolean;
+  id?: string;
+  reason?: string;
+}
+
+export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryOptions &
+  GenerateInputSource & {
+    state?: AgentRunState;
+    approvals?: AgentApprovalResponse[];
+    system?: string;
+    tools?: ToolSet;
+    toolChoice?: ToolChoice;
+    toolExecution?: ToolExecutionOptions;
+    maxSteps?: number;
+    temperature?: number;
+    maxTokens?: number;
+    reasoning?: ReasoningConfig;
+    providerOptions?: ProviderOptionsOf<TModel>;
+    metadata?: Record<string, JsonValue>;
+  };
+
+export interface AgentRunOutput {
+  status: AgentStatus;
+  outputText: string;
+  finishReason?: FinishReason;
+  providerFinishReason?: string;
+  usage?: TokenUsage;
+  messages: ModelMessage[];
+  steps: AgentStep[];
+  toolResults: ToolExecutionResult[];
+  state: AgentRunState;
+  error?: {
+    message: string;
+  };
+}
+
+export interface AgentStreamResult {
+  eventStream: AsyncIterable<AgentStreamEvent>;
+  textStream: AsyncIterable<string>;
+  collect: () => Promise<AgentRunOutput>;
 }
 
 export type TranscribeAudioOptions<TModel extends TranscriptionModel = TranscriptionModel> = RetryOptions & {
@@ -616,6 +812,14 @@ export interface UIMessageToolResultChunk {
   toolResult: ToolExecutionResult;
 }
 
+export interface UIMessageProviderDataChunk {
+  type: "provider-data";
+  messageId: string;
+  role: "assistant";
+  provider: string;
+  data: JsonValue;
+}
+
 export interface UIMessageFinishChunk {
   type: "finish";
   messageId: string;
@@ -632,12 +836,51 @@ export interface UIMessageErrorChunk {
   };
 }
 
+export interface UIAgentRunStartChunk {
+  type: "agent-run-start";
+  currentStep: number;
+  maxSteps: number;
+}
+
+export interface UIAgentStepStartChunk {
+  type: "agent-step-start";
+  stepIndex: number;
+}
+
+export interface UIAgentStepFinishChunk {
+  type: "agent-step-finish";
+  step: AgentStep;
+}
+
+export interface UIAgentApprovalRequestChunk {
+  type: "agent-approval-request";
+  approval: AgentApprovalRequest;
+}
+
+export interface UIAgentApprovalResolvedChunk {
+  type: "agent-approval-resolved";
+  approval: AgentApprovalResponse;
+}
+
+export interface UIAgentRunFinishChunk {
+  type: "agent-run-finish";
+  status: AgentStatus;
+  state: AgentRunState;
+}
+
 export type UIMessageChunk =
   | UIMessageTextChunk
   | UIMessageToolCallChunk
   | UIMessageToolResultChunk
+  | UIMessageProviderDataChunk
   | UIMessageFinishChunk
-  | UIMessageErrorChunk;
+  | UIMessageErrorChunk
+  | UIAgentRunStartChunk
+  | UIAgentStepStartChunk
+  | UIAgentStepFinishChunk
+  | UIAgentApprovalRequestChunk
+  | UIAgentApprovalResolvedChunk
+  | UIAgentRunFinishChunk;
 
 export interface EmbedInput {
   values: string[];

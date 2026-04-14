@@ -52,7 +52,18 @@ const capabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: false,
   reasoning: true,
-  webSearch: true
+  webSearch: true,
+  agentCapabilities: {
+    supportTier: "tier-b",
+    toolChoiceNone: true,
+    approvalRequests: false,
+    hostedWebSearch: true,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: true
+  }
 };
 
 const parseJson = async (response: Response) => {
@@ -514,6 +525,7 @@ export const anthropicWebSearchTool = (config: AnthropicWebSearchToolConfig = {}
     name: "web_search",
     provider: "anthropic",
     type: "web_search_20250305",
+    toolClass: "web-search",
     config: config as unknown as JsonValue
   });
 
@@ -522,5 +534,6 @@ export const anthropicMcpToolset = (config: AnthropicMcpToolsetConfig) =>
     name: config.server.name,
     provider: "anthropic",
     type: "mcp_toolset",
+    toolClass: "toolset",
     config: config as unknown as JsonValue
   });

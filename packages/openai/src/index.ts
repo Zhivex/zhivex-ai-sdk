@@ -174,7 +174,18 @@ const capabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: true,
   reasoning: true,
-  webSearch: true
+  webSearch: true,
+  agentCapabilities: {
+    supportTier: "tier-a",
+    toolChoiceNone: true,
+    approvalRequests: true,
+    hostedWebSearch: true,
+    hostedFileSearch: true,
+    remoteMcp: true,
+    computerUse: true,
+    codeExecution: false,
+    toolsets: false
+  }
 };
 
 const transcriptionCapabilities: ModelCapabilities = {
@@ -190,7 +201,18 @@ const transcriptionCapabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: false,
   reasoning: false,
-  webSearch: false
+  webSearch: false,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: false,
+    approvalRequests: false,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
 };
 
 const speechCapabilities: ModelCapabilities = {
@@ -1251,6 +1273,7 @@ export const openAIWebSearchTool = (config: OpenAIWebSearchToolConfig = {}) =>
     name: "web_search",
     provider: "openai",
     type: config.type ?? "web_search",
+    toolClass: "web-search",
     config: normalizeWebSearchConfig(config) as unknown as JsonValue
   });
 
@@ -1259,6 +1282,7 @@ export const openAIFileSearchTool = (config: OpenAIFileSearchToolConfig = {}) =>
     name: "file_search",
     provider: "openai",
     type: "file_search",
+    toolClass: "file-search",
     config: config as unknown as JsonValue
   });
 
@@ -1267,6 +1291,8 @@ export const openAIRemoteMcpTool = (config: OpenAIRemoteMcpToolConfig) =>
     name: config.server_label ?? "mcp",
     provider: "openai",
     type: "mcp",
+    toolClass: "remote-mcp",
+    requiresApproval: config.require_approval !== "never",
     config: config as unknown as JsonValue
   });
 
@@ -1281,5 +1307,6 @@ export const openAIComputerUseTool = (config: OpenAIComputerUseToolConfig) =>
     name: "computer",
     provider: "openai",
     type: "computer_use_preview",
+    toolClass: "computer-use",
     config: config as unknown as JsonValue
   });

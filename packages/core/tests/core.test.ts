@@ -17,10 +17,14 @@ import {
   createUIMessageLinesResponse,
   embed,
   embedMany,
+  getAgentCapabilities,
+  getAgentSupportTier,
+  getHostedToolClass,
   parseUIMessageRequest,
   generateObject,
   generateText,
   hostedTool,
+  isHostedToolClass,
   streamObject,
   streamText,
   system,
@@ -239,6 +243,50 @@ describe("core helpers", () => {
     });
 
     expect(result.text).toBe("tool selected");
+  });
+
+  it("infers hosted tool classes and exposes hosted tool helpers", () => {
+    const web = hostedTool({
+      name: "web",
+      provider: "openai",
+      type: "web_search"
+    });
+    const files = hostedTool({
+      name: "files",
+      provider: "openai",
+      type: "file_search"
+    });
+    const mcp = hostedTool({
+      name: "mcp",
+      provider: "openai",
+      type: "mcp"
+    });
+
+    expect(getHostedToolClass(web)).toBe("web-search");
+    expect(getHostedToolClass(files)).toBe("file-search");
+    expect(getHostedToolClass(mcp)).toBe("remote-mcp");
+    expect(isHostedToolClass(web, "web-search")).toBe(true);
+    expect(isHostedToolClass(files, "web-search")).toBe(false);
+  });
+
+  it("returns defaulted agent capabilities for models", () => {
+    const capabilities = getAgentCapabilities(createLanguageModel());
+
+    expect(capabilities).toEqual({
+      supportTier: "tier-c",
+      toolChoiceNone: false,
+      approvalRequests: false,
+      hostedWebSearch: false,
+      hostedFileSearch: false,
+      remoteMcp: false,
+      computerUse: false,
+      codeExecution: false,
+      toolsets: false
+    });
+  });
+
+  it("returns the normalized agent support tier for models", () => {
+    expect(getAgentSupportTier(createLanguageModel())).toBe("tier-c");
   });
 
   it("rejects tool choice for models without tool choice support", async () => {

@@ -5,7 +5,19 @@ import * as sdk from "../src/index.js";
 describe("sdk public surface", () => {
   it("exports the shared helpers from core", () => {
     expect(sdk.generateText).toBeTypeOf("function");
+    expect(sdk.createAgent).toBeTypeOf("function");
+    expect(sdk.resumeAgent).toBeTypeOf("function");
     expect(sdk.streamText).toBeTypeOf("function");
+    expect(sdk.runAgent).toBeTypeOf("function");
+    expect(sdk.streamAgent).toBeTypeOf("function");
+    expect(sdk.getAgentApprovalRequests).toBeTypeOf("function");
+    expect(sdk.getAgentApprovalRequestFromPart).toBeTypeOf("function");
+    expect(sdk.createAgentApprovalMessage).toBeTypeOf("function");
+    expect(sdk.agentApprovalResponsePart).toBeTypeOf("function");
+    expect(sdk.getAgentCapabilities).toBeTypeOf("function");
+    expect(sdk.getAgentSupportTier).toBeTypeOf("function");
+    expect(sdk.getHostedToolClass).toBeTypeOf("function");
+    expect(sdk.toUIAgentStreamResponse).toBeTypeOf("function");
     expect(sdk.generateObject).toBeTypeOf("function");
     expect(sdk.streamObject).toBeTypeOf("function");
     expect(sdk.embed).toBeTypeOf("function");

@@ -39,6 +39,104 @@ describe("mcp helpers", () => {
       structuredContent: { echoed: { value: 42 } },
       isError: false
     });
+    if (!("schema" in echo)) {
+      throw new Error("Expected MCP tool schema.");
+    }
+    expect(echo.schema.safeParse({ value: 42 }).success).toBe(true);
+    expect(echo.schema.safeParse({ value: "bad" }).success).toBe(true);
+    expect(echo.metadata).toEqual({
+      source: "mcp",
+      originalName: "echo",
+      inputSchema: null,
+      annotations: null
+    });
+  });
+
+  it("builds zod validation from MCP input schemas and preserves annotations", async () => {
+    const tools = await createMcpToolSet({
+      async listTools() {
+        return {
+          tools: [
+            {
+              name: "weather",
+              description: "Get weather",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  city: { type: "string", minLength: 2 },
+                  days: { type: "integer", minimum: 1 }
+                },
+                required: ["city"],
+                additionalProperties: false
+              },
+              annotations: {
+                readOnlyHint: true,
+                title: "Weather"
+              }
+            }
+          ]
+        };
+      },
+      async callTool(input) {
+        return {
+          structuredContent: input.arguments ?? {}
+        };
+      }
+    });
+
+    const weather = tools.weather;
+    if (!weather || !("execute" in weather)) {
+      throw new Error("Expected a callable MCP tool.");
+    }
+
+    expect(weather.schema.safeParse({ city: "Madrid", days: 2 }).success).toBe(true);
+    expect(weather.schema.safeParse({ city: "M" }).success).toBe(false);
+    expect(weather.schema.safeParse({ days: 2 }).success).toBe(false);
+    expect(weather.schema.safeParse({ city: "Madrid", extra: true }).success).toBe(false);
+    expect(weather.metadata).toEqual({
+      source: "mcp",
+      originalName: "weather",
+      inputSchema: {
+        type: "object",
+        properties: {
+          city: { type: "string", minLength: 2 },
+          days: { type: "integer", minimum: 1 }
+        },
+        required: ["city"],
+        additionalProperties: false
+      },
+      annotations: {
+        readOnlyHint: true,
+        title: "Weather"
+      }
+    });
+  });
+
+  it("uses safe unknown-schema fallbacks for unsupported MCP schemas", async () => {
+    const tools = await createMcpToolSet({
+      async listTools() {
+        return {
+          tools: [
+            {
+              name: "mystery",
+              inputSchema: {
+                type: "something-custom"
+              }
+            }
+          ]
+        };
+      },
+      async callTool(input) {
+        return input.arguments ?? null;
+      }
+    });
+
+    const mystery = tools.mystery;
+    if (!mystery || !("execute" in mystery)) {
+      throw new Error("Expected a callable MCP tool.");
+    }
+
+    expect(mystery.schema.safeParse({ any: "value" }).success).toBe(true);
   });
 
   it("preserves provider-data events in streamed assistant messages", async () => {

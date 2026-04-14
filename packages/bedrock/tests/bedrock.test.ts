@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createTextMessage, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 
 const sendMock = vi.fn();
@@ -38,6 +39,7 @@ describe("bedrock adapter", () => {
     providerName: "bedrock",
     modelId: "anthropic.claude-3-5-sonnet",
     createModel: () => createBedrock({ region: "us-east-1" })("anthropic.claude-3-5-sonnet"),
+    expectedAgentTier: "tier-c",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -52,6 +54,76 @@ describe("bedrock adapter", () => {
       embeddings: false,
       reasoning: false,
       webSearch: false
+    }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "bedrock",
+    modelId: "anthropic.claude-3-5-sonnet",
+    expectedAgentTier: "tier-c",
+    createModel: () => createBedrock({ region: "us-east-1" })("anthropic.claude-3-5-sonnet"),
+    mockSimpleRun: () => {
+      sendMock.mockResolvedValueOnce({
+        stopReason: "end_turn",
+        output: {
+          message: {
+            content: [{ text: "hello from bedrock agent" }]
+          }
+        }
+      });
+    },
+    mockToolRun: () => {
+      sendMock.mockResolvedValueOnce({
+        stopReason: "tool_use",
+        output: {
+          message: {
+            content: [
+              {
+                toolUse: {
+                  toolUseId: "tool-1",
+                  name: "weather",
+                  input: { city: "Madrid" }
+                }
+              }
+            ]
+          }
+        }
+      });
+      sendMock.mockResolvedValueOnce({
+        stopReason: "end_turn",
+        output: {
+          message: {
+            content: [{ text: "Madrid is sunny" }]
+          }
+        }
+      });
+    },
+    mockStreamRun: () => {
+      sendMock.mockResolvedValueOnce({
+        stream: (async function* () {
+          yield {
+            contentBlockDelta: {
+              contentBlockIndex: 0,
+              delta: {
+                text: "hello"
+              }
+            }
+          };
+          yield {
+            contentBlockDelta: {
+              contentBlockIndex: 0,
+              delta: {
+                text: " world"
+              }
+            }
+          };
+          yield {
+            messageStop: {
+              stopReason: "end_turn"
+            }
+          };
+        })()
+      });
     }
   });
 

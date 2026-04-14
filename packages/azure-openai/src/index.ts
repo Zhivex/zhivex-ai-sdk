@@ -173,7 +173,18 @@ const capabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: true,
   reasoning: true,
-  webSearch: true
+  webSearch: true,
+  agentCapabilities: {
+    supportTier: "tier-a",
+    toolChoiceNone: true,
+    approvalRequests: true,
+    hostedWebSearch: true,
+    hostedFileSearch: true,
+    remoteMcp: true,
+    computerUse: true,
+    codeExecution: false,
+    toolsets: false
+  }
 };
 
 const transcriptionCapabilities: ModelCapabilities = {
@@ -189,7 +200,18 @@ const transcriptionCapabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: false,
   reasoning: false,
-  webSearch: false
+  webSearch: false,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: false,
+    approvalRequests: false,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
 };
 
 const speechCapabilities: ModelCapabilities = {
@@ -1412,6 +1434,7 @@ export const azureOpenAIWebSearchTool = (config: AzureOpenAIWebSearchToolConfig 
     name: "web_search",
     provider: "azure-openai",
     type: config.type ?? "web_search_preview",
+    toolClass: "web-search",
     config: normalizeWebSearchConfig(config) as unknown as JsonValue
   });
 
@@ -1420,6 +1443,7 @@ export const azureOpenAIFileSearchTool = (config: AzureOpenAIFileSearchToolConfi
     name: "file_search",
     provider: "azure-openai",
     type: "file_search",
+    toolClass: "file-search",
     config: config as unknown as JsonValue
   });
 
@@ -1428,6 +1452,8 @@ export const azureOpenAIRemoteMcpTool = (config: AzureOpenAIRemoteMcpToolConfig)
     name: config.server_label ?? "mcp",
     provider: "azure-openai",
     type: "mcp",
+    toolClass: "remote-mcp",
+    requiresApproval: config.require_approval !== "never",
     config: config as unknown as JsonValue
   });
 
@@ -1442,5 +1468,6 @@ export const azureOpenAIComputerUseTool = (config: AzureOpenAIComputerUseToolCon
     name: "computer",
     provider: "azure-openai",
     type: "computer_use_preview",
+    toolClass: "computer-use",
     config: config as unknown as JsonValue
   });

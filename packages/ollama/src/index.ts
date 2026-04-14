@@ -50,7 +50,18 @@ const capabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: true,
   reasoning: false,
-  webSearch: false
+  webSearch: false,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: false,
+    approvalRequests: false,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
 };
 
 const parseDataUrl = (value: string) => {

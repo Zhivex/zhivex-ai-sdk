@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { anthropicMcpToolset, anthropicWebSearchTool, createAnthropic } from "../src/index.js";
 
@@ -12,6 +13,7 @@ describe("anthropic adapter", () => {
     providerName: "anthropic",
     modelId: "claude-3-5-sonnet",
     createModel: () => createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch })("claude-3-5-sonnet"),
+    expectedAgentTier: "tier-b",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -26,6 +28,59 @@ describe("anthropic adapter", () => {
       embeddings: false,
       reasoning: true,
       webSearch: true
+    }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "anthropic",
+    modelId: "claude-3-5-sonnet",
+    expectedAgentTier: "tier-b",
+    createModel: () => createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch })("claude-3-5-sonnet"),
+    mockSimpleRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          content: [{ type: "text", text: "hello from anthropic agent" }],
+          stop_reason: "end_turn"
+        })
+      );
+    },
+    mockToolRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          content: [{ type: "tool_use", id: "tool-1", name: "weather", input: { city: "Madrid" } }],
+          stop_reason: "tool_use"
+        })
+      );
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          content: [{ type: "text", text: "Madrid is sunny" }],
+          stop_reason: "end_turn"
+        })
+      );
+    },
+    mockStreamRun: () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              "event: content_block_delta\n" +
+                'data: {"index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n' +
+                "event: content_block_delta\n" +
+                'data: {"index":0,"delta":{"type":"text_delta","text":" world"}}\n\n' +
+                "event: message_stop\n" +
+                'data: {"stop_reason":"end_turn"}\n\n'
+            )
+          );
+          controller.close();
+        }
+      });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
     }
   });
 

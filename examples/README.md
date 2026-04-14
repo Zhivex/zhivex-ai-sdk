@@ -23,6 +23,8 @@ Typical examples:
 
 ```bash
 bun run examples/sdk/stream-text.ts
+bun run examples/sdk/agent-runtime.ts
+bun run examples/sdk/agent-stream.ts
 bun run examples/sdk/generate-object.ts
 bun run examples/sdk/messages-and-tools.ts
 bun run examples/sdk/transcribe-audio.ts
@@ -39,3 +41,4 @@ bun run examples/providers/openai.ts
 - Examples use the published package names such as `@zhivex-ai/sdk` and `@zhivex-ai/openai`.
 - Some providers do not support every capability. The examples follow the actual adapter capabilities in this repo.
 - `zod` is used in structured output and tool examples.
+- Agent examples currently focus on the shared runtime, local tools, lifecycle streaming, and SSE/UI transport. Approval-based MCP flows are documented in the root `README.md` because they require a provider-specific remote MCP setup.

@@ -1,3 +1,10 @@
+export { createAgent, resumeAgent, runAgent, streamAgent } from "./agent.js";
+export {
+  agentApprovalResponsePart,
+  createAgentApprovalMessage,
+  getAgentApprovalRequestFromPart,
+  getAgentApprovalRequests
+} from "./agent-approval.js";
 export { generateSpeech, transcribeAudio } from "./audio.js";
 export { embed, embedMany } from "./embed.js";
 export * from "./catalog.js";
@@ -20,10 +27,14 @@ export type { GenerateCache } from "./middleware.js";
 export {
   assistant,
   createTextMessage,
+  getAgentCapabilities,
+  getAgentSupportTier,
   getTextFromMessages,
   getTextFromParts,
+  getHostedToolClass,
   getToolCallsFromEvents,
   hostedTool,
+  isHostedToolClass,
   isCallableToolDefinition,
   isHostedToolDefinition,
   normalizeFinishReason,

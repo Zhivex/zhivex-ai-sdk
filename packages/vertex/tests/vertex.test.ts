@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, hostedTool, tool, transcribeAudio } from "@zhivex-ai/core";
+import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createVertex, vertexMcpTools } from "../src/index.js";
 
@@ -25,6 +26,7 @@ describe("vertex adapter", () => {
         location: "us-central1",
         fetch: fetchMock as typeof fetch
       }).embeddingModel("text-embedding-005"),
+    expectedAgentTier: "tier-b",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -39,6 +41,82 @@ describe("vertex adapter", () => {
       embeddings: true,
       reasoning: true,
       webSearch: true
+    }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "vertex",
+    modelId: "gemini-2.0-flash",
+    expectedAgentTier: "tier-b",
+    createModel: () =>
+      createVertex({
+        accessToken: "test",
+        projectId: "demo-project",
+        location: "us-central1",
+        fetch: fetchMock as typeof fetch
+      })("gemini-2.0-flash"),
+    mockSimpleRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: { parts: [{ text: "hello from vertex agent" }] }
+            }
+          ]
+        })
+      );
+    },
+    mockToolRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    functionCall: {
+                      id: "tool-1",
+                      name: "weather",
+                      args: { city: "Madrid" }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      );
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: { parts: [{ text: "Madrid is sunny" }] }
+            }
+          ]
+        })
+      );
+    },
+    mockStreamRun: () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\n\n" +
+                "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" world\"}]},\"finishReason\":\"STOP\"}]}\n\n"
+            )
+          );
+          controller.close();
+        }
+      });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
     }
   });
 

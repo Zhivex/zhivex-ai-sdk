@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createTextMessage, embed, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createOllama } from "../src/index.ts";
 
@@ -13,6 +14,7 @@ describe("ollama adapter", () => {
     modelId: "llama3.2",
     createModel: () => createOllama({ fetch: fetchMock as typeof fetch })("llama3.2"),
     createEmbeddingModel: () => createOllama({ fetch: fetchMock as typeof fetch }).embeddingModel("embeddinggemma"),
+    expectedAgentTier: "tier-c",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -27,6 +29,65 @@ describe("ollama adapter", () => {
       embeddings: true,
       reasoning: false,
       webSearch: false
+    }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "ollama",
+    modelId: "llama3.2",
+    expectedAgentTier: "tier-c",
+    createModel: () => createOllama({ fetch: fetchMock as typeof fetch })("llama3.2"),
+    mockSimpleRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          message: { content: "hello from ollama agent" },
+          done_reason: "stop"
+        })
+      );
+    },
+    mockToolRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          message: {
+            content: "",
+            tool_calls: [
+              {
+                function: {
+                  name: "weather",
+                  arguments: JSON.stringify({ city: "Madrid" })
+                }
+              }
+            ]
+          },
+          done_reason: "tool_calls"
+        })
+      );
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          message: { content: "Madrid is sunny" },
+          done_reason: "stop"
+        })
+      );
+    },
+    mockStreamRun: () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              `${JSON.stringify({ message: { content: "hello" }, done: false })}\n` +
+                `${JSON.stringify({ message: { content: " world" }, done: true, done_reason: "stop" })}\n`
+            )
+          );
+          controller.close();
+        }
+      });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "application/x-ndjson" }
+        })
+      );
     }
   });
 

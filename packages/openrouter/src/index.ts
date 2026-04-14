@@ -78,7 +78,18 @@ const capabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: false,
   reasoning: true,
-  webSearch: true
+  webSearch: true,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: true,
+    approvalRequests: false,
+    hostedWebSearch: true,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
 };
 
 const jsonHeaders = (apiKey: string, appName?: string, appURL?: string) => ({
@@ -416,5 +427,6 @@ export const openRouterWebSearchTool = (config: OpenRouterWebSearchToolConfig = 
     name: "web_search",
     provider: "openrouter",
     type: "openrouter:web_search",
+    toolClass: "web-search",
     config: (Object.keys(config).length ? { parameters: config } : {}) as unknown as JsonValue
   });

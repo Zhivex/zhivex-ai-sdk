@@ -52,7 +52,18 @@ const capabilities: ModelCapabilities = {
   audioOutput: false,
   embeddings: false,
   reasoning: false,
-  webSearch: false
+  webSearch: false,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: false,
+    approvalRequests: false,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
 };
 
 const supportedImageFormats = new Set(["png", "jpeg", "gif", "webp"]);
