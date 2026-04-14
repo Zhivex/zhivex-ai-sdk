@@ -116,16 +116,17 @@ The SDK aims to keep the application-facing contract stable, but capability pari
 | Gemini | yes | yes | yes | native | yes | yes | yes | model-dependent | yes | native |
 | Vertex | yes | yes | yes | native | yes | yes | yes | model-dependent | yes | native |
 | OpenRouter | yes | yes | yes | native | no | no | no | `effort` + `budgetTokens` | yes | server tools |
-| Qwen | yes | yes | yes | native | yes | no | no | no | no | no |
-| Kimi | yes | yes | yes | native | no | no | no | no | no | no |
+| Qwen | yes | yes | yes | native | yes | no | no | model-dependent | no | no |
+| Kimi | yes | yes | yes | native | no | no | no | model-dependent | no | no |
 | Bedrock | yes | yes | partial | native | no | no | no | no | no | no |
 | Ollama | yes | yes | no | native | yes | no | no | no | no | no |
 
 Compatibility notes:
 
 - `structured output` means the SDK can use the shared `generateObject()` / `streamObject()` contract. `native` means schema-aware provider support; `prompted` means SDK fallback prompting instead of provider-native schema enforcement.
-- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models.
+- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`.
 - `partial` for Bedrock `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`.
+- Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - `Hosted tools / MCP` refers to provider-native hosted tools or SDK-level MCP mappings, not local callable tools defined with `tool()`. For OpenRouter this currently means server tools such as `openrouter:web_search`.
 
 ## Core Capabilities
@@ -206,10 +207,19 @@ Provider compatibility for the common `reasoning` option:
 - Gemini and Vertex:
   - Gemini 3 models support `effort`
   - Gemini 2.5 and earlier models support `budgetTokens`
+- Qwen:
+  - supported on reasoning-capable model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`
+  - maps to `enable_thinking`, and `budgetTokens` maps to `thinking_budget`
+- Kimi:
+  - supported on thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`
+  - maps to Kimi `thinking.enabled/disabled`
+  - `budgetTokens` is not supported in the common mapping
+  - when reasoning is enabled, `toolChoice` must stay `auto` or `none`
 - Ollama and Bedrock: not supported
-- Qwen and Kimi: not supported yet in the common SDK config
 
 When a provider or model does not support the requested `reasoning` field, the SDK throws an explicit error instead of silently ignoring it. For the broader matrix, see [Provider Compatibility](#provider-compatibility).
+
+For Qwen and Kimi, the SDK also preserves provider reasoning state across multi-step loops by storing `reasoning_content` inside assistant `provider-data` parts and replaying it on subsequent requests when needed.
 
 ### HTTP Responses and UI Streams
 
