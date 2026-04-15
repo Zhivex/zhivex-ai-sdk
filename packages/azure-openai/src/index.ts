@@ -1,18 +1,25 @@
 import { toJSONSchema } from "zod";
 
 import {
+  CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
+  openWebSocketConnection,
   hostedTool,
   providerDataPart,
   UnsupportedFeatureError,
   createProviderAdapter,
+  encodeAudioFrame,
   isCallableToolDefinition,
   isHostedToolDefinition,
   normalizeFinishReason,
   streamSSE,
+  toToolSet,
+  toolResultPayload,
+  unsupportedBrowserToken,
   withRetry,
   withTimeoutSignal,
+  type AudioFrame,
   type AudioInput,
   type CallableProviderAdapter,
   type EmbedInput,
@@ -27,6 +34,11 @@ import {
   type ModelGenerateInput,
   type ModelMessage,
   type ProviderAdapter,
+  type RealtimeConnectOptions,
+  type RealtimeConnectionFactory,
+  type RealtimeModel,
+  type RealtimeSessionConfig,
+  type RealtimeTokenResult,
   type SpeechModel,
   type SpeechResult,
   type StreamEvent,
@@ -39,6 +51,9 @@ export interface AzureOpenAIProviderOptions {
   endpoint?: string;
   apiVersion?: string;
   fetch?: typeof globalThis.fetch;
+  realtimeConnectionFactory?: RealtimeConnectionFactory;
+  realtimeURL?: string;
+  browserTokenURL?: string;
 }
 
 export interface AzureOpenAIWebSearchToolConfig {
@@ -225,6 +240,20 @@ const groundedCapabilities: ModelCapabilities = {
   webSearch: true
 };
 
+const realtimeCapabilities: ModelCapabilities = {
+  ...capabilities,
+  streaming: false,
+  audioInput: true,
+  audioOutput: true,
+  realtime: {
+    sessions: true,
+    audioInput: true,
+    audioOutput: true,
+    tools: true,
+    browserTokens: false
+  }
+};
+
 const jsonHeaders = (apiKey: string) => ({
   "content-type": "application/json",
   "api-key": apiKey
@@ -392,6 +421,171 @@ const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
       name: toolChoice.toolName
     }
   };
+};
+
+const mapRealtimeProviderOptions = (providerOptions: Record<string, unknown> | undefined) => {
+  if (!providerOptions) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(providerOptions).filter(([key]) => !["headers", "realtime_url", "realtime_query", "expires_after"].includes(key))
+  );
+};
+
+const mapRealtimeAudioFormat = (mediaType: string | undefined, sampleRateHz: number | undefined) =>
+  mediaType || sampleRateHz
+    ? {
+        ...(mediaType ? { type: mediaType } : {}),
+        ...(sampleRateHz ? { rate: sampleRateHz } : {})
+      }
+    : undefined;
+
+const mapRealtimeSessionConfig = (config: RealtimeSessionConfig, modelId?: string) => ({
+  type: "realtime",
+  model: modelId,
+  instructions: config.instructions,
+  output_modalities: config.outputAudioMediaType || config.voice ? ["audio"] : ["text"],
+  tools: mapTools(toToolSet(config.tools)),
+  tool_choice: config.toolChoice ? mapToolChoice(config.toolChoice) : undefined,
+  audio: {
+    input: {
+      format: mapRealtimeAudioFormat(config.inputAudioMediaType, config.inputSampleRateHz),
+      turn_detection: config.turnDetection ?? undefined
+    },
+    output: {
+      format: mapRealtimeAudioFormat(config.outputAudioMediaType, config.outputSampleRateHz),
+      voice: config.voice
+    }
+  },
+  ...mapRealtimeProviderOptions(config.providerOptions)
+});
+
+const azureOpenAIRealtimeURL = (endpoint: string, modelId: string, apiVersion: string | undefined, override?: string) => {
+  if (override) {
+    return override;
+  }
+
+  const url = new URL(endpoint);
+  url.protocol = url.protocol === "https:" ? "wss:" : url.protocol === "http:" ? "ws:" : url.protocol;
+  if (apiVersion) {
+    url.pathname = "/openai/realtime";
+    url.searchParams.set("api-version", apiVersion);
+    url.searchParams.set("deployment", modelId);
+  } else {
+    url.pathname = "/openai/v1/realtime";
+    url.searchParams.set("model", modelId);
+  }
+  return url.toString();
+};
+
+const parseAzureRealtimeEvent = (payload: Record<string, unknown>) => {
+  const type = String(payload.type ?? "");
+  if (type === "session.created" || type === "session.updated") {
+    return [];
+  }
+  if (type === "response.text.delta" || type === "response.output_text.delta") {
+    return [
+      {
+        type: "realtime-text-delta" as const,
+        textDelta: String(payload.delta ?? ""),
+        itemId: typeof payload.item_id === "string" ? payload.item_id : undefined,
+        responseId: typeof payload.response_id === "string" ? payload.response_id : undefined,
+        role: "assistant" as const,
+        providerMetadata: payload as Record<string, JsonValue>
+      }
+    ];
+  }
+  if (type === "response.audio.delta" || type === "response.output_audio.delta") {
+    return [
+      {
+        type: "realtime-audio-output" as const,
+        audio: Buffer.from(String(payload.delta ?? ""), "base64"),
+        mediaType: typeof payload.media_type === "string" ? payload.media_type : "audio/pcm",
+        sampleRateHz: typeof payload.sample_rate_hz === "number" ? payload.sample_rate_hz : undefined,
+        channels: typeof payload.channels === "number" ? payload.channels : undefined,
+        itemId: typeof payload.item_id === "string" ? payload.item_id : undefined,
+        responseId: typeof payload.response_id === "string" ? payload.response_id : undefined,
+        providerMetadata: payload as Record<string, JsonValue>
+      }
+    ];
+  }
+  if (type === "conversation.item.input_audio_transcription.completed" || type === "input_audio_buffer.transcription.completed") {
+    return [
+      {
+        type: "realtime-transcript" as const,
+        text: String(payload.transcript ?? ""),
+        role: "user" as const,
+        isFinal: true,
+        itemId: typeof payload.item_id === "string" ? payload.item_id : undefined,
+        providerMetadata: payload as Record<string, JsonValue>
+      }
+    ];
+  }
+  if (type === "response.audio_transcript.delta" || type === "response.audio_transcription.delta" || type === "response.output_audio_transcript.delta") {
+    return [
+      {
+        type: "realtime-transcript" as const,
+        text: String(payload.delta ?? ""),
+        role: "assistant" as const,
+        isFinal: false,
+        itemId: typeof payload.item_id === "string" ? payload.item_id : undefined,
+        responseId: typeof payload.response_id === "string" ? payload.response_id : undefined,
+        providerMetadata: payload as Record<string, JsonValue>
+      }
+    ];
+  }
+  if (type === "response.audio_transcript.done" || type === "response.audio_transcription.done" || type === "response.output_audio_transcript.done") {
+    return [
+      {
+        type: "realtime-transcript" as const,
+        text: String(payload.transcript ?? ""),
+        role: "assistant" as const,
+        isFinal: true,
+        itemId: typeof payload.item_id === "string" ? payload.item_id : undefined,
+        responseId: typeof payload.response_id === "string" ? payload.response_id : undefined,
+        providerMetadata: payload as Record<string, JsonValue>
+      }
+    ];
+  }
+  if (type === "response.function_call_arguments.done" || type === "response.output_item.done") {
+    const item = payload.item && typeof payload.item === "object" ? (payload.item as Record<string, unknown>) : undefined;
+    const name = typeof payload.name === "string" ? payload.name : typeof item?.name === "string" ? item.name : undefined;
+    const callId = typeof payload.call_id === "string" ? payload.call_id : typeof item?.call_id === "string" ? item.call_id : undefined;
+    const rawArgs = typeof payload.arguments === "string" ? payload.arguments : typeof item?.arguments === "string" ? item.arguments : "{}";
+    if (!name || !callId) {
+      return [];
+    }
+    return [
+      {
+        type: "realtime-tool-call" as const,
+        toolCall: {
+          id: callId,
+          name,
+          input: JSON.parse(rawArgs || "{}") as JsonValue
+        }
+      }
+    ];
+  }
+  if (type === "response.done") {
+    return [
+      {
+        type: "realtime-response-complete" as const,
+        reason: typeof payload.status === "string" ? payload.status : undefined,
+        providerMetadata: payload as Record<string, JsonValue>
+      }
+    ];
+  }
+  if (type === "error") {
+    return [
+      {
+        type: "realtime-error" as const,
+        message: typeof payload.message === "string" ? payload.message : "Realtime API error.",
+        providerMetadata: payload as Record<string, JsonValue>
+      }
+    ];
+  }
+  return [];
 };
 
 const mapStructuredOutput = (input: ModelGenerateInput) => {
@@ -1149,6 +1343,107 @@ class AzureOpenAIGroundedLanguageModel implements GroundedLanguageModel {
   }
 }
 
+class AzureOpenAIRealtimeModel implements RealtimeModel {
+  readonly provider = "azure-openai";
+  readonly capabilities = realtimeCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly endpoint: string,
+    private readonly apiVersion: string | undefined,
+    private readonly connectionFactory?: RealtimeConnectionFactory,
+    private readonly realtimeURL?: string,
+    private readonly browserTokenURL?: string
+  ) {}
+
+  async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
+    const providerOptions = (config.providerOptions ?? {}) as Record<string, unknown>;
+    const url = new URL(
+      azureOpenAIRealtimeURL(
+        this.endpoint,
+        this.modelId,
+        this.apiVersion,
+        this.realtimeURL ?? (typeof providerOptions.realtime_url === "string" ? providerOptions.realtime_url : undefined)
+      )
+    );
+    if (!this.connectionFactory) {
+      url.searchParams.set("api-key", this.apiKey);
+    }
+
+    const connection = await (this.connectionFactory ?? openWebSocketConnection)(
+      url.toString(),
+      this.connectionFactory ? { "api-key": this.apiKey } : {},
+      options
+    );
+
+    const session = new CallbackRealtimeSession({
+      provider: this.provider,
+      modelId: this.modelId,
+      capabilities: this.capabilities,
+      config: {
+        autoResponse: true,
+        ...config
+      },
+      connection,
+      callbacks: {
+        parseEvent: parseAzureRealtimeEvent,
+        buildAudioPayloads: (frame, sessionConfig) => {
+          const payloads: Array<Record<string, unknown>> = [{ type: "input_audio_buffer.append", audio: encodeAudioFrame(frame) }];
+          if (frame.isFinal) {
+            payloads.push({ type: "input_audio_buffer.commit" });
+            if (sessionConfig.autoResponse ?? true) {
+              payloads.push({ type: "response.create" });
+            }
+          }
+          return payloads;
+        },
+        buildTextPayloads: (text, sessionConfig) => {
+          const payloads: Array<Record<string, unknown>> = [
+            {
+              type: "conversation.item.create",
+              item: {
+                type: "message",
+                role: "user",
+                content: [{ type: "input_text", text }]
+              }
+            }
+          ];
+          if (sessionConfig.autoResponse ?? true) {
+            payloads.push({ type: "response.create" });
+          }
+          return payloads;
+        },
+        buildToolResultPayloads: (result, sessionConfig) => {
+          const payloads: Array<Record<string, unknown>> = [
+            {
+              type: "conversation.item.create",
+              item: {
+                type: "function_call_output",
+                call_id: result.toolCallId,
+                output: JSON.stringify(toolResultPayload(result))
+              }
+            }
+          ];
+          if (sessionConfig.autoResponse ?? true) {
+            payloads.push({ type: "response.create" });
+          }
+          return payloads;
+        },
+        buildUpdatePayloads: (sessionConfig) => [{ type: "session.update", session: mapRealtimeSessionConfig(sessionConfig, this.modelId) }],
+        buildInitialPayloads: (sessionConfig) => [{ type: "session.update", session: mapRealtimeSessionConfig(sessionConfig, this.modelId) }]
+      }
+    });
+    await session.initialize();
+    return session;
+  }
+
+  async createBrowserToken(): Promise<RealtimeTokenResult> {
+    void this.browserTokenURL;
+    return unsupportedBrowserToken();
+  }
+}
+
 const normalizeEndpoint = (endpoint: string) => endpoint.replace(/\/+$/, "");
 type AzurePath = "chat/completions" | "embeddings" | "audio/transcriptions" | "audio/speech" | "responses";
 
@@ -1424,6 +1719,16 @@ export const createAzureOpenAI = (
       })(modelId, apiKey, baseURL, fetcher),
     transcriptionModel: (modelId) => new AzureOpenAITranscriptionModel(modelId, apiKey, resolveURL, fetcher),
     speechModel: (modelId) => new AzureOpenAISpeechModel(modelId, apiKey, resolveURL, fetcher),
+    realtimeModel: (modelId) =>
+      new AzureOpenAIRealtimeModel(
+        modelId,
+        apiKey,
+        normalizeEndpoint(endpoint),
+        apiVersion,
+        options.realtimeConnectionFactory,
+        options.realtimeURL,
+        options.browserTokenURL
+      ),
     groundedLanguageModel: (modelId) => new AzureOpenAIGroundedLanguageModel(modelId, apiKey, resolveURL, fetcher),
     rawFetch: fetcher
   });

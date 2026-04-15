@@ -1,15 +1,21 @@
 import { toJSONSchema } from "zod";
 
 import {
+  CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
   createMcpToolSet,
   createProviderAdapter,
+  encodeAudioFrame,
   isCallableToolDefinition,
   isHostedToolDefinition,
   normalizeFinishReason,
+  openWebSocketConnection,
   streamSSE,
+  toToolSet,
+  toolResultPayload,
+  unsupportedBrowserToken,
   withRetry,
   withTimeoutSignal,
   type AudioInput,
@@ -20,11 +26,16 @@ import {
   type GenerateResult,
   type GroundedGenerateResult,
   type GroundedLanguageModel,
+  type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
   type ProviderAdapter,
+  type RealtimeConnectOptions,
+  type RealtimeConnectionFactory,
+  type RealtimeModel,
+  type RealtimeSessionConfig,
   type SpeechModel,
   type SpeechResult,
   type StreamEvent,
@@ -39,6 +50,8 @@ export interface VertexProviderOptions {
   apiVersion?: string;
   baseURL?: string;
   fetch?: typeof globalThis.fetch;
+  realtimeURL?: string;
+  realtimeConnectionFactory?: RealtimeConnectionFactory;
 }
 
 export interface VertexLanguageModelOptions {
@@ -112,6 +125,20 @@ const speechCapabilities: ModelCapabilities = {
 const groundedCapabilities: ModelCapabilities = {
   ...capabilities,
   webSearch: true
+};
+
+const realtimeCapabilities: ModelCapabilities = {
+  ...capabilities,
+  streaming: false,
+  audioInput: true,
+  audioOutput: true,
+  realtime: {
+    sessions: true,
+    audioInput: true,
+    audioOutput: true,
+    tools: true,
+    browserTokens: false
+  }
 };
 
 const parseJson = async (response: Response) => {
@@ -250,6 +277,227 @@ const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"], tools: Mode
       allowedFunctionNames: [toolChoice.toolName]
     }
   };
+};
+
+const mapRealtimeProviderOptions = (providerOptions: Record<string, unknown> | undefined) =>
+  providerOptions
+    ? Object.fromEntries(
+        Object.entries(providerOptions).filter(([key]) => !["headers", "realtime_url"].includes(key))
+      )
+    : {};
+
+const vertexRealtimeURL = (
+  location: string,
+  apiVersion: string,
+  providerOptions?: Record<string, unknown>,
+  override?: string
+) => {
+  const candidate = override ?? (typeof providerOptions?.realtime_url === "string" ? providerOptions.realtime_url : undefined);
+  return candidate || `wss://${location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.${apiVersion}.PredictionService.BidiGenerateContent`;
+};
+
+const vertexRealtimeHeaders = (accessToken: string, providerOptions?: Record<string, unknown>) => ({
+  authorization: `Bearer ${accessToken}`,
+  ...(typeof providerOptions?.headers === "object" && providerOptions.headers && !Array.isArray(providerOptions.headers)
+    ? Object.fromEntries(
+        Object.entries(providerOptions.headers as Record<string, unknown>).map(([key, value]) => [key, String(value)])
+      )
+    : {})
+});
+
+const vertexRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => ({
+  setup: {
+    model: `models/${modelId}`,
+    generationConfig: {
+      ...(config.voice
+        ? {
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: config.voice
+                }
+              }
+            }
+          }
+        : {}),
+      responseModalities: config.outputAudioMediaType ? ["AUDIO"] : ["TEXT"]
+    },
+    ...(config.instructions
+      ? {
+          systemInstruction: {
+            parts: [{ text: config.instructions }]
+          }
+        }
+      : {}),
+    ...(mapTools(toToolSet(config.tools)) ? { tools: mapTools(toToolSet(config.tools)) } : {}),
+    ...mapRealtimeProviderOptions(config.providerOptions as Record<string, unknown> | undefined)
+  }
+});
+
+const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
+  if ("setupComplete" in payload) {
+    return [];
+  }
+
+  const serverContent =
+    typeof payload.serverContent === "object" && payload.serverContent
+      ? (payload.serverContent as Record<string, unknown>)
+      : typeof payload.server_content === "object" && payload.server_content
+        ? (payload.server_content as Record<string, unknown>)
+        : undefined;
+  if (serverContent) {
+    const modelTurn =
+      typeof serverContent.modelTurn === "object" && serverContent.modelTurn
+        ? (serverContent.modelTurn as Record<string, unknown>)
+        : typeof serverContent.model_turn === "object" && serverContent.model_turn
+          ? (serverContent.model_turn as Record<string, unknown>)
+          : {};
+    const parts = Array.isArray(modelTurn.parts) ? modelTurn.parts : [];
+    const events = [];
+
+    for (const part of parts) {
+      if (!part || typeof part !== "object") {
+        continue;
+      }
+      const typedPart = part as Record<string, unknown>;
+      if (typeof typedPart.text === "string" && typedPart.text) {
+        events.push({
+          type: "realtime-text-delta" as const,
+          textDelta: typedPart.text,
+          providerMetadata: payload as Record<string, JsonValue>
+        });
+      }
+      const inline =
+        typeof typedPart.inlineData === "object" && typedPart.inlineData
+          ? (typedPart.inlineData as Record<string, unknown>)
+          : typeof typedPart.inline_data === "object" && typedPart.inline_data
+            ? (typedPart.inline_data as Record<string, unknown>)
+            : undefined;
+      if (inline && typeof inline.data === "string" && inline.data) {
+        events.push({
+          type: "realtime-audio-output" as const,
+          audio: Buffer.from(inline.data, "base64"),
+          mediaType: typeof inline.mimeType === "string" ? inline.mimeType : typeof inline.mime_type === "string" ? inline.mime_type : "audio/pcm",
+          providerMetadata: payload as Record<string, JsonValue>
+        });
+      }
+      if (typedPart.functionCall && typeof typedPart.functionCall === "object") {
+        const call = typedPart.functionCall as Record<string, unknown>;
+        events.push({
+          type: "realtime-tool-call" as const,
+          toolCall: {
+            id: typeof call.id === "string" ? call.id : `${String(call.name ?? "")}-0`,
+            name: String(call.name ?? ""),
+            input: (call.args ?? {}) as JsonValue
+          }
+        });
+      }
+    }
+
+    const inputTranscription =
+      typeof serverContent.inputTranscription === "object" && serverContent.inputTranscription
+        ? (serverContent.inputTranscription as Record<string, unknown>)
+        : typeof serverContent.input_transcription === "object" && serverContent.input_transcription
+          ? (serverContent.input_transcription as Record<string, unknown>)
+          : undefined;
+    if (inputTranscription && typeof inputTranscription.text === "string" && inputTranscription.text) {
+      events.push({
+        type: "realtime-transcript" as const,
+        text: inputTranscription.text,
+        role: "user" as const,
+        isFinal: Boolean(serverContent.turnComplete ?? serverContent.turn_complete),
+        providerMetadata: payload as Record<string, JsonValue>
+      });
+    }
+
+    const outputTranscription =
+      typeof serverContent.outputTranscription === "object" && serverContent.outputTranscription
+        ? (serverContent.outputTranscription as Record<string, unknown>)
+        : typeof serverContent.output_transcription === "object" && serverContent.output_transcription
+          ? (serverContent.output_transcription as Record<string, unknown>)
+          : undefined;
+    if (outputTranscription && typeof outputTranscription.text === "string" && outputTranscription.text) {
+      events.push({
+        type: "realtime-transcript" as const,
+        text: outputTranscription.text,
+        role: "assistant" as const,
+        isFinal: Boolean(serverContent.turnComplete ?? serverContent.turn_complete),
+        providerMetadata: payload as Record<string, JsonValue>
+      });
+    }
+
+    if (serverContent.generationComplete || serverContent.generation_complete) {
+      events.push({
+        type: "realtime-response-complete" as const,
+        reason: "generation-complete",
+        providerMetadata: payload as Record<string, JsonValue>
+      });
+    }
+    if (serverContent.turnComplete || serverContent.turn_complete) {
+      events.push({
+        type: "realtime-response-complete" as const,
+        reason: "turn-complete",
+        providerMetadata: payload as Record<string, JsonValue>
+      });
+    }
+
+    return events;
+  }
+
+  const sessionResumption =
+    typeof payload.sessionResumptionUpdate === "object" && payload.sessionResumptionUpdate
+      ? (payload.sessionResumptionUpdate as Record<string, unknown>)
+      : typeof payload.session_resumption_update === "object" && payload.session_resumption_update
+        ? (payload.session_resumption_update as Record<string, unknown>)
+        : undefined;
+  if (sessionResumption) {
+    return [
+      {
+        type: "realtime-session-resumption" as const,
+        handle:
+          typeof sessionResumption.newHandle === "string"
+            ? sessionResumption.newHandle
+            : typeof sessionResumption.new_handle === "string"
+              ? sessionResumption.new_handle
+              : undefined,
+        resumable: typeof sessionResumption.resumable === "boolean" ? sessionResumption.resumable : undefined,
+        providerMetadata: payload as Record<string, JsonValue>
+      }
+    ];
+  }
+
+  const goAway =
+    typeof payload.goAway === "object" && payload.goAway
+      ? (payload.goAway as Record<string, unknown>)
+      : typeof payload.go_away === "object" && payload.go_away
+        ? (payload.go_away as Record<string, unknown>)
+        : undefined;
+  if (goAway) {
+    return [
+      {
+        type: "realtime-go-away" as const,
+        timeLeftMs:
+          typeof goAway.timeLeftMs === "number"
+            ? goAway.timeLeftMs
+            : typeof goAway.time_left_ms === "number"
+              ? goAway.time_left_ms
+              : undefined,
+        providerMetadata: payload as Record<string, JsonValue>
+      }
+    ];
+  }
+
+  if (payload.error && typeof payload.error === "object") {
+    return [
+      {
+        type: "realtime-end" as const,
+        reason: "error",
+        providerMetadata: payload as Record<string, JsonValue>
+      }
+    ];
+  }
+
+  return [];
 };
 
 const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
@@ -749,6 +997,83 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
   }
 }
 
+class VertexRealtimeModel implements RealtimeModel {
+  readonly provider = "vertex";
+  readonly capabilities = realtimeCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly accessToken: string,
+    private readonly location: string,
+    private readonly apiVersion: string,
+    private readonly connectionFactory?: RealtimeConnectionFactory,
+    private readonly realtimeURL?: string
+  ) {}
+
+  async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
+    const providerOptions = (config.providerOptions ?? {}) as Record<string, unknown>;
+    const connection = await (this.connectionFactory ?? openWebSocketConnection)(
+      vertexRealtimeURL(this.location, this.apiVersion, providerOptions, this.realtimeURL),
+      vertexRealtimeHeaders(this.accessToken, providerOptions),
+      options
+    );
+    const session = new CallbackRealtimeSession({
+      provider: this.provider,
+      modelId: this.modelId,
+      capabilities: this.capabilities,
+      config,
+      connection,
+      callbacks: {
+        parseEvent: parseVertexRealtimeEvent,
+        buildAudioPayloads: (frame) => [
+          {
+            realtimeInput: {
+              audio: {
+                mimeType: frame.mediaType,
+                data: encodeAudioFrame(frame)
+              }
+            }
+          }
+        ],
+        buildTextPayloads: (text) => [
+          {
+            clientContent: {
+              turns: [
+                {
+                  role: "user",
+                  parts: [{ text }]
+                }
+              ],
+              turnComplete: true
+            }
+          }
+        ],
+        buildToolResultPayloads: (result) => [
+          {
+            toolResponse: {
+              functionResponses: [
+                {
+                  id: result.toolCallId,
+                  name: result.toolName,
+                  response: toolResultPayload(result)
+                }
+              ]
+            }
+          }
+        ],
+        buildUpdatePayloads: (sessionConfig) => [vertexRealtimeSetup(sessionConfig, this.modelId)],
+        buildInitialPayloads: (sessionConfig) => [vertexRealtimeSetup(sessionConfig, this.modelId)]
+      }
+    });
+    await session.initialize();
+    return session;
+  }
+
+  async createBrowserToken() {
+    return unsupportedBrowserToken();
+  }
+}
+
 export const createVertex = (
   options: VertexProviderOptions = {}
 ): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
@@ -775,6 +1100,15 @@ export const createVertex = (
     embeddingModel: (modelId) => new VertexEmbeddingModel(modelId, baseURL, accessToken, fetcher),
     transcriptionModel: (modelId) => new VertexTranscriptionModel(modelId, baseURL, accessToken, fetcher),
     speechModel: (modelId) => new VertexSpeechModel(modelId, baseURL, accessToken, fetcher),
+    realtimeModel: (modelId) =>
+      new VertexRealtimeModel(
+        modelId,
+        accessToken,
+        location,
+        apiVersion,
+        options.realtimeConnectionFactory,
+        options.realtimeURL
+      ),
     groundedLanguageModel: (modelId) => new VertexGroundedLanguageModel(modelId, baseURL, accessToken, fetcher),
     rawFetch: fetcher
   });

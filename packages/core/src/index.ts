@@ -1,4 +1,5 @@
 export { createAgent, resumeAgent, runAgent, streamAgent } from "./agent.js";
+export { streamLiveAgent } from "./live-agent.js";
 export {
   agentApprovalResponsePart,
   createAgentApprovalMessage,
@@ -6,7 +7,16 @@ export {
   getAgentApprovalRequests
 } from "./agent-approval.js";
 export { createAgentHandoff, createAgentHandoffMessage, runAgentHandoff } from "./agent-handoff.js";
-export { createFileAgentMemoryStore, createFileAgentRunStore, createInMemoryAgentMemoryStore, createInMemoryAgentRunStore } from "./agent-store.js";
+export {
+  createFileAgentMemoryStore,
+  createFileAgentRunStore,
+  createInMemoryAgentMemoryStore,
+  createInMemoryAgentRunStore,
+  createPostgresAgentMemoryStore,
+  createPostgresAgentRunStore,
+  createSqliteAgentMemoryStore,
+  createSqliteAgentRunStore
+} from "./agent-store.js";
 export { generateSpeech, transcribeAudio } from "./audio.js";
 export { embed, embedMany } from "./embed.js";
 export * from "./catalog.js";
@@ -14,9 +24,11 @@ export * from "./errors.js";
 export * from "./fetch.js";
 export { generateObject, streamObject } from "./generate-object.js";
 export { generateGroundedText } from "./grounded-text.js";
-export { createMcpToolSet } from "./mcp.js";
+export { createMcpToolRegistry, createMcpToolSet } from "./mcp.js";
 export type { McpCallToolRequest, McpCallToolResponse, McpClient, McpListedTool, McpListToolsResponse, McpToolAnnotations, McpToolSetOptions } from "./mcp.js";
 export { generateText, normalizeMessages, streamText } from "./generate-text.js";
+export { createOtelAgentObserver, createOtelObserver, createOtelTelemetryMiddleware, OTelObserver, OTelSpanHandle } from "./observability.js";
+export type { OTelSpanLike, OTelTracerLike } from "./observability.js";
 export {
   createCachedGenerateMiddleware,
   createCircuitBreakerMiddleware,
@@ -51,7 +63,16 @@ export {
   user,
   validateMessageParts
 } from "./messages.js";
+export {
+  CallbackRealtimeSession,
+  encodeAudioFrame,
+  openWebSocketConnection,
+  toolResultPayload,
+  unsupportedBrowserToken
+} from "./realtime.js";
+export type { RealtimeConnection, RealtimeConnectionFactory, RealtimeEventParser, RealtimePayloadBuilder, RealtimeSessionCallbacks } from "./realtime.js";
 export { createProviderAdapter, mergeAbortSignals, withRetry, withTimeoutSignal } from "./runtime.js";
 export * from "./stream.js";
+export { createToolRegistry, isToolRegistry, toToolSet, ToolRegistry } from "./tool-registry.js";
 export * from "./types.js";
 export * from "./ui.js";

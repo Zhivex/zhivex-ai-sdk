@@ -12,6 +12,10 @@ import {
   createFileAgentRunStore,
   createInMemoryAgentMemoryStore,
   createInMemoryAgentRunStore,
+  createPostgresAgentMemoryStore,
+  createPostgresAgentRunStore,
+  createSqliteAgentMemoryStore,
+  createSqliteAgentRunStore,
   createTextMessage,
   getAgentApprovalRequests,
   resumeAgent,
@@ -21,7 +25,11 @@ import {
   toUIAgentStreamResponse,
   toUIMessageStream,
   tool,
+  type AgentRunState,
+  type PostgresClientLike,
   type LanguageModel,
+  type ModelMessage,
+  type SqliteDatabaseLike,
   type StreamEvent
 } from "../src/index.js";
 
@@ -59,6 +67,115 @@ const createLanguageModel = (overrides?: Partial<LanguageModel>): LanguageModel 
   },
   ...overrides
 });
+
+class FakeSqliteDatabase implements SqliteDatabaseLike {
+  private runTables = new Map<string, Map<string, string>>();
+  private memoryTables = new Map<string, Map<string, string>>();
+
+  exec(sql: string) {
+    const match = sql.match(/CREATE TABLE IF NOT EXISTS\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+    if (!match) {
+      return;
+    }
+
+    const tableName = match[1]!;
+    if (sql.includes("run_id")) {
+      this.runTables.set(tableName, this.runTables.get(tableName) ?? new Map());
+      return;
+    }
+
+    this.memoryTables.set(tableName, this.memoryTables.get(tableName) ?? new Map());
+  }
+
+  prepare<TResult extends Record<string, unknown> = Record<string, unknown>>(sql: string) {
+    return {
+      run: (params?: readonly unknown[]) => {
+        const values = [...(params ?? [])];
+        const insertMatch = sql.match(/INSERT INTO\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+        const deleteMatch = sql.match(/DELETE FROM\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+
+        if (insertMatch) {
+          const tableName = insertMatch[1]!;
+          if (sql.includes("run_id")) {
+            this.runTables.get(tableName)?.set(String(values[0]), String(values[1]));
+            return;
+          }
+
+          this.memoryTables.get(tableName)?.set(String(values[0]), String(values[1]));
+          return;
+        }
+
+        if (deleteMatch) {
+          this.runTables.get(deleteMatch[1]!)?.delete(String(values[0]));
+        }
+      },
+      get: (params?: readonly unknown[]) => {
+        const values = [...(params ?? [])];
+        const selectMatch = sql.match(/SELECT\s+.+\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+        if (!selectMatch) {
+          return undefined;
+        }
+
+        const tableName = selectMatch[1]!;
+        if (sql.includes("state_json")) {
+          const stateJson = this.runTables.get(tableName)?.get(String(values[0]));
+          return stateJson ? ({ state_json: stateJson } as TResult) : undefined;
+        }
+
+        const messagesJson = this.memoryTables.get(tableName)?.get(String(values[0]));
+        return messagesJson ? ({ messages_json: messagesJson } as TResult) : undefined;
+      }
+    };
+  }
+}
+
+class FakePostgresClient implements PostgresClientLike {
+  private runTables = new Map<string, Map<string, AgentRunState>>();
+  private memoryTables = new Map<string, Map<string, ModelMessage[]>>();
+
+  async query<TResult extends Record<string, unknown> = Record<string, unknown>>(sql: string, params: readonly unknown[] = []) {
+    const createMatch = sql.match(/CREATE TABLE IF NOT EXISTS\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+    if (createMatch) {
+      const tableName = createMatch[1]!;
+      if (sql.includes("run_id")) {
+        this.runTables.set(tableName, this.runTables.get(tableName) ?? new Map());
+      } else {
+        this.memoryTables.set(tableName, this.memoryTables.get(tableName) ?? new Map());
+      }
+      return { rows: [] as TResult[] };
+    }
+
+    const insertMatch = sql.match(/INSERT INTO\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+    if (insertMatch) {
+      const tableName = insertMatch[1]!;
+      if (sql.includes("run_id")) {
+        this.runTables.get(tableName)?.set(String(params[0]), JSON.parse(String(params[1])) as AgentRunState);
+      } else {
+        this.memoryTables.get(tableName)?.set(String(params[0]), JSON.parse(String(params[1])) as ModelMessage[]);
+      }
+      return { rows: [] as TResult[] };
+    }
+
+    const selectMatch = sql.match(/SELECT\s+.+\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+    if (selectMatch) {
+      const tableName = selectMatch[1]!;
+      if (sql.includes("state_json")) {
+        const state = this.runTables.get(tableName)?.get(String(params[0]));
+        return { rows: state ? ([{ state_json: state }] as TResult[]) : [] };
+      }
+
+      const messages = this.memoryTables.get(tableName)?.get(String(params[0]));
+      return { rows: messages ? ([{ messages_json: messages }] as TResult[]) : [] };
+    }
+
+    const deleteMatch = sql.match(/DELETE FROM\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+    if (deleteMatch) {
+      this.runTables.get(deleteMatch[1]!)?.delete(String(params[0]));
+    }
+
+    return { rows: [] as TResult[] };
+  }
+}
 
 describe("agent runtime", () => {
   it("runs a simple agent and returns serializable state", async () => {
@@ -254,6 +371,61 @@ describe("agent runtime", () => {
     expect(final.status).toBe("completed");
     expect(final.outputText).toBe("streamed answer");
     expect(final.state.currentStep).toBe(1);
+  });
+
+  it("fails fast when an input guardrail is triggered", async () => {
+    let modelCalled = false;
+    const agent = createAgent({
+      id: "guarded-input",
+      model: createLanguageModel({
+        async generate() {
+          modelCalled = true;
+          return {
+            messages: [createTextMessage("assistant", "should not run")],
+            text: "should not run",
+            finishReason: "stop"
+          };
+        }
+      }),
+      inputGuardrails: [
+        async () => ({
+          triggered: true,
+          reason: "Blocked by input guardrail."
+        })
+      ]
+    });
+
+    const result = await runAgent(agent, {
+      prompt: "Say hello"
+    });
+
+    expect(modelCalled).toBe(false);
+    expect(result.status).toBe("failed");
+    expect(result.error?.message).toBe("Blocked by input guardrail.");
+  });
+
+  it("fails when an output guardrail is triggered", async () => {
+    const agent = createAgent({
+      id: "guarded-output",
+      model: createLanguageModel(),
+      outputGuardrails: [
+        async ({ output }) =>
+          output.outputText.includes("hello")
+            ? {
+                triggered: true,
+                reason: "Blocked by output guardrail."
+              }
+            : undefined
+      ]
+    });
+
+    const result = await runAgent(agent, {
+      prompt: "Say hello"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.outputText).toBe("hello world");
+    expect(result.error?.message).toBe("Blocked by output guardrail.");
   });
 
   it("suspends an agent when the model emits an approval request", async () => {
@@ -583,6 +755,64 @@ describe("agent runtime", () => {
     expect(saved.outputText).toBe("hello world");
   });
 
+  it("persists run state through the sqlite-backed store", async () => {
+    const db = new FakeSqliteDatabase();
+    const store = createSqliteAgentRunStore({
+      db,
+      tableName: "agent_runs"
+    });
+    const agent = createAgent({
+      id: "sqlite-agent",
+      model: createLanguageModel(),
+      store
+    });
+
+    const first = await runAgent(agent, {
+      prompt: "Persist in sqlite"
+    });
+
+    const reloaded = createSqliteAgentRunStore({
+      db,
+      tableName: "agent_runs"
+    });
+    const loaded = await Promise.resolve(reloaded.load(first.state.runId));
+
+    expect(loaded?.runId).toBe(first.state.runId);
+    expect(loaded?.outputText).toBe("hello world");
+
+    await Promise.resolve(reloaded.delete?.(first.state.runId));
+    await expect(Promise.resolve(reloaded.load(first.state.runId))).resolves.toBeUndefined();
+  });
+
+  it("persists run state through the postgres-backed store", async () => {
+    const client = new FakePostgresClient();
+    const store = createPostgresAgentRunStore({
+      client,
+      tableName: "agent_runs"
+    });
+    const agent = createAgent({
+      id: "postgres-agent",
+      model: createLanguageModel(),
+      store
+    });
+
+    const first = await runAgent(agent, {
+      prompt: "Persist in postgres"
+    });
+
+    const reloaded = createPostgresAgentRunStore({
+      client,
+      tableName: "agent_runs"
+    });
+    const loaded = await reloaded.load(first.state.runId);
+
+    expect(loaded?.runId).toBe(first.state.runId);
+    expect(loaded?.outputText).toBe("hello world");
+
+    await reloaded.delete?.(first.state.runId);
+    await expect(reloaded.load(first.state.runId)).resolves.toBeUndefined();
+  });
+
   it("loads memory into fresh runs and saves the latest assistant context", async () => {
     const memory = createInMemoryAgentMemoryStore({
       initialMessages: {
@@ -619,6 +849,152 @@ describe("agent runtime", () => {
     expect(stored.at(-1)?.parts[0]).toMatchObject({
       type: "text",
       text: "Memory updated"
+    });
+  });
+
+  it("emits tool approval telemetry when a local tool is denied", async () => {
+    const events: string[] = [];
+    let callCount = 0;
+    const agent = createAgent({
+      id: "tool-approval-agent",
+      model: createLanguageModel({
+        async generate() {
+          callCount += 1;
+          if (callCount === 1) {
+            return {
+              messages: [
+                {
+                  role: "assistant",
+                  parts: [
+                    {
+                      type: "tool-call",
+                      toolCall: {
+                        id: "tool-1",
+                        name: "weather",
+                        input: { city: "Madrid" }
+                      }
+                    }
+                  ]
+                }
+              ],
+              finishReason: "tool-calls"
+            };
+          }
+
+          return {
+            messages: [createTextMessage("assistant", "Denied and continued")],
+            text: "Denied and continued",
+            finishReason: "stop"
+          };
+        }
+      }),
+      onTelemetryEvent(event) {
+        events.push(event.type);
+      },
+      toolApprovalPolicy() {
+        return {
+          approved: false,
+          reason: "Denied by policy."
+        };
+      },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, temperatureC: 26 })
+        })
+      },
+      maxSteps: 2
+    });
+
+    const result = await runAgent(agent, {
+      prompt: "Weather in Madrid?"
+    });
+
+    expect(result.toolResults[0]).toMatchObject({
+      toolName: "weather",
+      isError: true
+    });
+    expect(events).toContain("tool-approval");
+  });
+
+  it("persists memory through the sqlite-backed store", async () => {
+    const db = new FakeSqliteDatabase();
+    const memory = createSqliteAgentMemoryStore({
+      db,
+      tableName: "agent_memory"
+    });
+
+    const agent = createAgent({
+      id: "sqlite-memory-agent",
+      memory,
+      model: createLanguageModel({
+        async generate() {
+          return {
+            messages: [createTextMessage("assistant", "SQLite memory updated")],
+            text: "SQLite memory updated",
+            finishReason: "stop"
+          };
+        }
+      })
+    });
+
+    await runAgent(agent, {
+      prompt: "Remember this in sqlite"
+    });
+
+    const reloaded = createSqliteAgentMemoryStore({
+      db,
+      tableName: "agent_memory"
+    });
+    const stored = await Promise.resolve(reloaded.load({
+      runId: "ignored",
+      agentId: "sqlite-memory-agent"
+    }));
+
+    expect(stored.at(-1)?.parts[0]).toMatchObject({
+      type: "text",
+      text: "SQLite memory updated"
+    });
+  });
+
+  it("persists memory through the postgres-backed store", async () => {
+    const client = new FakePostgresClient();
+    const memory = createPostgresAgentMemoryStore({
+      client,
+      tableName: "agent_memory"
+    });
+
+    const agent = createAgent({
+      id: "postgres-memory-agent",
+      memory,
+      model: createLanguageModel({
+        async generate() {
+          return {
+            messages: [createTextMessage("assistant", "Postgres memory updated")],
+            text: "Postgres memory updated",
+            finishReason: "stop"
+          };
+        }
+      })
+    });
+
+    await runAgent(agent, {
+      prompt: "Remember this in postgres"
+    });
+
+    const reloaded = createPostgresAgentMemoryStore({
+      client,
+      tableName: "agent_memory"
+    });
+    const stored = await reloaded.load({
+      runId: "ignored",
+      agentId: "postgres-memory-agent"
+    });
+
+    expect(stored.at(-1)?.parts[0]).toMatchObject({
+      type: "text",
+      text: "Postgres memory updated"
     });
   });
 

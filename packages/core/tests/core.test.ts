@@ -12,6 +12,7 @@ import {
   createInMemoryGenerateCache,
   createModelCatalog,
   createTelemetryMiddleware,
+  createToolRegistry,
   createTextMessage,
   createUIMessageJsonResponse,
   createUIMessageLinesResponse,
@@ -25,6 +26,7 @@ import {
   generateText,
   hostedTool,
   isHostedToolClass,
+  createMcpToolRegistry,
   streamObject,
   streamText,
   system,
@@ -35,6 +37,7 @@ import {
   toUIMessageStreamResponse,
   wrapLanguageModel,
   tool,
+  toToolSet,
   user
 } from "../src/index.js";
 import type { EmbeddingModel, LanguageModel, StreamEvent, ToolSet } from "../src/index.js";
@@ -269,6 +272,60 @@ describe("core helpers", () => {
     expect(isHostedToolClass(files, "web-search")).toBe(false);
   });
 
+  it("creates composable tool registries and converts them back to tool sets", () => {
+    const registry = createToolRegistry({
+      weather: tool({
+        name: "weather",
+        schema: z.object({ city: z.string() }),
+        execute: ({ city }) => ({ city, forecast: "sunny" })
+      })
+    });
+
+    const merged = registry.merge({
+      web: hostedTool({
+        name: "web",
+        provider: "openai",
+        type: "web_search"
+      })
+    });
+
+    expect(merged.has("weather")).toBe(true);
+    expect(merged.has("web")).toBe(true);
+    expect(Object.keys(toToolSet(merged) ?? {})).toEqual(["weather", "web"]);
+  });
+
+  it("creates MCP tool registries from an MCP client", async () => {
+    const registry = await createMcpToolRegistry({
+      async listTools() {
+        return {
+          tools: [
+            {
+              name: "search_docs",
+              description: "Search docs",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  query: {
+                    type: "string"
+                  }
+                },
+                required: ["query"]
+              }
+            }
+          ]
+        };
+      },
+      async callTool() {
+        return { result: "ok" };
+      }
+    });
+
+    expect(registry.has("search_docs")).toBe(true);
+    expect(registry.get("search_docs")).toMatchObject({
+      name: "search_docs"
+    });
+  });
+
   it("returns defaulted agent capabilities for models", () => {
     const capabilities = getAgentCapabilities(createLanguageModel());
 
@@ -380,6 +437,97 @@ describe("core helpers", () => {
         }
       })
     ).rejects.toThrow('Tool "web" is provider-hosted and cannot be executed by the local tool loop.');
+  });
+
+  it("applies tool approval policies before local tool execution", async () => {
+    let call = 0;
+    const model = createLanguageModel({
+      async generate() {
+        call += 1;
+        if (call === 1) {
+          return {
+            messages: [
+              {
+                role: "assistant",
+                parts: [{ type: "tool-call", toolCall: { id: "1", name: "weather", input: { city: "Madrid" } } }]
+              }
+            ],
+            finishReason: "tool-calls"
+          };
+        }
+
+        return { messages: [createTextMessage("assistant", "done")], text: "done" };
+      }
+    });
+
+    const decisions: string[] = [];
+    const result = await generateText({
+      model,
+      prompt: "Weather?",
+      maxSteps: 2,
+      toolApprovalPolicy(request) {
+        decisions.push(request.toolCall.name);
+        return {
+          approved: false,
+          reason: "Approval denied for tests."
+        };
+      },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      }
+    });
+
+    expect(decisions).toEqual(["weather"]);
+    expect(result.toolResults[0]).toMatchObject({
+      toolName: "weather",
+      isError: true,
+      error: {
+        message: "Approval denied for tests."
+      }
+    });
+  });
+
+  it("blocks tools marked as requiring approval when no policy is configured", async () => {
+    let call = 0;
+    const model = createLanguageModel({
+      async generate() {
+        call += 1;
+        if (call === 1) {
+          return {
+            messages: [
+              {
+                role: "assistant",
+                parts: [{ type: "tool-call", toolCall: { id: "1", name: "shell", input: { cmd: "pwd" } } }]
+              }
+            ],
+            finishReason: "tool-calls"
+          };
+        }
+
+        return { messages: [createTextMessage("assistant", "done")], text: "done" };
+      }
+    });
+
+    const result = await generateText({
+      model,
+      prompt: "Run shell",
+      maxSteps: 2,
+      tools: {
+        shell: tool({
+          name: "shell",
+          requiresApproval: true,
+          schema: z.object({ cmd: z.string() }),
+          execute: ({ cmd }) => ({ cmd })
+        })
+      }
+    });
+
+    expect(result.toolResults[0]?.isError).toBe(true);
+    expect(result.toolResults[0]?.error?.message).toContain("requires approval");
   });
 
   it("executes tools across multiple steps", async () => {

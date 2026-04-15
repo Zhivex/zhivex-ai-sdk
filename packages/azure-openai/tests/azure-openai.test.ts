@@ -735,4 +735,63 @@ describe("azure openai adapter", () => {
     expect(result.text).toBe("fresh azure answer");
     expect(result.sources[0]?.url).toBe("https://example.com/azure");
   });
+
+  it("connects realtime sessions using the Azure websocket URI format", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
+      expect(url).toBe(
+        "wss://example.openai.azure.com/openai/realtime?api-version=2025-04-01-preview&deployment=gpt-4o-realtime-preview"
+      );
+      expect(headers).toEqual({ "api-key": "test" });
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      apiVersion: "2025-04-01-preview",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gpt-4o-realtime-preview").connect({
+      instructions: "Be brief."
+    });
+
+    await session.sendText("hello azure");
+    await session.close();
+
+    expect(connectionFactory).toHaveBeenCalledOnce();
+    expect(sent[0]).toMatchObject({
+      type: "session.update",
+      session: expect.objectContaining({
+        model: "gpt-4o-realtime-preview",
+        instructions: "Be brief."
+      })
+    });
+    expect(sent[1]).toMatchObject({
+      type: "conversation.item.create",
+      item: expect.objectContaining({ role: "user" })
+    });
+    expect(sent[2]).toEqual({ type: "response.create" });
+  });
+
+  it("reports Azure realtime browser tokens as unsupported", async () => {
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(provider.realtimeModel!("gpt-realtime").createBrowserToken?.()).rejects.toThrow(
+      "does not support browser session tokens"
+    );
+  });
 });

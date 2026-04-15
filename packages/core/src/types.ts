@@ -99,6 +99,13 @@ export interface ModelCapabilities {
   embeddings: boolean;
   reasoning: boolean;
   webSearch: boolean;
+  realtime?: {
+    sessions: boolean;
+    audioInput: boolean;
+    audioOutput: boolean;
+    tools: boolean;
+    browserTokens: boolean;
+  };
   agentCapabilities?: AgentCapabilities;
 }
 
@@ -367,6 +374,154 @@ export interface SpeechModel<TProviderOptions extends ProviderOptions = Provider
   generateSpeech(input: SpeechModelInput<TProviderOptions>): Promise<SpeechResult>;
 }
 
+export interface AudioFrame {
+  data: string | Uint8Array | ArrayBuffer;
+  mediaType: string;
+  sampleRateHz?: number;
+  channels?: number;
+  isFinal?: boolean;
+}
+
+export interface RealtimeConnectOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  subprotocols?: string[];
+}
+
+export interface RealtimeSessionConfig {
+  instructions?: string;
+  voice?: string;
+  tools?: ToolCollection;
+  toolChoice?: ToolChoice;
+  inputAudioMediaType?: string;
+  outputAudioMediaType?: string;
+  inputSampleRateHz?: number;
+  outputSampleRateHz?: number;
+  channels?: number;
+  turnDetection?: Record<string, unknown> | null;
+  providerOptions?: ProviderOptions;
+  metadata?: Record<string, JsonValue>;
+  autoResponse?: boolean;
+}
+
+export interface RealtimeTokenResult {
+  value: string;
+  expiresAtMs?: number;
+  rawResponse?: unknown;
+}
+
+export interface RealtimeSessionStartedEvent {
+  type: "realtime-start";
+  sessionId?: string;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export interface RealtimeTextDeltaEvent {
+  type: "realtime-text-delta";
+  textDelta: string;
+  itemId?: string;
+  responseId?: string;
+  role?: "assistant";
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export interface RealtimeAudioOutputEvent {
+  type: "realtime-audio-output";
+  audio: Uint8Array;
+  mediaType: string;
+  sampleRateHz?: number;
+  channels?: number;
+  itemId?: string;
+  responseId?: string;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export interface RealtimeTranscriptEvent {
+  type: "realtime-transcript";
+  text: string;
+  role: "user" | "assistant";
+  isFinal: boolean;
+  itemId?: string;
+  responseId?: string;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export interface RealtimeToolCallEvent {
+  type: "realtime-tool-call";
+  toolCall: ToolCall;
+}
+
+export interface RealtimeToolResultEvent {
+  type: "realtime-tool-result";
+  toolResult: ToolExecutionResult;
+}
+
+export interface RealtimeResponseCompleteEvent {
+  type: "realtime-response-complete";
+  reason?: string;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export interface RealtimeSessionResumptionEvent {
+  type: "realtime-session-resumption";
+  handle?: string;
+  resumable?: boolean;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export interface RealtimeGoAwayEvent {
+  type: "realtime-go-away";
+  timeLeftMs?: number;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export interface RealtimeSessionEndedEvent {
+  type: "realtime-end";
+  reason?: string;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export interface RealtimeErrorEvent {
+  type: "realtime-error";
+  error?: Error;
+  message?: string;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export type RealtimeEvent =
+  | RealtimeSessionStartedEvent
+  | RealtimeTextDeltaEvent
+  | RealtimeAudioOutputEvent
+  | RealtimeTranscriptEvent
+  | RealtimeToolCallEvent
+  | RealtimeToolResultEvent
+  | RealtimeResponseCompleteEvent
+  | RealtimeSessionResumptionEvent
+  | RealtimeGoAwayEvent
+  | RealtimeSessionEndedEvent
+  | RealtimeErrorEvent;
+
+export interface RealtimeSession {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly capabilities: ModelCapabilities;
+  readonly config: RealtimeSessionConfig;
+  sendAudio(frame: AudioFrame): Promise<void>;
+  sendText(text: string): Promise<void>;
+  sendToolResult(result: ToolExecutionResult): Promise<void>;
+  update(config: Partial<RealtimeSessionConfig>): Promise<void>;
+  eventStream(): AsyncIterable<RealtimeEvent>;
+  close(): Promise<void>;
+}
+
+export interface RealtimeModel {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly capabilities: ModelCapabilities;
+  connect(config?: RealtimeSessionConfig, options?: RealtimeConnectOptions): Promise<RealtimeSession>;
+  createBrowserToken?(config?: RealtimeSessionConfig, options?: RealtimeConnectOptions): Promise<RealtimeTokenResult>;
+}
+
 export interface GroundedLanguageModel<TProviderOptions extends ProviderOptions = ProviderOptions> {
   readonly provider: string;
   readonly modelId: string;
@@ -387,6 +542,7 @@ export interface ProviderAdapter {
   embeddingModel?: (modelId: string) => EmbeddingModel;
   transcriptionModel?: (modelId: string) => TranscriptionModel;
   speechModel?: (modelId: string) => SpeechModel;
+  realtimeModel?: (modelId: string) => RealtimeModel;
   groundedLanguageModel?: (modelId: string) => GroundedLanguageModel;
 }
 
@@ -397,6 +553,7 @@ export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny, TResult
   description?: string;
   schema: TSchema;
   metadata?: Record<string, JsonValue>;
+  requiresApproval?: boolean;
   execute: (input: z.infer<TSchema>) => Promise<TResult> | TResult;
 }
 
@@ -424,6 +581,44 @@ export type AnyToolDefinition = ToolDefinition | HostedToolDefinition;
 
 export type ToolSet = Record<string, AnyToolDefinition>;
 
+export interface ToolRegistryLike {
+  get(name: string): AnyToolDefinition | undefined;
+  has(name: string): boolean;
+  entries(): Iterable<[string, AnyToolDefinition]>;
+  toToolSet(): ToolSet;
+}
+
+export type ToolCollection = ToolSet | ToolRegistryLike;
+
+export interface ToolApprovalRequest {
+  toolCall: ToolCall;
+  tool: ToolDefinition;
+  input: JsonValue;
+  step: number;
+  model: LanguageModel | RealtimeModel;
+  request?: ModelGenerateInput;
+  realtimeConfig?: RealtimeSessionConfig;
+}
+
+export interface ToolApprovalDecision {
+  approved: boolean;
+  reason?: string;
+  metadata?: Record<string, JsonValue>;
+}
+
+export interface ToolApprovalEvent {
+  request: ToolApprovalRequest;
+  decision: ToolApprovalDecision;
+}
+
+export type ToolApprovalPolicy = (
+  request: ToolApprovalRequest
+) => ToolApprovalDecision | boolean | Promise<ToolApprovalDecision | boolean>;
+
+export type ToolApprovalObserver = (
+  event: ToolApprovalEvent
+) => void | Promise<void>;
+
 export type ProviderOptionsOf<TModel extends LanguageModel> = TModel extends LanguageModel<infer TProviderOptions>
   ? TProviderOptions
   : ProviderOptions;
@@ -432,9 +627,11 @@ export type GenerateTextOptions<TModel extends LanguageModel = LanguageModel> = 
   GenerateInputSource & {
     model: TModel;
     system?: string;
-    tools?: ToolSet;
+    tools?: ToolCollection;
     toolChoice?: ToolChoice;
     toolExecution?: ToolExecutionOptions;
+    toolApprovalPolicy?: ToolApprovalPolicy;
+    onToolApprovalDecision?: ToolApprovalObserver;
     maxSteps?: number;
     temperature?: number;
     maxTokens?: number;
@@ -540,6 +737,52 @@ export interface AgentMemoryStore {
   save?(context: AgentMemoryContext & { state: AgentRunState }): Promise<void> | void;
 }
 
+export interface SqliteStatementLike<TResult extends Record<string, unknown> = Record<string, unknown>> {
+  run(params?: readonly unknown[] | Record<string, unknown>): unknown;
+  get(params?: readonly unknown[] | Record<string, unknown>): TResult | undefined;
+}
+
+export interface SqliteDatabaseLike {
+  exec(sql: string): unknown;
+  prepare?<TResult extends Record<string, unknown> = Record<string, unknown>>(sql: string): SqliteStatementLike<TResult>;
+  query?<TResult extends Record<string, unknown> = Record<string, unknown>>(sql: string): SqliteStatementLike<TResult>;
+}
+
+export interface SqliteAgentRunStoreOptions {
+  db: SqliteDatabaseLike;
+  tableName?: string;
+}
+
+export interface SqliteAgentMemoryStoreOptions {
+  db: SqliteDatabaseLike;
+  tableName?: string;
+  key?: (context: AgentMemoryContext) => string;
+  selectMessages?: (state: AgentRunState) => ModelMessage[];
+}
+
+export interface PostgresQueryResultLike<TResult extends Record<string, unknown> = Record<string, unknown>> {
+  rows: TResult[];
+}
+
+export interface PostgresClientLike {
+  query<TResult extends Record<string, unknown> = Record<string, unknown>>(
+    sql: string,
+    params?: readonly unknown[]
+  ): Promise<PostgresQueryResultLike<TResult>> | PostgresQueryResultLike<TResult>;
+}
+
+export interface PostgresAgentRunStoreOptions {
+  client: PostgresClientLike;
+  tableName?: string;
+}
+
+export interface PostgresAgentMemoryStoreOptions {
+  client: PostgresClientLike;
+  tableName?: string;
+  key?: (context: AgentMemoryContext) => string;
+  selectMessages?: (state: AgentRunState) => ModelMessage[];
+}
+
 export interface AgentHandoff {
   id: string;
   fromRunId: string;
@@ -587,11 +830,59 @@ export interface AgentTelemetryApprovalResolvedEvent {
   approval: AgentApprovalResponse;
 }
 
+export interface AgentTelemetryToolApprovalEvent {
+  type: "tool-approval";
+  runId: string;
+  agentId?: string;
+  toolCall: ToolCall;
+  approved: boolean;
+  reason?: string;
+  metadata?: Record<string, JsonValue>;
+}
+
 export interface AgentTelemetryMemoryLoadedEvent {
   type: "memory-loaded";
   runId: string;
   agentId?: string;
   messageCount: number;
+}
+
+export interface AgentGuardrailTrigger {
+  triggered: true;
+  reason?: string;
+  metadata?: Record<string, JsonValue>;
+}
+
+export interface AgentInputGuardrailRequest {
+  runId: string;
+  agentId?: string;
+  messages: ModelMessage[];
+  metadata?: Record<string, JsonValue>;
+}
+
+export interface AgentOutputGuardrailRequest {
+  runId: string;
+  agentId?: string;
+  state: AgentRunState;
+  output: AgentRunOutput | LiveAgentRunOutput;
+  metadata?: Record<string, JsonValue>;
+}
+
+export type AgentInputGuardrail = (
+  request: AgentInputGuardrailRequest
+) => AgentGuardrailTrigger | void | Promise<AgentGuardrailTrigger | void>;
+
+export type AgentOutputGuardrail = (
+  request: AgentOutputGuardrailRequest
+) => AgentGuardrailTrigger | void | Promise<AgentGuardrailTrigger | void>;
+
+export interface AgentTelemetryGuardrailTriggeredEvent {
+  type: "guardrail-triggered";
+  runId: string;
+  agentId?: string;
+  stage: "input" | "output";
+  reason?: string;
+  metadata?: Record<string, JsonValue>;
 }
 
 export interface AgentTelemetryStateSavedEvent {
@@ -622,7 +913,9 @@ export type AgentTelemetryEvent =
   | AgentTelemetryStepFinishEvent
   | AgentTelemetryApprovalRequestEvent
   | AgentTelemetryApprovalResolvedEvent
+  | AgentTelemetryToolApprovalEvent
   | AgentTelemetryMemoryLoadedEvent
+  | AgentTelemetryGuardrailTriggeredEvent
   | AgentTelemetryStateSavedEvent
   | AgentTelemetryHandoffEvent
   | AgentTelemetryRunFinishEvent;
@@ -635,13 +928,33 @@ export interface AgentDefinition<TModel extends LanguageModel = LanguageModel> {
   id?: string;
   model: TModel;
   instructions?: string;
-  tools?: ToolSet;
+  tools?: ToolCollection;
   maxSteps?: number;
   temperature?: number;
   maxTokens?: number;
   reasoning?: ReasoningConfig;
   toolExecution?: ToolExecutionOptions;
+  toolApprovalPolicy?: ToolApprovalPolicy;
+  inputGuardrails?: AgentInputGuardrail[];
+  outputGuardrails?: AgentOutputGuardrail[];
   providerOptions?: ProviderOptionsOf<TModel>;
+  metadata?: Record<string, JsonValue>;
+  store?: AgentRunStore;
+  memory?: AgentMemoryStore;
+  onTelemetryEvent?: AgentTelemetryObserver;
+}
+
+export interface LiveAgentDefinition<TModel extends RealtimeModel = RealtimeModel> {
+  id?: string;
+  model: TModel;
+  instructions?: string;
+  tools?: ToolCollection;
+  toolChoice?: ToolChoice;
+  toolExecution?: ToolExecutionOptions;
+  toolApprovalPolicy?: ToolApprovalPolicy;
+  inputGuardrails?: AgentInputGuardrail[];
+  outputGuardrails?: AgentOutputGuardrail[];
+  providerOptions?: ProviderOptions;
   metadata?: Record<string, JsonValue>;
   store?: AgentRunStore;
   memory?: AgentMemoryStore;
@@ -672,9 +985,10 @@ export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryO
     approvals?: AgentApprovalResponse[];
     handoff?: AgentHandoff;
     system?: string;
-    tools?: ToolSet;
+    tools?: ToolCollection;
     toolChoice?: ToolChoice;
     toolExecution?: ToolExecutionOptions;
+    toolApprovalPolicy?: ToolApprovalPolicy;
     maxSteps?: number;
     temperature?: number;
     maxTokens?: number;
@@ -698,10 +1012,44 @@ export interface AgentRunOutput {
   };
 }
 
+export type LiveAgentRunInput = GenerateInputSource &
+  RetryOptions & {
+    runId?: string;
+    system?: string;
+    tools?: ToolCollection;
+    toolChoice?: ToolChoice;
+    toolExecution?: ToolExecutionOptions;
+    toolApprovalPolicy?: ToolApprovalPolicy;
+    providerOptions?: ProviderOptions;
+    metadata?: Record<string, JsonValue>;
+    realtime?: RealtimeSessionConfig;
+    connectOptions?: RealtimeConnectOptions;
+  };
+
+export interface LiveAgentRunOutput {
+  status: AgentStatus;
+  outputText: string;
+  messages: ModelMessage[];
+  toolResults: ToolExecutionResult[];
+  state: AgentRunState;
+  error?: {
+    message: string;
+  };
+}
+
 export interface AgentStreamResult {
   eventStream: AsyncIterable<AgentStreamEvent>;
   textStream: AsyncIterable<string>;
   collect: () => Promise<AgentRunOutput>;
+}
+
+export type AgentLiveEvent = AgentStreamEvent | RealtimeEvent;
+
+export interface AgentLiveStreamResult {
+  eventStream: AsyncIterable<AgentLiveEvent>;
+  textStream: AsyncIterable<string>;
+  session: Promise<RealtimeSession>;
+  collect: () => Promise<LiveAgentRunOutput>;
 }
 
 export type TranscribeAudioOptions<TModel extends TranscriptionModel = TranscriptionModel> = RetryOptions & {

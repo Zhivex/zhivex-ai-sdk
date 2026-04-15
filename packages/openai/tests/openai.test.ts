@@ -791,4 +791,88 @@ describe("openai adapter", () => {
       }
     ]);
   });
+
+  it("connects realtime sessions with the expected headers and setup payload", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
+      expect(url).toContain("/realtime");
+      expect(url).toContain("model=gpt-realtime");
+      expect(headers).toMatchObject({
+        authorization: "Bearer test",
+        "openai-beta": "realtime=v1"
+      });
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gpt-realtime").connect({
+      instructions: "Be brief.",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: () => ({ ok: true })
+        })
+      }
+    });
+
+    await session.sendText("hello");
+    await session.close();
+
+    expect(connectionFactory).toHaveBeenCalledOnce();
+    expect(sent[0]).toMatchObject({
+      type: "session.update",
+      session: expect.objectContaining({
+        model: "gpt-realtime",
+        instructions: "Be brief.",
+        tools: [expect.objectContaining({ type: "function" })]
+      })
+    });
+    expect(sent[1]).toMatchObject({
+      type: "conversation.item.create",
+      item: expect.objectContaining({ role: "user" })
+    });
+    expect(sent[2]).toEqual({ type: "response.create" });
+  });
+
+  it("creates browser tokens for realtime client sessions", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        client_secret: {
+          value: "ephemeral-secret",
+          expires_at_ms: 1234
+        }
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const token = await provider.realtimeModel!("gpt-realtime").createBrowserToken?.({
+      instructions: "Be helpful."
+    });
+
+    expect(token).toEqual({
+      value: "ephemeral-secret",
+      expiresAtMs: 1234,
+      rawResponse: expect.any(Object)
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/realtime/client_secrets",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ authorization: "Bearer test" })
+      })
+    );
+  });
 });

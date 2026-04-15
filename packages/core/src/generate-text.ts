@@ -12,6 +12,7 @@ import {
   toolResultPart,
   validateMessageParts
 } from "./messages.js";
+import { toToolSet } from "./tool-registry.js";
 import type {
   GenerateResult,
   GenerateTextOptions,
@@ -20,6 +21,8 @@ import type {
   ModelMessage,
   StreamTextResult,
   StreamEvent,
+  ToolApprovalDecision,
+  ToolApprovalRequest,
   ToolCall,
   ToolExecutionResult
 } from "./types.js";
@@ -87,7 +90,7 @@ const buildMessages = (options: Pick<GenerateTextOptions, "prompt" | "messages" 
 
 const toRequest = (options: GenerateTextOptions, messages: ModelMessage[]): ModelGenerateInput => ({
   messages,
-  tools: options.tools,
+  tools: toToolSet(options.tools),
   toolChoice: options.toolChoice,
   toolExecution: options.toolExecution,
   temperature: options.temperature,
@@ -107,10 +110,11 @@ const executeTools = async (
   context: {
     request: ModelGenerateInput;
     step: number;
+    tools: NonNullable<ReturnType<typeof toToolSet>>;
   }
 ): Promise<ToolExecutionResult[]> => {
   const validatedCalls = toolCalls.map((call) => {
-    const tool = options.tools?.[call.name];
+    const tool = context.tools[call.name];
     if (!tool) {
       throw new ValidationError(`Tool "${call.name}" was requested by the model but is not registered.`);
     }
@@ -139,11 +143,67 @@ const executeTools = async (
   const stopOnError = options.toolExecution?.stopOnError ?? false;
   const results = new Array<ToolExecutionResult>(validatedCalls.length);
 
+  const evaluateApproval = async (
+    item: (typeof validatedCalls)[number]
+  ): Promise<ToolApprovalDecision> => {
+    const request = {
+      toolCall: item.call,
+      tool: item.tool,
+      input: serializeJsonValue(item.parsedInput),
+      step: context.step,
+      model: options.model,
+      request: context.request
+    } satisfies ToolApprovalRequest;
+
+    if (!options.toolApprovalPolicy) {
+      const decision = item.tool.requiresApproval
+        ? {
+            approved: false,
+            reason: `Tool "${item.call.name}" requires approval, but no toolApprovalPolicy is configured.`
+          }
+        : { approved: true };
+      await options.onToolApprovalDecision?.({
+        request,
+        decision
+      });
+      return decision;
+    }
+
+    const rawDecision = await options.toolApprovalPolicy(request);
+    const decision =
+      typeof rawDecision === "boolean"
+        ? {
+            approved: rawDecision,
+            reason: rawDecision ? undefined : `Tool "${item.call.name}" was denied by the approval policy.`
+          }
+        : rawDecision;
+
+    const normalizedDecision = decision ?? { approved: true };
+    await options.onToolApprovalDecision?.({
+      request,
+      decision: normalizedDecision
+    });
+    return normalizedDecision;
+  };
+
   const executeSingleTool = async (
     item: (typeof validatedCalls)[number],
     index: number
   ): Promise<void> => {
     const { call, tool, parsedInput } = item;
+    const approval = await evaluateApproval(item);
+    if (!approval.approved) {
+      results[index] = {
+        toolCallId: call.id,
+        toolName: call.name,
+        error: {
+          message: approval.reason ?? `Tool "${call.name}" was denied by the approval policy.`
+        },
+        isError: true
+      } satisfies ToolExecutionResult;
+      return;
+    }
+
     const startedAt = Date.now();
     await emitLanguageModelTelemetryEvent(options.model, {
       type: "tool-execution-start",
@@ -241,7 +301,11 @@ const extractToolCalls = (messages: ModelMessage[]): ToolCall[] =>
       .map((part) => part.toolCall)
   );
 
-const validateToolChoice = (options: Pick<GenerateTextOptions, "model" | "tools" | "toolChoice">) => {
+const validateToolChoice = (options: {
+  model: GenerateTextOptions["model"];
+  tools?: ReturnType<typeof toToolSet>;
+  toolChoice?: GenerateTextOptions["toolChoice"];
+}) => {
   if (!options.toolChoice) {
     return;
   }
@@ -269,11 +333,17 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
   const maxSteps = Math.max(1, options.maxSteps ?? 1);
   const allMessages = buildMessages(options);
   const steps: GenerateTextOutput["steps"] = [];
+  const tools = toToolSet(options.tools);
+  const resolvedTools = tools ?? {};
   validateMessageParts(options.model, allMessages);
   validateReasoning(options);
-  validateToolChoice(options);
+  validateToolChoice({
+    model: options.model,
+    tools,
+    toolChoice: options.toolChoice
+  });
 
-  if (options.tools && !options.model.capabilities.tools) {
+  if (tools && !options.model.capabilities.tools) {
     throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
   }
 
@@ -298,7 +368,8 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
 
     const currentToolResults = await executeTools(toolCalls, options, {
       request,
-      step: step + 1
+      step: step + 1,
+      tools: resolvedTools
     });
     toolResults.push(...currentToolResults);
 
@@ -328,16 +399,22 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
 export const streamText = (options: GenerateTextOptions): StreamTextResult => {
   const maxSteps = Math.max(1, options.maxSteps ?? 1);
   const baseMessages = buildMessages(options);
+  const tools = toToolSet(options.tools);
+  const resolvedTools = tools ?? {};
   validateMessageParts(options.model, baseMessages);
   validateReasoning(options);
-  validateToolChoice(options);
+  validateToolChoice({
+    model: options.model,
+    tools,
+    toolChoice: options.toolChoice
+  });
 
   if (!options.model.stream) {
     throw new ValidationError(`Model "${options.model.provider}/${options.model.modelId}" does not support streaming.`);
   }
   const streamModel = options.model.stream.bind(options.model);
 
-  if (options.tools && !options.model.capabilities.tools) {
+  if (tools && !options.model.capabilities.tools) {
     throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
   }
 
@@ -461,10 +538,11 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
         break;
       }
 
-      const currentToolResults = await executeTools(toolCalls, options, {
-        request,
-        step: step + 1
-      });
+        const currentToolResults = await executeTools(toolCalls, options, {
+          request,
+          step: step + 1,
+          tools: resolvedTools
+        });
       toolResults.push(...currentToolResults);
 
       for (const toolResult of currentToolResults) {

@@ -584,4 +584,65 @@ describe("vertex adapter", () => {
     expect(result.text).toBe("fresh vertex answer");
     expect(result.sources[0]?.url).toBe("https://example.com/vertex");
   });
+
+  it("connects Vertex Live sessions using the documented BidiGenerateContent websocket", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
+      expect(url).toBe(
+        "wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.PredictionService.BidiGenerateContent"
+      );
+      expect(headers).toMatchObject({
+        authorization: "Bearer test"
+      });
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({
+      instructions: "Be brief."
+    });
+
+    await session.sendText("hello vertex");
+    await session.close();
+
+    expect(connectionFactory).toHaveBeenCalledOnce();
+    expect(sent[0]).toMatchObject({
+      setup: expect.objectContaining({
+        model: "models/gemini-live-2.5-flash-native-audio"
+      })
+    });
+    expect(sent[1]).toMatchObject({
+      clientContent: {
+        turns: [{ role: "user", parts: [{ text: "hello vertex" }] }],
+        turnComplete: true
+      }
+    });
+  });
+
+  it("reports Vertex browser tokens as unsupported", async () => {
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(provider.realtimeModel!("gemini-live-2.5-flash-native-audio").createBrowserToken?.()).rejects.toThrow(
+      "does not support browser session tokens"
+    );
+  });
 });

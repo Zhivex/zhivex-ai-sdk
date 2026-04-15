@@ -1,11 +1,15 @@
 import { createAgentApprovalMessage, getAgentApprovalRequests } from "./agent-approval.js";
 import { createAgentHandoffMessage } from "./agent-handoff.js";
-import { ValidationError } from "./errors.js";
+import { GuardrailTriggeredError, ValidationError } from "./errors.js";
 import { generateText, normalizeMessages, streamText } from "./generate-text.js";
+import { toToolSet } from "./tool-registry.js";
 import type {
   AgentApprovalRequest,
   AgentApprovalResponse,
   AgentDefinition,
+  AgentGuardrailTrigger,
+  AgentInputGuardrail,
+  AgentOutputGuardrail,
   AgentRunInput,
   AgentRunOutput,
   AgentRunState,
@@ -24,6 +28,8 @@ import type {
   ModelGenerateInput,
   ModelMessage,
   ProviderOptions,
+  ToolApprovalDecision,
+  ToolApprovalEvent,
   ToolExecutionResult
 } from "./types.js";
 
@@ -333,6 +339,65 @@ const emitApprovalTelemetry = async <TModel extends LanguageModel>(
   }
 };
 
+const emitToolApprovalTelemetry = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  state: AgentRunState,
+  event: ToolApprovalEvent
+) => {
+  await emitTelemetryEvent(agent, {
+    type: "tool-approval",
+    runId: state.runId,
+    agentId: state.agentId,
+    toolCall: event.request.toolCall,
+    approved: event.decision.approved,
+    reason: event.decision.reason,
+    metadata: event.decision.metadata
+  });
+};
+
+const normalizeGuardrailTrigger = (value: AgentGuardrailTrigger | void): AgentGuardrailTrigger | undefined =>
+  value?.triggered ? value : undefined;
+
+const applyGuardrailFailure = (
+  state: AgentRunState,
+  stage: "input" | "output",
+  trigger: AgentGuardrailTrigger
+): AgentRunState => ({
+  ...state,
+  status: "failed",
+  error: {
+    message: trigger.reason ?? `Agent ${stage} guardrail triggered.`
+  },
+  updatedAt: Date.now()
+});
+
+const runGuardrails = async <TModel extends LanguageModel, TRequest>(
+  agent: AgentDefinition<TModel>,
+  state: AgentRunState,
+  stage: "input" | "output",
+  guardrails: ReadonlyArray<((request: TRequest) => AgentGuardrailTrigger | void | Promise<AgentGuardrailTrigger | void>)> | undefined,
+  requestFactory: (index: number) => TRequest
+): Promise<AgentGuardrailTrigger | undefined> => {
+  for (const [index, guardrail] of (guardrails ?? []).entries()) {
+    const trigger = normalizeGuardrailTrigger(await guardrail(requestFactory(index)));
+    if (!trigger) {
+      continue;
+    }
+
+    await emitTelemetryEvent(agent, {
+      type: "guardrail-triggered",
+      runId: state.runId,
+      agentId: state.agentId,
+      stage,
+      reason: trigger.reason ?? `Agent ${stage} guardrail #${index + 1} triggered.`,
+      metadata: trigger.metadata
+    });
+    return trigger;
+  }
+
+  return undefined;
+};
+
 const resolveContext = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   input: AgentRunInput<TModel>
@@ -382,15 +447,20 @@ const resolveContext = async <TModel extends LanguageModel>(
 
 const createGenerateOptions = <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
+  state: AgentRunState,
   input: AgentRunInput<TModel>,
   messages: ModelMessage[],
   maxSteps: number
 ): GenerateTextOptions<TModel> => ({
   model: agent.model,
   messages,
-  tools: input.tools ?? agent.tools,
+  tools: toToolSet(input.tools ?? agent.tools),
   toolChoice: input.toolChoice,
   toolExecution: input.toolExecution ?? agent.toolExecution,
+  toolApprovalPolicy: input.toolApprovalPolicy ?? agent.toolApprovalPolicy,
+  onToolApprovalDecision: async (event) => {
+    await emitToolApprovalTelemetry(agent, state, event);
+  },
   maxSteps,
   temperature: input.temperature ?? agent.temperature,
   maxTokens: input.maxTokens ?? agent.maxTokens,
@@ -500,6 +570,19 @@ export const runAgent = async <TModel extends LanguageModel>(
     return toOutput(state);
   }
 
+  const inputGuardrail = await runGuardrails(agent, context.state, "input", agent.inputGuardrails, () => ({
+    runId: context.state.runId,
+    agentId: context.state.agentId,
+    messages: context.messages,
+    metadata: context.state.metadata
+  }));
+  if (inputGuardrail) {
+    const failedState = applyGuardrailFailure(context.state, "input", inputGuardrail);
+    await persistState(agent, failedState);
+    await emitRunFinishTelemetry(agent, failedState);
+    return toOutput(failedState);
+  }
+
   await emitTelemetryEvent(agent, {
     type: "step-start",
     runId: context.state.runId,
@@ -508,9 +591,20 @@ export const runAgent = async <TModel extends LanguageModel>(
   });
 
   try {
-    const result = await generateText(createGenerateOptions(agent, input, context.messages, context.remainingSteps));
+    const result = await generateText(createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps));
     const newSteps = mapSteps(result.steps, context.state.currentStep, result.toolResults);
-    const output = finalizeState(context.state, result, newSteps, result.toolResults);
+    let output = finalizeState(context.state, result, newSteps, result.toolResults);
+
+    const outputGuardrail = await runGuardrails(agent, output.state, "output", agent.outputGuardrails, () => ({
+      runId: output.state.runId,
+      agentId: output.state.agentId,
+      state: cloneState(output.state),
+      output,
+      metadata: output.state.metadata
+    }));
+    if (outputGuardrail) {
+      output = toOutput(applyGuardrailFailure(output.state, "output", outputGuardrail));
+    }
 
     await emitFinalizedStepTelemetry(agent, output.state, newSteps);
     await emitApprovalTelemetry(agent, output.state, approvalsFromEvents(newSteps.flatMap((step) => step.response?.messages ?? [])));
@@ -605,6 +699,40 @@ export const streamAgent = <TModel extends LanguageModel>(
       };
     }
 
+    const inputGuardrail = await runGuardrails(agent, context.state, "input", agent.inputGuardrails, () => ({
+      runId: context.state.runId,
+      agentId: context.state.agentId,
+      messages: context.messages,
+      metadata: context.state.metadata
+    }));
+    if (inputGuardrail) {
+      const failedState = applyGuardrailFailure(context.state, "input", inputGuardrail);
+      await persistState(agent, failedState);
+      await emitRunFinishTelemetry(agent, failedState);
+      publish({
+        done: false,
+        value: {
+          type: "error",
+          error: new GuardrailTriggeredError("input", failedState.error?.message ?? "Agent input guardrail triggered.", {
+            metadata: inputGuardrail.metadata
+          })
+        }
+      });
+      publish({
+        done: false,
+        value: {
+          type: "agent-run-finish",
+          status: failedState.status,
+          state: failedState
+        }
+      });
+      publish({ done: true, value: undefined });
+      return {
+        output: toOutput(failedState),
+        textStream: emptyAsyncIterable()
+      };
+    }
+
     publish({
       done: false,
       value: {
@@ -639,7 +767,7 @@ export const streamAgent = <TModel extends LanguageModel>(
       stepIndex: context.state.currentStep + 1
     });
 
-    const streamResult = streamText(createGenerateOptions(agent, input, context.messages, context.remainingSteps));
+    const streamResult = streamText(createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps));
     const approvalRequests: AgentApprovalRequest[] = [];
 
     const eventRelay = (async () => {
@@ -687,7 +815,29 @@ export const streamAgent = <TModel extends LanguageModel>(
         await eventRelay;
         const final = await streamResult.collect();
         const newSteps = mapSteps(final.steps, context.state.currentStep, final.toolResults);
-        const result = finalizeState(context.state, final, newSteps, final.toolResults);
+        let result = finalizeState(context.state, final, newSteps, final.toolResults);
+
+        const outputGuardrail = await runGuardrails(agent, result.state, "output", agent.outputGuardrails, () => ({
+          runId: result.state.runId,
+          agentId: result.state.agentId,
+          state: cloneState(result.state),
+          output: result,
+          metadata: result.state.metadata
+        }));
+        if (outputGuardrail) {
+          result = toOutput(applyGuardrailFailure(result.state, "output", outputGuardrail));
+          publish({
+            done: false,
+            value: {
+              type: "error",
+              error: new GuardrailTriggeredError(
+                "output",
+                result.state.error?.message ?? "Agent output guardrail triggered.",
+                { metadata: outputGuardrail.metadata }
+              )
+            }
+          });
+        }
 
         for (const step of newSteps) {
           publish({

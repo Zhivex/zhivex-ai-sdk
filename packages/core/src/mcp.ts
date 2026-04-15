@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { serializeJsonValue, tool } from "./messages.js";
+import { createToolRegistry, type ToolRegistry } from "./tool-registry.js";
 import type { JsonValue, ToolSet } from "./types.js";
 
 export interface McpToolAnnotations {
@@ -264,3 +265,8 @@ export const createMcpToolSet = async (client: McpClient, options: McpToolSetOpt
     })
   );
 };
+
+export const createMcpToolRegistry = async (
+  client: McpClient,
+  options: McpToolSetOptions = {}
+): Promise<ToolRegistry> => createToolRegistry(await createMcpToolSet(client, options));

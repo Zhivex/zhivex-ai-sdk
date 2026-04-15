@@ -570,4 +570,74 @@ describe("gemini adapter", () => {
     expect(result.text).toBe("fresh grounded answer");
     expect(result.sources[0]?.url).toBe("https://example.com/gemini");
   });
+
+  it("connects Gemini Live sessions using the websocket endpoint and setup payload", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
+      expect(url).toContain("/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent");
+      expect(url).toContain("key=test");
+      expect(headers).toEqual({});
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+
+    const provider = createGemini({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({
+      instructions: "Be brief.",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: () => ({ ok: true })
+        })
+      },
+      outputAudioMediaType: "audio/pcm"
+    });
+
+    await session.sendText("hello gemini");
+    await session.close();
+
+    expect(connectionFactory).toHaveBeenCalledOnce();
+    expect(sent[0]).toMatchObject({
+      setup: expect.objectContaining({
+        model: "models/gemini-live-2.5-flash-native-audio",
+        tools: [expect.any(Object)]
+      })
+    });
+    expect(sent[1]).toMatchObject({
+      clientContent: {
+        turns: [{ role: "user", parts: [{ text: "hello gemini" }] }],
+        turnComplete: true
+      }
+    });
+  });
+
+  it("creates Gemini ephemeral browser tokens for Live API sessions", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        authToken: {
+          name: "ephemeral-token",
+          expireTime: "2026-04-15T00:00:00Z"
+        }
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const token = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").createBrowserToken?.();
+
+    expect(token?.value).toBe("ephemeral-token");
+    expect(typeof token?.expiresAtMs).toBe("number");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/v1alpha/authTokens?key=test");
+  });
 });

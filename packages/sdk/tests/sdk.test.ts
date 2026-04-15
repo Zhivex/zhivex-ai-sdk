@@ -12,10 +12,15 @@ describe("sdk public surface", () => {
     expect(sdk.runAgent).toBeTypeOf("function");
     expect(sdk.runAgentHandoff).toBeTypeOf("function");
     expect(sdk.streamAgent).toBeTypeOf("function");
+    expect(sdk.streamLiveAgent).toBeTypeOf("function");
     expect(sdk.createInMemoryAgentRunStore).toBeTypeOf("function");
     expect(sdk.createFileAgentRunStore).toBeTypeOf("function");
+    expect(sdk.createSqliteAgentRunStore).toBeTypeOf("function");
+    expect(sdk.createPostgresAgentRunStore).toBeTypeOf("function");
     expect(sdk.createInMemoryAgentMemoryStore).toBeTypeOf("function");
     expect(sdk.createFileAgentMemoryStore).toBeTypeOf("function");
+    expect(sdk.createSqliteAgentMemoryStore).toBeTypeOf("function");
+    expect(sdk.createPostgresAgentMemoryStore).toBeTypeOf("function");
     expect(sdk.getAgentApprovalRequests).toBeTypeOf("function");
     expect(sdk.getAgentApprovalRequestFromPart).toBeTypeOf("function");
     expect(sdk.createAgentApprovalMessage).toBeTypeOf("function");
@@ -39,6 +44,11 @@ describe("sdk public surface", () => {
     expect(sdk.createCachedGenerateMiddleware).toBeTypeOf("function");
     expect(sdk.createCircuitBreakerMiddleware).toBeTypeOf("function");
     expect(sdk.createFileGenerateCache).toBeTypeOf("function");
+    expect(sdk.createToolRegistry).toBeTypeOf("function");
+    expect(sdk.createMcpToolRegistry).toBeTypeOf("function");
+    expect(sdk.createOtelObserver).toBeTypeOf("function");
+    expect(sdk.createOtelAgentObserver).toBeTypeOf("function");
+    expect(sdk.createOtelTelemetryMiddleware).toBeTypeOf("function");
     expect(sdk.createMcpToolSet).toBeTypeOf("function");
     expect(sdk.createModelCatalog).toBeTypeOf("function");
     expect(sdk.parseUIMessageRequest).toBeTypeOf("function");
