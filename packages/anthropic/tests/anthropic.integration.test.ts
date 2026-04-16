@@ -8,6 +8,8 @@ const apiKey = process.env.ANTHROPIC_API_KEY;
 const baseURL = process.env.ANTHROPIC_BASE_URL;
 const anthropicVersion = process.env.ANTHROPIC_VERSION;
 const textModelId = process.env.ANTHROPIC_INTEGRATION_MODEL ?? "claude-3-5-sonnet";
+const isOpus47OrLaterModel = (modelId: string) => /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9])(?:[-@]|$)/.test(modelId);
+const anthropicTemperature = isOpus47OrLaterModel(textModelId) ? undefined : 0;
 
 const describeIntegration = apiKey ? describe.sequential : describe.skip;
 
@@ -23,7 +25,7 @@ describeIntegration("anthropic adapter integration", () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-anthropic-ok",
-      temperature: 0,
+      temperature: anthropicTemperature,
       maxTokens: 32
     });
 
@@ -36,7 +38,7 @@ describeIntegration("anthropic adapter integration", () => {
     const result = streamText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-anthropic-stream-ok",
-      temperature: 0,
+      temperature: anthropicTemperature,
       maxTokens: 32
     });
 
@@ -55,7 +57,7 @@ describeIntegration("anthropic adapter integration", () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
-      temperature: 0,
+      temperature: anthropicTemperature,
       maxTokens: 32,
       maxSteps: 2,
       tools: {
@@ -80,7 +82,7 @@ describeIntegration("anthropic adapter integration", () => {
     const result = await generateObject({
       model: provider()(textModelId),
       prompt: "Return a city-country pair for Buenos Aires, Argentina.",
-      temperature: 0,
+      temperature: anthropicTemperature,
       schema: z.object({
         city: z.string(),
         country: z.string()

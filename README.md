@@ -123,7 +123,7 @@ The SDK aims to keep the application-facing contract stable, but capability pari
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | yes | Tier A |
 | Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | no | `effort` | yes | yes | Tier A |
-| Anthropic | yes | yes | yes | prompted | no | no | no | no | no | `budgetTokens` | yes | native MCP + web search | Tier B |
+| Anthropic | yes | yes | yes | prompted | no | no | no | no | no | model-dependent | yes | native MCP + web search | Tier B |
 | Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B |
 | Vertex | yes | yes | yes | native | yes | yes | yes | yes | no | model-dependent | yes | native | Tier B |
 | OpenRouter | yes | yes | yes | native | no | no | no | no | no | `effort` + `budgetTokens` | yes | server tools | Tier C |
@@ -136,7 +136,7 @@ Compatibility notes:
 
 - `structured output` means the SDK can use the shared `generateObject()` / `streamObject()` contract. `native` means schema-aware provider support; `prompted` means SDK fallback prompting instead of provider-native schema enforcement.
 - `Realtime sessions` means the provider package exposes `realtimeModel().connect()` through the shared `RealtimeSession` contract. `Browser tokens` means the provider also exposes `realtimeModel().createBrowserToken()` for short-lived client-side credentials.
-- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`.
+- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`.
 - `partial` for Bedrock `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - `Hosted tools / MCP` refers to provider-native hosted tools or SDK-level MCP mappings, not local callable tools defined with `tool()`. For OpenRouter this currently means server tools such as `openrouter:web_search`.
@@ -158,7 +158,7 @@ const anthropic = createAnthropic({
 });
 
 const result = await generateText({
-  model: anthropic("claude-3-5-sonnet"),
+  model: anthropic("claude-opus-4-7"),
   system: "Be concise and technical.",
   prompt: "Explain what a provider adapter does."
 });
@@ -560,7 +560,10 @@ Provider compatibility for the common `reasoning` option:
 
 - OpenAI and Azure OpenAI: support `effort`
 - OpenRouter: supports `effort` and `budgetTokens`
-- Anthropic: supports `budgetTokens`
+- Anthropic:
+  - Claude Opus 4.7 and later support `effort`; `budgetTokens` is rejected
+  - Claude Opus 4.5, Claude Opus 4.6, and Claude Sonnet 4.6 support `effort`
+  - `budgetTokens` remains available only on Anthropic models that still accept manual thinking
 - Gemini and Vertex:
   - Gemini 3 models support `effort`
   - Gemini 2.5 and earlier models support `budgetTokens`
@@ -686,7 +689,7 @@ const anthropic = createAnthropic({
 });
 
 const result = await generateText({
-  model: anthropic("claude-3-5-sonnet"),
+  model: anthropic("claude-opus-4-7"),
   messages: [user("What is the weather in Madrid?")],
   maxSteps: 2,
   tools: {
@@ -862,7 +865,7 @@ When the selected model supports tool selection, you can control it through the 
 
 ```ts
 const forcedToolResult = await generateText({
-  model: anthropic("claude-3-5-sonnet"),
+  model: anthropic("claude-opus-4-7"),
   messages: [user("What is the weather in Madrid?")],
   tools: {
     weather: tool({
@@ -1018,7 +1021,7 @@ const fromOpenAI = await generateText({
 });
 
 const fromAnthropic = await generateText({
-  model: anthropic("claude-3-5-sonnet"),
+  model: anthropic("claude-opus-4-7"),
   prompt
 });
 

@@ -22,7 +22,7 @@ describe("anthropic adapter", () => {
       toolChoice: true,
       parallelToolCalls: true,
       vision: true,
-      files: false,
+      files: true,
       audioInput: false,
       audioOutput: false,
       embeddings: false,
@@ -324,6 +324,178 @@ describe("anthropic adapter", () => {
     });
   });
 
+  it("maps reasoning effort to adaptive thinking and output_config for Claude Opus 4.7", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-opus-4-7"),
+      prompt: "hello",
+      reasoning: {
+        effort: "high"
+      },
+      providerOptions: {
+        thinking: {
+          type: "adaptive",
+          display: "summarized"
+        },
+        output_config: {
+          task_budget: {
+            type: "tokens",
+            total: 24000
+          }
+        }
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      thinking: { type: string; display?: string };
+      output_config: { effort: string; task_budget: { type: string; total: number } };
+    };
+    expect(body.thinking).toEqual({
+      type: "adaptive",
+      display: "summarized"
+    });
+    expect(body.output_config).toEqual({
+      effort: "high",
+      task_budget: {
+        type: "tokens",
+        total: 24000
+      }
+    });
+  });
+
+  it("keeps manual thinking plus effort for Claude Opus 4.5", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-opus-4-5"),
+      prompt: "hello",
+      reasoning: {
+        budgetTokens: 1024,
+        effort: "medium"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      thinking: { type: string; budget_tokens: number };
+      output_config: { effort: string };
+    };
+    expect(body.thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 1024
+    });
+    expect(body.output_config).toEqual({
+      effort: "medium"
+    });
+  });
+
+  it("sends adaptive thinking config on streaming requests for Claude Opus 4.7", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "event: content_block_delta\n" +
+              'data: {"index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n' +
+              "event: message_stop\n" +
+              'data: {"stop_reason":"end_turn"}\n\n'
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("claude-opus-4-7"),
+      prompt: "hello",
+      reasoning: {
+        effort: "high"
+      }
+    });
+
+    await result.collect();
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const requestBody = JSON.parse(String(requestInit.body)) as {
+      thinking: { type: string };
+      output_config: { effort: string };
+    };
+    expect(requestBody.thinking).toEqual({
+      type: "adaptive"
+    });
+    expect(requestBody.output_config).toEqual({
+      effort: "high"
+    });
+  });
+
+  it("maps PDF file parts into Anthropic document blocks and enables the Files API beta when needed", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-opus-4-7"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "Summarize this PDF." },
+            {
+              type: "file",
+              data: "file_011CNha8iCJcU1wXNR6q4V8w",
+              mediaType: "application/pdf",
+              filename: "brief.pdf"
+            }
+          ]
+        }
+      ]
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
+    const body = JSON.parse(String(requestInit.body)) as {
+      messages: Array<{ content: Array<Record<string, unknown>> }>;
+    };
+
+    expect(headers["anthropic-beta"]).toContain("files-api-2025-04-14");
+    expect(body.messages[0]?.content[1]).toEqual({
+      type: "document",
+      source: {
+        type: "file",
+        file_id: "file_011CNha8iCJcU1wXNR6q4V8w"
+      },
+      title: "brief.pdf"
+    });
+  });
+
   it("maps Anthropic MCP toolsets into native request fields", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -510,6 +682,48 @@ describe("anthropic adapter", () => {
           effort: "medium"
         }
       })
-    ).rejects.toThrow('Provider "anthropic" does not support "reasoning.effort".');
+    ).rejects.toThrow('Provider "anthropic" does not support "reasoning.effort" for this model.');
+  });
+
+  it("rejects budgetTokens for Claude Opus 4.7", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("claude-opus-4-7"),
+        prompt: "hello",
+        reasoning: {
+          budgetTokens: 1024
+        }
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later; use "reasoning.effort" instead.'
+    );
+  });
+
+  it("rejects explicit sampling controls for Claude Opus 4.7", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("claude-opus-4-7"),
+        prompt: "hello",
+        temperature: 0
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later; omit it from the request.'
+    );
+
+    await expect(
+      generateText({
+        model: provider("claude-opus-4-7"),
+        prompt: "hello",
+        providerOptions: {
+          top_p: 0.9
+        }
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later; omit them from the request.'
+    );
   });
 });

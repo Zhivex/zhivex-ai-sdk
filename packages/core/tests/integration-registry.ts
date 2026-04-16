@@ -28,6 +28,8 @@ const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
 const anthropicBaseURL = process.env.ANTHROPIC_BASE_URL;
 const anthropicVersion = process.env.ANTHROPIC_VERSION;
 const anthropicTextModelId = process.env.ANTHROPIC_INTEGRATION_MODEL ?? "claude-3-5-sonnet";
+const isAnthropicOpus47OrLaterModel = (modelId: string) =>
+  /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9])(?:[-@]|$)/.test(modelId);
 
 const geminiApiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const geminiBaseURL = process.env.GEMINI_BASE_URL;
@@ -93,9 +95,13 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
             tools: true,
             structuredOutputMode: "prompted",
             embeddings: false,
-            reasoning: {
-              budgetTokens: 256
-            }
+            reasoning: isAnthropicOpus47OrLaterModel(anthropicTextModelId)
+              ? {
+                  effort: "low"
+                }
+              : {
+                  budgetTokens: 256
+                }
           },
           toolChoiceForTool: () => "required"
         } satisfies IntegrationLanguageProvider

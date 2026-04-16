@@ -4,6 +4,7 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
+  ValidationError,
   createProviderAdapter,
   isCallableToolDefinition,
   hostedTool,
@@ -36,6 +37,23 @@ export interface AnthropicLanguageModelOptions {
   stop_sequences?: string[];
   metadata?: Record<string, unknown>;
   tool_choice?: { type: "auto" | "none" | "any" | "tool"; name?: string };
+  thinking?: AnthropicThinkingConfig;
+  output_config?: AnthropicOutputConfig;
+  [key: string]: unknown;
+}
+
+export interface AnthropicThinkingConfig {
+  type: "adaptive" | "disabled" | "enabled";
+  budget_tokens?: number;
+  display?: "omitted" | "summarized";
+}
+
+export interface AnthropicOutputConfig {
+  effort?: "high" | "low" | "max" | "medium" | "xhigh";
+  task_budget?: {
+    type: "tokens";
+    total: number;
+  };
   [key: string]: unknown;
 }
 
@@ -47,7 +65,7 @@ const capabilities: ModelCapabilities = {
   toolChoice: true,
   parallelToolCalls: true,
   vision: true,
-  files: false,
+  files: true,
   audioInput: false,
   audioOutput: false,
   embeddings: false,
@@ -66,6 +84,38 @@ const capabilities: ModelCapabilities = {
   }
 };
 
+const normalizeModelId = (modelId: string) => modelId.trim().toLowerCase();
+
+const isClaudeOpus45Model = (modelId: string) => /^claude-opus-4-5(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const isClaudeOpus46Model = (modelId: string) => /^claude-opus-4-6(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const isClaudeSonnet46Model = (modelId: string) => /^claude-sonnet-4-6(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const isClaudeOpus47OrLaterModel = (modelId: string) =>
+  /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9])(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const supportsAnthropicEffort = (modelId: string) =>
+  isClaudeOpus45Model(modelId) ||
+  isClaudeOpus46Model(modelId) ||
+  isClaudeSonnet46Model(modelId) ||
+  isClaudeOpus47OrLaterModel(modelId);
+
+const supportsAdaptiveThinking = (modelId: string) =>
+  isClaudeOpus46Model(modelId) || isClaudeSonnet46Model(modelId) || isClaudeOpus47OrLaterModel(modelId);
+
+const supportsAnthropicFiles = (modelId: string) => {
+  const normalized = normalizeModelId(modelId);
+  return /^claude-3-[5-9](?:[-@]|$)/.test(normalized) || /^claude-(?:opus|sonnet|haiku)-4(?:[-@]|$)/.test(normalized);
+};
+
+const isAnthropicFileId = (value: string) => /^file_[a-z0-9]+$/i.test(value);
+
+const isHttpUrl = (value: string) => /^https?:\/\//i.test(value);
+
+const mergeOptionalObjects = <T extends Record<string, unknown>>(base?: T, override?: T): T | undefined =>
+  base || override ? ({ ...(base ?? {}), ...(override ?? {}) } as T) : undefined;
+
 const parseJson = async (response: Response) => {
   if (!response.ok) {
     const body = await response.text();
@@ -76,7 +126,62 @@ const parseJson = async (response: Response) => {
   return response.json();
 };
 
-const mapBlockParts = (message: ModelMessage) =>
+const mapFilePart = (modelId: string, part: Extract<ModelMessage["parts"][number], { type: "file" }>) => {
+  if (!supportsAnthropicFiles(modelId)) {
+    throw new UnsupportedFeatureError(`Model "anthropic/${modelId}" does not support file inputs.`);
+  }
+
+  if (part.mediaType === "application/pdf") {
+    return {
+      type: "document",
+      source: isAnthropicFileId(part.data)
+        ? {
+            type: "file",
+            file_id: part.data
+          }
+        : isHttpUrl(part.data)
+          ? {
+              type: "url",
+              url: part.data
+            }
+          : {
+              type: "base64",
+              media_type: part.mediaType,
+              data: part.data
+            },
+      ...(part.filename ? { title: part.filename } : {})
+    };
+  }
+
+  if (part.mediaType === "text/plain") {
+    return {
+      type: "document",
+      source: isAnthropicFileId(part.data)
+        ? {
+            type: "file",
+            file_id: part.data
+          }
+        : isHttpUrl(part.data)
+          ? (() => {
+              throw new UnsupportedFeatureError(
+                'Provider "anthropic" does not support URL-based "text/plain" document inputs.'
+              );
+            })()
+          : {
+              type: "text",
+              media_type: part.mediaType,
+              data: part.data
+            },
+      ...(part.filename ? { title: part.filename } : {})
+    };
+  }
+
+  throw new UnsupportedFeatureError(
+    `Provider "anthropic" only supports "application/pdf" and "text/plain" file inputs in the shared file mapping. Received "${part.mediaType}".`
+  );
+};
+
+const mapBlockParts = (modelId: string, message: ModelMessage) =>
   message.parts.map((part) => {
     switch (part.type) {
       case "text":
@@ -89,6 +194,8 @@ const mapBlockParts = (message: ModelMessage) =>
             url: part.image
           }
         };
+      case "file":
+        return mapFilePart(modelId, part);
       case "tool-call":
         return {
           type: "tool_use",
@@ -119,20 +226,20 @@ const systemPromptFromMessages = (messages: ModelMessage[]) =>
     .map((part) => part.text)
     .join("\n");
 
-const mapMessages = (messages: ModelMessage[]) =>
+const mapMessages = (modelId: string, messages: ModelMessage[]) =>
   messages
     .filter((message) => message.role !== "system")
     .map((message) => {
       if (message.role === "tool") {
         return {
           role: "user",
-          content: mapBlockParts(message)
+          content: mapBlockParts(modelId, message)
         };
       }
 
       return {
         role: message.role === "assistant" ? "assistant" : "user",
-        content: mapBlockParts(message)
+        content: mapBlockParts(modelId, message)
       };
     });
 
@@ -244,22 +351,72 @@ const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
   };
 };
 
-const mapReasoning = (input: ModelGenerateInput) => {
+const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
   if (!input.reasoning) {
     return undefined;
   }
 
-  if (input.reasoning.effort !== undefined) {
-    throw new UnsupportedFeatureError('Provider "anthropic" does not support "reasoning.effort".');
+  const { effort, budgetTokens } = input.reasoning;
+
+  if (effort === "minimal") {
+    throw new UnsupportedFeatureError('Provider "anthropic" does not support "reasoning.effort=minimal".');
   }
 
-  if (input.reasoning.budgetTokens === undefined) {
-    return undefined;
+  if (effort === "none") {
+    if (budgetTokens !== undefined) {
+      throw new ValidationError(
+        'Provider "anthropic" cannot combine "reasoning.effort=none" with "reasoning.budgetTokens".'
+      );
+    }
+
+    return supportsAdaptiveThinking(modelId)
+      ? {
+          thinking: {
+            type: "disabled"
+          } satisfies AnthropicThinkingConfig
+        }
+      : undefined;
   }
+
+  if (effort === "xhigh" && !isClaudeOpus47OrLaterModel(modelId)) {
+    throw new UnsupportedFeatureError(
+      'Provider "anthropic" does not support "reasoning.effort=xhigh" before Claude Opus 4.7.'
+    );
+  }
+
+  if (effort !== undefined && !supportsAnthropicEffort(modelId)) {
+    throw new UnsupportedFeatureError(
+      'Provider "anthropic" does not support "reasoning.effort" for this model.'
+    );
+  }
+
+  if (budgetTokens !== undefined && isClaudeOpus47OrLaterModel(modelId)) {
+    throw new UnsupportedFeatureError(
+      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later; use "reasoning.effort" instead.'
+    );
+  }
+
+  const thinking =
+    budgetTokens !== undefined
+      ? ({
+          type: "enabled",
+          budget_tokens: budgetTokens
+        } satisfies AnthropicThinkingConfig)
+      : supportsAdaptiveThinking(modelId) && effort !== undefined
+        ? ({
+            type: "adaptive"
+          } satisfies AnthropicThinkingConfig)
+        : undefined;
 
   return {
-    type: "enabled",
-    budget_tokens: input.reasoning.budgetTokens
+    ...(thinking ? { thinking } : {}),
+    ...(effort !== undefined
+      ? {
+          output_config: {
+            effort
+          } satisfies AnthropicOutputConfig
+        }
+      : {})
   };
 };
 
@@ -282,7 +439,7 @@ const parseAssistantMessage = (json: any): ModelMessage => ({
         };
       }
 
-      if (typeof block?.type === "string" && block.type.startsWith("mcp_")) {
+      if (typeof block?.type === "string") {
         return providerDataPart("anthropic", block as JsonValue);
       }
 
@@ -292,7 +449,7 @@ const parseAssistantMessage = (json: any): ModelMessage => ({
 
 class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOptions> {
   readonly provider = "anthropic";
-  readonly capabilities = capabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
@@ -300,39 +457,86 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     private readonly baseURL: string,
     private readonly anthropicVersion: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {}
+  ) {
+    this.capabilities = {
+      ...capabilities,
+      files: supportsAnthropicFiles(modelId)
+    };
+  }
 
-  private headers(withMcpToolset: boolean) {
+  private headers(withMcpToolset: boolean, withFilesApi: boolean) {
+    const betas = [
+      ...(withMcpToolset ? ["mcp-client-2025-11-20"] : []),
+      ...(withFilesApi ? ["files-api-2025-04-14"] : [])
+    ];
+
     return {
       "content-type": "application/json",
       "x-api-key": this.apiKey,
       "anthropic-version": this.anthropicVersion,
-      ...(withMcpToolset ? { "anthropic-beta": "mcp-client-2025-11-20" } : {})
+      ...(betas.length ? { "anthropic-beta": betas.join(",") } : {})
     };
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const mcpServers = mapMcpServers(input.tools);
+    const providerOptions = { ...(input.providerOptions ?? {}) } as AnthropicLanguageModelOptions;
+    const rawThinking = providerOptions.thinking;
+    const rawOutputConfig = providerOptions.output_config;
+    delete providerOptions.thinking;
+    delete providerOptions.output_config;
+
+    if (
+      isClaudeOpus47OrLaterModel(this.modelId) &&
+      rawThinking?.type === "enabled" &&
+      typeof rawThinking.budget_tokens === "number"
+    ) {
+      throw new UnsupportedFeatureError(
+        'Provider "anthropic" does not support manual "thinking.enabled + budget_tokens" for Claude Opus 4.7 or later; use adaptive thinking and "output_config.effort" instead.'
+      );
+    }
+
+    if (isClaudeOpus47OrLaterModel(this.modelId)) {
+      if (input.temperature !== undefined) {
+        throw new UnsupportedFeatureError(
+          'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later; omit it from the request.'
+        );
+      }
+
+      if (providerOptions.top_p !== undefined || providerOptions.top_k !== undefined) {
+        throw new UnsupportedFeatureError(
+          'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later; omit them from the request.'
+        );
+      }
+    }
+
+    const reasoning = mapReasoning(this.modelId, input);
+    const thinking = mergeOptionalObjects(rawThinking, reasoning?.thinking);
+    const outputConfig = mergeOptionalObjects(rawOutputConfig, reasoning?.output_config);
+    const usesFilesApi = input.messages.some((message) =>
+      message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
+    );
 
     try {
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/messages`, {
             method: "POST",
-            headers: this.headers(Boolean(mcpServers?.length)),
+            headers: this.headers(Boolean(mcpServers?.length), usesFilesApi),
             signal,
             body: JSON.stringify({
               model: this.modelId,
               system: systemPromptFromMessages(input.messages),
-              messages: mapMessages(input.messages),
+              messages: mapMessages(this.modelId, input.messages),
               ...(mcpServers ? { mcp_servers: mcpServers } : {}),
               tools: mapTools(input.tools),
               tool_choice: mapToolChoice(input.toolChoice),
               temperature: input.temperature,
               max_tokens: input.maxTokens ?? 1024,
-              ...input.providerOptions,
-              thinking: mapReasoning(input)
+              ...providerOptions,
+              ...(outputConfig ? { output_config: outputConfig } : {}),
+              ...(thinking ? { thinking } : {})
             })
           }),
         input
@@ -364,23 +568,61 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const mcpServers = mapMcpServers(input.tools);
+    const providerOptions = { ...(input.providerOptions ?? {}) } as AnthropicLanguageModelOptions;
+    const rawThinking = providerOptions.thinking;
+    const rawOutputConfig = providerOptions.output_config;
+    delete providerOptions.thinking;
+    delete providerOptions.output_config;
+
+    if (
+      isClaudeOpus47OrLaterModel(this.modelId) &&
+      rawThinking?.type === "enabled" &&
+      typeof rawThinking.budget_tokens === "number"
+    ) {
+      throw new UnsupportedFeatureError(
+        'Provider "anthropic" does not support manual "thinking.enabled + budget_tokens" for Claude Opus 4.7 or later; use adaptive thinking and "output_config.effort" instead.'
+      );
+    }
+
+    if (isClaudeOpus47OrLaterModel(this.modelId)) {
+      if (input.temperature !== undefined) {
+        throw new UnsupportedFeatureError(
+          'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later; omit it from the request.'
+        );
+      }
+
+      if (providerOptions.top_p !== undefined || providerOptions.top_k !== undefined) {
+        throw new UnsupportedFeatureError(
+          'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later; omit them from the request.'
+        );
+      }
+    }
+
+    const reasoning = mapReasoning(this.modelId, input);
+    const thinking = mergeOptionalObjects(rawThinking, reasoning?.thinking);
+    const outputConfig = mergeOptionalObjects(rawOutputConfig, reasoning?.output_config);
+    const usesFilesApi = input.messages.some((message) =>
+      message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
+    );
     const response = await withRetry(
       () =>
         this.fetcher(`${this.baseURL}/messages`, {
           method: "POST",
-          headers: this.headers(Boolean(mcpServers?.length)),
+          headers: this.headers(Boolean(mcpServers?.length), usesFilesApi),
           signal,
           body: JSON.stringify({
             model: this.modelId,
             system: systemPromptFromMessages(input.messages),
-            messages: mapMessages(input.messages),
+            messages: mapMessages(this.modelId, input.messages),
             ...(mcpServers ? { mcp_servers: mcpServers } : {}),
             tools: mapTools(input.tools),
             tool_choice: mapToolChoice(input.toolChoice),
             temperature: input.temperature,
             max_tokens: input.maxTokens ?? 1024,
             stream: true,
-            ...input.providerOptions
+            ...providerOptions,
+            ...(outputConfig ? { output_config: outputConfig } : {}),
+            ...(thinking ? { thinking } : {})
           })
         }),
       input
@@ -417,11 +659,35 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
             } satisfies StreamEvent;
           }
 
+          if (event.event === "content_block_start" && json.content_block?.type === "thinking") {
+            yield {
+              type: "provider-data",
+              provider: "anthropic",
+              data: json.content_block as JsonValue
+            } satisfies StreamEvent;
+          }
+
           if (event.event === "content_block_delta" && json.delta?.type === "input_json_delta") {
             const current = toolBuffers.get(json.index);
             if (current) {
               current.input += json.delta.partial_json;
             }
+          }
+
+          if (event.event === "content_block_delta" && json.delta?.type === "thinking_delta") {
+            yield {
+              type: "provider-data",
+              provider: "anthropic",
+              data: json.delta as JsonValue
+            } satisfies StreamEvent;
+          }
+
+          if (event.event === "content_block_delta" && json.delta?.type === "signature_delta") {
+            yield {
+              type: "provider-data",
+              provider: "anthropic",
+              data: json.delta as JsonValue
+            } satisfies StreamEvent;
           }
 
           if (event.event === "content_block_stop") {
