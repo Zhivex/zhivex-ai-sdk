@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createTextMessage, embed, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createQwen } from "../src/index.js";
 
@@ -14,6 +15,7 @@ describe("qwen adapter", () => {
     createModel: () => createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch })("qwen-plus"),
     createEmbeddingModel: () =>
       createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch }).embeddingModel("text-embedding-v4"),
+    expectedAgentTier: "tier-c",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -28,6 +30,69 @@ describe("qwen adapter", () => {
       embeddings: true,
       reasoning: true,
       webSearch: false
+    }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "qwen",
+    modelId: "qwen-plus",
+    expectedAgentTier: "tier-c",
+    createModel: () => createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch })("qwen-plus"),
+    mockSimpleRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "hello from qwen agent" } }]
+        })
+      );
+    },
+    mockToolRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                content: "",
+                tool_calls: [
+                  {
+                    id: "tool-1",
+                    function: {
+                      name: "weather",
+                      arguments: JSON.stringify({ city: "Madrid" })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      );
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "Madrid is sunny" } }]
+        })
+      );
+    },
+    mockStreamRun: () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n" +
+                "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\n" +
+                "data: [DONE]\n\n"
+            )
+          );
+          controller.close();
+        }
+      });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
     }
   });
 
@@ -222,17 +287,129 @@ describe("qwen adapter", () => {
     });
   });
 
-  it("rejects common reasoning config for Qwen until it is mapped", async () => {
+  it("rejects common reasoning config for Qwen through the shared capabilities contract", async () => {
     const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
-
-    await expect(
-      generateText({
-        model: provider("qwen-plus"),
-        prompt: "hello",
-        reasoning: {
-          effort: "medium"
-        }
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "reasoned" } }]
       })
-    ).rejects.toThrow('Provider "qwen" does not support the common "reasoning" config yet.');
+    );
+
+    await generateText({
+      model: provider("qwen-plus"),
+      prompt: "hello",
+      reasoning: {
+        effort: "medium",
+        budgetTokens: 64
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      enable_thinking: boolean;
+      thinking_budget: number;
+    };
+    expect(body.enable_thinking).toBe(true);
+    expect(body.thinking_budget).toBe(64);
+  });
+
+  it("preserves Qwen reasoning content across a multi-step tool loop", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              reasoning_content: "Need to call the tool first.",
+              content: "",
+              tool_calls: [
+                {
+                  id: "tool-1",
+                  function: {
+                    name: "weather",
+                    arguments: JSON.stringify({ city: "Madrid" })
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "Sunny in Madrid" } }]
+      })
+    );
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("qwen-plus"),
+      prompt: "weather",
+      maxSteps: 2,
+      reasoning: {
+        effort: "medium"
+      },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, temperatureC: 26 })
+        })
+      }
+    });
+
+    expect(result.text).toBe("Sunny in Madrid");
+    const followupRequest = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    const followupBody = JSON.parse(String(followupRequest.body)) as {
+      preserve_thinking?: boolean;
+      messages: Array<{ role: string; reasoning_content?: string }>;
+    };
+    expect(followupBody.preserve_thinking).toBe(true);
+    expect(followupBody.messages.find((message) => message.role === "assistant")?.reasoning_content).toBe(
+      "Need to call the tool first."
+    );
+  });
+
+  it("streams reasoning content as provider data for Qwen", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Think\"}}]}\n\n" +
+              "data: {\"choices\":[{\"delta\":{\"content\":\" answer\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":3,\"total_tokens\":7}}\n\n" +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("qwen-plus"),
+      prompt: "hello",
+      reasoning: {
+        effort: "medium"
+      }
+    });
+
+    const final = await result.collect();
+    expect(final.text).toBe(" answer");
+    expect(final.messages.at(-1)?.parts).toContainEqual({
+      type: "provider-data",
+      provider: "qwen",
+      data: {
+        type: "reasoning_content",
+        reasoningContent: "Think"
+      }
+    });
   });
 });

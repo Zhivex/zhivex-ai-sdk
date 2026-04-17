@@ -4,16 +4,19 @@ import { z } from "zod";
 import {
   createTextMessage,
   embed,
+  getAgentCapabilities,
   generateGroundedText,
   generateObject,
   generateSpeech,
   generateText,
+  hostedTool,
   streamText,
   tool,
   transcribeAudio
 } from "@zhivex-ai/core";
+import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createOpenAI } from "../src/index.js";
+import { createOpenAI, openAIMcpApprovalResponse, openAIRemoteMcpTool, openAIWebSearchTool } from "../src/index.js";
 
 describe("openai adapter", () => {
   const fetchMock = vi.fn();
@@ -24,6 +27,7 @@ describe("openai adapter", () => {
     createModel: () => createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("gpt-4o-mini"),
     createEmbeddingModel: () =>
       createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch }).embeddingModel("text-embedding-3-small"),
+    expectedAgentTier: "tier-a",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -37,8 +41,108 @@ describe("openai adapter", () => {
       audioOutput: false,
       embeddings: true,
       reasoning: true,
-      webSearch: false
+      webSearch: true
     }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "openai",
+    modelId: "gpt-4o-mini",
+    expectedAgentTier: "tier-a",
+    createModel: () => createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("gpt-4o-mini"),
+    mockSimpleRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "hello from openai agent" } }]
+        })
+      );
+    },
+    mockToolRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                content: "",
+                tool_calls: [
+                  {
+                    id: "tool-1",
+                    function: {
+                      name: "weather",
+                      arguments: JSON.stringify({ city: "Madrid" })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      );
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "Madrid is sunny" } }]
+        })
+      );
+    },
+    mockStreamRun: () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n" +
+                "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\n" +
+                "data: [DONE]\n\n"
+            )
+          );
+          controller.close();
+        }
+      });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
+    },
+    mockApprovalRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          id: "resp_1",
+          status: "completed",
+          output: [
+            {
+              type: "mcp_approval_request",
+              id: "mcpr_1",
+              arguments: "{}",
+              name: "fetch_docs",
+              server_label: "github"
+            }
+          ]
+        })
+      );
+    },
+    mockApprovalResume: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          id: "resp_2",
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "approved by openai" }]
+            }
+          ]
+        })
+      );
+    },
+    createApprovalTools: () => ({
+      github: openAIRemoteMcpTool({
+        server_label: "github",
+        server_url: "https://example.com/mcp"
+      })
+    })
   });
 
   beforeEach(() => {
@@ -98,6 +202,225 @@ describe("openai adapter", () => {
     });
 
     expect((await result.collect()).text).toBe("hello world");
+  });
+
+  it("streams Responses API events for hosted tools", async () => {
+    const firstBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"item_1\",\"call_id\":\"call_1\",\"name\":\"weather\",\"arguments\":\"\"}}\n\n" +
+              "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item_1\",\"delta\":\"{\\\"city\\\":\\\"Mad\"}\n\n" +
+              "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item_1\",\"delta\":\"rid\\\"}\"}\n\n" +
+              "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"item_1\",\"arguments\":\"{\\\"city\\\":\\\"Madrid\\\"}\"}\n\n" +
+              "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2,\"total_tokens\":6}}}\n\n" +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    const secondBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Madrid \"}\n\n" +
+              "data: {\"type\":\"response.output_text.delta\",\"delta\":\"is sunny.\"}\n\n" +
+              "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_2\",\"status\":\"completed\",\"usage\":{\"input_tokens\":2,\"output_tokens\":3,\"total_tokens\":5}}}\n\n" +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(firstBody, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      new Response(secondBody, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("gpt-5"),
+      prompt: "Use hosted web search if needed, then weather.",
+      maxSteps: 2,
+      tools: {
+        web: hostedTool({
+          name: "web",
+          provider: "openai",
+          type: "web_search"
+        }),
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      }
+    });
+
+    expect((await result.collect()).text).toBe("Madrid is sunny.");
+
+    const firstRequest = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { stream: boolean };
+    expect(firstRequest.stream).toBe(true);
+
+    const secondRequest = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)) as {
+      input: Array<Record<string, unknown>>;
+    };
+    expect(secondRequest.input).toEqual([
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "Use hosted web search if needed, then weather." }]
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "function_call",
+            call_id: "call_1",
+            name: "weather",
+            arguments: JSON.stringify({ city: "Madrid" })
+          }
+        ]
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: JSON.stringify({ city: "Madrid", forecast: "sunny" })
+      }
+    ]);
+  });
+
+  it("parses remote MCP approval requests from the Responses API", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "mcp_approval_request",
+            id: "mcpr_1",
+            arguments: "{}",
+            name: "fetch_docs",
+            server_label: "github"
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-5"),
+      prompt: "Use MCP",
+      tools: {
+        github: openAIRemoteMcpTool({
+          server_label: "github",
+          server_url: "https://example.com/mcp"
+        })
+      }
+    });
+
+    expect(result.messages.at(-1)?.parts).toContainEqual({
+      type: "provider-data",
+      provider: "openai",
+      data: {
+        type: "mcp_approval_request",
+        id: "mcpr_1",
+        arguments: "{}",
+        name: "fetch_docs",
+        server_label: "github"
+      }
+    });
+  });
+
+  it("serializes MCP approval responses back into Responses API input", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: []
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-5"),
+      messages: [
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "provider-data",
+              provider: "openai",
+              data: {
+                responseId: "resp_prev"
+              }
+            }
+          ]
+        },
+        {
+          role: "user",
+          parts: [
+            openAIMcpApprovalResponse({
+              approval_request_id: "mcpr_1",
+              approve: true
+            })
+          ]
+        }
+      ],
+      tools: {
+        github: openAIRemoteMcpTool({
+          server_label: "github",
+          server_url: "https://example.com/mcp",
+          authorization: "Bearer token",
+          server_description: "Docs server",
+          allowed_tools: {
+            read_only: true,
+            tool_names: ["fetch_docs"]
+          },
+          require_approval: {
+            never: {
+              read_only: true
+            }
+          }
+        })
+      }
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      previous_response_id: string;
+      input: Array<Record<string, unknown>>;
+      tools: Array<Record<string, unknown>>;
+    };
+    expect(body.previous_response_id).toBe("resp_prev");
+    expect(body.input).toContainEqual({
+      type: "mcp_approval_response",
+      approval_request_id: "mcpr_1",
+      approve: true
+    });
+    expect(body.tools[0]).toMatchObject({
+      type: "mcp",
+      server_label: "github",
+      server_url: "https://example.com/mcp",
+      authorization: "Bearer token",
+      server_description: "Docs server",
+      allowed_tools: {
+        read_only: true,
+        tool_names: ["fetch_docs"]
+      },
+      require_approval: {
+        never: {
+          read_only: true
+        }
+      }
+    });
   });
 
   it("supports tool calls and native structured output", async () => {
@@ -232,6 +555,130 @@ describe("openai adapter", () => {
     });
   });
 
+  it("maps typed OpenAI hosted tool helpers", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "hello from openai" }]
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-4o-mini"),
+      prompt: "hello",
+      tools: {
+        web: openAIWebSearchTool({
+          search_context_size: "small"
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tools: Array<{ type: string; search_context_size?: string }>;
+    };
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.openai.com/v1/responses");
+    expect(body.tools).toEqual([
+      {
+        type: "web_search",
+        search_context_size: "low"
+      }
+    ]);
+
+    const webTool = openAIWebSearchTool();
+    const mcpTool = openAIRemoteMcpTool({
+      server_label: "docs",
+      server_url: "https://example.com/mcp"
+    });
+    expect(webTool.toolClass).toBe("web-search");
+    expect(mcpTool.toolClass).toBe("remote-mcp");
+    expect(mcpTool.requiresApproval).toBe(true);
+    expect(getAgentCapabilities(provider("gpt-4o-mini")).remoteMcp).toBe(true);
+  });
+
+  it("uses the Responses API for hosted tools and continues local function loops", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call_1",
+            name: "weather",
+            arguments: JSON.stringify({ city: "Madrid" })
+          }
+        ],
+        usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_2",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "Madrid is sunny." }]
+          }
+        ],
+        usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 }
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-5"),
+      prompt: "Use hosted web search if needed, then weather.",
+      maxSteps: 2,
+      tools: {
+        web: hostedTool({
+          name: "web",
+          provider: "openai",
+          type: "web_search"
+        }),
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      }
+    });
+
+    expect(result.text).toBe("Madrid is sunny.");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.openai.com/v1/responses");
+
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      tools: Array<{ type: string }>;
+    };
+    expect(firstBody.tools).toEqual(
+      expect.arrayContaining([
+        { type: "web_search" },
+        expect.objectContaining({ type: "function", name: "weather" })
+      ])
+    );
+
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)) as {
+      previous_response_id: string;
+      input: Array<{ type: string; call_id?: string; output?: string }>;
+    };
+    expect(secondBody.previous_response_id).toBe("resp_1");
+    expect(secondBody.input).toEqual([
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: JSON.stringify({ city: "Madrid", forecast: "sunny" })
+      }
+    ]);
+  });
+
   it("maps common reasoning config to OpenAI request fields", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -343,5 +790,89 @@ describe("openai adapter", () => {
         providerMetadata: expect.any(Object)
       }
     ]);
+  });
+
+  it("connects realtime sessions with the expected headers and setup payload", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
+      expect(url).toContain("/realtime");
+      expect(url).toContain("model=gpt-realtime");
+      expect(headers).toMatchObject({
+        authorization: "Bearer test",
+        "openai-beta": "realtime=v1"
+      });
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gpt-realtime").connect({
+      instructions: "Be brief.",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: () => ({ ok: true })
+        })
+      }
+    });
+
+    await session.sendText("hello");
+    await session.close();
+
+    expect(connectionFactory).toHaveBeenCalledOnce();
+    expect(sent[0]).toMatchObject({
+      type: "session.update",
+      session: expect.objectContaining({
+        model: "gpt-realtime",
+        instructions: "Be brief.",
+        tools: [expect.objectContaining({ type: "function" })]
+      })
+    });
+    expect(sent[1]).toMatchObject({
+      type: "conversation.item.create",
+      item: expect.objectContaining({ role: "user" })
+    });
+    expect(sent[2]).toEqual({ type: "response.create" });
+  });
+
+  it("creates browser tokens for realtime client sessions", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        client_secret: {
+          value: "ephemeral-secret",
+          expires_at_ms: 1234
+        }
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const token = await provider.realtimeModel!("gpt-realtime").createBrowserToken?.({
+      instructions: "Be helpful."
+    });
+
+    expect(token).toEqual({
+      value: "ephemeral-secret",
+      expiresAtMs: 1234,
+      rawResponse: expect.any(Object)
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/realtime/client_secrets",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ authorization: "Bearer test" })
+      })
+    );
   });
 });

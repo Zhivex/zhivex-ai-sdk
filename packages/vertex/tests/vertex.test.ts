@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, transcribeAudio } from "@zhivex-ai/core";
+import { embedMany, generateGroundedText, generateObject, generateSpeech, generateText, hostedTool, tool, transcribeAudio } from "@zhivex-ai/core";
+import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createVertex } from "../src/index.js";
+import { createVertex, vertexMcpTools } from "../src/index.js";
 
 describe("vertex adapter", () => {
   const fetchMock = vi.fn();
@@ -25,12 +26,13 @@ describe("vertex adapter", () => {
         location: "us-central1",
         fetch: fetchMock as typeof fetch
       }).embeddingModel("text-embedding-005"),
+    expectedAgentTier: "tier-b",
     expectedCapabilities: {
       streaming: true,
       tools: true,
       structuredOutput: true,
       jsonMode: true,
-      toolChoice: false,
+      toolChoice: true,
       parallelToolCalls: false,
       vision: true,
       files: false,
@@ -38,7 +40,83 @@ describe("vertex adapter", () => {
       audioOutput: false,
       embeddings: true,
       reasoning: true,
-      webSearch: false
+      webSearch: true
+    }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "vertex",
+    modelId: "gemini-2.0-flash",
+    expectedAgentTier: "tier-b",
+    createModel: () =>
+      createVertex({
+        accessToken: "test",
+        projectId: "demo-project",
+        location: "us-central1",
+        fetch: fetchMock as typeof fetch
+      })("gemini-2.0-flash"),
+    mockSimpleRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: { parts: [{ text: "hello from vertex agent" }] }
+            }
+          ]
+        })
+      );
+    },
+    mockToolRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    functionCall: {
+                      id: "tool-1",
+                      name: "weather",
+                      args: { city: "Madrid" }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      );
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: { parts: [{ text: "Madrid is sunny" }] }
+            }
+          ]
+        })
+      );
+    },
+    mockStreamRun: () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\n\n" +
+                "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" world\"}]},\"finishReason\":\"STOP\"}]}\n\n"
+            )
+          );
+          controller.close();
+        }
+      });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
     }
   });
 
@@ -171,6 +249,129 @@ describe("vertex adapter", () => {
     const body = JSON.parse(String(requestInit.body)) as { topP: number; candidateCount: number };
     expect(body.topP).toBe(0.95);
     expect(body.candidateCount).toBe(1);
+  });
+
+  it("maps common tool choice to Vertex toolConfig", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "hello from vertex" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      },
+      toolChoice: {
+        type: "tool",
+        toolName: "weather"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      toolConfig: { functionCallingConfig: { mode: string; allowedFunctionNames: string[] } };
+    };
+    expect(body.toolConfig).toEqual({
+      functionCallingConfig: {
+        mode: "ANY",
+        allowedFunctionNames: ["weather"]
+      }
+    });
+  });
+
+  it("maps hosted Vertex tools into native tool declarations", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "hello from vertex" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello",
+      tools: {
+        google: hostedTool({
+          name: "google",
+          provider: "vertex",
+          type: "googleSearch"
+        }),
+        code: hostedTool({
+          name: "code",
+          provider: "vertex",
+          type: "codeExecution"
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tools: Array<Record<string, unknown>>;
+    };
+    expect(body.tools).toEqual([{ googleSearch: {} }, { codeExecution: {} }]);
+  });
+
+  it("builds callable tools from an MCP client", async () => {
+    const tools = await vertexMcpTools({
+      async listTools() {
+        return {
+          tools: [
+            {
+              name: "echo",
+              description: "Echo a value"
+            }
+          ]
+        };
+      },
+      async callTool(input) {
+        return {
+          content: [{ type: "text", text: "ok" }],
+          structuredContent: {
+            echoed: input.arguments
+          }
+        };
+      }
+    });
+
+    const echo = tools.echo;
+    if (!echo || !("execute" in echo)) {
+      throw new Error("Expected MCP tool to be callable.");
+    }
+
+    await expect(echo.execute({ value: 42 })).resolves.toEqual({
+      content: [{ type: "text", text: "ok" }],
+      structuredContent: {
+        echoed: { value: 42 }
+      }
+    });
   });
 
   it("maps reasoning budget tokens to Vertex thinking config", async () => {
@@ -382,5 +583,66 @@ describe("vertex adapter", () => {
 
     expect(result.text).toBe("fresh vertex answer");
     expect(result.sources[0]?.url).toBe("https://example.com/vertex");
+  });
+
+  it("connects Vertex Live sessions using the documented BidiGenerateContent websocket", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
+      expect(url).toBe(
+        "wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.PredictionService.BidiGenerateContent"
+      );
+      expect(headers).toMatchObject({
+        authorization: "Bearer test"
+      });
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({
+      instructions: "Be brief."
+    });
+
+    await session.sendText("hello vertex");
+    await session.close();
+
+    expect(connectionFactory).toHaveBeenCalledOnce();
+    expect(sent[0]).toMatchObject({
+      setup: expect.objectContaining({
+        model: "models/gemini-live-2.5-flash-native-audio"
+      })
+    });
+    expect(sent[1]).toMatchObject({
+      clientContent: {
+        turns: [{ role: "user", parts: [{ text: "hello vertex" }] }],
+        turnComplete: true
+      }
+    });
+  });
+
+  it("reports Vertex browser tokens as unsupported", async () => {
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(provider.realtimeModel!("gemini-live-2.5-flash-native-audio").createBrowserToken?.()).rejects.toThrow(
+      "does not support browser session tokens"
+    );
   });
 });

@@ -1,8 +1,12 @@
 import { UnsupportedFeatureError } from "./errors.js";
 import type {
+  AgentCapabilities,
+  AgentSupportTier,
   ContentPart,
   FinishReason,
   GenerateResult,
+  HostedToolDefinition,
+  HostedToolClass,
   JsonValue,
   LanguageModel,
   ModelMessage,
@@ -24,6 +28,12 @@ export const toolCallPart = (toolCall: ToolCall): ContentPart => ({
 export const toolResultPart = (toolResult: ToolExecutionResult): ContentPart => ({
   type: "tool-result",
   toolResult
+});
+
+export const providerDataPart = (provider: string, data: JsonValue): ContentPart => ({
+  type: "provider-data",
+  provider,
+  data
 });
 
 export const createTextMessage = (role: ModelMessage["role"], text: string): ModelMessage => ({
@@ -61,6 +71,88 @@ export const getTextFromMessages = (messages: ModelMessage[]): string =>
 export const serializeJsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 
 export const tool = <TTool extends ToolDefinition>(definition: TTool): TTool => definition;
+
+const inferHostedToolClass = (definition: Omit<HostedToolDefinition, "kind">): HostedToolClass => {
+  const normalizedType = definition.type.toLowerCase();
+
+  if (
+    normalizedType.includes("web_search") ||
+    normalizedType.includes("web-search") ||
+    normalizedType.includes("googlesearch")
+  ) {
+    return "web-search";
+  }
+
+  if (
+    normalizedType.includes("file_search") ||
+    normalizedType.includes("file-search")
+  ) {
+    return "file-search";
+  }
+
+  if (normalizedType === "mcp" || normalizedType.includes("mcp_toolset") || normalizedType.includes("mcp-toolset")) {
+    return normalizedType.includes("toolset") ? "toolset" : "remote-mcp";
+  }
+
+  if (
+    normalizedType.includes("computer_use") ||
+    normalizedType.includes("computer-use")
+  ) {
+    return "computer-use";
+  }
+
+  if (
+    normalizedType.includes("codeexecution") ||
+    normalizedType.includes("code_execution") ||
+    normalizedType.includes("code-execution")
+  ) {
+    return "code-execution";
+  }
+
+  return "custom";
+};
+
+export const hostedTool = <TTool extends HostedToolDefinition>(definition: Omit<TTool, "kind">): TTool =>
+  ({
+    kind: "hosted",
+    toolClass: inferHostedToolClass(definition),
+    ...definition
+  }) as TTool;
+
+export const isHostedToolDefinition = (
+  toolDefinition: ToolDefinition | HostedToolDefinition
+): toolDefinition is HostedToolDefinition => "kind" in toolDefinition && toolDefinition.kind === "hosted";
+
+export const isCallableToolDefinition = (
+  toolDefinition: ToolDefinition | HostedToolDefinition
+): toolDefinition is ToolDefinition => !isHostedToolDefinition(toolDefinition);
+
+export const getHostedToolClass = (toolDefinition: HostedToolDefinition): HostedToolClass =>
+  toolDefinition.toolClass ?? inferHostedToolClass(toolDefinition);
+
+export const isHostedToolClass = (
+  toolDefinition: HostedToolDefinition,
+  toolClass: HostedToolClass
+) => getHostedToolClass(toolDefinition) === toolClass;
+
+const emptyAgentCapabilities: AgentCapabilities = {
+  supportTier: "tier-c",
+  toolChoiceNone: false,
+  approvalRequests: false,
+  hostedWebSearch: false,
+  hostedFileSearch: false,
+  remoteMcp: false,
+  computerUse: false,
+  codeExecution: false,
+  toolsets: false
+};
+
+export const getAgentCapabilities = (model: LanguageModel): AgentCapabilities => ({
+  ...emptyAgentCapabilities,
+  ...(model.capabilities.agentCapabilities ?? {})
+});
+
+export const getAgentSupportTier = (model: LanguageModel): AgentSupportTier => getAgentCapabilities(model).supportTier;
 
 export const normalizeFinishReason = (reason: string | undefined | null): FinishReason | undefined => {
   if (!reason) {

@@ -1,12 +1,18 @@
 import {
+  createAgent,
   generateObject,
+  runAgent,
   generateText,
+  streamAgent,
   streamObject,
   streamText,
+  type AgentRunOutput,
+  type AgentStreamResult,
   type GenerateObjectOptions,
   type GenerateObjectOutput,
   type GenerateTextOptions,
   type GenerateTextOutput,
+  type LanguageModel,
   type StreamEvent,
   type StreamObjectResult,
   type StreamTextResult,
@@ -18,6 +24,9 @@ import { createRouteDecision, gatewayMessagesToModelMessages, stripImagesForUnsu
 import {
   GatewayError,
   type GatewayAttempt,
+  type GatewayAgentRequest,
+  type GatewayAgentResponse,
+  type GatewayAgentStreamResult,
   type GatewayConfig,
   type GatewayGenerateObjectRequest,
   type GatewayModelTarget,
@@ -84,7 +93,41 @@ const supportsRequiredCapabilities = (
   );
 };
 
-const withinCostBudget = (config: GatewayConfig, request: GatewayRequest, target: GatewayModelTarget) => {
+const agentTierRank = (tier: "tier-a" | "tier-b" | "tier-c" | undefined) =>
+  tier === "tier-a" ? 3 : tier === "tier-b" ? 2 : tier === "tier-c" ? 1 : 0;
+
+const supportsRequiredAgentCapabilities = (
+  adapter: ProviderAdapter,
+  target: GatewayModelTarget,
+  requiredAgentCapabilities: GatewayAgentRequest["requiredAgentCapabilities"]
+) => {
+  if (!requiredAgentCapabilities) {
+    return true;
+  }
+
+  const capabilities = adapter.languageModel(target.modelId).capabilities.agentCapabilities;
+  if (!capabilities) {
+    return false;
+  }
+
+  return Object.entries(requiredAgentCapabilities).every(([key, value]) => {
+    if (value == null) {
+      return true;
+    }
+
+    if (key === "supportTier") {
+      return agentTierRank(capabilities.supportTier) >= agentTierRank(value as typeof capabilities.supportTier);
+    }
+
+    return value !== true || capabilities[key as keyof typeof capabilities] === true;
+  });
+};
+
+const withinCostBudget = (
+  config: GatewayConfig,
+  request: Pick<GatewayRequest, "maxCostPer1kTokens">,
+  target: GatewayModelTarget
+) => {
   if (request.maxCostPer1kTokens == null) {
     return true;
   }
@@ -167,7 +210,7 @@ const getInputText = (request: GatewayRequest) =>
   `${request.systemPrompt ?? ""}\n${request.messages.map((message) => message.content).join("\n")}`.trim();
 
 const buildRequiredCapabilities = (
-  request: GatewayRequest,
+  request: Pick<GatewayRequest, "requiredCapabilities" | "tools" | "reasoning">,
   extra: NonNullable<GatewayRequest["requiredCapabilities"]> = {}
 ): GatewayRequest["requiredCapabilities"] => ({
   ...(request.requiredCapabilities ?? {}),
@@ -231,6 +274,59 @@ const enrichObjectResult = <TSchema extends ZodTypeAny>(
   routeDecision
 });
 
+const createAgentMessages = (request: GatewayAgentRequest, target: GatewayModelTarget) =>
+  request.messages
+    ? gatewayMessagesToModelMessages(
+        stripImagesForUnsupportedModel(request.messages, target.provider, target.modelId),
+        undefined
+      )
+    : undefined;
+
+const createAgentRunInput = (request: GatewayAgentRequest, target: GatewayModelTarget) => {
+  const source =
+    request.prompt !== undefined
+      ? { prompt: request.prompt }
+      : request.messages
+        ? { messages: createAgentMessages(request, target) }
+        : {};
+
+  return {
+    ...source,
+    system: request.system,
+    state: request.state,
+    approvals: request.approvals,
+    handoff: request.handoff,
+    tools: request.tools,
+    toolChoice: request.toolChoice,
+    toolExecution: request.toolExecution,
+    maxSteps: request.maxSteps,
+    temperature: request.temperature,
+    maxTokens: request.maxTokens,
+    reasoning: request.reasoning,
+    providerOptions: request.providerOptions,
+    abortSignal: request.abortSignal
+  };
+};
+
+const enrichAgentResult = (
+  target: GatewayModelTarget,
+  attempts: GatewayAttempt[],
+  routeDecision: GatewayResponse["routeDecision"],
+  startedAt: number,
+  result: AgentRunOutput
+): GatewayAgentResponse => ({
+  ...result,
+  providerUsed: target.provider,
+  modelUsed: target.modelId,
+  latencyMs: Date.now() - startedAt,
+  attempts,
+  routeDecision,
+  state: {
+    ...result.state,
+    routeDecision
+  }
+});
+
 export const createGateway = (config: GatewayConfig) => {
   const getAdapter = (provider: GatewayProviderId): ProviderAdapter => {
     const adapter = config.adapters[provider];
@@ -250,6 +346,66 @@ export const createGateway = (config: GatewayConfig) => {
       orderedTargets,
       routeDecision: createRouteDecision(mode, intent, orderedTargets)
     };
+  };
+
+  const selectAgentTarget = async (request: GatewayAgentRequest) => {
+    const mode = request.routingMode ?? "balanced";
+    const intent = request.taskIntent ?? "tool-heavy";
+    const orderedTargets = orderTargets(mode, intent, request.primary, request.fallbacks ?? [], config);
+    const routeDecision = createRouteDecision(mode, intent, orderedTargets);
+    const attempts: GatewayAttempt[] = [];
+
+    for (const target of orderedTargets) {
+      const adapter = getAdapter(target.provider);
+
+      if (!supportsRequiredCapabilities(adapter, target, buildRequiredCapabilities(request))) {
+        attempts.push({
+          provider: target.provider,
+          modelId: target.modelId,
+          ok: false,
+          latencyMs: 0,
+          errorMessage: "Skipped because model capabilities do not satisfy the request."
+        });
+        continue;
+      }
+
+      if (!supportsRequiredAgentCapabilities(adapter, target, request.requiredAgentCapabilities)) {
+        attempts.push({
+          provider: target.provider,
+          modelId: target.modelId,
+          ok: false,
+          latencyMs: 0,
+          errorMessage: "Skipped because agent capabilities do not satisfy the request."
+        });
+        continue;
+      }
+
+      if (!withinCostBudget(config, request, target)) {
+        attempts.push({
+          provider: target.provider,
+          modelId: target.modelId,
+          ok: false,
+          latencyMs: 0,
+          errorMessage: "Skipped because provider cost exceeds the configured budget."
+        });
+        continue;
+      }
+
+      await config.onAgentRoute?.({
+        provider: target.provider,
+        modelId: target.modelId,
+        routeDecision
+      });
+
+      return {
+        target,
+        attempts,
+        routeDecision,
+        startedAt: Date.now()
+      };
+    }
+
+    throw new GatewayError(attempts.at(-1)?.errorMessage ?? "No gateway agent target satisfied the request.", false);
   };
 
   const runGenerate = async <TResult extends GenerateTextOutput>(
@@ -575,6 +731,103 @@ export const createGateway = (config: GatewayConfig) => {
           const relay = await ensureRelay();
           for await (const partial of relay.streamResult.partialObjectStream) {
             yield partial;
+          }
+        })(),
+        textStream: (async function* () {
+          const relay = await ensureRelay();
+          for await (const chunk of relay.streamResult.textStream) {
+            yield chunk;
+          }
+        })(),
+        collect: async () => (await ensureRelay()).collect()
+      };
+    },
+
+    async runAgent(request: GatewayAgentRequest): Promise<GatewayAgentResponse> {
+      const selection = await selectAgentTarget(request);
+      const adapter = getAdapter(selection.target.provider);
+      const model = adapter.languageModel(selection.target.modelId) as LanguageModel;
+      const agent = createAgent({
+        id: request.agentId,
+        model,
+        instructions: request.instructions,
+        tools: request.tools,
+        maxSteps: request.maxSteps,
+        temperature: request.temperature,
+        maxTokens: request.maxTokens,
+        reasoning: request.reasoning,
+        toolExecution: request.toolExecution,
+        providerOptions: request.providerOptions,
+        metadata: request.metadata,
+        store: request.store,
+        memory: request.memory,
+        onTelemetryEvent: request.onTelemetryEvent
+      });
+
+      const result = await runAgent(agent, {
+        ...createAgentRunInput(request, selection.target)
+      });
+
+      return enrichAgentResult(selection.target, selection.attempts, selection.routeDecision, selection.startedAt, result);
+    },
+
+    streamAgent(request: GatewayAgentRequest): GatewayAgentStreamResult {
+      const selection = selectAgentTarget(request);
+      let relayPromise:
+        | Promise<{
+            streamResult: AgentStreamResult;
+            collect: () => Promise<GatewayAgentResponse>;
+          }>
+        | undefined;
+
+      const ensureRelay = async () => {
+        if (!relayPromise) {
+          relayPromise = selection.then(async (selected) => {
+            const adapter = getAdapter(selected.target.provider);
+            const model = adapter.languageModel(selected.target.modelId) as LanguageModel;
+            const agent = createAgent({
+              id: request.agentId,
+              model,
+              instructions: request.instructions,
+              tools: request.tools,
+              maxSteps: request.maxSteps,
+              temperature: request.temperature,
+              maxTokens: request.maxTokens,
+              reasoning: request.reasoning,
+              toolExecution: request.toolExecution,
+              providerOptions: request.providerOptions,
+              metadata: request.metadata,
+              store: request.store,
+              memory: request.memory,
+              onTelemetryEvent: request.onTelemetryEvent
+            });
+
+            const streamResult = streamAgent(agent, {
+              ...createAgentRunInput(request, selected.target)
+            });
+
+            return {
+              streamResult,
+              collect: async () =>
+                enrichAgentResult(
+                  selected.target,
+                  selected.attempts,
+                  selected.routeDecision,
+                  selected.startedAt,
+                  await streamResult.collect()
+                )
+            };
+          });
+        }
+
+        return relayPromise;
+      };
+
+      return {
+        eventStream: (async function* () {
+          const relay = await ensureRelay();
+          for await (const event of relay.streamResult.eventStream) {
+            yield event;
           }
         })(),
         textStream: (async function* () {

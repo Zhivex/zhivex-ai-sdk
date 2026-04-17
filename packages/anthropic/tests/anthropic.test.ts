@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { generateObject, generateText, tool } from "@zhivex-ai/core";
+import { generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createAnthropic } from "../src/index.js";
+import { anthropicMcpToolset, anthropicWebSearchTool, createAnthropic } from "../src/index.js";
 
 describe("anthropic adapter", () => {
   const fetchMock = vi.fn();
@@ -12,20 +13,74 @@ describe("anthropic adapter", () => {
     providerName: "anthropic",
     modelId: "claude-3-5-sonnet",
     createModel: () => createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch })("claude-3-5-sonnet"),
+    expectedAgentTier: "tier-b",
     expectedCapabilities: {
       streaming: true,
       tools: true,
       structuredOutput: false,
       jsonMode: false,
       toolChoice: true,
-      parallelToolCalls: false,
+      parallelToolCalls: true,
       vision: true,
-      files: false,
+      files: true,
       audioInput: false,
       audioOutput: false,
       embeddings: false,
       reasoning: true,
-      webSearch: false
+      webSearch: true
+    }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "anthropic",
+    modelId: "claude-3-5-sonnet",
+    expectedAgentTier: "tier-b",
+    createModel: () => createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch })("claude-3-5-sonnet"),
+    mockSimpleRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          content: [{ type: "text", text: "hello from anthropic agent" }],
+          stop_reason: "end_turn"
+        })
+      );
+    },
+    mockToolRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          content: [{ type: "tool_use", id: "tool-1", name: "weather", input: { city: "Madrid" } }],
+          stop_reason: "tool_use"
+        })
+      );
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          content: [{ type: "text", text: "Madrid is sunny" }],
+          stop_reason: "end_turn"
+        })
+      );
+    },
+    mockStreamRun: () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              "event: content_block_delta\n" +
+                'data: {"index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n' +
+                "event: content_block_delta\n" +
+                'data: {"index":0,"delta":{"type":"text_delta","text":" world"}}\n\n' +
+                "event: message_stop\n" +
+                'data: {"stop_reason":"end_turn"}\n\n'
+            )
+          );
+          controller.close();
+        }
+      });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
     }
   });
 
@@ -176,23 +231,69 @@ describe("anthropic adapter", () => {
     });
   });
 
-  it("rejects unsupported toolChoice none for Anthropic", async () => {
-    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
-
-    await expect(
-      generateText({
-        model: provider("claude-3-5-sonnet"),
-        prompt: "hello",
-        tools: {
-          weather: tool({
-            name: "weather",
-            schema: z.object({ city: z.string() }),
-            execute: ({ city }) => ({ city })
-          })
-        },
-        toolChoice: "none"
+  it("maps toolChoice none to Anthropic tool_choice", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
       })
-    ).rejects.toThrow('Provider "anthropic" does not support "toolChoice=none".');
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      },
+      toolChoice: "none"
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tool_choice: { type: string };
+    };
+    expect(body.tool_choice).toEqual({
+      type: "none"
+    });
+  });
+
+  it("maps hosted Anthropic web search tools into native tool definitions", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        web: anthropicWebSearchTool({
+          max_uses: 3
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tools: Array<{ type: string; name: string; max_uses: number }>;
+    };
+    expect(body.tools).toEqual([
+      {
+        type: "web_search_20250305",
+        name: "web_search",
+        max_uses: 3
+      }
+    ]);
   });
 
   it("maps reasoning budget tokens to Anthropic thinking", async () => {
@@ -223,6 +324,353 @@ describe("anthropic adapter", () => {
     });
   });
 
+  it("maps reasoning effort to adaptive thinking and output_config for Claude Opus 4.7", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-opus-4-7"),
+      prompt: "hello",
+      reasoning: {
+        effort: "high"
+      },
+      providerOptions: {
+        thinking: {
+          type: "adaptive",
+          display: "summarized"
+        },
+        output_config: {
+          task_budget: {
+            type: "tokens",
+            total: 24000
+          }
+        }
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      thinking: { type: string; display?: string };
+      output_config: { effort: string; task_budget: { type: string; total: number } };
+    };
+    expect(body.thinking).toEqual({
+      type: "adaptive",
+      display: "summarized"
+    });
+    expect(body.output_config).toEqual({
+      effort: "high",
+      task_budget: {
+        type: "tokens",
+        total: 24000
+      }
+    });
+  });
+
+  it("keeps manual thinking plus effort for Claude Opus 4.5", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-opus-4-5"),
+      prompt: "hello",
+      reasoning: {
+        budgetTokens: 1024,
+        effort: "medium"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      thinking: { type: string; budget_tokens: number };
+      output_config: { effort: string };
+    };
+    expect(body.thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 1024
+    });
+    expect(body.output_config).toEqual({
+      effort: "medium"
+    });
+  });
+
+  it("sends adaptive thinking config on streaming requests for Claude Opus 4.7", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "event: content_block_delta\n" +
+              'data: {"index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n' +
+              "event: message_stop\n" +
+              'data: {"stop_reason":"end_turn"}\n\n'
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("claude-opus-4-7"),
+      prompt: "hello",
+      reasoning: {
+        effort: "high"
+      }
+    });
+
+    await result.collect();
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const requestBody = JSON.parse(String(requestInit.body)) as {
+      thinking: { type: string };
+      output_config: { effort: string };
+    };
+    expect(requestBody.thinking).toEqual({
+      type: "adaptive"
+    });
+    expect(requestBody.output_config).toEqual({
+      effort: "high"
+    });
+  });
+
+  it("maps PDF file parts into Anthropic document blocks and enables the Files API beta when needed", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-opus-4-7"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "Summarize this PDF." },
+            {
+              type: "file",
+              data: "file_011CNha8iCJcU1wXNR6q4V8w",
+              mediaType: "application/pdf",
+              filename: "brief.pdf"
+            }
+          ]
+        }
+      ]
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
+    const body = JSON.parse(String(requestInit.body)) as {
+      messages: Array<{ content: Array<Record<string, unknown>> }>;
+    };
+
+    expect(headers["anthropic-beta"]).toContain("files-api-2025-04-14");
+    expect(body.messages[0]?.content[1]).toEqual({
+      type: "document",
+      source: {
+        type: "file",
+        file_id: "file_011CNha8iCJcU1wXNR6q4V8w"
+      },
+      title: "brief.pdf"
+    });
+  });
+
+  it("maps Anthropic MCP toolsets into native request fields", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        github: anthropicMcpToolset({
+          server: {
+            name: "github",
+            url: "https://example.com/mcp",
+            authorization_token: "secret"
+          },
+          default_config: {
+            enabled: true
+          }
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
+    const body = JSON.parse(String(requestInit.body)) as {
+      mcp_servers: Array<Record<string, unknown>>;
+      tools: Array<Record<string, unknown>>;
+    };
+
+    expect(headers["anthropic-beta"]).toBe("mcp-client-2025-11-20");
+    expect(body.mcp_servers).toEqual([
+      {
+        type: "url",
+        name: "github",
+        url: "https://example.com/mcp",
+        authorization_token: "secret"
+      }
+    ]);
+    expect(body.tools).toEqual([
+      {
+        type: "mcp_toolset",
+        mcp_server_name: "github",
+        default_config: {
+          enabled: true
+        }
+      }
+    ]);
+  });
+
+  it("parses Anthropic MCP blocks into provider-data parts", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [
+          {
+            type: "mcp_tool_use",
+            id: "mcpu_1",
+            name: "fetch_docs",
+            server_name: "github",
+            input: { path: "README.md" }
+          },
+          {
+            type: "mcp_tool_result",
+            tool_use_id: "mcpu_1",
+            server_name: "github",
+            content: { text: "ok" }
+          }
+        ],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        github: anthropicMcpToolset({
+          server: {
+            name: "github",
+            url: "https://example.com/mcp"
+          }
+        })
+      }
+    });
+
+    expect(result.messages.at(-1)?.parts).toEqual([
+      {
+        type: "provider-data",
+        provider: "anthropic",
+        data: {
+          type: "mcp_tool_use",
+          id: "mcpu_1",
+          name: "fetch_docs",
+          server_name: "github",
+          input: {
+            path: "README.md"
+          }
+        }
+      },
+      {
+        type: "provider-data",
+        provider: "anthropic",
+        data: {
+          type: "mcp_tool_result",
+          tool_use_id: "mcpu_1",
+          server_name: "github",
+          content: {
+            text: "ok"
+          }
+        }
+      }
+    ]);
+  });
+
+  it("streams Anthropic MCP blocks as provider-data events", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "event: content_block_start\n" +
+              'data: {"index":0,"content_block":{"type":"mcp_tool_use","id":"mcpu_1","name":"fetch_docs","server_name":"github","input":{"path":"README.md"}}}\n\n' +
+              "event: content_block_delta\n" +
+              'data: {"index":1,"delta":{"type":"text_delta","text":"approved"}}\n\n' +
+              "event: message_stop\n" +
+              'data: {"stop_reason":"end_turn"}\n\n'
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        github: anthropicMcpToolset({
+          server: {
+            name: "github",
+            url: "https://example.com/mcp"
+          }
+        })
+      }
+    });
+
+    const final = await result.collect();
+    expect(final.text).toBe("approved");
+    expect(final.messages.at(-1)?.parts).toContainEqual({
+      type: "provider-data",
+      provider: "anthropic",
+      data: {
+        type: "mcp_tool_use",
+        id: "mcpu_1",
+        name: "fetch_docs",
+        server_name: "github",
+        input: {
+          path: "README.md"
+        }
+      }
+    });
+  });
+
   it("rejects unsupported reasoning effort for Anthropic", async () => {
     const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
@@ -234,6 +682,48 @@ describe("anthropic adapter", () => {
           effort: "medium"
         }
       })
-    ).rejects.toThrow('Provider "anthropic" does not support "reasoning.effort".');
+    ).rejects.toThrow('Provider "anthropic" does not support "reasoning.effort" for this model.');
+  });
+
+  it("rejects budgetTokens for Claude Opus 4.7", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("claude-opus-4-7"),
+        prompt: "hello",
+        reasoning: {
+          budgetTokens: 1024
+        }
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later; use "reasoning.effort" instead.'
+    );
+  });
+
+  it("rejects explicit sampling controls for Claude Opus 4.7", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("claude-opus-4-7"),
+        prompt: "hello",
+        temperature: 0
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later; omit it from the request.'
+    );
+
+    await expect(
+      generateText({
+        model: provider("claude-opus-4-7"),
+        prompt: "hello",
+        providerOptions: {
+          top_p: 0.9
+        }
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later; omit them from the request.'
+    );
   });
 });

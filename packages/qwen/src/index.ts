@@ -5,7 +5,9 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   createProviderAdapter,
+  isCallableToolDefinition,
   normalizeFinishReason,
+  providerDataPart,
   streamSSE,
   withRetry,
   withTimeoutSignal,
@@ -51,9 +53,62 @@ const capabilities: ModelCapabilities = {
   audioInput: false,
   audioOutput: false,
   embeddings: true,
-  reasoning: true,
-  webSearch: false
+  reasoning: false,
+  webSearch: false,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: true,
+    approvalRequests: false,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
 };
+
+const embeddingCapabilities: ModelCapabilities = {
+  streaming: false,
+  tools: false,
+  structuredOutput: false,
+  jsonMode: false,
+  toolChoice: false,
+  parallelToolCalls: false,
+  vision: false,
+  files: false,
+  audioInput: false,
+  audioOutput: false,
+  embeddings: true,
+  reasoning: false,
+  webSearch: false,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: false,
+    approvalRequests: false,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
+};
+
+const supportsQwenReasoning = (modelId: string) => /^(qwen-(plus|turbo|max)|qwq|qwen3)/i.test(modelId);
+
+const reasoningContentFromMessage = (message: ModelMessage) =>
+  message.parts
+    .filter((part) => {
+      if (part.type !== "provider-data" || part.provider !== "qwen") {
+        return false;
+      }
+
+      const data = part.data as Record<string, unknown>;
+      return data.type === "reasoning_content" && typeof data.reasoningContent === "string";
+    })
+    .map((part) => (part.type === "provider-data" ? String((part.data as Record<string, unknown>).reasoningContent) : ""))
+    .join("");
 
 const jsonHeaders = (apiKey: string) => ({
   "content-type": "application/json",
@@ -124,6 +179,11 @@ const mapMessages = (messages: ModelMessage[]) =>
       content: mapContentParts(message)
     };
 
+    const reasoningContent = reasoningContentFromMessage(message);
+    if (reasoningContent) {
+      payload.reasoning_content = reasoningContent;
+    }
+
     if (toolCalls.length) {
       payload.tool_calls = toolCalls;
     }
@@ -133,14 +193,22 @@ const mapMessages = (messages: ModelMessage[]) =>
 
 const mapTools = (tools: ModelGenerateInput["tools"]) =>
   tools
-    ? Object.values(tools).map((tool) => ({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: toJSONSchema(tool.schema)
+    ? (() => {
+        const toolDefinitions = Object.values(tools);
+        const callableTools = toolDefinitions.filter(isCallableToolDefinition);
+        if (callableTools.length !== toolDefinitions.length) {
+          throw new UnsupportedFeatureError('Provider "qwen" does not support hosted tools.');
         }
-      }))
+
+        return callableTools.map((tool) => ({
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: toJSONSchema(tool.schema)
+          }
+        }));
+      })()
     : undefined;
 
 const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
@@ -175,9 +243,29 @@ const mapStructuredOutput = (input: ModelGenerateInput) => {
   };
 };
 
+const hasPreservedReasoning = (messages: ModelMessage[]) =>
+  messages.some((message) => message.role === "assistant" && reasoningContentFromMessage(message));
+
+const mapReasoning = (input: ModelGenerateInput) => {
+  if (!input.reasoning) {
+    return undefined;
+  }
+
+  return {
+    enable_thinking: input.reasoning.effort === "none" ? false : true,
+    ...(input.reasoning.effort !== "none" && input.reasoning.budgetTokens !== undefined
+      ? { thinking_budget: input.reasoning.budgetTokens }
+      : {}),
+    ...(hasPreservedReasoning(input.messages) ? { preserve_thinking: true } : {})
+  };
+};
+
 const parseAssistantMessage = (message: any): ModelMessage => ({
   role: "assistant",
   parts: [
+    ...(typeof message.reasoning_content === "string" && message.reasoning_content
+      ? [providerDataPart("qwen", { type: "reasoning_content", reasoningContent: message.reasoning_content })]
+      : []),
     ...(typeof message.content === "string" && message.content
       ? [{ type: "text", text: message.content } as const]
       : []),
@@ -194,23 +282,24 @@ const parseAssistantMessage = (message: any): ModelMessage => ({
 
 class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
   readonly provider = "qwen";
-  readonly capabilities = capabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {}
+  ) {
+    this.capabilities = {
+      ...capabilities,
+      reasoning: supportsQwenReasoning(modelId)
+    };
+  }
 
   async generate(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      if (input.reasoning) {
-        throw new UnsupportedFeatureError('Provider "qwen" does not support the common "reasoning" config yet.');
-      }
-
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
@@ -226,6 +315,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               temperature: input.temperature,
               max_tokens: input.maxTokens,
               stream: false,
+              ...mapReasoning(input),
               ...input.providerOptions
             })
           }),
@@ -260,10 +350,6 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
   async stream(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
-    if (input.reasoning) {
-      throw new UnsupportedFeatureError('Provider "qwen" does not support the common "reasoning" config yet.');
-    }
-
     const response = await withRetry(
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {
@@ -280,6 +366,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             max_tokens: input.maxTokens,
             stream: true,
             stream_options: { include_usage: true },
+            ...mapReasoning(input),
             ...input.providerOptions
           })
         }),
@@ -298,6 +385,17 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           const json = JSON.parse(event.data);
           const choice = json.choices?.[0];
           const delta = choice?.delta;
+
+          if (delta?.reasoning_content) {
+            yield {
+              type: "provider-data",
+              provider: "qwen",
+              data: {
+                type: "reasoning_content",
+                reasoningContent: delta.reasoning_content
+              }
+            } satisfies StreamEvent;
+          }
 
           if (delta?.content) {
             yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;
@@ -349,7 +447,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
 
 class QwenEmbeddingModel implements EmbeddingModel {
   readonly provider = "qwen";
-  readonly capabilities = capabilities;
+  readonly capabilities = embeddingCapabilities;
 
   constructor(
     readonly modelId: string,

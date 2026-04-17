@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { defaultModelCatalog, type ModelCapabilities, type ProviderAdapter } from "@zhivex-ai/core";
+import { createAgentHandoff, createInMemoryAgentRunStore, defaultModelCatalog, type ModelCapabilities, type ProviderAdapter } from "@zhivex-ai/core";
 import { createGateway } from "../src/index.ts";
 
 const createAdapter = (
@@ -74,6 +74,68 @@ const createStreamingAdapter = (
       },
       async stream() {
         return streamImpl();
+      }
+    };
+  }
+});
+
+const createAgentCapableCapabilities = (overrides: Partial<ModelCapabilities> = {}): ModelCapabilities => ({
+  streaming: true,
+  tools: true,
+  structuredOutput: true,
+  jsonMode: true,
+  toolChoice: true,
+  parallelToolCalls: false,
+  vision: true,
+  files: false,
+  audioInput: false,
+  audioOutput: false,
+  embeddings: false,
+  reasoning: true,
+  webSearch: true,
+  agentCapabilities: {
+    supportTier: "tier-b",
+    toolChoiceNone: true,
+    approvalRequests: false,
+    hostedWebSearch: true,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: true
+  },
+  ...overrides
+});
+
+const createAgentAdapter = (
+  generateImpl: () => Promise<{ text: string }>,
+  capabilities: ModelCapabilities = createAgentCapableCapabilities()
+): ProviderAdapter => ({
+  name: "agent-test",
+  languageModel(modelId) {
+    return {
+      provider: "agent-test",
+      modelId,
+      capabilities,
+      async generate() {
+        const result = await generateImpl();
+        return {
+          messages: [
+            {
+              role: "assistant",
+              parts: [{ type: "text", text: result.text }]
+            }
+          ],
+          text: result.text,
+          finishReason: "stop"
+        };
+      },
+      async stream() {
+        const result = await generateImpl();
+        return (async function* () {
+          yield { type: "text-delta" as const, textDelta: result.text };
+          yield { type: "finish" as const, finishReason: "stop" as const };
+        })();
       }
     };
   }
@@ -350,5 +412,110 @@ describe("gateway", () => {
 
     expect(result.object).toEqual({ answer: "ok" });
     expect(result.providerUsed).toBe("gemini");
+  });
+
+  it("routes agents according to required agent capabilities and saves state", async () => {
+    const store = createInMemoryAgentRunStore();
+    const gateway = createGateway({
+      adapters: {
+        bedrock: createAgentAdapter(async () => ({ text: "too limited" }), createAgentCapableCapabilities({
+          agentCapabilities: {
+            supportTier: "tier-c",
+            toolChoiceNone: false,
+            approvalRequests: false,
+            hostedWebSearch: false,
+            hostedFileSearch: false,
+            remoteMcp: false,
+            computerUse: false,
+            codeExecution: false,
+            toolsets: false
+          }
+        })),
+        openai: createAgentAdapter(async () => ({ text: "agent from openai" }), createAgentCapableCapabilities({
+          agentCapabilities: {
+            supportTier: "tier-a",
+            toolChoiceNone: true,
+            approvalRequests: true,
+            hostedWebSearch: true,
+            hostedFileSearch: true,
+            remoteMcp: true,
+            computerUse: true,
+            codeExecution: true,
+            toolsets: true
+          }
+        }))
+      }
+    });
+
+    const result = await gateway.runAgent({
+      primary: { provider: "bedrock", modelId: "anthropic.claude-v2" },
+      fallbacks: [{ provider: "openai", modelId: "gpt-5" }],
+      prompt: "Use the best agent provider",
+      requiredAgentCapabilities: {
+        supportTier: "tier-a",
+        approvalRequests: true
+      },
+      store
+    });
+
+    expect(result.providerUsed).toBe("openai");
+    expect(result.outputText).toBe("agent from openai");
+    expect(result.attempts[0]?.errorMessage).toContain("agent capabilities");
+    expect(await store.load(result.state.runId)).toBeDefined();
+  });
+
+  it("streams routed agents and preserves route metadata on the final state", async () => {
+    const gateway = createGateway({
+      adapters: {
+        gemini: createAgentAdapter(async () => ({ text: "streamed agent" }))
+      }
+    });
+
+    const result = gateway.streamAgent({
+      primary: { provider: "gemini", modelId: "gemini-2.0-flash" },
+      prompt: "Stream this agent answer"
+    });
+
+    const chunks: string[] = [];
+    for await (const chunk of result.textStream) {
+      chunks.push(chunk);
+    }
+
+    const final = await result.collect();
+    expect(chunks.join("")).toBe("streamed agent");
+    expect(final.providerUsed).toBe("gemini");
+    expect(final.state.routeDecision.orderedTargets[0]).toEqual({
+      provider: "gemini",
+      modelId: "gemini-2.0-flash"
+    });
+  });
+
+  it("passes handoffs through routed agents", async () => {
+    const gateway = createGateway({
+      adapters: {
+        openai: createAgentAdapter(async () => ({ text: "handled handoff" }))
+      }
+    });
+
+    const sourceGateway = createGateway({
+      adapters: {
+        openai: createAgentAdapter(async () => ({ text: "source output" }))
+      }
+    });
+
+    const source = await sourceGateway.runAgent({
+      primary: { provider: "openai", modelId: "gpt-4o-mini" },
+      prompt: "Create source context"
+    });
+
+    const result = await gateway.runAgent({
+      primary: { provider: "openai", modelId: "gpt-4o-mini" },
+      handoff: createAgentHandoff({
+        source
+      })
+    });
+
+    expect(result.state.parentRunId).toBe(source.state.runId);
+    expect(result.outputText).toContain("handled handoff");
   });
 });

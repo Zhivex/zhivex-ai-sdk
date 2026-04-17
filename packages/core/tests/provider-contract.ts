@@ -1,12 +1,13 @@
 import { expect, it } from "vitest";
 
-import type { EmbeddingModel, LanguageModel, ModelCapabilities } from "../src/index.js";
+import type { AgentSupportTier, EmbeddingModel, LanguageModel, ModelCapabilities } from "../src/index.js";
 
 interface LanguageModelContractOptions {
   providerName: string;
   modelId: string;
   createModel: () => LanguageModel;
   expectedCapabilities: ModelCapabilities;
+  expectedAgentTier: AgentSupportTier;
   createEmbeddingModel?: () => EmbeddingModel;
 }
 
@@ -21,7 +22,9 @@ export const runLanguageModelContractSuite = (options: LanguageModelContractOpti
   it("declares the expanded capabilities contract", () => {
     const model = options.createModel();
 
-    expect(model.capabilities).toEqual(options.expectedCapabilities);
+    expect(model.capabilities).toMatchObject(options.expectedCapabilities);
+    expect(model.capabilities.agentCapabilities).toBeDefined();
+    expect(model.capabilities.agentCapabilities?.supportTier).toBe(options.expectedAgentTier);
   });
 
   if (options.createEmbeddingModel) {

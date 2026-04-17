@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createTextMessage, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createKimi } from "../src/index.js";
 
@@ -12,6 +13,7 @@ describe("kimi adapter", () => {
     providerName: "kimi",
     modelId: "kimi-k2-0905-preview",
     createModel: () => createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch })("kimi-k2-0905-preview"),
+    expectedAgentTier: "tier-c",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -24,8 +26,71 @@ describe("kimi adapter", () => {
       audioInput: false,
       audioOutput: false,
       embeddings: false,
-      reasoning: true,
+      reasoning: false,
       webSearch: false
+    }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "kimi",
+    modelId: "kimi-k2-0905-preview",
+    expectedAgentTier: "tier-c",
+    createModel: () => createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch })("kimi-k2-0905-preview"),
+    mockSimpleRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "hello from kimi agent" } }]
+        })
+      );
+    },
+    mockToolRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                content: "",
+                tool_calls: [
+                  {
+                    id: "tool-1",
+                    function: {
+                      name: "weather",
+                      arguments: JSON.stringify({ city: "Madrid" })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      );
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "Madrid is sunny" } }]
+        })
+      );
+    },
+    mockStreamRun: () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n" +
+                "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\n" +
+                "data: [DONE]\n\n"
+            )
+          );
+          controller.close();
+        }
+      });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
     }
   });
 
@@ -202,7 +267,7 @@ describe("kimi adapter", () => {
     });
   });
 
-  it("rejects common reasoning config for Kimi until it is mapped", async () => {
+  it("rejects common reasoning config for Kimi through the shared capabilities contract", async () => {
     const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
     await expect(
@@ -213,6 +278,161 @@ describe("kimi adapter", () => {
           effort: "medium"
         }
       })
-    ).rejects.toThrow('Provider "kimi" does not support the common "reasoning" config yet.');
+    ).rejects.toThrow('Model "kimi/kimi-k2-0905-preview" does not support reasoning.');
+  });
+
+  it("declares reasoning support for thinking-capable Kimi models", () => {
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    expect(provider("kimi-k2.5").capabilities.reasoning).toBe(true);
+    expect(provider("kimi-k2-thinking").capabilities.reasoning).toBe(true);
+  });
+
+  it("maps common reasoning config to Kimi thinking mode", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "reasoned" } }]
+      })
+    );
+
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("kimi-k2.5"),
+      prompt: "hello",
+      reasoning: {
+        effort: "medium"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      thinking: { type: string };
+    };
+    expect(body.thinking).toEqual({
+      type: "enabled"
+    });
+  });
+
+  it("rejects unsupported tool choice when Kimi reasoning is enabled", async () => {
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("kimi-k2.5"),
+        prompt: "hello",
+        reasoning: {
+          effort: "medium"
+        },
+        tools: {
+          weather: tool({
+            name: "weather",
+            schema: z.object({ city: z.string() }),
+            execute: ({ city }) => ({ city })
+          })
+        },
+        toolChoice: {
+          type: "tool",
+          toolName: "weather"
+        }
+      })
+    ).rejects.toThrow('Provider "kimi" only supports "toolChoice=auto" or "toolChoice=none" when reasoning is enabled.');
+  });
+
+  it("preserves Kimi reasoning content across a multi-step tool loop", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              reasoning_content: "Need to inspect the weather tool first.",
+              content: "",
+              tool_calls: [
+                {
+                  id: "tool-1",
+                  function: {
+                    name: "weather",
+                    arguments: JSON.stringify({ city: "Madrid" })
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "Sunny in Madrid" } }]
+      })
+    );
+
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("kimi-k2.5"),
+      prompt: "weather",
+      maxSteps: 2,
+      reasoning: {
+        effort: "medium"
+      },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, temperatureC: 26 })
+        })
+      }
+    });
+
+    expect(result.text).toBe("Sunny in Madrid");
+    const followupRequest = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    const followupBody = JSON.parse(String(followupRequest.body)) as {
+      messages: Array<{ role: string; reasoning_content?: string }>;
+    };
+    expect(followupBody.messages.find((message) => message.role === "assistant")?.reasoning_content).toBe(
+      "Need to inspect the weather tool first."
+    );
+  });
+
+  it("streams reasoning content as provider data for Kimi", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Think\"}}]}\n\n" +
+              "data: {\"choices\":[{\"delta\":{\"content\":\" answer\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":3,\"total_tokens\":7}}\n\n" +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("kimi-k2.5"),
+      prompt: "hello",
+      reasoning: {
+        effort: "medium"
+      }
+    });
+
+    const final = await result.collect();
+    expect(final.text).toBe(" answer");
+    expect(final.messages.at(-1)?.parts).toContainEqual({
+      type: "provider-data",
+      provider: "kimi",
+      data: {
+        type: "reasoning_content",
+        reasoningContent: "Think"
+      }
+    });
   });
 });

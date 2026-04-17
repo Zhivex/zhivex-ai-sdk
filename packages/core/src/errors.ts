@@ -25,3 +25,16 @@ export class ProviderHTTPError extends ZhivexAIError {
 export class ValidationError extends ZhivexAIError {}
 export class ParseError extends ZhivexAIError {}
 export class UnsupportedFeatureError extends ZhivexAIError {}
+
+export class GuardrailTriggeredError extends ZhivexAIError {
+  constructor(
+    readonly stage: "input" | "output",
+    message: string,
+    options?: { cause?: unknown; metadata?: unknown }
+  ) {
+    super(message, options);
+    this.metadata = options?.metadata;
+  }
+
+  readonly metadata?: unknown;
+}

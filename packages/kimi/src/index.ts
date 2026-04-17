@@ -5,7 +5,9 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   createProviderAdapter,
+  isCallableToolDefinition,
   normalizeFinishReason,
+  providerDataPart,
   streamSSE,
   withRetry,
   withTimeoutSignal,
@@ -48,9 +50,35 @@ const capabilities: ModelCapabilities = {
   audioInput: false,
   audioOutput: false,
   embeddings: false,
-  reasoning: true,
-  webSearch: false
+  reasoning: false,
+  webSearch: false,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: true,
+    approvalRequests: false,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
 };
+
+const supportsKimiReasoning = (modelId: string) => /kimi-k2\.5|kimi-k2-thinking/i.test(modelId);
+
+const reasoningContentFromMessage = (message: ModelMessage) =>
+  message.parts
+    .filter((part) => {
+      if (part.type !== "provider-data" || part.provider !== "kimi") {
+        return false;
+      }
+
+      const data = part.data as Record<string, unknown>;
+      return data.type === "reasoning_content" && typeof data.reasoningContent === "string";
+    })
+    .map((part) => (part.type === "provider-data" ? String((part.data as Record<string, unknown>).reasoningContent) : ""))
+    .join("");
 
 const jsonHeaders = (apiKey: string) => ({
   "content-type": "application/json",
@@ -121,6 +149,11 @@ const mapMessages = (messages: ModelMessage[]) =>
       content: mapContentParts(message)
     };
 
+    const reasoningContent = reasoningContentFromMessage(message);
+    if (reasoningContent) {
+      payload.reasoning_content = reasoningContent;
+    }
+
     if (toolCalls.length) {
       payload.tool_calls = toolCalls;
     }
@@ -130,14 +163,22 @@ const mapMessages = (messages: ModelMessage[]) =>
 
 const mapTools = (tools: ModelGenerateInput["tools"]) =>
   tools
-    ? Object.values(tools).map((tool) => ({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: toJSONSchema(tool.schema)
+    ? (() => {
+        const toolDefinitions = Object.values(tools);
+        const callableTools = toolDefinitions.filter(isCallableToolDefinition);
+        if (callableTools.length !== toolDefinitions.length) {
+          throw new UnsupportedFeatureError('Provider "kimi" does not support hosted tools.');
         }
-      }))
+
+        return callableTools.map((tool) => ({
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: toJSONSchema(tool.schema)
+          }
+        }));
+      })()
     : undefined;
 
 const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
@@ -172,9 +213,28 @@ const mapStructuredOutput = (input: ModelGenerateInput) => {
   };
 };
 
+const mapReasoning = (input: ModelGenerateInput) => {
+  if (!input.reasoning) {
+    return undefined;
+  }
+
+  if (input.reasoning.budgetTokens !== undefined) {
+    throw new UnsupportedFeatureError('Provider "kimi" does not support "reasoning.budgetTokens".');
+  }
+
+  return {
+    thinking: {
+      type: input.reasoning.effort === "none" ? "disabled" : "enabled"
+    }
+  };
+};
+
 const parseAssistantMessage = (message: any): ModelMessage => ({
   role: "assistant",
   parts: [
+    ...(typeof message.reasoning_content === "string" && message.reasoning_content
+      ? [providerDataPart("kimi", { type: "reasoning_content", reasoningContent: message.reasoning_content })]
+      : []),
     ...(typeof message.content === "string" && message.content
       ? [{ type: "text", text: message.content } as const]
       : []),
@@ -191,23 +251,39 @@ const parseAssistantMessage = (message: any): ModelMessage => ({
 
 class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
   readonly provider = "kimi";
-  readonly capabilities = capabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {}
+  ) {
+    this.capabilities = {
+      ...capabilities,
+      reasoning: supportsKimiReasoning(modelId)
+    };
+  }
+
+  private mapToolChoice(toolChoice: ModelGenerateInput["toolChoice"], reasoningEnabled: boolean) {
+    if (!toolChoice) {
+      return undefined;
+    }
+
+    if (reasoningEnabled && toolChoice !== "auto" && toolChoice !== "none") {
+      throw new UnsupportedFeatureError(
+        'Provider "kimi" only supports "toolChoice=auto" or "toolChoice=none" when reasoning is enabled.'
+      );
+    }
+
+    return mapToolChoice(toolChoice);
+  }
 
   async generate(input: ModelGenerateInput<KimiLanguageModelOptions>): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      if (input.reasoning) {
-        throw new UnsupportedFeatureError('Provider "kimi" does not support the common "reasoning" config yet.');
-      }
-
+      const reasoning = mapReasoning(input);
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
@@ -218,11 +294,12 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
               model: this.modelId,
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
-              tool_choice: mapToolChoice(input.toolChoice),
+              tool_choice: this.mapToolChoice(input.toolChoice, Boolean(reasoning && reasoning.thinking.type === "enabled")),
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
               max_tokens: input.maxTokens,
               stream: false,
+              ...reasoning,
               ...input.providerOptions
             })
           }),
@@ -256,10 +333,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
 
   async stream(input: ModelGenerateInput<KimiLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
-
-    if (input.reasoning) {
-      throw new UnsupportedFeatureError('Provider "kimi" does not support the common "reasoning" config yet.');
-    }
+    const reasoning = mapReasoning(input);
 
     const response = await withRetry(
       () =>
@@ -271,12 +345,13 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
             model: this.modelId,
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
-            tool_choice: mapToolChoice(input.toolChoice),
+            tool_choice: this.mapToolChoice(input.toolChoice, Boolean(reasoning && reasoning.thinking.type === "enabled")),
             response_format: mapStructuredOutput(input),
             temperature: input.temperature,
             max_tokens: input.maxTokens,
             stream: true,
             stream_options: { include_usage: true },
+            ...reasoning,
             ...input.providerOptions
           })
         }),
@@ -295,6 +370,17 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
           const json = JSON.parse(event.data);
           const choice = json.choices?.[0];
           const delta = choice?.delta;
+
+          if (delta?.reasoning_content) {
+            yield {
+              type: "provider-data",
+              provider: "kimi",
+              data: {
+                type: "reasoning_content",
+                reasoningContent: delta.reasoning_content
+              }
+            } satisfies StreamEvent;
+          }
 
           if (delta?.content) {
             yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;

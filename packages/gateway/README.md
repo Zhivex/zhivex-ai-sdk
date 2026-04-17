@@ -8,8 +8,12 @@ The gateway now supports:
 - `streamText()`
 - `generateObject()`
 - `streamObject()`
+- `runAgent()`
+- `streamAgent()`
 
 Tool loops continue to run on the selected target after routing, and streaming fallbacks are resolved before the first chunk is emitted.
+
+For agent routing, the gateway can also filter by `agentCapabilities`, such as provider support tier or approval-capable MCP support, before selecting the final target.
 
 ## Install
 

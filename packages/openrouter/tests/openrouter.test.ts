@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { generateObject, generateText, hostedTool, streamText, tool } from "@zhivex-ai/core";
+import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createOpenRouter } from "../src/index.js";
+import { createOpenRouter, openRouterWebSearchTool } from "../src/index.js";
 
 describe("openrouter adapter", () => {
   const fetchMock = vi.fn();
@@ -12,6 +13,7 @@ describe("openrouter adapter", () => {
     providerName: "openrouter",
     modelId: "openai/gpt-4o-mini",
     createModel: () => createOpenRouter({ apiKey: "test", fetch: fetchMock as typeof fetch })("openai/gpt-4o-mini"),
+    expectedAgentTier: "tier-c",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -25,7 +27,70 @@ describe("openrouter adapter", () => {
       audioOutput: false,
       embeddings: false,
       reasoning: true,
-      webSearch: false
+      webSearch: true
+    }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "openrouter",
+    modelId: "openai/gpt-4o-mini",
+    expectedAgentTier: "tier-c",
+    createModel: () => createOpenRouter({ apiKey: "test", fetch: fetchMock as typeof fetch })("openai/gpt-4o-mini"),
+    mockSimpleRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "hello from openrouter agent" } }]
+        })
+      );
+    },
+    mockToolRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                content: "",
+                tool_calls: [
+                  {
+                    id: "tool-1",
+                    function: {
+                      name: "weather",
+                      arguments: JSON.stringify({ city: "Madrid" })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      );
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "Madrid is sunny" } }]
+        })
+      );
+    },
+    mockStreamRun: () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n" +
+                "data: {\"choices\":[{\"delta\":{\"content\":\" router\"},\"finish_reason\":\"stop\"}]}\n\n" +
+                "data: [DONE]\n\n"
+            )
+          );
+          controller.close();
+        }
+      });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
     }
   });
 
@@ -196,6 +261,88 @@ describe("openrouter adapter", () => {
       type: "function",
       function: {
         name: "weather"
+      }
+    });
+  });
+
+  it("maps the OpenRouter web search hosted tool into a server tool definition", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "hello from openrouter" } }]
+      })
+    );
+
+    const provider = createOpenRouter({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("openai/gpt-4o-mini"),
+      prompt: "What changed in AI this week?",
+      tools: {
+        web: openRouterWebSearchTool({
+          max_results: 3,
+          allowed_domains: ["openai.com"]
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tools: Array<{ type: string; parameters?: { max_results?: number; allowed_domains?: string[] } }>;
+    };
+    expect(body.tools).toEqual([
+      {
+        type: "openrouter:web_search",
+        parameters: {
+          max_results: 3,
+          allowed_domains: ["openai.com"]
+        }
+      }
+    ]);
+  });
+
+  it("supports mixing OpenRouter server tools with user-defined callable tools", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "hello from openrouter" } }]
+      })
+    );
+
+    const provider = createOpenRouter({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("openai/gpt-4o-mini"),
+      prompt: "Search then summarize.",
+      tools: {
+        web: hostedTool({
+          name: "web_search",
+          provider: "openrouter",
+          type: "openrouter:web_search"
+        }),
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tools: Array<{ type: string; function?: { name: string } }>;
+    };
+    expect(body.tools[0]).toEqual({ type: "openrouter:web_search" });
+    expect(body.tools[1]).toMatchObject({
+      type: "function",
+      function: {
+        name: "weather",
+        parameters: {
+          type: "object",
+          properties: {
+            city: {
+              type: "string"
+            }
+          },
+          required: ["city"],
+          additionalProperties: false
+        }
       }
     });
   });

@@ -15,6 +15,11 @@
     "build": "tsc -b",
     "changeset": "changeset",
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:integration:openai": "vitest run --config vitest.integration.config.ts packages/openai/tests/openai.integration.test.ts",
+    "test:integration:anthropic": "vitest run --config vitest.integration.config.ts packages/anthropic/tests/anthropic.integration.test.ts",
+    "test:integration:gemini": "vitest run --config vitest.integration.config.ts packages/gemini/tests/gemini.integration.test.ts",
+    "test:integration:vertex": "vitest run --config vitest.integration.config.ts packages/vertex/tests/vertex.integration.test.ts",
     "typecheck": "tsc --noEmit",
     "version-packages": "changeset version",
     "release": "bun run build && changeset publish"

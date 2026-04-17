@@ -1,5 +1,5 @@
 import { ParseError, ProviderHTTPError } from "./errors.js";
-import type { StreamTextResult, UIMessageChunk } from "./types.js";
+import type { AgentStreamResult, StreamTextResult, UIMessageChunk } from "./types.js";
 import { toUIMessageStream } from "./ui.js";
 
 const decoder = new TextDecoder();
@@ -138,7 +138,7 @@ export const toTextStreamResponse = (result: StreamTextResult, init: ResponseIni
   });
 
 export const toUIMessageStreamResponse = (
-  source: StreamTextResult | AsyncIterable<UIMessageChunk>,
+  source: StreamTextResult | AgentStreamResult | AsyncIterable<UIMessageChunk>,
   init: ResponseInit & { messageId?: string } = {}
 ): Response => {
   const { messageId, headers, ...rest } = init;
@@ -151,3 +151,8 @@ export const toUIMessageStreamResponse = (
     event: (chunk) => chunk.type
   });
 };
+
+export const toUIAgentStreamResponse = (
+  source: AgentStreamResult | AsyncIterable<UIMessageChunk>,
+  init: ResponseInit & { messageId?: string } = {}
+): Response => toUIMessageStreamResponse(source, init);
