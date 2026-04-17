@@ -57,6 +57,11 @@ export interface AnthropicOutputConfig {
   [key: string]: unknown;
 }
 
+interface MappedAnthropicReasoning {
+  thinking?: AnthropicThinkingConfig;
+  output_config?: AnthropicOutputConfig;
+}
+
 const capabilities: ModelCapabilities = {
   streaming: true,
   tools: true,
@@ -113,7 +118,7 @@ const isAnthropicFileId = (value: string) => /^file_[a-z0-9]+$/i.test(value);
 
 const isHttpUrl = (value: string) => /^https?:\/\//i.test(value);
 
-const mergeOptionalObjects = <T extends Record<string, unknown>>(base?: T, override?: T): T | undefined =>
+const mergeOptionalObjects = <T extends object>(base?: T, override?: T): T | undefined =>
   base || override ? ({ ...(base ?? {}), ...(override ?? {}) } as T) : undefined;
 
 const parseJson = async (response: Response) => {
@@ -351,7 +356,7 @@ const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
   };
 };
 
-const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
+const mapReasoning = (modelId: string, input: ModelGenerateInput): MappedAnthropicReasoning | undefined => {
   if (!input.reasoning) {
     return undefined;
   }
