@@ -86,7 +86,7 @@ bun add @zhivex-ai/core @zhivex-ai/openai
 
 ## Examples
 
-The repository includes runnable examples under [`examples/`](/Users/mikeortiz/dev/zhivex-ai-sdk/examples/README.md) covering:
+The repository includes runnable examples under [`examples/`](./examples/README.md) covering:
 
 - high-level SDK flows
 - agent runtime, lifecycle streaming, and UI/SSE transport
@@ -172,8 +172,8 @@ For reusable multi-step assistants, `createAgent()` and `runAgent()` provide a s
 
 Relevant runnable examples:
 
-- [`examples/sdk/agent-runtime.ts`](/Users/mikeortiz/dev/zhivex-ai-sdk/examples/sdk/agent-runtime.ts)
-- [`examples/sdk/agent-stream.ts`](/Users/mikeortiz/dev/zhivex-ai-sdk/examples/sdk/agent-stream.ts)
+- [`examples/sdk/agent-runtime.ts`](./examples/sdk/agent-runtime.ts)
+- [`examples/sdk/agent-stream.ts`](./examples/sdk/agent-stream.ts)
 
 ```ts
 import { createAgent, runAgent, tool } from "@zhivex-ai/sdk";
@@ -1123,7 +1123,7 @@ bun run test
 bun run build
 ```
 
-The integration layer now includes provider-specific tests plus capability-first suites under [`packages/core/tests/`](/Users/mikeortiz/dev/zhivex-ai-sdk/packages/core/tests). These capability suites exercise the shared contract across any providers that have credentials available in the current environment.
+The integration layer now includes provider-specific tests plus capability-first suites under [`packages/core/tests/`](./packages/core/tests). These capability suites exercise the shared contract across any providers that have credentials available in the current environment.
 
 ## Design Principles
 

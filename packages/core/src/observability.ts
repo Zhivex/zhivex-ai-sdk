@@ -22,6 +22,17 @@ export interface OTelTracerLike {
   startSpan(name: string, options?: { attributes?: Record<string, SpanAttributeValue> }): OTelSpanLike;
 }
 
+const OTEL_API_MODULE = "@opentelemetry/api";
+
+// Keep OpenTelemetry optional for consumers that never use the OTEL helpers.
+const loadOptionalOtelApi = async (): Promise<any | undefined> => {
+  try {
+    return await import(OTEL_API_MODULE);
+  } catch {
+    return undefined;
+  }
+};
+
 const toSpanAttributeValue = (value: unknown): SpanAttributeValue | undefined => {
   if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return value;
@@ -100,17 +111,16 @@ export class OTelObserver {
 }
 
 const createDefaultStatusSetter = async () => {
-  try {
-    const otel = await import("@opentelemetry/api");
-    return (span: OTelSpanLike, error: Error) => {
-      span.setStatus?.({
-        code: otel.SpanStatusCode.ERROR,
-        message: error.message
-      });
-    };
-  } catch {
+  const otel = await loadOptionalOtelApi();
+  if (!otel) {
     return undefined;
   }
+  return (span: OTelSpanLike, error: Error) => {
+    span.setStatus?.({
+      code: otel.SpanStatusCode.ERROR,
+      message: error.message
+    });
+  };
 };
 
 export const createOtelObserver = async (options: {
@@ -124,15 +134,14 @@ export const createOtelObserver = async (options: {
     return new OTelObserver(options.tracer, statusSetter);
   }
 
-  try {
-    const otel = await import("@opentelemetry/api");
-    return new OTelObserver(otel.trace.getTracer(options.tracerName ?? "zhivex-ai", options.version), statusSetter);
-  } catch (error) {
+  const otel = await loadOptionalOtelApi();
+  if (!otel) {
     throw new Error(
       'OpenTelemetry is not installed. Install "@opentelemetry/api" to use OTEL observability helpers.',
-      { cause: error }
+      { cause: new Error(`Missing optional dependency: ${OTEL_API_MODULE}`) }
     );
   }
+  return new OTelObserver(otel.trace.getTracer(options.tracerName ?? "zhivex-ai", options.version), statusSetter);
 };
 
 export const createOtelAgentObserver = async (options: {
