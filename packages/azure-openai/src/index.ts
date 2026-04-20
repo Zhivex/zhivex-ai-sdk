@@ -10,6 +10,7 @@ import {
   UnsupportedFeatureError,
   createProviderAdapter,
   encodeAudioFrame,
+  encodeMediaFrame,
   isCallableToolDefinition,
   isHostedToolDefinition,
   normalizeFinishReason,
@@ -249,6 +250,7 @@ const realtimeCapabilities: ModelCapabilities = {
     sessions: true,
     audioInput: true,
     audioOutput: true,
+    imageInput: true,
     tools: true,
     browserTokens: false
   }
@@ -1397,6 +1399,28 @@ class AzureOpenAIRealtimeModel implements RealtimeModel {
             }
           }
           return payloads;
+        },
+        buildMediaPayloads: (frame) => {
+          if (!frame.mediaType.startsWith("image/")) {
+            throw new UnsupportedFeatureError(
+              `Provider "azure-openai" only supports realtime image media input, but received "${frame.mediaType}".`
+            );
+          }
+          return [
+            {
+              type: "conversation.item.create",
+              item: {
+                type: "message",
+                role: "user",
+                content: [
+                  {
+                    type: "input_image",
+                    image_url: `data:${frame.mediaType};base64,${encodeMediaFrame(frame)}`
+                  }
+                ]
+              }
+            }
+          ];
         },
         buildTextPayloads: (text, sessionConfig) => {
           const payloads: Array<Record<string, unknown>> = [

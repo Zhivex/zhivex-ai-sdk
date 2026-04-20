@@ -10,6 +10,7 @@ import {
   UnsupportedFeatureError,
   createProviderAdapter,
   encodeAudioFrame,
+  encodeMediaFrame,
   isCallableToolDefinition,
   isHostedToolDefinition,
   normalizeFinishReason,
@@ -241,7 +242,9 @@ const groundedCapabilities: ModelCapabilities = {
   webSearch: true
 };
 
-const realtimeCapabilities: ModelCapabilities = {
+const openAIRealtimeSupportsImageInput = (modelId: string) => /^(gpt-realtime(?:-mini)?)(?:[-@]|$)/.test(modelId);
+
+const realtimeCapabilities = (modelId: string): ModelCapabilities => ({
   ...capabilities,
   streaming: false,
   audioInput: true,
@@ -250,10 +253,11 @@ const realtimeCapabilities: ModelCapabilities = {
     sessions: true,
     audioInput: true,
     audioOutput: true,
+    imageInput: openAIRealtimeSupportsImageInput(modelId),
     tools: true,
     browserTokens: true
   }
-};
+});
 
 const jsonHeaders = (apiKey: string) => ({
   "content-type": "application/json",
@@ -1475,7 +1479,7 @@ class OpenAIGroundedLanguageModel implements GroundedLanguageModel {
 
 class OpenAIRealtimeModel implements RealtimeModel {
   readonly provider = "openai";
-  readonly capabilities = realtimeCapabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
@@ -1485,7 +1489,9 @@ class OpenAIRealtimeModel implements RealtimeModel {
     private readonly connectionFactory?: RealtimeConnectionFactory,
     private readonly realtimeURL?: string,
     private readonly browserTokenURL?: string
-  ) {}
+  ) {
+    this.capabilities = realtimeCapabilities(modelId);
+  }
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
     const headers = {
@@ -1522,6 +1528,31 @@ class OpenAIRealtimeModel implements RealtimeModel {
             }
           }
           return payloads;
+        },
+        buildMediaPayloads: (frame) => {
+          if (!openAIRealtimeSupportsImageInput(this.modelId)) {
+            throw new UnsupportedFeatureError(`Provider "openai" model "${this.modelId}" does not support realtime image input.`);
+          }
+          if (!frame.mediaType.startsWith("image/")) {
+            throw new UnsupportedFeatureError(
+              `Provider "openai" only supports realtime image media input, but received "${frame.mediaType}".`
+            );
+          }
+          return [
+            {
+              type: "conversation.item.create",
+              item: {
+                type: "message",
+                role: "user",
+                content: [
+                  {
+                    type: "input_image",
+                    image_url: `data:${frame.mediaType};base64,${encodeMediaFrame(frame)}`
+                  }
+                ]
+              }
+            }
+          ];
         },
         buildTextPayloads: (text, sessionConfig) => {
           const payloads: Array<Record<string, unknown>> = [

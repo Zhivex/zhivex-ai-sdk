@@ -1,6 +1,7 @@
 import { ConfigurationError, UnsupportedFeatureError } from "./errors.js";
 import type {
   AudioFrame,
+  MediaFrame,
   ModelCapabilities,
   ProviderOptions,
   RealtimeConnectOptions,
@@ -32,6 +33,7 @@ export type RealtimeConnectionFactory = (
 export interface RealtimeSessionCallbacks {
   parseEvent: RealtimeEventParser;
   buildAudioPayloads: RealtimePayloadBuilder<AudioFrame>;
+  buildMediaPayloads?: RealtimePayloadBuilder<MediaFrame>;
   buildTextPayloads: RealtimePayloadBuilder<string>;
   buildToolResultPayloads: RealtimePayloadBuilder<ToolExecutionResult>;
   buildUpdatePayloads: RealtimePayloadBuilder<RealtimeSessionConfig>;
@@ -133,6 +135,21 @@ export class CallbackRealtimeSession implements RealtimeSession {
 
   async sendAudio(frame: AudioFrame) {
     await this.sendPayloads(this.callbacks.buildAudioPayloads(frame, this.config));
+  }
+
+  async sendMedia(frame: MediaFrame) {
+    if (frame.mediaType.startsWith("audio/")) {
+      await this.sendAudio(frame);
+      return;
+    }
+
+    if (!this.callbacks.buildMediaPayloads) {
+      throw new UnsupportedFeatureError(
+        `Realtime media input is not supported for provider "${this.provider}" with media type "${frame.mediaType}".`
+      );
+    }
+
+    await this.sendPayloads(this.callbacks.buildMediaPayloads(frame, this.config));
   }
 
   async sendText(text: string) {
@@ -377,13 +394,17 @@ export const unsupportedBrowserToken = async (): Promise<never> => {
   throw new UnsupportedFeatureError("This realtime model does not support browser session tokens.");
 };
 
-export const encodeAudioFrame = (frame: AudioFrame): string => {
-  if (typeof frame.data === "string") {
-    return frame.data;
+const encodeRealtimeFrameData = (data: string | Uint8Array | ArrayBuffer): string => {
+  if (typeof data === "string") {
+    return data;
   }
-  const bytes = frame.data instanceof Uint8Array ? frame.data : new Uint8Array(frame.data);
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   return Buffer.from(bytes).toString("base64");
 };
+
+export const encodeAudioFrame = (frame: AudioFrame): string => encodeRealtimeFrameData(frame.data);
+
+export const encodeMediaFrame = (frame: MediaFrame): string => encodeRealtimeFrameData(frame.data);
 
 export const toolResultPayload = (result: ToolExecutionResult): Record<string, unknown> =>
   result.isError
