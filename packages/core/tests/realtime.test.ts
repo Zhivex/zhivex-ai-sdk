@@ -64,6 +64,7 @@ describe("realtime helpers", () => {
           return [];
         },
         buildAudioPayloads: () => [{ type: "audio" }],
+        buildMediaPayloads: (frame) => [{ type: "media", mediaType: frame.mediaType }],
         buildTextPayloads: (text) => [{ type: "text", text }],
         buildToolResultPayloads: (result) => [{ type: "tool", id: result.toolCallId }],
         buildUpdatePayloads: () => [{ type: "update" }],
@@ -72,6 +73,7 @@ describe("realtime helpers", () => {
     });
 
     await session.initialize();
+    await session.sendMedia({ data: "image-bytes", mediaType: "image/jpeg" });
     await session.sendText("hello");
 
     const events = [];
@@ -79,10 +81,53 @@ describe("realtime helpers", () => {
       events.push(event.type);
     }
 
-    expect(sent).toEqual([{ type: "init" }, { type: "text", text: "hello" }]);
+    expect(sent).toEqual([{ type: "init" }, { type: "media", mediaType: "image/jpeg" }, { type: "text", text: "hello" }]);
     expect(events).toContain("realtime-start");
     expect(events).toContain("realtime-text-delta");
     expect(events.at(-1)).toBe("realtime-end");
+  });
+
+  it("rejects unsupported non-audio media input explicitly", async () => {
+    const session = new CallbackRealtimeSession({
+      provider: "test",
+      modelId: "realtime-test",
+      capabilities: {
+        streaming: false,
+        tools: false,
+        structuredOutput: false,
+        jsonMode: false,
+        toolChoice: false,
+        parallelToolCalls: false,
+        vision: false,
+        files: false,
+        audioInput: true,
+        audioOutput: false,
+        embeddings: false,
+        reasoning: false,
+        webSearch: false
+      },
+      config: {},
+      connection: {
+        async sendJson() {},
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      },
+      callbacks: {
+        parseEvent: () => [],
+        buildAudioPayloads: () => [{ type: "audio" }],
+        buildTextPayloads: () => [{ type: "text" }],
+        buildToolResultPayloads: () => [{ type: "tool" }],
+        buildUpdatePayloads: () => [{ type: "update" }]
+      }
+    });
+
+    await session.initialize();
+
+    await expect(session.sendMedia({ data: "image", mediaType: "image/jpeg" })).rejects.toThrow(
+      'Realtime media input is not supported for provider "test"'
+    );
   });
 
   it("streams live agents, executes local tools, and persists final state", async () => {
@@ -110,6 +155,7 @@ describe("realtime helpers", () => {
       },
       config: {},
       async sendAudio() {},
+      async sendMedia() {},
       async sendText(text) {
         sentTexts.push(text);
       },

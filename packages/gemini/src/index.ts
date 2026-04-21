@@ -8,6 +8,7 @@ import {
   createMcpToolSet,
   createProviderAdapter,
   encodeAudioFrame,
+  encodeMediaFrame,
   isCallableToolDefinition,
   isHostedToolDefinition,
   normalizeFinishReason,
@@ -135,6 +136,7 @@ const realtimeCapabilities: ModelCapabilities = {
     sessions: true,
     audioInput: true,
     audioOutput: true,
+    imageInput: true,
     tools: true,
     browserTokens: true
   }
@@ -1023,6 +1025,16 @@ class GeminiRealtimeModel implements RealtimeModel {
               audio: {
                 mimeType: frame.mediaType,
                 data: encodeAudioFrame(frame)
+              }
+            }
+          }
+        ],
+        buildMediaPayloads: (frame) => [
+          {
+            realtimeInput: {
+              media: {
+                mimeType: frame.mediaType,
+                data: encodeMediaFrame(frame)
               }
             }
           }

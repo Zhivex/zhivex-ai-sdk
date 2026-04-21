@@ -828,6 +828,7 @@ describe("openai adapter", () => {
       }
     });
 
+    await session.sendMedia({ data: "image-bytes", mediaType: "image/jpeg" });
     await session.sendText("hello");
     await session.close();
 
@@ -842,9 +843,38 @@ describe("openai adapter", () => {
     });
     expect(sent[1]).toMatchObject({
       type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_image", image_url: "data:image/jpeg;base64,image-bytes" }]
+      }
+    });
+    expect(sent[2]).toMatchObject({
+      type: "conversation.item.create",
       item: expect.objectContaining({ role: "user" })
     });
-    expect(sent[2]).toEqual({ type: "response.create" });
+    expect(sent[3]).toEqual({ type: "response.create" });
+  });
+
+  it("rejects realtime image input for OpenAI preview models that do not support it", async () => {
+    const connectionFactory = vi.fn(async () => ({
+      async sendJson() {},
+      async recvJson() {
+        return undefined;
+      },
+      async close() {}
+    }));
+
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gpt-4o-realtime-preview").connect();
+
+    await expect(session.sendMedia({ data: "image", mediaType: "image/jpeg" })).rejects.toThrow(
+      'Provider "openai" model "gpt-4o-realtime-preview" does not support realtime image input.'
+    );
   });
 
   it("creates browser tokens for realtime client sessions", async () => {

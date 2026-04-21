@@ -616,6 +616,7 @@ describe("vertex adapter", () => {
       instructions: "Be brief."
     });
 
+    await session.sendMedia({ data: "vertex-image", mediaType: "image/jpeg" });
     await session.sendText("hello vertex");
     await session.close();
 
@@ -626,6 +627,14 @@ describe("vertex adapter", () => {
       })
     });
     expect(sent[1]).toMatchObject({
+      realtimeInput: {
+        media: {
+          mimeType: "image/jpeg",
+          data: "vertex-image"
+        }
+      }
+    });
+    expect(sent[2]).toMatchObject({
       clientContent: {
         turns: [{ role: "user", parts: [{ text: "hello vertex" }] }],
         turnComplete: true

@@ -605,6 +605,7 @@ describe("gemini adapter", () => {
       outputAudioMediaType: "audio/pcm"
     });
 
+    await session.sendMedia({ data: "image-bytes", mediaType: "image/jpeg" });
     await session.sendText("hello gemini");
     await session.close();
 
@@ -616,6 +617,14 @@ describe("gemini adapter", () => {
       })
     });
     expect(sent[1]).toMatchObject({
+      realtimeInput: {
+        media: {
+          mimeType: "image/jpeg",
+          data: "image-bytes"
+        }
+      }
+    });
+    expect(sent[2]).toMatchObject({
       clientContent: {
         turns: [{ role: "user", parts: [{ text: "hello gemini" }] }],
         turnComplete: true

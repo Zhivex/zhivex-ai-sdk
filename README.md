@@ -86,7 +86,7 @@ bun add @zhivex-ai/core @zhivex-ai/openai
 
 ## Examples
 
-The repository includes runnable examples under [`examples/`](/Users/mikeortiz/dev/zhivex-ai-sdk/examples/README.md) covering:
+The repository includes runnable examples under [`examples/`](./examples/README.md) covering:
 
 - high-level SDK flows
 - agent runtime, lifecycle streaming, and UI/SSE transport
@@ -136,6 +136,7 @@ Compatibility notes:
 
 - `structured output` means the SDK can use the shared `generateObject()` / `streamObject()` contract. `native` means schema-aware provider support; `prompted` means SDK fallback prompting instead of provider-native schema enforcement.
 - `Realtime sessions` means the provider package exposes `realtimeModel().connect()` through the shared `RealtimeSession` contract. `Browser tokens` means the provider also exposes `realtimeModel().createBrowserToken()` for short-lived client-side credentials.
+- Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime` / `gpt-realtime-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
 - `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`.
 - `partial` for Bedrock `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
@@ -172,8 +173,8 @@ For reusable multi-step assistants, `createAgent()` and `runAgent()` provide a s
 
 Relevant runnable examples:
 
-- [`examples/sdk/agent-runtime.ts`](/Users/mikeortiz/dev/zhivex-ai-sdk/examples/sdk/agent-runtime.ts)
-- [`examples/sdk/agent-stream.ts`](/Users/mikeortiz/dev/zhivex-ai-sdk/examples/sdk/agent-stream.ts)
+- [`examples/sdk/agent-runtime.ts`](./examples/sdk/agent-runtime.ts)
+- [`examples/sdk/agent-stream.ts`](./examples/sdk/agent-stream.ts)
 
 ```ts
 import { createAgent, runAgent, tool } from "@zhivex-ai/sdk";
@@ -257,7 +258,29 @@ Notes:
 
 - Providers that require auth headers during the WebSocket handshake, such as OpenAI server-side sessions and Vertex, should be given a custom `realtimeConnectionFactory` in Node/Bun.
 - Browser-token helpers are currently exposed for OpenAI and Gemini.
+- Gemini, Vertex, and Azure OpenAI sessions support `sendMedia()` for image inputs such as `image/jpeg`.
+- OpenAI supports `sendMedia()` for image inputs on `gpt-realtime` and `gpt-realtime-mini`, but not on the older `gpt-4o-*-realtime-preview` models.
 - Advanced provider-specific session fields can still be passed through `RealtimeSessionConfig.providerOptions`.
+
+For browser-driven interview-style flows, you can send camera frames through the shared contract on providers that support realtime image input:
+
+```ts
+import { createGemini } from "@zhivex-ai/gemini";
+
+const gemini = createGemini({
+  apiKey: process.env.GEMINI_API_KEY
+});
+
+const session = await gemini.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({
+  instructions: "Observe the camera feed and give concise interview feedback.",
+  outputAudioMediaType: "audio/pcm"
+});
+
+await session.sendMedia({
+  data: jpegFrameBase64,
+  mediaType: "image/jpeg"
+});
+```
 
 ### Live Agent Runtime
 
@@ -1123,7 +1146,7 @@ bun run test
 bun run build
 ```
 
-The integration layer now includes provider-specific tests plus capability-first suites under [`packages/core/tests/`](/Users/mikeortiz/dev/zhivex-ai-sdk/packages/core/tests). These capability suites exercise the shared contract across any providers that have credentials available in the current environment.
+The integration layer now includes provider-specific tests plus capability-first suites under [`packages/core/tests/`](./packages/core/tests). These capability suites exercise the shared contract across any providers that have credentials available in the current environment.
 
 ## Design Principles
 

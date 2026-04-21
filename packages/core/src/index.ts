@@ -66,6 +66,7 @@ export {
 export {
   CallbackRealtimeSession,
   encodeAudioFrame,
+  encodeMediaFrame,
   openWebSocketConnection,
   toolResultPayload,
   unsupportedBrowserToken

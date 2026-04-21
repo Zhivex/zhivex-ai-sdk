@@ -103,6 +103,7 @@ export interface ModelCapabilities {
     sessions: boolean;
     audioInput: boolean;
     audioOutput: boolean;
+    imageInput: boolean;
     tools: boolean;
     browserTokens: boolean;
   };
@@ -382,6 +383,11 @@ export interface AudioFrame {
   isFinal?: boolean;
 }
 
+export interface MediaFrame {
+  data: string | Uint8Array | ArrayBuffer;
+  mediaType: string;
+}
+
 export interface RealtimeConnectOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -507,6 +513,7 @@ export interface RealtimeSession {
   readonly capabilities: ModelCapabilities;
   readonly config: RealtimeSessionConfig;
   sendAudio(frame: AudioFrame): Promise<void>;
+  sendMedia(frame: MediaFrame): Promise<void>;
   sendText(text: string): Promise<void>;
   sendToolResult(result: ToolExecutionResult): Promise<void>;
   update(config: Partial<RealtimeSessionConfig>): Promise<void>;

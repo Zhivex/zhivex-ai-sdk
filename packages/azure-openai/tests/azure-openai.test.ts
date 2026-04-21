@@ -765,6 +765,7 @@ describe("azure openai adapter", () => {
       instructions: "Be brief."
     });
 
+    await session.sendMedia({ data: "azure-image", mediaType: "image/jpeg" });
     await session.sendText("hello azure");
     await session.close();
 
@@ -778,9 +779,39 @@ describe("azure openai adapter", () => {
     });
     expect(sent[1]).toMatchObject({
       type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_image", image_url: "data:image/jpeg;base64,azure-image" }]
+      }
+    });
+    expect(sent[2]).toMatchObject({
+      type: "conversation.item.create",
       item: expect.objectContaining({ role: "user" })
     });
-    expect(sent[2]).toEqual({ type: "response.create" });
+    expect(sent[3]).toEqual({ type: "response.create" });
+  });
+
+  it("rejects non-image realtime media input for Azure sessions", async () => {
+    const connectionFactory = vi.fn(async () => ({
+      async sendJson() {},
+      async recvJson() {
+        return undefined;
+      },
+      async close() {}
+    }));
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gpt-realtime").connect();
+
+    await expect(session.sendMedia({ data: "video", mediaType: "video/mp4" })).rejects.toThrow(
+      'Provider "azure-openai" only supports realtime image media input, but received "video/mp4".'
+    );
   });
 
   it("reports Azure realtime browser tokens as unsupported", async () => {
