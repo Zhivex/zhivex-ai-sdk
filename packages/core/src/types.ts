@@ -119,6 +119,11 @@ export interface AgentCapabilities {
   remoteMcp: boolean;
   computerUse: boolean;
   codeExecution: boolean;
+  shell?: boolean;
+  applyPatch?: boolean;
+  toolSearch?: boolean;
+  webExtraction?: boolean;
+  skills?: boolean;
   toolsets: boolean;
 }
 
@@ -570,6 +575,11 @@ export type HostedToolClass =
   | "remote-mcp"
   | "computer-use"
   | "code-execution"
+  | "shell"
+  | "apply-patch"
+  | "tool-search"
+  | "web-extraction"
+  | "skill"
   | "toolset"
   | "custom";
 

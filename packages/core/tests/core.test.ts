@@ -264,10 +264,40 @@ describe("core helpers", () => {
       provider: "openai",
       type: "mcp"
     });
+    const shell = hostedTool({
+      name: "shell",
+      provider: "openai",
+      type: "shell"
+    });
+    const applyPatch = hostedTool({
+      name: "apply_patch",
+      provider: "openai",
+      type: "apply_patch"
+    });
+    const toolSearch = hostedTool({
+      name: "tool_search",
+      provider: "openai",
+      type: "tool_search"
+    });
+    const webExtractor = hostedTool({
+      name: "web_extractor",
+      provider: "qwen",
+      type: "web_extractor"
+    });
+    const skill = hostedTool({
+      name: "skill",
+      provider: "openai",
+      type: "skill_tool"
+    });
 
     expect(getHostedToolClass(web)).toBe("web-search");
     expect(getHostedToolClass(files)).toBe("file-search");
     expect(getHostedToolClass(mcp)).toBe("remote-mcp");
+    expect(getHostedToolClass(shell)).toBe("shell");
+    expect(getHostedToolClass(applyPatch)).toBe("apply-patch");
+    expect(getHostedToolClass(toolSearch)).toBe("tool-search");
+    expect(getHostedToolClass(webExtractor)).toBe("web-extraction");
+    expect(getHostedToolClass(skill)).toBe("skill");
     expect(isHostedToolClass(web, "web-search")).toBe(true);
     expect(isHostedToolClass(files, "web-search")).toBe(false);
   });
@@ -338,6 +368,11 @@ describe("core helpers", () => {
       remoteMcp: false,
       computerUse: false,
       codeExecution: false,
+      shell: false,
+      applyPatch: false,
+      toolSearch: false,
+      webExtraction: false,
+      skills: false,
       toolsets: false
     });
   });

@@ -1,4 +1,4 @@
-import { toJSONSchema } from "zod";
+import { toJSONSchema, z } from "zod";
 
 import {
   CallbackRealtimeSession,
@@ -43,6 +43,7 @@ import {
   type SpeechModel,
   type SpeechResult,
   type StreamEvent,
+  type ToolDefinition,
   type TranscriptionModel,
   type TranscriptionResult
 } from "@zhivex-ai/core";
@@ -129,6 +130,99 @@ export interface OpenAIComputerUseToolConfig {
   display_height?: number;
 }
 
+export interface OpenAICodeInterpreterToolConfig {
+  container:
+    | string
+    | {
+        type: "auto";
+        memory_limit?: "1g" | "4g" | "16g" | "64g";
+        file_ids?: string[];
+      };
+}
+
+export interface OpenAIShellToolConfig {
+  name?: string;
+  cwd?: string;
+  rootDir?: string;
+  timeoutMs?: number;
+  maxOutputLength?: number;
+  execute?: (input: OpenAIShellToolInput) => Promise<OpenAIShellToolOutput> | OpenAIShellToolOutput;
+}
+
+export interface OpenAIShellToolInput {
+  command?: string;
+  action?: {
+    command?: string;
+    max_output_length?: number;
+    maxOutputLength?: number;
+  };
+  maxOutputLength?: number;
+  max_output_length?: number;
+}
+
+export interface OpenAIShellToolOutput {
+  stdout: string;
+  stderr: string;
+  outcome: {
+    type: "exit" | "timeout";
+    exitCode?: number;
+  };
+  maxOutputLength?: number;
+}
+
+export interface OpenAIApplyPatchOperation {
+  type: "create_file" | "update_file" | "delete_file";
+  path: string;
+  diff?: string;
+}
+
+export interface OpenAIApplyPatchToolConfig {
+  name?: string;
+  rootDir?: string;
+  applyOperation: (operation: OpenAIApplyPatchOperation) => Promise<OpenAIApplyPatchToolOutput> | OpenAIApplyPatchToolOutput;
+}
+
+export interface OpenAIApplyPatchToolInput {
+  operation: OpenAIApplyPatchOperation;
+}
+
+export interface OpenAIApplyPatchToolOutput {
+  status: "completed" | "failed";
+  output?: string;
+}
+
+export interface OpenAIToolSearchToolConfig {
+  [key: string]: unknown;
+}
+
+const openAIResponsesToolMetadataKey = "openai.responses_tool_type";
+
+const openAILocalResponsesToolType = (tool: ToolDefinition) => {
+  const type = tool.metadata?.[openAIResponsesToolMetadataKey];
+  return typeof type === "string" ? type : undefined;
+};
+
+const openAILocalResponsesToolConfig = (tool: ToolDefinition) => {
+  const config = tool.metadata?.["openai.responses_tool_config"];
+  return config && typeof config === "object" && !Array.isArray(config) ? (config as Record<string, unknown>) : undefined;
+};
+
+const assertOpenAIToolPathInsideRoot = async (rootDir: string | undefined, targetPath: string, label: string) => {
+  if (!rootDir) {
+    return targetPath;
+  }
+
+  const path = await import("node:path");
+  const root = path.resolve(rootDir);
+  const target = path.resolve(root, targetPath);
+  const relative = path.relative(root, target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`OpenAI ${label} path escapes rootDir.`);
+  }
+
+  return target;
+};
+
 export interface OpenAIMcpApprovalRequest {
   type: "mcp_approval_request";
   id: string;
@@ -199,7 +293,11 @@ const capabilities: ModelCapabilities = {
     hostedFileSearch: true,
     remoteMcp: true,
     computerUse: true,
-    codeExecution: false,
+    codeExecution: true,
+    shell: true,
+    applyPatch: true,
+    toolSearch: true,
+    skills: true,
     toolsets: false
   }
 };
@@ -352,8 +450,8 @@ const mapMessages = (messages: ModelMessage[]) =>
     return payload;
   });
 
-const hasHostedTools = (tools: ModelGenerateInput["tools"]) =>
-  Object.values(tools ?? {}).some((tool) => isHostedToolDefinition(tool));
+const hasResponsesOnlyTools = (tools: ModelGenerateInput["tools"]) =>
+  Object.values(tools ?? {}).some((tool) => isHostedToolDefinition(tool) || (isCallableToolDefinition(tool) && openAILocalResponsesToolType(tool)));
 
 const normalizeWebSearchConfig = (config: OpenAIWebSearchToolConfig = {}) => ({
   ...config,
@@ -392,6 +490,14 @@ const mapResponsesTools = (input: ModelGenerateInput["tools"]) =>
   input
     ? Object.values(input).map((tool) => {
         if (isCallableToolDefinition(tool)) {
+          const responsesToolType = openAILocalResponsesToolType(tool);
+          if (responsesToolType) {
+            return {
+              type: responsesToolType,
+              ...openAILocalResponsesToolConfig(tool)
+            };
+          }
+
           return {
             type: "function",
             name: tool.name,
@@ -703,11 +809,41 @@ const getProviderResponseId = (messages: ModelMessage[]) => {
 const serializeToolOutput = (message: ModelMessage) =>
   message.parts
     .filter((part): part is Extract<ModelMessage["parts"][number], { type: "tool-result" }> => part.type === "tool-result")
-    .map((part) => ({
-      type: "function_call_output",
-      call_id: part.toolResult.toolCallId,
-      output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
-    }));
+    .map((part) => {
+      if (part.toolResult.toolName === "shell") {
+        return {
+          type: "shell_call_output",
+          call_id: part.toolResult.toolCallId,
+          output: part.toolResult.isError
+            ? {
+                stdout: "",
+                stderr: part.toolResult.error?.message ?? "Shell execution failed.",
+                outcome: { type: "exit", exitCode: 1 }
+              }
+            : part.toolResult.output
+        };
+      }
+
+      if (part.toolResult.toolName === "apply_patch") {
+        const output = part.toolResult.output;
+        const outputRecord =
+          output && typeof output === "object" && !Array.isArray(output)
+            ? (output as Record<string, unknown>)
+            : undefined;
+        return {
+          type: "apply_patch_call_output",
+          call_id: part.toolResult.toolCallId,
+          status: part.toolResult.isError ? "failed" : outputRecord?.status ?? "completed",
+          output: part.toolResult.isError ? part.toolResult.error?.message : outputRecord?.output
+        };
+      }
+
+      return {
+        type: "function_call_output",
+        call_id: part.toolResult.toolCallId,
+        output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
+      };
+    });
 
 const serializeProviderDataInput = (message: ModelMessage) =>
   message.parts
@@ -727,12 +863,35 @@ const parseResponsesProviderData = (item: unknown) => {
   }
 
   const typedItem = item as Record<string, unknown>;
-  if (typeof typedItem.type !== "string" || !typedItem.type.startsWith("mcp_")) {
+  if (
+    typeof typedItem.type !== "string" ||
+    ["message", "function_call", "shell_call", "apply_patch_call"].includes(typedItem.type)
+  ) {
     return undefined;
   }
 
   return item as JsonValue;
 };
+
+const parseShellCallInput = (item: Record<string, unknown>) => {
+  const action = item.action && typeof item.action === "object" ? (item.action as Record<string, unknown>) : undefined;
+  return {
+    command: typeof action?.command === "string" ? action.command : typeof item.command === "string" ? item.command : undefined,
+    action: action as JsonValue | undefined,
+    maxOutputLength:
+      typeof action?.max_output_length === "number"
+        ? action.max_output_length
+        : typeof item.max_output_length === "number"
+          ? item.max_output_length
+          : typeof item.maxOutputLength === "number"
+            ? item.maxOutputLength
+            : undefined
+  };
+};
+
+const parseApplyPatchCallInput = (item: Record<string, unknown>) => ({
+  operation: item.operation && typeof item.operation === "object" ? (item.operation as JsonValue) : {}
+});
 
 const parseAssistantMessage = (message: any): ModelMessage => ({
   role: "assistant",
@@ -815,6 +974,30 @@ const parseResponsesAssistantMessage = (json: any): ModelMessage => {
           id: item.call_id ?? item.id ?? `${item.name}-${index}`,
           name: item.name,
           input: JSON.parse(item.arguments ?? "{}")
+        }
+      });
+      continue;
+    }
+
+    if (item?.type === "shell_call") {
+      parts.push({
+        type: "tool-call",
+        toolCall: {
+          id: item.call_id ?? item.id ?? `shell-${index}`,
+          name: "shell",
+          input: parseShellCallInput(item) as JsonValue
+        }
+      });
+      continue;
+    }
+
+    if (item?.type === "apply_patch_call") {
+      parts.push({
+        type: "tool-call",
+        toolCall: {
+          id: item.call_id ?? item.id ?? `apply_patch-${index}`,
+          name: "apply_patch",
+          input: parseApplyPatchCallInput(item) as JsonValue
         }
       });
       continue;
@@ -925,6 +1108,30 @@ const streamResponses = async function* (
         }
       }
 
+      if (item?.type === "shell_call" && type === "response.output_item.done") {
+        yield {
+          type: "tool-call",
+          toolCall: {
+            id: item.call_id ?? item.id ?? `${json.output_index ?? "shell"}`,
+            name: "shell",
+            input: parseShellCallInput(item) as JsonValue
+          }
+        } satisfies StreamEvent;
+        sawToolCalls = true;
+      }
+
+      if (item?.type === "apply_patch_call" && type === "response.output_item.done") {
+        yield {
+          type: "tool-call",
+          toolCall: {
+            id: item.call_id ?? item.id ?? `${json.output_index ?? "apply_patch"}`,
+            name: "apply_patch",
+            input: parseApplyPatchCallInput(item) as JsonValue
+          }
+        } satisfies StreamEvent;
+        sawToolCalls = true;
+      }
+
       const providerData = parseResponsesProviderData(item);
       if (providerData && type === "response.output_item.done") {
         yield {
@@ -1029,7 +1236,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
   ) {}
 
   private usesResponsesAPI(input: ModelGenerateInput) {
-    return hasHostedTools(input.tools);
+    return hasResponsesOnlyTools(input.tools);
   }
 
   private async generateViaResponses(input: ModelGenerateInput, signal: AbortSignal | undefined): Promise<GenerateResult> {
@@ -1706,6 +1913,24 @@ export const openAIFileSearchTool = (config: OpenAIFileSearchToolConfig = {}) =>
     config: config as unknown as JsonValue
   });
 
+export const openAICodeInterpreterTool = (config: OpenAICodeInterpreterToolConfig) =>
+  hostedTool({
+    name: "code_interpreter",
+    provider: "openai",
+    type: "code_interpreter",
+    toolClass: "code-execution",
+    config: config as unknown as JsonValue
+  });
+
+export const openAIToolSearchTool = (config: OpenAIToolSearchToolConfig = {}) =>
+  hostedTool({
+    name: "tool_search",
+    provider: "openai",
+    type: "tool_search",
+    toolClass: "tool-search",
+    config: config as unknown as JsonValue
+  });
+
 export const openAIRemoteMcpTool = (config: OpenAIRemoteMcpToolConfig) =>
   hostedTool({
     name: config.server_label ?? "mcp",
@@ -1730,3 +1955,117 @@ export const openAIComputerUseTool = (config: OpenAIComputerUseToolConfig) =>
     toolClass: "computer-use",
     config: config as unknown as JsonValue
   });
+
+const runOpenAIShellCommand = async (
+  input: OpenAIShellToolInput,
+  config: OpenAIShellToolConfig
+): Promise<OpenAIShellToolOutput> => {
+  if (config.execute) {
+    return config.execute(input);
+  }
+
+  const command = input.command ?? input.action?.command;
+  if (!command) {
+    throw new Error("OpenAI shell tool did not provide a command.");
+  }
+
+  const { exec } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execAsync = promisify(exec);
+  const maxBuffer = Math.max(1024, config.maxOutputLength ?? input.maxOutputLength ?? input.max_output_length ?? input.action?.maxOutputLength ?? input.action?.max_output_length ?? 20000);
+  const cwd = config.rootDir
+    ? await assertOpenAIToolPathInsideRoot(config.rootDir, config.cwd ?? ".", "shell cwd")
+    : config.cwd;
+
+  try {
+    const result = await execAsync(command, {
+      cwd,
+      timeout: config.timeoutMs,
+      maxBuffer
+    });
+    return {
+      stdout: result.stdout,
+      stderr: result.stderr,
+      outcome: {
+        type: "exit",
+        exitCode: 0
+      },
+      maxOutputLength: maxBuffer
+    };
+  } catch (error) {
+    const err = error as {
+      stdout?: string;
+      stderr?: string;
+      code?: number;
+      signal?: string;
+      killed?: boolean;
+      message?: string;
+    };
+    return {
+      stdout: err.stdout ?? "",
+      stderr: err.stderr ?? err.message ?? "",
+      outcome: {
+        type: err.killed || err.signal === "SIGTERM" ? "timeout" : "exit",
+        exitCode: typeof err.code === "number" ? err.code : 1
+      },
+      maxOutputLength: maxBuffer
+    };
+  }
+};
+
+export const openAIShellTool = (config: OpenAIShellToolConfig = {}): ToolDefinition<z.ZodType<OpenAIShellToolInput>, JsonValue> => ({
+  name: config.name ?? "shell",
+  description: "Run a shell command requested by the OpenAI Responses shell tool.",
+  requiresApproval: true,
+  metadata: {
+    [openAIResponsesToolMetadataKey]: "shell",
+    "openai.responses_tool_config": {}
+  },
+  schema: z.object({
+    command: z.string().optional(),
+    action: z
+      .object({
+        command: z.string().optional(),
+        max_output_length: z.number().optional(),
+        maxOutputLength: z.number().optional()
+      })
+      .passthrough()
+      .optional(),
+    maxOutputLength: z.number().optional(),
+    max_output_length: z.number().optional()
+  }) as z.ZodType<OpenAIShellToolInput>,
+  execute: async (input) => runOpenAIShellCommand(input, config) as unknown as JsonValue
+});
+
+const applyOpenAIPatchOperation = async (
+  operation: OpenAIApplyPatchOperation,
+  config: OpenAIApplyPatchToolConfig
+) => {
+  if (config.rootDir) {
+    await assertOpenAIToolPathInsideRoot(config.rootDir, operation.path, "apply_patch");
+  }
+
+  return config.applyOperation(operation);
+};
+
+export const openAIApplyPatchTool = (
+  config: OpenAIApplyPatchToolConfig
+): ToolDefinition<z.ZodType<OpenAIApplyPatchToolInput>, JsonValue> => ({
+  name: config.name ?? "apply_patch",
+  description: "Apply a structured patch operation requested by the OpenAI Responses apply_patch tool.",
+  requiresApproval: true,
+  metadata: {
+    [openAIResponsesToolMetadataKey]: "apply_patch",
+    "openai.responses_tool_config": {}
+  },
+  schema: z.object({
+    operation: z
+      .object({
+        type: z.enum(["create_file", "update_file", "delete_file"]),
+        path: z.string(),
+        diff: z.string().optional()
+      })
+      .passthrough()
+  }) as z.ZodType<OpenAIApplyPatchToolInput>,
+  execute: async ({ operation }) => applyOpenAIPatchOperation(operation, config) as unknown as JsonValue
+});

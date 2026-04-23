@@ -121,13 +121,13 @@ The SDK aims to keep the application-facing contract stable, but capability pari
 
 | Provider | `streamText` | Tools | `toolChoice` | Structured output | Embeddings | Audio in | Audio out | Realtime sessions | Browser tokens | Reasoning | Web search | Hosted tools / MCP | Agent tier |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | yes | Tier A |
-| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | no | `effort` | yes | yes | Tier A |
-| Anthropic | yes | yes | yes | prompted | no | no | no | no | no | model-dependent | yes | native MCP + web search | Tier B |
+| OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
+| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | no | `effort` | yes | Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
+| Anthropic | yes | yes | yes | prompted | no | no | no | no | no | model-dependent | yes | native MCP, web search, code execution | Tier B |
 | Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B |
 | Vertex | yes | yes | yes | native | yes | yes | yes | yes | no | model-dependent | yes | native | Tier B |
 | OpenRouter | yes | yes | yes | native | no | no | no | no | no | `effort` + `budgetTokens` | yes | server tools | Tier C |
-| Qwen | yes | yes | yes | native | yes | no | no | no | no | model-dependent | no | no | Tier C |
+| Qwen | yes | yes | yes | native | yes | no | no | no | no | model-dependent | yes | Responses web search, web extractor, code interpreter | Tier B |
 | Kimi | yes | yes | yes | native | no | no | no | no | no | model-dependent | no | no | Tier C |
 | Bedrock | yes | yes | partial | native | no | no | no | no | no | no | no | no | Tier C |
 | Ollama | yes | yes | no | native | yes | no | no | no | no | no | no | no | Tier C |
@@ -513,7 +513,7 @@ Agent stream events currently include:
 
 Those events are exposed both through `streamAgent().eventStream` and through UI/SSE helpers such as `toUIAgentStreamResponse()` and `toUIMessageStream()`.
 
-When you need to reason about provider-specific agent features at runtime, inspect `model.capabilities.agentCapabilities` or use helpers such as `getAgentCapabilities()`, `getAgentSupportTier()`, and `getHostedToolClass()`. Hosted tools now carry a normalized `toolClass` like `web-search`, `file-search`, `remote-mcp`, or `computer-use`.
+When you need to reason about provider-specific agent features at runtime, inspect `model.capabilities.agentCapabilities` or use helpers such as `getAgentCapabilities()`, `getAgentSupportTier()`, and `getHostedToolClass()`. Hosted tools now carry a normalized `toolClass` like `web-search`, `file-search`, `remote-mcp`, `computer-use`, `code-execution`, `shell`, `apply-patch`, `tool-search`, `web-extraction`, or `skill`.
 
 ```ts
 import { getAgentCapabilities, getAgentSupportTier } from "@zhivex-ai/sdk";
@@ -754,6 +754,88 @@ const result = await generateText({
       max_results: 5,
       allowed_domains: ["openai.com", "anthropic.com"]
     })
+  }
+});
+
+console.log(result.text);
+```
+
+OpenAI and Azure OpenAI can expose Responses agent tools through provider helpers. `shell` and `apply_patch` are SDK-managed local harness tools, so they require an explicit approval policy by default:
+
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { createOpenAI, openAIApplyPatchTool, openAIShellTool } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const result = await generateText({
+  model: openai("gpt-5"),
+  prompt: "Inspect package scripts and propose a tiny patch.",
+  maxSteps: 4,
+  toolApprovalPolicy({ toolCall }) {
+    return toolCall.name === "shell" && String(toolCall.input).includes("npm")
+      ? { approved: false, reason: "Use bun in this repository." }
+      : { approved: true };
+  },
+  tools: {
+    shell: openAIShellTool({ cwd: process.cwd(), timeoutMs: 10_000 }),
+    patch: openAIApplyPatchTool({
+      async applyOperation(operation) {
+        return {
+          operation,
+          applied: false,
+          message: "Patch review mode; apply it in your own workspace runner."
+        };
+      }
+    })
+  }
+});
+
+console.log(result.text);
+console.log(result.toolResults);
+```
+
+Anthropic exposes Claude web search by default with `web_search_20260209` and now has a native code execution helper:
+
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { anthropicCodeExecutionTool, anthropicWebSearchTool, createAnthropic } from "@zhivex-ai/anthropic";
+
+const anthropic = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY
+});
+
+const result = await generateText({
+  model: anthropic("claude-opus-4-7"),
+  prompt: "Research this API change and verify the migration with code.",
+  tools: {
+    web: anthropicWebSearchTool(),
+    code: anthropicCodeExecutionTool()
+  }
+});
+
+console.log(result.text);
+```
+
+Qwen now uses the DashScope-compatible Responses API by default, including hosted web search, web extraction, and code interpreter. Pass `providerOptions: { apiMode: "chat" }` only when you need the legacy Chat Completions path.
+
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { createQwen, qwenCodeInterpreterTool, qwenWebExtractorTool, qwenWebSearchTool } from "@zhivex-ai/qwen";
+
+const qwen = createQwen({
+  apiKey: process.env.DASHSCOPE_API_KEY
+});
+
+const result = await generateText({
+  model: qwen("qwen-plus"),
+  prompt: "Find current docs, extract the relevant page, and check a sample with code.",
+  tools: {
+    search: qwenWebSearchTool(),
+    extract: qwenWebExtractorTool(),
+    code: qwenCodeInterpreterTool()
   }
 });
 

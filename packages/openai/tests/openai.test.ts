@@ -16,7 +16,16 @@ import {
 } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createOpenAI, openAIMcpApprovalResponse, openAIRemoteMcpTool, openAIWebSearchTool } from "../src/index.js";
+import {
+  createOpenAI,
+  openAIApplyPatchTool,
+  openAICodeInterpreterTool,
+  openAIMcpApprovalResponse,
+  openAIRemoteMcpTool,
+  openAIShellTool,
+  openAIToolSearchTool,
+  openAIWebSearchTool
+} from "../src/index.js";
 
 describe("openai adapter", () => {
   const fetchMock = vi.fn();
@@ -601,6 +610,138 @@ describe("openai adapter", () => {
     expect(mcpTool.toolClass).toBe("remote-mcp");
     expect(mcpTool.requiresApproval).toBe(true);
     expect(getAgentCapabilities(provider("gpt-4o-mini")).remoteMcp).toBe(true);
+    expect(getAgentCapabilities(provider("gpt-4o-mini")).codeExecution).toBe(true);
+    expect(getAgentCapabilities(provider("gpt-4o-mini")).shell).toBe(true);
+  });
+
+  it("maps OpenAI agent built-in helpers into Responses tools", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "done" }]
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-5.1"),
+      prompt: "inspect",
+      tools: {
+        code: openAICodeInterpreterTool({ container: { type: "auto" } }),
+        shell: openAIShellTool({ execute: () => ({ stdout: "", stderr: "", outcome: { type: "exit", exitCode: 0 } }) }),
+        patch: openAIApplyPatchTool({ applyOperation: () => ({ status: "completed", output: "ok" }) }),
+        toolSearch: openAIToolSearchTool()
+      },
+      toolApprovalPolicy: () => true
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as { tools: Array<{ type: string }> };
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.openai.com/v1/responses");
+    expect(body.tools).toEqual(
+      expect.arrayContaining([
+        { type: "code_interpreter", container: { type: "auto" } },
+        { type: "shell" },
+        { type: "apply_patch" },
+        { type: "tool_search" }
+      ])
+    );
+  });
+
+  it("executes OpenAI shell calls through the local approval-aware harness", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "shell_call",
+            call_id: "call_shell",
+            action: {
+              command: "echo hi",
+              max_output_length: 1000
+            }
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_2",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "shell done" }]
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const approvals: string[] = [];
+    const result = await generateText({
+      model: provider("gpt-5.1"),
+      prompt: "run shell",
+      maxSteps: 2,
+      tools: {
+        shell: openAIShellTool({
+          execute: (input) => ({
+            stdout: `ran:${input.command ?? input.action?.command}`,
+            stderr: "",
+            outcome: { type: "exit", exitCode: 0 },
+            maxOutputLength: input.maxOutputLength
+          })
+        })
+      },
+      toolApprovalPolicy(request) {
+        approvals.push(request.toolCall.name);
+        return true;
+      }
+    });
+
+    expect(result.text).toBe("shell done");
+    expect(approvals).toEqual(["shell"]);
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)) as {
+      input: Array<{ type: string; call_id: string; output: unknown }>;
+    };
+    expect(secondBody.input[0]).toMatchObject({
+      type: "shell_call_output",
+      call_id: "call_shell",
+      output: {
+        stdout: "ran:echo hi"
+      }
+    });
+  });
+
+  it("blocks OpenAI local harness paths that escape rootDir", async () => {
+    const shell = openAIShellTool({
+      rootDir: "/tmp/openai-root",
+      cwd: "../outside"
+    });
+    await expect(shell.execute({ command: "echo hi" })).rejects.toThrow("OpenAI shell cwd path escapes rootDir.");
+
+    const applyOperation = vi.fn(() => ({ status: "completed" as const }));
+    const patch = openAIApplyPatchTool({
+      rootDir: "/tmp/openai-root",
+      applyOperation
+    });
+    await expect(
+      patch.execute({
+        operation: {
+          type: "update_file",
+          path: "../outside.txt",
+          diff: "patch"
+        }
+      })
+    ).rejects.toThrow("OpenAI apply_patch path escapes rootDir.");
+    expect(applyOperation).not.toHaveBeenCalled();
   });
 
   it("uses the Responses API for hosted tools and continues local function loops", async () => {
