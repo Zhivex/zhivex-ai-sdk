@@ -97,6 +97,16 @@ export interface ModelCapabilities {
   audioInput: boolean;
   audioOutput: boolean;
   embeddings: boolean;
+  imageGeneration?: boolean;
+  videoGeneration?: boolean;
+  musicGeneration?: boolean;
+  fileSearch?: boolean;
+  urlContext?: boolean;
+  contextCaching?: boolean;
+  batch?: boolean;
+  interactions?: boolean;
+  rawPrediction?: boolean;
+  computerUse?: boolean;
   reasoning: boolean;
   webSearch: boolean;
   realtime?: {
@@ -281,6 +291,22 @@ export interface AudioInput {
   filename?: string;
 }
 
+export interface MediaInput {
+  data?: string | Uint8Array | ArrayBuffer;
+  uri?: string;
+  mediaType: string;
+  filename?: string;
+  providerMetadata?: Record<string, unknown>;
+}
+
+export interface GeneratedMedia {
+  data?: Uint8Array;
+  uri?: string;
+  mediaType: string;
+  text?: string;
+  providerMetadata?: Record<string, unknown>;
+}
+
 export interface TranscriptionResult {
   text: string;
   rawResponse?: unknown;
@@ -290,6 +316,94 @@ export interface SpeechResult {
   audio: Uint8Array;
   mediaType: string;
   rawResponse?: unknown;
+}
+
+export interface ImageGenerationResult {
+  images: GeneratedMedia[];
+  text?: string;
+  rawResponse?: unknown;
+}
+
+export interface VideoGenerationResult {
+  videos: GeneratedMedia[];
+  operationName?: string;
+  rawResponse?: unknown;
+}
+
+export interface MusicGenerationResult {
+  audio: GeneratedMedia[];
+  text?: string;
+  rawResponse?: unknown;
+}
+
+export interface UploadedFile {
+  name: string;
+  uri?: string;
+  mimeType?: string;
+  sizeBytes?: string | number;
+  state?: string;
+  displayName?: string;
+  rawResponse?: unknown;
+  providerMetadata?: Record<string, unknown>;
+}
+
+export interface FileSearchStore {
+  name: string;
+  displayName?: string;
+  createTime?: string;
+  updateTime?: string;
+  rawResponse?: unknown;
+  providerMetadata?: Record<string, unknown>;
+}
+
+export interface CachedContent {
+  name: string;
+  model?: string;
+  displayName?: string;
+  createTime?: string;
+  updateTime?: string;
+  expireTime?: string;
+  usageMetadata?: Record<string, unknown>;
+  rawResponse?: unknown;
+  providerMetadata?: Record<string, unknown>;
+}
+
+export interface BatchJob {
+  name: string;
+  model?: string;
+  state?: string;
+  done?: boolean;
+  createTime?: string;
+  updateTime?: string;
+  rawResponse?: unknown;
+  providerMetadata?: Record<string, unknown>;
+}
+
+export interface Interaction {
+  id: string;
+  name?: string;
+  model?: string;
+  status?: string;
+  outputs?: unknown[];
+  rawResponse?: unknown;
+  providerMetadata?: Record<string, unknown>;
+}
+
+export interface PredictionOperation {
+  name: string;
+  done?: boolean;
+  response?: unknown;
+  error?: unknown;
+  metadata?: unknown;
+  rawResponse?: unknown;
+}
+
+export interface PredictionResult {
+  predictions?: unknown[];
+  operationName?: string;
+  operation?: PredictionOperation;
+  rawResponse?: unknown;
+  providerMetadata?: Record<string, unknown>;
 }
 
 export interface GroundingSource {
@@ -378,6 +492,210 @@ export interface SpeechModel<TProviderOptions extends ProviderOptions = Provider
   readonly modelId: string;
   readonly capabilities: ModelCapabilities;
   generateSpeech(input: SpeechModelInput<TProviderOptions>): Promise<SpeechResult>;
+}
+
+export interface ImageGenerationModel<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly capabilities: ModelCapabilities;
+  generateImage(input: ImageGenerationModelInput<TProviderOptions>): Promise<ImageGenerationResult>;
+}
+
+export interface VideoGenerationModel<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly capabilities: ModelCapabilities;
+  generateVideo(input: VideoGenerationModelInput<TProviderOptions>): Promise<VideoGenerationResult>;
+}
+
+export interface MusicGenerationModel<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly capabilities: ModelCapabilities;
+  generateMusic(input: MusicGenerationModelInput<TProviderOptions>): Promise<MusicGenerationResult>;
+}
+
+export interface FileUploadInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  data: string | Uint8Array | ArrayBuffer | Blob;
+  mediaType: string;
+  displayName?: string;
+  name?: string;
+  filename?: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface FileListInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  pageSize?: number;
+  pageToken?: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface FileGetInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  name: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface FileDeleteInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  name: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface FilesClient<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  upload(input: FileUploadInput<TProviderOptions>): Promise<UploadedFile>;
+  get(input: FileGetInput<TProviderOptions>): Promise<UploadedFile>;
+  list(input?: FileListInput<TProviderOptions>): Promise<{ files: UploadedFile[]; nextPageToken?: string; rawResponse?: unknown }>;
+  delete(input: FileDeleteInput<TProviderOptions>): Promise<{ name: string; rawResponse?: unknown }>;
+}
+
+export interface FileSearchStoreCreateInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  displayName?: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface FileSearchStoreListInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  pageSize?: number;
+  pageToken?: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface FileSearchStoreGetInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  name: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface FileSearchStoreDeleteInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  name: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface FileSearchStoreUploadInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  storeName: string;
+  data: string | Uint8Array | ArrayBuffer | Blob;
+  mediaType: string;
+  displayName?: string;
+  filename?: string;
+  pollIntervalMs?: number;
+  providerOptions?: TProviderOptions;
+}
+
+export interface FileSearchStoreImportInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  storeName: string;
+  fileName: string;
+  pollIntervalMs?: number;
+  providerOptions?: TProviderOptions;
+}
+
+export interface FileSearchStoresClient<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  create(input?: FileSearchStoreCreateInput<TProviderOptions>): Promise<FileSearchStore>;
+  upload(input: FileSearchStoreUploadInput<TProviderOptions>): Promise<PredictionOperation>;
+  importFile(input: FileSearchStoreImportInput<TProviderOptions>): Promise<PredictionOperation>;
+  get(input: FileSearchStoreGetInput<TProviderOptions>): Promise<FileSearchStore>;
+  list(input?: FileSearchStoreListInput<TProviderOptions>): Promise<{ stores: FileSearchStore[]; nextPageToken?: string; rawResponse?: unknown }>;
+  delete(input: FileSearchStoreDeleteInput<TProviderOptions>): Promise<{ name: string; rawResponse?: unknown }>;
+}
+
+export interface ContextCacheCreateInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  modelId: string;
+  contents: ModelMessage[];
+  system?: string;
+  displayName?: string;
+  ttl?: string;
+  expireTime?: string;
+  tools?: ToolCollection;
+  providerOptions?: TProviderOptions;
+}
+
+export interface ContextCacheGetInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  name: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface ContextCacheListInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  pageSize?: number;
+  pageToken?: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface ContextCacheDeleteInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  name: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface ContextCachesClient<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  create(input: ContextCacheCreateInput<TProviderOptions>): Promise<CachedContent>;
+  get(input: ContextCacheGetInput<TProviderOptions>): Promise<CachedContent>;
+  list(input?: ContextCacheListInput<TProviderOptions>): Promise<{ caches: CachedContent[]; nextPageToken?: string; rawResponse?: unknown }>;
+  delete(input: ContextCacheDeleteInput<TProviderOptions>): Promise<{ name: string; rawResponse?: unknown }>;
+}
+
+export interface BatchCreateInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  modelId: string;
+  displayName?: string;
+  requests?: Array<{ request: unknown; metadata?: Record<string, unknown> }>;
+  fileName?: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface BatchGetInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  name: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface BatchListInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  pageSize?: number;
+  pageToken?: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface BatchDeleteInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  name: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface BatchCancelInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  name: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface BatchesClient<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  create(input: BatchCreateInput<TProviderOptions>): Promise<BatchJob>;
+  get(input: BatchGetInput<TProviderOptions>): Promise<BatchJob>;
+  list(input?: BatchListInput<TProviderOptions>): Promise<{ batches: BatchJob[]; nextPageToken?: string; rawResponse?: unknown }>;
+  cancel(input: BatchCancelInput<TProviderOptions>): Promise<BatchJob>;
+  delete(input: BatchDeleteInput<TProviderOptions>): Promise<{ name: string; rawResponse?: unknown }>;
+}
+
+export interface InteractionCreateInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  modelId?: string;
+  agent?: string;
+  input: unknown;
+  previousInteractionId?: string;
+  tools?: ToolCollection;
+  background?: boolean;
+  store?: boolean;
+  providerOptions?: TProviderOptions;
+}
+
+export interface InteractionGetInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  id: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface InteractionsClient<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  create(input: InteractionCreateInput<TProviderOptions>): Promise<Interaction>;
+  get(input: InteractionGetInput<TProviderOptions>): Promise<Interaction>;
+  stream(input: InteractionCreateInput<TProviderOptions>): Promise<AsyncIterable<StreamEvent>>;
+}
+
+export interface PredictionModel<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly capabilities: ModelCapabilities;
+  predictRaw(input: PredictionModelInput<TProviderOptions>): Promise<PredictionResult>;
+  rawPredict?(input: PredictionModelInput<TProviderOptions>): Promise<PredictionResult>;
+  invoke?(input: PredictionModelInput<TProviderOptions>): Promise<PredictionResult>;
+  predictLongRunning(input: PredictionModelInput<TProviderOptions>): Promise<PredictionOperation>;
+  fetchPredictionOperation(input: PredictionOperationInput<TProviderOptions>): Promise<PredictionOperation>;
 }
 
 export interface AudioFrame {
@@ -554,8 +872,17 @@ export interface ProviderAdapter {
   embeddingModel?: (modelId: string) => EmbeddingModel;
   transcriptionModel?: (modelId: string) => TranscriptionModel;
   speechModel?: (modelId: string) => SpeechModel;
+  imageGenerationModel?: (modelId: string) => ImageGenerationModel;
+  videoGenerationModel?: (modelId: string) => VideoGenerationModel;
+  musicGenerationModel?: (modelId: string) => MusicGenerationModel;
   realtimeModel?: (modelId: string) => RealtimeModel;
   groundedLanguageModel?: (modelId: string) => GroundedLanguageModel;
+  files?: FilesClient;
+  fileSearchStores?: FileSearchStoresClient;
+  caches?: ContextCachesClient;
+  batches?: BatchesClient;
+  interactions?: InteractionsClient;
+  predictionModel?: (modelId: string) => PredictionModel;
 }
 
 export type CallableProviderAdapter = ProviderAdapter & ((modelId: string) => LanguageModel);
@@ -1091,6 +1418,204 @@ export type GenerateSpeechOptions<TModel extends SpeechModel = SpeechModel> = Re
 export interface SpeechOutput extends SpeechResult {
   input: string;
 }
+
+export interface ImageGenerationModelInput<TProviderOptions extends ProviderOptions = ProviderOptions>
+  extends RetryOptions {
+  prompt: string;
+  images?: MediaInput[];
+  count?: number;
+  aspectRatio?: string;
+  size?: string;
+  negativePrompt?: string;
+  outputMimeType?: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface VideoGenerationModelInput<TProviderOptions extends ProviderOptions = ProviderOptions>
+  extends RetryOptions {
+  prompt: string;
+  image?: MediaInput;
+  count?: number;
+  aspectRatio?: string;
+  negativePrompt?: string;
+  durationSeconds?: number;
+  outputStorageUri?: string;
+  pollIntervalMs?: number;
+  providerOptions?: TProviderOptions;
+}
+
+export interface MusicGenerationModelInput<TProviderOptions extends ProviderOptions = ProviderOptions>
+  extends RetryOptions {
+  prompt: string;
+  images?: MediaInput[];
+  negativePrompt?: string;
+  outputMimeType?: string;
+  providerOptions?: TProviderOptions;
+}
+
+export type GenerateImageOptions<TModel extends ImageGenerationModel = ImageGenerationModel> =
+  ImageGenerationModelInput<TModel extends ImageGenerationModel<infer TProviderOptions> ? TProviderOptions : ProviderOptions> & {
+    model: TModel;
+  };
+
+export interface GenerateImageOutput extends ImageGenerationResult {
+  prompt: string;
+}
+
+export type GenerateVideoOptions<TModel extends VideoGenerationModel = VideoGenerationModel> =
+  VideoGenerationModelInput<TModel extends VideoGenerationModel<infer TProviderOptions> ? TProviderOptions : ProviderOptions> & {
+    model: TModel;
+  };
+
+export interface GenerateVideoOutput extends VideoGenerationResult {
+  prompt: string;
+}
+
+export type GenerateMusicOptions<TModel extends MusicGenerationModel = MusicGenerationModel> =
+  MusicGenerationModelInput<TModel extends MusicGenerationModel<infer TProviderOptions> ? TProviderOptions : ProviderOptions> & {
+    model: TModel;
+  };
+
+export interface GenerateMusicOutput extends MusicGenerationResult {
+  prompt: string;
+}
+
+export type UploadFileOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  FileUploadInput & {
+    provider: TProvider;
+  };
+
+export type GetFileOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  FileGetInput & {
+    provider: TProvider;
+  };
+
+export type ListFilesOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  FileListInput & {
+    provider: TProvider;
+  };
+
+export type DeleteFileOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  FileDeleteInput & {
+    provider: TProvider;
+  };
+
+export type CreateFileSearchStoreOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  FileSearchStoreCreateInput & {
+    provider: TProvider;
+  };
+
+export type UploadToFileSearchStoreOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  FileSearchStoreUploadInput & {
+    provider: TProvider;
+  };
+
+export type ImportFileToFileSearchStoreOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  FileSearchStoreImportInput & {
+    provider: TProvider;
+  };
+
+export type GetFileSearchStoreOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  FileSearchStoreGetInput & {
+    provider: TProvider;
+  };
+
+export type ListFileSearchStoresOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  FileSearchStoreListInput & {
+    provider: TProvider;
+  };
+
+export type DeleteFileSearchStoreOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  FileSearchStoreDeleteInput & {
+    provider: TProvider;
+  };
+
+export type CreateContextCacheOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  ContextCacheCreateInput & {
+    provider: TProvider;
+  };
+
+export type GetContextCacheOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  ContextCacheGetInput & {
+    provider: TProvider;
+  };
+
+export type ListContextCachesOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  ContextCacheListInput & {
+    provider: TProvider;
+  };
+
+export type DeleteContextCacheOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  ContextCacheDeleteInput & {
+    provider: TProvider;
+  };
+
+export type CreateBatchOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  BatchCreateInput & {
+    provider: TProvider;
+  };
+
+export type GetBatchOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  BatchGetInput & {
+    provider: TProvider;
+  };
+
+export type ListBatchesOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  BatchListInput & {
+    provider: TProvider;
+  };
+
+export type CancelBatchOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  BatchCancelInput & {
+    provider: TProvider;
+  };
+
+export type DeleteBatchOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  BatchDeleteInput & {
+    provider: TProvider;
+  };
+
+export type CreateInteractionOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  InteractionCreateInput & {
+    provider: TProvider;
+  };
+
+export type GetInteractionOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  InteractionGetInput & {
+    provider: TProvider;
+  };
+
+export type StreamInteractionOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  InteractionCreateInput & {
+    provider: TProvider;
+  };
+
+export interface PredictionModelInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  instances?: unknown[];
+  parameters?: Record<string, unknown>;
+  body?: unknown;
+  providerOptions?: TProviderOptions;
+}
+
+export interface PredictionOperationInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  name: string;
+  providerOptions?: TProviderOptions;
+}
+
+export type PredictRawOptions<TModel extends PredictionModel = PredictionModel> =
+  PredictionModelInput<TModel extends PredictionModel<infer TProviderOptions> ? TProviderOptions : ProviderOptions> & {
+    model: TModel;
+  };
+
+export type PredictLongRunningOptions<TModel extends PredictionModel = PredictionModel> =
+  PredictionModelInput<TModel extends PredictionModel<infer TProviderOptions> ? TProviderOptions : ProviderOptions> & {
+    model: TModel;
+  };
+
+export type FetchPredictionOperationOptions<TModel extends PredictionModel = PredictionModel> =
+  PredictionOperationInput<TModel extends PredictionModel<infer TProviderOptions> ? TProviderOptions : ProviderOptions> & {
+    model: TModel;
+  };
 
 export type GenerateGroundedTextOptions<TModel extends GroundedLanguageModel = GroundedLanguageModel> = RetryOptions &
   GenerateInputSource & {

@@ -32,7 +32,7 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
   };
 });
 
-import { createBedrock } from "../src/index.ts";
+import { bedrockServerTool, createBedrock } from "../src/index.ts";
 
 describe("bedrock adapter", () => {
   runLanguageModelContractSuite({
@@ -456,5 +456,98 @@ describe("bedrock adapter", () => {
     });
 
     expect((await result.collect()).text).toBe("Sunny in Madrid");
+  });
+
+  it("uses Bedrock OpenAI-compatible Responses mode when requested", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "hello from mantle" }] }],
+        usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 }
+      })
+    );
+
+    const provider = createBedrock({
+      runtime: "openai",
+      apiKey: "test",
+      baseURL: "https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await generateText({
+      model: provider("openai.gpt-oss-120b-1:0"),
+      prompt: "hello",
+      tools: {
+        notes: bedrockServerTool({
+          name: "notes",
+          type: "server_tool",
+          config: { id: "notes" }
+        })
+      }
+    });
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body)) as { tools: Array<Record<string, unknown>> };
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1/responses");
+    expect(body.tools).toEqual([expect.objectContaining({ type: "server_tool", id: "notes" })]);
+    expect(result.text).toBe("hello from mantle");
+  });
+
+  it("serializes local tool results in Bedrock OpenAI-compatible Responses mode", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "resp_1",
+          status: "completed",
+          output: [
+            {
+              type: "function_call",
+              call_id: "call_weather",
+              name: "weather",
+              arguments: JSON.stringify({ city: "Madrid" })
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "resp_2",
+          status: "completed",
+          output: [{ type: "message", content: [{ type: "output_text", text: "Sunny in Madrid" }] }]
+        })
+      );
+
+    const provider = createBedrock({
+      runtime: "openai",
+      apiKey: "test",
+      baseURL: "https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await generateText({
+      model: provider("openai.gpt-oss-120b-1:0"),
+      prompt: "weather",
+      maxSteps: 2,
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, temperatureC: 26 })
+        })
+      }
+    });
+
+    const secondRequest = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    const body = JSON.parse(String(secondRequest.body)) as { input: Array<Record<string, unknown>> };
+    expect(body.input).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "function_call_output",
+          call_id: "call_weather",
+          output: JSON.stringify({ city: "Madrid", temperatureC: 26 })
+        })
+      ])
+    );
+    expect(result.text).toBe("Sunny in Madrid");
   });
 });

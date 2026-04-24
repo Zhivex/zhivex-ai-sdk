@@ -302,6 +302,32 @@ const capabilities: ModelCapabilities = {
   }
 };
 
+const normalizeModelId = (modelId: string) => modelId.trim().toLowerCase();
+
+const supportsOpenAIToolSearch = (modelId: string) => {
+  const normalized = normalizeModelId(modelId);
+  return /^gpt-5\.4(?:$|-20|-pro)/.test(normalized);
+};
+
+const supportsOpenAIComputerUse = (modelId: string) => {
+  const normalized = normalizeModelId(modelId);
+  return /^gpt-5\.4(?:$|-20|-pro|-mini)/.test(normalized);
+};
+
+const supportsOpenAIHostedHarnessTools = (modelId: string) => /^gpt-5\.4(?:$|-)/.test(normalizeModelId(modelId));
+
+const modelCapabilities = (modelId: string): ModelCapabilities => ({
+  ...capabilities,
+  agentCapabilities: {
+    ...capabilities.agentCapabilities!,
+    computerUse: supportsOpenAIComputerUse(modelId),
+    shell: supportsOpenAIHostedHarnessTools(modelId),
+    applyPatch: supportsOpenAIHostedHarnessTools(modelId),
+    skills: supportsOpenAIHostedHarnessTools(modelId),
+    toolSearch: supportsOpenAIToolSearch(modelId)
+  }
+});
+
 const transcriptionCapabilities: ModelCapabilities = {
   ...capabilities,
   streaming: false,
@@ -452,6 +478,22 @@ const mapMessages = (messages: ModelMessage[]) =>
 
 const hasResponsesOnlyTools = (tools: ModelGenerateInput["tools"]) =>
   Object.values(tools ?? {}).some((tool) => isHostedToolDefinition(tool) || (isCallableToolDefinition(tool) && openAILocalResponsesToolType(tool)));
+
+const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInput["tools"]) => {
+  const currentCapabilities = modelCapabilities(modelId).agentCapabilities;
+  for (const definition of Object.values(tools ?? {})) {
+    const type = isCallableToolDefinition(definition) ? openAILocalResponsesToolType(definition) : definition.type;
+    if (type === "tool_search" && !currentCapabilities?.toolSearch) {
+      throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses tool_search tool.`);
+    }
+    if (type === "computer_use_preview" && !currentCapabilities?.computerUse) {
+      throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses computer_use tool.`);
+    }
+    if ((type === "shell" || type === "apply_patch") && !supportsOpenAIHostedHarnessTools(modelId)) {
+      throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses ${type} tool.`);
+    }
+  }
+};
 
 const normalizeWebSearchConfig = (config: OpenAIWebSearchToolConfig = {}) => ({
   ...config,
@@ -1226,20 +1268,23 @@ const extractSources = (value: any): GroundedGenerateResult["sources"] => {
 
 class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
   readonly provider = "openai";
-  readonly capabilities = capabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {}
+  ) {
+    this.capabilities = modelCapabilities(modelId);
+  }
 
   private usesResponsesAPI(input: ModelGenerateInput) {
     return hasResponsesOnlyTools(input.tools);
   }
 
   private async generateViaResponses(input: ModelGenerateInput, signal: AbortSignal | undefined): Promise<GenerateResult> {
+    assertResponsesToolsSupported(this.modelId, input.tools);
     const previousResponse = getProviderResponseId(input.messages);
     const messages =
       previousResponse && previousResponse.index < input.messages.length - 1
@@ -1345,6 +1390,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
 
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
     if (this.usesResponsesAPI(input)) {
+      assertResponsesToolsSupported(this.modelId, input.tools);
       const { signal, cleanup } = getRequestOptions(input);
       const response = await withRetry(
         () =>

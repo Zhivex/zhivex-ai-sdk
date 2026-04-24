@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createTextMessage, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createKimi } from "../src/index.js";
+import { createKimi, kimiFormulaTools, kimiWebSearchTool } from "../src/index.js";
 
 describe("kimi adapter", () => {
   const fetchMock = vi.fn();
@@ -434,5 +434,75 @@ describe("kimi adapter", () => {
         reasoningContent: "Think"
       }
     });
+  });
+
+  it("serializes Kimi official Formula tools as function tools and executes formula fibers", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            {
+              finish_reason: "tool_calls",
+              message: {
+                tool_calls: [
+                  {
+                    id: "call_1",
+                    function: {
+                      name: "web_search",
+                      arguments: "{\"query\":\"news\"}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(Response.json({ output: [{ title: "Result" }] }))
+      .mockResolvedValueOnce(Response.json({ choices: [{ finish_reason: "stop", message: { content: "done" } }] }));
+
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("kimi-k2-0905-preview"),
+      prompt: "search",
+      maxSteps: 2,
+      tools: {
+        web_search: kimiWebSearchTool({ apiKey: "test", fetch: fetchMock as typeof fetch })
+      }
+    });
+
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      tools: Array<{ function: { name: string; parameters: unknown } }>;
+    };
+    expect(firstBody.tools[0]?.function.name).toBe("web_search");
+    expect(firstBody.tools[0]?.function.parameters).toMatchObject({ required: ["query"] });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe("https://api.moonshot.ai/v1/formulas/moonshot/web-search:latest/fibers");
+    expect(result.text).toContain("done");
+  });
+
+  it("loads Kimi Formula tool definitions from the official tools endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "fetch",
+              description: "Fetch URL",
+              parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }
+            }
+          }
+        ]
+      })
+    );
+
+    const tools = await kimiFormulaTools({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      formulas: ["moonshot/fetch:latest"]
+    });
+
+    expect(Object.keys(tools)).toEqual(["fetch"]);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://api.moonshot.ai/v1/formulas/moonshot/fetch:latest/tools");
   });
 });

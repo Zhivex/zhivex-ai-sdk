@@ -301,6 +301,32 @@ const capabilities: ModelCapabilities = {
   }
 };
 
+const normalizeModelId = (modelId: string) => modelId.trim().toLowerCase();
+
+const supportsAzureOpenAIToolSearch = (modelId: string) => {
+  const normalized = normalizeModelId(modelId);
+  return /^gpt-5\.4(?:$|-20|-pro)/.test(normalized);
+};
+
+const supportsAzureOpenAIComputerUse = (modelId: string) => {
+  const normalized = normalizeModelId(modelId);
+  return /^gpt-5\.4(?:$|-20|-pro|-mini)/.test(normalized);
+};
+
+const supportsAzureOpenAIHostedHarnessTools = (modelId: string) => /^gpt-5\.4(?:$|-)/.test(normalizeModelId(modelId));
+
+const modelCapabilities = (modelId: string): ModelCapabilities => ({
+  ...capabilities,
+  agentCapabilities: {
+    ...capabilities.agentCapabilities!,
+    computerUse: supportsAzureOpenAIComputerUse(modelId),
+    shell: supportsAzureOpenAIHostedHarnessTools(modelId),
+    applyPatch: supportsAzureOpenAIHostedHarnessTools(modelId),
+    skills: supportsAzureOpenAIHostedHarnessTools(modelId),
+    toolSearch: supportsAzureOpenAIToolSearch(modelId)
+  }
+});
+
 const transcriptionCapabilities: ModelCapabilities = {
   ...capabilities,
   streaming: false,
@@ -449,6 +475,22 @@ const hasResponsesOnlyTools = (tools: ModelGenerateInput["tools"]) =>
   Object.values(tools ?? {}).some(
     (tool) => isHostedToolDefinition(tool) || (isCallableToolDefinition(tool) && azureOpenAILocalResponsesToolType(tool))
   );
+
+const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInput["tools"]) => {
+  const currentCapabilities = modelCapabilities(modelId).agentCapabilities;
+  for (const definition of Object.values(tools ?? {})) {
+    const type = isCallableToolDefinition(definition) ? azureOpenAILocalResponsesToolType(definition) : definition.type;
+    if (type === "tool_search" && !currentCapabilities?.toolSearch) {
+      throw new UnsupportedFeatureError(`Provider "azure-openai" model "${modelId}" does not support the Responses tool_search tool.`);
+    }
+    if (type === "computer_use_preview" && !currentCapabilities?.computerUse) {
+      throw new UnsupportedFeatureError(`Provider "azure-openai" model "${modelId}" does not support the Responses computer_use tool.`);
+    }
+    if ((type === "shell" || type === "apply_patch") && !supportsAzureOpenAIHostedHarnessTools(modelId)) {
+      throw new UnsupportedFeatureError(`Provider "azure-openai" model "${modelId}" does not support the Responses ${type} tool.`);
+    }
+  }
+};
 
 const normalizeWebSearchConfig = (config: AzureOpenAIWebSearchToolConfig = {}) => ({
   ...config,
@@ -1190,14 +1232,16 @@ const extractSources = (value: any): GroundedGenerateResult["sources"] => {
 
 class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModelOptions> {
   readonly provider = "azure-openai";
-  readonly capabilities = capabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {}
+  ) {
+    this.capabilities = modelCapabilities(modelId);
+  }
 
   async generate(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
@@ -1712,6 +1756,7 @@ export const createAzureOpenAI = (
           const { signal, cleanup } = withTimeoutSignal(input);
           try {
             if (hasResponsesOnlyTools(input.tools)) {
+              assertResponsesToolsSupported(modelId, input.tools);
               const previousResponse = getProviderResponseId(input.messages);
               const messages =
                 previousResponse && previousResponse.index < input.messages.length - 1
@@ -1803,6 +1848,7 @@ export const createAzureOpenAI = (
 
         async stream(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
           if (hasResponsesOnlyTools(input.tools)) {
+            assertResponsesToolsSupported(modelId, input.tools);
             const { signal, cleanup } = withTimeoutSignal(input);
             const response = await withRetry(
               () =>

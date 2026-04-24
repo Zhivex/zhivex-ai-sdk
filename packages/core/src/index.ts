@@ -23,9 +23,42 @@ export * from "./catalog.js";
 export * from "./errors.js";
 export * from "./fetch.js";
 export { generateObject, streamObject } from "./generate-object.js";
+export {
+  cancelBatch,
+  createBatch,
+  createContextCache,
+  createFileSearchStore,
+  createInteraction,
+  deleteBatch,
+  deleteContextCache,
+  deleteFile,
+  deleteFileSearchStore,
+  fetchPredictionOperation,
+  getBatch,
+  getContextCache,
+  getFile,
+  getFileSearchStore,
+  getInteraction,
+  googleCodeExecutionTool,
+  googleComputerUseTool,
+  googleFileSearchTool,
+  googleSearchTool,
+  googleUrlContextTool,
+  importFileToFileSearchStore,
+  listBatches,
+  listContextCaches,
+  listFiles,
+  listFileSearchStores,
+  predictLongRunning,
+  predictRaw,
+  streamInteraction,
+  uploadFile,
+  uploadToFileSearchStore
+} from "./google.js";
 export { generateGroundedText } from "./grounded-text.js";
 export { createMcpToolRegistry, createMcpToolSet } from "./mcp.js";
 export type { McpCallToolRequest, McpCallToolResponse, McpClient, McpListedTool, McpListToolsResponse, McpToolAnnotations, McpToolSetOptions } from "./mcp.js";
+export { generateImage, generateMusic, generateVideo } from "./media.js";
 export { generateText, normalizeMessages, streamText } from "./generate-text.js";
 export { createOtelAgentObserver, createOtelObserver, createOtelTelemetryMiddleware, OTelObserver, OTelSpanHandle } from "./observability.js";
 export type { OTelSpanLike, OTelTracerLike } from "./observability.js";

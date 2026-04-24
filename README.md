@@ -119,17 +119,24 @@ The high-level API accepts either a `prompt` or explicit `messages`, and returns
 
 The SDK aims to keep the application-facing contract stable, but capability parity is not identical across providers yet. Use this matrix as the source of truth for the currently implemented SDK behavior.
 
+Status shorthand:
+
+- `yes`: implemented in the SDK adapter.
+- `model-dependent`: implemented, but gated by the selected model family.
+- `endpoint-dependent`: implemented only on a specific provider endpoint or API mode.
+- `env/live-tested`: included in the integration registry and skipped unless credentials are present.
+
 | Provider | `streamText` | Tools | `toolChoice` | Structured output | Embeddings | Audio in | Audio out | Realtime sessions | Browser tokens | Reasoning | Web search | Hosted tools / MCP | Agent tier |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
-| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | no | `effort` | yes | Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
+| OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
+| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | no | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
 | Anthropic | yes | yes | yes | prompted | no | no | no | no | no | model-dependent | yes | native MCP, web search, code execution | Tier B |
 | Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B |
 | Vertex | yes | yes | yes | native | yes | yes | yes | yes | no | model-dependent | yes | native | Tier B |
 | OpenRouter | yes | yes | yes | native | no | no | no | no | no | `effort` + `budgetTokens` | yes | server tools | Tier C |
 | Qwen | yes | yes | yes | native | yes | no | no | no | no | model-dependent | yes | Responses web search, web extractor, code interpreter | Tier B |
-| Kimi | yes | yes | yes | native | no | no | no | no | no | model-dependent | no | no | Tier C |
-| Bedrock | yes | yes | partial | native | no | no | no | no | no | no | no | no | Tier C |
+| Kimi | yes | yes | yes | native | no | no | no | no | no | model-dependent | Formula tool | Formula tools via Chat Completions | Tier C |
+| Bedrock | yes | yes | partial / endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses server tools | Tier C / B by endpoint |
 | Ollama | yes | yes | no | native | yes | no | no | no | no | no | no | no | Tier C |
 
 Compatibility notes:
@@ -137,10 +144,13 @@ Compatibility notes:
 - `structured output` means the SDK can use the shared `generateObject()` / `streamObject()` contract. `native` means schema-aware provider support; `prompted` means SDK fallback prompting instead of provider-native schema enforcement.
 - `Realtime sessions` means the provider package exposes `realtimeModel().connect()` through the shared `RealtimeSession` contract. `Browser tokens` means the provider also exposes `realtimeModel().createBrowserToken()` for short-lived client-side credentials.
 - Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime` / `gpt-realtime-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
-- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`.
-- `partial` for Bedrock `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`.
+- Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
+- Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
+- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`.
+- `partial` for Bedrock Converse `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; that path is endpoint-dependent and intended for Bedrock Responses server tools and stateful Responses features.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
-- `Hosted tools / MCP` refers to provider-native hosted tools or SDK-level MCP mappings, not local callable tools defined with `tool()`. For OpenRouter this currently means server tools such as `openrouter:web_search`.
+- Kimi Formula tools are exposed as public helpers in `@zhivex-ai/kimi`. The SDK loads or declares Formula tool schemas, maps them into Chat Completions function tools, tracks `function.name -> formula_uri`, and executes the official Formula fiber after a Kimi tool call.
+- `Hosted tools / MCP` refers to provider-native hosted tools or SDK-level MCP mappings, not local callable tools defined with `tool()`. Kimi Formula helpers are called out separately because they are official provider tools executed through Formula fibers. For OpenRouter this currently means server tools such as `openrouter:web_search`.
 - `Agent tier` summarizes how far the provider currently goes for the agent runtime:
 - `Tier A`: native agent building blocks including approval-capable remote MCP or equivalent hosted tools.
 - `Tier B`: strong tool-using agent support, but with more provider-specific gaps or fewer hosted-agent features.
@@ -1079,6 +1089,122 @@ const speech = await generateSpeech({
 console.log(transcript.text);
 console.log(speech.mediaType, speech.audio.length);
 ```
+
+### Generative Media
+
+Use the shared media primitives with Google models that expose image, video, or music generation.
+
+```ts
+import { generateImage, generateMusic, generateVideo } from "@zhivex-ai/sdk";
+import { createGemini } from "@zhivex-ai/gemini";
+
+const gemini = createGemini({
+  apiKey: process.env.GEMINI_API_KEY
+});
+
+const image = await generateImage({
+  model: gemini.imageGenerationModel!("gemini-3.1-flash-image-preview"),
+  prompt: "Create a crisp product shot of a matte black espresso cup"
+});
+
+const video = await generateVideo({
+  model: gemini.videoGenerationModel!("veo-3.1-generate-preview"),
+  prompt: "A cinematic dolly shot through a quiet modern library"
+});
+
+const music = await generateMusic({
+  model: gemini.musicGenerationModel!("lyria-3-clip-preview"),
+  prompt: "Create a 30-second optimistic acoustic intro"
+});
+
+console.log(image.images[0]?.mediaType);
+console.log(video.videos[0]?.uri);
+console.log(music.audio[0]?.mediaType);
+```
+
+### Google Files, Retrieval, Batch, Interactions, And Raw Prediction
+
+Gemini and Vertex expose Google-native surfaces in two layers:
+
+| Surface | Gemini | Vertex |
+| --- | --- | --- |
+| Files API | high-level | not exposed by the same Vertex contract |
+| File Search stores | high-level + hosted tool | hosted tool only when the selected Vertex endpoint supports it |
+| URL Context | hosted tool | hosted tool |
+| Context Caching | high-level | high-level |
+| Batch API | high-level | high-level |
+| Interactions / Deep Research | high-level | not exposed by the same Vertex contract |
+| Model Garden / publisher prediction | raw/prediction | raw/prediction |
+
+```ts
+import {
+  createBatch,
+  createContextCache,
+  createFileSearchStore,
+  createInteraction,
+  generateText,
+  googleFileSearchTool,
+  googleUrlContextTool,
+  predictRaw,
+  uploadFile
+} from "@zhivex-ai/sdk";
+import { createGemini } from "@zhivex-ai/gemini";
+import { createVertex } from "@zhivex-ai/vertex";
+
+const gemini = createGemini({ apiKey: process.env.GEMINI_API_KEY });
+
+const file = await uploadFile({
+  provider: gemini,
+  data: "SDK notes",
+  mediaType: "text/plain",
+  displayName: "notes.txt"
+});
+
+const store = await createFileSearchStore({ provider: gemini, displayName: "Docs" });
+
+await generateText({
+  model: gemini("gemini-2.5-flash"),
+  prompt: "Answer from the indexed docs and this URL.",
+  tools: {
+    docs: googleFileSearchTool([store.name]),
+    urls: googleUrlContextTool()
+  }
+});
+
+await createContextCache({
+  provider: gemini,
+  modelId: "gemini-2.5-flash",
+  contents: [{ role: "user", parts: [{ type: "file", data: file.uri ?? file.name, mediaType: "text/plain" }] }]
+});
+
+await createBatch({
+  provider: gemini,
+  modelId: "gemini-2.5-flash",
+  requests: [{ request: { contents: [{ parts: [{ text: "Summarize this." }] }] } }]
+});
+
+await createInteraction({
+  provider: gemini,
+  modelId: "gemini-3-flash-preview",
+  input: "Run a deep research style interaction."
+});
+
+const vertex = createVertex({
+  accessToken: process.env.VERTEX_ACCESS_TOKEN,
+  projectId: process.env.GOOGLE_CLOUD_PROJECT,
+  location: "us-central1"
+});
+
+const raw = await predictRaw({
+  model: vertex.predictionModel!("publisher-model-id"),
+  instances: [{ prompt: "provider-specific request" }],
+  parameters: { temperature: 0.2 }
+});
+
+console.log(raw.rawResponse);
+```
+
+Use `predictionModel()` for Vertex Model Garden and other Google publisher endpoints that do not have a stable shared helper yet. The SDK keeps `rawResponse` available so consumers can handle model-specific contracts without the core API overpromising portability.
 
 ### Grounded Web Search
 

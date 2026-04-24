@@ -611,7 +611,8 @@ describe("openai adapter", () => {
     expect(mcpTool.requiresApproval).toBe(true);
     expect(getAgentCapabilities(provider("gpt-4o-mini")).remoteMcp).toBe(true);
     expect(getAgentCapabilities(provider("gpt-4o-mini")).codeExecution).toBe(true);
-    expect(getAgentCapabilities(provider("gpt-4o-mini")).shell).toBe(true);
+    expect(getAgentCapabilities(provider("gpt-4o-mini")).shell).toBe(false);
+    expect(getAgentCapabilities(provider("gpt-5.4")).shell).toBe(true);
   });
 
   it("maps OpenAI agent built-in helpers into Responses tools", async () => {
@@ -630,7 +631,7 @@ describe("openai adapter", () => {
 
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
     await generateText({
-      model: provider("gpt-5.1"),
+      model: provider("gpt-5.4"),
       prompt: "inspect",
       tools: {
         code: openAICodeInterpreterTool({ container: { type: "auto" } }),
@@ -652,6 +653,22 @@ describe("openai adapter", () => {
         { type: "tool_search" }
       ])
     );
+  });
+
+  it("rejects Responses tools that the selected OpenAI model does not support", async () => {
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    expect(getAgentCapabilities(provider("gpt-5.4")).toolSearch).toBe(true);
+    expect(getAgentCapabilities(provider("gpt-5.4-nano")).toolSearch).toBe(false);
+
+    await expect(
+      generateText({
+        model: provider("gpt-5.4-nano"),
+        prompt: "inspect",
+        tools: {
+          toolSearch: openAIToolSearchTool()
+        }
+      })
+    ).rejects.toThrow('Provider "openai" model "gpt-5.4-nano" does not support the Responses tool_search tool.');
   });
 
   it("executes OpenAI shell calls through the local approval-aware harness", async () => {
@@ -687,7 +704,7 @@ describe("openai adapter", () => {
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const approvals: string[] = [];
     const result = await generateText({
-      model: provider("gpt-5.1"),
+      model: provider("gpt-5.4"),
       prompt: "run shell",
       maxSteps: 2,
       tools: {

@@ -20,18 +20,58 @@ import {
   withRetry,
   withTimeoutSignal,
   type AudioInput,
+  type BatchCreateInput,
+  type BatchJob,
+  type BatchGetInput,
+  type BatchListInput,
+  type BatchCancelInput,
+  type BatchDeleteInput,
+  type BatchesClient,
+  type CachedContent,
   type CallableProviderAdapter,
+  type ContextCacheCreateInput,
+  type ContextCacheDeleteInput,
+  type ContextCacheGetInput,
+  type ContextCacheListInput,
+  type ContextCachesClient,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
+  type FileDeleteInput,
+  type FileGetInput,
+  type FileListInput,
+  type FileSearchStore,
+  type FileSearchStoreCreateInput,
+  type FileSearchStoreDeleteInput,
+  type FileSearchStoreGetInput,
+  type FileSearchStoreImportInput,
+  type FileSearchStoreListInput,
+  type FileSearchStoreUploadInput,
+  type FileSearchStoresClient,
+  type FileUploadInput,
+  type FilesClient,
   type GenerateResult,
+  type GeneratedMedia,
   type GroundedGenerateResult,
   type GroundedLanguageModel,
+  type ImageGenerationModel,
+  type ImageGenerationResult,
+  type InteractionCreateInput,
+  type InteractionGetInput,
+  type InteractionsClient,
   type JsonValue,
   type LanguageModel,
+  type MediaInput,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
+  type MusicGenerationModel,
+  type MusicGenerationResult,
+  type PredictionModel,
+  type PredictionModelInput,
+  type PredictionOperation,
+  type PredictionOperationInput,
+  type PredictionResult,
   type ProviderAdapter,
   type RealtimeConnectOptions,
   type RealtimeConnectionFactory,
@@ -42,7 +82,10 @@ import {
   type SpeechResult,
   type StreamEvent,
   type TranscriptionModel,
-  type TranscriptionResult
+  type TranscriptionResult,
+  type UploadedFile,
+  type VideoGenerationModel,
+  type VideoGenerationResult
 } from "@zhivex-ai/core";
 
 export interface GeminiProviderOptions {
@@ -71,10 +114,17 @@ const capabilities: ModelCapabilities = {
   toolChoice: true,
   parallelToolCalls: false,
   vision: true,
-  files: false,
+  files: true,
   audioInput: false,
   audioOutput: false,
   embeddings: true,
+  fileSearch: true,
+  urlContext: true,
+  contextCaching: true,
+  batch: true,
+  interactions: true,
+  rawPrediction: true,
+  computerUse: true,
   reasoning: true,
   webSearch: true,
   agentCapabilities: {
@@ -82,9 +132,9 @@ const capabilities: ModelCapabilities = {
     toolChoiceNone: true,
     approvalRequests: false,
     hostedWebSearch: true,
-    hostedFileSearch: false,
+    hostedFileSearch: true,
     remoteMcp: false,
-    computerUse: false,
+    computerUse: true,
     codeExecution: true,
     toolsets: false
   }
@@ -127,6 +177,88 @@ const groundedCapabilities: ModelCapabilities = {
   webSearch: true
 };
 
+const imageGenerationCapabilities: ModelCapabilities = {
+  ...capabilities,
+  streaming: false,
+  tools: false,
+  structuredOutput: false,
+  jsonMode: false,
+  toolChoice: false,
+  parallelToolCalls: false,
+  embeddings: false,
+  imageGeneration: true,
+  videoGeneration: false,
+  musicGeneration: false,
+  reasoning: false,
+  webSearch: false,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: false,
+    approvalRequests: false,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
+};
+
+const videoGenerationCapabilities: ModelCapabilities = {
+  ...capabilities,
+  streaming: false,
+  tools: false,
+  structuredOutput: false,
+  jsonMode: false,
+  toolChoice: false,
+  parallelToolCalls: false,
+  vision: false,
+  embeddings: false,
+  imageGeneration: false,
+  videoGeneration: true,
+  musicGeneration: false,
+  reasoning: false,
+  webSearch: false,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: false,
+    approvalRequests: false,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
+};
+
+const musicGenerationCapabilities: ModelCapabilities = {
+  ...capabilities,
+  streaming: false,
+  tools: false,
+  structuredOutput: false,
+  jsonMode: false,
+  toolChoice: false,
+  parallelToolCalls: false,
+  embeddings: false,
+  imageGeneration: false,
+  videoGeneration: false,
+  musicGeneration: true,
+  reasoning: false,
+  webSearch: false,
+  agentCapabilities: {
+    supportTier: "tier-c",
+    toolChoiceNone: false,
+    approvalRequests: false,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: false,
+    toolsets: false
+  }
+};
+
 const realtimeCapabilities: ModelCapabilities = {
   ...capabilities,
   streaming: false,
@@ -161,6 +293,248 @@ const toBase64 = (data: AudioInput["data"]) => {
   return Buffer.from(bytes).toString("base64");
 };
 
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (ms <= 0) {
+      resolve();
+      return;
+    }
+    if (signal?.aborted) {
+      reject(new Error("Operation aborted."));
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(new Error("Operation aborted."));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+
+const splitGenerationConfig = (providerOptions: Record<string, unknown> | undefined) => {
+  const { generationConfig, ...rest } = providerOptions ?? {};
+  return {
+    generationConfig:
+      generationConfig && typeof generationConfig === "object" ? (generationConfig as Record<string, unknown>) : {},
+    providerOptions: rest
+  };
+};
+
+const mediaInputToPart = (media: MediaInput) =>
+  media.uri
+    ? {
+        fileData: {
+          mimeType: media.mediaType,
+          fileUri: media.uri
+        }
+      }
+    : {
+        inlineData: {
+          mimeType: media.mediaType,
+          data: media.data ? toBase64(media.data) : ""
+        }
+      };
+
+const collectInlineMedia = (json: any, fallbackMediaType: string): { media: GeneratedMedia[]; text?: string } => {
+  const text: string[] = [];
+  const media: GeneratedMedia[] = [];
+  const candidates = Array.isArray(json.candidates) ? json.candidates : [];
+
+  for (const candidate of candidates) {
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+    for (const part of parts) {
+      if (typeof part.text === "string" && part.text) {
+        text.push(part.text);
+      }
+      const inlineData = part.inlineData ?? part.inline_data;
+      if (inlineData?.data) {
+        media.push({
+          data: Uint8Array.from(Buffer.from(inlineData.data, "base64")),
+          mediaType: inlineData.mimeType ?? inlineData.mime_type ?? fallbackMediaType,
+          text: typeof part.text === "string" ? part.text : undefined
+        });
+      }
+    }
+  }
+
+  return {
+    media,
+    text: text.length ? text.join("\n") : undefined
+  };
+};
+
+const mediaInputToVeoImage = (media: MediaInput) =>
+  media.uri
+    ? {
+        gcsUri: media.uri,
+        mimeType: media.mediaType
+      }
+    : {
+        bytesBase64Encoded: media.data ? toBase64(media.data) : "",
+        mimeType: media.mediaType
+      };
+
+const collectVideos = (json: any): GeneratedMedia[] => {
+  const samples =
+    json.response?.generateVideoResponse?.generatedSamples ??
+    json.response?.generatedVideos ??
+    json.response?.generated_videos ??
+    [];
+
+  return (Array.isArray(samples) ? samples : [])
+    .map((sample: any) => sample.video ?? sample)
+    .map((video: any) => ({
+      data: video.videoBytes
+        ? Uint8Array.from(Buffer.from(video.videoBytes, "base64"))
+        : video.bytesBase64Encoded
+          ? Uint8Array.from(Buffer.from(video.bytesBase64Encoded, "base64"))
+          : undefined,
+      uri: video.uri ?? video.gcsUri,
+      mediaType: video.mimeType ?? "video/mp4",
+      providerMetadata: video
+    }))
+    .filter((video: GeneratedMedia) => video.data || video.uri);
+};
+
+const dataToBytes = async (data: FileUploadInput["data"]): Promise<Uint8Array> => {
+  if (typeof data === "string") {
+    return new TextEncoder().encode(data);
+  }
+  if (data instanceof Uint8Array) {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  return new Uint8Array(await data.arrayBuffer());
+};
+
+const bytesToArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
+  bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+
+const normalizeUploadedFile = (json: any): UploadedFile => {
+  const file = json.file ?? json;
+  return {
+    name: file.name ?? "",
+    uri: file.uri ?? file.fileUri ?? file.file_uri,
+    mimeType: file.mimeType ?? file.mime_type,
+    sizeBytes: file.sizeBytes ?? file.size_bytes,
+    state: file.state,
+    displayName: file.displayName ?? file.display_name,
+    rawResponse: json,
+    providerMetadata: file
+  };
+};
+
+const normalizeFileSearchStore = (json: any): FileSearchStore => ({
+  name: json.name ?? "",
+  displayName: json.displayName ?? json.display_name,
+  createTime: json.createTime ?? json.create_time,
+  updateTime: json.updateTime ?? json.update_time,
+  rawResponse: json,
+  providerMetadata: json
+});
+
+const normalizeCachedContent = (json: any): CachedContent => ({
+  name: json.name ?? "",
+  model: json.model,
+  displayName: json.displayName ?? json.display_name,
+  createTime: json.createTime ?? json.create_time,
+  updateTime: json.updateTime ?? json.update_time,
+  expireTime: json.expireTime ?? json.expire_time,
+  usageMetadata: json.usageMetadata ?? json.usage_metadata,
+  rawResponse: json,
+  providerMetadata: json
+});
+
+const normalizeBatchJob = (json: any): BatchJob => ({
+  name: json.name ?? "",
+  model: json.model,
+  state: json.state ?? json.metadata?.state,
+  done: json.done,
+  createTime: json.createTime ?? json.create_time ?? json.metadata?.createTime,
+  updateTime: json.updateTime ?? json.update_time ?? json.metadata?.updateTime,
+  rawResponse: json,
+  providerMetadata: json
+});
+
+const normalizeInteraction = (json: any) => ({
+  id: json.id ?? json.name ?? "",
+  name: json.name,
+  model: json.model,
+  status: json.status,
+  outputs: json.outputs,
+  rawResponse: json,
+  providerMetadata: json
+});
+
+const normalizeOperation = (json: any): PredictionOperation => ({
+  name: json.name ?? "",
+  done: json.done,
+  response: json.response,
+  error: json.error,
+  metadata: json.metadata,
+  rawResponse: json
+});
+
+const normalizePredictionResult = (json: any): PredictionResult => ({
+  predictions: json.predictions,
+  operationName: json.name,
+  operation: json.name || json.done !== undefined ? normalizeOperation(json) : undefined,
+  rawResponse: json,
+  providerMetadata: json
+});
+
+const appendQuery = (url: string, query: Record<string, string | number | undefined>) => {
+  const parsed = new URL(url);
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) {
+      parsed.searchParams.set(key, String(value));
+    }
+  }
+  return parsed.toString();
+};
+
+const geminiUploadBaseURL = (baseURL: string) => baseURL.replace(/\/v1beta\/?$/, "/upload/v1beta");
+
+const pollGeminiOperation = async (
+  operation: PredictionOperation,
+  baseURL: string,
+  apiKey: string,
+  fetcher: typeof globalThis.fetch,
+  options: { pollIntervalMs?: number; timeoutMs?: number; abortSignal?: AbortSignal; maxRetries?: number; retryBackoffMs?: number }
+) => {
+  if (options.pollIntervalMs === undefined && options.timeoutMs === undefined) {
+    return operation;
+  }
+
+  const startedAt = Date.now();
+  const timeoutMs = options.timeoutMs ?? 600_000;
+  let current = operation;
+
+  while (!current.done) {
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error(`Gemini operation "${operation.name}" timed out after ${timeoutMs}ms.`);
+    }
+    await sleep(options.pollIntervalMs ?? 5_000, options.abortSignal);
+    const response = await withRetry(
+      () =>
+        fetcher(`${baseURL}/${current.name}?key=${apiKey}`, {
+          method: "GET",
+          signal: options.abortSignal
+        }),
+      options
+    );
+    current = normalizeOperation(await parseJson(response));
+  }
+
+  return current;
+};
+
 const systemInstruction = (messages: ModelMessage[]) => {
   const text = messages
     .filter((message) => message.role === "system")
@@ -181,6 +555,13 @@ const mapPart = (part: ModelMessage["parts"][number]) => {
         inlineData: {
           mimeType: part.mediaType ?? "image/jpeg",
           data: part.image
+        }
+      };
+    case "file":
+      return {
+        fileData: {
+          mimeType: part.mediaType,
+          fileUri: part.data
         }
       };
     case "tool-call":
@@ -623,6 +1004,9 @@ const parseAssistantMessage = (candidate: any): ModelMessage => ({
           }
         };
       }
+      if (part.inlineData?.data && String(part.inlineData.mimeType ?? "").startsWith("image/")) {
+        return { type: "image", image: part.inlineData.data, mediaType: part.inlineData.mimeType } as const;
+      }
       return { type: "text", text: JSON.stringify(part) } as const;
     }) ?? []
 });
@@ -636,6 +1020,667 @@ const extractGroundingSources = (candidate: any): GroundedGenerateResult["source
       providerMetadata: chunk
     }))
     .filter((source: GroundedGenerateResult["sources"][number]) => typeof source.url === "string");
+
+class GeminiFilesClient implements FilesClient {
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  private url(path: string, query: Record<string, string | number | undefined> = {}) {
+    return appendQuery(`${this.baseURL}/${path}`, { key: this.apiKey, ...query });
+  }
+
+  private uploadUrl(path: string) {
+    return appendQuery(`${geminiUploadBaseURL(this.baseURL)}/${path}`, { key: this.apiKey });
+  }
+
+  async upload(input: FileUploadInput): Promise<UploadedFile> {
+    const bytes = await dataToBytes(input.data);
+    const { signal, cleanup } = withTimeoutSignal(input);
+
+    try {
+      const startResponse = await withRetry(
+        () =>
+          this.fetcher(this.uploadUrl("files"), {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-goog-upload-protocol": "resumable",
+              "x-goog-upload-command": "start",
+              "x-goog-upload-header-content-length": String(bytes.byteLength),
+              "x-goog-upload-header-content-type": input.mediaType
+            },
+            signal,
+            body: JSON.stringify({
+              file: {
+                ...(input.displayName ? { displayName: input.displayName } : {}),
+                ...(input.name ? { name: input.name } : {}),
+                ...(input.providerOptions ?? {})
+              }
+            })
+          }),
+        input
+      );
+      if (!startResponse.ok) {
+        await parseJson(startResponse);
+      }
+      const resumableUrl = startResponse.headers.get("x-goog-upload-url");
+      if (!resumableUrl) {
+        throw new ProviderHTTPError('Gemini file upload did not return "x-goog-upload-url".', 500);
+      }
+
+      const uploadResponse = await withRetry(
+        () =>
+          this.fetcher(resumableUrl, {
+            method: "POST",
+            headers: {
+              "content-type": input.mediaType,
+              "x-goog-upload-command": "upload, finalize",
+              "x-goog-upload-offset": "0"
+            },
+            signal,
+            body: new Blob([bytesToArrayBuffer(bytes)], { type: input.mediaType })
+          }),
+        input
+      );
+      return normalizeUploadedFile(await parseJson(uploadResponse));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async get(input: FileGetInput): Promise<UploadedFile> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(this.url(input.name), { method: "GET", signal }), input);
+      return normalizeUploadedFile(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async list(input: FileListInput = {}) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () => this.fetcher(this.url("files", { pageSize: input.pageSize, pageToken: input.pageToken }), { method: "GET", signal }),
+        input
+      );
+      const json = await parseJson(response);
+      return {
+        files: (json.files ?? []).map(normalizeUploadedFile),
+        nextPageToken: json.nextPageToken,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+
+  async delete(input: FileDeleteInput) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(this.url(input.name), { method: "DELETE", signal }), input);
+      const json = await parseJson(response);
+      return { name: input.name, rawResponse: json };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class GeminiFileSearchStoresClient implements FileSearchStoresClient {
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  private url(path: string, query: Record<string, string | number | undefined> = {}) {
+    return appendQuery(`${this.baseURL}/${path}`, { key: this.apiKey, ...query });
+  }
+
+  private uploadUrl(path: string) {
+    return appendQuery(`${geminiUploadBaseURL(this.baseURL)}/${path}`, { key: this.apiKey });
+  }
+
+  async create(input: FileSearchStoreCreateInput = {}): Promise<FileSearchStore> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url("fileSearchStores"), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              ...(input.displayName ? { displayName: input.displayName } : {}),
+              ...(input.providerOptions ?? {})
+            })
+          }),
+        input
+      );
+      return normalizeFileSearchStore(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async upload(input: FileSearchStoreUploadInput): Promise<PredictionOperation> {
+    const bytes = await dataToBytes(input.data);
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const startResponse = await withRetry(
+        () =>
+          this.fetcher(this.uploadUrl(`${input.storeName}:uploadToFileSearchStore`), {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-goog-upload-protocol": "resumable",
+              "x-goog-upload-command": "start",
+              "x-goog-upload-header-content-length": String(bytes.byteLength),
+              "x-goog-upload-header-content-type": input.mediaType
+            },
+            signal,
+            body: JSON.stringify({
+              file: {
+                ...(input.displayName ? { displayName: input.displayName } : {}),
+                ...(input.filename ? { name: input.filename } : {})
+              },
+              ...(input.providerOptions ?? {})
+            })
+          }),
+        input
+      );
+      if (!startResponse.ok) {
+        await parseJson(startResponse);
+      }
+      const resumableUrl = startResponse.headers.get("x-goog-upload-url");
+      if (!resumableUrl) {
+        throw new ProviderHTTPError('Gemini file search upload did not return "x-goog-upload-url".', 500);
+      }
+      const uploadResponse = await withRetry(
+        () =>
+          this.fetcher(resumableUrl, {
+            method: "POST",
+            headers: {
+              "content-type": input.mediaType,
+              "x-goog-upload-command": "upload, finalize",
+              "x-goog-upload-offset": "0"
+            },
+            signal,
+            body: new Blob([bytesToArrayBuffer(bytes)], { type: input.mediaType })
+          }),
+        input
+      );
+      return pollGeminiOperation(normalizeOperation(await parseJson(uploadResponse)), this.baseURL, this.apiKey, this.fetcher, {
+        ...input,
+        abortSignal: signal
+      });
+    } finally {
+      cleanup();
+    }
+  }
+
+  async importFile(input: FileSearchStoreImportInput): Promise<PredictionOperation> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url(`${input.storeName}:importFile`), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              fileName: input.fileName,
+              ...(input.providerOptions ?? {})
+            })
+          }),
+        input
+      );
+      return pollGeminiOperation(normalizeOperation(await parseJson(response)), this.baseURL, this.apiKey, this.fetcher, {
+        ...input,
+        abortSignal: signal
+      });
+    } finally {
+      cleanup();
+    }
+  }
+
+  async get(input: FileSearchStoreGetInput): Promise<FileSearchStore> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(this.url(input.name), { method: "GET", signal }), input);
+      return normalizeFileSearchStore(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async list(input: FileSearchStoreListInput = {}) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () => this.fetcher(this.url("fileSearchStores", { pageSize: input.pageSize, pageToken: input.pageToken }), { method: "GET", signal }),
+        input
+      );
+      const json = await parseJson(response);
+      return {
+        stores: (json.fileSearchStores ?? json.file_search_stores ?? []).map(normalizeFileSearchStore),
+        nextPageToken: json.nextPageToken,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+
+  async delete(input: FileSearchStoreDeleteInput) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(this.url(input.name), { method: "DELETE", signal }), input);
+      const json = await parseJson(response);
+      return { name: input.name, rawResponse: json };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class GeminiContextCachesClient implements ContextCachesClient {
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  private url(path: string, query: Record<string, string | number | undefined> = {}) {
+    return appendQuery(`${this.baseURL}/${path}`, { key: this.apiKey, ...query });
+  }
+
+  async create(input: ContextCacheCreateInput): Promise<CachedContent> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url("cachedContents"), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              model: input.modelId.startsWith("models/") ? input.modelId : `models/${input.modelId}`,
+              contents: mapMessages(input.contents),
+              ...(input.system ? { systemInstruction: { parts: [{ text: input.system }] } } : { systemInstruction: systemInstruction(input.contents) }),
+              ...(input.tools ? { tools: mapTools(toToolSet(input.tools)) } : {}),
+              ...(input.displayName ? { displayName: input.displayName } : {}),
+              ...(input.ttl ? { ttl: input.ttl } : {}),
+              ...(input.expireTime ? { expireTime: input.expireTime } : {}),
+              ...(input.providerOptions ?? {})
+            })
+          }),
+        input
+      );
+      return normalizeCachedContent(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async get(input: ContextCacheGetInput): Promise<CachedContent> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(this.url(input.name), { method: "GET", signal }), input);
+      return normalizeCachedContent(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async list(input: ContextCacheListInput = {}) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () => this.fetcher(this.url("cachedContents", { pageSize: input.pageSize, pageToken: input.pageToken }), { method: "GET", signal }),
+        input
+      );
+      const json = await parseJson(response);
+      return {
+        caches: (json.cachedContents ?? json.cached_contents ?? []).map(normalizeCachedContent),
+        nextPageToken: json.nextPageToken,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+
+  async delete(input: ContextCacheDeleteInput) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(this.url(input.name), { method: "DELETE", signal }), input);
+      const json = await parseJson(response);
+      return { name: input.name, rawResponse: json };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class GeminiBatchesClient implements BatchesClient {
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  private url(path: string, query: Record<string, string | number | undefined> = {}) {
+    return appendQuery(`${this.baseURL}/${path}`, { key: this.apiKey, ...query });
+  }
+
+  async create(input: BatchCreateInput): Promise<BatchJob> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url(`models/${input.modelId}:batchGenerateContent`), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              batch: {
+                ...(input.displayName ? { displayName: input.displayName } : {}),
+                inputConfig: input.fileName
+                  ? { fileName: input.fileName }
+                  : {
+                      requests: {
+                        requests: input.requests ?? []
+                      }
+                    },
+                ...(input.providerOptions ?? {})
+              }
+            })
+          }),
+        input
+      );
+      return normalizeBatchJob(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async get(input: BatchGetInput): Promise<BatchJob> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(this.url(input.name), { method: "GET", signal }), input);
+      return normalizeBatchJob(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async list(input: BatchListInput = {}) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () => this.fetcher(this.url("batches", { pageSize: input.pageSize, pageToken: input.pageToken }), { method: "GET", signal }),
+        input
+      );
+      const json = await parseJson(response);
+      return {
+        batches: (json.batches ?? []).map(normalizeBatchJob),
+        nextPageToken: json.nextPageToken,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+
+  async cancel(input: BatchCancelInput): Promise<BatchJob> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url(`${input.name}:cancel`), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify(input.providerOptions ?? {})
+          }),
+        input
+      );
+      return normalizeBatchJob(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async delete(input: BatchDeleteInput) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(this.url(`${input.name}:delete`), { method: "POST", signal }), input);
+      const json = await parseJson(response);
+      return { name: input.name, rawResponse: json };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class GeminiInteractionsClient implements InteractionsClient {
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  private url(path: string, query: Record<string, string | number | undefined> = {}) {
+    return appendQuery(`${this.baseURL}/${path}`, { key: this.apiKey, ...query });
+  }
+
+  private body(input: InteractionCreateInput, stream = false) {
+    return {
+      ...(input.modelId ? { model: input.modelId } : {}),
+      ...(input.agent ? { agent: input.agent } : {}),
+      input: input.input,
+      ...(input.previousInteractionId ? { previous_interaction_id: input.previousInteractionId } : {}),
+      ...(input.tools ? { tools: mapTools(toToolSet(input.tools)) } : {}),
+      ...(input.background !== undefined ? { background: input.background } : {}),
+      ...(input.store !== undefined ? { store: input.store } : {}),
+      ...(stream ? { stream: true } : {}),
+      ...(input.providerOptions ?? {})
+    };
+  }
+
+  async create(input: InteractionCreateInput) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url("interactions"), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify(this.body(input))
+          }),
+        input
+      );
+      return normalizeInteraction(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async get(input: InteractionGetInput) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(this.url(`interactions/${input.id}`), { method: "GET", signal }), input);
+      return normalizeInteraction(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async stream(input: InteractionCreateInput): Promise<AsyncIterable<StreamEvent>> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const response = await withRetry(
+      () =>
+        this.fetcher(this.url("interactions", { alt: "sse" }), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          signal,
+          body: JSON.stringify(this.body(input, true))
+        }),
+      input
+    );
+
+    return (async function* () {
+      try {
+        for await (const event of streamSSE(response)) {
+          const json = JSON.parse(event.data);
+          const text =
+            json.text ??
+            json.delta?.text ??
+            json.output?.text ??
+            (Array.isArray(json.outputs) ? json.outputs.find((output: any) => typeof output.text === "string")?.text : undefined);
+          if (typeof text === "string" && text) {
+            yield { type: "text-delta", textDelta: text } satisfies StreamEvent;
+          } else {
+            yield { type: "provider-data", provider: "gemini", data: json } satisfies StreamEvent;
+          }
+          if (json.status === "completed" || json.done) {
+            yield { type: "finish", finishReason: "stop" } satisfies StreamEvent;
+          }
+        }
+      } finally {
+        cleanup();
+      }
+    })();
+  }
+}
+
+class GeminiPredictionModel implements PredictionModel {
+  readonly provider = "gemini";
+  readonly capabilities: ModelCapabilities = {
+    ...capabilities,
+    rawPrediction: true
+  };
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  private url(action: string) {
+    return `${this.baseURL}/models/${this.modelId}:${action}?key=${this.apiKey}`;
+  }
+
+  private body(input: PredictionModelInput) {
+    return input.body ?? {
+      ...(input.instances ? { instances: input.instances } : {}),
+      ...(input.parameters ? { parameters: input.parameters } : {}),
+      ...(input.providerOptions ?? {})
+    };
+  }
+
+  async predictRaw(input: PredictionModelInput): Promise<PredictionResult> {
+    const action = typeof input.providerOptions?.action === "string" ? input.providerOptions.action : "predict";
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url(action), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify(this.body(input))
+          }),
+        input
+      );
+      return normalizePredictionResult(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async rawPredict(input: PredictionModelInput): Promise<PredictionResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url("rawPredict"), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify(this.body(input))
+          }),
+        input
+      );
+      return normalizePredictionResult(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async invoke(input: PredictionModelInput): Promise<PredictionResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url("invoke"), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify(this.body(input))
+          }),
+        input
+      );
+      return normalizePredictionResult(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async predictLongRunning(input: PredictionModelInput): Promise<PredictionOperation> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url("predictLongRunning"), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify(this.body(input))
+          }),
+        input
+      );
+      return normalizeOperation(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async fetchPredictionOperation(input: PredictionOperationInput): Promise<PredictionOperation> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/${input.name}?key=${this.apiKey}`, {
+            method: "GET",
+            signal
+          }),
+        input
+      );
+      return normalizeOperation(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+}
 
 class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
   readonly provider = "gemini";
@@ -924,6 +1969,238 @@ class GeminiSpeechModel implements SpeechModel {
   }
 }
 
+class GeminiImageGenerationModel implements ImageGenerationModel {
+  readonly provider = "gemini";
+  readonly capabilities = imageGenerationCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async generateImage(input: {
+    prompt: string;
+    images?: MediaInput[];
+    count?: number;
+    aspectRatio?: string;
+    size?: string;
+    negativePrompt?: string;
+    outputMimeType?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<ImageGenerationResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const { generationConfig, providerOptions } = splitGenerationConfig(input.providerOptions);
+
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/models/${this.modelId}:generateContent?key=${this.apiKey}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    { text: input.negativePrompt ? `${input.prompt}\n\nNegative prompt: ${input.negativePrompt}` : input.prompt },
+                    ...(input.images ?? []).map(mediaInputToPart)
+                  ]
+                }
+              ],
+              ...providerOptions,
+              generationConfig: {
+                responseModalities: ["TEXT", "IMAGE"],
+                ...(input.count ? { candidateCount: input.count } : {}),
+                ...(input.outputMimeType ? { responseMimeType: input.outputMimeType } : {}),
+                ...(input.aspectRatio || input.size
+                  ? {
+                      imageConfig: {
+                        ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
+                        ...(input.size ? { imageSize: input.size } : {})
+                      }
+                    }
+                  : {}),
+                ...generationConfig
+              }
+            })
+          }),
+        input
+      );
+
+      const json = await parseJson(response);
+      const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "image/png");
+      return {
+        images: media,
+        text,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class GeminiMusicGenerationModel implements MusicGenerationModel {
+  readonly provider = "gemini";
+  readonly capabilities = musicGenerationCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async generateMusic(input: {
+    prompt: string;
+    images?: MediaInput[];
+    negativePrompt?: string;
+    outputMimeType?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<MusicGenerationResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const { generationConfig, providerOptions } = splitGenerationConfig(input.providerOptions);
+
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/models/${this.modelId}:generateContent?key=${this.apiKey}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    { text: input.negativePrompt ? `${input.prompt}\n\nNegative prompt: ${input.negativePrompt}` : input.prompt },
+                    ...(input.images ?? []).map(mediaInputToPart)
+                  ]
+                }
+              ],
+              ...providerOptions,
+              generationConfig: {
+                responseModalities: ["AUDIO", "TEXT"],
+                ...(input.outputMimeType ? { responseMimeType: input.outputMimeType } : {}),
+                ...generationConfig
+              }
+            })
+          }),
+        input
+      );
+
+      const json = await parseJson(response);
+      const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "audio/mpeg");
+      return {
+        audio: media,
+        text,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class GeminiVideoGenerationModel implements VideoGenerationModel {
+  readonly provider = "gemini";
+  readonly capabilities = videoGenerationCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async generateVideo(input: {
+    prompt: string;
+    image?: MediaInput;
+    count?: number;
+    aspectRatio?: string;
+    negativePrompt?: string;
+    durationSeconds?: number;
+    outputStorageUri?: string;
+    pollIntervalMs?: number;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<VideoGenerationResult> {
+    const timeoutMs = input.timeoutMs ?? 600_000;
+    const { signal, cleanup } = withTimeoutSignal({ ...input, timeoutMs });
+    const startedAt = Date.now();
+
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/models/${this.modelId}:predictLongRunning?key=${this.apiKey}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              instances: [
+                {
+                  prompt: input.prompt,
+                  ...(input.image ? { image: mediaInputToVeoImage(input.image) } : {})
+                }
+              ],
+              parameters: {
+                ...(input.count ? { sampleCount: input.count } : {}),
+                ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
+                ...(input.negativePrompt ? { negativePrompt: input.negativePrompt } : {}),
+                ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}),
+                ...(input.outputStorageUri ? { storageUri: input.outputStorageUri } : {}),
+                ...input.providerOptions
+              }
+            })
+          }),
+        input
+      );
+
+      let operation = await parseJson(response);
+      const operationName = operation.name;
+      const pollIntervalMs = input.pollIntervalMs ?? 10_000;
+
+      while (!operation.done) {
+        if (Date.now() - startedAt >= timeoutMs) {
+          throw new Error(`Gemini video generation timed out after ${timeoutMs}ms.`);
+        }
+        await sleep(pollIntervalMs, signal);
+        const pollResponse = await withRetry(
+          () =>
+            this.fetcher(`${this.baseURL}/${operationName}?key=${this.apiKey}`, {
+              method: "GET",
+              signal
+            }),
+          input
+        );
+        operation = await parseJson(pollResponse);
+      }
+
+      return {
+        videos: collectVideos(operation),
+        operationName,
+        rawResponse: operation
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
 class GeminiGroundedLanguageModel implements GroundedLanguageModel {
   readonly provider = "gemini";
   readonly capabilities = groundedCapabilities;
@@ -1140,6 +2417,9 @@ export const createGemini = (
     embeddingModel: (modelId) => new GeminiEmbeddingModel(modelId, apiKey, baseURL, fetcher),
     transcriptionModel: (modelId) => new GeminiTranscriptionModel(modelId, apiKey, baseURL, fetcher),
     speechModel: (modelId) => new GeminiSpeechModel(modelId, apiKey, baseURL, fetcher),
+    imageGenerationModel: (modelId) => new GeminiImageGenerationModel(modelId, apiKey, baseURL, fetcher),
+    videoGenerationModel: (modelId) => new GeminiVideoGenerationModel(modelId, apiKey, baseURL, fetcher),
+    musicGenerationModel: (modelId) => new GeminiMusicGenerationModel(modelId, apiKey, baseURL, fetcher),
     realtimeModel: (modelId) =>
       new GeminiRealtimeModel(
         modelId,
@@ -1151,6 +2431,12 @@ export const createGemini = (
         options.browserTokenURL
       ),
     groundedLanguageModel: (modelId) => new GeminiGroundedLanguageModel(modelId, apiKey, baseURL, fetcher),
+    files: new GeminiFilesClient(apiKey, baseURL, fetcher),
+    fileSearchStores: new GeminiFileSearchStoresClient(apiKey, baseURL, fetcher),
+    caches: new GeminiContextCachesClient(apiKey, baseURL, fetcher),
+    batches: new GeminiBatchesClient(apiKey, baseURL, fetcher),
+    interactions: new GeminiInteractionsClient(apiKey, baseURL, fetcher),
+    predictionModel: (modelId) => new GeminiPredictionModel(modelId, apiKey, baseURL, fetcher),
     rawFetch: fetcher
   });
 };

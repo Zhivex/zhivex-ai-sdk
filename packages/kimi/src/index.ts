@@ -1,4 +1,4 @@
-import { toJSONSchema } from "zod";
+import { z, toJSONSchema } from "zod";
 
 import {
   ConfigurationError,
@@ -8,17 +8,21 @@ import {
   isCallableToolDefinition,
   normalizeFinishReason,
   providerDataPart,
+  serializeJsonValue,
   streamSSE,
+  tool,
   withRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
+  type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
   type ProviderAdapter,
-  type StreamEvent
+  type StreamEvent,
+  type ToolSet
 } from "@zhivex-ai/core";
 
 export interface KimiProviderOptions {
@@ -36,6 +40,25 @@ export interface KimiLanguageModelOptions {
   user?: string;
   tool_choice?: "none" | "auto" | "required" | { type: "function"; function: { name: string } };
   [key: string]: unknown;
+}
+
+export interface KimiFormulaToolOptions {
+  apiKey?: string;
+  baseURL?: string;
+  fetch?: typeof globalThis.fetch;
+}
+
+export interface KimiOfficialToolOptions extends KimiFormulaToolOptions {
+  name: string;
+  formulaUri: string;
+  description?: string;
+  parameters?: JsonValue;
+  requiresApproval?: boolean;
+}
+
+export interface KimiFormulaToolsOptions extends KimiFormulaToolOptions {
+  formulas: string[];
+  requiresApproval?: boolean;
 }
 
 const capabilities: ModelCapabilities = {
@@ -66,6 +89,48 @@ const capabilities: ModelCapabilities = {
 };
 
 const supportsKimiReasoning = (modelId: string) => /kimi-k2\.5|kimi-k2-thinking/i.test(modelId);
+
+const kimiToolMetadata = (definition: { formulaUri: string; parameters?: JsonValue }) => ({
+  "kimi.formula_uri": definition.formulaUri,
+  ...(definition.parameters ? { "kimi.tool_schema": definition.parameters } : {})
+});
+
+const kimiFormulaToolSchema = (toolDefinition: { metadata?: Record<string, JsonValue>; schema: z.ZodTypeAny }) =>
+  toolDefinition.metadata?.["kimi.tool_schema"] ?? toJSONSchema(toolDefinition.schema);
+
+const resolveFormulaConfig = (options: KimiFormulaToolOptions) => {
+  const apiKey = options.apiKey ?? process.env.KIMI_API_KEY ?? process.env.MOONSHOT_API_KEY;
+  if (!apiKey) {
+    throw new ConfigurationError("Missing Kimi API key for official Formula tool execution.");
+  }
+  return {
+    apiKey,
+    baseURL: (options.baseURL ?? process.env.KIMI_BASE_URL ?? process.env.MOONSHOT_BASE_URL ?? "https://api.moonshot.ai/v1").replace(/\/+$/, ""),
+    fetcher: options.fetch ?? globalThis.fetch
+  };
+};
+
+const callKimiFormula = async (
+  options: KimiFormulaToolOptions,
+  formulaUri: string,
+  name: string,
+  input: unknown
+): Promise<JsonValue> => {
+  const { apiKey, baseURL, fetcher } = resolveFormulaConfig(options);
+  const response = await fetcher(`${baseURL}/formulas/${formulaUri}/fibers`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      name,
+      arguments: JSON.stringify(input ?? {})
+    })
+  });
+  const json = await parseJson(response);
+  return serializeJsonValue(json);
+};
 
 const reasoningContentFromMessage = (message: ModelMessage) =>
   message.parts
@@ -175,7 +240,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           function: {
             name: tool.name,
             description: tool.description,
-            parameters: toJSONSchema(tool.schema)
+            parameters: kimiFormulaToolSchema(tool)
           }
         }));
       })()
@@ -446,4 +511,125 @@ export const createKimi = (
     languageModel: (modelId) => new KimiLanguageModel(modelId, apiKey, baseURL, fetcher),
     rawFetch: fetcher
   });
+};
+
+export const kimiOfficialTool = (options: KimiOfficialToolOptions) =>
+  tool({
+    name: options.name,
+    description: options.description,
+    schema: z.any(),
+    metadata: kimiToolMetadata({
+      formulaUri: options.formulaUri,
+      parameters: options.parameters
+    }),
+    requiresApproval: options.requiresApproval,
+    execute: (input) => callKimiFormula(options, options.formulaUri, options.name, input)
+  });
+
+const kimiObjectSchema = (properties: Record<string, JsonValue>, required: string[] = []): JsonValue => ({
+  type: "object",
+  properties,
+  ...(required.length ? { required } : {})
+});
+
+export const kimiWebSearchTool = (options: KimiFormulaToolOptions & { requiresApproval?: boolean } = {}) =>
+  kimiOfficialTool({
+    ...options,
+    name: "web_search",
+    formulaUri: "moonshot/web-search:latest",
+    description: "Search the web for current information.",
+    parameters: kimiObjectSchema(
+      {
+        query: {
+          type: "string",
+          description: "The search query."
+        }
+      },
+      ["query"]
+    )
+  });
+
+export const kimiFetchTool = (options: KimiFormulaToolOptions & { requiresApproval?: boolean } = {}) =>
+  kimiOfficialTool({
+    ...options,
+    name: "fetch",
+    formulaUri: "moonshot/fetch:latest",
+    description: "Fetch and convert URL content.",
+    parameters: kimiObjectSchema(
+      {
+        url: {
+          type: "string",
+          description: "The URL to fetch."
+        }
+      },
+      ["url"]
+    )
+  });
+
+export const kimiCodeRunnerTool = (options: KimiFormulaToolOptions & { requiresApproval?: boolean } = {}) =>
+  kimiOfficialTool({
+    ...options,
+    name: "code_runner",
+    formulaUri: "moonshot/code_runner:latest",
+    description: "Run Python code in Kimi Formula.",
+    parameters: kimiObjectSchema(
+      {
+        code: {
+          type: "string",
+          description: "Python code to execute."
+        }
+      },
+      ["code"]
+    ),
+    requiresApproval: options.requiresApproval ?? true
+  });
+
+export const kimiExcelTool = (options: KimiFormulaToolOptions & { requiresApproval?: boolean } = {}) =>
+  kimiOfficialTool({
+    ...options,
+    name: "excel",
+    formulaUri: "moonshot/excel:latest",
+    description: "Analyze Excel or CSV content with Kimi Formula.",
+    parameters: kimiObjectSchema({})
+  });
+
+export const kimiDateTool = (options: KimiFormulaToolOptions & { requiresApproval?: boolean } = {}) =>
+  kimiOfficialTool({
+    ...options,
+    name: "date",
+    formulaUri: "moonshot/date:latest",
+    description: "Resolve date and time requests.",
+    parameters: kimiObjectSchema({})
+  });
+
+export const kimiFormulaTools = async (options: KimiFormulaToolsOptions): Promise<ToolSet> => {
+  const { apiKey, baseURL, fetcher } = resolveFormulaConfig(options);
+  const result: ToolSet = {};
+
+  for (const formulaUri of options.formulas) {
+    const response = await fetcher(`${baseURL}/formulas/${formulaUri}/tools`, {
+      headers: {
+        authorization: `Bearer ${apiKey}`
+      }
+    });
+    const json = await parseJson(response);
+    for (const definition of json.tools ?? []) {
+      const name = definition.function?.name;
+      if (!name) {
+        continue;
+      }
+      result[name] = kimiOfficialTool({
+        apiKey,
+        baseURL,
+        fetch: fetcher,
+        name,
+        formulaUri,
+        description: definition.function?.description,
+        parameters: definition.function?.parameters,
+        requiresApproval: options.requiresApproval
+      });
+    }
+  }
+
+  return result;
 };
