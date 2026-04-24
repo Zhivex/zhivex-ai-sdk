@@ -2,6 +2,7 @@ import type { EmbeddingModel, LanguageModel, ReasoningConfig, StructuredOutputMo
 import { createAnthropic } from "../../anthropic/src/index.js";
 import { createAzureOpenAI } from "../../azure-openai/src/index.js";
 import { createBedrock } from "../../bedrock/src/index.js";
+import { createDeepSeek } from "../../deepseek/src/index.js";
 import { createGemini } from "../../gemini/src/index.js";
 import { createKimi } from "../../kimi/src/index.js";
 import { createOpenAI } from "../../openai/src/index.js";
@@ -49,6 +50,10 @@ const geminiEmbeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ??
 const openRouterApiKey = process.env.OPENROUTER_API_KEY;
 const openRouterBaseURL = process.env.OPENROUTER_BASE_URL;
 const openRouterTextModelId = process.env.OPENROUTER_INTEGRATION_MODEL ?? "openai/gpt-4o-mini";
+
+const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
+const deepSeekBaseURL = process.env.DEEPSEEK_BASE_URL;
+const deepSeekTextModelId = process.env.DEEPSEEK_INTEGRATION_MODEL ?? "deepseek-v4-flash";
 
 const qwenApiKey = process.env.QWEN_API_KEY ?? process.env.DASHSCOPE_API_KEY;
 const qwenBaseURL = process.env.QWEN_BASE_URL;
@@ -211,6 +216,31 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
             reasoning: {
               effort: "low",
               budgetTokens: 256
+            }
+          },
+          toolChoiceForTool: (toolName) => ({
+            type: "tool",
+            toolName
+          })
+        } satisfies IntegrationLanguageProvider
+      ]
+    : []),
+  ...(deepSeekApiKey
+    ? [
+        {
+          name: "deepseek",
+          createModel: () =>
+            createDeepSeek({
+              apiKey: deepSeekApiKey,
+              baseURL: deepSeekBaseURL
+            })(deepSeekTextModelId),
+          supports: {
+            streaming: true,
+            tools: true,
+            structuredOutputMode: "native",
+            embeddings: false,
+            reasoning: {
+              effort: "high"
             }
           },
           toolChoiceForTool: (toolName) => ({

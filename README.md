@@ -41,6 +41,7 @@ For production integrations, prefer supported public package entrypoints and use
 - `@zhivex-ai/vertex`
 - `@zhivex-ai/qwen`
 - `@zhivex-ai/kimi`
+- `@zhivex-ai/deepseek`
 - `@zhivex-ai/openrouter`
 - `@zhivex-ai/bedrock`
 - `@zhivex-ai/ollama`
@@ -71,6 +72,7 @@ bun add @zhivex-ai/gemini
 bun add @zhivex-ai/vertex
 bun add @zhivex-ai/qwen
 bun add @zhivex-ai/kimi
+bun add @zhivex-ai/deepseek
 bun add @zhivex-ai/openrouter
 bun add @zhivex-ai/azure-openai
 bun add @zhivex-ai/bedrock
@@ -136,6 +138,7 @@ Status shorthand:
 | OpenRouter | yes | yes | yes | native | no | no | no | no | no | `effort` + `budgetTokens` | yes | server tools | Tier C |
 | Qwen | yes | yes | yes | native | yes | no | no | no | no | model-dependent | yes | Responses web search, web extractor, code interpreter | Tier B |
 | Kimi | yes | yes | yes | native | no | no | no | no | no | model-dependent | Formula tool | Formula tools via Chat Completions | Tier C |
+| DeepSeek | yes | yes | yes | JSON object | no | no | no | no | no | `effort` | no | no | Tier C |
 | Bedrock | yes | yes | partial / endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses server tools | Tier C / B by endpoint |
 | Ollama | yes | yes | no | native | yes | no | no | no | no | no | no | no | Tier C |
 
@@ -146,7 +149,7 @@ Compatibility notes:
 - Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime` / `gpt-realtime-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
 - Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
-- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`.
+- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
 - `partial` for Bedrock Converse `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; that path is endpoint-dependent and intended for Bedrock Responses server tools and stateful Responses features.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - Kimi Formula tools are exposed as public helpers in `@zhivex-ai/kimi`. The SDK loads or declares Formula tool schemas, maps them into Chat Completions function tools, tracks `function.name -> formula_uri`, and executes the official Formula fiber after a Kimi tool call.
@@ -608,11 +611,16 @@ Provider compatibility for the common `reasoning` option:
   - maps to Kimi `thinking.enabled/disabled`
   - `budgetTokens` is not supported in the common mapping
   - when reasoning is enabled, `toolChoice` must stay `auto` or `none`
+- DeepSeek:
+  - supported on `deepseek-v4-flash` and `deepseek-v4-pro`
+  - maps `effort` to DeepSeek `thinking` and `reasoning_effort`
+  - `effort: "none"` disables thinking mode
+  - `budgetTokens` is not supported in the common mapping
 - Ollama and Bedrock: not supported
 
 When a provider or model does not support the requested `reasoning` field, the SDK throws an explicit error instead of silently ignoring it. For the broader matrix, see [Provider Compatibility](#provider-compatibility).
 
-For Qwen and Kimi, the SDK also preserves provider reasoning state across multi-step loops by storing `reasoning_content` inside assistant `provider-data` parts and replaying it on subsequent requests when needed.
+For Qwen, Kimi, and DeepSeek, the SDK also preserves provider reasoning state across multi-step loops by storing `reasoning_content` inside assistant `provider-data` parts and replaying it on subsequent requests when needed.
 
 ### HTTP Responses and UI Streams
 
@@ -1337,6 +1345,7 @@ packages/
   vertex/         Vertex AI adapter
   qwen/           Qwen adapter
   kimi/           Kimi adapter
+  deepseek/       DeepSeek adapter
   openrouter/     OpenRouter adapter
   bedrock/        AWS Bedrock adapter
   ollama/         Ollama adapter

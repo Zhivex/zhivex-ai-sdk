@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./packages/openai" },
+    { "path": "./packages/deepseek" },
     { "path": "./packages/qwen" },
     { "path": "./packages/kimi" },
     { "path": "./packages/anthropic" },
