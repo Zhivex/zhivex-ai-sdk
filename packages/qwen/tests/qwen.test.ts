@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createTextMessage, embed, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createQwen } from "../src/index.js";
+import { createQwen, qwenCodeInterpreterTool, qwenWebExtractorTool, qwenWebSearchTool } from "../src/index.js";
 
 describe("qwen adapter", () => {
   const fetchMock = vi.fn();
@@ -15,7 +15,7 @@ describe("qwen adapter", () => {
     createModel: () => createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch })("qwen-plus"),
     createEmbeddingModel: () =>
       createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch }).embeddingModel("text-embedding-v4"),
-    expectedAgentTier: "tier-c",
+    expectedAgentTier: "tier-b",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -29,47 +29,44 @@ describe("qwen adapter", () => {
       audioOutput: false,
       embeddings: true,
       reasoning: true,
-      webSearch: false
+      webSearch: true
     }
   });
 
   runAgentProviderContractSuite({
     providerName: "qwen",
     modelId: "qwen-plus",
-    expectedAgentTier: "tier-c",
+    expectedAgentTier: "tier-b",
     createModel: () => createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch })("qwen-plus"),
     mockSimpleRun: () => {
       fetchMock.mockResolvedValueOnce(
         Response.json({
-          choices: [{ finish_reason: "stop", message: { content: "hello from qwen agent" } }]
+          id: "resp_1",
+          status: "completed",
+          output: [{ type: "message", content: [{ type: "output_text", text: "hello from qwen agent" }] }]
         })
       );
     },
     mockToolRun: () => {
       fetchMock.mockResolvedValueOnce(
         Response.json({
-          choices: [
+          id: "resp_1",
+          status: "completed",
+          output: [
             {
-              finish_reason: "tool_calls",
-              message: {
-                content: "",
-                tool_calls: [
-                  {
-                    id: "tool-1",
-                    function: {
-                      name: "weather",
-                      arguments: JSON.stringify({ city: "Madrid" })
-                    }
-                  }
-                ]
-              }
+              type: "function_call",
+              call_id: "tool-1",
+              name: "weather",
+              arguments: JSON.stringify({ city: "Madrid" })
             }
           ]
         })
       );
       fetchMock.mockResolvedValueOnce(
         Response.json({
-          choices: [{ finish_reason: "stop", message: { content: "Madrid is sunny" } }]
+          id: "resp_2",
+          status: "completed",
+          output: [{ type: "message", content: [{ type: "output_text", text: "Madrid is sunny" }] }]
         })
       );
     },
@@ -78,8 +75,9 @@ describe("qwen adapter", () => {
         start(controller) {
           controller.enqueue(
             new TextEncoder().encode(
-              "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n" +
-                "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\n" +
+              "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n" +
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\n" +
+                "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n" +
                 "data: [DONE]\n\n"
             )
           );
@@ -100,11 +98,13 @@ describe("qwen adapter", () => {
     fetchMock.mockReset();
   });
 
-  it("maps chat completions to the common contract", async () => {
+  it("maps Responses API results to the common contract by default", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
-        choices: [{ finish_reason: "stop", message: { content: "hello from qwen" } }],
-        usage: { prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 }
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "hello from qwen" }] }],
+        usage: { input_tokens: 4, output_tokens: 3, total_tokens: 7 }
       })
     );
 
@@ -117,6 +117,30 @@ describe("qwen adapter", () => {
     expect(result.text).toBe("hello from qwen");
     expect(result.usage?.totalTokens).toBe(7);
     expect(result.messages.at(-1)?.parts[0]).toMatchObject({ type: "text", text: "hello from qwen" });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/responses");
+  });
+
+  it("keeps Chat Completions available through apiMode: chat", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "hello from qwen" } }],
+        usage: { prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 }
+      })
+    );
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("qwen-plus"),
+      prompt: "hello",
+      providerOptions: {
+        apiMode: "chat"
+      }
+    });
+
+    expect(result.text).toBe("hello from qwen");
+    expect(result.usage?.totalTokens).toBe(7);
+    expect(result.messages.at(-1)?.parts[0]).toMatchObject({ type: "text", text: "hello from qwen" });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/completions");
   });
 
   it("creates equivalent language models from the callable provider", () => {
@@ -130,8 +154,9 @@ describe("qwen adapter", () => {
       start(controller) {
         controller.enqueue(
           new TextEncoder().encode(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n" +
-              "data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\n" +
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n" +
+              "data: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\n" +
+              "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n" +
               "data: [DONE]\n\n"
           )
         );
@@ -158,31 +183,26 @@ describe("qwen adapter", () => {
   it("supports tool calls and native structured output", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
-        choices: [
+        id: "resp_1",
+        status: "completed",
+        output: [
           {
-            finish_reason: "tool_calls",
-            message: {
-              content: "",
-              tool_calls: [
-                {
-                  id: "tool-1",
-                  function: {
-                    name: "weather",
-                    arguments: JSON.stringify({ city: "Madrid" })
-                  }
-                }
-              ]
-            }
+            type: "function_call",
+            call_id: "tool-1",
+            name: "weather",
+            arguments: JSON.stringify({ city: "Madrid" })
           }
         ]
       })
     );
     fetchMock.mockResolvedValueOnce(
       Response.json({
-        choices: [
+        id: "resp_2",
+        status: "completed",
+        output: [
           {
-            finish_reason: "stop",
-            message: { content: JSON.stringify({ city: "Madrid", forecast: "sunny" }) }
+            type: "message",
+            content: [{ type: "output_text", text: JSON.stringify({ city: "Madrid", forecast: "sunny" }) }]
           }
         ]
       })
@@ -231,7 +251,9 @@ describe("qwen adapter", () => {
   it("passes provider-specific options through to the Qwen API", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
-        choices: [{ finish_reason: "stop", message: { content: "hello from qwen" } }]
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "hello from qwen" }] }]
       })
     );
 
@@ -246,15 +268,18 @@ describe("qwen adapter", () => {
     });
 
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    const body = JSON.parse(String(requestInit.body)) as { top_p: number; user: string };
+    const body = JSON.parse(String(requestInit.body)) as { top_p: number; user: string; apiMode?: string };
     expect(body.top_p).toBe(0.8);
     expect(body.user).toBe("test-user");
+    expect(body.apiMode).toBeUndefined();
   });
 
   it("maps common tool choice to Qwen tool_choice", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
-        choices: [{ finish_reason: "stop", message: { content: "hello from qwen" } }]
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "hello from qwen" }] }]
       })
     );
 
@@ -291,7 +316,9 @@ describe("qwen adapter", () => {
     const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
     fetchMock.mockResolvedValueOnce(
       Response.json({
-        choices: [{ finish_reason: "stop", message: { content: "reasoned" } }]
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "reasoned" }] }]
       })
     );
 
@@ -347,6 +374,9 @@ describe("qwen adapter", () => {
       model: provider("qwen-plus"),
       prompt: "weather",
       maxSteps: 2,
+      providerOptions: {
+        apiMode: "chat"
+      },
       reasoning: {
         effort: "medium"
       },
@@ -376,8 +406,9 @@ describe("qwen adapter", () => {
       start(controller) {
         controller.enqueue(
           new TextEncoder().encode(
-            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Think\"}}]}\n\n" +
-              "data: {\"choices\":[{\"delta\":{\"content\":\" answer\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":3,\"total_tokens\":7}}\n\n" +
+            "data: {\"type\":\"response.reasoning_text.delta\",\"delta\":\"Think\"}\n\n" +
+              "data: {\"type\":\"response.output_text.delta\",\"delta\":\" answer\"}\n\n" +
+              "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":3,\"total_tokens\":7}}}\n\n" +
               "data: [DONE]\n\n"
           )
         );
@@ -411,5 +442,54 @@ describe("qwen adapter", () => {
         reasoningContent: "Think"
       }
     });
+  });
+
+  it("serializes Qwen hosted tools in Responses mode", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "done" }] }]
+      })
+    );
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("qwen-plus"),
+      prompt: "research",
+      tools: {
+        search: qwenWebSearchTool(),
+        extract: qwenWebExtractorTool({ max_results: 2 }),
+        code: qwenCodeInterpreterTool()
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as { tools: Array<Record<string, unknown>> };
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/responses");
+    expect(body.tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "web_search" }),
+        expect.objectContaining({ type: "web_extractor", max_results: 2 }),
+        expect.objectContaining({ type: "code_interpreter" })
+      ])
+    );
+  });
+
+  it("rejects hosted tools in Chat Completions compatibility mode", async () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("qwen-plus"),
+        prompt: "research",
+        providerOptions: {
+          apiMode: "chat"
+        },
+        tools: {
+          search: qwenWebSearchTool()
+        }
+      })
+    ).rejects.toThrow('Provider "qwen" does not support hosted tools.');
   });
 });

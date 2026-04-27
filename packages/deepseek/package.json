@@ -1,7 +1,7 @@
 {
-  "name": "@zhivex-ai/gateway",
-  "version": "0.5.0",
-  "description": "Routing and fallback helpers for Zhivex AI SDK.",
+  "name": "@zhivex-ai/deepseek",
+  "version": "0.2.0",
+  "description": "DeepSeek adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,7 +24,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Zhivex/zhivex-ai-sdk.git",
-    "directory": "packages/gateway"
+    "directory": "packages/deepseek"
   },
   "homepage": "https://github.com/Zhivex/zhivex-ai-sdk#readme",
   "bugs": {
@@ -33,14 +33,15 @@
   "keywords": [
     "ai",
     "sdk",
-    "gateway",
-    "routing",
+    "deepseek",
+    "llm",
     "typescript"
   ],
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^0.7.0"
+    "@zhivex-ai/core": "^0.7.0",
+    "zod": "^4.3.6"
   }
 }

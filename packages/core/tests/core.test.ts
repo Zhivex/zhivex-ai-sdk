@@ -21,9 +21,17 @@ import {
   getAgentCapabilities,
   getAgentSupportTier,
   getHostedToolClass,
-  parseUIMessageRequest,
-  generateObject,
-  generateText,
+	  parseUIMessageRequest,
+	  generateImage,
+	  generateMusic,
+	  generateObject,
+	  generateText,
+	  generateVideo,
+  googleCodeExecutionTool,
+  googleComputerUseTool,
+  googleFileSearchTool,
+  googleSearchTool,
+  googleUrlContextTool,
   hostedTool,
   isHostedToolClass,
   createMcpToolRegistry,
@@ -37,10 +45,12 @@ import {
   toUIMessageStreamResponse,
   wrapLanguageModel,
   tool,
+  uploadFile,
+  predictRaw,
   toToolSet,
   user
 } from "../src/index.js";
-import type { EmbeddingModel, LanguageModel, StreamEvent, ToolSet } from "../src/index.js";
+import type { EmbeddingModel, ImageGenerationModel, LanguageModel, MusicGenerationModel, PredictionModel, ProviderAdapter, StreamEvent, ToolSet, VideoGenerationModel } from "../src/index.js";
 import { UnsupportedFeatureError, ValidationError } from "../src/index.js";
 
 const createLanguageModel = (overrides?: Partial<LanguageModel>): LanguageModel => ({
@@ -264,10 +274,40 @@ describe("core helpers", () => {
       provider: "openai",
       type: "mcp"
     });
+    const shell = hostedTool({
+      name: "shell",
+      provider: "openai",
+      type: "shell"
+    });
+    const applyPatch = hostedTool({
+      name: "apply_patch",
+      provider: "openai",
+      type: "apply_patch"
+    });
+    const toolSearch = hostedTool({
+      name: "tool_search",
+      provider: "openai",
+      type: "tool_search"
+    });
+    const webExtractor = hostedTool({
+      name: "web_extractor",
+      provider: "qwen",
+      type: "web_extractor"
+    });
+    const skill = hostedTool({
+      name: "skill",
+      provider: "openai",
+      type: "skill_tool"
+    });
 
     expect(getHostedToolClass(web)).toBe("web-search");
     expect(getHostedToolClass(files)).toBe("file-search");
     expect(getHostedToolClass(mcp)).toBe("remote-mcp");
+    expect(getHostedToolClass(shell)).toBe("shell");
+    expect(getHostedToolClass(applyPatch)).toBe("apply-patch");
+    expect(getHostedToolClass(toolSearch)).toBe("tool-search");
+    expect(getHostedToolClass(webExtractor)).toBe("web-extraction");
+    expect(getHostedToolClass(skill)).toBe("skill");
     expect(isHostedToolClass(web, "web-search")).toBe(true);
     expect(isHostedToolClass(files, "web-search")).toBe(false);
   });
@@ -338,6 +378,11 @@ describe("core helpers", () => {
       remoteMcp: false,
       computerUse: false,
       codeExecution: false,
+      shell: false,
+      applyPatch: false,
+      toolSearch: false,
+      webExtraction: false,
+      skills: false,
       toolsets: false
     });
   });
@@ -1161,6 +1206,135 @@ describe("core helpers", () => {
         value: "x"
       })
     ).rejects.toBeInstanceOf(UnsupportedFeatureError);
+  });
+
+  it("generates images through the shared media helper", async () => {
+    const model: ImageGenerationModel = {
+      provider: "test",
+      modelId: "image",
+      capabilities: { ...createLanguageModel().capabilities, imageGeneration: true },
+      async generateImage(input) {
+        return {
+          images: [{ data: new Uint8Array([1, 2]), mediaType: "image/png" }],
+          text: input.prompt,
+          rawResponse: { ok: true }
+        };
+      }
+    };
+
+    const result = await generateImage({ model, prompt: "draw" });
+
+    expect(result.prompt).toBe("draw");
+    expect(result.images[0]?.mediaType).toBe("image/png");
+    expect(result.rawResponse).toEqual({ ok: true });
+  });
+
+  it("rejects unsupported shared media helpers", async () => {
+    const imageModel: ImageGenerationModel = {
+      provider: "test",
+      modelId: "image",
+      capabilities: createLanguageModel().capabilities,
+      async generateImage() {
+        return { images: [] };
+      }
+    };
+
+    await expect(generateImage({ model: imageModel, prompt: "draw" })).rejects.toThrow(
+      'Model "test/image" does not support image generation.'
+    );
+  });
+
+  it("generates music and video through the shared media helpers", async () => {
+    const musicModel: MusicGenerationModel = {
+      provider: "test",
+      modelId: "music",
+      capabilities: { ...createLanguageModel().capabilities, musicGeneration: true },
+      async generateMusic() {
+        return {
+          audio: [{ data: new Uint8Array([3, 4]), mediaType: "audio/mpeg" }],
+          text: "lyrics"
+        };
+      }
+    };
+    const videoModel: VideoGenerationModel = {
+      provider: "test",
+      modelId: "video",
+      capabilities: { ...createLanguageModel().capabilities, videoGeneration: true },
+      async generateVideo() {
+        return {
+          videos: [{ uri: "https://example.test/video.mp4", mediaType: "video/mp4" }],
+          operationName: "operations/123"
+        };
+      }
+    };
+
+    const music = await generateMusic({ model: musicModel, prompt: "song" });
+    const video = await generateVideo({ model: videoModel, prompt: "scene", pollIntervalMs: 0 });
+
+    expect(music.audio[0]?.mediaType).toBe("audio/mpeg");
+    expect(video.videos[0]?.uri).toBe("https://example.test/video.mp4");
+    expect(video.operationName).toBe("operations/123");
+  });
+
+  it("rejects provider resource helpers when the adapter has no client", async () => {
+    const provider: ProviderAdapter = {
+      name: "test",
+      languageModel: () => createLanguageModel()
+    };
+
+    await expect(
+      uploadFile({
+        provider,
+        data: "hello",
+        mediaType: "text/plain"
+      })
+    ).rejects.toThrow('Provider "test" does not support files.');
+  });
+
+  it("delegates raw prediction through prediction models", async () => {
+    const model: PredictionModel = {
+      provider: "test",
+      modelId: "raw",
+      capabilities: { ...createLanguageModel().capabilities, rawPrediction: true },
+      async predictRaw(input) {
+        return {
+          predictions: input.instances,
+          rawResponse: { ok: true }
+        };
+      },
+      async predictLongRunning() {
+        return { name: "operations/1", done: false };
+      },
+      async fetchPredictionOperation(input) {
+        return { name: input.name, done: true, response: { ok: true } };
+      }
+    };
+
+    const result = await predictRaw({
+      model,
+      instances: [{ prompt: "hello" }]
+    });
+
+    expect(result.predictions).toEqual([{ prompt: "hello" }]);
+    expect(result.rawResponse).toEqual({ ok: true });
+  });
+
+  it("builds Google hosted tools with Gemini-compatible shapes", () => {
+    expect(googleSearchTool()).toMatchObject({ kind: "hosted", type: "googleSearch", toolClass: "web-search" });
+    expect(googleUrlContextTool()).toMatchObject({ kind: "hosted", type: "urlContext", toolClass: "web-extraction" });
+    expect(googleFileSearchTool(["fileSearchStores/1"])).toMatchObject({
+      kind: "hosted",
+      type: "fileSearch",
+      toolClass: "file-search",
+      config: { fileSearchStoreNames: ["fileSearchStores/1"] }
+    });
+    expect(googleCodeExecutionTool()).toMatchObject({ kind: "hosted", type: "codeExecution", toolClass: "code-execution" });
+    expect(googleComputerUseTool({ screen: "browser" })).toMatchObject({
+      kind: "hosted",
+      type: "computerUse",
+      toolClass: "computer-use",
+      config: { screen: "browser" }
+    });
   });
 
   it("wraps language models with a cache middleware", async () => {

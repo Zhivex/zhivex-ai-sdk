@@ -84,6 +84,15 @@ const inferHostedToolClass = (definition: Omit<HostedToolDefinition, "kind">): H
   }
 
   if (
+    normalizedType.includes("web_extractor") ||
+    normalizedType.includes("web-extractor") ||
+    normalizedType.includes("web_extraction") ||
+    normalizedType.includes("web-extraction")
+  ) {
+    return "web-extraction";
+  }
+
+  if (
     normalizedType.includes("file_search") ||
     normalizedType.includes("file-search")
   ) {
@@ -104,9 +113,37 @@ const inferHostedToolClass = (definition: Omit<HostedToolDefinition, "kind">): H
   if (
     normalizedType.includes("codeexecution") ||
     normalizedType.includes("code_execution") ||
-    normalizedType.includes("code-execution")
+    normalizedType.includes("code-execution") ||
+    normalizedType.includes("code_interpreter") ||
+    normalizedType.includes("code-interpreter")
   ) {
     return "code-execution";
+  }
+
+  if (normalizedType === "shell" || normalizedType.includes("shell_call") || normalizedType.includes("shell-call")) {
+    return "shell";
+  }
+
+  if (
+    normalizedType.includes("apply_patch") ||
+    normalizedType.includes("apply-patch")
+  ) {
+    return "apply-patch";
+  }
+
+  if (
+    normalizedType.includes("tool_search") ||
+    normalizedType.includes("tool-search")
+  ) {
+    return "tool-search";
+  }
+
+  if (
+    normalizedType === "skill" ||
+    normalizedType.includes("skill_tool") ||
+    normalizedType.includes("skill-tool")
+  ) {
+    return "skill";
   }
 
   return "custom";
@@ -144,6 +181,11 @@ const emptyAgentCapabilities: AgentCapabilities = {
   remoteMcp: false,
   computerUse: false,
   codeExecution: false,
+  shell: false,
+  applyPatch: false,
+  toolSearch: false,
+  webExtraction: false,
+  skills: false,
   toolsets: false
 };
 

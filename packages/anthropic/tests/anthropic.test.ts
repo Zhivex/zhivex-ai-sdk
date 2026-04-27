@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { generateObject, generateText, getAgentCapabilities, streamText, tool } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { anthropicMcpToolset, anthropicWebSearchTool, createAnthropic } from "../src/index.js";
+import { anthropicCodeExecutionTool, anthropicMcpToolset, anthropicWebSearchTool, createAnthropic } from "../src/index.js";
 
 describe("anthropic adapter", () => {
   const fetchMock = vi.fn();
@@ -289,11 +289,59 @@ describe("anthropic adapter", () => {
     };
     expect(body.tools).toEqual([
       {
-        type: "web_search_20250305",
+        type: "web_search_20260209",
         name: "web_search",
         max_uses: 3
       }
     ]);
+    expect(getAgentCapabilities(provider("claude-3-5-sonnet")).codeExecution).toBe(true);
+  });
+
+  it("maps Anthropic code execution into native tools and beta headers", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [
+          { type: "server_tool_use", id: "srv_1", name: "bash_code_execution", input: { command: "python -V" } },
+          {
+            type: "bash_code_execution_tool_result",
+            tool_use_id: "srv_1",
+            content: { type: "bash_code_execution_result", stdout: "Python 3.11", stderr: "", return_code: 0 }
+          },
+          { type: "text", text: "done" }
+        ],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("claude-sonnet-4"),
+      prompt: "run code",
+      tools: {
+        code: anthropicCodeExecutionTool()
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
+    const body = JSON.parse(String(requestInit.body)) as { tools: Array<{ type: string; name: string }> };
+    expect(headers["anthropic-beta"]).toBe("code-execution-2025-08-25");
+    expect(body.tools).toEqual([{ type: "code_execution_20250825", name: "code_execution" }]);
+    expect(result.messages.at(-1)?.parts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "provider-data",
+          provider: "anthropic",
+          data: expect.objectContaining({ type: "server_tool_use" })
+        }),
+        expect.objectContaining({
+          type: "provider-data",
+          provider: "anthropic",
+          data: expect.objectContaining({ type: "bash_code_execution_tool_result" })
+        })
+      ])
+    );
   });
 
   it("maps reasoning budget tokens to Anthropic thinking", async () => {

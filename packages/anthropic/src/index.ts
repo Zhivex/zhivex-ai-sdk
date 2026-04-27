@@ -84,7 +84,7 @@ const capabilities: ModelCapabilities = {
     hostedFileSearch: false,
     remoteMcp: false,
     computerUse: false,
-    codeExecution: false,
+    codeExecution: true,
     toolsets: true
   }
 };
@@ -469,10 +469,11 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     };
   }
 
-  private headers(withMcpToolset: boolean, withFilesApi: boolean) {
+  private headers(withMcpToolset: boolean, withFilesApi: boolean, withCodeExecution: boolean) {
     const betas = [
       ...(withMcpToolset ? ["mcp-client-2025-11-20"] : []),
-      ...(withFilesApi ? ["files-api-2025-04-14"] : [])
+      ...(withFilesApi ? ["files-api-2025-04-14"] : []),
+      ...(withCodeExecution ? ["code-execution-2025-08-25"] : [])
     ];
 
     return {
@@ -522,13 +523,14 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
+    const usesCodeExecution = Object.values(input.tools ?? {}).some((tool) => !isCallableToolDefinition(tool) && tool.type === "code_execution_20250825");
 
     try {
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/messages`, {
             method: "POST",
-            headers: this.headers(Boolean(mcpServers?.length), usesFilesApi),
+            headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, usesCodeExecution),
             signal,
             body: JSON.stringify({
               model: this.modelId,
@@ -609,11 +611,12 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
+    const usesCodeExecution = Object.values(input.tools ?? {}).some((tool) => !isCallableToolDefinition(tool) && tool.type === "code_execution_20250825");
     const response = await withRetry(
       () =>
         this.fetcher(`${this.baseURL}/messages`, {
           method: "POST",
-          headers: this.headers(Boolean(mcpServers?.length), usesFilesApi),
+          headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, usesCodeExecution),
           signal,
           body: JSON.stringify({
             model: this.modelId,
@@ -655,7 +658,9 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
           if (
             event.event === "content_block_start" &&
             typeof json.content_block?.type === "string" &&
-            json.content_block.type.startsWith("mcp_")
+            (json.content_block.type.startsWith("mcp_") ||
+              json.content_block.type === "server_tool_use" ||
+              json.content_block.type.includes("code_execution"))
           ) {
             yield {
               type: "provider-data",
@@ -669,6 +674,18 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
               type: "provider-data",
               provider: "anthropic",
               data: json.content_block as JsonValue
+            } satisfies StreamEvent;
+          }
+
+          if (
+            event.event === "content_block_delta" &&
+            typeof json.delta?.type === "string" &&
+            json.delta.type.includes("code_execution")
+          ) {
+            yield {
+              type: "provider-data",
+              provider: "anthropic",
+              data: json.delta as JsonValue
             } satisfies StreamEvent;
           }
 
@@ -744,6 +761,7 @@ export const createAnthropic = (
 };
 
 export interface AnthropicWebSearchToolConfig {
+  type?: "web_search_20260209" | "web_search_20250305";
   max_uses?: number;
   allowed_domains?: string[];
   blocked_domains?: string[];
@@ -754,6 +772,10 @@ export interface AnthropicWebSearchToolConfig {
     country?: string;
     timezone?: string;
   };
+}
+
+export interface AnthropicCodeExecutionToolConfig {
+  name?: string;
 }
 
 export interface AnthropicMcpServerConfig {
@@ -795,9 +817,18 @@ export const anthropicWebSearchTool = (config: AnthropicWebSearchToolConfig = {}
   hostedTool({
     name: "web_search",
     provider: "anthropic",
-    type: "web_search_20250305",
+    type: config.type ?? "web_search_20260209",
     toolClass: "web-search",
-    config: config as unknown as JsonValue
+    config: Object.fromEntries(Object.entries(config).filter(([key]) => key !== "type")) as unknown as JsonValue
+  });
+
+export const anthropicCodeExecutionTool = (config: AnthropicCodeExecutionToolConfig = {}) =>
+  hostedTool({
+    name: config.name ?? "code_execution",
+    provider: "anthropic",
+    type: "code_execution_20250825",
+    toolClass: "code-execution",
+    config: {} as JsonValue
   });
 
 export const anthropicMcpToolset = (config: AnthropicMcpToolsetConfig) =>

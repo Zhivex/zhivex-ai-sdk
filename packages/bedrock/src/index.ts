@@ -12,31 +12,52 @@ import {
 import {
   ConfigurationError,
   isCallableToolDefinition,
+  ProviderHTTPError,
   UnsupportedFeatureError,
   ValidationError,
   createProviderAdapter,
+  hostedTool,
   normalizeFinishReason,
+  providerDataPart,
+  streamSSE,
   withRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
+  type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
-  type ProviderAdapter
-  , type StreamEvent
+  type ProviderAdapter,
+  type StreamEvent
 } from "@zhivex-ai/core";
 
 export interface BedrockProviderOptions {
   client?: BedrockRuntimeClient;
   region?: string;
+  runtime?: "converse" | "openai";
+  baseURL?: string;
+  apiKey?: string;
+  fetch?: typeof globalThis.fetch;
 }
 
 export interface BedrockLanguageModelOptions {
   additionalModelRequestFields?: Record<string, unknown>;
   additionalModelResponseFieldPaths?: string[];
   [key: string]: unknown;
+}
+
+export interface BedrockOpenAICompatibleLanguageModelOptions {
+  [key: string]: unknown;
+}
+
+export interface BedrockServerToolConfig {
+  name: string;
+  type: string;
+  config?: JsonValue;
+  toolClass?: "web-search" | "code-execution" | "custom";
+  requiresApproval?: boolean;
 }
 
 const capabilities: ModelCapabilities = {
@@ -62,6 +83,23 @@ const capabilities: ModelCapabilities = {
     remoteMcp: false,
     computerUse: false,
     codeExecution: false,
+    toolsets: false
+  }
+};
+
+const openAICompatibleCapabilities: ModelCapabilities = {
+  ...capabilities,
+  reasoning: true,
+  webSearch: true,
+  agentCapabilities: {
+    supportTier: "tier-b",
+    toolChoiceNone: true,
+    approvalRequests: false,
+    hostedWebSearch: true,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    computerUse: false,
+    codeExecution: true,
     toolsets: false
   }
 };
@@ -230,6 +268,143 @@ const mapStructuredOutput = (structuredOutput: ModelGenerateInput["structuredOut
       }
     }
   };
+};
+
+const mapOpenAIToolOutput = (message: ModelMessage) =>
+  message.parts
+    .filter((part): part is Extract<ModelMessage["parts"][number], { type: "tool-result" }> => part.type === "tool-result")
+    .map((part) => ({
+      type: "function_call_output",
+      call_id: part.toolResult.toolCallId,
+      output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
+    }));
+
+const mapOpenAIInput = (messages: ModelMessage[]) => {
+  const input: Array<Record<string, unknown>> = [];
+
+  for (const message of messages) {
+    if (message.role === "tool") {
+      input.push(...mapOpenAIToolOutput(message));
+      continue;
+    }
+
+    const content: Array<Record<string, unknown>> = [];
+    for (const part of message.parts) {
+      if (part.type === "text") {
+        content.push({ type: "input_text", text: part.text });
+      }
+      if (part.type === "tool-call" && message.role === "assistant") {
+        content.push({
+          type: "function_call",
+          call_id: part.toolCall.id,
+          name: part.toolCall.name,
+          arguments: JSON.stringify(part.toolCall.input)
+        });
+      }
+    }
+
+    if (content.length) {
+      input.push({
+        role: message.role,
+        content
+      });
+    }
+  }
+
+  return input;
+};
+
+const mapOpenAITools = (tools: ModelGenerateInput["tools"]) =>
+  tools
+    ? Object.values(tools).map((definition) => {
+        if (isCallableToolDefinition(definition)) {
+          return {
+            type: "function",
+            name: definition.name,
+            description: definition.description,
+            parameters: toJSONSchema(definition.schema)
+          };
+        }
+
+        if (definition.provider && definition.provider !== "bedrock") {
+          throw new UnsupportedFeatureError(
+            `Provider "bedrock" does not support hosted tools declared for provider "${definition.provider}".`
+          );
+        }
+
+        return {
+          type: definition.type,
+          ...(definition.config && typeof definition.config === "object" ? definition.config : {})
+        };
+      })
+    : undefined;
+
+const mapOpenAIToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
+  if (!toolChoice) {
+    return undefined;
+  }
+  if (typeof toolChoice === "string") {
+    return toolChoice;
+  }
+  return {
+    type: "function",
+    function: {
+      name: toolChoice.toolName
+    }
+  };
+};
+
+const parseOpenAICompatibleMessage = (json: any): ModelMessage => {
+  const output = json.output ?? [];
+  const parts: ModelMessage["parts"] = [];
+
+  for (const item of output) {
+    if (item.type === "message") {
+      for (const content of item.content ?? []) {
+        if (typeof content.text === "string") {
+          parts.push({ type: "text", text: content.text });
+        }
+        if (typeof content.output_text === "string") {
+          parts.push({ type: "text", text: content.output_text });
+        }
+      }
+    }
+    if (item.type === "function_call") {
+      parts.push({
+        type: "tool-call",
+        toolCall: {
+          id: item.call_id ?? item.id,
+          name: item.name,
+          input: JSON.parse(item.arguments ?? "{}")
+        }
+      });
+    }
+  }
+
+  if (!parts.some((part) => part.type === "text") && typeof json.output_text === "string" && json.output_text) {
+    parts.push({ type: "text", text: json.output_text });
+  }
+
+  if (typeof json.id === "string") {
+    parts.push(providerDataPart("bedrock", { responseId: json.id }));
+  }
+  return { role: "assistant", parts };
+};
+
+const normalizeOpenAICompatibleFinishReason = (status: unknown, hasToolCalls: boolean) => {
+  if (hasToolCalls) {
+    return "tool-calls" as const;
+  }
+  if (status === "completed") {
+    return "stop" as const;
+  }
+  if (status === "incomplete") {
+    return "length" as const;
+  }
+  if (status === "failed") {
+    return "error" as const;
+  }
+  return "unknown" as const;
 };
 
 const parseAssistantMessage = (message: { content?: ContentBlock[] } | undefined): ModelMessage => {
@@ -458,7 +633,144 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
   }
 }
 
+class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenAICompatibleLanguageModelOptions> {
+  readonly provider = "bedrock";
+  readonly capabilities = openAICompatibleCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async generate(input: ModelGenerateInput<BedrockOpenAICompatibleLanguageModelOptions>): Promise<GenerateResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/responses`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${this.apiKey}`
+            },
+            signal,
+            body: JSON.stringify({
+              model: this.modelId,
+              input: mapOpenAIInput(input.messages),
+              tools: mapOpenAITools(input.tools),
+              tool_choice: mapOpenAIToolChoice(input.toolChoice),
+              temperature: input.temperature,
+              max_output_tokens: input.maxTokens,
+              ...input.providerOptions,
+              stream: false
+            })
+          }),
+        input
+      );
+      const json = await response.json();
+      if (!response.ok) {
+        throw new ProviderHTTPError(`Bedrock OpenAI-compatible request failed with status ${response.status}.`, response.status, {
+          responseBody: JSON.stringify(json)
+        });
+      }
+      const assistantMessage = parseOpenAICompatibleMessage(json);
+      const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
+      return {
+        messages: [assistantMessage],
+        text: assistantMessage.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join(""),
+        finishReason: normalizeOpenAICompatibleFinishReason(json.status, hasToolCalls),
+        providerFinishReason: json.status,
+        usage: {
+          inputTokens: json.usage?.input_tokens,
+          outputTokens: json.usage?.output_tokens,
+          totalTokens: json.usage?.total_tokens
+        },
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+
+  async stream(input: ModelGenerateInput<BedrockOpenAICompatibleLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const response = await withRetry(
+      () =>
+        this.fetcher(`${this.baseURL}/responses`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${this.apiKey}`
+          },
+          signal,
+          body: JSON.stringify({
+            model: this.modelId,
+            input: mapOpenAIInput(input.messages),
+            tools: mapOpenAITools(input.tools),
+            tool_choice: mapOpenAIToolChoice(input.toolChoice),
+            temperature: input.temperature,
+            max_output_tokens: input.maxTokens,
+            ...input.providerOptions,
+            stream: true
+          })
+        }),
+      input
+    );
+
+    return (async function* () {
+      try {
+        for await (const event of streamSSE(response)) {
+          if (event.data === "[DONE]") {
+            return;
+          }
+          const json = JSON.parse(event.data);
+          if (json.type === "response.output_text.delta" && typeof json.delta === "string") {
+            yield { type: "text-delta", textDelta: json.delta } satisfies StreamEvent;
+          }
+          if (json.type === "response.completed") {
+            yield {
+              type: "finish",
+              finishReason: "stop",
+              providerFinishReason: "completed",
+              usage: json.response?.usage
+                ? {
+                    inputTokens: json.response.usage.input_tokens,
+                    outputTokens: json.response.usage.output_tokens,
+                    totalTokens: json.response.usage.total_tokens
+                  }
+                : undefined
+            } satisfies StreamEvent;
+          }
+        }
+      } finally {
+        cleanup();
+      }
+    })();
+  }
+}
+
 export const createBedrock = (options: BedrockProviderOptions = {}): CallableProviderAdapter & ProviderAdapter => {
+  if (options.runtime === "openai") {
+    const apiKey = options.apiKey ?? process.env.BEDROCK_API_KEY ?? process.env.AWS_BEARER_TOKEN_BEDROCK;
+    if (!apiKey) {
+      throw new ConfigurationError("Missing Bedrock OpenAI-compatible API key.");
+    }
+    const baseURL = (options.baseURL ?? process.env.BEDROCK_OPENAI_BASE_URL)?.replace(/\/+$/, "");
+    if (!baseURL) {
+      throw new ConfigurationError("Missing Bedrock OpenAI-compatible base URL.");
+    }
+    const fetcher = options.fetch ?? globalThis.fetch;
+    return createProviderAdapter({
+      name: "bedrock",
+      languageModel: (modelId) => new BedrockOpenAICompatibleLanguageModel(modelId, apiKey, baseURL, fetcher)
+    });
+  }
+
   const client =
     options.client ??
     (() => {
@@ -474,3 +786,13 @@ export const createBedrock = (options: BedrockProviderOptions = {}): CallablePro
     languageModel: (modelId) => new BedrockLanguageModel(modelId, client)
   });
 };
+
+export const bedrockServerTool = (config: BedrockServerToolConfig) =>
+  hostedTool({
+    name: config.name,
+    provider: "bedrock",
+    type: config.type,
+    toolClass: config.toolClass ?? "custom",
+    requiresApproval: config.requiresApproval,
+    config: config.config ?? {}
+  });

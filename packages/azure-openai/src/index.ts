@@ -1,4 +1,4 @@
-import { toJSONSchema } from "zod";
+import { toJSONSchema, z } from "zod";
 
 import {
   CallbackRealtimeSession,
@@ -43,6 +43,7 @@ import {
   type SpeechModel,
   type SpeechResult,
   type StreamEvent,
+  type ToolDefinition,
   type TranscriptionModel,
   type TranscriptionResult
 } from "@zhivex-ai/core";
@@ -123,6 +124,99 @@ export interface AzureOpenAIComputerUseToolConfig {
   display_height?: number;
 }
 
+export interface AzureOpenAICodeInterpreterToolConfig {
+  container:
+    | string
+    | {
+        type: "auto";
+        memory_limit?: "1g" | "4g" | "16g" | "64g";
+        file_ids?: string[];
+      };
+}
+
+export interface AzureOpenAIShellToolConfig {
+  name?: string;
+  cwd?: string;
+  rootDir?: string;
+  timeoutMs?: number;
+  maxOutputLength?: number;
+  execute?: (input: AzureOpenAIShellToolInput) => Promise<AzureOpenAIShellToolOutput> | AzureOpenAIShellToolOutput;
+}
+
+export interface AzureOpenAIShellToolInput {
+  command?: string;
+  action?: {
+    command?: string;
+    max_output_length?: number;
+    maxOutputLength?: number;
+  };
+  maxOutputLength?: number;
+  max_output_length?: number;
+}
+
+export interface AzureOpenAIShellToolOutput {
+  stdout: string;
+  stderr: string;
+  outcome: {
+    type: "exit" | "timeout";
+    exitCode?: number;
+  };
+  maxOutputLength?: number;
+}
+
+export interface AzureOpenAIApplyPatchOperation {
+  type: "create_file" | "update_file" | "delete_file";
+  path: string;
+  diff?: string;
+}
+
+export interface AzureOpenAIApplyPatchToolInput {
+  operation: AzureOpenAIApplyPatchOperation;
+}
+
+export interface AzureOpenAIApplyPatchToolOutput {
+  status: "completed" | "failed";
+  output?: string;
+}
+
+export interface AzureOpenAIApplyPatchToolConfig {
+  name?: string;
+  rootDir?: string;
+  applyOperation: (operation: AzureOpenAIApplyPatchOperation) => Promise<AzureOpenAIApplyPatchToolOutput> | AzureOpenAIApplyPatchToolOutput;
+}
+
+export interface AzureOpenAIToolSearchToolConfig {
+  [key: string]: unknown;
+}
+
+const azureOpenAIResponsesToolMetadataKey = "azure-openai.responses_tool_type";
+
+const azureOpenAILocalResponsesToolType = (tool: ToolDefinition) => {
+  const type = tool.metadata?.[azureOpenAIResponsesToolMetadataKey];
+  return typeof type === "string" ? type : undefined;
+};
+
+const azureOpenAILocalResponsesToolConfig = (tool: ToolDefinition) => {
+  const config = tool.metadata?.["azure-openai.responses_tool_config"];
+  return config && typeof config === "object" && !Array.isArray(config) ? (config as Record<string, unknown>) : undefined;
+};
+
+const assertAzureOpenAIToolPathInsideRoot = async (rootDir: string | undefined, targetPath: string, label: string) => {
+  if (!rootDir) {
+    return targetPath;
+  }
+
+  const path = await import("node:path");
+  const root = path.resolve(rootDir);
+  const target = path.resolve(root, targetPath);
+  const relative = path.relative(root, target);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Azure OpenAI ${label} path escapes rootDir.`);
+  }
+
+  return target;
+};
+
 export interface AzureOpenAIMcpApprovalRequest {
   type: "mcp_approval_request";
   id: string;
@@ -198,10 +292,40 @@ const capabilities: ModelCapabilities = {
     hostedFileSearch: true,
     remoteMcp: true,
     computerUse: true,
-    codeExecution: false,
+    codeExecution: true,
+    shell: true,
+    applyPatch: true,
+    toolSearch: true,
+    skills: true,
     toolsets: false
   }
 };
+
+const normalizeModelId = (modelId: string) => modelId.trim().toLowerCase();
+
+const supportsAzureOpenAIToolSearch = (modelId: string) => {
+  const normalized = normalizeModelId(modelId);
+  return /^gpt-5\.4(?:$|-20|-pro)/.test(normalized);
+};
+
+const supportsAzureOpenAIComputerUse = (modelId: string) => {
+  const normalized = normalizeModelId(modelId);
+  return /^gpt-5\.4(?:$|-20|-pro|-mini)/.test(normalized);
+};
+
+const supportsAzureOpenAIHostedHarnessTools = (modelId: string) => /^gpt-5\.4(?:$|-)/.test(normalizeModelId(modelId));
+
+const modelCapabilities = (modelId: string): ModelCapabilities => ({
+  ...capabilities,
+  agentCapabilities: {
+    ...capabilities.agentCapabilities!,
+    computerUse: supportsAzureOpenAIComputerUse(modelId),
+    shell: supportsAzureOpenAIHostedHarnessTools(modelId),
+    applyPatch: supportsAzureOpenAIHostedHarnessTools(modelId),
+    skills: supportsAzureOpenAIHostedHarnessTools(modelId),
+    toolSearch: supportsAzureOpenAIToolSearch(modelId)
+  }
+});
 
 const transcriptionCapabilities: ModelCapabilities = {
   ...capabilities,
@@ -347,8 +471,26 @@ const mapMessages = (messages: ModelMessage[]) =>
     return payload;
   });
 
-const hasHostedTools = (tools: ModelGenerateInput["tools"]) =>
-  Object.values(tools ?? {}).some((tool) => isHostedToolDefinition(tool));
+const hasResponsesOnlyTools = (tools: ModelGenerateInput["tools"]) =>
+  Object.values(tools ?? {}).some(
+    (tool) => isHostedToolDefinition(tool) || (isCallableToolDefinition(tool) && azureOpenAILocalResponsesToolType(tool))
+  );
+
+const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInput["tools"]) => {
+  const currentCapabilities = modelCapabilities(modelId).agentCapabilities;
+  for (const definition of Object.values(tools ?? {})) {
+    const type = isCallableToolDefinition(definition) ? azureOpenAILocalResponsesToolType(definition) : definition.type;
+    if (type === "tool_search" && !currentCapabilities?.toolSearch) {
+      throw new UnsupportedFeatureError(`Provider "azure-openai" model "${modelId}" does not support the Responses tool_search tool.`);
+    }
+    if (type === "computer_use_preview" && !currentCapabilities?.computerUse) {
+      throw new UnsupportedFeatureError(`Provider "azure-openai" model "${modelId}" does not support the Responses computer_use tool.`);
+    }
+    if ((type === "shell" || type === "apply_patch") && !supportsAzureOpenAIHostedHarnessTools(modelId)) {
+      throw new UnsupportedFeatureError(`Provider "azure-openai" model "${modelId}" does not support the Responses ${type} tool.`);
+    }
+  }
+};
 
 const normalizeWebSearchConfig = (config: AzureOpenAIWebSearchToolConfig = {}) => ({
   ...config,
@@ -387,6 +529,14 @@ const mapResponsesTools = (input: ModelGenerateInput["tools"]) =>
   input
     ? Object.values(input).map((tool) => {
         if (isCallableToolDefinition(tool)) {
+          const responsesToolType = azureOpenAILocalResponsesToolType(tool);
+          if (responsesToolType) {
+            return {
+              type: responsesToolType,
+              ...azureOpenAILocalResponsesToolConfig(tool)
+            };
+          }
+
           return {
             type: "function",
             name: tool.name,
@@ -665,11 +815,41 @@ const getProviderResponseId = (messages: ModelMessage[]) => {
 const serializeToolOutput = (message: ModelMessage) =>
   message.parts
     .filter((part): part is Extract<ModelMessage["parts"][number], { type: "tool-result" }> => part.type === "tool-result")
-    .map((part) => ({
-      type: "function_call_output",
-      call_id: part.toolResult.toolCallId,
-      output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
-    }));
+    .map((part) => {
+      if (part.toolResult.toolName === "shell") {
+        return {
+          type: "shell_call_output",
+          call_id: part.toolResult.toolCallId,
+          output: part.toolResult.isError
+            ? {
+                stdout: "",
+                stderr: part.toolResult.error?.message ?? "Shell execution failed.",
+                outcome: { type: "exit", exitCode: 1 }
+              }
+            : part.toolResult.output
+        };
+      }
+
+      if (part.toolResult.toolName === "apply_patch") {
+        const output = part.toolResult.output;
+        const outputRecord =
+          output && typeof output === "object" && !Array.isArray(output)
+            ? (output as Record<string, unknown>)
+            : undefined;
+        return {
+          type: "apply_patch_call_output",
+          call_id: part.toolResult.toolCallId,
+          status: part.toolResult.isError ? "failed" : outputRecord?.status ?? "completed",
+          output: part.toolResult.isError ? part.toolResult.error?.message : outputRecord?.output
+        };
+      }
+
+      return {
+        type: "function_call_output",
+        call_id: part.toolResult.toolCallId,
+        output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
+      };
+    });
 
 const serializeProviderDataInput = (message: ModelMessage) =>
   message.parts
@@ -689,12 +869,35 @@ const parseResponsesProviderData = (item: unknown) => {
   }
 
   const typedItem = item as Record<string, unknown>;
-  if (typeof typedItem.type !== "string" || !typedItem.type.startsWith("mcp_")) {
+  if (
+    typeof typedItem.type !== "string" ||
+    ["message", "function_call", "shell_call", "apply_patch_call"].includes(typedItem.type)
+  ) {
     return undefined;
   }
 
   return item as JsonValue;
 };
+
+const parseShellCallInput = (item: Record<string, unknown>) => {
+  const action = item.action && typeof item.action === "object" ? (item.action as Record<string, unknown>) : undefined;
+  return {
+    command: typeof action?.command === "string" ? action.command : typeof item.command === "string" ? item.command : undefined,
+    action: action as JsonValue | undefined,
+    maxOutputLength:
+      typeof action?.max_output_length === "number"
+        ? action.max_output_length
+        : typeof item.max_output_length === "number"
+          ? item.max_output_length
+          : typeof item.maxOutputLength === "number"
+            ? item.maxOutputLength
+            : undefined
+  };
+};
+
+const parseApplyPatchCallInput = (item: Record<string, unknown>) => ({
+  operation: item.operation && typeof item.operation === "object" ? (item.operation as JsonValue) : {}
+});
 
 const parseAssistantMessage = (message: any): ModelMessage => ({
   role: "assistant",
@@ -777,6 +980,30 @@ const parseResponsesAssistantMessage = (json: any): ModelMessage => {
           id: item.call_id ?? item.id ?? `${item.name}-${index}`,
           name: item.name,
           input: JSON.parse(item.arguments ?? "{}")
+        }
+      });
+      continue;
+    }
+
+    if (item?.type === "shell_call") {
+      parts.push({
+        type: "tool-call",
+        toolCall: {
+          id: item.call_id ?? item.id ?? `shell-${index}`,
+          name: "shell",
+          input: parseShellCallInput(item) as JsonValue
+        }
+      });
+      continue;
+    }
+
+    if (item?.type === "apply_patch_call") {
+      parts.push({
+        type: "tool-call",
+        toolCall: {
+          id: item.call_id ?? item.id ?? `apply_patch-${index}`,
+          name: "apply_patch",
+          input: parseApplyPatchCallInput(item) as JsonValue
         }
       });
       continue;
@@ -887,6 +1114,30 @@ const streamResponses = async function* (
         }
       }
 
+      if (item?.type === "shell_call" && type === "response.output_item.done") {
+        yield {
+          type: "tool-call",
+          toolCall: {
+            id: item.call_id ?? item.id ?? `${json.output_index ?? "shell"}`,
+            name: "shell",
+            input: parseShellCallInput(item) as JsonValue
+          }
+        } satisfies StreamEvent;
+        sawToolCalls = true;
+      }
+
+      if (item?.type === "apply_patch_call" && type === "response.output_item.done") {
+        yield {
+          type: "tool-call",
+          toolCall: {
+            id: item.call_id ?? item.id ?? `${json.output_index ?? "apply_patch"}`,
+            name: "apply_patch",
+            input: parseApplyPatchCallInput(item) as JsonValue
+          }
+        } satisfies StreamEvent;
+        sawToolCalls = true;
+      }
+
       const providerData = parseResponsesProviderData(item);
       if (providerData && type === "response.output_item.done") {
         yield {
@@ -981,14 +1232,16 @@ const extractSources = (value: any): GroundedGenerateResult["sources"] => {
 
 class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModelOptions> {
   readonly provider = "azure-openai";
-  readonly capabilities = capabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {}
+  ) {
+    this.capabilities = modelCapabilities(modelId);
+  }
 
   async generate(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
@@ -1502,7 +1755,8 @@ export const createAzureOpenAI = (
         async generate(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<GenerateResult> {
           const { signal, cleanup } = withTimeoutSignal(input);
           try {
-            if (hasHostedTools(input.tools)) {
+            if (hasResponsesOnlyTools(input.tools)) {
+              assertResponsesToolsSupported(modelId, input.tools);
               const previousResponse = getProviderResponseId(input.messages);
               const messages =
                 previousResponse && previousResponse.index < input.messages.length - 1
@@ -1593,7 +1847,8 @@ export const createAzureOpenAI = (
         }
 
         async stream(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
-          if (hasHostedTools(input.tools)) {
+          if (hasResponsesOnlyTools(input.tools)) {
+            assertResponsesToolsSupported(modelId, input.tools);
             const { signal, cleanup } = withTimeoutSignal(input);
             const response = await withRetry(
               () =>
@@ -1776,6 +2031,24 @@ export const azureOpenAIFileSearchTool = (config: AzureOpenAIFileSearchToolConfi
     config: config as unknown as JsonValue
   });
 
+export const azureOpenAICodeInterpreterTool = (config: AzureOpenAICodeInterpreterToolConfig) =>
+  hostedTool({
+    name: "code_interpreter",
+    provider: "azure-openai",
+    type: "code_interpreter",
+    toolClass: "code-execution",
+    config: config as unknown as JsonValue
+  });
+
+export const azureOpenAIToolSearchTool = (config: AzureOpenAIToolSearchToolConfig = {}) =>
+  hostedTool({
+    name: "tool_search",
+    provider: "azure-openai",
+    type: "tool_search",
+    toolClass: "tool-search",
+    config: config as unknown as JsonValue
+  });
+
 export const azureOpenAIRemoteMcpTool = (config: AzureOpenAIRemoteMcpToolConfig) =>
   hostedTool({
     name: config.server_label ?? "mcp",
@@ -1800,3 +2073,119 @@ export const azureOpenAIComputerUseTool = (config: AzureOpenAIComputerUseToolCon
     toolClass: "computer-use",
     config: config as unknown as JsonValue
   });
+
+const runAzureOpenAIShellCommand = async (
+  input: AzureOpenAIShellToolInput,
+  config: AzureOpenAIShellToolConfig
+): Promise<AzureOpenAIShellToolOutput> => {
+  if (config.execute) {
+    return config.execute(input);
+  }
+
+  const command = input.command ?? input.action?.command;
+  if (!command) {
+    throw new Error("Azure OpenAI shell tool did not provide a command.");
+  }
+
+  const { exec } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execAsync = promisify(exec);
+  const maxBuffer = Math.max(1024, config.maxOutputLength ?? input.maxOutputLength ?? input.max_output_length ?? input.action?.maxOutputLength ?? input.action?.max_output_length ?? 20000);
+  const cwd = config.rootDir
+    ? await assertAzureOpenAIToolPathInsideRoot(config.rootDir, config.cwd ?? ".", "shell cwd")
+    : config.cwd;
+
+  try {
+    const result = await execAsync(command, {
+      cwd,
+      timeout: config.timeoutMs,
+      maxBuffer
+    });
+    return {
+      stdout: result.stdout,
+      stderr: result.stderr,
+      outcome: {
+        type: "exit",
+        exitCode: 0
+      },
+      maxOutputLength: maxBuffer
+    };
+  } catch (error) {
+    const err = error as {
+      stdout?: string;
+      stderr?: string;
+      code?: number;
+      signal?: string;
+      killed?: boolean;
+      message?: string;
+    };
+    return {
+      stdout: err.stdout ?? "",
+      stderr: err.stderr ?? err.message ?? "",
+      outcome: {
+        type: err.killed || err.signal === "SIGTERM" ? "timeout" : "exit",
+        exitCode: typeof err.code === "number" ? err.code : 1
+      },
+      maxOutputLength: maxBuffer
+    };
+  }
+};
+
+export const azureOpenAIShellTool = (
+  config: AzureOpenAIShellToolConfig = {}
+): ToolDefinition<z.ZodType<AzureOpenAIShellToolInput>, JsonValue> => ({
+  name: config.name ?? "shell",
+  description: "Run a shell command requested by the Azure OpenAI Responses shell tool.",
+  requiresApproval: true,
+  metadata: {
+    [azureOpenAIResponsesToolMetadataKey]: "shell",
+    "azure-openai.responses_tool_config": {}
+  },
+  schema: z.object({
+    command: z.string().optional(),
+    action: z
+      .object({
+        command: z.string().optional(),
+        max_output_length: z.number().optional(),
+        maxOutputLength: z.number().optional()
+      })
+      .passthrough()
+      .optional(),
+    maxOutputLength: z.number().optional(),
+    max_output_length: z.number().optional()
+  }) as z.ZodType<AzureOpenAIShellToolInput>,
+  execute: async (input) => runAzureOpenAIShellCommand(input, config) as unknown as JsonValue
+});
+
+const applyAzureOpenAIPatchOperation = async (
+  operation: AzureOpenAIApplyPatchOperation,
+  config: AzureOpenAIApplyPatchToolConfig
+) => {
+  if (config.rootDir) {
+    await assertAzureOpenAIToolPathInsideRoot(config.rootDir, operation.path, "apply_patch");
+  }
+
+  return config.applyOperation(operation);
+};
+
+export const azureOpenAIApplyPatchTool = (
+  config: AzureOpenAIApplyPatchToolConfig
+): ToolDefinition<z.ZodType<AzureOpenAIApplyPatchToolInput>, JsonValue> => ({
+  name: config.name ?? "apply_patch",
+  description: "Apply a structured patch operation requested by the Azure OpenAI Responses apply_patch tool.",
+  requiresApproval: true,
+  metadata: {
+    [azureOpenAIResponsesToolMetadataKey]: "apply_patch",
+    "azure-openai.responses_tool_config": {}
+  },
+  schema: z.object({
+    operation: z
+      .object({
+        type: z.enum(["create_file", "update_file", "delete_file"]),
+        path: z.string(),
+        diff: z.string().optional()
+      })
+      .passthrough()
+  }) as z.ZodType<AzureOpenAIApplyPatchToolInput>,
+  execute: async ({ operation }) => applyAzureOpenAIPatchOperation(operation, config) as unknown as JsonValue
+});

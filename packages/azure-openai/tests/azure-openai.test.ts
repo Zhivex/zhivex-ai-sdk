@@ -5,8 +5,12 @@ import { z } from "zod";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import {
+  azureOpenAIApplyPatchTool,
+  azureOpenAICodeInterpreterTool,
   azureOpenAIMcpApprovalResponse,
   azureOpenAIRemoteMcpTool,
+  azureOpenAIShellTool,
+  azureOpenAIToolSearchTool,
   azureOpenAIWebSearchTool,
   createAzureOpenAI
 } from "../src/index.js";
@@ -170,12 +174,32 @@ describe("azure openai adapter", () => {
       fetch: fetchMock as typeof fetch
     });
     const result = await generateText({
-      model: provider("gpt-4o-mini"),
+      model: provider("gpt-5.4"),
       prompt: "hello"
     });
 
     expect(result.text).toBe("hello from azure");
     expect(result.usage?.totalTokens).toBe(7);
+  });
+
+  it("rejects Responses tools that the selected Azure OpenAI model does not support", async () => {
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    expect(getAgentCapabilities(provider("gpt-5.4")).toolSearch).toBe(true);
+    expect(getAgentCapabilities(provider("gpt-5.4-nano")).toolSearch).toBe(false);
+
+    await expect(
+      generateText({
+        model: provider("gpt-5.4-nano"),
+        prompt: "inspect",
+        tools: {
+          toolSearch: azureOpenAIToolSearchTool()
+        }
+      })
+    ).rejects.toThrow('Provider "azure-openai" model "gpt-5.4-nano" does not support the Responses tool_search tool.');
   });
 
   it("streams incremental text", async () => {
@@ -573,6 +597,79 @@ describe("azure openai adapter", () => {
     expect(mcpTool.toolClass).toBe("remote-mcp");
     expect(mcpTool.requiresApproval).toBe(true);
     expect(getAgentCapabilities(provider("gpt-4o-mini")).remoteMcp).toBe(true);
+    expect(getAgentCapabilities(provider("gpt-4o-mini")).codeExecution).toBe(true);
+    expect(getAgentCapabilities(provider("gpt-4o-mini")).shell).toBe(false);
+    expect(getAgentCapabilities(provider("gpt-5.4")).shell).toBe(true);
+  });
+
+  it("maps Azure OpenAI agent built-in helpers into Responses tools", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "done" }]
+          }
+        ]
+      })
+    );
+
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("gpt-5.4"),
+      prompt: "inspect",
+      tools: {
+        code: azureOpenAICodeInterpreterTool({ container: { type: "auto" } }),
+        shell: azureOpenAIShellTool({ execute: () => ({ stdout: "", stderr: "", outcome: { type: "exit", exitCode: 0 } }) }),
+        patch: azureOpenAIApplyPatchTool({ applyOperation: () => ({ status: "completed", output: "ok" }) }),
+        toolSearch: azureOpenAIToolSearchTool()
+      },
+      toolApprovalPolicy: () => true
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as { tools: Array<{ type: string }> };
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/responses");
+    expect(body.tools).toEqual(
+      expect.arrayContaining([
+        { type: "code_interpreter", container: { type: "auto" } },
+        { type: "shell" },
+        { type: "apply_patch" },
+        { type: "tool_search" }
+      ])
+    );
+  });
+
+  it("blocks Azure OpenAI local harness paths that escape rootDir", async () => {
+    const shell = azureOpenAIShellTool({
+      rootDir: "/tmp/azure-openai-root",
+      cwd: "../outside"
+    });
+    await expect(shell.execute({ command: "echo hi" })).rejects.toThrow(
+      "Azure OpenAI shell cwd path escapes rootDir."
+    );
+
+    const applyOperation = vi.fn(() => ({ status: "completed" as const }));
+    const patch = azureOpenAIApplyPatchTool({
+      rootDir: "/tmp/azure-openai-root",
+      applyOperation
+    });
+    await expect(
+      patch.execute({
+        operation: {
+          type: "update_file",
+          path: "../outside.txt",
+          diff: "patch"
+        }
+      })
+    ).rejects.toThrow("Azure OpenAI apply_patch path escapes rootDir.");
+    expect(applyOperation).not.toHaveBeenCalled();
   });
 
   it("uses the Responses API for hosted tools and continues local function loops", async () => {

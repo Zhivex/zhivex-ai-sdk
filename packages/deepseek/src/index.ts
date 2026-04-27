@@ -1,4 +1,4 @@
-import { z, toJSONSchema } from "zod";
+import { toJSONSchema } from "zod";
 
 import {
   ConfigurationError,
@@ -8,57 +8,37 @@ import {
   isCallableToolDefinition,
   normalizeFinishReason,
   providerDataPart,
-  serializeJsonValue,
   streamSSE,
-  tool,
   withRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
-  type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
   type ProviderAdapter,
-  type StreamEvent,
-  type ToolSet
+  type StreamEvent
 } from "@zhivex-ai/core";
 
-export interface KimiProviderOptions {
+export interface DeepSeekProviderOptions {
   apiKey?: string;
   baseURL?: string;
   fetch?: typeof globalThis.fetch;
 }
 
-export interface KimiLanguageModelOptions {
+export interface DeepSeekLanguageModelOptions {
+  thinking?: {
+    type: "enabled" | "disabled";
+  };
+  reasoning_effort?: "high" | "max";
   top_p?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
   stop?: string | string[];
-  seed?: number;
   user?: string;
   tool_choice?: "none" | "auto" | "required" | { type: "function"; function: { name: string } };
   [key: string]: unknown;
-}
-
-export interface KimiFormulaToolOptions {
-  apiKey?: string;
-  baseURL?: string;
-  fetch?: typeof globalThis.fetch;
-}
-
-export interface KimiOfficialToolOptions extends KimiFormulaToolOptions {
-  name: string;
-  formulaUri: string;
-  description?: string;
-  parameters?: JsonValue;
-  requiresApproval?: boolean;
-}
-
-export interface KimiFormulaToolsOptions extends KimiFormulaToolOptions {
-  formulas: string[];
-  requiresApproval?: boolean;
 }
 
 const capabilities: ModelCapabilities = {
@@ -68,12 +48,12 @@ const capabilities: ModelCapabilities = {
   jsonMode: true,
   toolChoice: true,
   parallelToolCalls: true,
-  vision: true,
+  vision: false,
   files: false,
   audioInput: false,
   audioOutput: false,
   embeddings: false,
-  reasoning: false,
+  reasoning: true,
   webSearch: false,
   agentCapabilities: {
     supportTier: "tier-c",
@@ -88,54 +68,10 @@ const capabilities: ModelCapabilities = {
   }
 };
 
-const supportsKimiReasoning = (modelId: string) => /kimi-k2\.5|kimi-k2-thinking/i.test(modelId);
-
-const kimiToolMetadata = (definition: { formulaUri: string; parameters?: JsonValue }) => ({
-  "kimi.formula_uri": definition.formulaUri,
-  ...(definition.parameters ? { "kimi.tool_schema": definition.parameters } : {})
-});
-
-const kimiFormulaToolSchema = (toolDefinition: { metadata?: Record<string, JsonValue>; schema: z.ZodTypeAny }) =>
-  toolDefinition.metadata?.["kimi.tool_schema"] ?? toJSONSchema(toolDefinition.schema);
-
-const resolveFormulaConfig = (options: KimiFormulaToolOptions) => {
-  const apiKey = options.apiKey ?? process.env.KIMI_API_KEY ?? process.env.MOONSHOT_API_KEY;
-  if (!apiKey) {
-    throw new ConfigurationError("Missing Kimi API key for official Formula tool execution.");
-  }
-  return {
-    apiKey,
-    baseURL: (options.baseURL ?? process.env.KIMI_BASE_URL ?? process.env.MOONSHOT_BASE_URL ?? "https://api.moonshot.ai/v1").replace(/\/+$/, ""),
-    fetcher: options.fetch ?? globalThis.fetch
-  };
-};
-
-const callKimiFormula = async (
-  options: KimiFormulaToolOptions,
-  formulaUri: string,
-  name: string,
-  input: unknown
-): Promise<JsonValue> => {
-  const { apiKey, baseURL, fetcher } = resolveFormulaConfig(options);
-  const response = await fetcher(`${baseURL}/formulas/${formulaUri}/fibers`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      name,
-      arguments: JSON.stringify(input ?? {})
-    })
-  });
-  const json = await parseJson(response);
-  return serializeJsonValue(json);
-};
-
 const reasoningContentFromMessage = (message: ModelMessage) =>
   message.parts
     .filter((part) => {
-      if (part.type !== "provider-data" || part.provider !== "kimi") {
+      if (part.type !== "provider-data" || part.provider !== "deepseek") {
         return false;
       }
 
@@ -153,7 +89,7 @@ const jsonHeaders = (apiKey: string) => ({
 const parseJson = async (response: Response) => {
   if (!response.ok) {
     const body = await response.text();
-    throw new ProviderHTTPError(`Kimi request failed with status ${response.status}.`, response.status, {
+    throw new ProviderHTTPError(`DeepSeek request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
@@ -163,24 +99,7 @@ const parseJson = async (response: Response) => {
 
 const mapContentParts = (message: ModelMessage) => {
   const textParts = message.parts.filter((part) => part.type === "text");
-  const imageParts = message.parts.filter((part) => part.type === "image");
-
-  if (!imageParts.length) {
-    return textParts.map((part) => part.text).join("");
-  }
-
-  return [
-    ...textParts.map((part) => ({
-      type: "text",
-      text: part.text
-    })),
-    ...imageParts.map((part) => ({
-      type: "image_url",
-      image_url: {
-        url: part.image
-      }
-    }))
-  ];
+  return textParts.map((part) => part.text).join("");
 };
 
 const mapMessages = (messages: ModelMessage[]) =>
@@ -232,7 +151,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
         const toolDefinitions = Object.values(tools);
         const callableTools = toolDefinitions.filter(isCallableToolDefinition);
         if (callableTools.length !== toolDefinitions.length) {
-          throw new UnsupportedFeatureError('Provider "kimi" does not support hosted tools.');
+          throw new UnsupportedFeatureError('Provider "deepseek" does not support hosted tools.');
         }
 
         return callableTools.map((tool) => ({
@@ -240,7 +159,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           function: {
             name: tool.name,
             description: tool.description,
-            parameters: kimiFormulaToolSchema(tool)
+            parameters: toJSONSchema(tool.schema)
           }
         }));
       })()
@@ -269,13 +188,20 @@ const mapStructuredOutput = (input: ModelGenerateInput) => {
   }
 
   return {
-    type: "json_schema",
-    json_schema: {
-      name: input.structuredOutput.name ?? "response",
-      strict: true,
-      schema: toJSONSchema(input.structuredOutput.schema)
-    }
+    type: "json_object"
   };
+};
+
+const mapReasoningEffort = (effort: NonNullable<ModelGenerateInput["reasoning"]>["effort"]) => {
+  if (effort === "xhigh") {
+    return "max";
+  }
+
+  if (!effort || effort === "none") {
+    return undefined;
+  }
+
+  return "high";
 };
 
 const mapReasoning = (input: ModelGenerateInput) => {
@@ -284,21 +210,26 @@ const mapReasoning = (input: ModelGenerateInput) => {
   }
 
   if (input.reasoning.budgetTokens !== undefined) {
-    throw new UnsupportedFeatureError('Provider "kimi" does not support "reasoning.budgetTokens".');
+    throw new UnsupportedFeatureError('Provider "deepseek" does not support "reasoning.budgetTokens".');
   }
 
+  const thinking = input.reasoning.effort === "none" ? { type: "disabled" as const } : { type: "enabled" as const };
+  const reasoningEffort = mapReasoningEffort(input.reasoning.effort);
+
   return {
-    thinking: {
-      type: input.reasoning.effort === "none" ? "disabled" : "enabled"
-    }
+    thinking,
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {})
   };
 };
+
+const hasPreservedReasoning = (messages: ModelMessage[]) =>
+  messages.some((message) => message.role === "assistant" && reasoningContentFromMessage(message));
 
 const parseAssistantMessage = (message: any): ModelMessage => ({
   role: "assistant",
   parts: [
     ...(typeof message.reasoning_content === "string" && message.reasoning_content
-      ? [providerDataPart("kimi", { type: "reasoning_content", reasoningContent: message.reasoning_content })]
+      ? [providerDataPart("deepseek", { type: "reasoning_content", reasoningContent: message.reasoning_content })]
       : []),
     ...(typeof message.content === "string" && message.content
       ? [{ type: "text", text: message.content } as const]
@@ -314,41 +245,21 @@ const parseAssistantMessage = (message: any): ModelMessage => ({
   ]
 });
 
-class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
-  readonly provider = "kimi";
-  readonly capabilities: ModelCapabilities;
+class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOptions> {
+  readonly provider = "deepseek";
+  readonly capabilities = capabilities;
 
   constructor(
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {
-    this.capabilities = {
-      ...capabilities,
-      reasoning: supportsKimiReasoning(modelId)
-    };
-  }
+  ) {}
 
-  private mapToolChoice(toolChoice: ModelGenerateInput["toolChoice"], reasoningEnabled: boolean) {
-    if (!toolChoice) {
-      return undefined;
-    }
-
-    if (reasoningEnabled && toolChoice !== "auto" && toolChoice !== "none") {
-      throw new UnsupportedFeatureError(
-        'Provider "kimi" only supports "toolChoice=auto" or "toolChoice=none" when reasoning is enabled.'
-      );
-    }
-
-    return mapToolChoice(toolChoice);
-  }
-
-  async generate(input: ModelGenerateInput<KimiLanguageModelOptions>): Promise<GenerateResult> {
+  async generate(input: ModelGenerateInput<DeepSeekLanguageModelOptions>): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const reasoning = mapReasoning(input);
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
@@ -359,13 +270,14 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
               model: this.modelId,
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
-              tool_choice: this.mapToolChoice(input.toolChoice, Boolean(reasoning && reasoning.thinking.type === "enabled")),
+              tool_choice: mapToolChoice(input.toolChoice),
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
               max_tokens: input.maxTokens,
               stream: false,
-              ...reasoning,
-              ...input.providerOptions
+              ...(hasPreservedReasoning(input.messages) ? { preserve_thinking: true } : {}),
+              ...input.providerOptions,
+              ...mapReasoning(input)
             })
           }),
         input
@@ -396,10 +308,8 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
     }
   }
 
-  async stream(input: ModelGenerateInput<KimiLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
+  async stream(input: ModelGenerateInput<DeepSeekLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
-    const reasoning = mapReasoning(input);
-
     const response = await withRetry(
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {
@@ -410,14 +320,15 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
             model: this.modelId,
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
-            tool_choice: this.mapToolChoice(input.toolChoice, Boolean(reasoning && reasoning.thinking.type === "enabled")),
+            tool_choice: mapToolChoice(input.toolChoice),
             response_format: mapStructuredOutput(input),
             temperature: input.temperature,
             max_tokens: input.maxTokens,
             stream: true,
             stream_options: { include_usage: true },
-            ...reasoning,
-            ...input.providerOptions
+            ...(hasPreservedReasoning(input.messages) ? { preserve_thinking: true } : {}),
+            ...input.providerOptions,
+            ...mapReasoning(input)
           })
         }),
       input
@@ -426,6 +337,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
     return (async function* () {
       try {
         const toolBuffers = new Map<string, { name: string; args: string }>();
+        let lastFinishReason: string | undefined;
 
         for await (const event of streamSSE(response)) {
           if (event.data === "[DONE]") {
@@ -435,11 +347,26 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
           const json = JSON.parse(event.data);
           const choice = json.choices?.[0];
           const delta = choice?.delta;
+          const usage = json.usage ?? choice?.usage;
+
+          if (!choice && usage) {
+            yield {
+              type: "finish",
+              finishReason: normalizeFinishReason(lastFinishReason),
+              providerFinishReason: lastFinishReason,
+              usage: {
+                inputTokens: usage.prompt_tokens,
+                outputTokens: usage.completion_tokens,
+                totalTokens: usage.total_tokens
+              }
+            } satisfies StreamEvent;
+            continue;
+          }
 
           if (delta?.reasoning_content) {
             yield {
               type: "provider-data",
-              provider: "kimi",
+              provider: "deepseek",
               data: {
                 type: "reasoning_content",
                 reasoningContent: delta.reasoning_content
@@ -453,10 +380,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
 
           for (const toolCall of delta?.tool_calls ?? []) {
             const id = toolCall.id ?? `${toolCall.index}`;
-            const existing = toolBuffers.get(id) ?? {
-              name: toolCall.function?.name ?? "",
-              args: ""
-            };
+            const existing = toolBuffers.get(id) ?? { name: toolCall.function?.name ?? "", args: "" };
             existing.name ||= toolCall.function?.name ?? "";
             existing.args += toolCall.function?.arguments ?? "";
             toolBuffers.set(id, existing);
@@ -474,15 +398,16 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
           }
 
           if (choice?.finish_reason) {
+            lastFinishReason = choice.finish_reason;
             yield {
               type: "finish",
               finishReason: normalizeFinishReason(choice.finish_reason),
               providerFinishReason: choice.finish_reason,
-              usage: json.usage
+              usage: usage
                 ? {
-                    inputTokens: json.usage.prompt_tokens,
-                    outputTokens: json.usage.completion_tokens,
-                    totalTokens: json.usage.total_tokens
+                    inputTokens: usage.prompt_tokens,
+                    outputTokens: usage.completion_tokens,
+                    totalTokens: usage.total_tokens
                   }
                 : undefined
             } satisfies StreamEvent;
@@ -495,141 +420,20 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
   }
 }
 
-export const createKimi = (
-  options: KimiProviderOptions = {}
+export const createDeepSeek = (
+  options: DeepSeekProviderOptions = {}
 ): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
-  const apiKey = options.apiKey ?? process.env.KIMI_API_KEY ?? process.env.MOONSHOT_API_KEY;
+  const apiKey = options.apiKey ?? process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {
-    throw new ConfigurationError("Missing Kimi API key.");
+    throw new ConfigurationError("Missing DeepSeek API key.");
   }
 
-  const baseURL = options.baseURL ?? "https://api.moonshot.ai/v1";
+  const baseURL = (options.baseURL ?? "https://api.deepseek.com").replace(/\/+$/, "");
   const fetcher = options.fetch ?? globalThis.fetch;
 
   return createProviderAdapter({
-    name: "kimi",
-    languageModel: (modelId) => new KimiLanguageModel(modelId, apiKey, baseURL, fetcher),
+    name: "deepseek",
+    languageModel: (modelId) => new DeepSeekLanguageModel(modelId, apiKey, baseURL, fetcher),
     rawFetch: fetcher
   });
-};
-
-export const kimiOfficialTool = (options: KimiOfficialToolOptions) =>
-  tool({
-    name: options.name,
-    description: options.description,
-    schema: z.any(),
-    metadata: kimiToolMetadata({
-      formulaUri: options.formulaUri,
-      parameters: options.parameters
-    }),
-    requiresApproval: options.requiresApproval,
-    execute: (input) => callKimiFormula(options, options.formulaUri, options.name, input)
-  });
-
-const kimiObjectSchema = (properties: Record<string, JsonValue>, required: string[] = []): JsonValue => ({
-  type: "object",
-  properties,
-  ...(required.length ? { required } : {})
-});
-
-export const kimiWebSearchTool = (options: KimiFormulaToolOptions & { requiresApproval?: boolean } = {}) =>
-  kimiOfficialTool({
-    ...options,
-    name: "web_search",
-    formulaUri: "moonshot/web-search:latest",
-    description: "Search the web for current information.",
-    parameters: kimiObjectSchema(
-      {
-        query: {
-          type: "string",
-          description: "The search query."
-        }
-      },
-      ["query"]
-    )
-  });
-
-export const kimiFetchTool = (options: KimiFormulaToolOptions & { requiresApproval?: boolean } = {}) =>
-  kimiOfficialTool({
-    ...options,
-    name: "fetch",
-    formulaUri: "moonshot/fetch:latest",
-    description: "Fetch and convert URL content.",
-    parameters: kimiObjectSchema(
-      {
-        url: {
-          type: "string",
-          description: "The URL to fetch."
-        }
-      },
-      ["url"]
-    )
-  });
-
-export const kimiCodeRunnerTool = (options: KimiFormulaToolOptions & { requiresApproval?: boolean } = {}) =>
-  kimiOfficialTool({
-    ...options,
-    name: "code_runner",
-    formulaUri: "moonshot/code_runner:latest",
-    description: "Run Python code in Kimi Formula.",
-    parameters: kimiObjectSchema(
-      {
-        code: {
-          type: "string",
-          description: "Python code to execute."
-        }
-      },
-      ["code"]
-    ),
-    requiresApproval: options.requiresApproval ?? true
-  });
-
-export const kimiExcelTool = (options: KimiFormulaToolOptions & { requiresApproval?: boolean } = {}) =>
-  kimiOfficialTool({
-    ...options,
-    name: "excel",
-    formulaUri: "moonshot/excel:latest",
-    description: "Analyze Excel or CSV content with Kimi Formula.",
-    parameters: kimiObjectSchema({})
-  });
-
-export const kimiDateTool = (options: KimiFormulaToolOptions & { requiresApproval?: boolean } = {}) =>
-  kimiOfficialTool({
-    ...options,
-    name: "date",
-    formulaUri: "moonshot/date:latest",
-    description: "Resolve date and time requests.",
-    parameters: kimiObjectSchema({})
-  });
-
-export const kimiFormulaTools = async (options: KimiFormulaToolsOptions): Promise<ToolSet> => {
-  const { apiKey, baseURL, fetcher } = resolveFormulaConfig(options);
-  const result: ToolSet = {};
-
-  for (const formulaUri of options.formulas) {
-    const response = await fetcher(`${baseURL}/formulas/${formulaUri}/tools`, {
-      headers: {
-        authorization: `Bearer ${apiKey}`
-      }
-    });
-    const json = await parseJson(response);
-    for (const definition of json.tools ?? []) {
-      const name = definition.function?.name;
-      if (!name) {
-        continue;
-      }
-      result[name] = kimiOfficialTool({
-        apiKey,
-        baseURL,
-        fetch: fetcher,
-        name,
-        formulaUri,
-        description: definition.function?.description,
-        parameters: definition.function?.parameters,
-        requiresApproval: options.requiresApproval
-      });
-    }
-  }
-
-  return result;
 };
