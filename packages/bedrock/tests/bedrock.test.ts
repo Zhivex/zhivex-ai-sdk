@@ -164,6 +164,23 @@ describe("bedrock adapter", () => {
     expect(provider("anthropic.claude-3-5-sonnet")).toMatchObject(provider.languageModel("anthropic.claude-3-5-sonnet"));
   });
 
+  it("passes explicit Bedrock API keys to the native Converse client as a bearer token", () => {
+    createBedrock({ region: "us-east-1", apiKey: "bedrock-key" });
+
+    expect(clientMock).toHaveBeenCalledWith({
+      region: "us-east-1",
+      token: { token: "bedrock-key" }
+    });
+  });
+
+  it("uses an injected native Converse client without adding API key configuration", () => {
+    const client = { send: sendMock } as never;
+
+    createBedrock({ client, region: "us-east-1", apiKey: "bedrock-key" });
+
+    expect(clientMock).not.toHaveBeenCalled();
+  });
+
   it("maps multimodal user content with image data urls", async () => {
     sendMock.mockResolvedValueOnce({
       stopReason: "end_turn",

@@ -778,7 +778,14 @@ export const createBedrock = (options: BedrockProviderOptions = {}): CallablePro
       if (!region) {
         throw new ConfigurationError("Missing AWS region for Bedrock.");
       }
-      return new BedrockRuntimeClient({ region });
+      return new BedrockRuntimeClient(
+        options.apiKey
+          ? {
+              region,
+              token: { token: options.apiKey }
+            }
+          : { region }
+      );
     })();
 
   return createProviderAdapter({
