@@ -27,23 +27,35 @@ import {
 import { createVertex } from "@zhivex-ai/vertex";
 
 const vertex = createVertex({
-  accessToken: process.env.VERTEX_ACCESS_TOKEN,
+  apiKey: process.env.GOOGLE_API_KEY
+});
+
+const productionVertex = createVertex({
   projectId: process.env.GOOGLE_CLOUD_PROJECT,
-  location: "us-central1"
+  location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1"
+});
+
+const advancedProductionVertex = createVertex({
+  getAccessToken: async () => {
+    // Optional: supply your own service-account or token-broker integration.
+    return process.env.VERTEX_ACCESS_TOKEN!;
+  },
+  projectId: process.env.GOOGLE_CLOUD_PROJECT,
+  location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1"
 });
 
 await generateImage({
-  model: vertex.imageGenerationModel!("imagen-4.0-generate-001"),
+  model: productionVertex.imageGenerationModel!("imagen-4.0-generate-001"),
   prompt: "Create a product photo"
 });
 
 await generateVideo({
-  model: vertex.videoGenerationModel!("veo-3.1-generate-preview"),
+  model: productionVertex.videoGenerationModel!("veo-3.1-generate-preview"),
   prompt: "Create a cinematic establishing shot"
 });
 
 await generateMusic({
-  model: vertex.musicGenerationModel!("lyria-002"),
+  model: productionVertex.musicGenerationModel!("lyria-002"),
   prompt: "Create a short instrumental intro"
 });
 
@@ -56,23 +68,25 @@ await generateText({
 });
 
 await createContextCache({
-  provider: vertex,
+  provider: productionVertex,
   modelId: "gemini-2.5-flash",
   contents: [{ role: "user", parts: [{ type: "file", data: "gs://bucket/large.pdf", mediaType: "application/pdf" }] }]
 });
 
 await createBatch({
-  provider: vertex,
+  provider: productionVertex,
   modelId: "gemini-2.5-flash",
   fileName: "files/batch-input"
 });
 
 await predictRaw({
-  model: vertex.predictionModel!("publisher-model-id"),
+  model: advancedProductionVertex.predictionModel!("publisher-model-id"),
   instances: [{ prompt: "provider-specific request" }],
   parameters: { temperature: 0.2 }
 });
 ```
+
+Authentication follows the current Google guidance for Gemini on Vertex AI: API keys are supported for testing with `apiKey`, `VERTEX_API_KEY`, or `GOOGLE_API_KEY`, while production can use automatic ADC with `createVertex({ projectId, location })` or explicit service-account integrations through `authClient`, `getAccessToken`, or `accessToken`. See Google's guides for [API keys](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys), the [Vertex AI quickstart](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start?usertype=apikey), and [Vertex AI authentication](https://docs.cloud.google.com/vertex-ai/docs/authentication).
 
 Model Garden coverage is intentionally raw/prediction based. The adapter does not add a dedicated wrapper for every publisher model.
 

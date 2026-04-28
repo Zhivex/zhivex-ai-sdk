@@ -1198,19 +1198,29 @@ await createInteraction({
 });
 
 const vertex = createVertex({
-  accessToken: process.env.VERTEX_ACCESS_TOKEN,
+  apiKey: process.env.GOOGLE_API_KEY
+});
+
+const productionVertex = createVertex({
   projectId: process.env.GOOGLE_CLOUD_PROJECT,
-  location: "us-central1"
+  location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1"
+});
+
+await generateText({
+  model: vertex("gemini-2.5-flash"),
+  prompt: "Use the API-key quickstart path."
 });
 
 const raw = await predictRaw({
-  model: vertex.predictionModel!("publisher-model-id"),
+  model: productionVertex.predictionModel!("publisher-model-id"),
   instances: [{ prompt: "provider-specific request" }],
   parameters: { temperature: 0.2 }
 });
 
 console.log(raw.rawResponse);
 ```
+
+Vertex authentication follows Google's current guidance: use `apiKey`, `VERTEX_API_KEY`, or `GOOGLE_API_KEY` for testing, and use ADC/service-account credentials in production. `createVertex({ projectId, location })` resolves ADC automatically, while `authClient`, `getAccessToken`, and `accessToken` remain available for explicit integrations. See Google's docs for [API keys](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys), the [Vertex AI quickstart](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start?usertype=apikey), and [Vertex AI authentication](https://docs.cloud.google.com/vertex-ai/docs/authentication).
 
 Use `predictionModel()` for Vertex Model Garden and other Google publisher endpoints that do not have a stable shared helper yet. The SDK keeps `rawResponse` available so consumers can handle model-specific contracts without the core API overpromising portability.
 
