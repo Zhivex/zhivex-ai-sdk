@@ -8,6 +8,7 @@ import type {
   AgentRunState,
   JsonValue,
   ModelMessage,
+  TokenUsage,
   ToolApprovalDecision,
   ToolApprovalPolicy,
   ToolApprovalRequest,
@@ -45,6 +46,7 @@ export interface BudgetGuardOptions {
   maxInputTokens?: number;
   maxOutputTokens?: number;
   maxTotalTokens?: number;
+  includeChildRuns?: boolean;
 }
 
 export interface BudgetGuard {
@@ -331,12 +333,27 @@ const budgetFailure = (reason: string, metadata: Record<string, JsonValue>): Age
   metadata
 });
 
+const addUsage = (usage: TokenUsage | undefined, next: TokenUsage | undefined): TokenUsage | undefined => {
+  if (!usage && !next) {
+    return undefined;
+  }
+
+  return {
+    inputTokens: (usage?.inputTokens ?? 0) + (next?.inputTokens ?? 0) || undefined,
+    outputTokens: (usage?.outputTokens ?? 0) + (next?.outputTokens ?? 0) || undefined,
+    totalTokens: (usage?.totalTokens ?? 0) + (next?.totalTokens ?? 0) || undefined
+  };
+};
+
 const evaluateBudget = (state: AgentRunState, output: { usage?: AgentRunOutput["usage"] } | undefined, limits: BudgetGuardOptions) => {
-  const usage = output?.usage ?? state.usage;
-  const toolErrors = state.toolResults.filter((result) => result.isError).length;
-  const toolCalls = countToolCalls(state);
+  const includeChildRuns = limits.includeChildRuns ?? true;
+  const childRuns = includeChildRuns ? state.childRuns ?? [] : [];
+  const usage = childRuns.reduce((total, childRun) => addUsage(total, childRun.usage), output?.usage ?? state.usage);
+  const toolErrors = state.toolResults.filter((result) => result.isError).length + childRuns.reduce((total, childRun) => total + childRun.toolErrors, 0);
+  const toolCalls = countToolCalls(state) + childRuns.reduce((total, childRun) => total + childRun.toolCalls, 0);
+  const steps = state.currentStep + childRuns.reduce((total, childRun) => total + childRun.steps, 0);
   const checks = [
-    ["maxSteps", state.currentStep, limits.maxSteps],
+    ["maxSteps", steps, limits.maxSteps],
     ["maxToolCalls", toolCalls, limits.maxToolCalls],
     ["maxToolErrors", toolErrors, limits.maxToolErrors],
     ["maxInputTokens", usage?.inputTokens, limits.maxInputTokens],
@@ -346,10 +363,12 @@ const evaluateBudget = (state: AgentRunState, output: { usage?: AgentRunOutput["
 
   for (const [name, actual, limit] of checks) {
     if (limit !== undefined && actual !== undefined && actual > limit) {
-      return budgetFailure(`Agent budget exceeded: ${name} limit ${limit}, actual ${actual}.`, {
+      const scope = includeChildRuns ? " including child runs" : "";
+      return budgetFailure(`Agent budget exceeded${scope}: ${name} limit ${limit}, actual ${actual}.`, {
         budgetLimit: name,
         limit,
-        actual
+        actual,
+        includeChildRuns
       });
     }
   }

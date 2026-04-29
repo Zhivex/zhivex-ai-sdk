@@ -428,9 +428,156 @@ const bookingResult = await runAgentHandoff(bookingAgent, handoff);
 console.log(bookingResult.state.parentRunId);
 ```
 
+### Native Subagents
+
+Agents can also expose specialist agents as callable subagent tools. The parent run records child run summaries in `state.childRuns`, and replay/trace helpers include those child links without re-running the child agent.
+
+```ts
+import { createAgent, runAgent } from "@zhivex-ai/sdk";
+
+const researcher = createAgent({
+  id: "researcher",
+  model: openai("gpt-5-mini"),
+  instructions: "Research the requested topic and return concise findings."
+});
+
+const coordinator = createAgent({
+  id: "coordinator",
+  model: openai("gpt-5"),
+  subagents: [
+    {
+      name: "research",
+      agent: researcher,
+      description: "Delegate focused research to the researcher subagent."
+    }
+  ],
+  maxSteps: 3
+});
+
+const result = await runAgent(coordinator, {
+  prompt: "Answer with help from the research specialist."
+});
+
+console.log(result.state.childRuns?.[0]?.parentRunId);
+```
+
+### Subagent Production Controls
+
+For production subagent workflows, use a shared durable run store when parent and child runs need to be audited or cancelled together. Built-in stores can look up child runs by `parentRunId`, and `cancelAgentRunTree()` marks the parent plus all persisted descendants as cancelled.
+
+```ts
+import {
+  cancelAgentRunTree,
+  createAgent,
+  createPostgresAgentRunStore,
+  runAgent
+} from "@zhivex-ai/sdk";
+
+const store = createPostgresAgentRunStore({ client: pgPool });
+
+const researcher = createAgent({
+  id: "researcher",
+  model: openai("gpt-5-mini"),
+  store
+});
+
+const coordinator = createAgent({
+  id: "coordinator",
+  model: openai("gpt-5"),
+  store,
+  subagents: [{ name: "research", agent: researcher }]
+});
+
+const run = await runAgent(coordinator, {
+  prompt: "Coordinate the research task."
+});
+
+const childRuns = await store.findByParentRunId?.(run.state.runId);
+await cancelAgentRunTree(store, run.state.runId, {
+  reason: "Workflow cancelled by the user."
+});
+```
+
+`createBudgetGuard()` includes `state.childRuns` by default when enforcing step, tool-call, tool-error, and token limits. Pass `includeChildRuns: false` for parent-only limits.
+
+### Hierarchical Agent Traces
+
+Use tree helpers when a persisted parent run needs to be exported with its descendants. These helpers are dry: they load saved state and never call models or tools.
+
+```ts
+import { createAgentRunTreeSnapshot, createHierarchicalAgentTrace } from "@zhivex-ai/sdk";
+
+const tree = await createAgentRunTreeSnapshot(store, run.state.runId);
+const trace = await createHierarchicalAgentTrace(store, run.state.runId, {
+  includeMessages: false
+});
+
+console.log(tree?.totalRuns, trace?.root.children.length);
+```
+
+### Multi-Agent Evaluations
+
+Evaluation expectations can assert child-run behavior in addition to parent output.
+
+```ts
+const result = await runAgentEvaluation(
+  [
+    {
+      name: "research workflow",
+      input: { prompt: "Answer with research." },
+      expectations: {
+        childRunCount: 1,
+        childAgents: ["researcher"],
+        childStatuses: ["completed"],
+        childToolNames: ["research"],
+        childOutputContains: ["source"]
+      }
+    }
+  ],
+  { agent: coordinator }
+);
+```
+
+`createAgentEvaluationReport()` includes child-run totals, child agent counts, and child status counts.
+
+### Parallel Agent Groups
+
+Use `runAgentGroup()` for explicit fan-out from code when you do not want to depend on the model emitting subagent tool calls.
+
+```ts
+import { runAgentGroup } from "@zhivex-ai/sdk";
+
+const group = await runAgentGroup(
+  [
+    { name: "research", agent: researcher },
+    { name: "critic", agent: critic }
+  ],
+  {
+    prompt: "Analyze this task independently.",
+    parentRunId: run.state.runId,
+    stopOnError: true
+  }
+);
+```
+
+Use `handoff` for sequential ownership transfer, `subagents` for model-driven delegation inside an agent loop, and `runAgentGroup()` for deterministic fan-out from application code.
+
+### Subagent Defaults
+
+`prepareSubagentsForAgent()` returns a compatible agent definition where subagents inherit missing operational defaults from the parent, such as store, memory, telemetry, tool approvals, and tool execution settings. It does not mutate the original parent or child definitions.
+
+```ts
+import { prepareSubagentsForAgent } from "@zhivex-ai/sdk";
+
+const productionCoordinator = prepareSubagentsForAgent(coordinator, {
+  store,
+  onTelemetryEvent: observer
+});
+```
+
 ### Agent Telemetry
 
-Agents can now emit lifecycle telemetry without wrapping the underlying language model yourself. Attach `onTelemetryEvent` to an agent definition when you want hooks for run start/finish, step start/finish, approval requests, memory loads, state saves, and handoffs.
+Agents can now emit lifecycle telemetry without wrapping the underlying language model yourself. Attach `onTelemetryEvent` to an agent definition when you want hooks for run start/finish, step start/finish, approval requests, memory loads, state saves, handoffs, and subagent runs.
 
 ```ts
 const agent = createAgent({

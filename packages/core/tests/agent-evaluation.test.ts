@@ -266,6 +266,117 @@ describe("agent replay and evaluation helpers", () => {
     expect(result.cases[1]?.failures[0]).toContain("Barcelona");
   });
 
+  it("evaluates child run expectations for multi-agent workflows", async () => {
+    const child = createAgent({
+      id: "researcher",
+      model: createMockLanguageModel({
+        responses: [
+          {
+            messages: [createTextMessage("assistant", "child research output")],
+            text: "child research output",
+            finishReason: "stop"
+          }
+        ]
+      })
+    });
+    const parent = createAgent({
+      model: createMockLanguageModel({
+        responses: [
+          {
+            messages: [
+              {
+                role: "assistant",
+                parts: [
+                  {
+                    type: "tool-call",
+                    toolCall: {
+                      id: "call_1",
+                      name: "research",
+                      input: { prompt: "research" }
+                    }
+                  }
+                ]
+              }
+            ],
+            finishReason: "tool-calls"
+          },
+          {
+            messages: [createTextMessage("assistant", "parent done")],
+            text: "parent done",
+            finishReason: "stop"
+          }
+        ]
+      }),
+      subagents: [{ name: "research", agent: child }],
+      maxSteps: 2
+    });
+
+    const result = await runAgentEvaluation(
+      [
+        {
+          name: "multi-agent-pass",
+          input: { prompt: "run" },
+          expectations: {
+            childRunCount: 1,
+            childAgents: ["researcher"],
+            childStatuses: ["completed"],
+            childOutputContains: ["research output"],
+            childToolNames: ["research"]
+          }
+        }
+      ],
+      { agent: parent }
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("reports child run metrics in evaluation reports", () => {
+    const result = {
+      ok: true,
+      cases: [
+        {
+          name: "case",
+          ok: true,
+          failures: [],
+          output: {
+            status: "completed",
+            outputText: "ok",
+            messages: [],
+            steps: [],
+            toolResults: [],
+            state: baseState({
+              childRuns: [
+                {
+                  runId: "child",
+                  agentId: "researcher",
+                  parentRunId: "run_1",
+                  toolName: "research",
+                  status: "completed",
+                  outputText: "child ok",
+                  steps: 1,
+                  toolCalls: 0,
+                  toolErrors: 0
+                }
+              ]
+            })
+          }
+        }
+      ]
+    } as Awaited<ReturnType<typeof runAgentEvaluation>>;
+
+    const report = createAgentEvaluationReport(result);
+
+    expect(report.childRunCount).toBe(1);
+    expect(report.childAgentCounts).toEqual({ researcher: 1 });
+    expect(report.childStatusCounts).toEqual({ completed: 1 });
+    expect(report.cases[0]).toMatchObject({
+      childRunCount: 1,
+      childAgents: ["researcher"],
+      childStatuses: ["completed"]
+    });
+  });
+
   it("judges evaluation results with deterministic and model judges", async () => {
     const agent = createAgent({
       model: createMockLanguageModel({

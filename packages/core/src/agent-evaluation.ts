@@ -30,6 +30,7 @@ export interface AgentRunSnapshot {
   modelId: string;
   steps: number;
   toolCalls: ToolCall[];
+  childRuns: AgentRunState["childRuns"];
   usage?: AgentRunState["usage"];
   outputText: string;
   error?: AgentRunState["error"];
@@ -64,6 +65,10 @@ export type AgentReplayTimelineEvent =
   | {
       type: "approval-request";
       approval: AgentRunState["pendingApprovals"][number];
+    }
+  | {
+      type: "subagent-run";
+      childRun: NonNullable<AgentRunState["childRuns"]>[number];
     }
   | {
       type: "step-finish";
@@ -104,6 +109,11 @@ export interface AgentEvaluationExpectations {
   outputContains?: string;
   outputEquals?: string;
   toolCalls?: string[];
+  childRunCount?: number;
+  childAgents?: string[];
+  childStatuses?: AgentStatus[];
+  childOutputContains?: string[];
+  childToolNames?: string[];
   finishReason?: FinishReason;
   errorContains?: string;
 }
@@ -161,6 +171,9 @@ export interface AgentEvaluationReportCase {
   outputPreview: string;
   toolCalls: string[];
   toolCallCount: number;
+  childRunCount: number;
+  childAgents: string[];
+  childStatuses: AgentStatus[];
   durationMs?: number;
   error?: AgentRunOutput["error"];
   metadata?: Record<string, JsonValue>;
@@ -174,6 +187,9 @@ export interface AgentEvaluationReport {
   passRate: number;
   statusCounts: Record<string, number>;
   toolCallCounts: Record<string, number>;
+  childRunCount: number;
+  childAgentCounts: Record<string, number>;
+  childStatusCounts: Record<string, number>;
   failures: Array<{ name: string; failures: string[] }>;
   cases: AgentEvaluationReportCase[];
   judge?: AgentEvaluationJudgeResult;
@@ -211,6 +227,7 @@ export const createAgentRunSnapshot = (state: AgentRunState): AgentRunSnapshot =
   modelId: state.modelId,
   steps: state.steps.length,
   toolCalls: state.steps.flatMap(stepToolCalls),
+  childRuns: state.childRuns ?? [],
   usage: state.usage,
   outputText: state.outputText,
   error: state.error,
@@ -266,6 +283,13 @@ export const replayAgentRun = (state: AgentRunState): AgentReplayResult => {
     timeline.push({
       type: "approval-request",
       approval
+    });
+  }
+
+  for (const childRun of state.childRuns ?? []) {
+    timeline.push({
+      type: "subagent-run",
+      childRun
     });
   }
 
@@ -379,6 +403,41 @@ const evaluateExpectations = (
       }
     }
   }
+  const childRuns = output.state.childRuns ?? [];
+  if (expectations.childRunCount !== undefined && childRuns.length !== expectations.childRunCount) {
+    failures.push(`Expected ${expectations.childRunCount} child runs, received ${childRuns.length}.`);
+  }
+  if (expectations.childAgents?.length) {
+    const childAgents = new Set(childRuns.flatMap((childRun) => childRun.agentId ? [childRun.agentId] : []));
+    for (const agentId of expectations.childAgents) {
+      if (!childAgents.has(agentId)) {
+        failures.push(`Expected child agent "${agentId}".`);
+      }
+    }
+  }
+  if (expectations.childStatuses?.length) {
+    const childStatuses = new Set(childRuns.map((childRun) => childRun.status));
+    for (const status of expectations.childStatuses) {
+      if (!childStatuses.has(status)) {
+        failures.push(`Expected child status "${status}".`);
+      }
+    }
+  }
+  if (expectations.childOutputContains?.length) {
+    for (const expectedText of expectations.childOutputContains) {
+      if (!childRuns.some((childRun) => childRun.outputText.includes(expectedText))) {
+        failures.push(`Expected child output to contain "${expectedText}".`);
+      }
+    }
+  }
+  if (expectations.childToolNames?.length) {
+    const childToolNames = new Set(childRuns.flatMap((childRun) => childRun.toolName ? [childRun.toolName] : []));
+    for (const toolName of expectations.childToolNames) {
+      if (!childToolNames.has(toolName)) {
+        failures.push(`Expected child tool "${toolName}".`);
+      }
+    }
+  }
 
   return failures;
 };
@@ -446,6 +505,7 @@ export const createAgentEvaluationReport = (
   const outputPreviewLength = options.outputPreviewLength ?? 500;
   const cases = result.cases.map((testCase): AgentEvaluationReportCase => {
     const toolCalls = testCase.output.steps.flatMap((step) => stepToolCalls(step).map((call) => call.name));
+    const childRuns = testCase.output.state.childRuns ?? [];
     return {
       name: testCase.name,
       ok: testCase.ok,
@@ -454,6 +514,9 @@ export const createAgentEvaluationReport = (
       outputPreview: preview(testCase.output.outputText, outputPreviewLength),
       toolCalls,
       toolCallCount: toolCalls.length,
+      childRunCount: childRuns.length,
+      childAgents: childRuns.flatMap((childRun) => childRun.agentId ? [childRun.agentId] : []),
+      childStatuses: childRuns.map((childRun) => childRun.status),
       durationMs: outputDuration(testCase.output),
       error: testCase.output.error,
       metadata: testCase.metadata
@@ -461,10 +524,18 @@ export const createAgentEvaluationReport = (
   });
   const statusCounts: Record<string, number> = {};
   const toolCallCounts: Record<string, number> = {};
+  const childAgentCounts: Record<string, number> = {};
+  const childStatusCounts: Record<string, number> = {};
   for (const testCase of cases) {
     statusCounts[testCase.status] = (statusCounts[testCase.status] ?? 0) + 1;
     for (const toolName of testCase.toolCalls) {
       toolCallCounts[toolName] = (toolCallCounts[toolName] ?? 0) + 1;
+    }
+    for (const agentId of testCase.childAgents) {
+      childAgentCounts[agentId] = (childAgentCounts[agentId] ?? 0) + 1;
+    }
+    for (const status of testCase.childStatuses) {
+      childStatusCounts[status] = (childStatusCounts[status] ?? 0) + 1;
     }
   }
   const passed = cases.filter((testCase) => testCase.ok).length;
@@ -478,6 +549,9 @@ export const createAgentEvaluationReport = (
     passRate: cases.length ? passed / cases.length : 1,
     statusCounts,
     toolCallCounts,
+    childRunCount: cases.reduce((total, testCase) => total + testCase.childRunCount, 0),
+    childAgentCounts,
+    childStatusCounts,
     failures: cases.filter((testCase) => testCase.failures.length).map((testCase) => ({
       name: testCase.name,
       failures: testCase.failures

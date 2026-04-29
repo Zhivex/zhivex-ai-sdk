@@ -1,4 +1,14 @@
-export { cancelAgentRun, createAgent, resumeAgent, runAgent, streamAgent } from "./agent.js";
+export {
+  cancelAgentRun,
+  cancelAgentRunTree,
+  createAgent,
+  createSubAgentTool,
+  prepareSubagentsForAgent,
+  resumeAgent,
+  runAgent,
+  runAgentGroup,
+  streamAgent
+} from "./agent.js";
 export {
   AdvancedToolRegistry,
   createAdvancedToolRegistry,
@@ -56,14 +66,18 @@ export type {
   RunAgentEvaluationOptions
 } from "./agent-evaluation.js";
 export {
+  createAgentRunTreeSnapshot,
   createAgentTraceArtifact,
   createAgentTraceCollector,
+  createHierarchicalAgentTrace,
   estimateAgentRunCost,
   estimateTokenCost,
   summarizeAgentTrace
 } from "./agent-trace.js";
 export type {
   AgentRunCostPricing,
+  AgentRunTreeNode,
+  AgentRunTreeSnapshot,
   AgentTraceArtifact,
   AgentTraceCollector,
   AgentTraceEvent,
@@ -72,6 +86,8 @@ export type {
   AgentTraceSummary,
   AgentTraceToolCall,
   CostEstimate,
+  HierarchicalAgentTrace,
+  HierarchicalAgentTraceNode,
   LatencySummary,
   TokenPricing
 } from "./agent-trace.js";

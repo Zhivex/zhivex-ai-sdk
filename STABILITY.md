@@ -38,8 +38,9 @@ These APIs are the supported public contract for application code and production
 - Agent runtime: `createAgent`, `runAgent`, `resumeAgent`, `streamAgent`
 - Agent persistence contracts: `AgentRunStore`, `AgentMemoryStore`
 - Durable agent helpers: `cancelAgentRun`, schema-versioned `AgentRunState`, and `idempotencyKey` support on built-in run stores
-- Agent replay and evaluation helpers: `createAgentRunSnapshot`, `replayAgentRun`, `createMockLanguageModel`, `createMockTool`, `runAgentEvaluation`, `createAgentEvaluationFixture`, `runAgentEvaluationFixture`, `createAgentEvaluationReport`, and `judgeAgentEvaluation`
-- Agent trace and cost helpers: `createAgentTraceArtifact`, `createAgentTraceCollector`, `summarizeAgentTrace`, `estimateTokenCost`, and `estimateAgentRunCost`
+- Native subagent helpers: `AgentDefinition.subagents`, `createSubAgentTool`, `prepareSubagentsForAgent`, `runAgentGroup`, `AgentRunInput.parentRunId`, `AgentRunState.childRuns`, `AgentRunStore.findByParentRunId`, shared child-run budget accounting, and `cancelAgentRunTree`
+- Agent replay and evaluation helpers: `createAgentRunSnapshot`, `replayAgentRun`, `createMockLanguageModel`, `createMockTool`, `runAgentEvaluation`, `createAgentEvaluationFixture`, `runAgentEvaluationFixture`, `createAgentEvaluationReport`, multi-agent child-run expectations, and `judgeAgentEvaluation`
+- Agent trace and cost helpers: `createAgentTraceArtifact`, `createAgentRunTreeSnapshot`, `createHierarchicalAgentTrace`, `createAgentTraceCollector`, `summarizeAgentTrace`, `estimateTokenCost`, and `estimateAgentRunCost`
 - Safety/policy helpers: `createSafetyPolicy`, `createApprovalPolicy`, `createRedactionPolicy`, `createBudgetGuard`, and `applySafetyPolicyToAgent`
 - Provider parity helpers: `inspectProviderAgentSupport`, `createProviderSupportMatrix`, `renderProviderSupportMatrix`, and `createProviderSupportDriftReport`
 - Default agent stores: in-memory, file-backed, SQLite, and Postgres run and memory stores

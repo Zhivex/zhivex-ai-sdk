@@ -1,6 +1,8 @@
 import type { ModelCatalog } from "./catalog.js";
-import { replayAgentRun } from "./agent-evaluation.js";
+import { ValidationError } from "./errors.js";
+import { createAgentRunSnapshot, replayAgentRun, type AgentRunSnapshot } from "./agent-evaluation.js";
 import type {
+  AgentRunStore,
   AgentRunState,
   AgentStatus,
   AgentStep,
@@ -75,6 +77,7 @@ export interface AgentTraceArtifact {
   updatedAt?: number;
   durationMs?: number;
   steps: AgentTraceStep[];
+  childRuns: AgentRunState["childRuns"];
   events: AgentTraceEvent[];
   approvals: AgentRunState["pendingApprovals"];
   usage?: TokenUsage;
@@ -98,6 +101,7 @@ export interface AgentTraceSummary {
   status: AgentStatus;
   latency: LatencySummary;
   steps: number;
+  childRuns: number;
   toolCalls: number;
   toolErrors: number;
   approvals: number;
@@ -112,6 +116,30 @@ export interface AgentTraceCollector {
   getTrace(runId?: string): AgentTraceArtifact | undefined;
   getEvents(runId?: string): AgentTraceEvent[];
   reset(runId?: string): void;
+}
+
+export interface AgentRunTreeNode {
+  runId: string;
+  agentId?: string;
+  parentRunId?: string;
+  status: AgentStatus;
+  snapshot: AgentRunSnapshot;
+  children: AgentRunTreeNode[];
+}
+
+export interface AgentRunTreeSnapshot {
+  root: AgentRunTreeNode;
+  totalRuns: number;
+}
+
+export interface HierarchicalAgentTraceNode {
+  trace: AgentTraceArtifact;
+  children: HierarchicalAgentTraceNode[];
+}
+
+export interface HierarchicalAgentTrace {
+  root: HierarchicalAgentTraceNode;
+  totalRuns: number;
 }
 
 export type AgentRunCostPricing = TokenPricing | ModelCatalog;
@@ -182,6 +210,12 @@ const serializeEventData = (event: AgentTelemetryEvent): JsonValue | undefined =
   if (event.type === "handoff") {
     return toJsonValue(event.handoff);
   }
+  if (event.type === "subagent-start") {
+    return toJsonValue({ childAgentId: event.childAgentId, toolName: event.toolName });
+  }
+  if (event.type === "subagent-finish") {
+    return toJsonValue(event.childRun);
+  }
   if (event.type === "run-finish") {
     return { status: event.status, currentStep: event.state.currentStep };
   }
@@ -210,6 +244,10 @@ const toTraceEvent = (event: AgentTelemetryEvent): AgentTraceEvent => ({
       ? event.approval.name
       : event.type === "tool-approval"
         ? event.toolCall.name
+        : event.type === "subagent-start"
+          ? event.toolName
+          : event.type === "subagent-finish"
+            ? event.childRun.toolName
         : undefined,
   data: serializeEventData(event)
 });
@@ -236,6 +274,8 @@ const replayEvents = (state: AgentRunState): AgentTraceEvent[] =>
         ? event.toolCall.name
         : event.type === "tool-result"
           ? event.result.toolName
+          : event.type === "subagent-run"
+            ? event.childRun.toolName
           : event.type === "approval-request"
             ? event.approval.name
             : undefined,
@@ -271,6 +311,7 @@ const stateToTrace = (
       ...(includeMessages ? { messages: cloneJson(step.response?.messages ?? []) } : {}),
       error: step.error
     })),
+    childRuns: cloneJson(state.childRuns ?? []),
     events: cloneJson(events),
     approvals: cloneJson(state.pendingApprovals),
     usage: normalizeUsage(state.usage),
@@ -285,6 +326,113 @@ export const createAgentTraceArtifact = (
   state: AgentRunState,
   options: AgentTraceOptions = {}
 ): AgentTraceArtifact => stateToTrace(state, options);
+
+const requireParentLookup = (store: AgentRunStore) => {
+  if (!store.findByParentRunId) {
+    throw new ValidationError('The agent run "store" must implement "findByParentRunId()" to build hierarchical agent traces.');
+  }
+};
+
+const loadRunTree = async (
+  store: AgentRunStore,
+  runId: string,
+  visited = new Set<string>()
+): Promise<AgentRunState | undefined> => {
+  if (visited.has(runId)) {
+    return undefined;
+  }
+  visited.add(runId);
+  return store.load(runId);
+};
+
+const buildTreeNode = async (
+  store: AgentRunStore,
+  state: AgentRunState,
+  visited: Set<string>
+): Promise<AgentRunTreeNode> => {
+  const childStates = await store.findByParentRunId?.(state.runId) ?? [];
+  const children: AgentRunTreeNode[] = [];
+  for (const childState of childStates) {
+    if (visited.has(childState.runId)) {
+      continue;
+    }
+    visited.add(childState.runId);
+    children.push(await buildTreeNode(store, childState, visited));
+  }
+
+  return {
+    runId: state.runId,
+    agentId: state.agentId,
+    parentRunId: state.parentRunId,
+    status: state.status,
+    snapshot: createAgentRunSnapshot(state),
+    children
+  };
+};
+
+interface TreeCountNode {
+  children: TreeCountNode[];
+}
+
+const countTreeNodes = (node: TreeCountNode): number =>
+  1 + node.children.reduce((total, child) => total + countTreeNodes(child), 0);
+
+export const createAgentRunTreeSnapshot = async (
+  store: AgentRunStore,
+  runId: string
+): Promise<AgentRunTreeSnapshot | undefined> => {
+  requireParentLookup(store);
+  const rootState = await loadRunTree(store, runId);
+  if (!rootState) {
+    return undefined;
+  }
+
+  const root = await buildTreeNode(store, rootState, new Set([rootState.runId]));
+  return {
+    root,
+    totalRuns: countTreeNodes(root)
+  };
+};
+
+const buildTraceNode = async (
+  store: AgentRunStore,
+  state: AgentRunState,
+  options: AgentTraceOptions,
+  visited: Set<string>
+): Promise<HierarchicalAgentTraceNode> => {
+  const childStates = await store.findByParentRunId?.(state.runId) ?? [];
+  const children: HierarchicalAgentTraceNode[] = [];
+  for (const childState of childStates) {
+    if (visited.has(childState.runId)) {
+      continue;
+    }
+    visited.add(childState.runId);
+    children.push(await buildTraceNode(store, childState, options, visited));
+  }
+
+  return {
+    trace: createAgentTraceArtifact(state, options),
+    children
+  };
+};
+
+export const createHierarchicalAgentTrace = async (
+  store: AgentRunStore,
+  runId: string,
+  options: AgentTraceOptions = {}
+): Promise<HierarchicalAgentTrace | undefined> => {
+  requireParentLookup(store);
+  const rootState = await loadRunTree(store, runId);
+  if (!rootState) {
+    return undefined;
+  }
+
+  const root = await buildTraceNode(store, rootState, options, new Set([rootState.runId]));
+  return {
+    root,
+    totalRuns: countTreeNodes(root)
+  };
+};
 
 export const estimateTokenCost = (
   usage: TokenUsage | undefined,
@@ -369,6 +517,7 @@ export const summarizeAgentTrace = (
       durationMs: trace.durationMs
     },
     steps: trace.steps.length,
+    childRuns: trace.childRuns?.length ?? 0,
     toolCalls: trace.steps.reduce((total, step) => total + step.toolCalls.length, 0),
     toolErrors: toolResults.filter((result) => result.isError).length,
     approvals: trace.approvals.length,

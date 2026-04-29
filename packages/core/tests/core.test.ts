@@ -20,6 +20,7 @@ import {
   createProviderSupportDriftReport,
   createRedactionPolicy,
   createSafetyPolicy,
+  createSubAgentTool,
   createTelemetryMiddleware,
   createToolRegistry,
   createToolPermissionPreset,
@@ -71,7 +72,7 @@ import {
   toToolSet,
   user
 } from "../src/index.js";
-import type { EmbeddingModel, ImageGenerationModel, LanguageModel, MusicGenerationModel, PredictionModel, ProviderAdapter, StreamEvent, ToolSet, VideoGenerationModel } from "../src/index.js";
+import type { AgentRunState, EmbeddingModel, ImageGenerationModel, LanguageModel, MusicGenerationModel, PredictionModel, ProviderAdapter, StreamEvent, ToolSet, VideoGenerationModel } from "../src/index.js";
 import { UnsupportedFeatureError, ValidationError } from "../src/index.js";
 
 const createLanguageModel = (overrides?: Partial<LanguageModel>): LanguageModel => ({
@@ -355,6 +356,34 @@ describe("core helpers", () => {
     expect(Object.keys(toToolSet(merged) ?? {})).toEqual(["weather", "web"]);
   });
 
+  it("creates standalone subagent tools", async () => {
+    const subagentTool = createSubAgentTool({
+      agent: createAgent({
+        id: "helper",
+        model: createLanguageModel({
+          async generate() {
+            return {
+              messages: [createTextMessage("assistant", "subagent output")],
+              text: "subagent output"
+            };
+          }
+        })
+      }),
+      parentRunId: "parent-run",
+      name: "helper"
+    });
+
+    const output = await subagentTool.execute({ prompt: "help" });
+
+    expect(subagentTool.metadata).toMatchObject({ type: "subagent", parentRunId: "parent-run" });
+    expect(output).toMatchObject({
+      agentId: "helper",
+      parentRunId: "parent-run",
+      status: "completed",
+      outputText: "subagent output"
+    });
+  });
+
   it("creates advanced tool registries with audit metadata and compatible tool sets", () => {
     const weather = tool({
       name: "weather",
@@ -489,6 +518,90 @@ describe("core helpers", () => {
 
     expect(result.status).toBe("failed");
     expect(result.error?.message).toContain("maxTotalTokens limit 1");
+  });
+
+  it("applies budget guards across parent and child runs by default", () => {
+    const state = {
+      schemaVersion: 1,
+      runId: "parent",
+      provider: "test",
+      modelId: "model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [{ toolCallId: "parent-tool", toolName: "parent", isError: true }],
+      currentStep: 1,
+      maxSteps: 5,
+      outputText: "",
+      usage: { totalTokens: 4 },
+      pendingApprovals: [],
+      childRuns: [
+        {
+          runId: "child",
+          parentRunId: "parent",
+          status: "completed",
+          outputText: "child",
+          steps: 2,
+          toolCalls: 3,
+          toolErrors: 1,
+          usage: { totalTokens: 8 }
+        }
+      ]
+    } satisfies AgentRunState;
+
+    const stepGuard = createBudgetGuard({ maxSteps: 2 });
+    const toolGuard = createBudgetGuard({ maxToolCalls: 2 });
+    const errorGuard = createBudgetGuard({ maxToolErrors: 1 });
+    const tokenGuard = createBudgetGuard({ maxTotalTokens: 10 });
+
+    expect(stepGuard.outputGuardrail({ runId: "parent", state, output: { usage: state.usage } as never })?.reason).toContain("including child runs");
+    expect(toolGuard.outputGuardrail({ runId: "parent", state, output: { usage: state.usage } as never })?.metadata).toMatchObject({
+      budgetLimit: "maxToolCalls",
+      actual: 3,
+      includeChildRuns: true
+    });
+    expect(errorGuard.outputGuardrail({ runId: "parent", state, output: { usage: state.usage } as never })?.metadata).toMatchObject({
+      budgetLimit: "maxToolErrors",
+      actual: 2
+    });
+    expect(tokenGuard.outputGuardrail({ runId: "parent", state, output: { usage: state.usage } as never })?.metadata).toMatchObject({
+      budgetLimit: "maxTotalTokens",
+      actual: 12
+    });
+  });
+
+  it("can evaluate budget guards against the parent run only", () => {
+    const state = {
+      schemaVersion: 1,
+      runId: "parent",
+      provider: "test",
+      modelId: "model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 1,
+      maxSteps: 5,
+      outputText: "",
+      usage: { totalTokens: 4 },
+      pendingApprovals: [],
+      childRuns: [
+        {
+          runId: "child",
+          parentRunId: "parent",
+          status: "completed",
+          outputText: "child",
+          steps: 5,
+          toolCalls: 5,
+          toolErrors: 5,
+          usage: { totalTokens: 100 }
+        }
+      ]
+    } satisfies AgentRunState;
+
+    const guard = createBudgetGuard({ maxTotalTokens: 10, includeChildRuns: false });
+
+    expect(guard.outputGuardrail({ runId: "parent", state, output: { usage: state.usage } as never })).toBeUndefined();
   });
 
   it("blocks sensitive tools when an agent uses review-sensitive safety policy", async () => {

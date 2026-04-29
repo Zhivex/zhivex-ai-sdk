@@ -209,6 +209,20 @@ These are the opportunities where TypeScript can surpass Python rather than just
 - token cost estimates
 - latency and run summaries
 
+### Phase 6: Native subagent orchestration - complete
+
+- `AgentDefinition.subagents` exposes specialist agents as compatible callable tools.
+- `createSubAgentTool()` supports standalone subagent tool composition.
+- Parent states record `childRuns`, and child states preserve `parentRunId`.
+- Replay and trace artifacts include subagent child-run links.
+- shared budgets include child-run metrics by default
+- built-in stores support parent/child lookup
+- `cancelAgentRunTree()` provides durable cascade cancellation
+- hierarchical tree snapshots and traces export full parent/child run trees
+- evaluation helpers include child-run expectations and report totals
+- `runAgentGroup()` supports explicit parallel fan-out from application code
+- `prepareSubagentsForAgent()` shares operational defaults without mutating definitions
+
 ## Proposed Definition Of Done
 
 The TypeScript SDK should be considered at least equal to Python when all of the following are true:
@@ -230,6 +244,7 @@ The TypeScript SDK should be considered better than Python when, in addition:
 - safety policies are reusable SDK primitives instead of downstream glue
 - trace/cost summaries are reusable SDK primitives instead of downstream glue
 - provider parity rendering and drift reports are reusable SDK primitives
+- native subagent orchestration is available without building a separate control plane
 - app teams can build production agent systems with less custom glue code
 
 ## Recommended Immediate Next Steps

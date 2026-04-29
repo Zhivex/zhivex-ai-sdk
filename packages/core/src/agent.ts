@@ -2,11 +2,17 @@ import { createAgentApprovalMessage, getAgentApprovalRequests } from "./agent-ap
 import { createAgentHandoffMessage } from "./agent-handoff.js";
 import { GuardrailTriggeredError, ValidationError } from "./errors.js";
 import { generateText, normalizeMessages, streamText } from "./generate-text.js";
+import { serializeJsonValue } from "./messages.js";
 import { toToolSet } from "./tool-registry.js";
+import { z } from "zod";
 import type {
+  AgentChildRun,
   AgentApprovalRequest,
   AgentApprovalResponse,
   AgentDefinition,
+  AgentGroupMember,
+  AgentGroupRunInput,
+  AgentGroupRunOutput,
   AgentGuardrailTrigger,
   AgentInputGuardrail,
   AgentOutputGuardrail,
@@ -15,6 +21,7 @@ import type {
   AgentRunOutput,
   AgentRunStore,
   AgentRunState,
+  AgentRunTreeCancellationResult,
   AgentStep,
   AgentStepRequest,
   AgentStepResponse,
@@ -22,6 +29,7 @@ import type {
   AgentStreamEvent,
   AgentStreamResult,
   AgentTelemetryEvent,
+  CreateSubAgentToolOptions,
   GenerateTextOptions,
   GenerateTextOutput,
   GenerateTextStep,
@@ -29,9 +37,13 @@ import type {
   LanguageModel,
   ModelGenerateInput,
   ModelMessage,
+  PrepareSubagentsForAgentOptions,
   ProviderOptions,
+  SubAgentToolInput,
+  SubAgentToolOutput,
   ToolApprovalDecision,
   ToolApprovalEvent,
+  ToolDefinition,
   ToolExecutionResult
 } from "./types.js";
 
@@ -130,6 +142,7 @@ const createBaseState = (
   agentId: string | undefined,
   runId: string,
   handoff: AgentRunInput["handoff"],
+  parentRunId: string | undefined,
   idempotencyKey: string | undefined
 ): AgentRunState => {
   const startedAt = Date.now();
@@ -139,7 +152,7 @@ const createBaseState = (
     runId,
     idempotencyKey,
     agentId,
-    parentRunId: handoff?.fromRunId,
+    parentRunId: parentRunId ?? handoff?.fromRunId,
     provider,
     modelId,
     status: "running",
@@ -316,6 +329,105 @@ const emitTelemetryEvent = async <TModel extends LanguageModel>(
   await agent.onTelemetryEvent?.(event);
 };
 
+const subAgentToolInputSchema = z.object({
+  prompt: z.string().min(1),
+  system: z.string().optional()
+});
+
+const defaultSubAgentToolName = (agent: AgentDefinition): string => {
+  const id = agent.id ?? `${agent.model.provider}_${agent.model.modelId}`;
+  return `subagent_${id.replace(/[^A-Za-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "agent"}`;
+};
+
+const countToolCallsInSteps = (steps: AgentStep[]): number =>
+  steps.reduce((total, step) => total + countToolCalls(step.response?.messages ?? []), 0);
+
+const countToolErrors = (toolResults: ToolExecutionResult[]): number =>
+  toolResults.filter((result) => result.isError).length;
+
+export const createSubAgentTool = <TModel extends LanguageModel>(
+  options: CreateSubAgentToolOptions<TModel>
+): ToolDefinition<typeof subAgentToolInputSchema, SubAgentToolOutput> => {
+  const toolName = options.toolName ?? options.name ?? defaultSubAgentToolName(options.agent);
+  const metadata: Record<string, JsonValue> = {
+    type: "subagent"
+  };
+  if (options.agent.id) {
+    metadata.childAgentId = options.agent.id;
+  }
+  if (options.parentRunId) {
+    metadata.parentRunId = options.parentRunId;
+  }
+  if (options.parentAgentId) {
+    metadata.parentAgentId = options.parentAgentId;
+  }
+
+  return {
+    name: toolName,
+    description:
+      options.description ??
+      `Delegate the task to ${options.agent.id ? `subagent "${options.agent.id}"` : "a subagent"} and return its result.`,
+    schema: subAgentToolInputSchema,
+    requiresApproval: options.requiresApproval,
+    metadata: cloneMetadata(metadata, options.metadata),
+    execute: async (input: SubAgentToolInput) => {
+      await options.onStart?.({
+        toolName,
+        childAgentId: options.agent.id,
+        parentRunId: options.parentRunId
+      });
+      const childMetadata: Record<string, JsonValue> = {
+        subagentToolName: toolName
+      };
+      if (options.parentRunId) {
+        childMetadata.parentRunId = options.parentRunId;
+      }
+      if (options.parentAgentId) {
+        childMetadata.parentAgentId = options.parentAgentId;
+      }
+      const output = await runAgent(options.agent, {
+        prompt: input.prompt,
+        system: joinInstructions(options.system, input.system),
+        parentRunId: options.parentRunId,
+        maxSteps: options.maxSteps,
+        metadata: cloneMetadata(options.metadata, childMetadata)
+      });
+      const childRun: AgentChildRun = {
+        runId: output.state.runId,
+        status: output.status,
+        outputText: output.outputText,
+        steps: output.state.currentStep,
+        toolCalls: countToolCallsInSteps(output.steps),
+        toolErrors: countToolErrors(output.toolResults)
+      };
+      if (output.state.agentId) {
+        childRun.agentId = output.state.agentId;
+      }
+      if (options.parentRunId) {
+        childRun.parentRunId = options.parentRunId;
+      }
+      childRun.toolName = toolName;
+      if (output.usage) {
+        childRun.usage = output.usage;
+      }
+      if (output.state.startedAt !== undefined) {
+        childRun.startedAt = output.state.startedAt;
+      }
+      if (output.state.updatedAt !== undefined) {
+        childRun.updatedAt = output.state.updatedAt;
+      }
+      if (output.error) {
+        childRun.error = output.error;
+      }
+      if (output.state.metadata) {
+        childRun.metadata = output.state.metadata;
+      }
+      await options.onFinish?.(childRun);
+      return serializeJsonValue(childRun) as SubAgentToolOutput;
+    }
+  };
+};
+
 const persistState = async <TModel extends LanguageModel>(agent: AgentDefinition<TModel>, state: AgentRunState) => {
   state.updatedAt = Date.now();
   await agent.store?.save(cloneState(state));
@@ -465,6 +577,7 @@ const resolveContext = async <TModel extends LanguageModel>(
         schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
         idempotencyKey: loadedState.idempotencyKey ?? input.idempotencyKey,
         agentId: loadedState.agentId ?? agent.id,
+        parentRunId: loadedState.parentRunId ?? input.parentRunId,
         provider: agent.model.provider,
         modelId: agent.model.modelId,
         maxSteps,
@@ -493,6 +606,7 @@ const resolveContext = async <TModel extends LanguageModel>(
       agent.id,
       runId,
       input.handoff,
+      input.parentRunId,
       input.idempotencyKey
     ),
     messages: prepared.messages,
@@ -507,26 +621,60 @@ const createGenerateOptions = <TModel extends LanguageModel>(
   input: AgentRunInput<TModel>,
   messages: ModelMessage[],
   maxSteps: number
-): GenerateTextOptions<TModel> => ({
-  model: agent.model,
-  messages,
-  tools: toToolSet(input.tools ?? agent.tools),
-  toolChoice: input.toolChoice,
-  toolExecution: input.toolExecution ?? agent.toolExecution,
-  toolApprovalPolicy: input.toolApprovalPolicy ?? agent.toolApprovalPolicy,
-  onToolApprovalDecision: async (event) => {
-    await emitToolApprovalTelemetry(agent, state, event);
-  },
-  maxSteps,
-  temperature: input.temperature ?? agent.temperature,
-  maxTokens: input.maxTokens ?? agent.maxTokens,
-  reasoning: input.reasoning ?? agent.reasoning,
-  providerOptions: input.providerOptions ?? agent.providerOptions,
-  abortSignal: input.abortSignal,
-  timeoutMs: input.timeoutMs,
-  maxRetries: input.maxRetries,
-  retryBackoffMs: input.retryBackoffMs
-});
+): GenerateTextOptions<TModel> => {
+  const tools = { ...(toToolSet(input.tools ?? agent.tools) ?? {}) };
+  for (const subagent of agent.subagents ?? []) {
+    const subagentTool = createSubAgentTool({
+      ...subagent,
+      parentRunId: state.runId,
+      parentAgentId: state.agentId,
+      onStart: async ({ toolName, childAgentId }) => {
+        await emitTelemetryEvent(agent, {
+          type: "subagent-start",
+          runId: state.runId,
+          agentId: state.agentId,
+          childAgentId,
+          toolName
+        });
+      },
+      onFinish: async (childRun) => {
+        state.childRuns = [...(state.childRuns ?? []), childRun];
+        await emitTelemetryEvent(agent, {
+          type: "subagent-finish",
+          runId: state.runId,
+          agentId: state.agentId,
+          childRun
+        });
+      }
+    });
+    if (tools[subagentTool.name]) {
+      throw new ValidationError(`Subagent tool "${subagentTool.name}" conflicts with an existing tool.`);
+    }
+    tools[subagentTool.name] = subagentTool;
+  }
+  const finalTools = Object.keys(tools).length ? tools : undefined;
+
+  return {
+    model: agent.model,
+    messages,
+    tools: finalTools,
+    toolChoice: input.toolChoice,
+    toolExecution: input.toolExecution ?? agent.toolExecution,
+    toolApprovalPolicy: input.toolApprovalPolicy ?? agent.toolApprovalPolicy,
+    onToolApprovalDecision: async (event) => {
+      await emitToolApprovalTelemetry(agent, state, event);
+    },
+    maxSteps,
+    temperature: input.temperature ?? agent.temperature,
+    maxTokens: input.maxTokens ?? agent.maxTokens,
+    reasoning: input.reasoning ?? agent.reasoning,
+    providerOptions: input.providerOptions ?? agent.providerOptions,
+    abortSignal: input.abortSignal,
+    timeoutMs: input.timeoutMs,
+    maxRetries: input.maxRetries,
+    retryBackoffMs: input.retryBackoffMs
+  };
+};
 
 const emptyAsyncIterable = async function* () {
   return;
@@ -604,6 +752,83 @@ export const createAgent = <TModel extends AgentDefinition["model"]>(
   metadata: cloneMetadata(definition.metadata)
 });
 
+export const prepareSubagentsForAgent = <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  options: PrepareSubagentsForAgentOptions = {}
+): AgentDefinition<TModel> => {
+  const store = options.store ?? agent.store;
+  const memory = options.memory ?? agent.memory;
+  const onTelemetryEvent = options.onTelemetryEvent ?? agent.onTelemetryEvent;
+  const toolApprovalPolicy = options.toolApprovalPolicy ?? agent.toolApprovalPolicy;
+  const toolExecution = options.toolExecution ?? agent.toolExecution;
+  const defaultMetadata = cloneMetadata(agent.metadata, options.metadata);
+
+  return {
+    ...agent,
+    metadata: cloneMetadata(agent.metadata),
+    subagents: (agent.subagents ?? []).map((subagent) => ({
+      ...subagent,
+      metadata: cloneMetadata(defaultMetadata, subagent.metadata),
+      agent: {
+        ...subagent.agent,
+        store: subagent.agent.store ?? store,
+        memory: subagent.agent.memory ?? memory,
+        onTelemetryEvent: subagent.agent.onTelemetryEvent ?? onTelemetryEvent,
+        toolApprovalPolicy: subagent.agent.toolApprovalPolicy ?? toolApprovalPolicy,
+        toolExecution: subagent.agent.toolExecution ?? toolExecution,
+        metadata: cloneMetadata(defaultMetadata, subagent.agent.metadata)
+      }
+    }))
+  };
+};
+
+export const runAgentGroup = async (
+  agents: AgentGroupMember[],
+  input: AgentGroupRunInput = {}
+): Promise<AgentGroupRunOutput> => {
+  const { stopOnError, runId: _runId, state: _state, approvals: _approvals, handoff: _handoff, ...sharedInput } = input;
+  const parentRunId = input.parentRunId;
+  const runs = agents.map((member) => {
+    const runInput = {
+      ...sharedInput,
+      ...(member.input ?? {}),
+      parentRunId: member.input?.parentRunId ?? parentRunId,
+      metadata: cloneMetadata(input.metadata, member.input?.metadata, {
+        ...(member.name ? { agentGroupMember: member.name } : {})
+      })
+    } as AgentRunInput;
+    return runAgent(member.agent, runInput);
+  });
+  const settled = await Promise.allSettled(runs);
+  const outputs = settled.map((result, index) => {
+    const member = agents[index]!;
+    if (result.status === "fulfilled") {
+      return {
+        name: member.name,
+        agentId: result.value.state.agentId ?? member.agent.id,
+        status: "fulfilled" as const,
+        output: result.value
+      };
+    }
+
+    return {
+      name: member.name,
+      agentId: member.agent.id,
+      status: "rejected" as const,
+      error: {
+        message: result.reason instanceof Error ? result.reason.message : String(result.reason)
+      }
+    };
+  });
+  const failed = outputs.some((output) => output.status === "rejected" || output.output?.status === "failed");
+
+  return {
+    status: stopOnError && failed ? "failed" : failed ? "failed" : "completed",
+    parentRunId,
+    outputs
+  };
+};
+
 export const cancelAgentRun = async (
   store: AgentRunStore,
   runId: string,
@@ -625,6 +850,63 @@ export const cancelAgentRun = async (
   });
   await store.save(cloneState(state));
   return cloneState(state);
+};
+
+export const cancelAgentRunTree = async (
+  store: AgentRunStore,
+  runId: string,
+  options: AgentRunCancellationOptions = {}
+): Promise<AgentRunTreeCancellationResult> => {
+  if (!store.findByParentRunId) {
+    throw new ValidationError('The agent run "store" must implement "findByParentRunId()" to cancel an agent run tree.');
+  }
+
+  const cancelledAt = Date.now();
+  const cancelState = (state: AgentRunState): AgentRunState =>
+    normalizeRunState({
+      ...state,
+      status: "cancelled",
+      cancelledAt,
+      cancellationReason: options.reason,
+      updatedAt: cancelledAt,
+      error: undefined
+    });
+
+  const parent = await store.load(runId);
+  if (!parent) {
+    return {
+      parent: undefined,
+      children: []
+    };
+  }
+
+  const visited = new Set<string>([runId]);
+  const children: AgentRunState[] = [];
+  const collectChildren = async (parentRunId: string): Promise<void> => {
+    const directChildren = await store.findByParentRunId?.(parentRunId);
+    for (const child of directChildren ?? []) {
+      if (visited.has(child.runId)) {
+        continue;
+      }
+      visited.add(child.runId);
+      children.push(child);
+      await collectChildren(child.runId);
+    }
+  };
+
+  await collectChildren(runId);
+
+  const cancelledParent = cancelState(parent);
+  const cancelledChildren = children.map(cancelState);
+  await store.save(cloneState(cancelledParent));
+  for (const child of cancelledChildren) {
+    await store.save(cloneState(child));
+  }
+
+  return {
+    parent: cloneState(cancelledParent),
+    children: cancelledChildren.map(cloneState)
+  };
 };
 
 export const runAgent = async <TModel extends LanguageModel>(
