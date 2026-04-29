@@ -70,6 +70,11 @@ const initializeSqliteTable = (db: SqliteDatabaseLike, sql: string) => {
   db.exec(sql);
 };
 
+const normalizeRunState = (state: AgentRunState): AgentRunState => ({
+  ...state,
+  schemaVersion: 1
+});
+
 const ensurePostgresTable = (() => {
   const initializedTables = new WeakMap<PostgresClientLike, Map<string, Promise<void>>>();
 
@@ -92,16 +97,33 @@ const ensurePostgresTable = (() => {
 
 export const createInMemoryAgentRunStore = (): AgentRunStore => {
   const states = new Map<string, AgentRunState>();
+  const idempotencyKeys = new Map<string, string>();
 
   return {
     load(runId) {
       const state = states.get(runId);
-      return state ? cloneState(state) : undefined;
+      return state ? cloneState(normalizeRunState(state)) : undefined;
+    },
+    findByIdempotencyKey(idempotencyKey) {
+      const runId = idempotencyKeys.get(idempotencyKey);
+      if (!runId) {
+        return undefined;
+      }
+      const state = states.get(runId);
+      return state ? cloneState(normalizeRunState(state)) : undefined;
     },
     save(state) {
-      states.set(state.runId, cloneState(state));
+      const normalized = normalizeRunState(state);
+      states.set(normalized.runId, cloneState(normalized));
+      if (normalized.idempotencyKey) {
+        idempotencyKeys.set(normalized.idempotencyKey, normalized.runId);
+      }
     },
     delete(runId) {
+      const state = states.get(runId);
+      if (state?.idempotencyKey) {
+        idempotencyKeys.delete(state.idempotencyKey);
+      }
       states.delete(runId);
     }
   };
@@ -113,7 +135,7 @@ export const createFileAgentRunStore = (options: {
   async load(runId) {
     try {
       const content = await fs.readFile(path.join(options.directory, `${runId}.json`), "utf8");
-      return JSON.parse(content) as AgentRunState;
+      return normalizeRunState(JSON.parse(content) as AgentRunState);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return undefined;
@@ -121,9 +143,33 @@ export const createFileAgentRunStore = (options: {
       throw error;
     }
   },
+  async findByIdempotencyKey(idempotencyKey) {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(options.directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    }
+
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) {
+        continue;
+      }
+      const content = await fs.readFile(path.join(options.directory, entry), "utf8");
+      const state = normalizeRunState(JSON.parse(content) as AgentRunState);
+      if (state.idempotencyKey === idempotencyKey) {
+        return state;
+      }
+    }
+
+    return undefined;
+  },
   async save(state) {
     await fs.mkdir(options.directory, { recursive: true });
-    await fs.writeFile(path.join(options.directory, `${state.runId}.json`), JSON.stringify(state, null, 2), "utf8");
+    await fs.writeFile(path.join(options.directory, `${state.runId}.json`), JSON.stringify(normalizeRunState(state), null, 2), "utf8");
   },
   async delete(runId) {
     try {
@@ -190,11 +236,20 @@ export const createFileAgentMemoryStore = (options: {
 
 export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): AgentRunStore => {
   const tableName = validateIdentifier(options.tableName ?? "zhivex_agent_runs", "tableName");
+  const idempotencyTableName = `${tableName}_idempotency`;
   initializeSqliteTable(
     options.db,
     `CREATE TABLE IF NOT EXISTS ${tableName} (
       run_id TEXT PRIMARY KEY,
       state_json TEXT NOT NULL,
+      updated_at_ms INTEGER NOT NULL
+    )`
+  );
+  initializeSqliteTable(
+    options.db,
+    `CREATE TABLE IF NOT EXISTS ${idempotencyTableName} (
+      idempotency_key TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
       updated_at_ms INTEGER NOT NULL
     )`
   );
@@ -211,18 +266,44 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
       updated_at_ms = excluded.updated_at_ms
   `);
   const deleteStatement = prepareSqliteStatement(options.db, `DELETE FROM ${tableName} WHERE run_id = ?`);
+  const findIdempotencyStatement = prepareSqliteStatement<{ state_json?: string; stateJson?: string }>(
+    options.db,
+    `SELECT runs.state_json
+     FROM ${tableName} runs
+     INNER JOIN ${idempotencyTableName} keys ON keys.run_id = runs.run_id
+     WHERE keys.idempotency_key = ?`
+  );
+  const saveIdempotencyStatement = prepareSqliteStatement(options.db, `
+    INSERT INTO ${idempotencyTableName} (idempotency_key, run_id, updated_at_ms)
+    VALUES (?, ?, ?)
+    ON CONFLICT(idempotency_key) DO UPDATE SET
+      run_id = excluded.run_id,
+      updated_at_ms = excluded.updated_at_ms
+  `);
+  const deleteIdempotencyStatement = prepareSqliteStatement(options.db, `DELETE FROM ${idempotencyTableName} WHERE run_id = ?`);
 
   return {
     load(runId) {
       const row = loadStatement.get([runId]);
       const stateJson = getRecordField(row, ["state_json", "stateJson"]);
-      return typeof stateJson === "string" ? (JSON.parse(stateJson) as AgentRunState) : undefined;
+      return typeof stateJson === "string" ? normalizeRunState(JSON.parse(stateJson) as AgentRunState) : undefined;
+    },
+    findByIdempotencyKey(idempotencyKey) {
+      const row = findIdempotencyStatement.get([idempotencyKey]);
+      const stateJson = getRecordField(row, ["state_json", "stateJson"]);
+      return typeof stateJson === "string" ? normalizeRunState(JSON.parse(stateJson) as AgentRunState) : undefined;
     },
     save(state) {
-      saveStatement.run([state.runId, JSON.stringify(state), Date.now()]);
+      const normalized = normalizeRunState(state);
+      const updatedAt = Date.now();
+      saveStatement.run([normalized.runId, JSON.stringify(normalized), updatedAt]);
+      if (normalized.idempotencyKey) {
+        saveIdempotencyStatement.run([normalized.idempotencyKey, normalized.runId, updatedAt]);
+      }
     },
     delete(runId) {
       deleteStatement.run([runId]);
+      deleteIdempotencyStatement.run([runId]);
     }
   };
 };
@@ -267,10 +348,18 @@ export const createSqliteAgentMemoryStore = (options: SqliteAgentMemoryStoreOpti
 
 export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOptions): AgentRunStore => {
   const tableName = validateIdentifier(options.tableName ?? "zhivex_agent_runs", "tableName");
+  const idempotencyTableName = `${tableName}_idempotency`;
   const createSql = `
     CREATE TABLE IF NOT EXISTS ${tableName} (
       run_id TEXT PRIMARY KEY,
       state_json JSONB NOT NULL,
+      updated_at_ms BIGINT NOT NULL
+    )
+  `;
+  const createIdempotencySql = `
+    CREATE TABLE IF NOT EXISTS ${idempotencyTableName} (
+      idempotency_key TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
       updated_at_ms BIGINT NOT NULL
     )
   `;
@@ -282,22 +371,51 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
         `SELECT state_json FROM ${tableName} WHERE run_id = $1`,
         [runId]
       );
-      return result.rows[0] ? ((getRecordField(result.rows[0], ["state_json", "stateJson"]) as AgentRunState | undefined) ?? undefined) : undefined;
+      const state = result.rows[0] ? ((getRecordField(result.rows[0], ["state_json", "stateJson"]) as AgentRunState | undefined) ?? undefined) : undefined;
+      return state ? normalizeRunState(state) : undefined;
+    },
+    async findByIdempotencyKey(idempotencyKey) {
+      await ensurePostgresTable(options.client, tableName, createSql);
+      await ensurePostgresTable(options.client, idempotencyTableName, createIdempotencySql);
+      const result = await options.client.query<{ state_json?: AgentRunState; stateJson?: AgentRunState }>(
+        `SELECT runs.state_json
+         FROM ${tableName} runs
+         INNER JOIN ${idempotencyTableName} keys ON keys.run_id = runs.run_id
+         WHERE keys.idempotency_key = $1`,
+        [idempotencyKey]
+      );
+      const state = result.rows[0] ? ((getRecordField(result.rows[0], ["state_json", "stateJson"]) as AgentRunState | undefined) ?? undefined) : undefined;
+      return state ? normalizeRunState(state) : undefined;
     },
     async save(state) {
       await ensurePostgresTable(options.client, tableName, createSql);
+      await ensurePostgresTable(options.client, idempotencyTableName, createIdempotencySql);
+      const normalized = normalizeRunState(state);
+      const updatedAt = Date.now();
       await options.client.query(
         `INSERT INTO ${tableName} (run_id, state_json, updated_at_ms)
          VALUES ($1, $2::jsonb, $3)
          ON CONFLICT(run_id) DO UPDATE SET
            state_json = EXCLUDED.state_json,
            updated_at_ms = EXCLUDED.updated_at_ms`,
-        [state.runId, JSON.stringify(state), Date.now()]
+        [normalized.runId, JSON.stringify(normalized), updatedAt]
       );
+      if (normalized.idempotencyKey) {
+        await options.client.query(
+          `INSERT INTO ${idempotencyTableName} (idempotency_key, run_id, updated_at_ms)
+           VALUES ($1, $2, $3)
+           ON CONFLICT(idempotency_key) DO UPDATE SET
+             run_id = EXCLUDED.run_id,
+             updated_at_ms = EXCLUDED.updated_at_ms`,
+          [normalized.idempotencyKey, normalized.runId, updatedAt]
+        );
+      }
     },
     async delete(runId) {
       await ensurePostgresTable(options.client, tableName, createSql);
+      await ensurePostgresTable(options.client, idempotencyTableName, createIdempotencySql);
       await options.client.query(`DELETE FROM ${tableName} WHERE run_id = $1`, [runId]);
+      await options.client.query(`DELETE FROM ${idempotencyTableName} WHERE run_id = $1`, [runId]);
     }
   };
 };

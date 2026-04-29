@@ -52,6 +52,8 @@ For stable public APIs, support means:
 - test coverage for the shared contract
 - explicit release notes for observable behavior changes
 - provider capability signaling when a feature is unsupported
+- compatible durability primitives for built-in agent stores, including schema-versioned state, idempotency-key lookup, and cooperative cancellation
+- stable safety policy helpers for approvals, redaction, budget limits, and provider capability inspection
 
 For provider adapters, support means:
 
@@ -74,6 +76,8 @@ For production adoption:
 
 - prefer `@zhivex-ai/sdk` unless you need lower-level composition
 - choose providers based on the README capability matrix, not package presence alone
+- use `inspectProviderAgentSupport()` or `createProviderSupportMatrix()` when provider/model choices need runtime validation
+- wrap production agents with `createSafetyPolicy()` when tool side effects, secrets, or token budgets matter
 - isolate Tier C or provider-specific escape hatches behind your own service boundary
 - review changesets and release notes when upgrading shared contracts in `@zhivex-ai/core`
 

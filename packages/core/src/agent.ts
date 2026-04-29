@@ -10,8 +10,10 @@ import type {
   AgentGuardrailTrigger,
   AgentInputGuardrail,
   AgentOutputGuardrail,
+  AgentRunCancellationOptions,
   AgentRunInput,
   AgentRunOutput,
+  AgentRunStore,
   AgentRunState,
   AgentStep,
   AgentStepRequest,
@@ -34,6 +36,7 @@ import type {
 } from "./types.js";
 
 const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+const AGENT_RUN_STATE_SCHEMA_VERSION = 1;
 
 const joinInstructions = (...parts: Array<string | undefined>): string | undefined => {
   const content = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
@@ -110,7 +113,13 @@ const toOutput = (state: AgentRunState): AgentRunOutput => ({
   error: state.error
 });
 
-const cloneState = (state: AgentRunState): AgentRunState => JSON.parse(JSON.stringify(state)) as AgentRunState;
+const normalizeRunState = (state: AgentRunState): AgentRunState => ({
+  ...state,
+  schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION
+});
+
+const cloneState = (state: AgentRunState): AgentRunState =>
+  JSON.parse(JSON.stringify(normalizeRunState(state))) as AgentRunState;
 
 const createBaseState = (
   provider: string,
@@ -120,12 +129,15 @@ const createBaseState = (
   metadata: Record<string, JsonValue> | undefined,
   agentId: string | undefined,
   runId: string,
-  handoff: AgentRunInput["handoff"]
+  handoff: AgentRunInput["handoff"],
+  idempotencyKey: string | undefined
 ): AgentRunState => {
   const startedAt = Date.now();
 
   return {
+    schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
     runId,
+    idempotencyKey,
     agentId,
     parentRunId: handoff?.fromRunId,
     provider,
@@ -156,6 +168,20 @@ const ensureValidStateInput = (input: AgentRunInput) => {
 
   if (input.prompt !== undefined || input.messages !== undefined || input.system !== undefined || input.handoff !== undefined) {
     throw new ValidationError('Pass either "state" or a fresh "prompt"/"messages" input, but not both.');
+  }
+};
+
+const ensureValidIdempotencyInput = (input: AgentRunInput, store: AgentRunStore | undefined) => {
+  if (!input.idempotencyKey) {
+    return;
+  }
+
+  if (!store) {
+    throw new ValidationError('The "idempotencyKey" option requires an agent run "store".');
+  }
+
+  if (!store.findByIdempotencyKey) {
+    throw new ValidationError('The agent run "store" must implement "findByIdempotencyKey()" to use "idempotencyKey".');
   }
 };
 
@@ -402,12 +428,30 @@ const resolveContext = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   input: AgentRunInput<TModel>
 ) => {
-  let loadedState = input.state;
+  ensureValidIdempotencyInput(input, agent.store);
+
+  let loadedState = input.state ? normalizeRunState(input.state) : undefined;
+  let loadedByIdempotencyKey = false;
+  if (!loadedState && input.idempotencyKey) {
+    loadedState = await agent.store?.findByIdempotencyKey?.(input.idempotencyKey);
+    if (loadedState) {
+      loadedState = normalizeRunState(loadedState);
+      loadedByIdempotencyKey = true;
+    }
+  }
   if (!loadedState && input.runId && agent.store) {
     loadedState = await agent.store.load(input.runId);
+    if (loadedState) {
+      loadedState = normalizeRunState(loadedState);
+    }
   }
 
-  const normalizedInput = loadedState ? { ...input, state: loadedState } : input;
+  const normalizedInput =
+    loadedState && loadedByIdempotencyKey
+      ? { ...input, prompt: undefined, messages: undefined, system: undefined, handoff: undefined, state: loadedState }
+      : loadedState
+        ? { ...input, state: loadedState }
+        : input;
   ensureValidStateInput(normalizedInput);
 
   const metadata = cloneMetadata(agent.metadata, loadedState?.metadata, input.metadata, input.handoff?.metadata);
@@ -418,6 +462,8 @@ const resolveContext = async <TModel extends LanguageModel>(
     return {
       state: {
         ...loadedState,
+        schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
+        idempotencyKey: loadedState.idempotencyKey ?? input.idempotencyKey,
         agentId: loadedState.agentId ?? agent.id,
         provider: agent.model.provider,
         modelId: agent.model.modelId,
@@ -438,7 +484,17 @@ const resolveContext = async <TModel extends LanguageModel>(
   const prepared = await prepareFreshMessages(agent, input, runId);
 
   return {
-    state: createBaseState(agent.model.provider, agent.model.modelId, prepared.messages, maxSteps, metadata, agent.id, runId, input.handoff),
+    state: createBaseState(
+      agent.model.provider,
+      agent.model.modelId,
+      prepared.messages,
+      maxSteps,
+      metadata,
+      agent.id,
+      runId,
+      input.handoff,
+      input.idempotencyKey
+    ),
     messages: prepared.messages,
     remainingSteps: maxSteps,
     memoryMessages: prepared.memoryMessages
@@ -547,6 +603,29 @@ export const createAgent = <TModel extends AgentDefinition["model"]>(
   ...definition,
   metadata: cloneMetadata(definition.metadata)
 });
+
+export const cancelAgentRun = async (
+  store: AgentRunStore,
+  runId: string,
+  options: AgentRunCancellationOptions = {}
+): Promise<AgentRunState | undefined> => {
+  const loadedState = await store.load(runId);
+  if (!loadedState) {
+    return undefined;
+  }
+
+  const cancelledAt = Date.now();
+  const state = normalizeRunState({
+    ...loadedState,
+    status: "cancelled",
+    cancelledAt,
+    cancellationReason: options.reason,
+    updatedAt: cancelledAt,
+    error: undefined
+  });
+  await store.save(cloneState(state));
+  return cloneState(state);
+};
 
 export const runAgent = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,

@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import {
   agentApprovalResponsePart,
+  cancelAgentRun,
   createAgent,
   createAgentHandoff,
   createAgentApprovalMessage,
@@ -25,6 +26,7 @@ import {
   toUIAgentStreamResponse,
   toUIMessageStream,
   tool,
+  ValidationError,
   type AgentRunState,
   type PostgresClientLike,
   type LanguageModel,
@@ -71,6 +73,7 @@ const createLanguageModel = (overrides?: Partial<LanguageModel>): LanguageModel 
 class FakeSqliteDatabase implements SqliteDatabaseLike {
   private runTables = new Map<string, Map<string, string>>();
   private memoryTables = new Map<string, Map<string, string>>();
+  private idempotencyTables = new Map<string, Map<string, string>>();
 
   exec(sql: string) {
     const match = sql.match(/CREATE TABLE IF NOT EXISTS\s+([A-Za-z_][A-Za-z0-9_]*)/i);
@@ -79,6 +82,11 @@ class FakeSqliteDatabase implements SqliteDatabaseLike {
     }
 
     const tableName = match[1]!;
+    if (sql.includes("idempotency_key")) {
+      this.idempotencyTables.set(tableName, this.idempotencyTables.get(tableName) ?? new Map());
+      return;
+    }
+
     if (sql.includes("run_id")) {
       this.runTables.set(tableName, this.runTables.get(tableName) ?? new Map());
       return;
@@ -96,6 +104,11 @@ class FakeSqliteDatabase implements SqliteDatabaseLike {
 
         if (insertMatch) {
           const tableName = insertMatch[1]!;
+          if (sql.includes("idempotency_key")) {
+            this.idempotencyTables.get(tableName)?.set(String(values[0]), String(values[1]));
+            return;
+          }
+
           if (sql.includes("run_id")) {
             this.runTables.get(tableName)?.set(String(values[0]), String(values[1]));
             return;
@@ -106,7 +119,19 @@ class FakeSqliteDatabase implements SqliteDatabaseLike {
         }
 
         if (deleteMatch) {
-          this.runTables.get(deleteMatch[1]!)?.delete(String(values[0]));
+          const tableName = deleteMatch[1]!;
+          if (this.idempotencyTables.has(tableName)) {
+            const runId = String(values[0]);
+            const table = this.idempotencyTables.get(tableName);
+            for (const [key, mappedRunId] of table ?? []) {
+              if (mappedRunId === runId) {
+                table?.delete(key);
+              }
+            }
+            return;
+          }
+
+          this.runTables.get(tableName)?.delete(String(values[0]));
         }
       },
       get: (params?: readonly unknown[]) => {
@@ -117,6 +142,14 @@ class FakeSqliteDatabase implements SqliteDatabaseLike {
         }
 
         const tableName = selectMatch[1]!;
+        if (sql.includes("idempotency_key")) {
+          const joinMatch = sql.match(/JOIN\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+          const idempotencyTableName = joinMatch?.[1];
+          const runId = idempotencyTableName ? this.idempotencyTables.get(idempotencyTableName)?.get(String(values[0])) : undefined;
+          const stateJson = runId ? this.runTables.get(tableName)?.get(runId) : undefined;
+          return stateJson ? ({ state_json: stateJson } as TResult) : undefined;
+        }
+
         if (sql.includes("state_json")) {
           const stateJson = this.runTables.get(tableName)?.get(String(values[0]));
           return stateJson ? ({ state_json: stateJson } as TResult) : undefined;
@@ -132,12 +165,15 @@ class FakeSqliteDatabase implements SqliteDatabaseLike {
 class FakePostgresClient implements PostgresClientLike {
   private runTables = new Map<string, Map<string, AgentRunState>>();
   private memoryTables = new Map<string, Map<string, ModelMessage[]>>();
+  private idempotencyTables = new Map<string, Map<string, string>>();
 
   async query<TResult extends Record<string, unknown> = Record<string, unknown>>(sql: string, params: readonly unknown[] = []) {
     const createMatch = sql.match(/CREATE TABLE IF NOT EXISTS\s+([A-Za-z_][A-Za-z0-9_]*)/i);
     if (createMatch) {
       const tableName = createMatch[1]!;
-      if (sql.includes("run_id")) {
+      if (sql.includes("idempotency_key")) {
+        this.idempotencyTables.set(tableName, this.idempotencyTables.get(tableName) ?? new Map());
+      } else if (sql.includes("run_id")) {
         this.runTables.set(tableName, this.runTables.get(tableName) ?? new Map());
       } else {
         this.memoryTables.set(tableName, this.memoryTables.get(tableName) ?? new Map());
@@ -148,7 +184,9 @@ class FakePostgresClient implements PostgresClientLike {
     const insertMatch = sql.match(/INSERT INTO\s+([A-Za-z_][A-Za-z0-9_]*)/i);
     if (insertMatch) {
       const tableName = insertMatch[1]!;
-      if (sql.includes("run_id")) {
+      if (sql.includes("idempotency_key")) {
+        this.idempotencyTables.get(tableName)?.set(String(params[0]), String(params[1]));
+      } else if (sql.includes("run_id")) {
         this.runTables.get(tableName)?.set(String(params[0]), JSON.parse(String(params[1])) as AgentRunState);
       } else {
         this.memoryTables.get(tableName)?.set(String(params[0]), JSON.parse(String(params[1])) as ModelMessage[]);
@@ -159,6 +197,14 @@ class FakePostgresClient implements PostgresClientLike {
     const selectMatch = sql.match(/SELECT\s+.+\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)/i);
     if (selectMatch) {
       const tableName = selectMatch[1]!;
+      if (sql.includes("idempotency_key")) {
+        const joinMatch = sql.match(/JOIN\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+        const idempotencyTableName = joinMatch?.[1];
+        const runId = idempotencyTableName ? this.idempotencyTables.get(idempotencyTableName)?.get(String(params[0])) : undefined;
+        const state = runId ? this.runTables.get(tableName)?.get(runId) : undefined;
+        return { rows: state ? ([{ state_json: state }] as TResult[]) : [] };
+      }
+
       if (sql.includes("state_json")) {
         const state = this.runTables.get(tableName)?.get(String(params[0]));
         return { rows: state ? ([{ state_json: state }] as TResult[]) : [] };
@@ -170,7 +216,18 @@ class FakePostgresClient implements PostgresClientLike {
 
     const deleteMatch = sql.match(/DELETE FROM\s+([A-Za-z_][A-Za-z0-9_]*)/i);
     if (deleteMatch) {
-      this.runTables.get(deleteMatch[1]!)?.delete(String(params[0]));
+      const tableName = deleteMatch[1]!;
+      if (this.idempotencyTables.has(tableName)) {
+        const runId = String(params[0]);
+        const table = this.idempotencyTables.get(tableName);
+        for (const [key, mappedRunId] of table ?? []) {
+          if (mappedRunId === runId) {
+            table?.delete(key);
+          }
+        }
+      } else {
+        this.runTables.get(tableName)?.delete(String(params[0]));
+      }
     }
 
     return { rows: [] as TResult[] };
@@ -734,6 +791,127 @@ describe("agent runtime", () => {
     expect(reloaded.outputText).toBe("hello world");
   });
 
+  it("reuses existing runs by idempotency key", async () => {
+    let calls = 0;
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({
+      id: "idempotent-agent",
+      model: createLanguageModel({
+        async generate() {
+          calls += 1;
+          return {
+            messages: [createTextMessage("assistant", `call ${calls}`)],
+            text: `call ${calls}`,
+            finishReason: "stop"
+          };
+        }
+      }),
+      store
+    });
+
+    const first = await runAgent(agent, {
+      prompt: "Do this once",
+      idempotencyKey: "agent-run-key-1"
+    });
+    const second = await runAgent(agent, {
+      prompt: "Do this once",
+      idempotencyKey: "agent-run-key-1"
+    });
+
+    expect(first.state.runId).toBe(second.state.runId);
+    expect(second.outputText).toBe("call 1");
+    expect(second.state.schemaVersion).toBe(1);
+    expect(second.state.idempotencyKey).toBe("agent-run-key-1");
+    expect(calls).toBe(1);
+  });
+
+  it("requires a store with idempotency lookup when idempotency keys are used", async () => {
+    const agentWithoutStore = createAgent({
+      id: "no-store-agent",
+      model: createLanguageModel()
+    });
+    await expect(runAgent(agentWithoutStore, { prompt: "once", idempotencyKey: "missing-store" })).rejects.toThrow(
+      ValidationError
+    );
+
+    const agentWithoutLookup = createAgent({
+      id: "custom-store-agent",
+      model: createLanguageModel(),
+      store: {
+        load: () => undefined,
+        save: () => undefined
+      }
+    });
+    await expect(runAgent(agentWithoutLookup, { prompt: "once", idempotencyKey: "missing-lookup" })).rejects.toThrow(
+      ValidationError
+    );
+  });
+
+  it("normalizes legacy run state to schema version 1 when resuming", async () => {
+    const store = createInMemoryAgentRunStore();
+    const legacyState = {
+      runId: "legacy-run",
+      provider: "test",
+      modelId: "agent-model",
+      status: "failed",
+      messages: [createTextMessage("user", "Weather in Madrid?")],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "",
+      pendingApprovals: []
+    } as AgentRunState;
+    await Promise.resolve(store.save(legacyState));
+
+    const result = await runAgent(
+      createAgent({
+        id: "legacy-agent",
+        model: createLanguageModel(),
+        store
+      }),
+      {
+        runId: "legacy-run"
+      }
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.state.schemaVersion).toBe(1);
+    await expect(Promise.resolve(store.load("legacy-run"))).resolves.toMatchObject({ schemaVersion: 1 });
+  });
+
+  it("cancels persisted runs and skips model execution after cancellation", async () => {
+    let calls = 0;
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({
+      id: "cancel-agent",
+      model: createLanguageModel({
+        async generate() {
+          calls += 1;
+          return {
+            messages: [createTextMessage("assistant", "before cancel")],
+            text: "before cancel",
+            finishReason: "stop"
+          };
+        }
+      }),
+      store
+    });
+
+    const first = await runAgent(agent, { prompt: "cancel me later" });
+    const cancelled = await cancelAgentRun(store, first.state.runId, { reason: "User cancelled." });
+    const resumed = await runAgent(agent, { runId: first.state.runId });
+
+    expect(cancelled).toMatchObject({
+      status: "cancelled",
+      schemaVersion: 1,
+      cancellationReason: "User cancelled."
+    });
+    expect(cancelled?.cancelledAt).toBeTypeOf("number");
+    expect(resumed.status).toBe("cancelled");
+    expect(calls).toBe(1);
+  });
+
   it("writes serialized run state to the file-backed store", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-store-"));
     const store = createFileAgentRunStore({ directory });
@@ -753,6 +931,31 @@ describe("agent runtime", () => {
     };
     expect(saved.runId).toBe(result.state.runId);
     expect(saved.outputText).toBe("hello world");
+    await expect(Promise.resolve(store.findByIdempotencyKey?.("missing-key"))).resolves.toBeUndefined();
+  });
+
+  it("looks up and deletes file-backed runs by idempotency key", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-store-"));
+    const store = createFileAgentRunStore({ directory });
+    const result = await runAgent(
+      createAgent({
+        id: "file-idempotency-agent",
+        model: createLanguageModel(),
+        store
+      }),
+      {
+        prompt: "Persist this once",
+        idempotencyKey: "file-key"
+      }
+    );
+
+    await expect(Promise.resolve(store.findByIdempotencyKey?.("file-key"))).resolves.toMatchObject({
+      runId: result.state.runId,
+      schemaVersion: 1
+    });
+
+    await Promise.resolve(store.delete?.(result.state.runId));
+    await expect(Promise.resolve(store.findByIdempotencyKey?.("file-key"))).resolves.toBeUndefined();
   });
 
   it("persists run state through the sqlite-backed store", async () => {
@@ -779,9 +982,37 @@ describe("agent runtime", () => {
 
     expect(loaded?.runId).toBe(first.state.runId);
     expect(loaded?.outputText).toBe("hello world");
+    await expect(Promise.resolve(reloaded.findByIdempotencyKey?.("sqlite-key"))).resolves.toBeUndefined();
 
     await Promise.resolve(reloaded.delete?.(first.state.runId));
     await expect(Promise.resolve(reloaded.load(first.state.runId))).resolves.toBeUndefined();
+  });
+
+  it("looks up and deletes sqlite-backed runs by idempotency key", async () => {
+    const db = new FakeSqliteDatabase();
+    const store = createSqliteAgentRunStore({
+      db,
+      tableName: "agent_runs"
+    });
+    const result = await runAgent(
+      createAgent({
+        id: "sqlite-idempotency-agent",
+        model: createLanguageModel(),
+        store
+      }),
+      {
+        prompt: "Persist idempotently in sqlite",
+        idempotencyKey: "sqlite-key"
+      }
+    );
+
+    await expect(Promise.resolve(store.findByIdempotencyKey?.("sqlite-key"))).resolves.toMatchObject({
+      runId: result.state.runId,
+      schemaVersion: 1
+    });
+
+    await Promise.resolve(store.delete?.(result.state.runId));
+    await expect(Promise.resolve(store.findByIdempotencyKey?.("sqlite-key"))).resolves.toBeUndefined();
   });
 
   it("persists run state through the postgres-backed store", async () => {
@@ -808,9 +1039,37 @@ describe("agent runtime", () => {
 
     expect(loaded?.runId).toBe(first.state.runId);
     expect(loaded?.outputText).toBe("hello world");
+    await expect(reloaded.findByIdempotencyKey?.("postgres-key")).resolves.toBeUndefined();
 
     await reloaded.delete?.(first.state.runId);
     await expect(reloaded.load(first.state.runId)).resolves.toBeUndefined();
+  });
+
+  it("looks up and deletes postgres-backed runs by idempotency key", async () => {
+    const client = new FakePostgresClient();
+    const store = createPostgresAgentRunStore({
+      client,
+      tableName: "agent_runs"
+    });
+    const result = await runAgent(
+      createAgent({
+        id: "postgres-idempotency-agent",
+        model: createLanguageModel(),
+        store
+      }),
+      {
+        prompt: "Persist idempotently in postgres",
+        idempotencyKey: "postgres-key"
+      }
+    );
+
+    await expect(store.findByIdempotencyKey?.("postgres-key")).resolves.toMatchObject({
+      runId: result.state.runId,
+      schemaVersion: 1
+    });
+
+    await store.delete?.(result.state.runId);
+    await expect(store.findByIdempotencyKey?.("postgres-key")).resolves.toBeUndefined();
   });
 
   it("loads memory into fresh runs and saves the latest assistant context", async () => {

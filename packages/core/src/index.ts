@@ -1,4 +1,80 @@
-export { createAgent, resumeAgent, runAgent, streamAgent } from "./agent.js";
+export { cancelAgentRun, createAgent, resumeAgent, runAgent, streamAgent } from "./agent.js";
+export {
+  AdvancedToolRegistry,
+  createAdvancedToolRegistry,
+  createHttpTool,
+  createToolPermissionPreset,
+  createToolTestFixture,
+  inspectToolRegistry,
+  recordToolTestFixture,
+  runToolTestFixture,
+  testToolDefinition,
+  testToolRegistry
+} from "./advanced-tool-registry.js";
+export type {
+  AdvancedToolRegistryEntry,
+  AdvancedToolSource,
+  HttpToolOptions,
+  ToolFixtureCase,
+  ToolFixtureCaseResult,
+  ToolFixtureResult,
+  ToolAuditMetadata,
+  ToolPermissionPreset,
+  ToolPermission,
+  ToolRegistryInspection,
+  ToolRegistryInspectionTool,
+  ToolRegistryTestCase,
+  ToolTestFixture,
+  ToolTestResult
+} from "./advanced-tool-registry.js";
+export {
+  createAgentEvaluationFixture,
+  createAgentEvaluationReport,
+  createAgentRunSnapshot,
+  createMockLanguageModel,
+  createMockTool,
+  judgeAgentEvaluation,
+  replayAgentRun,
+  runAgentEvaluationFixture,
+  runAgentEvaluation
+} from "./agent-evaluation.js";
+export type {
+  AgentEvaluationCase,
+  AgentEvaluationCaseResult,
+  AgentEvaluationExpectations,
+  AgentEvaluationFixture,
+  AgentEvaluationJudge,
+  AgentEvaluationJudgeResult,
+  AgentEvaluationReport,
+  AgentEvaluationReportCase,
+  AgentEvaluationResult,
+  AgentReplayResult,
+  AgentReplayTimelineEvent,
+  AgentRunSnapshot,
+  MockLanguageModelOptions,
+  MockToolOptions,
+  RunAgentEvaluationOptions
+} from "./agent-evaluation.js";
+export {
+  createAgentTraceArtifact,
+  createAgentTraceCollector,
+  estimateAgentRunCost,
+  estimateTokenCost,
+  summarizeAgentTrace
+} from "./agent-trace.js";
+export type {
+  AgentRunCostPricing,
+  AgentTraceArtifact,
+  AgentTraceCollector,
+  AgentTraceEvent,
+  AgentTraceOptions,
+  AgentTraceStep,
+  AgentTraceSummary,
+  AgentTraceToolCall,
+  CostEstimate,
+  LatencySummary,
+  TokenPricing
+} from "./agent-trace.js";
 export { streamLiveAgent } from "./live-agent.js";
 export {
   agentApprovalResponsePart,
@@ -62,6 +138,27 @@ export { generateImage, generateMusic, generateVideo } from "./media.js";
 export { generateText, normalizeMessages, streamText } from "./generate-text.js";
 export { createOtelAgentObserver, createOtelObserver, createOtelTelemetryMiddleware, OTelObserver, OTelSpanHandle } from "./observability.js";
 export type { OTelSpanLike, OTelTracerLike } from "./observability.js";
+export { createProviderSupportMatrix, inspectProviderAgentSupport } from "./provider-parity.js";
+export type { ProviderAgentSupport, ProviderSupportMatrix, ProviderSupportMatrixEntry } from "./provider-parity.js";
+export {
+  applySafetyPolicyToAgent,
+  createApprovalPolicy,
+  createBudgetGuard,
+  createRedactionPolicy,
+  createSafetyPolicy
+} from "./safety-policy.js";
+export type {
+  ApprovalPolicyOptions,
+  ApprovalPolicyPreset,
+  BudgetGuard,
+  BudgetGuardOptions,
+  RedactionPolicy,
+  RedactionPolicyOptions,
+  RedactionRule,
+  SafetyPolicy,
+  SafetyPolicyOptions,
+  SafetyPolicyPreset
+} from "./safety-policy.js";
 export {
   createCachedGenerateMiddleware,
   createCircuitBreakerMiddleware,

@@ -1038,7 +1038,9 @@ export interface AgentStep {
 }
 
 export interface AgentRunState {
+  schemaVersion: 1;
   runId: string;
+  idempotencyKey?: string;
   agentId?: string;
   parentRunId?: string;
   provider: string;
@@ -1058,6 +1060,8 @@ export interface AgentRunState {
   handoff?: AgentHandoff;
   startedAt?: number;
   updatedAt?: number;
+  cancelledAt?: number;
+  cancellationReason?: string;
   error?: {
     message: string;
   };
@@ -1065,8 +1069,13 @@ export interface AgentRunState {
 
 export interface AgentRunStore {
   load(runId: string): Promise<AgentRunState | undefined> | AgentRunState | undefined;
+  findByIdempotencyKey?(idempotencyKey: string): Promise<AgentRunState | undefined> | AgentRunState | undefined;
   save(state: AgentRunState): Promise<void> | void;
   delete?(runId: string): Promise<void> | void;
+}
+
+export interface AgentRunCancellationOptions {
+  reason?: string;
 }
 
 export interface AgentMemoryContext {
@@ -1325,6 +1334,7 @@ export interface AgentApprovalResponse {
 export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryOptions &
   GenerateInputSource & {
     runId?: string;
+    idempotencyKey?: string;
     state?: AgentRunState;
     approvals?: AgentApprovalResponse[];
     handoff?: AgentHandoff;

@@ -379,6 +379,35 @@ These helpers intentionally depend on small driver interfaces instead of bundlin
 - SQLite drivers that expose `db.exec()` plus `db.prepare()` or `db.query()`, such as `better-sqlite3` or Bun SQLite
 - Postgres clients or pools that expose `query(sql, params)`, such as `pg`
 
+### Durable Agent Runs
+
+Built-in run stores support compatible durability primitives for production agent services: schema-versioned state, idempotent run creation, and cooperative cancellation.
+
+```ts
+import { cancelAgentRun, createAgent, createPostgresAgentRunStore, runAgent } from "@zhivex-ai/sdk";
+
+const store = createPostgresAgentRunStore({ client: pgPool });
+const agent = createAgent({
+  model: openai("gpt-5"),
+  store
+});
+
+const first = await runAgent(agent, {
+  prompt: "Draft the customer reply.",
+  idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+});
+
+await cancelAgentRun(store, first.state.runId, {
+  reason: "User cancelled the request."
+});
+```
+
+- New runs are persisted with `state.schemaVersion === 1`.
+- Legacy states without `schemaVersion` are normalized when loaded or resumed.
+- `idempotencyKey` requires an agent run store that implements `findByIdempotencyKey()`. The built-in in-memory, file, SQLite, and Postgres stores support it.
+- Reusing an existing `idempotencyKey` returns the existing run state instead of creating a duplicate run.
+- `cancelAgentRun()` marks the saved state as `cancelled`. It is a durable/cooperative SDK cancellation marker; it does not promise to abort a provider request that is already in flight.
+
 ### Agent Handoffs
 
 For multi-agent workflows, create a handoff from one completed run and pass it into another agent. The runtime preserves the parent run relationship in `state.parentRunId` and records the handoff on the downstream state.
@@ -463,6 +492,39 @@ const agent = createAgent({
 });
 ```
 
+### Trace Artifacts And Cost Summaries
+
+For portable debugging and dashboards, trace helpers create serializable artifacts from saved run state or from live agent telemetry. They do not re-run models or tools.
+
+```ts
+import {
+  createAgentTraceArtifact,
+  createAgentTraceCollector,
+  estimateAgentRunCost,
+  summarizeAgentTrace
+} from "@zhivex-ai/sdk";
+
+const trace = createAgentTraceArtifact(savedRunState, {
+  includeMessages: false,
+  includeToolInputs: false
+});
+
+const summary = summarizeAgentTrace(trace, {
+  pricing: { inputCostPer1kTokens: 1, outputCostPer1kTokens: 2, currency: "USD" }
+});
+
+console.log(summary.latency.durationMs);
+console.log(estimateAgentRunCost(savedRunState, { costPer1kTokens: 0.6 }).totalCost);
+
+const collector = createAgentTraceCollector();
+const agent = createAgent({
+  model: openai("gpt-5"),
+  onTelemetryEvent: collector.observer
+});
+```
+
+Use `includeMessages` and `includeToolInputs` only when you need full payloads in exported traces. By default the artifact keeps metadata, lifecycle events, usage, approvals, errors, tool results, and an output preview without copying large message/tool-input payloads.
+
 For SDK-defined local tools, you can now attach a `toolApprovalPolicy` at the agent or request level. The policy runs before local tool execution and can allow or deny the call with a reason:
 
 ```ts
@@ -526,15 +588,20 @@ Agent stream events currently include:
 
 Those events are exposed both through `streamAgent().eventStream` and through UI/SSE helpers such as `toUIAgentStreamResponse()` and `toUIMessageStream()`.
 
-When you need to reason about provider-specific agent features at runtime, inspect `model.capabilities.agentCapabilities` or use helpers such as `getAgentCapabilities()`, `getAgentSupportTier()`, and `getHostedToolClass()`. Hosted tools now carry a normalized `toolClass` like `web-search`, `file-search`, `remote-mcp`, `computer-use`, `code-execution`, `shell`, `apply-patch`, `tool-search`, `web-extraction`, or `skill`.
+When you need to reason about provider-specific agent features at runtime, inspect `model.capabilities.agentCapabilities` or use helpers such as `getAgentCapabilities()`, `getAgentSupportTier()`, `inspectProviderAgentSupport()`, `createProviderSupportMatrix()`, and `getHostedToolClass()`. Hosted tools now carry a normalized `toolClass` like `web-search`, `file-search`, `remote-mcp`, `computer-use`, `code-execution`, `shell`, `apply-patch`, `tool-search`, `web-extraction`, or `skill`.
 
 ```ts
-import { getAgentCapabilities, getAgentSupportTier } from "@zhivex-ai/sdk";
+import { createProviderSupportMatrix, getAgentCapabilities, getAgentSupportTier } from "@zhivex-ai/sdk";
 
 const capabilities = getAgentCapabilities(openai("gpt-5"));
+const matrix = createProviderSupportMatrix([
+  openai("gpt-5"),
+  openai("gpt-4o-mini")
+]);
 
 console.log(getAgentSupportTier(openai("gpt-5")));
 console.log(capabilities);
+console.log(matrix.entries);
 ```
 
 Use the agent tiers as release guidance, not just metadata:
@@ -542,6 +609,89 @@ Use the agent tiers as release guidance, not just metadata:
 - `Tier A`: choose this when you need approvals, remote MCP, or the strongest hosted-agent story.
 - `Tier B`: good default for portable tool-using agents, especially with local tools or SDK-managed MCP clients.
 - `Tier C`: keep expectations narrower; these providers work well for basic loops, but you should avoid marketing them as full hosted-agent support.
+
+### Safety Policies
+
+Safety policies are stable composition helpers for production agent services. They wrap the existing `toolApprovalPolicy`, guardrail, and `toolExecution` hooks instead of changing the runtime contract.
+
+```ts
+import { applySafetyPolicyToAgent, createAgent, createSafetyPolicy } from "@zhivex-ai/sdk";
+
+const safeAgent = applySafetyPolicyToAgent(
+  createAgent({
+    model: openai("gpt-5"),
+    tools: registry.toToolSet(),
+    maxSteps: 6
+  }),
+  createSafetyPolicy({
+    preset: "review-sensitive",
+    budget: {
+      maxSteps: 6,
+      maxToolCalls: 8,
+      maxToolErrors: 1,
+      maxTotalTokens: 20_000
+    }
+  })
+);
+```
+
+Available presets are `permissive`, `review-sensitive`, and `locked-down`. The approval helper treats `requiresApproval`, Advanced Tool Registry permissions/audit metadata, hosted tool classes, and sensitive tool names as policy inputs. Redaction helpers cover common API keys, bearer/basic auth tokens, optional email addresses, and custom regex rules. Budget guards fail the run through normal guardrail behavior when configured limits are exceeded.
+
+### Agent Replay And Evaluation
+
+For deterministic debugging, `createAgentRunSnapshot()` and `replayAgentRun()` inspect a saved `AgentRunState` without calling a model or re-running tools. For regression suites, `runAgentEvaluation()` executes small datasets against an agent and `judgeAgentEvaluation()` can score the result with either a deterministic function or a `LanguageModel`.
+
+```ts
+import {
+  createAgentEvaluationFixture,
+  createAgentEvaluationReport,
+  createAgentRunSnapshot,
+  createMockLanguageModel,
+  judgeAgentEvaluation,
+  replayAgentRun,
+  runAgentEvaluationFixture
+} from "@zhivex-ai/sdk";
+
+const replay = replayAgentRun(savedRunState);
+console.log(createAgentRunSnapshot(savedRunState));
+console.log(replay.timeline);
+
+const fixture = createAgentEvaluationFixture({
+  name: "weather-regression",
+  dataset: [
+    {
+      name: "weather-answer",
+      input: { prompt: "Weather in Madrid?" },
+      expectations: {
+        status: "completed",
+        outputContains: "Madrid",
+        toolCalls: ["weather"]
+      }
+    }
+  ]
+});
+
+const evaluation = await runAgentEvaluationFixture(fixture, { agent: weatherAgent });
+const report = createAgentEvaluationReport(evaluation);
+
+const judged = await judgeAgentEvaluation(evaluation, (result) => ({
+  score: result.ok ? 1 : 0,
+  feedback: result.ok ? "All cases passed." : "Review failing cases."
+}));
+
+const modelJudge = createMockLanguageModel({
+  responses: [
+    {
+      messages: [{ role: "assistant", parts: [{ type: "text", text: "{\"score\":1,\"feedback\":\"ok\"}" }] }],
+      text: "{\"score\":1,\"feedback\":\"ok\"}"
+    }
+  ]
+});
+
+console.log(report.passRate);
+```
+
+The initial replay helper is intentionally dry: it reconstructs a timeline from saved state and does not execute side effects.
 
 ### Streaming
 
@@ -908,6 +1058,54 @@ const mcpTools = await createMcpToolRegistry(myMcpClient, {
 
 const tools = toToolSet(localTools.merge(mcpTools));
 ```
+
+### Advanced Tool Registry
+
+The experimental advanced registry adds stronger tool metadata, permission labels, audit fields, HTTP-backed tools, fixture helpers, inspection helpers, and local test helpers while still converting back to the stable `ToolSet` contract.
+
+```ts
+import {
+  createAdvancedToolRegistry,
+  createHttpTool,
+  createToolPermissionPreset,
+  inspectToolRegistry,
+  recordToolTestFixture,
+  runToolTestFixture,
+  tool
+} from "@zhivex-ai/sdk";
+import { z } from "zod";
+
+const registry = createAdvancedToolRegistry([
+  {
+    tool: tool({
+      name: "weather",
+      schema: z.object({ city: z.string() }),
+      execute: async ({ city }) => ({ city, forecast: "sunny" })
+    }),
+    source: "local",
+    ...createToolPermissionPreset("read-only")
+  },
+  createHttpTool({
+    name: "crm_update",
+    description: "Update CRM notes through an internal service.",
+    schema: z.object({ customerId: z.string(), note: z.string() }),
+    url: "https://internal.example.com/tools/crm-update",
+    headers: {
+      authorization: `Bearer ${process.env.CRM_TOOL_TOKEN}`
+    }
+  })
+]);
+
+const fixture = await recordToolTestFixture(registry, [
+  { toolName: "weather", input: { city: "Madrid" } }
+]);
+const results = await runToolTestFixture(registry, fixture);
+const inspection = inspectToolRegistry(registry);
+
+const tools = registry.toToolSet();
+```
+
+`toToolSet()` preserves compatibility with `generateText()`, `runAgent()`, `streamAgent()`, and provider adapters. Sensitive permissions such as `write`, `filesystem`, `code-execution`, `shell`, and `external-side-effect`, as well as `high` or `critical` audit risk, mark the materialized tool as `requiresApproval`.
 
 For OpenAI and Azure OpenAI remote MCP servers, use the provider helpers and pass approval responses back as `provider-data` parts:
 

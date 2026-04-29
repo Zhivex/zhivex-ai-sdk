@@ -37,7 +37,12 @@ These APIs are the supported public contract for application code and production
 - Audio: `transcribeAudio`, `generateSpeech`
 - Agent runtime: `createAgent`, `runAgent`, `resumeAgent`, `streamAgent`
 - Agent persistence contracts: `AgentRunStore`, `AgentMemoryStore`
-- Default agent stores: in-memory and file-backed run and memory stores
+- Durable agent helpers: `cancelAgentRun`, schema-versioned `AgentRunState`, and `idempotencyKey` support on built-in run stores
+- Agent replay and evaluation helpers: `createAgentRunSnapshot`, `replayAgentRun`, `createMockLanguageModel`, `createMockTool`, `runAgentEvaluation`, `createAgentEvaluationFixture`, `runAgentEvaluationFixture`, `createAgentEvaluationReport`, and `judgeAgentEvaluation`
+- Agent trace and cost helpers: `createAgentTraceArtifact`, `createAgentTraceCollector`, `summarizeAgentTrace`, `estimateTokenCost`, and `estimateAgentRunCost`
+- Safety/policy helpers: `createSafetyPolicy`, `createApprovalPolicy`, `createRedactionPolicy`, `createBudgetGuard`, and `applySafetyPolicyToAgent`
+- Provider parity helpers: `inspectProviderAgentSupport` and `createProviderSupportMatrix`
+- Default agent stores: in-memory, file-backed, SQLite, and Postgres run and memory stores
 - MCP integration: `createMcpToolSet`
 - Gateway: `createGateway` and its documented request/response surface
 - Middleware helpers for caching, circuit breaking, telemetry, and model wrapping
@@ -53,7 +58,7 @@ These APIs are supported and documented, but they may still change between minor
 - Agent telemetry event details and observer patterns
 - OTEL observability helpers
 - Model catalog helpers
-- Hosted-tool classification helpers and agent capability inspection helpers
+- Hosted-tool classification helpers
 - Gateway route metadata and policy selection ergonomics
 
 Beta APIs still require changelog-quality release notes when they change, but they do not yet carry the same compatibility expectations as the stable surface.
@@ -63,6 +68,7 @@ Beta APIs still require changelog-quality release notes when they change, but th
 These areas are available for evaluation, but they should not be treated as long-term compatibility contracts yet:
 
 - Provider-native hosted tools and escape hatches that do not map cleanly to the shared contract
+- Advanced tool registry helpers: `createAdvancedToolRegistry`, `AdvancedToolRegistry`, `createHttpTool`, `testToolDefinition`, `testToolRegistry`, `createToolTestFixture`, `recordToolTestFixture`, `runToolTestFixture`, `createToolPermissionPreset`, and `inspectToolRegistry`
 - Provider-specific `providerOptions` shapes beyond the documented shared behavior
 - Agent/provider features currently described as support-tier dependent
 - Future realtime or live-agent surfaces until they are explicitly promoted
