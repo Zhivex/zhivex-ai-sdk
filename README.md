@@ -150,7 +150,7 @@ Compatibility notes:
 - Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
 - `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
-- `partial` for Bedrock Converse `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; that path is endpoint-dependent and intended for Bedrock Responses server tools and stateful Responses features.
+- `partial` for Bedrock Converse `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - Kimi Formula tools are exposed as public helpers in `@zhivex-ai/kimi`. The SDK loads or declares Formula tool schemas, maps them into Chat Completions function tools, tracks `function.name -> formula_uri`, and executes the official Formula fiber after a Kimi tool call.
 - `Hosted tools / MCP` refers to provider-native hosted tools or SDK-level MCP mappings, not local callable tools defined with `tool()`. Kimi Formula helpers are called out separately because they are official provider tools executed through Formula fibers. For OpenRouter this currently means server tools such as `openrouter:web_search`.
@@ -1198,19 +1198,31 @@ await createInteraction({
 });
 
 const vertex = createVertex({
-  accessToken: process.env.VERTEX_ACCESS_TOKEN,
+  apiKey: process.env.GOOGLE_API_KEY
+});
+
+const productionVertex = createVertex({
   projectId: process.env.GOOGLE_CLOUD_PROJECT,
-  location: "us-central1"
+  location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1"
+});
+
+await generateText({
+  model: vertex("gemini-2.5-flash"),
+  prompt: "Use the API-key quickstart path."
 });
 
 const raw = await predictRaw({
-  model: vertex.predictionModel!("publisher-model-id"),
+  model: productionVertex.predictionModel!("publisher-model-id"),
   instances: [{ prompt: "provider-specific request" }],
   parameters: { temperature: 0.2 }
 });
 
 console.log(raw.rawResponse);
 ```
+
+Vertex authentication follows Google's current guidance: use `apiKey`, `VERTEX_API_KEY`, or `GOOGLE_API_KEY` for testing, and use ADC/service-account credentials in production. `createVertex({ projectId, location })` resolves ADC automatically, while `authClient`, `getAccessToken`, and `accessToken` remain available for explicit integrations. See Google's docs for [API keys](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys), the [Vertex AI quickstart](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start?usertype=apikey), and [Vertex AI authentication](https://docs.cloud.google.com/vertex-ai/docs/authentication).
+
+Naming note: Google now presents this product surface as [Gemini Enterprise Agent Platform, formerly Vertex AI](https://cloud.google.com/products/gemini-enterprise-agent-platform), and its migration docs say Vertex AI is transitioning to become part of Agent Platform. The SDK keeps `@zhivex-ai/vertex`, `createVertex()`, and provider id `"vertex"` for compatibility while Google Cloud's public API surface still uses Vertex/`aiplatform.googleapis.com` endpoints.
 
 Use `predictionModel()` for Vertex Model Garden and other Google publisher endpoints that do not have a stable shared helper yet. The SDK keeps `rawResponse` available so consumers can handle model-specific contracts without the core API overpromising portability.
 

@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/vertex",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Vertex AI adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -42,6 +42,7 @@
   },
   "dependencies": {
     "@zhivex-ai/core": "^0.7.0",
+    "google-auth-library": "^10.6.2",
     "zod": "^4.3.6"
   }
 }

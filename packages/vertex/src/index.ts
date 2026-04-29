@@ -1,3 +1,4 @@
+import { GoogleAuth } from "google-auth-library";
 import { toJSONSchema } from "zod";
 
 import {
@@ -70,8 +71,16 @@ import {
   type VideoGenerationResult
 } from "@zhivex-ai/core";
 
+export interface VertexAuthClient {
+  getAccessToken: () => string | null | undefined | Promise<string | null | undefined>;
+}
+
 export interface VertexProviderOptions {
   accessToken?: string;
+  getAccessToken?: () => string | Promise<string>;
+  authClient?: VertexAuthClient;
+  apiKey?: string;
+  scopes?: string | string[];
   projectId?: string;
   location?: string;
   apiVersion?: string;
@@ -436,6 +445,86 @@ const appendQuery = (url: string, query: Record<string, string | number | undefi
   }
   return parsed.toString();
 };
+
+type VertexAuth =
+  | {
+      type: "bearer";
+      getAccessToken: () => string | null | undefined | Promise<string | null | undefined>;
+    }
+  | {
+      type: "api-key";
+      apiKey: string;
+    };
+
+const resolveVertexAuth = (options: VertexProviderOptions): VertexAuth => {
+  if (options.accessToken) {
+    return { type: "bearer", getAccessToken: () => options.accessToken as string };
+  }
+
+  if (options.getAccessToken) {
+    return { type: "bearer", getAccessToken: options.getAccessToken };
+  }
+
+  if (options.authClient) {
+    return { type: "bearer", getAccessToken: options.authClient.getAccessToken.bind(options.authClient) };
+  }
+
+  if (options.apiKey) {
+    return { type: "api-key", apiKey: options.apiKey };
+  }
+
+  const envAccessToken = process.env.VERTEX_ACCESS_TOKEN ?? process.env.GOOGLE_ACCESS_TOKEN;
+  if (envAccessToken) {
+    return { type: "bearer", getAccessToken: () => envAccessToken };
+  }
+
+  const envApiKey = process.env.VERTEX_API_KEY ?? process.env.GOOGLE_API_KEY;
+  if (envApiKey) {
+    return { type: "api-key", apiKey: envApiKey };
+  }
+
+  const googleAuth = new GoogleAuth({
+    scopes: options.scopes ?? ["https://www.googleapis.com/auth/cloud-platform"]
+  });
+  return { type: "bearer", getAccessToken: () => googleAuth.getAccessToken() };
+};
+
+const appendVertexApiKey = (auth: VertexAuth, input: RequestInfo | URL): RequestInfo | URL => {
+  if (auth.type !== "api-key") {
+    return input;
+  }
+
+  if (typeof input === "string") {
+    return appendQuery(input, { key: auth.apiKey });
+  }
+
+  if (input instanceof URL) {
+    return new URL(appendQuery(input.toString(), { key: auth.apiKey }));
+  }
+
+  return new Request(appendQuery(input.url, { key: auth.apiKey }), input);
+};
+
+const createVertexAuthenticatedFetch = (fetcher: typeof globalThis.fetch, auth: VertexAuth): typeof globalThis.fetch =>
+  (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    if (init?.headers) {
+      new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+    }
+
+    if (auth.type === "bearer") {
+      const accessToken = await auth.getAccessToken();
+      if (!accessToken) {
+        throw new ConfigurationError("Missing Vertex access token.");
+      }
+      headers.set("authorization", `Bearer ${accessToken}`);
+    }
+
+    return fetcher(appendVertexApiKey(auth, input), {
+      ...init,
+      headers
+    });
+  }) as typeof globalThis.fetch;
 
 const systemInstruction = (messages: ModelMessage[]) => {
   const text = messages
@@ -892,8 +981,7 @@ class VertexContextCachesClient implements ContextCachesClient {
 
   private headers() {
     return {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.accessToken}`
+      "content-type": "application/json"
     };
   }
 
@@ -986,8 +1074,7 @@ class VertexBatchesClient implements BatchesClient {
 
   private headers() {
     return {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.accessToken}`
+      "content-type": "application/json"
     };
   }
 
@@ -1102,8 +1189,7 @@ class VertexPredictionModel implements PredictionModel {
 
   private headers() {
     return {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.accessToken}`
+      "content-type": "application/json"
     };
   }
 
@@ -1236,8 +1322,7 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
 
   private headers() {
     return {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.accessToken}`
+      "content-type": "application/json"
     };
   }
 
@@ -1358,8 +1443,7 @@ class VertexEmbeddingModel implements EmbeddingModel {
 
   private headers() {
     return {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.accessToken}`
+      "content-type": "application/json"
     };
   }
 
@@ -1410,8 +1494,7 @@ class VertexTranscriptionModel implements TranscriptionModel {
 
   private headers() {
     return {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.accessToken}`
+      "content-type": "application/json"
     };
   }
 
@@ -1488,8 +1571,7 @@ class VertexSpeechModel implements SpeechModel {
 
   private headers() {
     return {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.accessToken}`
+      "content-type": "application/json"
     };
   }
 
@@ -1555,8 +1637,7 @@ class VertexImageGenerationModel implements ImageGenerationModel {
 
   private headers() {
     return {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.accessToken}`
+      "content-type": "application/json"
     };
   }
 
@@ -1686,8 +1767,7 @@ class VertexMusicGenerationModel implements MusicGenerationModel {
 
   private headers() {
     return {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.accessToken}`
+      "content-type": "application/json"
     };
   }
 
@@ -1792,8 +1872,7 @@ class VertexVideoGenerationModel implements VideoGenerationModel {
 
   private headers() {
     return {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.accessToken}`
+      "content-type": "application/json"
     };
   }
 
@@ -1895,8 +1974,7 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
 
   private headers() {
     return {
-      "content-type": "application/json",
-      authorization: `Bearer ${this.accessToken}`
+      "content-type": "application/json"
     };
   }
 
@@ -1961,7 +2039,7 @@ class VertexRealtimeModel implements RealtimeModel {
 
   constructor(
     readonly modelId: string,
-    private readonly accessToken: string,
+    private readonly auth: VertexAuth,
     private readonly location: string,
     private readonly apiVersion: string,
     private readonly connectionFactory?: RealtimeConnectionFactory,
@@ -1969,10 +2047,19 @@ class VertexRealtimeModel implements RealtimeModel {
   ) {}
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
+    if (this.auth.type === "api-key") {
+      throw new UnsupportedFeatureError('Provider "vertex" realtime sessions require accessToken or getAccessToken auth.');
+    }
+
+    const accessToken = await this.auth.getAccessToken();
+    if (!accessToken) {
+      throw new ConfigurationError("Missing Vertex access token.");
+    }
+
     const providerOptions = (config.providerOptions ?? {}) as Record<string, unknown>;
     const connection = await (this.connectionFactory ?? openWebSocketConnection)(
       vertexRealtimeURL(this.location, this.apiVersion, providerOptions, this.realtimeURL),
-      vertexRealtimeHeaders(this.accessToken, providerOptions),
+      vertexRealtimeHeaders(accessToken, providerOptions),
       options
     );
     const session = new CallbackRealtimeSession({
@@ -2045,45 +2132,43 @@ class VertexRealtimeModel implements RealtimeModel {
 export const createVertex = (
   options: VertexProviderOptions = {}
 ): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
-  const accessToken = options.accessToken ?? process.env.VERTEX_ACCESS_TOKEN ?? process.env.GOOGLE_ACCESS_TOKEN;
-  if (!accessToken) {
-    throw new ConfigurationError("Missing Vertex access token.");
-  }
-
+  const auth = resolveVertexAuth(options);
   const projectId = options.projectId ?? process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
-  if (!projectId && !options.baseURL) {
+  if (auth.type === "bearer" && !projectId && !options.baseURL) {
     throw new ConfigurationError("Missing Vertex project ID.");
   }
 
-  const location = options.location ?? process.env.VERTEX_LOCATION ?? "us-central1";
+  const location = options.location ?? process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1";
   const apiVersion = options.apiVersion ?? "v1beta1";
   const baseURL =
     options.baseURL ??
-    `https://${location}-aiplatform.googleapis.com/${apiVersion}/projects/${projectId}/locations/${location}`;
-  const fetcher = options.fetch ?? globalThis.fetch;
+    (auth.type === "api-key"
+      ? `https://aiplatform.googleapis.com/${apiVersion}`
+      : `https://${location}-aiplatform.googleapis.com/${apiVersion}/projects/${projectId}/locations/${location}`);
+  const fetcher = createVertexAuthenticatedFetch(options.fetch ?? globalThis.fetch, auth);
 
   return createProviderAdapter({
     name: "vertex",
-    languageModel: (modelId) => new VertexLanguageModel(modelId, baseURL, accessToken, fetcher),
-    embeddingModel: (modelId) => new VertexEmbeddingModel(modelId, baseURL, accessToken, fetcher),
-    transcriptionModel: (modelId) => new VertexTranscriptionModel(modelId, baseURL, accessToken, fetcher),
-    speechModel: (modelId) => new VertexSpeechModel(modelId, baseURL, accessToken, fetcher),
-    imageGenerationModel: (modelId) => new VertexImageGenerationModel(modelId, baseURL, accessToken, fetcher),
-    videoGenerationModel: (modelId) => new VertexVideoGenerationModel(modelId, baseURL, accessToken, fetcher),
-    musicGenerationModel: (modelId) => new VertexMusicGenerationModel(modelId, baseURL, accessToken, fetcher),
+    languageModel: (modelId) => new VertexLanguageModel(modelId, baseURL, "", fetcher),
+    embeddingModel: (modelId) => new VertexEmbeddingModel(modelId, baseURL, "", fetcher),
+    transcriptionModel: (modelId) => new VertexTranscriptionModel(modelId, baseURL, "", fetcher),
+    speechModel: (modelId) => new VertexSpeechModel(modelId, baseURL, "", fetcher),
+    imageGenerationModel: (modelId) => new VertexImageGenerationModel(modelId, baseURL, "", fetcher),
+    videoGenerationModel: (modelId) => new VertexVideoGenerationModel(modelId, baseURL, "", fetcher),
+    musicGenerationModel: (modelId) => new VertexMusicGenerationModel(modelId, baseURL, "", fetcher),
     realtimeModel: (modelId) =>
       new VertexRealtimeModel(
         modelId,
-        accessToken,
+        auth,
         location,
         apiVersion,
         options.realtimeConnectionFactory,
         options.realtimeURL
       ),
-    groundedLanguageModel: (modelId) => new VertexGroundedLanguageModel(modelId, baseURL, accessToken, fetcher),
-    caches: new VertexContextCachesClient(baseURL, accessToken, fetcher),
-    batches: new VertexBatchesClient(baseURL, accessToken, fetcher),
-    predictionModel: (modelId) => new VertexPredictionModel(modelId, baseURL, accessToken, fetcher),
+    groundedLanguageModel: (modelId) => new VertexGroundedLanguageModel(modelId, baseURL, "", fetcher),
+    caches: new VertexContextCachesClient(baseURL, "", fetcher),
+    batches: new VertexBatchesClient(baseURL, "", fetcher),
+    predictionModel: (modelId) => new VertexPredictionModel(modelId, baseURL, "", fetcher),
     rawFetch: fetcher
   });
 };

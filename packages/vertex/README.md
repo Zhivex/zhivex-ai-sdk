@@ -1,8 +1,10 @@
 # @zhivex-ai/vertex
 
-Vertex AI adapter for Zhivex AI SDK.
+Vertex AI / Gemini Enterprise Agent Platform adapter for Zhivex AI SDK.
 
 Supports Vertex Gemini text, embeddings, speech, realtime sessions, grounded generation, Context Caching, Batch API, raw prediction calls, and Google generative media endpoints for Gemini Image, Imagen, Veo, and Lyria.
+
+Google is transitioning Vertex AI into Gemini Enterprise Agent Platform. The SDK keeps the package name `@zhivex-ai/vertex`, the factory `createVertex()`, and provider id `"vertex"` for backwards compatibility and because the public API endpoints still use `aiplatform.googleapis.com`. Treat "Vertex" in this package as the Google Cloud Agent Platform / Vertex API surface, not as a separate deprecated wire contract.
 
 | Surface | Support |
 | --- | --- |
@@ -27,23 +29,35 @@ import {
 import { createVertex } from "@zhivex-ai/vertex";
 
 const vertex = createVertex({
-  accessToken: process.env.VERTEX_ACCESS_TOKEN,
+  apiKey: process.env.GOOGLE_API_KEY
+});
+
+const productionVertex = createVertex({
   projectId: process.env.GOOGLE_CLOUD_PROJECT,
-  location: "us-central1"
+  location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1"
+});
+
+const advancedProductionVertex = createVertex({
+  getAccessToken: async () => {
+    // Optional: supply your own service-account or token-broker integration.
+    return process.env.VERTEX_ACCESS_TOKEN!;
+  },
+  projectId: process.env.GOOGLE_CLOUD_PROJECT,
+  location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1"
 });
 
 await generateImage({
-  model: vertex.imageGenerationModel!("imagen-4.0-generate-001"),
+  model: productionVertex.imageGenerationModel!("imagen-4.0-generate-001"),
   prompt: "Create a product photo"
 });
 
 await generateVideo({
-  model: vertex.videoGenerationModel!("veo-3.1-generate-preview"),
+  model: productionVertex.videoGenerationModel!("veo-3.1-generate-preview"),
   prompt: "Create a cinematic establishing shot"
 });
 
 await generateMusic({
-  model: vertex.musicGenerationModel!("lyria-002"),
+  model: productionVertex.musicGenerationModel!("lyria-002"),
   prompt: "Create a short instrumental intro"
 });
 
@@ -56,23 +70,27 @@ await generateText({
 });
 
 await createContextCache({
-  provider: vertex,
+  provider: productionVertex,
   modelId: "gemini-2.5-flash",
   contents: [{ role: "user", parts: [{ type: "file", data: "gs://bucket/large.pdf", mediaType: "application/pdf" }] }]
 });
 
 await createBatch({
-  provider: vertex,
+  provider: productionVertex,
   modelId: "gemini-2.5-flash",
   fileName: "files/batch-input"
 });
 
 await predictRaw({
-  model: vertex.predictionModel!("publisher-model-id"),
+  model: advancedProductionVertex.predictionModel!("publisher-model-id"),
   instances: [{ prompt: "provider-specific request" }],
   parameters: { temperature: 0.2 }
 });
 ```
+
+Authentication follows the current Google guidance for Gemini on Vertex AI: API keys are supported for testing with `apiKey`, `VERTEX_API_KEY`, or `GOOGLE_API_KEY`, while production can use automatic ADC with `createVertex({ projectId, location })` or explicit service-account integrations through `authClient`, `getAccessToken`, or `accessToken`. See Google's guides for [API keys](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys), the [Vertex AI quickstart](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start?usertype=apikey), and [Vertex AI authentication](https://docs.cloud.google.com/vertex-ai/docs/authentication).
+
+Google's current product page labels this surface as [Gemini Enterprise Agent Platform, formerly Vertex AI](https://cloud.google.com/products/gemini-enterprise-agent-platform), and Google's migration docs say Vertex AI is transitioning to become part of Agent Platform. This package intentionally does not rename the provider id yet; doing so would be a breaking API change without a corresponding endpoint-level migration requirement.
 
 Model Garden coverage is intentionally raw/prediction based. The adapter does not add a dedicated wrapper for every publisher model.
 

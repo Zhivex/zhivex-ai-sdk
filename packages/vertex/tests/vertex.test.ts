@@ -1,6 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
+const googleAuthMockState = ((globalThis as any).__vertexGoogleAuthMockState ??= {
+  instances: [] as Array<{
+    options: Record<string, unknown>;
+    getAccessToken: ReturnType<typeof vi.fn>;
+  }>,
+  nextToken: "adc-token" as string | null | undefined
+});
+
+vi.mock("google-auth-library", () => ({
+  GoogleAuth: vi.fn(function GoogleAuth(options: Record<string, unknown>) {
+    const state = ((globalThis as any).__vertexGoogleAuthMockState ??= {
+      instances: [],
+      nextToken: "adc-token"
+    });
+    const instance = {
+      options,
+      getAccessToken: vi.fn(async () => state.nextToken)
+    };
+    state.instances.push(instance);
+    return instance;
+  })
+}));
+
 import {
   createBatch,
   createContextCache,
@@ -24,6 +47,45 @@ import {
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createVertex, vertexMcpTools } from "../src/index.js";
+
+const vertexEnvKeys = [
+  "VERTEX_ACCESS_TOKEN",
+  "GOOGLE_ACCESS_TOKEN",
+  "VERTEX_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_CLOUD_PROJECT",
+  "GCLOUD_PROJECT",
+  "VERTEX_LOCATION",
+  "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_APPLICATION_CREDENTIALS"
+];
+
+const withVertexEnv = async (env: Record<string, string | undefined>, run: () => Promise<void>) => {
+  const original = new Map(vertexEnvKeys.map((key) => [key, process.env[key]]));
+  for (const key of vertexEnvKeys) {
+    delete process.env[key];
+  }
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  try {
+    await run();
+  } finally {
+    for (const key of vertexEnvKeys) {
+      const value = original.get(key);
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+};
 
 describe("vertex adapter", () => {
   const fetchMock = vi.fn();
@@ -148,6 +210,227 @@ describe("vertex adapter", () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
+    googleAuthMockState.instances.length = 0;
+    googleAuthMockState.nextToken = "adc-token";
+  });
+
+  it("authenticates Vertex requests with an API key", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "api key ok" }] } }]
+      })
+    );
+
+    const provider = createVertex({
+      apiKey: "vertex-api-key",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello"
+    });
+
+    const requestURL = String(fetchMock.mock.calls[0]?.[0]);
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = new Headers(requestInit.headers);
+    expect(requestURL).toBe("https://aiplatform.googleapis.com/v1beta1/publishers/google/models/gemini-2.0-flash:generateContent?key=vertex-api-key");
+    expect(headers.get("authorization")).toBeNull();
+  });
+
+  it("uses GOOGLE_API_KEY and VERTEX_API_KEY from the environment", async () => {
+    await withVertexEnv({ GOOGLE_API_KEY: "google-env-key" }, async () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: "google env ok" }] } }]
+        })
+      );
+
+      await generateText({
+        model: createVertex({ fetch: fetchMock as typeof fetch })("gemini-2.0-flash"),
+        prompt: "hello"
+      });
+
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain("key=google-env-key");
+    });
+
+    fetchMock.mockReset();
+
+    await withVertexEnv({ VERTEX_API_KEY: "vertex-env-key" }, async () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: "vertex env ok" }] } }]
+        })
+      );
+
+      await generateText({
+        model: createVertex({ fetch: fetchMock as typeof fetch })("gemini-2.0-flash"),
+        prompt: "hello"
+      });
+
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain("key=vertex-env-key");
+    });
+  });
+
+  it("keeps access token auth for Vertex bearer credentials", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "token ok" }] } }]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "token",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello"
+    });
+
+    const requestURL = String(fetchMock.mock.calls[0]?.[0]);
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = new Headers(requestInit.headers);
+    expect(requestURL).toBe(
+      "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/demo-project/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
+    );
+    expect(headers.get("authorization")).toBe("Bearer token");
+  });
+
+  it("resolves getAccessToken lazily and supports async tokens", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "lazy token ok" }] } }]
+      })
+    );
+    const getAccessToken = vi.fn(async () => "lazy-token");
+
+    const provider = createVertex({
+      getAccessToken,
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+
+    expect(getAccessToken).not.toHaveBeenCalled();
+
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello"
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(getAccessToken).toHaveBeenCalledOnce();
+    expect(new Headers(requestInit.headers).get("authorization")).toBe("Bearer lazy-token");
+  });
+
+  it("prefers explicit API keys over environment access tokens", async () => {
+    await withVertexEnv({ VERTEX_ACCESS_TOKEN: "env-token", GOOGLE_CLOUD_PROJECT: "env-project" }, async () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: "explicit api key ok" }] } }]
+        })
+      );
+
+      await generateText({
+        model: createVertex({ apiKey: "explicit-key", fetch: fetchMock as typeof fetch })("gemini-2.0-flash"),
+        prompt: "hello"
+      });
+
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain("key=explicit-key");
+      expect(new Headers(requestInit.headers).get("authorization")).toBeNull();
+    });
+  });
+
+  it("falls back to Application Default Credentials when no explicit credentials are configured", async () => {
+    await withVertexEnv({ GOOGLE_CLOUD_PROJECT: "adc-project" }, async () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: "adc ok" }] } }]
+        })
+      );
+
+      const provider = createVertex({
+        location: "us-central1",
+        fetch: fetchMock as typeof fetch
+      });
+
+      expect(googleAuthMockState.instances).toHaveLength(1);
+      expect(googleAuthMockState.instances[0]?.options).toEqual({
+        scopes: ["https://www.googleapis.com/auth/cloud-platform"]
+      });
+
+      await generateText({
+        model: provider("gemini-2.0-flash"),
+        prompt: "hello"
+      });
+
+      const requestURL = String(fetchMock.mock.calls[0]?.[0]);
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+      expect(requestURL).toBe(
+        "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/adc-project/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
+      );
+      expect(new Headers(requestInit.headers).get("authorization")).toBe("Bearer adc-token");
+      expect(googleAuthMockState.instances[0]?.getAccessToken).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("passes custom scopes to Application Default Credentials", async () => {
+    await withVertexEnv({ GOOGLE_CLOUD_PROJECT: "adc-project" }, async () => {
+      createVertex({
+        scopes: ["https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/devstorage.read_only"],
+        fetch: fetchMock as typeof fetch
+      });
+
+      expect(googleAuthMockState.instances[0]?.options).toEqual({
+        scopes: ["https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/devstorage.read_only"]
+      });
+    });
+  });
+
+  it("prefers authClient over environment API keys", async () => {
+    await withVertexEnv({ GOOGLE_API_KEY: "env-api-key" }, async () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: "auth client ok" }] } }]
+        })
+      );
+      const authClient = {
+        getAccessToken: vi.fn(async () => "auth-client-token")
+      };
+
+      await generateText({
+        model: createVertex({
+          authClient,
+          projectId: "demo-project",
+          location: "us-central1",
+          fetch: fetchMock as typeof fetch
+        })("gemini-2.0-flash"),
+        prompt: "hello"
+      });
+
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+      expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("key=env-api-key");
+      expect(new Headers(requestInit.headers).get("authorization")).toBe("Bearer auth-client-token");
+      expect(authClient.getAccessToken).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("fails clearly when ADC returns no access token", async () => {
+    await withVertexEnv({ GOOGLE_CLOUD_PROJECT: "adc-project" }, async () => {
+      googleAuthMockState.nextToken = null;
+
+      await expect(
+        generateText({
+          model: createVertex({ fetch: fetchMock as typeof fetch })("gemini-2.0-flash"),
+          prompt: "hello"
+        })
+      ).rejects.toThrow("Missing Vertex access token.");
+    });
   });
 
   it("maps generated text into the common contract", async () => {
@@ -922,6 +1205,49 @@ describe("vertex adapter", () => {
         turnComplete: true
       }
     });
+  });
+
+  it("rejects Vertex Live sessions when only API key auth is configured", async () => {
+    const provider = createVertex({
+      apiKey: "vertex-api-key",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect()).rejects.toThrow(
+      'Provider "vertex" realtime sessions require accessToken or getAccessToken auth.'
+    );
+  });
+
+  it("connects Vertex Live sessions with authClient bearer tokens", async () => {
+    const connectionFactory = vi.fn(async (_url: string, headers: Record<string, string>) => {
+      expect(headers).toMatchObject({
+        authorization: "Bearer auth-client-token"
+      });
+      return {
+        async sendJson() {},
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+    const authClient = {
+      getAccessToken: vi.fn(async () => "auth-client-token")
+    };
+
+    const provider = createVertex({
+      authClient,
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect();
+    await session.close();
+
+    expect(authClient.getAccessToken).toHaveBeenCalledOnce();
+    expect(connectionFactory).toHaveBeenCalledOnce();
   });
 
   it("reports Vertex browser tokens as unsupported", async () => {

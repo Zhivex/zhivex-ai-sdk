@@ -71,13 +71,15 @@ const bedrockOpenAIApiKey = process.env.BEDROCK_API_KEY ?? process.env.AWS_BEARE
 const bedrockOpenAITextModelId = process.env.BEDROCK_OPENAI_INTEGRATION_MODEL ?? "openai.gpt-oss-120b-1:0";
 
 const vertexAccessToken = process.env.VERTEX_ACCESS_TOKEN ?? process.env.GOOGLE_ACCESS_TOKEN;
+const vertexApiKey = process.env.VERTEX_API_KEY ?? process.env.GOOGLE_API_KEY;
 const vertexProjectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
-const vertexLocation = process.env.VERTEX_LOCATION;
+const vertexLocation = process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION;
 const vertexBaseURL = process.env.VERTEX_BASE_URL;
 const vertexTextModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-2.0-flash";
 const vertexEmbeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-005";
+const usableVertexAccessToken = vertexAccessToken && (vertexProjectId || vertexBaseURL) ? vertexAccessToken : undefined;
 
-const hasVertexCredentials = Boolean(vertexAccessToken && (vertexProjectId || vertexBaseURL));
+const hasVertexCredentials = Boolean(usableVertexAccessToken || vertexApiKey);
 
 export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
   ...(openAIApiKey
@@ -358,14 +360,16 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
           name: "vertex",
           createModel: () =>
             createVertex({
-              accessToken: vertexAccessToken,
+              accessToken: usableVertexAccessToken,
+              apiKey: vertexApiKey,
               projectId: vertexProjectId,
               location: vertexLocation,
               baseURL: vertexBaseURL
             })(vertexTextModelId),
           createEmbeddingModel: () =>
             createVertex({
-              accessToken: vertexAccessToken,
+              accessToken: usableVertexAccessToken,
+              apiKey: vertexApiKey,
               projectId: vertexProjectId,
               location: vertexLocation,
               baseURL: vertexBaseURL
