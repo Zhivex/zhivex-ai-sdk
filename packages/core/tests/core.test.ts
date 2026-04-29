@@ -17,6 +17,7 @@ import {
   createApprovalPolicy,
   createBudgetGuard,
   createProviderSupportMatrix,
+  createProviderSupportDriftReport,
   createRedactionPolicy,
   createSafetyPolicy,
   createTelemetryMiddleware,
@@ -59,6 +60,7 @@ import {
   toUIMessageStreamResponse,
   wrapLanguageModel,
   recordToolTestFixture,
+  renderProviderSupportMatrix,
   runAgent,
   runToolTestFixture,
   tool,
@@ -609,18 +611,123 @@ describe("core helpers", () => {
       codeExecution: true,
       shell: true,
       realtime: true,
-      reasoning: true
+      reasoning: true,
+      embeddings: false,
+      audioInput: false,
+      audioOutput: false,
+      browserTokens: true,
+      structuredOutputSummary: "native",
+      reasoningSummary: "yes",
+      hostedToolSummary: "web search, remote MCP, code execution, shell, apply patch, tool search, toolsets"
     });
     expect(createProviderSupportMatrix([{ provider: "OpenAI", model }])).toEqual({
       entries: [
         expect.objectContaining({
           provider: "OpenAI",
           modelId: "gpt-test",
-          agentTier: "tier-a"
+          agentTier: "tier-a",
+          browserTokens: true
         })
       ]
     });
     expect(JSON.parse(JSON.stringify(createProviderSupportMatrix([model])))).toEqual(createProviderSupportMatrix([model]));
+  });
+
+  it("renders provider support matrices and reports drift", () => {
+    const model = createLanguageModel({
+      provider: "openai",
+      modelId: "gpt-test",
+      capabilities: {
+        ...createLanguageModel().capabilities,
+        embeddings: true,
+        reasoning: true,
+        webSearch: true,
+        audioInput: true,
+        audioOutput: false,
+        realtime: {
+          sessions: true,
+          audioInput: true,
+          audioOutput: false,
+          imageInput: false,
+          tools: true,
+          browserTokens: true
+        },
+        agentCapabilities: {
+          supportTier: "tier-a",
+          toolChoiceNone: true,
+          approvalRequests: true,
+          hostedWebSearch: true,
+          hostedFileSearch: false,
+          remoteMcp: true,
+          computerUse: false,
+          codeExecution: false,
+          shell: false,
+          applyPatch: false,
+          toolSearch: false,
+          webExtraction: false,
+          skills: false,
+          toolsets: false
+        }
+      }
+    });
+    const matrix = createProviderSupportMatrix([
+      {
+        provider: "OpenAI",
+        model,
+        summary: {
+          structuredOutputSummary: "native",
+          reasoningSummary: "`effort`",
+          hostedToolSummary: "remote MCP"
+        }
+      }
+    ]);
+
+    expect(renderProviderSupportMatrix(matrix)).toContain(
+      "| OpenAI | yes | yes | yes | native | yes | yes | no | yes | yes | `effort` | yes | remote MCP | Tier A |"
+    );
+
+    const providerOnlyReport = createProviderSupportDriftReport(matrix, {
+      entries: [
+        {
+          provider: "OpenAI",
+          agentTier: "tier-a",
+          browserTokens: true
+        }
+      ]
+    });
+    expect(providerOnlyReport).toEqual({
+      ok: true,
+      missing: [],
+      unexpected: [],
+      changed: []
+    });
+
+    const drift = createProviderSupportDriftReport(matrix, {
+      entries: [
+        {
+          provider: "OpenAI",
+          modelId: "gpt-test",
+          reasoning: false
+        },
+        {
+          provider: "Anthropic"
+        }
+      ]
+    });
+
+    expect(drift.ok).toBe(false);
+    expect(drift.changed).toEqual([
+      {
+        provider: "OpenAI",
+        modelId: "gpt-test",
+        field: "reasoning",
+        expected: false,
+        actual: true
+      }
+    ]);
+    expect(drift.missing).toEqual([{ provider: "Anthropic", modelId: undefined }]);
+    expect(drift.unexpected).toEqual([]);
+    expect(JSON.parse(JSON.stringify(drift))).toEqual(drift);
   });
 
   it("rejects duplicate advanced registry tool names", () => {

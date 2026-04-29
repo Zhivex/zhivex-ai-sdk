@@ -19,6 +19,7 @@ describe("sdk public surface", () => {
     expect(sdk.createBudgetGuard).toBeTypeOf("function");
     expect(sdk.createMockLanguageModel).toBeTypeOf("function");
     expect(sdk.createMockTool).toBeTypeOf("function");
+    expect(sdk.createProviderSupportDriftReport).toBeTypeOf("function");
     expect(sdk.createProviderSupportMatrix).toBeTypeOf("function");
     expect(sdk.createRedactionPolicy).toBeTypeOf("function");
     expect(sdk.createSafetyPolicy).toBeTypeOf("function");
@@ -46,6 +47,7 @@ describe("sdk public surface", () => {
     expect(sdk.applySafetyPolicyToAgent).toBeTypeOf("function");
     expect(sdk.judgeAgentEvaluation).toBeTypeOf("function");
     expect(sdk.replayAgentRun).toBeTypeOf("function");
+    expect(sdk.renderProviderSupportMatrix).toBeTypeOf("function");
     expect(sdk.runAgentEvaluation).toBeTypeOf("function");
     expect(sdk.getHostedToolClass).toBeTypeOf("function");
     expect(sdk.toUIAgentStreamResponse).toBeTypeOf("function");

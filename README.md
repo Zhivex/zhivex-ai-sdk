@@ -588,10 +588,16 @@ Agent stream events currently include:
 
 Those events are exposed both through `streamAgent().eventStream` and through UI/SSE helpers such as `toUIAgentStreamResponse()` and `toUIMessageStream()`.
 
-When you need to reason about provider-specific agent features at runtime, inspect `model.capabilities.agentCapabilities` or use helpers such as `getAgentCapabilities()`, `getAgentSupportTier()`, `inspectProviderAgentSupport()`, `createProviderSupportMatrix()`, and `getHostedToolClass()`. Hosted tools now carry a normalized `toolClass` like `web-search`, `file-search`, `remote-mcp`, `computer-use`, `code-execution`, `shell`, `apply-patch`, `tool-search`, `web-extraction`, or `skill`.
+When you need to reason about provider-specific agent features at runtime, inspect `model.capabilities.agentCapabilities` or use helpers such as `getAgentCapabilities()`, `getAgentSupportTier()`, `inspectProviderAgentSupport()`, `createProviderSupportMatrix()`, `renderProviderSupportMatrix()`, `createProviderSupportDriftReport()`, and `getHostedToolClass()`. Hosted tools now carry a normalized `toolClass` like `web-search`, `file-search`, `remote-mcp`, `computer-use`, `code-execution`, `shell`, `apply-patch`, `tool-search`, `web-extraction`, or `skill`.
 
 ```ts
-import { createProviderSupportMatrix, getAgentCapabilities, getAgentSupportTier } from "@zhivex-ai/sdk";
+import {
+  createProviderSupportDriftReport,
+  createProviderSupportMatrix,
+  getAgentCapabilities,
+  getAgentSupportTier,
+  renderProviderSupportMatrix
+} from "@zhivex-ai/sdk";
 
 const capabilities = getAgentCapabilities(openai("gpt-5"));
 const matrix = createProviderSupportMatrix([
@@ -601,7 +607,8 @@ const matrix = createProviderSupportMatrix([
 
 console.log(getAgentSupportTier(openai("gpt-5")));
 console.log(capabilities);
-console.log(matrix.entries);
+console.log(renderProviderSupportMatrix(matrix));
+console.log(createProviderSupportDriftReport(matrix, { entries: [{ provider: "openai", agentTier: "tier-a" }] }));
 ```
 
 Use the agent tiers as release guidance, not just metadata:

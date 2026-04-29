@@ -41,7 +41,7 @@ These APIs are the supported public contract for application code and production
 - Agent replay and evaluation helpers: `createAgentRunSnapshot`, `replayAgentRun`, `createMockLanguageModel`, `createMockTool`, `runAgentEvaluation`, `createAgentEvaluationFixture`, `runAgentEvaluationFixture`, `createAgentEvaluationReport`, and `judgeAgentEvaluation`
 - Agent trace and cost helpers: `createAgentTraceArtifact`, `createAgentTraceCollector`, `summarizeAgentTrace`, `estimateTokenCost`, and `estimateAgentRunCost`
 - Safety/policy helpers: `createSafetyPolicy`, `createApprovalPolicy`, `createRedactionPolicy`, `createBudgetGuard`, and `applySafetyPolicyToAgent`
-- Provider parity helpers: `inspectProviderAgentSupport` and `createProviderSupportMatrix`
+- Provider parity helpers: `inspectProviderAgentSupport`, `createProviderSupportMatrix`, `renderProviderSupportMatrix`, and `createProviderSupportDriftReport`
 - Default agent stores: in-memory, file-backed, SQLite, and Postgres run and memory stores
 - MCP integration: `createMcpToolSet`
 - Gateway: `createGateway` and its documented request/response surface

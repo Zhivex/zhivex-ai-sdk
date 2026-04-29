@@ -138,8 +138,22 @@ export { generateImage, generateMusic, generateVideo } from "./media.js";
 export { generateText, normalizeMessages, streamText } from "./generate-text.js";
 export { createOtelAgentObserver, createOtelObserver, createOtelTelemetryMiddleware, OTelObserver, OTelSpanHandle } from "./observability.js";
 export type { OTelSpanLike, OTelTracerLike } from "./observability.js";
-export { createProviderSupportMatrix, inspectProviderAgentSupport } from "./provider-parity.js";
-export type { ProviderAgentSupport, ProviderSupportMatrix, ProviderSupportMatrixEntry } from "./provider-parity.js";
+export {
+  createProviderSupportDriftReport,
+  createProviderSupportMatrix,
+  inspectProviderAgentSupport,
+  renderProviderSupportMatrix
+} from "./provider-parity.js";
+export type {
+  ProviderAgentSupport,
+  ProviderSupportDrift,
+  ProviderSupportDriftExpectedEntry,
+  ProviderSupportDriftExpectedMatrix,
+  ProviderSupportDriftReport,
+  ProviderSupportMatrix,
+  ProviderSupportMatrixEntry,
+  ProviderSupportMatrixFormat
+} from "./provider-parity.js";
 export {
   applySafetyPolicyToAgent,
   createApprovalPolicy,

@@ -229,15 +229,17 @@ The TypeScript SDK should be considered better than Python when, in addition:
 - tool testing, replay, and evaluation helpers are first-class
 - safety policies are reusable SDK primitives instead of downstream glue
 - trace/cost summaries are reusable SDK primitives instead of downstream glue
+- provider parity rendering and drift reports are reusable SDK primitives
 - app teams can build production agent systems with less custom glue code
 
 ## Recommended Immediate Next Steps
 
-1. Provider parity follow-up: generated docs from the runtime support matrix
-2. Release hardening: consolidate changesets and compare the public API against `main`
-3. Evaluation follow-up: richer judge adapters and run diff helpers
-4. Tool platform follow-up: deeper MCP/hosted-tool metadata
-5. Observability follow-up: optional exporters for external trace stores
+1. Release channel decision: choose stable, beta, rc, or next before versioning
+2. Versioning dry run: apply `bun run version-packages` only when the release channel is chosen
+3. Provider parity follow-up: optional README generation from rendered runtime matrix
+4. Evaluation follow-up: richer judge adapters and run diff helpers
+5. Tool platform follow-up: deeper MCP/hosted-tool metadata
+6. Observability follow-up: optional exporters for external trace stores
 
 ## Notes
 
