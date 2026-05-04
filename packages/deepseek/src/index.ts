@@ -56,7 +56,7 @@ const capabilities: ModelCapabilities = {
   reasoning: true,
   webSearch: false,
   agentCapabilities: {
-    supportTier: "tier-c",
+    supportTier: "tier-b",
     toolChoiceNone: true,
     approvalRequests: false,
     hostedWebSearch: false,

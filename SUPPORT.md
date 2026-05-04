@@ -32,6 +32,7 @@ The following packages are intended for npm consumers:
 - `@zhivex-ai/openrouter`
 - `@zhivex-ai/qwen`
 - `@zhivex-ai/kimi`
+- `@zhivex-ai/deepseek`
 - `@zhivex-ai/gateway`
 
 ## Provider Tiers
