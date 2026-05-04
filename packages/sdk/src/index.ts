@@ -174,6 +174,7 @@ export type {
   AgentRunCancellationOptions,
   AgentRunInput,
   AgentRunOutput,
+  AgentRunPolicy,
   AgentRunStore,
   AgentRunState,
   AgentRunTreeCancellationResult,

@@ -226,6 +226,7 @@ What the runtime guarantees:
 - `state` is JSON-serializable and can be persisted by your app.
 - `createAgent()` keeps reusable defaults such as `instructions`, `tools`, `maxSteps`, `reasoning`, and provider options in one place.
 - `resumeAgent()` continues from a previous `state` instead of rebuilding the run manually.
+- Production states include `queued`, `running`, `waiting_approval`, `cancel_requested`, `cancelled`, `timed_out`, `failed`, and `completed`. The legacy `suspended` status is still accepted when loading old persisted runs, but new approval waits use `waiting_approval`.
 
 ### Realtime Sessions
 
@@ -406,7 +407,9 @@ await cancelAgentRun(store, first.state.runId, {
 - Legacy states without `schemaVersion` are normalized when loaded or resumed.
 - `idempotencyKey` requires an agent run store that implements `findByIdempotencyKey()`. The built-in in-memory, file, SQLite, and Postgres stores support it.
 - Reusing an existing `idempotencyKey` returns the existing run state instead of creating a duplicate run.
-- `cancelAgentRun()` marks the saved state as `cancelled`. It is a durable/cooperative SDK cancellation marker; it does not promise to abort a provider request that is already in flight.
+- `cancelAgentRun()` marks the saved state as `cancel_requested` by default. Pass `{ mode: "final" }` to write a terminal `cancelled` state.
+- Cancellation is durable and cooperative. It gives workers/providers a stable marker to observe, but it does not promise to stop external side effects that already started.
+- Add `policy: { timeoutMs, onTimeout }` to `createAgent()` or `runAgent()` to enforce an SDK-level runtime timeout. The default timeout result is `timed_out`; `onTimeout: "cancel-requested"` writes `cancel_requested` instead. The timeout is propagated to providers through `AbortSignal`.
 
 ### Agent Handoffs
 
@@ -463,7 +466,7 @@ console.log(result.state.childRuns?.[0]?.parentRunId);
 
 ### Subagent Production Controls
 
-For production subagent workflows, use a shared durable run store when parent and child runs need to be audited or cancelled together. Built-in stores can look up child runs by `parentRunId`, and `cancelAgentRunTree()` marks the parent plus all persisted descendants as cancelled.
+For production subagent workflows, use a shared durable run store when parent and child runs need to be audited or cancelled together. Built-in stores can look up child runs by `parentRunId`, and `cancelAgentRunTree()` marks the parent plus all persisted descendants as `cancel_requested` by default. Pass `{ mode: "final" }` when the workflow is known to be terminally cancelled.
 
 ```ts
 import {
@@ -560,6 +563,8 @@ const group = await runAgentGroup(
 );
 ```
 
+With `stopOnError: false`, groups keep all-settled behavior and report every member result. With `stopOnError: true`, the first thrown error or member output with `status: "failed"` or `status: "timed_out"` aborts pending members cooperatively through `AbortSignal`; aborted members are returned as rejected outputs with a stable fail-fast error message.
+
 Use `handoff` for sequential ownership transfer, `subagents` for model-driven delegation inside an agent loop, and `runAgentGroup()` for deterministic fan-out from application code.
 
 ### Subagent Defaults
@@ -588,20 +593,20 @@ const agent = createAgent({
 });
 ```
 
-If a provider emits an MCP approval request, the run is suspended instead of failing. You can inspect pending approvals with `getAgentApprovalRequests()` and continue with `resumeAgent()`:
+If a provider emits an MCP approval request, the run moves to `waiting_approval` instead of failing. You can inspect pending approvals with `getAgentApprovalRequests()` and continue with `resumeAgent()`. Persisted legacy states with `status: "suspended"` are still accepted for compatibility.
 
 ```ts
 import { createAgent, getAgentApprovalRequests, resumeAgent, runAgent } from "@zhivex-ai/sdk";
 
-const suspended = await runAgent(weatherAgent, {
+const waiting = await runAgent(weatherAgent, {
   prompt: "Search the docs through MCP."
 });
 
-if (suspended.status === "suspended") {
-  const [approval] = getAgentApprovalRequests(suspended.messages);
+if (waiting.status === "waiting_approval") {
+  const [approval] = getAgentApprovalRequests(waiting.messages);
 
   const resumed = await resumeAgent(weatherAgent, {
-    state: suspended.state,
+    state: waiting.state,
     approvals: [
       {
         provider: approval.provider,

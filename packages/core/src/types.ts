@@ -999,9 +999,26 @@ export interface GenerateTextOutput {
   toolResults: ToolExecutionResult[];
 }
 
-export type AgentStatus = "running" | "completed" | "suspended" | "failed" | "cancelled";
+export type AgentStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  /**
+   * @deprecated Use "waiting_approval". Kept for legacy persisted run states.
+   */
+  | "suspended"
+  | "waiting_approval"
+  | "cancel_requested"
+  | "failed"
+  | "cancelled"
+  | "timed_out";
 
-export type AgentStepStatus = "running" | "completed" | "suspended" | "failed";
+export type AgentStepStatus = "running" | "completed" | "suspended" | "waiting_approval" | "failed";
+
+export interface AgentRunPolicy {
+  timeoutMs?: number;
+  onTimeout?: "fail" | "cancel-requested";
+}
 
 export interface AgentStepRequest {
   messages: ModelMessage[];
@@ -1098,6 +1115,7 @@ export interface AgentRunStore {
 export interface AgentRunCancellationOptions {
   reason?: string;
   cascade?: boolean;
+  mode?: "request" | "final";
 }
 
 export interface AgentRunTreeCancellationResult {
@@ -1337,6 +1355,7 @@ export interface AgentDefinition<TModel extends LanguageModel = LanguageModel> {
   outputGuardrails?: AgentOutputGuardrail[];
   providerOptions?: ProviderOptionsOf<TModel>;
   subagents?: AgentSubAgentDefinition[];
+  policy?: AgentRunPolicy;
   metadata?: Record<string, JsonValue>;
   store?: AgentRunStore;
   memory?: AgentMemoryStore;
@@ -1395,6 +1414,7 @@ export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryO
     maxTokens?: number;
     reasoning?: ReasoningConfig;
     providerOptions?: ProviderOptionsOf<TModel>;
+    policy?: AgentRunPolicy;
     metadata?: Record<string, JsonValue>;
   };
 

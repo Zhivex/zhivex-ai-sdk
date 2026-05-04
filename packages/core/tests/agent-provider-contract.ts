@@ -147,7 +147,7 @@ export const runAgentProviderContractSuite = (options: AgentProviderContractOpti
         prompt: "Use MCP"
       });
 
-      expect(suspended.status).toBe("suspended");
+      expect(suspended.status).toBe("waiting_approval");
       expect(suspended.state.pendingApprovals).toHaveLength(1);
 
       const pendingApproval = suspended.state.pendingApprovals[0];

@@ -598,7 +598,7 @@ describe("agent runtime", () => {
       prompt: "Use MCP"
     });
 
-    expect(result.status).toBe("suspended");
+    expect(result.status).toBe("waiting_approval");
     expect(result.state.pendingApprovals).toEqual([
       {
         provider: "openai",
@@ -619,7 +619,7 @@ describe("agent runtime", () => {
     expect(getAgentApprovalRequests(result.messages)).toEqual(result.state.pendingApprovals);
   });
 
-  it("resumes a suspended agent when approval responses are provided", async () => {
+  it("resumes an agent waiting for approval when approval responses are provided", async () => {
     let callCount = 0;
     let seenApprovalMessage = false;
 
@@ -694,6 +694,72 @@ describe("agent runtime", () => {
     expect(resumed.outputText).toBe("Approved and completed");
     expect(resumed.state.pendingApprovals).toEqual([]);
     expect(resumed.state.currentStep).toBe(2);
+  });
+
+  it("accepts legacy suspended states while resuming approvals", async () => {
+    let sawApproval = false;
+    const agent = createAgent({
+      model: createLanguageModel({
+        async generate(input) {
+          sawApproval = input.messages.some((message) =>
+            message.parts.some(
+              (part) =>
+                part.type === "provider-data" &&
+                part.provider === "openai" &&
+                (part.data as { type?: string }).type === "mcp_approval_response"
+            )
+          );
+
+          return {
+            messages: [createTextMessage("assistant", "legacy resumed")],
+            text: "legacy resumed",
+            finishReason: "stop"
+          };
+        }
+      }),
+      maxSteps: 2
+    });
+    const legacyState = {
+      schemaVersion: 1,
+      runId: "legacy-suspended",
+      provider: "test",
+      modelId: "agent-model",
+      status: "suspended",
+      messages: [createTextMessage("user", "Use MCP")],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 2,
+      outputText: "",
+      pendingApprovals: [
+        {
+          provider: "openai",
+          id: "mcpr_legacy",
+          arguments: "{}",
+          name: "fetch_docs",
+          rawData: {
+            type: "mcp_approval_request",
+            id: "mcpr_legacy",
+            arguments: "{}",
+            name: "fetch_docs"
+          }
+        }
+      ]
+    } as AgentRunState;
+
+    const resumed = await resumeAgent(agent, {
+      state: legacyState,
+      approvals: [
+        {
+          provider: "openai",
+          approvalRequestId: "mcpr_legacy",
+          approve: true
+        }
+      ]
+    });
+
+    expect(sawApproval).toBe(true);
+    expect(resumed.status).toBe("completed");
   });
 
   it("builds reusable approval response parts and messages", () => {
@@ -785,7 +851,7 @@ describe("agent runtime", () => {
     expect(events.some((event) => event.type === "agent-approval-request")).toBe(true);
     expect(events.at(-1)).toMatchObject({
       type: "agent-run-finish",
-      status: "suspended"
+      status: "waiting_approval"
     });
   });
 
@@ -954,7 +1020,7 @@ describe("agent runtime", () => {
     await expect(Promise.resolve(store.load("legacy-run"))).resolves.toMatchObject({ schemaVersion: 1 });
   });
 
-  it("cancels persisted runs and skips model execution after cancellation", async () => {
+  it("marks persisted runs cancel_requested by default and skips model execution", async () => {
     let calls = 0;
     const store = createInMemoryAgentRunStore();
     const agent = createAgent({
@@ -977,13 +1043,96 @@ describe("agent runtime", () => {
     const resumed = await runAgent(agent, { runId: first.state.runId });
 
     expect(cancelled).toMatchObject({
-      status: "cancelled",
+      status: "cancel_requested",
       schemaVersion: 1,
       cancellationReason: "User cancelled."
     });
     expect(cancelled?.cancelledAt).toBeTypeOf("number");
-    expect(resumed.status).toBe("cancelled");
+    expect(resumed.status).toBe("cancel_requested");
     expect(calls).toBe(1);
+  });
+
+  it("can mark persisted runs as finally cancelled", async () => {
+    const store = createInMemoryAgentRunStore();
+    const first = await runAgent(
+      createAgent({
+        id: "cancel-final-agent",
+        model: createLanguageModel(),
+        store
+      }),
+      { prompt: "cancel final" }
+    );
+
+    const cancelled = await cancelAgentRun(store, first.state.runId, {
+      reason: "Final cancellation.",
+      mode: "final"
+    });
+
+    expect(cancelled).toMatchObject({
+      status: "cancelled",
+      cancellationReason: "Final cancellation."
+    });
+  });
+
+  it("returns timed_out when an agent policy timeout expires", async () => {
+    let aborted = false;
+    const agent = createAgent({
+      id: "timeout-agent",
+      model: createLanguageModel({
+        async generate(input) {
+          await new Promise((resolve, reject) => {
+            input.abortSignal?.addEventListener(
+              "abort",
+              () => {
+                aborted = true;
+                reject(new Error("model aborted"));
+              },
+              { once: true }
+            );
+            setTimeout(resolve, 50);
+          });
+          return {
+            messages: [createTextMessage("assistant", "too late")],
+            text: "too late"
+          };
+        }
+      }),
+      policy: {
+        timeoutMs: 5
+      }
+    });
+
+    const result = await runAgent(agent, { prompt: "slow" });
+
+    expect(result.status).toBe("timed_out");
+    expect(result.error?.message).toContain("timed out");
+    expect(aborted).toBe(true);
+  });
+
+  it("can convert an agent policy timeout into cancel_requested", async () => {
+    const agent = createAgent({
+      id: "timeout-cancel-agent",
+      model: createLanguageModel({
+        async generate() {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return {
+            messages: [createTextMessage("assistant", "too late")],
+            text: "too late"
+          };
+        }
+      })
+    });
+
+    const result = await runAgent(agent, {
+      prompt: "slow",
+      policy: {
+        timeoutMs: 5,
+        onTimeout: "cancel-requested"
+      }
+    });
+
+    expect(result.status).toBe("cancel_requested");
+    expect(result.state.cancellationReason).toContain("timed out");
   });
 
   it("looks up and deletes in-memory runs by parent run id", async () => {
@@ -1048,10 +1197,10 @@ describe("agent runtime", () => {
 
     const result = await cancelAgentRunTree(store, "parent-run", { reason: "Stop workflow." });
 
-    expect(result.parent).toMatchObject({ runId: "parent-run", status: "cancelled", cancellationReason: "Stop workflow." });
+    expect(result.parent).toMatchObject({ runId: "parent-run", status: "cancel_requested", cancellationReason: "Stop workflow." });
     expect(result.children).toHaveLength(1);
-    expect(result.children[0]).toMatchObject({ runId: "child-run", status: "cancelled", cancellationReason: "Stop workflow." });
-    await expect(Promise.resolve(store.load("child-run"))).resolves.toMatchObject({ status: "cancelled" });
+    expect(result.children[0]).toMatchObject({ runId: "child-run", status: "cancel_requested", cancellationReason: "Stop workflow." });
+    await expect(Promise.resolve(store.load("child-run"))).resolves.toMatchObject({ status: "cancel_requested" });
   });
 
   it("requires parent lookup support for tree cancellation", async () => {
@@ -1779,6 +1928,148 @@ describe("agent runtime", () => {
     expect(group.status).toBe("failed");
     expect(group.outputs[0]).toMatchObject({ name: "ok", status: "fulfilled" });
     expect(group.outputs[1]).toMatchObject({ name: "bad", status: "rejected", error: { message: "bad failed" } });
+  });
+
+  it("keeps all-settled agent group behavior when stopOnError is false", async () => {
+    const calls: string[] = [];
+    const group = await runAgentGroup(
+      [
+        {
+          name: "bad",
+          agent: createAgent({
+            id: "bad",
+            model: createLanguageModel({
+              async generate() {
+                calls.push("bad");
+                throw new Error("bad failed");
+              }
+            })
+          })
+        },
+        {
+          name: "ok",
+          agent: createAgent({
+            id: "ok",
+            model: createLanguageModel({
+              async generate() {
+                calls.push("ok");
+                return { messages: [createTextMessage("assistant", "ok")], text: "ok" };
+              }
+            })
+          })
+        }
+      ],
+      { prompt: "fan out", stopOnError: false }
+    );
+
+    expect(group.status).toBe("failed");
+    expect(group.outputs[0]).toMatchObject({ name: "bad", status: "rejected" });
+    expect(group.outputs[1]).toMatchObject({ name: "ok", status: "fulfilled" });
+    expect(calls.sort()).toEqual(["bad", "ok"]);
+  });
+
+  it("aborts pending agent group members after the first fail-fast exception", async () => {
+    let slowAborted = false;
+    const group = await runAgentGroup(
+      [
+        {
+          name: "bad",
+          agent: createAgent({
+            id: "bad",
+            model: createLanguageModel({
+              async generate() {
+                throw new Error("bad failed");
+              }
+            })
+          })
+        },
+        {
+          name: "slow",
+          agent: createAgent({
+            id: "slow",
+            model: createLanguageModel({
+              async generate(input) {
+                await new Promise((resolve, reject) => {
+                  input.abortSignal?.addEventListener(
+                    "abort",
+                    () => {
+                      slowAborted = true;
+                      reject(new Error("slow aborted"));
+                    },
+                    { once: true }
+                  );
+                  setTimeout(resolve, 50);
+                });
+                return { messages: [createTextMessage("assistant", "slow")], text: "slow" };
+              }
+            })
+          })
+        }
+      ],
+      { prompt: "fan out", stopOnError: true }
+    );
+
+    expect(group.status).toBe("failed");
+    expect(slowAborted).toBe(true);
+    expect(group.outputs[0]).toMatchObject({ name: "bad", status: "rejected", error: { message: "bad failed" } });
+    expect(group.outputs[1]).toMatchObject({
+      name: "slow",
+      status: "rejected",
+      error: { message: "Agent group member aborted after fail-fast." }
+    });
+  });
+
+  it("aborts pending agent group members after a failed output status", async () => {
+    let slowAborted = false;
+    const group = await runAgentGroup(
+      [
+        {
+          name: "failed-output",
+          agent: createAgent({
+            id: "failed-output",
+            model: createLanguageModel(),
+            inputGuardrails: [
+              () => ({
+                triggered: true,
+                reason: "blocked"
+              })
+            ]
+          })
+        },
+        {
+          name: "slow",
+          agent: createAgent({
+            id: "slow-output",
+            model: createLanguageModel({
+              async generate(input) {
+                await new Promise((resolve, reject) => {
+                  input.abortSignal?.addEventListener(
+                    "abort",
+                    () => {
+                      slowAborted = true;
+                      reject(new Error("slow aborted"));
+                    },
+                    { once: true }
+                  );
+                  setTimeout(resolve, 50);
+                });
+                return { messages: [createTextMessage("assistant", "slow")], text: "slow" };
+              }
+            })
+          })
+        }
+      ],
+      { prompt: "fan out", stopOnError: true }
+    );
+
+    expect(group.status).toBe("failed");
+    expect(slowAborted).toBe(true);
+    expect(group.outputs[0]).toMatchObject({ name: "failed-output", status: "fulfilled", output: { status: "failed" } });
+    expect(group.outputs[1]).toMatchObject({
+      name: "slow",
+      status: "rejected",
+      error: { message: "Agent group member aborted after fail-fast." }
+    });
   });
 
   it("prepares subagents with shared defaults without mutating originals", () => {

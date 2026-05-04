@@ -3,6 +3,7 @@ import { createAgentHandoffMessage } from "./agent-handoff.js";
 import { GuardrailTriggeredError, ValidationError } from "./errors.js";
 import { generateText, normalizeMessages, streamText } from "./generate-text.js";
 import { serializeJsonValue } from "./messages.js";
+import { mergeAbortSignals } from "./runtime.js";
 import { toToolSet } from "./tool-registry.js";
 import { z } from "zod";
 import type {
@@ -19,6 +20,7 @@ import type {
   AgentRunCancellationOptions,
   AgentRunInput,
   AgentRunOutput,
+  AgentRunPolicy,
   AgentRunStore,
   AgentRunState,
   AgentRunTreeCancellationResult,
@@ -49,6 +51,14 @@ import type {
 
 const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 const AGENT_RUN_STATE_SCHEMA_VERSION = 1;
+const AGENT_GROUP_FAIL_FAST_ABORT_MESSAGE = "Agent group member aborted after fail-fast.";
+
+class AgentPolicyTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Agent run timed out after ${timeoutMs}ms.`);
+    this.name = "AgentPolicyTimeoutError";
+  }
+}
 
 const joinInstructions = (...parts: Array<string | undefined>): string | undefined => {
   const content = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
@@ -129,6 +139,9 @@ const normalizeRunState = (state: AgentRunState): AgentRunState => ({
   ...state,
   schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION
 });
+
+const normalizeApprovalStatus = (status: AgentStatus): AgentStatus =>
+  status === "suspended" ? "waiting_approval" : status;
 
 const cloneState = (state: AgentRunState): AgentRunState =>
   JSON.parse(JSON.stringify(normalizeRunState(state))) as AgentRunState;
@@ -289,10 +302,10 @@ const finalizeState = (
   const pendingApprovals = getAgentApprovalRequests(newSteps.flatMap((step) => step.response?.messages ?? []));
 
   if (pendingApprovals.length) {
-    state.status = "suspended";
+    state.status = "waiting_approval";
     state.error = undefined;
     if (lastStep) {
-      lastStep.status = "suspended";
+      lastStep.status = "waiting_approval";
     }
   } else if (exhausted && unresolvedToolCalls) {
     state.status = "failed";
@@ -620,7 +633,8 @@ const createGenerateOptions = <TModel extends LanguageModel>(
   state: AgentRunState,
   input: AgentRunInput<TModel>,
   messages: ModelMessage[],
-  maxSteps: number
+  maxSteps: number,
+  abortSignal: AbortSignal | undefined = input.abortSignal
 ): GenerateTextOptions<TModel> => {
   const tools = { ...(toToolSet(input.tools ?? agent.tools) ?? {}) };
   for (const subagent of agent.subagents ?? []) {
@@ -669,7 +683,7 @@ const createGenerateOptions = <TModel extends LanguageModel>(
     maxTokens: input.maxTokens ?? agent.maxTokens,
     reasoning: input.reasoning ?? agent.reasoning,
     providerOptions: input.providerOptions ?? agent.providerOptions,
-    abortSignal: input.abortSignal,
+    abortSignal,
     timeoutMs: input.timeoutMs,
     maxRetries: input.maxRetries,
     retryBackoffMs: input.retryBackoffMs
@@ -688,6 +702,88 @@ const createFailedState = (state: AgentRunState, message: string): AgentRunState
   },
   updatedAt: Date.now()
 });
+
+const createTerminalState = (
+  state: AgentRunState,
+  status: Extract<AgentStatus, "cancel_requested" | "timed_out">,
+  message: string
+): AgentRunState => ({
+  ...state,
+  status,
+  error: {
+    message
+  },
+  cancellationReason: status === "cancel_requested" ? message : state.cancellationReason,
+  cancelledAt: status === "cancel_requested" ? Date.now() : state.cancelledAt,
+  updatedAt: Date.now()
+});
+
+const resolveRunPolicy = <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  input: AgentRunInput<TModel>
+): AgentRunPolicy | undefined => {
+  const policy = {
+    ...(agent.policy ?? {}),
+    ...(input.policy ?? {})
+  };
+  return Object.keys(policy).length ? policy : undefined;
+};
+
+const withAgentPolicyTimeout = async <T>(
+  operation: Promise<T>,
+  timeout: {
+    signal?: AbortSignal;
+    timeoutPromise?: Promise<never>;
+    cleanup: () => void;
+    isTimedOut: () => boolean;
+  }
+): Promise<T> => {
+  if (!timeout.timeoutPromise) {
+    return operation;
+  }
+
+  try {
+    return await Promise.race([operation, timeout.timeoutPromise]);
+  } finally {
+    timeout.cleanup();
+  }
+};
+
+const createAgentAbortContext = (
+  inputAbortSignal: AbortSignal | undefined,
+  policy: AgentRunPolicy | undefined
+) => {
+  if (!policy?.timeoutMs) {
+    return {
+      signal: inputAbortSignal,
+      timeoutPromise: undefined,
+      cleanup: () => undefined,
+      isTimedOut: () => false
+    };
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(new AgentPolicyTimeoutError(policy.timeoutMs!));
+    }, policy.timeoutMs);
+  });
+
+  return {
+    signal: mergeAbortSignals(inputAbortSignal, controller.signal),
+    timeoutPromise,
+    cleanup: () => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    },
+    isTimedOut: () => timedOut
+  };
+};
 
 const emitRunStartTelemetry = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
@@ -788,16 +884,41 @@ export const runAgentGroup = async (
 ): Promise<AgentGroupRunOutput> => {
   const { stopOnError, runId: _runId, state: _state, approvals: _approvals, handoff: _handoff, ...sharedInput } = input;
   const parentRunId = input.parentRunId;
-  const runs = agents.map((member) => {
+  const controllers = agents.map(() => new AbortController());
+  let failFastTriggered = false;
+  const isFailingOutput = (output: AgentRunOutput) => output.status === "failed" || output.status === "timed_out";
+  const abortPending = (currentIndex: number) => {
+    if (!stopOnError || failFastTriggered) {
+      return;
+    }
+    failFastTriggered = true;
+    controllers.forEach((controller, index) => {
+      if (index !== currentIndex) {
+        controller.abort();
+      }
+    });
+  };
+
+  const runs = agents.map(async (member, index) => {
     const runInput = {
       ...sharedInput,
       ...(member.input ?? {}),
       parentRunId: member.input?.parentRunId ?? parentRunId,
+      abortSignal: mergeAbortSignals(input.abortSignal, member.input?.abortSignal, controllers[index]!.signal),
       metadata: cloneMetadata(input.metadata, member.input?.metadata, {
         ...(member.name ? { agentGroupMember: member.name } : {})
       })
     } as AgentRunInput;
-    return runAgent(member.agent, runInput);
+    try {
+      const output = await runAgent(member.agent, runInput);
+      if (isFailingOutput(output)) {
+        abortPending(index);
+      }
+      return output;
+    } catch (error) {
+      abortPending(index);
+      throw error;
+    }
   });
   const settled = await Promise.allSettled(runs);
   const outputs = settled.map((result, index) => {
@@ -816,11 +937,18 @@ export const runAgentGroup = async (
       agentId: member.agent.id,
       status: "rejected" as const,
       error: {
-        message: result.reason instanceof Error ? result.reason.message : String(result.reason)
+        message:
+          stopOnError && failFastTriggered && controllers[index]!.signal.aborted
+            ? AGENT_GROUP_FAIL_FAST_ABORT_MESSAGE
+            : result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason)
       }
     };
   });
-  const failed = outputs.some((output) => output.status === "rejected" || output.output?.status === "failed");
+  const failed = outputs.some(
+    (output) => output.status === "rejected" || output.output?.status === "failed" || output.output?.status === "timed_out"
+  );
 
   return {
     status: stopOnError && failed ? "failed" : failed ? "failed" : "completed",
@@ -840,9 +968,10 @@ export const cancelAgentRun = async (
   }
 
   const cancelledAt = Date.now();
+  const status = options.mode === "final" ? "cancelled" : "cancel_requested";
   const state = normalizeRunState({
     ...loadedState,
-    status: "cancelled",
+    status,
     cancelledAt,
     cancellationReason: options.reason,
     updatedAt: cancelledAt,
@@ -862,10 +991,11 @@ export const cancelAgentRunTree = async (
   }
 
   const cancelledAt = Date.now();
+  const status = options.mode === "final" ? "cancelled" : "cancel_requested";
   const cancelState = (state: AgentRunState): AgentRunState =>
     normalizeRunState({
       ...state,
-      status: "cancelled",
+      status,
       cancelledAt,
       cancellationReason: options.reason,
       updatedAt: cancelledAt,
@@ -915,12 +1045,20 @@ export const runAgent = async <TModel extends LanguageModel>(
 ): Promise<AgentRunOutput> => {
   const context = await resolveContext(agent, input);
   await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
+  const currentStatus = normalizeApprovalStatus(context.state.status);
 
-  if (context.state.status === "completed" || context.state.status === "cancelled") {
+  if (
+    currentStatus === "completed" ||
+    currentStatus === "cancelled" ||
+    currentStatus === "cancel_requested" ||
+    currentStatus === "timed_out"
+  ) {
+    context.state.status = currentStatus;
     return toOutput(context.state);
   }
 
-  if (context.state.status === "suspended" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
+  if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
+    context.state.status = currentStatus;
     return toOutput(context.state);
   }
 
@@ -951,8 +1089,14 @@ export const runAgent = async <TModel extends LanguageModel>(
     stepIndex: context.state.currentStep + 1
   });
 
+  const policy = resolveRunPolicy(agent, input);
+  const abortContext = createAgentAbortContext(input.abortSignal, policy);
+
   try {
-    const result = await generateText(createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps));
+    const result = await withAgentPolicyTimeout(
+      generateText(createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps, abortContext.signal)),
+      abortContext
+    );
     const newSteps = mapSteps(result.steps, context.state.currentStep, result.toolResults);
     let output = finalizeState(context.state, result, newSteps, result.toolResults);
 
@@ -974,6 +1118,15 @@ export const runAgent = async <TModel extends LanguageModel>(
 
     return output;
   } catch (error) {
+    if (error instanceof AgentPolicyTimeoutError || abortContext.isTimedOut()) {
+      const status = policy?.onTimeout === "cancel-requested" ? "cancel_requested" : "timed_out";
+      const message = error instanceof Error ? error.message : `Agent run timed out after ${policy?.timeoutMs}ms.`;
+      const timedOutState = createTerminalState(context.state, status, message);
+      await persistState(agent, timedOutState);
+      await emitRunFinishTelemetry(agent, timedOutState);
+      return toOutput(timedOutState);
+    }
+
     const failedState = createFailedState(
       context.state,
       error instanceof Error ? error.message : String(error)
@@ -1032,8 +1185,15 @@ export const streamAgent = <TModel extends LanguageModel>(
   const runner = (async () => {
     const context = await resolveContext(agent, input);
     await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
+    const currentStatus = normalizeApprovalStatus(context.state.status);
 
-    if (context.state.status === "completed" || context.state.status === "cancelled") {
+    if (
+      currentStatus === "completed" ||
+      currentStatus === "cancelled" ||
+      currentStatus === "cancel_requested" ||
+      currentStatus === "timed_out"
+    ) {
+      context.state.status = currentStatus;
       publish({ done: true, value: undefined });
       return {
         output: toOutput(context.state),
@@ -1041,7 +1201,8 @@ export const streamAgent = <TModel extends LanguageModel>(
       };
     }
 
-    if (context.state.status === "suspended" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
+    if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
+      context.state.status = currentStatus;
       publish({ done: true, value: undefined });
       return {
         output: toOutput(context.state),
@@ -1128,7 +1289,11 @@ export const streamAgent = <TModel extends LanguageModel>(
       stepIndex: context.state.currentStep + 1
     });
 
-    const streamResult = streamText(createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps));
+    const policy = resolveRunPolicy(agent, input);
+    const abortContext = createAgentAbortContext(input.abortSignal, policy);
+    const streamResult = streamText(
+      createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps, abortContext.signal)
+    );
     const approvalRequests: AgentApprovalRequest[] = [];
 
     const eventRelay = (async () => {
@@ -1173,8 +1338,10 @@ export const streamAgent = <TModel extends LanguageModel>(
 
     const output = (async () => {
       try {
-        await eventRelay;
-        const final = await streamResult.collect();
+        const final = await withAgentPolicyTimeout(
+          eventRelay.then(() => streamResult.collect()),
+          abortContext
+        );
         const newSteps = mapSteps(final.steps, context.state.currentStep, final.toolResults);
         let result = finalizeState(context.state, final, newSteps, final.toolResults);
 
@@ -1228,6 +1395,31 @@ export const streamAgent = <TModel extends LanguageModel>(
         publish({ done: true, value: undefined });
         return result;
       } catch (error) {
+        if (error instanceof AgentPolicyTimeoutError || abortContext.isTimedOut()) {
+          const status = policy?.onTimeout === "cancel-requested" ? "cancel_requested" : "timed_out";
+          const message = error instanceof Error ? error.message : `Agent run timed out after ${policy?.timeoutMs}ms.`;
+          const timedOutState = createTerminalState(context.state, status, message);
+          await persistState(agent, timedOutState);
+          await emitRunFinishTelemetry(agent, timedOutState);
+          publish({
+            done: false,
+            value: {
+              type: "error",
+              error: new AgentPolicyTimeoutError(policy?.timeoutMs ?? 0)
+            }
+          });
+          publish({
+            done: false,
+            value: {
+              type: "agent-run-finish",
+              status: timedOutState.status,
+              state: timedOutState
+            }
+          });
+          publish({ done: true, value: undefined });
+          return toOutput(timedOutState);
+        }
+
         const failedState = createFailedState(context.state, error instanceof Error ? error.message : String(error));
         await persistState(agent, failedState);
         await emitRunFinishTelemetry(agent, failedState);
