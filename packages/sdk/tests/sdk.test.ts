@@ -9,6 +9,9 @@ describe("sdk public surface", () => {
     expect(sdk.cancelAgentRun).toBeTypeOf("function");
     expect(sdk.cancelAgentRunTree).toBeTypeOf("function");
     expect(sdk.createAdvancedToolRegistry).toBeTypeOf("function");
+    expect(sdk.getApiStability).toBeTypeOf("function");
+    expect(sdk.listApiStability).toBeTypeOf("function");
+    expect(sdk.API_STABILITY_MANIFEST.createRunner.stability).toBe("stable");
     expect(sdk.createAgent).toBeTypeOf("function");
     expect(sdk.createAgentEvaluationFixture).toBeTypeOf("function");
     expect(sdk.createAgentEvaluationReport).toBeTypeOf("function");
@@ -96,6 +99,18 @@ describe("sdk public surface", () => {
     expect(sdk.system).toBeTypeOf("function");
     expect(sdk.user).toBeTypeOf("function");
     expect(sdk.assistant).toBeTypeOf("function");
+  });
+
+  it("re-exports API stability metadata from core", () => {
+    expect(sdk.getApiStability("generateText")?.stability).toBe("stable");
+    expect(sdk.getApiStability("createRunner")?.stability).toBe("stable");
+    expect(sdk.getApiStability("createInMemorySessionService")?.stability).toBe("stable");
+    expect(sdk.getApiStability("createFileSessionService")?.stability).toBe("stable");
+    expect(sdk.getApiStability("createWorkflow")?.stability).toBe("beta");
+    expect(sdk.getApiStability("createFileArtifactService")?.stability).toBe("beta");
+    expect(sdk.getApiStability("createFileWorkflowStateService")?.stability).toBe("beta");
+    expect(sdk.getApiStability("verifyArtifactIntegrity")?.stability).toBe("beta");
+    expect(sdk.getApiStability("createAdvancedToolRegistry")?.stability).toBe("experimental");
   });
 
   it("does not re-export provider factories", () => {

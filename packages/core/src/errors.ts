@@ -23,6 +23,7 @@ export class ProviderHTTPError extends ZhivexAIError {
 }
 
 export class ValidationError extends ZhivexAIError {}
+export class ConflictError extends ZhivexAIError {}
 export class ParseError extends ZhivexAIError {}
 export class UnsupportedFeatureError extends ZhivexAIError {}
 

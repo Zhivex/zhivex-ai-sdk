@@ -14,6 +14,18 @@ The SDK now documents its public contract and release expectations more explicit
 
 For production integrations, prefer supported public package entrypoints and use the provider capability matrix below as the source of truth for cross-provider behavior.
 
+Runtime exports from `@zhivex-ai/core` are also classified by a verifiable API manifest:
+
+```ts
+import { getApiStability } from "@zhivex-ai/sdk";
+
+console.log(getApiStability("createWorkflow")?.stability); // "beta"
+```
+
+Runtime export drift is guarded by that manifest, and public declaration drift is guarded by type snapshot tests for `@zhivex-ai/core` and `@zhivex-ai/sdk`.
+
+The first post-RC promotion is intentionally narrow: `Runner + SessionService` is Stable, while declarative workflows, artifacts, workflow state services, and the CLI remain Beta.
+
 ## Why Zhivex AI SDK
 
 - Unified primitives for text generation, streaming, structured output, tools, multimodal messages, and embeddings.
@@ -228,6 +240,390 @@ What the runtime guarantees:
 - `createAgent()` keeps reusable defaults such as `instructions`, `tools`, `maxSteps`, `reasoning`, and provider options in one place.
 - `resumeAgent()` continues from a previous `state` instead of rebuilding the run manually.
 - Production states include `queued`, `running`, `waiting_approval`, `cancel_requested`, `cancelled`, `timed_out`, `failed`, and `completed`. The legacy `suspended` status is still accepted when loading old persisted runs, but new approval waits use `waiting_approval`.
+
+### Runner And Sessions
+
+`createRunner()` adds a small application/session layer on top of the existing agent runtime. It keeps `runAgent()` as the execution engine while a `SessionService` stores multi-turn session events and the latest resumable `AgentRunState`.
+
+```ts
+import { createAgent, createInMemorySessionService, createRunner } from "@zhivex-ai/sdk";
+
+const agent = createAgent({
+  model: openai("gpt-5"),
+  instructions: "Keep answers concise."
+});
+
+const runner = createRunner({
+  appName: "travel-assistant",
+  agent,
+  sessionService: createInMemorySessionService()
+});
+
+const first = await runner.run({
+  userId: "user_123",
+  sessionId: "trip-planning",
+  prompt: "Remember that I prefer museums."
+});
+
+const next = await runner.run({
+  userId: "user_123",
+  sessionId: first.session.sessionId,
+  prompt: "Plan tomorrow afternoon."
+});
+
+console.log(next.session.events.map((event) => event.type));
+console.log(next.output.outputText);
+```
+
+The in-memory service is useful for local apps and tests. For app runtimes that need to survive process restarts, use a durable session service:
+
+```ts
+import { createFileSessionService, createRunner } from "@zhivex-ai/sdk";
+
+const runner = createRunner({
+  appName: "travel-assistant",
+  agent,
+  sessionService: createFileSessionService({
+    directory: "./tmp/agent-sessions"
+  })
+});
+```
+
+The SDK also exposes `createSqliteSessionService()` and `createPostgresSessionService()` for production applications that already provide compatible database clients. These services store the full `AgentSession` JSON, including events and the latest resumable `AgentRunState`. This layer is SDK-only: it does not introduce workspaces, project API keys, BYOK storage, billing, or an HTTP server.
+
+Durable session records are schema-versioned. New sessions are saved with `schemaVersion: 1`; legacy session JSON without a version is normalized when loaded, while records from a future schema version fail fast.
+
+Durable records also include a `revision` counter. Pass `expectedRevision` to save operations when your app wants optimistic concurrency; if the stored revision changed, the SDK raises `ConflictError`. Omitting `expectedRevision` keeps the compatible last-write-wins behavior.
+
+For explicit migration/validation, use `migrateAgentSessionRecord(record)`. File-backed session stores can be pruned locally with `pruneFileSessionStore({ directory, keepLast, olderThanMs, dryRun })`.
+
+### Declarative Workflows
+
+`createWorkflow()` and `runWorkflow()` run agent workflows on top of `Runner`. The Beta workflow surface supports sequential task steps, parallel groups, and bounded task loops. Each task calls a runner, can read previous step outputs, and can persist its own `outputKey` into the workflow state.
+
+```ts
+import { createWorkflow, runWorkflow } from "@zhivex-ai/sdk";
+
+const workflow = createWorkflow({
+  id: "candidate-review",
+  steps: [
+    {
+      id: "intake",
+      runner,
+      prompt: "Summarize the candidate profile.",
+      outputKey: "intake"
+    },
+    {
+      id: "review",
+      runner,
+      prompt: ({ outputs }) => `Review this intake: ${outputs.intake}`,
+      outputKey: "review"
+    }
+  ]
+});
+
+const result = await runWorkflow(workflow, {
+  userId: "user_123",
+  sessionId: "candidate_456"
+});
+
+console.log(result.status);
+console.log(result.outputs.review);
+```
+
+If a step pauses for approval, the workflow returns `waiting_approval` with a serializable `state`. Call `runWorkflow()` again with that state and approval responses to resume the pending step. `replayWorkflowRun()` inspects a saved workflow state without calling models or tools.
+
+Workflows can also persist their latest state. For compact apps, `SessionService` can keep the state under session metadata. For production-style local state, use a dedicated `WorkflowStateService`:
+
+```ts
+import {
+  createFileSessionService,
+  createFileWorkflowStateService,
+  createWorkflow,
+  loadWorkflowState,
+  runWorkflow
+} from "@zhivex-ai/sdk";
+
+const sessionService = createFileSessionService({
+  directory: ".zhivex/sessions"
+});
+const workflowStateService = createFileWorkflowStateService({
+  directory: ".zhivex/workflow-states"
+});
+
+const workflow = createWorkflow({
+  id: "candidate-review",
+  persistence: {
+    appName: "candidate-review",
+    sessionService,
+    workflowStateService
+  },
+  steps: [
+    { id: "intake", runner, prompt: "Summarize the candidate.", outputKey: "intake" },
+    { id: "review", runner, prompt: ({ outputs }) => `Review: ${outputs.intake}`, outputKey: "review" }
+  ]
+});
+
+const result = await runWorkflow(workflow, {
+  userId: "user_123",
+  sessionId: "candidate_456"
+});
+
+const persisted = await loadWorkflowState(workflow, {
+  userId: "user_123",
+  sessionId: "candidate_456"
+});
+
+const resumed = await runWorkflow(workflow, {
+  userId: "user_123",
+  sessionId: "candidate_456",
+  resumeFromPersistedState: true,
+  approvals
+});
+```
+
+`WorkflowStateService` is the recommended durable workflow-state path. When `workflowStateService` is configured, the full state is stored by `appName`, `userId`, `sessionId`, and workflow key while the session keeps only a lightweight reference. Without it, the compatibility fallback stores state under `session.metadata.workflowRuns[workflow.id]`. Use `persistence.metadataKey` or `persistence.workflowKey` if your app needs a different namespace for the fallback or key.
+
+Workflow run states and dedicated workflow state records are also schema-versioned. New records use `schemaVersion: 1`, and legacy records without a version are normalized on load.
+
+Workflow steps can also fan out with a parallel group. Child steps run concurrently, preserve result order, and write their own `outputKey` values for later sequential steps:
+
+```ts
+const workflow = createWorkflow({
+  steps: [
+    {
+      id: "research",
+      kind: "parallel",
+      failFast: false,
+      steps: [
+        { id: "market", runner, prompt: "Analyze market", outputKey: "market" },
+        { id: "legal", runner, prompt: "Analyze legal risk", outputKey: "legal" }
+      ]
+    },
+    {
+      id: "synthesis",
+      runner,
+      prompt: ({ outputs }) => `Synthesize: ${outputs.market}\n${outputs.legal}`
+    }
+  ]
+});
+```
+
+Use a loop step when a single task should iterate until a condition is met or `maxIterations` is reached:
+
+```ts
+const workflow = createWorkflow({
+  steps: [
+    {
+      id: "rewrite-loop",
+      kind: "loop",
+      maxIterations: 3,
+      step: {
+        id: "rewrite",
+        runner,
+        prompt: ({ outputs }) => `Improve this draft: ${outputs.draft ?? "initial"}`,
+        outputKey: "draft"
+      },
+      until: ({ outputs }) => String(outputs.draft ?? "").includes("approved")
+    }
+  ]
+});
+```
+
+Loop iterations are recorded in the loop result's `children`. If an iteration pauses for approval, pass the saved workflow `state` and approval responses back to `runWorkflow()` to resume that pending iteration.
+
+For local regression suites, workflow evaluations mirror the agent evaluation helpers:
+
+```ts
+import {
+  compareWorkflowEvaluationReports,
+  createWorkflowEvaluationFixture,
+  createWorkflowEvaluationDiffReport,
+  createWorkflowEvaluationReport,
+  runWorkflowEvaluationFixture
+} from "@zhivex-ai/sdk";
+
+const fixture = createWorkflowEvaluationFixture({
+  name: "candidate-review-workflow",
+  dataset: [
+    {
+      name: "happy-path",
+      input: { userId: "user_123", sessionId: "candidate_456" },
+      expectations: {
+        status: "completed",
+        outputContains: { review: "recommended" },
+        stepStatuses: { review: "completed" },
+        timelineContains: ["workflow-start", "workflow-finish"]
+      }
+    }
+  ]
+});
+
+const evaluation = await runWorkflowEvaluationFixture(fixture, { workflow });
+const report = createWorkflowEvaluationReport(evaluation);
+
+console.log(report.passRate);
+
+const diff = createWorkflowEvaluationDiffReport(
+  compareWorkflowEvaluationReports(previousReport, report)
+);
+```
+
+### Artifacts
+
+`ArtifactService` stores JSON-serializable artifacts for a session, workflow run, workflow step, or agent run. The first Beta service implementations are in-memory and file-backed:
+
+```ts
+import { createFileArtifactService } from "@zhivex-ai/sdk";
+
+const artifacts = createFileArtifactService({
+  directory: ".zhivex/artifacts"
+});
+
+const report = await artifacts.saveArtifact({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  workflowRunId: workflowResult.state.runId,
+  workflowStepId: "review",
+  name: "review-report.json",
+  contentType: "application/json",
+  data: {
+    recommendation: "advance",
+    reasons: ["skills match", "salary aligned"]
+  }
+});
+
+const sessionArtifacts = await artifacts.listArtifacts({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456"
+});
+
+const savedReport = await artifacts.loadArtifact({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  id: report.id
+});
+```
+
+The file-backed service writes one JSON file per artifact with a path-safe filename derived from `appName`, `userId`, `sessionId`, and `id`. The SDK also exposes `createSqliteArtifactService()` and `createPostgresArtifactService()` for production applications that already provide compatible database clients.
+
+Binary artifacts use a formal metadata convention in this first cut: store base64 as `data`, set `encoding: "base64"`, and optionally include `size` and `sha256`. The SDK validates provided `size` and `sha256` values but does not calculate hashes automatically yet. Native streaming/binary storage is intentionally left for a later artifact phase.
+
+```ts
+import { createBase64ArtifactData } from "@zhivex-ai/sdk";
+
+await artifacts.saveArtifact({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  name: "resume.pdf",
+  contentType: "application/pdf",
+  ...createBase64ArtifactData(pdfBytes)
+});
+```
+
+For real binary storage, file-backed artifacts can write metadata and bytes separately. `loadArtifact()` returns the JSON metadata, while `loadBinaryArtifact()` returns the bytes:
+
+```ts
+const binary = await artifacts.saveBinaryArtifact({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  name: "resume.pdf",
+  contentType: "application/pdf",
+  data: pdfBytes
+});
+
+const loaded = await artifacts.loadBinaryArtifact({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  id: binary.id
+});
+```
+
+The file store writes blobs under a path-safe `blobs/` subdirectory and calculates `size` and `sha256` for `saveBinaryArtifact()`. SQLite and Postgres stores keep binary payloads as base64 JSON compatibility records in this Beta cut. For heavy production binaries, prefer app-owned blob/object storage with durable artifact metadata in SQL until native SQL/blob streaming is introduced; `createExternalArtifactReference()` creates the standard metadata shape for that pattern.
+
+Artifact records are schema-versioned as well. New artifacts use `schemaVersion: 1`; old JSON artifacts without a version are accepted and normalized, but future versions are rejected until the SDK has an explicit migration path.
+
+Artifact writes support the same optional optimistic concurrency guard via `expectedRevision`. Integrity helpers can verify binary/base64 artifacts without re-running workflows:
+
+```ts
+import { verifyArtifactIntegrity } from "@zhivex-ai/sdk";
+
+const integrity = await verifyArtifactIntegrity(artifacts, {
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  id: binary.id
+});
+```
+
+For file-backed artifact stores, `inspectFileArtifactStore()` detects orphan blobs, invalid metadata, and metadata that references missing blobs. `cleanupFileArtifactStore()` deletes only orphan blobs.
+
+Workflow helpers can persist outputs, dry replay timelines, and evaluation reports as artifacts explicitly:
+
+```ts
+import {
+  saveWorkflowEvaluationReportAsArtifact,
+  saveWorkflowOutputsAsArtifacts,
+  saveWorkflowReplayAsArtifact
+} from "@zhivex-ai/sdk";
+
+await saveWorkflowOutputsAsArtifacts(workflowResult, {
+  artifactService: artifacts,
+  appName: "candidate-review"
+});
+
+await saveWorkflowReplayAsArtifact(workflowResult, {
+  artifactService: artifacts,
+  appName: "candidate-review"
+});
+
+await saveWorkflowEvaluationReportAsArtifact(evaluation, {
+  artifactService: artifacts,
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  workflowRunId: workflowResult.state.runId
+});
+```
+
+These helpers do not change `runWorkflow()` behavior. They are explicit persistence calls, so applications can choose which outputs or reports become durable artifacts.
+
+### CLI / Dev UX
+
+`@zhivex-ai/sdk` includes a Beta `zhivex-ai` CLI for local SDK state. Inspection commands are dry: they read JSON files, replay workflow state, and build reports without executing models or tools. Execution commands import an app-owned local module, so the app remains responsible for constructing runners, models, tools, and credentials.
+
+```bash
+zhivex-ai sessions list --dir .zhivex/sessions
+zhivex-ai sessions show --dir .zhivex/sessions --app candidate-review --user user_123 --session candidate_456
+
+zhivex-ai artifacts list --dir .zhivex/artifacts --app candidate-review --user user_123 --session candidate_456
+zhivex-ai artifacts show --dir .zhivex/artifacts --app candidate-review --user user_123 --session candidate_456 --id art_123
+zhivex-ai artifacts verify --dir .zhivex/artifacts --app candidate-review --user user_123 --session candidate_456 --id art_123
+zhivex-ai artifacts inspect --dir .zhivex/artifacts
+zhivex-ai artifacts cleanup --dir .zhivex/artifacts --dry-run
+
+zhivex-ai workflow replay --state workflow-state.json
+zhivex-ai workflow report --evaluation workflow-evaluation.json
+zhivex-ai workflow compare --base previous-report.json --target current-report.json
+zhivex-ai workflow run --module ./workflow.mjs --input workflow-input.json --state-out workflow-state.json
+zhivex-ai workflow eval --module ./workflow.mjs --workflow-export workflow --fixture workflow-fixture.json --report-out workflow-report.json
+
+zhivex-ai workflow replay --state workflow-state.json --save-artifact --artifacts-dir .zhivex/artifacts --app candidate-review
+zhivex-ai workflow report --evaluation workflow-evaluation.json --save-artifact --artifacts-dir .zhivex/artifacts --app candidate-review --user user_123 --session candidate_456
+zhivex-ai workflow-states list --dir .zhivex/workflow-states --app candidate-review --user user_123 --session candidate_456
+zhivex-ai workflow-states show --dir .zhivex/workflow-states --app candidate-review --user user_123 --session candidate_456 --workflow default
+zhivex-ai sessions workflow-state show --dir .zhivex/sessions --app candidate-review --user user_123 --session candidate_456 --workflow default
+zhivex-ai artifacts prune --dir .zhivex/artifacts --keep-last 100
+zhivex-ai workflow-states prune --dir .zhivex/workflow-states --older-than-ms 2592000000
+```
+
+Output is JSON pretty-printed by default. Use `workflow-states list/show` for first-class durable workflow state inspection; `sessions workflow-state show` remains available for legacy session-metadata fallback state. Prune commands are dry-run by default; pass `--execute` to delete. The CLI is intentionally local-only and does not introduce auth, workspaces, Gateway calls, or a control plane.
 
 ### Realtime Sessions
 

@@ -1,4 +1,13 @@
 export {
+  API_STABILITY_MANIFEST,
+  getApiStability,
+  listApiStability
+} from "./api-stability.js";
+export type {
+  ApiStabilityEntry,
+  ApiStabilityLevel
+} from "./api-stability.js";
+export {
   cancelAgentRun,
   cancelAgentRunTree,
   createAgent,
@@ -66,6 +75,112 @@ export type {
   RunAgentEvaluationOptions
 } from "./agent-evaluation.js";
 export {
+  createFileArtifactService,
+  createBase64ArtifactData,
+  cleanupFileArtifactStore,
+  createExternalArtifactReference,
+  createInMemoryArtifactService,
+  ARTIFACT_SCHEMA_VERSION,
+  inspectFileArtifactStore,
+  migrateArtifactRecord,
+  normalizeArtifactRecord,
+  pruneFileArtifactStore,
+  createPostgresArtifactService,
+  createSqliteArtifactService,
+  verifyArtifactIntegrity,
+  verifyArtifactRecordIntegrity
+} from "./artifact.js";
+export type {
+  ArtifactBinaryLoadOutput,
+  ArtifactBinarySaveInput,
+  ArtifactEncoding,
+  ArtifactIntegrityIssue,
+  ArtifactIntegrityResult,
+  ArtifactListInput,
+  ArtifactLookup,
+  ArtifactRecord,
+  ArtifactSaveInput,
+  ArtifactService,
+  ArtifactStorageMode,
+  Base64ArtifactData,
+  Base64ArtifactDataInput,
+  ExternalArtifactReference,
+  ExternalArtifactReferenceInput,
+  FileArtifactServiceOptions,
+  FileArtifactStoreCleanupOptions,
+  FileArtifactStoreCleanupResult,
+  FileArtifactStoreInspection,
+  FileArtifactStoreInspectionIssue,
+  FileArtifactStorePruneOptions,
+  FileArtifactStorePruneResult,
+  PostgresArtifactServiceOptions,
+  SqliteArtifactServiceOptions
+} from "./artifact.js";
+export {
+  compareWorkflowEvaluationReports,
+  createWorkflowEvaluationDiffReport
+} from "./workflow-evaluation-diff.js";
+export type {
+  WorkflowEvaluationDiff,
+  WorkflowEvaluationDiffCase,
+  WorkflowEvaluationDiffCaseStatus,
+  WorkflowEvaluationDiffReport,
+  WorkflowEvaluationDiffSummary
+} from "./workflow-evaluation-diff.js";
+export {
+  createWorkflowEvaluationFixture,
+  createWorkflowEvaluationReport,
+  judgeWorkflowEvaluation,
+  runWorkflowEvaluation,
+  runWorkflowEvaluationFixture
+} from "./workflow-evaluation.js";
+export type {
+  RunWorkflowEvaluationOptions,
+  WorkflowEvaluationCase,
+  WorkflowEvaluationCaseResult,
+  WorkflowEvaluationExpectations,
+  WorkflowEvaluationFixture,
+  WorkflowEvaluationJudge,
+  WorkflowEvaluationJudgeResult,
+  WorkflowEvaluationReport,
+  WorkflowEvaluationReportCase,
+  WorkflowEvaluationResult
+} from "./workflow-evaluation.js";
+export {
+  saveWorkflowEvaluationReportAsArtifact,
+  saveWorkflowOutputsAsArtifacts,
+  saveWorkflowReplayAsArtifact
+} from "./workflow-artifacts.js";
+export type {
+  SaveWorkflowEvaluationReportAsArtifactOptions,
+  SaveWorkflowOutputsAsArtifactsOptions,
+  SaveWorkflowReplayAsArtifactOptions,
+  WorkflowArtifactContext
+} from "./workflow-artifacts.js";
+export {
+  createFileWorkflowStateService,
+  createInMemoryWorkflowStateService,
+  migrateWorkflowStateRecord,
+  normalizeWorkflowStateRecord,
+  pruneFileWorkflowStateStore,
+  createPostgresWorkflowStateService,
+  createSqliteWorkflowStateService,
+  WORKFLOW_STATE_RECORD_SCHEMA_VERSION
+} from "./workflow-state-service.js";
+export type {
+  FileWorkflowStateServiceOptions,
+  FileWorkflowStateStorePruneOptions,
+  FileWorkflowStateStorePruneResult,
+  PostgresWorkflowStateServiceOptions,
+  SqliteWorkflowStateServiceOptions,
+  WorkflowStateListInput as WorkflowStateServiceListInput,
+  WorkflowStateLookup as WorkflowStateServiceLookup,
+  WorkflowStateRecord,
+  WorkflowStateRecordMigrationTarget,
+  WorkflowStateSaveInput,
+  WorkflowStateService
+} from "./workflow-state-service.js";
+export {
   createAgentRunTreeSnapshot,
   createAgentTraceArtifact,
   createAgentTraceCollector,
@@ -92,6 +207,69 @@ export type {
   TokenPricing
 } from "./agent-trace.js";
 export { streamLiveAgent } from "./live-agent.js";
+export {
+  createFileSessionService,
+  createInMemorySessionService,
+  migrateAgentSessionRecord,
+  normalizeAgentSession,
+  pruneFileSessionStore,
+  createPostgresSessionService,
+  createRunner,
+  createSqliteSessionService,
+  SESSION_SCHEMA_VERSION
+} from "./runner.js";
+export type {
+  AgentSession,
+  AgentSessionMigrationTarget,
+  CreateRunnerOptions,
+  FileSessionServiceOptions,
+  FileSessionStorePruneOptions,
+  FileSessionStorePruneResult,
+  PostgresSessionServiceOptions,
+  Runner,
+  RunnerRunInput,
+  RunnerRunOutput,
+  RunnerStreamResult,
+  SessionCreateInput,
+  SessionEvent,
+  SessionEventType,
+  SessionLookup,
+  SessionService,
+  SqliteSessionServiceOptions
+} from "./runner.js";
+export {
+  createWorkflow,
+  loadWorkflowState,
+  migrateWorkflowRunState,
+  normalizeWorkflowRunState,
+  replayWorkflowRun,
+  runWorkflow,
+  saveWorkflowState,
+  WORKFLOW_RUN_STATE_SCHEMA_VERSION
+} from "./workflow.js";
+export type {
+  PersistedWorkflowRunState,
+  WorkflowDefinition,
+  WorkflowLoopCondition,
+  WorkflowLoopConditionContext,
+  WorkflowLoopStep,
+  WorkflowPersistenceOptions,
+  WorkflowPrompt,
+  WorkflowPromptContext,
+  WorkflowParallelStep,
+  WorkflowReplayResult,
+  WorkflowReplayTimelineEvent,
+  WorkflowRunInput,
+  WorkflowRunOutput,
+  WorkflowRunState,
+  WorkflowRunStateMigrationTarget,
+  WorkflowStatus,
+  WorkflowStep,
+  WorkflowStepResult,
+  WorkflowStepStatus,
+  WorkflowStateLookup,
+  WorkflowTaskStep
+} from "./workflow.js";
 export {
   agentApprovalResponsePart,
   createAgentApprovalMessage,
