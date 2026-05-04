@@ -1,7 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createTextMessage, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import {
+  createAgent,
+  createTextMessage,
+  generateObject,
+  generateText,
+  getAgentCapabilities,
+  hostedTool,
+  runAgent,
+  streamText,
+  tool
+} from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 
@@ -32,9 +42,20 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
   };
 });
 
-import { bedrockServerTool, createBedrock } from "../src/index.ts";
+import {
+  bedrockCodeExecutionTool,
+  bedrockMcpApprovalResponse,
+  bedrockRemoteMcpTool,
+  bedrockServerTool,
+  bedrockWebSearchTool,
+  createBedrockAgentCoreMcpClient,
+  createBedrockAgentCoreMcpToolSet,
+  createBedrock
+} from "../src/index.ts";
 
 describe("bedrock adapter", () => {
+  const fetchMock = vi.fn();
+
   runLanguageModelContractSuite({
     providerName: "bedrock",
     modelId: "anthropic.claude-3-5-sonnet",
@@ -127,9 +148,137 @@ describe("bedrock adapter", () => {
     }
   });
 
+  runLanguageModelContractSuite({
+    providerName: "bedrock",
+    modelId: "openai.gpt-oss-120b-1:0",
+    createModel: () =>
+      createBedrock({
+        runtime: "openai",
+        apiKey: "test",
+        baseURL: "https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1",
+        fetch: fetchMock as typeof fetch
+      })("openai.gpt-oss-120b-1:0"),
+    expectedAgentTier: "tier-a",
+    expectedCapabilities: {
+      streaming: true,
+      tools: true,
+      structuredOutput: true,
+      jsonMode: true,
+      toolChoice: true,
+      parallelToolCalls: false,
+      vision: true,
+      files: false,
+      audioInput: false,
+      audioOutput: false,
+      embeddings: false,
+      reasoning: true,
+      webSearch: true
+    }
+  });
+
+  runAgentProviderContractSuite({
+    providerName: "bedrock",
+    modelId: "openai.gpt-oss-120b-1:0",
+    expectedAgentTier: "tier-a",
+    createModel: () =>
+      createBedrock({
+        runtime: "openai",
+        apiKey: "test",
+        baseURL: "https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1",
+        fetch: fetchMock as typeof fetch
+      })("openai.gpt-oss-120b-1:0"),
+    mockSimpleRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          id: "resp_1",
+          status: "completed",
+          output: [{ type: "message", content: [{ type: "output_text", text: "hello from bedrock agent" }] }]
+        })
+      );
+    },
+    mockToolRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          id: "resp_1",
+          status: "completed",
+          output: [
+            {
+              type: "function_call",
+              call_id: "tool-1",
+              name: "weather",
+              arguments: JSON.stringify({ city: "Madrid" })
+            }
+          ]
+        })
+      );
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          id: "resp_2",
+          status: "completed",
+          output: [{ type: "message", content: [{ type: "output_text", text: "Madrid is sunny" }] }]
+        })
+      );
+    },
+    mockStreamRun: () => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"type":"response.output_text.delta","delta":"hello"}\n\n' +
+                'data: {"type":"response.output_text.delta","delta":" world"}\n\n' +
+                'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}\n\n' +
+                "data: [DONE]\n\n"
+            )
+          );
+          controller.close();
+        }
+      });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      );
+    },
+    mockApprovalRun: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          id: "resp_approval",
+          status: "completed",
+          output: [
+            {
+              type: "mcp_approval_request",
+              id: "mcpr_1",
+              arguments: "{}",
+              name: "fetch_docs",
+              server_label: "docs"
+            }
+          ]
+        })
+      );
+    },
+    mockApprovalResume: () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          id: "resp_done",
+          status: "completed",
+          output: [{ type: "message", content: [{ type: "output_text", text: "approved by bedrock" }] }]
+        })
+      );
+    },
+    createApprovalTools: () => ({
+      docs: bedrockRemoteMcpTool({
+        server_label: "docs",
+        server_url: "https://example.com/mcp"
+      })
+    })
+  });
+
   beforeEach(() => {
     sendMock.mockReset();
     clientMock.mockClear();
+    fetchMock.mockReset();
   });
 
   it("maps generated text into the common contract", async () => {
@@ -476,7 +625,7 @@ describe("bedrock adapter", () => {
   });
 
   it("uses Bedrock OpenAI-compatible Responses mode when requested", async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(
+    fetchMock.mockResolvedValueOnce(
       Response.json({
         id: "resp_1",
         status: "completed",
@@ -510,9 +659,203 @@ describe("bedrock adapter", () => {
     expect(result.text).toBe("hello from mantle");
   });
 
+  it("maps typed Bedrock hosted tools and marks OpenAI-compatible runtime as Tier A", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "done" }] }]
+      })
+    );
+
+    const provider = createBedrock({
+      runtime: "openai",
+      apiKey: "test",
+      baseURL: "https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("openai.gpt-oss-120b-1:0"),
+      prompt: "inspect",
+      tools: {
+        web: bedrockWebSearchTool({ search_context_size: "small" }),
+        code: bedrockCodeExecutionTool({ container: { type: "auto" } }),
+        mcp: bedrockRemoteMcpTool({
+          server_label: "docs",
+          server_url: "https://example.com/mcp"
+        })
+      }
+    });
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body)) as { tools: Array<Record<string, unknown>> };
+    expect(body.tools).toEqual(
+      expect.arrayContaining([
+        { type: "web_search", search_context_size: "small" },
+        { type: "code_interpreter", container: { type: "auto" } },
+        expect.objectContaining({ type: "mcp", server_label: "docs", server_url: "https://example.com/mcp" })
+      ])
+    );
+
+    const capabilities = getAgentCapabilities(provider("openai.gpt-oss-120b-1:0"));
+    expect(capabilities.supportTier).toBe("tier-a");
+    expect(capabilities.approvalRequests).toBe(true);
+    expect(capabilities.remoteMcp).toBe(true);
+    expect(capabilities.codeExecution).toBe(true);
+  });
+
+  it("rejects non-Bedrock hosted tools in OpenAI-compatible Responses mode", async () => {
+    const provider = createBedrock({
+      runtime: "openai",
+      apiKey: "test",
+      baseURL: "https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(
+      generateText({
+        model: provider("openai.gpt-oss-120b-1:0"),
+        prompt: "hello",
+        tools: {
+          web: hostedTool({
+            name: "web",
+            provider: "openai",
+            type: "web_search"
+          })
+        }
+      })
+    ).rejects.toThrow('Provider "bedrock" does not support hosted tools declared for provider "openai".');
+  });
+
+  it("parses Bedrock MCP approval requests and serializes approval responses", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "resp_approval",
+          status: "completed",
+          output: [
+            {
+              type: "mcp_approval_request",
+              id: "mcpr_1",
+              arguments: "{}",
+              name: "fetch_docs",
+              server_label: "docs"
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "resp_done",
+          status: "completed",
+          output: [{ type: "message", content: [{ type: "output_text", text: "approved" }] }]
+        })
+      );
+
+    const provider = createBedrock({
+      runtime: "openai",
+      apiKey: "test",
+      baseURL: "https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1",
+      fetch: fetchMock as typeof fetch
+    });
+    const first = await generateText({
+      model: provider("openai.gpt-oss-120b-1:0"),
+      prompt: "Use MCP",
+      tools: {
+        docs: bedrockRemoteMcpTool({
+          server_label: "docs",
+          server_url: "https://example.com/mcp"
+        })
+      }
+    });
+    expect(first.messages.at(-1)?.parts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "provider-data",
+          provider: "bedrock",
+          data: expect.objectContaining({ type: "mcp_approval_request", id: "mcpr_1" })
+        })
+      ])
+    );
+
+    const approval = bedrockMcpApprovalResponse({
+      approval_request_id: "mcpr_1",
+      approve: true
+    });
+    await generateText({
+      model: provider("openai.gpt-oss-120b-1:0"),
+      messages: [...first.messages, { role: "user", parts: [approval] }]
+    });
+
+    const secondRequest = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    const body = JSON.parse(String(secondRequest.body)) as {
+      previous_response_id?: string;
+      input: Array<Record<string, unknown>>;
+    };
+    expect(body.previous_response_id).toBe("resp_approval");
+    expect(body.input).toEqual([
+      {
+        type: "mcp_approval_response",
+        approval_request_id: "mcpr_1",
+        approve: true
+      }
+    ]);
+  });
+
+  it("streams Bedrock OpenAI-compatible approval provider-data events", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"type":"response.output_item.done","item":{"type":"mcp_approval_request","id":"mcpr_1","arguments":"{}","name":"fetch_docs","server_label":"docs"}}\n\n' +
+              'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createBedrock({
+      runtime: "openai",
+      apiKey: "test",
+      baseURL: "https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = streamText({
+      model: provider("openai.gpt-oss-120b-1:0"),
+      prompt: "Use MCP",
+      tools: {
+        docs: bedrockRemoteMcpTool({
+          server_label: "docs",
+          server_url: "https://example.com/mcp"
+        })
+      }
+    });
+
+    const events = [];
+    for await (const event of result.eventStream) {
+      events.push(event);
+    }
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "provider-data",
+          provider: "bedrock",
+          data: expect.objectContaining({ type: "mcp_approval_request", id: "mcpr_1" })
+        })
+      ])
+    );
+  });
+
   it("serializes local tool results in Bedrock OpenAI-compatible Responses mode", async () => {
-    const fetchMock = vi
-      .fn()
+    fetchMock
       .mockResolvedValueOnce(
         Response.json({
           id: "resp_1",
@@ -566,5 +909,285 @@ describe("bedrock adapter", () => {
       ])
     );
     expect(result.text).toBe("Sunny in Madrid");
+  });
+
+  it("calls AgentCore MCP tools through a runtime ARN endpoint and preserves session headers", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            jsonrpc: "2.0",
+            id: "1",
+            result: {
+              tools: [
+                {
+                  name: "fetch_docs",
+                  description: "Fetch docs",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      path: { type: "string" }
+                    },
+                    required: ["path"]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            headers: {
+              "Mcp-Session-Id": "session-from-agentcore"
+            }
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          jsonrpc: "2.0",
+          id: "2",
+          result: {
+            structuredContent: { title: "README" },
+            content: [{ type: "text", text: "docs body" }]
+          }
+        })
+      );
+
+    const client = createBedrockAgentCoreMcpClient({
+      runtimeArn: "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/my_mcp_server-xyz123",
+      region: "us-west-2",
+      bearerToken: "token-123",
+      headers: {
+        "X-Team": "platform"
+      },
+      sessionId: "initial-session",
+      fetch: fetchMock as typeof fetch
+    });
+
+    const listed = await client.listTools();
+    const result = await client.callTool({
+      name: "fetch_docs",
+      arguments: { path: "README.md" }
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://bedrock-agentcore.us-west-2.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-west-2%3A123456789012%3Aruntime%2Fmy_mcp_server-xyz123/invocations?qualifier=DEFAULT"
+    );
+    const firstRequest = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(firstRequest.headers).toMatchObject({
+      Authorization: "Bearer token-123",
+      "X-Team": "platform",
+      "Mcp-Session-Id": "initial-session"
+    });
+    expect(JSON.parse(String(firstRequest.body))).toMatchObject({
+      jsonrpc: "2.0",
+      method: "tools/list"
+    });
+
+    const secondRequest = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(secondRequest.headers).toMatchObject({
+      "Mcp-Session-Id": "session-from-agentcore"
+    });
+    expect(JSON.parse(String(secondRequest.body))).toMatchObject({
+      method: "tools/call",
+      params: {
+        name: "fetch_docs",
+        arguments: { path: "README.md" }
+      }
+    });
+    expect(listed).toEqual({
+      tools: [
+        expect.objectContaining({
+          name: "fetch_docs",
+          description: "Fetch docs"
+        })
+      ]
+    });
+    expect(result).toEqual({
+      structuredContent: { title: "README" },
+      content: [{ type: "text", text: "docs body" }]
+    });
+  });
+
+  it("uses an explicit AgentCore MCP endpoint and authorization header for ToolSet conversion", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        jsonrpc: "2.0",
+        id: "1",
+        result: {
+          tools: [
+            {
+              name: "search",
+              description: "Search docs",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  query: { type: "string" }
+                },
+                required: ["query"]
+              }
+            }
+          ]
+        }
+      })
+    );
+
+    const tools = await createBedrockAgentCoreMcpToolSet(
+      {
+        endpoint: "https://gateway-id.gateway.bedrock-agentcore.us-east-1.amazonaws.com/docs/invocations",
+        authorization: "Bearer explicit-token",
+        fetch: fetchMock as typeof fetch
+      },
+      {
+        toolNamePrefix: "agentcore_"
+      }
+    );
+
+    expect(Object.keys(tools)).toEqual(["agentcore_search"]);
+    expect(tools.agentcore_search?.metadata).toMatchObject({
+      source: "mcp",
+      originalName: "search"
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://gateway-id.gateway.bedrock-agentcore.us-east-1.amazonaws.com/docs/invocations"
+    );
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject({
+      Authorization: "Bearer explicit-token"
+    });
+  });
+
+  it("propagates AgentCore MCP HTTP and JSON-RPC errors", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json(
+        {
+          error: {
+            message: "unauthorized"
+          }
+        },
+        {
+          status: 401
+        }
+      )
+    );
+
+    const client = createBedrockAgentCoreMcpClient({
+      endpoint: "https://example.com/mcp",
+      authorization: "Bearer token",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(client.listTools()).rejects.toThrow("Bedrock AgentCore MCP request failed with status 401.");
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        jsonrpc: "2.0",
+        id: "2",
+        error: {
+          code: -32601,
+          message: "unknown method"
+        }
+      })
+    );
+
+    await expect(client.callTool({ name: "missing" })).rejects.toThrow(
+      "Bedrock AgentCore MCP tools/call failed: unknown method."
+    );
+  });
+
+  it("runs AgentCore MCP ToolSet through the shared agent loop on Bedrock Converse", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json({
+          jsonrpc: "2.0",
+          id: "1",
+          result: {
+            tools: [
+              {
+                name: "fetch_docs",
+                description: "Fetch docs",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    path: { type: "string" }
+                  },
+                  required: ["path"]
+                }
+              }
+            ]
+          }
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          jsonrpc: "2.0",
+          id: "2",
+          result: {
+            structuredContent: { title: "README" },
+            content: [{ type: "text", text: "docs body" }]
+          }
+        })
+      );
+    sendMock
+      .mockResolvedValueOnce({
+        stopReason: "tool_use",
+        output: {
+          message: {
+            content: [
+              {
+                toolUse: {
+                  toolUseId: "tool-1",
+                  name: "agentcore_fetch_docs",
+                  input: { path: "README.md" }
+                }
+              }
+            ]
+          }
+        }
+      })
+      .mockResolvedValueOnce({
+        stopReason: "end_turn",
+        output: {
+          message: {
+            content: [{ text: "README says docs body" }]
+          }
+        }
+      });
+
+    const agentcoreTools = await createBedrockAgentCoreMcpToolSet(
+      {
+        endpoint: "https://bedrock-agentcore.us-west-2.amazonaws.com/runtimes/runtime/invocations?qualifier=DEFAULT",
+        bearerToken: "token",
+        fetch: fetchMock as typeof fetch
+      },
+      {
+        toolNamePrefix: "agentcore_"
+      }
+    );
+    const result = await runAgent(
+      createAgent({
+        model: createBedrock({ region: "us-east-1" })("anthropic.claude-3-5-sonnet"),
+        tools: agentcoreTools,
+        maxSteps: 2
+      }),
+      {
+        prompt: "Fetch docs"
+      }
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.outputText).toBe("README says docs body");
+    expect(result.toolResults[0]).toMatchObject({
+      toolName: "agentcore_fetch_docs",
+      output: {
+        structuredContent: { title: "README" },
+        content: [{ type: "text", text: "docs body" }]
+      }
+    });
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toMatchObject({
+      method: "tools/call",
+      params: {
+        name: "fetch_docs",
+        arguments: { path: "README.md" }
+      }
+    });
   });
 });

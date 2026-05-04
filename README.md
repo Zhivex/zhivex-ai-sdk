@@ -139,7 +139,7 @@ Status shorthand:
 | Qwen | yes | yes | yes | native | yes | no | no | no | no | model-dependent | yes | Responses web search, web extractor, code interpreter | Tier B |
 | Kimi | yes | yes | yes | native | no | no | no | no | no | model-dependent | Formula tool | Formula tools via Chat Completions | Tier C |
 | DeepSeek | yes | yes | yes | JSON object | no | no | no | no | no | `effort` | no | no | Tier C |
-| Bedrock | yes | yes | partial / endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses server tools | Tier C / B by endpoint |
+| Bedrock | yes | yes | partial / endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C / A by runtime |
 | Ollama | yes | yes | no | native | yes | no | no | no | no | no | no | no | Tier C |
 
 Compatibility notes:
@@ -150,7 +150,7 @@ Compatibility notes:
 - Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
 - `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
-- `partial` for Bedrock Converse `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming.
+- `partial` for Bedrock Converse `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming. In the SDK's agent matrix, Bedrock Tier A applies to `createBedrock({ runtime: "openai" })`, which exposes Responses hosted tools, remote MCP, and approval requests. AWS-native AgentCore MCP is exposed separately as SDK-managed MCP tools for Converse or any shared agent loop; it does not promote Converse itself to a provider-emitted approval runtime.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - Kimi Formula tools are exposed as public helpers in `@zhivex-ai/kimi`. The SDK loads or declares Formula tool schemas, maps them into Chat Completions function tools, tracks `function.name -> formula_uri`, and executes the official Formula fiber after a Kimi tool call.
 - `Hosted tools / MCP` refers to provider-native hosted tools or SDK-level MCP mappings, not local callable tools defined with `tool()`. Kimi Formula helpers are called out separately because they are official provider tools executed through Formula fibers. For OpenRouter this currently means server tools such as `openrouter:web_search`.
@@ -1178,6 +1178,7 @@ The SDK now exposes MCP helpers across the providers that support it:
 - `@zhivex-ai/openai` and `@zhivex-ai/azure-openai`: remote MCP servers map to native Responses API MCP tools, including approval request/response flow.
 - `@zhivex-ai/anthropic`: MCP toolsets map to Anthropic `mcp_servers` plus `mcp_toolset`.
 - `@zhivex-ai/gemini` and `@zhivex-ai/vertex`: `geminiMcpTools()` and `vertexMcpTools()` re-export the shared MCP wrapper for SDK-managed MCP clients.
+- `@zhivex-ai/bedrock`: `createBedrockAgentCoreMcpClient()` and `createBedrockAgentCoreMcpToolSet()` expose AWS-native AgentCore Runtime or Gateway MCP endpoints as SDK-managed callable tools. This is separate from `runtime: "openai"` hosted MCP and approvals.
 
 Use the shared helper when you already have an MCP client in-process:
 
@@ -1196,6 +1197,39 @@ const result = await generateText({
   prompt: "Use the MCP tools if needed.",
   tools
 });
+```
+
+For AWS-native remote tools on Bedrock Converse, point the Bedrock AgentCore MCP client at either a runtime ARN or an explicit AgentCore/Gateway endpoint and pass the resulting toolset into the shared agent loop:
+
+```ts
+import { runAgent } from "@zhivex-ai/sdk";
+import { createBedrock, createBedrockAgentCoreMcpToolSet } from "@zhivex-ai/bedrock";
+
+const bedrock = createBedrock({
+  region: process.env.AWS_REGION
+});
+
+const tools = await createBedrockAgentCoreMcpToolSet(
+  {
+    runtimeArn: process.env.AGENTCORE_RUNTIME_ARN,
+    region: process.env.AWS_REGION,
+    bearerToken: process.env.AGENTCORE_BEARER_TOKEN
+  },
+  {
+    toolNamePrefix: "agentcore_"
+  }
+);
+
+const result = await runAgent(
+  {
+    model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
+    tools,
+    maxSteps: 4
+  },
+  {
+    prompt: "Use the AWS AgentCore tools when useful."
+  }
+);
 ```
 
 When you want a richer composition surface, build a registry first and materialize it with `toToolSet()` only at the edge:

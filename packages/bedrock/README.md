@@ -67,6 +67,43 @@ await generateText({
 
 AWS's Mantle examples use `OPENAI_API_KEY` and `OPENAI_BASE_URL`; pass those values explicitly as `apiKey` and `baseURL` if you use that naming. The adapter does not read them automatically so a real OpenAI configuration is not accidentally reused for Bedrock.
 
+## AgentCore MCP
+
+For AWS-native remote tool runtimes, keep `createBedrock({ runtime: "converse" })` on the native Converse path and expose AgentCore MCP as SDK-managed callable tools:
+
+```ts
+import { runAgent } from "@zhivex-ai/core";
+import { createBedrock, createBedrockAgentCoreMcpToolSet } from "@zhivex-ai/bedrock";
+
+const bedrock = createBedrock({
+  region: process.env.AWS_REGION
+});
+
+const tools = await createBedrockAgentCoreMcpToolSet(
+  {
+    runtimeArn: process.env.AGENTCORE_RUNTIME_ARN,
+    region: process.env.AWS_REGION,
+    bearerToken: process.env.AGENTCORE_BEARER_TOKEN
+  },
+  {
+    toolNamePrefix: "agentcore_"
+  }
+);
+
+const result = await runAgent(
+  {
+    model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
+    tools,
+    maxSteps: 4
+  },
+  {
+    prompt: "Use the AWS AgentCore tools when useful."
+  }
+);
+```
+
+You can pass either `runtimeArn` plus `region` or an explicit AgentCore/Gateway MCP `endpoint`. The client sends JSON-RPC `tools/list` and `tools/call` over HTTP, forwards `Authorization`, custom headers, and `Mcp-Session-Id`, and preserves the session id returned by AgentCore. Token acquisition is intentionally left to the application; pass `bearerToken` or a full `authorization` header value.
+
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
