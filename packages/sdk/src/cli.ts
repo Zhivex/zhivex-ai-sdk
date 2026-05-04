@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   compareWorkflowEvaluationReports,
@@ -483,7 +483,11 @@ export const runCli = async (args: string[], io: CliIO = {}): Promise<number> =>
   }
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+const invokedPath = process.argv[1]
+  ? await fs.realpath(process.argv[1]).catch(() => process.argv[1])
+  : undefined;
+
+if (invokedPath && fileURLToPath(import.meta.url) === invokedPath) {
   const exitCode = await runCli(process.argv.slice(2));
   process.exitCode = exitCode;
 }
