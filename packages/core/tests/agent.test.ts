@@ -6,9 +6,15 @@ import { z } from "zod";
 
 import {
   agentApprovalResponsePart,
+  cancelAgentRun,
+  cancelAgentRunTree,
   createAgent,
   createAgentHandoff,
   createAgentApprovalMessage,
+  createAgentRunSnapshot,
+  createAgentRunTreeSnapshot,
+  createAgentTraceArtifact,
+  createHierarchicalAgentTrace,
   createFileAgentRunStore,
   createInMemoryAgentMemoryStore,
   createInMemoryAgentRunStore,
@@ -18,13 +24,18 @@ import {
   createSqliteAgentRunStore,
   createTextMessage,
   getAgentApprovalRequests,
+  replayAgentRun,
+  prepareSubagentsForAgent,
   resumeAgent,
   runAgent,
+  runAgentGroup,
   runAgentHandoff,
   streamAgent,
+  summarizeAgentTrace,
   toUIAgentStreamResponse,
   toUIMessageStream,
   tool,
+  ValidationError,
   type AgentRunState,
   type PostgresClientLike,
   type LanguageModel,
@@ -71,6 +82,8 @@ const createLanguageModel = (overrides?: Partial<LanguageModel>): LanguageModel 
 class FakeSqliteDatabase implements SqliteDatabaseLike {
   private runTables = new Map<string, Map<string, string>>();
   private memoryTables = new Map<string, Map<string, string>>();
+  private idempotencyTables = new Map<string, Map<string, string>>();
+  private parentTables = new Map<string, Map<string, string>>();
 
   exec(sql: string) {
     const match = sql.match(/CREATE TABLE IF NOT EXISTS\s+([A-Za-z_][A-Za-z0-9_]*)/i);
@@ -79,6 +92,16 @@ class FakeSqliteDatabase implements SqliteDatabaseLike {
     }
 
     const tableName = match[1]!;
+    if (sql.includes("idempotency_key")) {
+      this.idempotencyTables.set(tableName, this.idempotencyTables.get(tableName) ?? new Map());
+      return;
+    }
+
+    if (sql.includes("parent_run_id")) {
+      this.parentTables.set(tableName, this.parentTables.get(tableName) ?? new Map());
+      return;
+    }
+
     if (sql.includes("run_id")) {
       this.runTables.set(tableName, this.runTables.get(tableName) ?? new Map());
       return;
@@ -96,6 +119,16 @@ class FakeSqliteDatabase implements SqliteDatabaseLike {
 
         if (insertMatch) {
           const tableName = insertMatch[1]!;
+          if (sql.includes("idempotency_key")) {
+            this.idempotencyTables.get(tableName)?.set(String(values[0]), String(values[1]));
+            return;
+          }
+
+          if (sql.includes("parent_run_id")) {
+            this.parentTables.get(tableName)?.set(String(values[0]), String(values[1]));
+            return;
+          }
+
           if (sql.includes("run_id")) {
             this.runTables.get(tableName)?.set(String(values[0]), String(values[1]));
             return;
@@ -106,7 +139,24 @@ class FakeSqliteDatabase implements SqliteDatabaseLike {
         }
 
         if (deleteMatch) {
-          this.runTables.get(deleteMatch[1]!)?.delete(String(values[0]));
+          const tableName = deleteMatch[1]!;
+          if (this.idempotencyTables.has(tableName)) {
+            const runId = String(values[0]);
+            const table = this.idempotencyTables.get(tableName);
+            for (const [key, mappedRunId] of table ?? []) {
+              if (mappedRunId === runId) {
+                table?.delete(key);
+              }
+            }
+            return;
+          }
+
+          if (this.parentTables.has(tableName)) {
+            this.parentTables.get(tableName)?.delete(String(values[0]));
+            return;
+          }
+
+          this.runTables.get(tableName)?.delete(String(values[0]));
         }
       },
       get: (params?: readonly unknown[]) => {
@@ -117,6 +167,23 @@ class FakeSqliteDatabase implements SqliteDatabaseLike {
         }
 
         const tableName = selectMatch[1]!;
+        if (sql.includes("idempotency_key")) {
+          const joinMatch = sql.match(/JOIN\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+          const idempotencyTableName = joinMatch?.[1];
+          const runId = idempotencyTableName ? this.idempotencyTables.get(idempotencyTableName)?.get(String(values[0])) : undefined;
+          const stateJson = runId ? this.runTables.get(tableName)?.get(runId) : undefined;
+          return stateJson ? ({ state_json: stateJson } as TResult) : undefined;
+        }
+
+        if (sql.includes("parent_run_id")) {
+          const joinMatch = sql.match(/JOIN\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+          const parentTableName = joinMatch?.[1];
+          const parentTable = parentTableName ? this.parentTables.get(parentTableName) : undefined;
+          const runId = [...(parentTable ?? [])].find(([, mappedParentRunId]) => mappedParentRunId === String(values[0]))?.[0];
+          const stateJson = runId ? this.runTables.get(tableName)?.get(runId) : undefined;
+          return stateJson ? ({ state_json: stateJson } as TResult) : undefined;
+        }
+
         if (sql.includes("state_json")) {
           const stateJson = this.runTables.get(tableName)?.get(String(values[0]));
           return stateJson ? ({ state_json: stateJson } as TResult) : undefined;
@@ -124,6 +191,25 @@ class FakeSqliteDatabase implements SqliteDatabaseLike {
 
         const messagesJson = this.memoryTables.get(tableName)?.get(String(values[0]));
         return messagesJson ? ({ messages_json: messagesJson } as TResult) : undefined;
+      },
+      all: (params?: readonly unknown[]) => {
+        const values = [...(params ?? [])];
+        const selectMatch = sql.match(/SELECT\s+.+\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+        if (!selectMatch || !sql.includes("parent_run_id")) {
+          return [];
+        }
+
+        const tableName = selectMatch[1]!;
+        const joinMatch = sql.match(/JOIN\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+        const parentTableName = joinMatch?.[1];
+        const parentTable = parentTableName ? this.parentTables.get(parentTableName) : undefined;
+        return [...(parentTable ?? [])].flatMap(([runId, mappedParentRunId]) => {
+          if (mappedParentRunId !== String(values[0])) {
+            return [];
+          }
+          const stateJson = this.runTables.get(tableName)?.get(runId);
+          return stateJson ? ([{ state_json: stateJson }] as TResult[]) : [];
+        });
       }
     };
   }
@@ -132,12 +218,18 @@ class FakeSqliteDatabase implements SqliteDatabaseLike {
 class FakePostgresClient implements PostgresClientLike {
   private runTables = new Map<string, Map<string, AgentRunState>>();
   private memoryTables = new Map<string, Map<string, ModelMessage[]>>();
+  private idempotencyTables = new Map<string, Map<string, string>>();
+  private parentTables = new Map<string, Map<string, string>>();
 
   async query<TResult extends Record<string, unknown> = Record<string, unknown>>(sql: string, params: readonly unknown[] = []) {
     const createMatch = sql.match(/CREATE TABLE IF NOT EXISTS\s+([A-Za-z_][A-Za-z0-9_]*)/i);
     if (createMatch) {
       const tableName = createMatch[1]!;
-      if (sql.includes("run_id")) {
+      if (sql.includes("idempotency_key")) {
+        this.idempotencyTables.set(tableName, this.idempotencyTables.get(tableName) ?? new Map());
+      } else if (sql.includes("parent_run_id")) {
+        this.parentTables.set(tableName, this.parentTables.get(tableName) ?? new Map());
+      } else if (sql.includes("run_id")) {
         this.runTables.set(tableName, this.runTables.get(tableName) ?? new Map());
       } else {
         this.memoryTables.set(tableName, this.memoryTables.get(tableName) ?? new Map());
@@ -148,7 +240,11 @@ class FakePostgresClient implements PostgresClientLike {
     const insertMatch = sql.match(/INSERT INTO\s+([A-Za-z_][A-Za-z0-9_]*)/i);
     if (insertMatch) {
       const tableName = insertMatch[1]!;
-      if (sql.includes("run_id")) {
+      if (sql.includes("idempotency_key")) {
+        this.idempotencyTables.get(tableName)?.set(String(params[0]), String(params[1]));
+      } else if (sql.includes("parent_run_id")) {
+        this.parentTables.get(tableName)?.set(String(params[0]), String(params[1]));
+      } else if (sql.includes("run_id")) {
         this.runTables.get(tableName)?.set(String(params[0]), JSON.parse(String(params[1])) as AgentRunState);
       } else {
         this.memoryTables.get(tableName)?.set(String(params[0]), JSON.parse(String(params[1])) as ModelMessage[]);
@@ -159,6 +255,28 @@ class FakePostgresClient implements PostgresClientLike {
     const selectMatch = sql.match(/SELECT\s+.+\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)/i);
     if (selectMatch) {
       const tableName = selectMatch[1]!;
+      if (sql.includes("idempotency_key")) {
+        const joinMatch = sql.match(/JOIN\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+        const idempotencyTableName = joinMatch?.[1];
+        const runId = idempotencyTableName ? this.idempotencyTables.get(idempotencyTableName)?.get(String(params[0])) : undefined;
+        const state = runId ? this.runTables.get(tableName)?.get(runId) : undefined;
+        return { rows: state ? ([{ state_json: state }] as TResult[]) : [] };
+      }
+
+      if (sql.includes("parent_run_id")) {
+        const joinMatch = sql.match(/JOIN\s+([A-Za-z_][A-Za-z0-9_]*)/i);
+        const parentTableName = joinMatch?.[1];
+        const parentTable = parentTableName ? this.parentTables.get(parentTableName) : undefined;
+        const states = [...(parentTable ?? [])].flatMap(([runId, mappedParentRunId]) => {
+          if (mappedParentRunId !== String(params[0])) {
+            return [];
+          }
+          const state = this.runTables.get(tableName)?.get(runId);
+          return state ? ([{ state_json: state }] as TResult[]) : [];
+        });
+        return { rows: states };
+      }
+
       if (sql.includes("state_json")) {
         const state = this.runTables.get(tableName)?.get(String(params[0]));
         return { rows: state ? ([{ state_json: state }] as TResult[]) : [] };
@@ -170,7 +288,20 @@ class FakePostgresClient implements PostgresClientLike {
 
     const deleteMatch = sql.match(/DELETE FROM\s+([A-Za-z_][A-Za-z0-9_]*)/i);
     if (deleteMatch) {
-      this.runTables.get(deleteMatch[1]!)?.delete(String(params[0]));
+      const tableName = deleteMatch[1]!;
+      if (this.idempotencyTables.has(tableName)) {
+        const runId = String(params[0]);
+        const table = this.idempotencyTables.get(tableName);
+        for (const [key, mappedRunId] of table ?? []) {
+          if (mappedRunId === runId) {
+            table?.delete(key);
+          }
+        }
+      } else if (this.parentTables.has(tableName)) {
+        this.parentTables.get(tableName)?.delete(String(params[0]));
+      } else {
+        this.runTables.get(tableName)?.delete(String(params[0]));
+      }
     }
 
     return { rows: [] as TResult[] };
@@ -467,7 +598,7 @@ describe("agent runtime", () => {
       prompt: "Use MCP"
     });
 
-    expect(result.status).toBe("suspended");
+    expect(result.status).toBe("waiting_approval");
     expect(result.state.pendingApprovals).toEqual([
       {
         provider: "openai",
@@ -488,7 +619,7 @@ describe("agent runtime", () => {
     expect(getAgentApprovalRequests(result.messages)).toEqual(result.state.pendingApprovals);
   });
 
-  it("resumes a suspended agent when approval responses are provided", async () => {
+  it("resumes an agent waiting for approval when approval responses are provided", async () => {
     let callCount = 0;
     let seenApprovalMessage = false;
 
@@ -563,6 +694,72 @@ describe("agent runtime", () => {
     expect(resumed.outputText).toBe("Approved and completed");
     expect(resumed.state.pendingApprovals).toEqual([]);
     expect(resumed.state.currentStep).toBe(2);
+  });
+
+  it("accepts legacy suspended states while resuming approvals", async () => {
+    let sawApproval = false;
+    const agent = createAgent({
+      model: createLanguageModel({
+        async generate(input) {
+          sawApproval = input.messages.some((message) =>
+            message.parts.some(
+              (part) =>
+                part.type === "provider-data" &&
+                part.provider === "openai" &&
+                (part.data as { type?: string }).type === "mcp_approval_response"
+            )
+          );
+
+          return {
+            messages: [createTextMessage("assistant", "legacy resumed")],
+            text: "legacy resumed",
+            finishReason: "stop"
+          };
+        }
+      }),
+      maxSteps: 2
+    });
+    const legacyState = {
+      schemaVersion: 1,
+      runId: "legacy-suspended",
+      provider: "test",
+      modelId: "agent-model",
+      status: "suspended",
+      messages: [createTextMessage("user", "Use MCP")],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 2,
+      outputText: "",
+      pendingApprovals: [
+        {
+          provider: "openai",
+          id: "mcpr_legacy",
+          arguments: "{}",
+          name: "fetch_docs",
+          rawData: {
+            type: "mcp_approval_request",
+            id: "mcpr_legacy",
+            arguments: "{}",
+            name: "fetch_docs"
+          }
+        }
+      ]
+    } as AgentRunState;
+
+    const resumed = await resumeAgent(agent, {
+      state: legacyState,
+      approvals: [
+        {
+          provider: "openai",
+          approvalRequestId: "mcpr_legacy",
+          approve: true
+        }
+      ]
+    });
+
+    expect(sawApproval).toBe(true);
+    expect(resumed.status).toBe("completed");
   });
 
   it("builds reusable approval response parts and messages", () => {
@@ -654,7 +851,7 @@ describe("agent runtime", () => {
     expect(events.some((event) => event.type === "agent-approval-request")).toBe(true);
     expect(events.at(-1)).toMatchObject({
       type: "agent-run-finish",
-      status: "suspended"
+      status: "waiting_approval"
     });
   });
 
@@ -734,6 +931,290 @@ describe("agent runtime", () => {
     expect(reloaded.outputText).toBe("hello world");
   });
 
+  it("reuses existing runs by idempotency key", async () => {
+    let calls = 0;
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({
+      id: "idempotent-agent",
+      model: createLanguageModel({
+        async generate() {
+          calls += 1;
+          return {
+            messages: [createTextMessage("assistant", `call ${calls}`)],
+            text: `call ${calls}`,
+            finishReason: "stop"
+          };
+        }
+      }),
+      store
+    });
+
+    const first = await runAgent(agent, {
+      prompt: "Do this once",
+      idempotencyKey: "agent-run-key-1"
+    });
+    const second = await runAgent(agent, {
+      prompt: "Do this once",
+      idempotencyKey: "agent-run-key-1"
+    });
+
+    expect(first.state.runId).toBe(second.state.runId);
+    expect(second.outputText).toBe("call 1");
+    expect(second.state.schemaVersion).toBe(1);
+    expect(second.state.idempotencyKey).toBe("agent-run-key-1");
+    expect(calls).toBe(1);
+  });
+
+  it("requires a store with idempotency lookup when idempotency keys are used", async () => {
+    const agentWithoutStore = createAgent({
+      id: "no-store-agent",
+      model: createLanguageModel()
+    });
+    await expect(runAgent(agentWithoutStore, { prompt: "once", idempotencyKey: "missing-store" })).rejects.toThrow(
+      ValidationError
+    );
+
+    const agentWithoutLookup = createAgent({
+      id: "custom-store-agent",
+      model: createLanguageModel(),
+      store: {
+        load: () => undefined,
+        save: () => undefined
+      }
+    });
+    await expect(runAgent(agentWithoutLookup, { prompt: "once", idempotencyKey: "missing-lookup" })).rejects.toThrow(
+      ValidationError
+    );
+  });
+
+  it("normalizes legacy run state to schema version 1 when resuming", async () => {
+    const store = createInMemoryAgentRunStore();
+    const legacyState = {
+      runId: "legacy-run",
+      provider: "test",
+      modelId: "agent-model",
+      status: "failed",
+      messages: [createTextMessage("user", "Weather in Madrid?")],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "",
+      pendingApprovals: []
+    } as AgentRunState;
+    await Promise.resolve(store.save(legacyState));
+
+    const result = await runAgent(
+      createAgent({
+        id: "legacy-agent",
+        model: createLanguageModel(),
+        store
+      }),
+      {
+        runId: "legacy-run"
+      }
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.state.schemaVersion).toBe(1);
+    await expect(Promise.resolve(store.load("legacy-run"))).resolves.toMatchObject({ schemaVersion: 1 });
+  });
+
+  it("marks persisted runs cancel_requested by default and skips model execution", async () => {
+    let calls = 0;
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({
+      id: "cancel-agent",
+      model: createLanguageModel({
+        async generate() {
+          calls += 1;
+          return {
+            messages: [createTextMessage("assistant", "before cancel")],
+            text: "before cancel",
+            finishReason: "stop"
+          };
+        }
+      }),
+      store
+    });
+
+    const first = await runAgent(agent, { prompt: "cancel me later" });
+    const cancelled = await cancelAgentRun(store, first.state.runId, { reason: "User cancelled." });
+    const resumed = await runAgent(agent, { runId: first.state.runId });
+
+    expect(cancelled).toMatchObject({
+      status: "cancel_requested",
+      schemaVersion: 1,
+      cancellationReason: "User cancelled."
+    });
+    expect(cancelled?.cancelledAt).toBeTypeOf("number");
+    expect(resumed.status).toBe("cancel_requested");
+    expect(calls).toBe(1);
+  });
+
+  it("can mark persisted runs as finally cancelled", async () => {
+    const store = createInMemoryAgentRunStore();
+    const first = await runAgent(
+      createAgent({
+        id: "cancel-final-agent",
+        model: createLanguageModel(),
+        store
+      }),
+      { prompt: "cancel final" }
+    );
+
+    const cancelled = await cancelAgentRun(store, first.state.runId, {
+      reason: "Final cancellation.",
+      mode: "final"
+    });
+
+    expect(cancelled).toMatchObject({
+      status: "cancelled",
+      cancellationReason: "Final cancellation."
+    });
+  });
+
+  it("returns timed_out when an agent policy timeout expires", async () => {
+    let aborted = false;
+    const agent = createAgent({
+      id: "timeout-agent",
+      model: createLanguageModel({
+        async generate(input) {
+          await new Promise((resolve, reject) => {
+            input.abortSignal?.addEventListener(
+              "abort",
+              () => {
+                aborted = true;
+                reject(new Error("model aborted"));
+              },
+              { once: true }
+            );
+            setTimeout(resolve, 50);
+          });
+          return {
+            messages: [createTextMessage("assistant", "too late")],
+            text: "too late"
+          };
+        }
+      }),
+      policy: {
+        timeoutMs: 5
+      }
+    });
+
+    const result = await runAgent(agent, { prompt: "slow" });
+
+    expect(result.status).toBe("timed_out");
+    expect(result.error?.message).toContain("timed out");
+    expect(aborted).toBe(true);
+  });
+
+  it("can convert an agent policy timeout into cancel_requested", async () => {
+    const agent = createAgent({
+      id: "timeout-cancel-agent",
+      model: createLanguageModel({
+        async generate() {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return {
+            messages: [createTextMessage("assistant", "too late")],
+            text: "too late"
+          };
+        }
+      })
+    });
+
+    const result = await runAgent(agent, {
+      prompt: "slow",
+      policy: {
+        timeoutMs: 5,
+        onTimeout: "cancel-requested"
+      }
+    });
+
+    expect(result.status).toBe("cancel_requested");
+    expect(result.state.cancellationReason).toContain("timed out");
+  });
+
+  it("looks up and deletes in-memory runs by parent run id", async () => {
+    const store = createInMemoryAgentRunStore();
+    await Promise.resolve(store.save({
+      schemaVersion: 1,
+      runId: "memory-child",
+      parentRunId: "memory-parent",
+      provider: "test",
+      modelId: "agent-model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "child",
+      pendingApprovals: []
+    }));
+
+    await expect(Promise.resolve(store.findByParentRunId?.("memory-parent"))).resolves.toEqual([
+      expect.objectContaining({ runId: "memory-child", parentRunId: "memory-parent" })
+    ]);
+
+    await Promise.resolve(store.delete?.("memory-child"));
+    await expect(Promise.resolve(store.findByParentRunId?.("memory-parent"))).resolves.toEqual([]);
+  });
+
+  it("cancels persisted parent and child runs as a tree", async () => {
+    const store = createInMemoryAgentRunStore();
+    await Promise.resolve(store.save({
+      schemaVersion: 1,
+      runId: "parent-run",
+      agentId: "parent",
+      provider: "test",
+      modelId: "agent-model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "parent",
+      pendingApprovals: []
+    }));
+    await Promise.resolve(store.save({
+      schemaVersion: 1,
+      runId: "child-run",
+      agentId: "child",
+      parentRunId: "parent-run",
+      provider: "test",
+      modelId: "agent-model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "child",
+      pendingApprovals: []
+    }));
+
+    const result = await cancelAgentRunTree(store, "parent-run", { reason: "Stop workflow." });
+
+    expect(result.parent).toMatchObject({ runId: "parent-run", status: "cancel_requested", cancellationReason: "Stop workflow." });
+    expect(result.children).toHaveLength(1);
+    expect(result.children[0]).toMatchObject({ runId: "child-run", status: "cancel_requested", cancellationReason: "Stop workflow." });
+    await expect(Promise.resolve(store.load("child-run"))).resolves.toMatchObject({ status: "cancel_requested" });
+  });
+
+  it("requires parent lookup support for tree cancellation", async () => {
+    await expect(
+      cancelAgentRunTree(
+        {
+          load: () => undefined,
+          save: () => undefined
+        },
+        "parent-run"
+      )
+    ).rejects.toThrow(ValidationError);
+  });
+
   it("writes serialized run state to the file-backed store", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-store-"));
     const store = createFileAgentRunStore({ directory });
@@ -753,6 +1234,59 @@ describe("agent runtime", () => {
     };
     expect(saved.runId).toBe(result.state.runId);
     expect(saved.outputText).toBe("hello world");
+    await expect(Promise.resolve(store.findByIdempotencyKey?.("missing-key"))).resolves.toBeUndefined();
+    await expect(Promise.resolve(store.findByParentRunId?.("missing-parent"))).resolves.toEqual([]);
+  });
+
+  it("looks up file-backed runs by parent run id", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-store-"));
+    const store = createFileAgentRunStore({ directory });
+    await Promise.resolve(store.save({
+      schemaVersion: 1,
+      runId: "file-child",
+      parentRunId: "file-parent",
+      provider: "test",
+      modelId: "agent-model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "child",
+      pendingApprovals: []
+    }));
+
+    await expect(Promise.resolve(store.findByParentRunId?.("file-parent"))).resolves.toEqual([
+      expect.objectContaining({ runId: "file-child", parentRunId: "file-parent" })
+    ]);
+
+    await Promise.resolve(store.delete?.("file-child"));
+    await expect(Promise.resolve(store.findByParentRunId?.("file-parent"))).resolves.toEqual([]);
+  });
+
+  it("looks up and deletes file-backed runs by idempotency key", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-store-"));
+    const store = createFileAgentRunStore({ directory });
+    const result = await runAgent(
+      createAgent({
+        id: "file-idempotency-agent",
+        model: createLanguageModel(),
+        store
+      }),
+      {
+        prompt: "Persist this once",
+        idempotencyKey: "file-key"
+      }
+    );
+
+    await expect(Promise.resolve(store.findByIdempotencyKey?.("file-key"))).resolves.toMatchObject({
+      runId: result.state.runId,
+      schemaVersion: 1
+    });
+
+    await Promise.resolve(store.delete?.(result.state.runId));
+    await expect(Promise.resolve(store.findByIdempotencyKey?.("file-key"))).resolves.toBeUndefined();
   });
 
   it("persists run state through the sqlite-backed store", async () => {
@@ -779,9 +1313,68 @@ describe("agent runtime", () => {
 
     expect(loaded?.runId).toBe(first.state.runId);
     expect(loaded?.outputText).toBe("hello world");
+    await expect(Promise.resolve(reloaded.findByIdempotencyKey?.("sqlite-key"))).resolves.toBeUndefined();
+    await expect(Promise.resolve(reloaded.findByParentRunId?.("sqlite-parent"))).resolves.toEqual([]);
 
     await Promise.resolve(reloaded.delete?.(first.state.runId));
     await expect(Promise.resolve(reloaded.load(first.state.runId))).resolves.toBeUndefined();
+  });
+
+  it("looks up and deletes sqlite-backed runs by idempotency key", async () => {
+    const db = new FakeSqliteDatabase();
+    const store = createSqliteAgentRunStore({
+      db,
+      tableName: "agent_runs"
+    });
+    const result = await runAgent(
+      createAgent({
+        id: "sqlite-idempotency-agent",
+        model: createLanguageModel(),
+        store
+      }),
+      {
+        prompt: "Persist idempotently in sqlite",
+        idempotencyKey: "sqlite-key"
+      }
+    );
+
+    await expect(Promise.resolve(store.findByIdempotencyKey?.("sqlite-key"))).resolves.toMatchObject({
+      runId: result.state.runId,
+      schemaVersion: 1
+    });
+
+    await Promise.resolve(store.delete?.(result.state.runId));
+    await expect(Promise.resolve(store.findByIdempotencyKey?.("sqlite-key"))).resolves.toBeUndefined();
+  });
+
+  it("looks up and deletes sqlite-backed runs by parent run id", async () => {
+    const db = new FakeSqliteDatabase();
+    const store = createSqliteAgentRunStore({
+      db,
+      tableName: "agent_runs"
+    });
+    await Promise.resolve(store.save({
+      schemaVersion: 1,
+      runId: "sqlite-child",
+      parentRunId: "sqlite-parent",
+      provider: "test",
+      modelId: "agent-model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "child",
+      pendingApprovals: []
+    }));
+
+    await expect(Promise.resolve(store.findByParentRunId?.("sqlite-parent"))).resolves.toEqual([
+      expect.objectContaining({ runId: "sqlite-child", parentRunId: "sqlite-parent" })
+    ]);
+
+    await Promise.resolve(store.delete?.("sqlite-child"));
+    await expect(Promise.resolve(store.findByParentRunId?.("sqlite-parent"))).resolves.toEqual([]);
   });
 
   it("persists run state through the postgres-backed store", async () => {
@@ -808,9 +1401,68 @@ describe("agent runtime", () => {
 
     expect(loaded?.runId).toBe(first.state.runId);
     expect(loaded?.outputText).toBe("hello world");
+    await expect(reloaded.findByIdempotencyKey?.("postgres-key")).resolves.toBeUndefined();
+    await expect(reloaded.findByParentRunId?.("postgres-parent")).resolves.toEqual([]);
 
     await reloaded.delete?.(first.state.runId);
     await expect(reloaded.load(first.state.runId)).resolves.toBeUndefined();
+  });
+
+  it("looks up and deletes postgres-backed runs by idempotency key", async () => {
+    const client = new FakePostgresClient();
+    const store = createPostgresAgentRunStore({
+      client,
+      tableName: "agent_runs"
+    });
+    const result = await runAgent(
+      createAgent({
+        id: "postgres-idempotency-agent",
+        model: createLanguageModel(),
+        store
+      }),
+      {
+        prompt: "Persist idempotently in postgres",
+        idempotencyKey: "postgres-key"
+      }
+    );
+
+    await expect(store.findByIdempotencyKey?.("postgres-key")).resolves.toMatchObject({
+      runId: result.state.runId,
+      schemaVersion: 1
+    });
+
+    await store.delete?.(result.state.runId);
+    await expect(store.findByIdempotencyKey?.("postgres-key")).resolves.toBeUndefined();
+  });
+
+  it("looks up and deletes postgres-backed runs by parent run id", async () => {
+    const client = new FakePostgresClient();
+    const store = createPostgresAgentRunStore({
+      client,
+      tableName: "agent_runs"
+    });
+    await store.save({
+      schemaVersion: 1,
+      runId: "postgres-child",
+      parentRunId: "postgres-parent",
+      provider: "test",
+      modelId: "agent-model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "child",
+      pendingApprovals: []
+    });
+
+    await expect(store.findByParentRunId?.("postgres-parent")).resolves.toEqual([
+      expect.objectContaining({ runId: "postgres-child", parentRunId: "postgres-parent" })
+    ]);
+
+    await store.delete?.("postgres-child");
+    await expect(store.findByParentRunId?.("postgres-parent")).resolves.toEqual([]);
   });
 
   it("loads memory into fresh runs and saves the latest assistant context", async () => {
@@ -1045,6 +1697,412 @@ describe("agent runtime", () => {
     expect(seenHandoff).toBe(true);
     expect(result.state.parentRunId).toBe(source.state.runId);
     expect(result.state.handoff?.toAgentId).toBe("booking");
+  });
+
+  it("runs native subagents as child runs and records hierarchical replay data", async () => {
+    const child = createAgent({
+      id: "researcher",
+      model: createLanguageModel({
+        async generate(input) {
+          expect(input.messages.at(-1)?.parts[0]).toMatchObject({
+            type: "text",
+            text: "Find sources"
+          });
+          return {
+            messages: [createTextMessage("assistant", "Research complete")],
+            text: "Research complete",
+            finishReason: "stop"
+          };
+        }
+      })
+    });
+
+    let callCount = 0;
+    const parent = createAgent({
+      id: "coordinator",
+      model: createLanguageModel({
+        async generate() {
+          callCount += 1;
+          if (callCount === 1) {
+            return {
+              messages: [
+                {
+                  role: "assistant",
+                  parts: [
+                    {
+                      type: "tool-call",
+                      toolCall: {
+                        id: "subagent-call-1",
+                        name: "research",
+                        input: { prompt: "Find sources" }
+                      }
+                    }
+                  ]
+                }
+              ],
+              finishReason: "tool-calls"
+            };
+          }
+
+          return {
+            messages: [createTextMessage("assistant", "Final answer with research")],
+            text: "Final answer with research",
+            finishReason: "stop"
+          };
+        }
+      }),
+      subagents: [
+        {
+          name: "research",
+          agent: child
+        }
+      ],
+      maxSteps: 2
+    });
+
+    const result = await runAgent(parent, {
+      prompt: "Coordinate research"
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.state.childRuns).toHaveLength(1);
+    expect(result.state.childRuns?.[0]).toMatchObject({
+      agentId: "researcher",
+      parentRunId: result.state.runId,
+      toolName: "research",
+      status: "completed",
+      outputText: "Research complete"
+    });
+    expect(result.toolResults[0]?.output).toMatchObject({
+      agentId: "researcher",
+      parentRunId: result.state.runId,
+      status: "completed"
+    });
+    expect(createAgentRunSnapshot(result.state).childRuns?.[0]?.agentId).toBe("researcher");
+    expect(replayAgentRun(result.state).timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "subagent-run",
+          childRun: expect.objectContaining({ agentId: "researcher" })
+        })
+      ])
+    );
+
+    const trace = createAgentTraceArtifact(result.state);
+    expect(trace.childRuns?.[0]?.agentId).toBe("researcher");
+    expect(summarizeAgentTrace(trace).childRuns).toBe(1);
+  });
+
+  it("creates hierarchical snapshots and traces from stored parent-child runs", async () => {
+    const store = createInMemoryAgentRunStore();
+    const createState = (runId: string, parentRunId?: string): AgentRunState => ({
+      schemaVersion: 1,
+      runId,
+      parentRunId,
+      agentId: runId,
+      provider: "test",
+      modelId: "agent-model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: runId,
+      pendingApprovals: []
+    });
+    await Promise.resolve(store.save(createState("parent")));
+    await Promise.resolve(store.save(createState("child", "parent")));
+    await Promise.resolve(store.save(createState("grandchild", "child")));
+
+    const snapshot = await createAgentRunTreeSnapshot(store, "parent");
+    const trace = await createHierarchicalAgentTrace(store, "parent");
+
+    expect(snapshot).toMatchObject({
+      totalRuns: 3,
+      root: {
+        runId: "parent",
+        children: [
+          {
+            runId: "child",
+            children: [{ runId: "grandchild" }]
+          }
+        ]
+      }
+    });
+    expect(trace).toMatchObject({
+      totalRuns: 3,
+      root: {
+        trace: { runId: "parent" },
+        children: [{ trace: { runId: "child" }, children: [{ trace: { runId: "grandchild" } }] }]
+      }
+    });
+    expect(JSON.parse(JSON.stringify(trace))).toEqual(trace);
+  });
+
+  it("requires parent lookup support for hierarchical traces", async () => {
+    const store = {
+      load: () => undefined,
+      save: () => undefined
+    };
+
+    await expect(createAgentRunTreeSnapshot(store, "run")).rejects.toThrow(ValidationError);
+    await expect(createHierarchicalAgentTrace(store, "run")).rejects.toThrow(ValidationError);
+  });
+
+  it("fails fast when a native subagent tool conflicts with an existing tool", async () => {
+    const child = createAgent({
+      id: "researcher",
+      model: createLanguageModel()
+    });
+    const agent = createAgent({
+      model: createLanguageModel(),
+      tools: {
+        research: tool({
+          name: "research",
+          schema: z.object({ query: z.string() }),
+          execute: ({ query }) => query
+        })
+      },
+      subagents: [{ name: "research", agent: child }]
+    });
+
+    await expect(runAgent(agent, { prompt: "hello" })).rejects.toThrow('Subagent tool "research" conflicts');
+  });
+
+  it("runs explicit agent groups in parallel while preserving order", async () => {
+    const calls: string[] = [];
+    const first = createAgent({
+      id: "first",
+      model: createLanguageModel({
+        async generate() {
+          calls.push("first");
+          return { messages: [createTextMessage("assistant", "one")], text: "one" };
+        }
+      })
+    });
+    const second = createAgent({
+      id: "second",
+      model: createLanguageModel({
+        async generate() {
+          calls.push("second");
+          return { messages: [createTextMessage("assistant", "two")], text: "two" };
+        }
+      })
+    });
+
+    const group = await runAgentGroup(
+      [
+        { name: "a", agent: first },
+        { name: "b", agent: second }
+      ],
+      { prompt: "fan out", parentRunId: "parent", metadata: { shared: true } }
+    );
+
+    expect(group.status).toBe("completed");
+    expect(group.parentRunId).toBe("parent");
+    expect(group.outputs.map((output) => output.name)).toEqual(["a", "b"]);
+    expect(group.outputs.map((output) => output.output?.state.parentRunId)).toEqual(["parent", "parent"]);
+    expect(calls.sort()).toEqual(["first", "second"]);
+  });
+
+  it("reports agent group failures without hiding successful outputs", async () => {
+    const group = await runAgentGroup(
+      [
+        { name: "ok", agent: createAgent({ id: "ok", model: createLanguageModel() }) },
+        {
+          name: "bad",
+          agent: createAgent({
+            id: "bad",
+            model: createLanguageModel({
+              async generate() {
+                throw new Error("bad failed");
+              }
+            })
+          })
+        }
+      ],
+      { prompt: "fan out", stopOnError: true }
+    );
+
+    expect(group.status).toBe("failed");
+    expect(group.outputs[0]).toMatchObject({ name: "ok", status: "fulfilled" });
+    expect(group.outputs[1]).toMatchObject({ name: "bad", status: "rejected", error: { message: "bad failed" } });
+  });
+
+  it("keeps all-settled agent group behavior when stopOnError is false", async () => {
+    const calls: string[] = [];
+    const group = await runAgentGroup(
+      [
+        {
+          name: "bad",
+          agent: createAgent({
+            id: "bad",
+            model: createLanguageModel({
+              async generate() {
+                calls.push("bad");
+                throw new Error("bad failed");
+              }
+            })
+          })
+        },
+        {
+          name: "ok",
+          agent: createAgent({
+            id: "ok",
+            model: createLanguageModel({
+              async generate() {
+                calls.push("ok");
+                return { messages: [createTextMessage("assistant", "ok")], text: "ok" };
+              }
+            })
+          })
+        }
+      ],
+      { prompt: "fan out", stopOnError: false }
+    );
+
+    expect(group.status).toBe("failed");
+    expect(group.outputs[0]).toMatchObject({ name: "bad", status: "rejected" });
+    expect(group.outputs[1]).toMatchObject({ name: "ok", status: "fulfilled" });
+    expect(calls.sort()).toEqual(["bad", "ok"]);
+  });
+
+  it("aborts pending agent group members after the first fail-fast exception", async () => {
+    let slowAborted = false;
+    const group = await runAgentGroup(
+      [
+        {
+          name: "bad",
+          agent: createAgent({
+            id: "bad",
+            model: createLanguageModel({
+              async generate() {
+                throw new Error("bad failed");
+              }
+            })
+          })
+        },
+        {
+          name: "slow",
+          agent: createAgent({
+            id: "slow",
+            model: createLanguageModel({
+              async generate(input) {
+                await new Promise((resolve, reject) => {
+                  input.abortSignal?.addEventListener(
+                    "abort",
+                    () => {
+                      slowAborted = true;
+                      reject(new Error("slow aborted"));
+                    },
+                    { once: true }
+                  );
+                  setTimeout(resolve, 50);
+                });
+                return { messages: [createTextMessage("assistant", "slow")], text: "slow" };
+              }
+            })
+          })
+        }
+      ],
+      { prompt: "fan out", stopOnError: true }
+    );
+
+    expect(group.status).toBe("failed");
+    expect(slowAborted).toBe(true);
+    expect(group.outputs[0]).toMatchObject({ name: "bad", status: "rejected", error: { message: "bad failed" } });
+    expect(group.outputs[1]).toMatchObject({
+      name: "slow",
+      status: "rejected",
+      error: { message: "Agent group member aborted after fail-fast." }
+    });
+  });
+
+  it("aborts pending agent group members after a failed output status", async () => {
+    let slowAborted = false;
+    const group = await runAgentGroup(
+      [
+        {
+          name: "failed-output",
+          agent: createAgent({
+            id: "failed-output",
+            model: createLanguageModel(),
+            inputGuardrails: [
+              () => ({
+                triggered: true,
+                reason: "blocked"
+              })
+            ]
+          })
+        },
+        {
+          name: "slow",
+          agent: createAgent({
+            id: "slow-output",
+            model: createLanguageModel({
+              async generate(input) {
+                await new Promise((resolve, reject) => {
+                  input.abortSignal?.addEventListener(
+                    "abort",
+                    () => {
+                      slowAborted = true;
+                      reject(new Error("slow aborted"));
+                    },
+                    { once: true }
+                  );
+                  setTimeout(resolve, 50);
+                });
+                return { messages: [createTextMessage("assistant", "slow")], text: "slow" };
+              }
+            })
+          })
+        }
+      ],
+      { prompt: "fan out", stopOnError: true }
+    );
+
+    expect(group.status).toBe("failed");
+    expect(slowAborted).toBe(true);
+    expect(group.outputs[0]).toMatchObject({ name: "failed-output", status: "fulfilled", output: { status: "failed" } });
+    expect(group.outputs[1]).toMatchObject({
+      name: "slow",
+      status: "rejected",
+      error: { message: "Agent group member aborted after fail-fast." }
+    });
+  });
+
+  it("prepares subagents with shared defaults without mutating originals", () => {
+    const store = createInMemoryAgentRunStore();
+    const memory = createInMemoryAgentMemoryStore();
+    const telemetry = () => undefined;
+    const approval = () => true;
+    const child = createAgent({
+      id: "child",
+      model: createLanguageModel()
+    });
+    const parent = createAgent({
+      id: "parent",
+      model: createLanguageModel(),
+      store,
+      memory,
+      onTelemetryEvent: telemetry,
+      toolApprovalPolicy: approval,
+      toolExecution: { parallel: false },
+      metadata: { parent: true },
+      subagents: [{ name: "child", agent: child, metadata: { role: "helper" } }]
+    });
+
+    const prepared = prepareSubagentsForAgent(parent, { metadata: { prepared: true } });
+
+    expect(parent.subagents?.[0]?.agent.store).toBeUndefined();
+    expect(prepared.subagents?.[0]?.agent.store).toBe(store);
+    expect(prepared.subagents?.[0]?.agent.memory).toBe(memory);
+    expect(prepared.subagents?.[0]?.agent.onTelemetryEvent).toBe(telemetry);
+    expect(prepared.subagents?.[0]?.agent.toolApprovalPolicy).toBe(approval);
+    expect(prepared.subagents?.[0]?.agent.toolExecution).toEqual({ parallel: false });
+    expect(prepared.subagents?.[0]?.agent.metadata).toMatchObject({ parent: true, prepared: true });
+    expect(prepared.subagents?.[0]?.metadata).toMatchObject({ role: "helper", prepared: true });
   });
 
   it("emits agent telemetry for lifecycle, memory, approvals, and handoffs", async () => {

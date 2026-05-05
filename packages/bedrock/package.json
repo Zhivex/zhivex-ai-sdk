@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/bedrock",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "AWS Bedrock adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -42,6 +42,6 @@
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.999.0",
-    "@zhivex-ai/core": "^0.7.0"
+    "@zhivex-ai/core": "^0.8.0"
   }
 }

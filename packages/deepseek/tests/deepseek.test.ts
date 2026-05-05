@@ -13,7 +13,7 @@ describe("deepseek adapter", () => {
     providerName: "deepseek",
     modelId: "deepseek-v4-flash",
     createModel: () => createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch })("deepseek-v4-flash"),
-    expectedAgentTier: "tier-c",
+    expectedAgentTier: "tier-b",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -34,7 +34,7 @@ describe("deepseek adapter", () => {
   runAgentProviderContractSuite({
     providerName: "deepseek",
     modelId: "deepseek-v4-flash",
-    expectedAgentTier: "tier-c",
+    expectedAgentTier: "tier-b",
     createModel: () => createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch })("deepseek-v4-flash"),
     mockSimpleRun: () => {
       fetchMock.mockResolvedValueOnce(

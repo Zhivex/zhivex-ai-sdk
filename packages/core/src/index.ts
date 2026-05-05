@@ -1,5 +1,275 @@
-export { createAgent, resumeAgent, runAgent, streamAgent } from "./agent.js";
+export {
+  API_STABILITY_MANIFEST,
+  getApiStability,
+  listApiStability
+} from "./api-stability.js";
+export type {
+  ApiStabilityEntry,
+  ApiStabilityLevel
+} from "./api-stability.js";
+export {
+  cancelAgentRun,
+  cancelAgentRunTree,
+  createAgent,
+  createSubAgentTool,
+  prepareSubagentsForAgent,
+  resumeAgent,
+  runAgent,
+  runAgentGroup,
+  streamAgent
+} from "./agent.js";
+export {
+  AdvancedToolRegistry,
+  createAdvancedToolRegistry,
+  createHttpTool,
+  createToolPermissionPreset,
+  createToolTestFixture,
+  inspectToolRegistry,
+  recordToolTestFixture,
+  runToolTestFixture,
+  testToolDefinition,
+  testToolRegistry
+} from "./advanced-tool-registry.js";
+export type {
+  AdvancedToolRegistryEntry,
+  AdvancedToolSource,
+  HttpToolOptions,
+  ToolFixtureCase,
+  ToolFixtureCaseResult,
+  ToolFixtureResult,
+  ToolAuditMetadata,
+  ToolPermissionPreset,
+  ToolPermission,
+  ToolRegistryInspection,
+  ToolRegistryInspectionTool,
+  ToolRegistryTestCase,
+  ToolTestFixture,
+  ToolTestResult
+} from "./advanced-tool-registry.js";
+export {
+  createAgentEvaluationFixture,
+  createAgentEvaluationReport,
+  createAgentRunSnapshot,
+  createMockLanguageModel,
+  createMockTool,
+  judgeAgentEvaluation,
+  replayAgentRun,
+  runAgentEvaluationFixture,
+  runAgentEvaluation
+} from "./agent-evaluation.js";
+export type {
+  AgentEvaluationCase,
+  AgentEvaluationCaseResult,
+  AgentEvaluationExpectations,
+  AgentEvaluationFixture,
+  AgentEvaluationJudge,
+  AgentEvaluationJudgeResult,
+  AgentEvaluationReport,
+  AgentEvaluationReportCase,
+  AgentEvaluationResult,
+  AgentReplayResult,
+  AgentReplayTimelineEvent,
+  AgentRunSnapshot,
+  MockLanguageModelOptions,
+  MockToolOptions,
+  RunAgentEvaluationOptions
+} from "./agent-evaluation.js";
+export {
+  createFileArtifactService,
+  createBase64ArtifactData,
+  cleanupFileArtifactStore,
+  createExternalArtifactReference,
+  createInMemoryArtifactService,
+  ARTIFACT_SCHEMA_VERSION,
+  inspectFileArtifactStore,
+  migrateArtifactRecord,
+  normalizeArtifactRecord,
+  pruneFileArtifactStore,
+  createPostgresArtifactService,
+  createSqliteArtifactService,
+  verifyArtifactIntegrity,
+  verifyArtifactRecordIntegrity
+} from "./artifact.js";
+export type {
+  ArtifactBinaryLoadOutput,
+  ArtifactBinarySaveInput,
+  ArtifactEncoding,
+  ArtifactIntegrityIssue,
+  ArtifactIntegrityResult,
+  ArtifactListInput,
+  ArtifactLookup,
+  ArtifactRecord,
+  ArtifactSaveInput,
+  ArtifactService,
+  ArtifactStorageMode,
+  Base64ArtifactData,
+  Base64ArtifactDataInput,
+  ExternalArtifactReference,
+  ExternalArtifactReferenceInput,
+  FileArtifactServiceOptions,
+  FileArtifactStoreCleanupOptions,
+  FileArtifactStoreCleanupResult,
+  FileArtifactStoreInspection,
+  FileArtifactStoreInspectionIssue,
+  FileArtifactStorePruneOptions,
+  FileArtifactStorePruneResult,
+  PostgresArtifactServiceOptions,
+  SqliteArtifactServiceOptions
+} from "./artifact.js";
+export {
+  compareWorkflowEvaluationReports,
+  createWorkflowEvaluationDiffReport
+} from "./workflow-evaluation-diff.js";
+export type {
+  WorkflowEvaluationDiff,
+  WorkflowEvaluationDiffCase,
+  WorkflowEvaluationDiffCaseStatus,
+  WorkflowEvaluationDiffReport,
+  WorkflowEvaluationDiffSummary
+} from "./workflow-evaluation-diff.js";
+export {
+  createWorkflowEvaluationFixture,
+  createWorkflowEvaluationReport,
+  judgeWorkflowEvaluation,
+  runWorkflowEvaluation,
+  runWorkflowEvaluationFixture
+} from "./workflow-evaluation.js";
+export type {
+  RunWorkflowEvaluationOptions,
+  WorkflowEvaluationCase,
+  WorkflowEvaluationCaseResult,
+  WorkflowEvaluationExpectations,
+  WorkflowEvaluationFixture,
+  WorkflowEvaluationJudge,
+  WorkflowEvaluationJudgeResult,
+  WorkflowEvaluationReport,
+  WorkflowEvaluationReportCase,
+  WorkflowEvaluationResult
+} from "./workflow-evaluation.js";
+export {
+  saveWorkflowEvaluationReportAsArtifact,
+  saveWorkflowOutputsAsArtifacts,
+  saveWorkflowReplayAsArtifact
+} from "./workflow-artifacts.js";
+export type {
+  SaveWorkflowEvaluationReportAsArtifactOptions,
+  SaveWorkflowOutputsAsArtifactsOptions,
+  SaveWorkflowReplayAsArtifactOptions,
+  WorkflowArtifactContext
+} from "./workflow-artifacts.js";
+export {
+  createFileWorkflowStateService,
+  createInMemoryWorkflowStateService,
+  migrateWorkflowStateRecord,
+  normalizeWorkflowStateRecord,
+  pruneFileWorkflowStateStore,
+  createPostgresWorkflowStateService,
+  createSqliteWorkflowStateService,
+  WORKFLOW_STATE_RECORD_SCHEMA_VERSION
+} from "./workflow-state-service.js";
+export type {
+  FileWorkflowStateServiceOptions,
+  FileWorkflowStateStorePruneOptions,
+  FileWorkflowStateStorePruneResult,
+  PostgresWorkflowStateServiceOptions,
+  SqliteWorkflowStateServiceOptions,
+  WorkflowStateListInput as WorkflowStateServiceListInput,
+  WorkflowStateLookup as WorkflowStateServiceLookup,
+  WorkflowStateRecord,
+  WorkflowStateRecordMigrationTarget,
+  WorkflowStateSaveInput,
+  WorkflowStateService
+} from "./workflow-state-service.js";
+export {
+  createAgentRunTreeSnapshot,
+  createAgentTraceArtifact,
+  createAgentTraceCollector,
+  createHierarchicalAgentTrace,
+  estimateAgentRunCost,
+  estimateTokenCost,
+  summarizeAgentTrace
+} from "./agent-trace.js";
+export type {
+  AgentRunCostPricing,
+  AgentRunTreeNode,
+  AgentRunTreeSnapshot,
+  AgentTraceArtifact,
+  AgentTraceCollector,
+  AgentTraceEvent,
+  AgentTraceOptions,
+  AgentTraceStep,
+  AgentTraceSummary,
+  AgentTraceToolCall,
+  CostEstimate,
+  HierarchicalAgentTrace,
+  HierarchicalAgentTraceNode,
+  LatencySummary,
+  TokenPricing
+} from "./agent-trace.js";
 export { streamLiveAgent } from "./live-agent.js";
+export {
+  createFileSessionService,
+  createInMemorySessionService,
+  migrateAgentSessionRecord,
+  normalizeAgentSession,
+  pruneFileSessionStore,
+  createPostgresSessionService,
+  createRunner,
+  createSqliteSessionService,
+  SESSION_SCHEMA_VERSION
+} from "./runner.js";
+export type {
+  AgentSession,
+  AgentSessionMigrationTarget,
+  CreateRunnerOptions,
+  FileSessionServiceOptions,
+  FileSessionStorePruneOptions,
+  FileSessionStorePruneResult,
+  PostgresSessionServiceOptions,
+  Runner,
+  RunnerRunInput,
+  RunnerRunOutput,
+  RunnerStreamResult,
+  SessionCreateInput,
+  SessionEvent,
+  SessionEventType,
+  SessionLookup,
+  SessionService,
+  SqliteSessionServiceOptions
+} from "./runner.js";
+export {
+  createWorkflow,
+  loadWorkflowState,
+  migrateWorkflowRunState,
+  normalizeWorkflowRunState,
+  replayWorkflowRun,
+  runWorkflow,
+  saveWorkflowState,
+  WORKFLOW_RUN_STATE_SCHEMA_VERSION
+} from "./workflow.js";
+export type {
+  PersistedWorkflowRunState,
+  WorkflowDefinition,
+  WorkflowLoopCondition,
+  WorkflowLoopConditionContext,
+  WorkflowLoopStep,
+  WorkflowPersistenceOptions,
+  WorkflowPrompt,
+  WorkflowPromptContext,
+  WorkflowParallelStep,
+  WorkflowReplayResult,
+  WorkflowReplayTimelineEvent,
+  WorkflowRunInput,
+  WorkflowRunOutput,
+  WorkflowRunState,
+  WorkflowRunStateMigrationTarget,
+  WorkflowStatus,
+  WorkflowStep,
+  WorkflowStepResult,
+  WorkflowStepStatus,
+  WorkflowStateLookup,
+  WorkflowTaskStep
+} from "./workflow.js";
 export {
   agentApprovalResponsePart,
   createAgentApprovalMessage,
@@ -62,6 +332,41 @@ export { generateImage, generateMusic, generateVideo } from "./media.js";
 export { generateText, normalizeMessages, streamText } from "./generate-text.js";
 export { createOtelAgentObserver, createOtelObserver, createOtelTelemetryMiddleware, OTelObserver, OTelSpanHandle } from "./observability.js";
 export type { OTelSpanLike, OTelTracerLike } from "./observability.js";
+export {
+  createProviderSupportDriftReport,
+  createProviderSupportMatrix,
+  inspectProviderAgentSupport,
+  renderProviderSupportMatrix
+} from "./provider-parity.js";
+export type {
+  ProviderAgentSupport,
+  ProviderSupportDrift,
+  ProviderSupportDriftExpectedEntry,
+  ProviderSupportDriftExpectedMatrix,
+  ProviderSupportDriftReport,
+  ProviderSupportMatrix,
+  ProviderSupportMatrixEntry,
+  ProviderSupportMatrixFormat
+} from "./provider-parity.js";
+export {
+  applySafetyPolicyToAgent,
+  createApprovalPolicy,
+  createBudgetGuard,
+  createRedactionPolicy,
+  createSafetyPolicy
+} from "./safety-policy.js";
+export type {
+  ApprovalPolicyOptions,
+  ApprovalPolicyPreset,
+  BudgetGuard,
+  BudgetGuardOptions,
+  RedactionPolicy,
+  RedactionPolicyOptions,
+  RedactionRule,
+  SafetyPolicy,
+  SafetyPolicyOptions,
+  SafetyPolicyPreset
+} from "./safety-policy.js";
 export {
   createCachedGenerateMiddleware,
   createCircuitBreakerMiddleware,

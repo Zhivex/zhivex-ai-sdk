@@ -14,6 +14,40 @@ The SDK now documents its public contract and release expectations more explicit
 
 For production integrations, prefer supported public package entrypoints and use the provider capability matrix below as the source of truth for cross-provider behavior.
 
+Runtime exports from `@zhivex-ai/core` are also classified by a verifiable API manifest:
+
+```ts
+import { getApiStability } from "@zhivex-ai/sdk";
+
+console.log(getApiStability("createWorkflow")?.stability); // "beta"
+```
+
+Runtime export drift is guarded by that manifest, and public declaration drift is guarded by type snapshot tests for `@zhivex-ai/core` and `@zhivex-ai/sdk`.
+
+The first post-RC promotion is intentionally narrow: `Runner + SessionService` is Stable, while declarative workflows, artifacts, workflow state services, and the CLI remain Beta.
+
+### Installing The RC
+
+The current release candidate is published on npm under the `next` dist-tag:
+
+```bash
+bun add @zhivex-ai/sdk@next
+```
+
+Use the SDK from server runtimes: Node.js, Bun, Next.js route handlers/server actions, API servers, or background workers. Browser React clients should call your backend instead of importing provider-backed runners directly, because provider credentials, tools, database clients, and durable stores must stay server-side.
+
+For local development, file-backed stores are convenient. For serverless and production deployments, prefer database-backed services such as `createPostgresSessionService()` over file stores, because serverless filesystems are usually ephemeral and not shared across instances.
+
+## Start Here
+
+Use these guides when adopting the SDK in a real app:
+
+- [Quickstart](./docs/QUICKSTART.md): install the RC and run a multi-turn `Runner`.
+- [Next.js Runner Guide](./docs/NEXTJS.md): route handler plus React client shape.
+- [Production Guide](./docs/PRODUCTION.md): store choices, server-only boundaries, identity mapping, concurrency, workflows, and artifacts.
+- [Zhivex API Integration](./docs/ZHIVEX_API_INTEGRATION.md): how this SDK fits inside the Zhivex API without absorbing auth, workspaces, BYOK, billing, or HTTP concerns.
+- [Examples](./examples/README.md): runnable TypeScript examples, including a deterministic runner/session example and a Next.js reference.
+
 ## Why Zhivex AI SDK
 
 - Unified primitives for text generation, streaming, structured output, tools, multimodal messages, and embeddings.
@@ -138,8 +172,8 @@ Status shorthand:
 | OpenRouter | yes | yes | yes | native | no | no | no | no | no | `effort` + `budgetTokens` | yes | server tools | Tier C |
 | Qwen | yes | yes | yes | native | yes | no | no | no | no | model-dependent | yes | Responses web search, web extractor, code interpreter | Tier B |
 | Kimi | yes | yes | yes | native | no | no | no | no | no | model-dependent | Formula tool | Formula tools via Chat Completions | Tier C |
-| DeepSeek | yes | yes | yes | JSON object | no | no | no | no | no | `effort` | no | no | Tier C |
-| Bedrock | yes | yes | partial / endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses server tools | Tier C / B by endpoint |
+| DeepSeek | yes | yes | yes | JSON object | no | no | no | no | no | `effort` | no | no | Tier B |
+| Bedrock | yes | yes | partial / endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C / A by runtime |
 | Ollama | yes | yes | no | native | yes | no | no | no | no | no | no | no | Tier C |
 
 Compatibility notes:
@@ -150,8 +184,9 @@ Compatibility notes:
 - Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
 - `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
-- `partial` for Bedrock Converse `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming.
+- `partial` for Bedrock Converse `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming. In the SDK's agent matrix, Bedrock Tier A applies to `createBedrock({ runtime: "openai" })`, which exposes Responses hosted tools, remote MCP, and approval requests. AWS-native AgentCore MCP is exposed separately as SDK-managed MCP tools for Converse or any shared agent loop; it does not promote Converse itself to a provider-emitted approval runtime.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
+- DeepSeek is Tier B for portable tool loops plus documented thinking mode on `deepseek-v4-flash` and `deepseek-v4-pro`; it does not expose hosted tools, remote MCP, web search, embeddings, audio, or realtime sessions in this adapter.
 - Kimi Formula tools are exposed as public helpers in `@zhivex-ai/kimi`. The SDK loads or declares Formula tool schemas, maps them into Chat Completions function tools, tracks `function.name -> formula_uri`, and executes the official Formula fiber after a Kimi tool call.
 - `Hosted tools / MCP` refers to provider-native hosted tools or SDK-level MCP mappings, not local callable tools defined with `tool()`. Kimi Formula helpers are called out separately because they are official provider tools executed through Formula fibers. For OpenRouter this currently means server tools such as `openrouter:web_search`.
 - `Agent tier` summarizes how far the provider currently goes for the agent runtime:
@@ -226,6 +261,391 @@ What the runtime guarantees:
 - `state` is JSON-serializable and can be persisted by your app.
 - `createAgent()` keeps reusable defaults such as `instructions`, `tools`, `maxSteps`, `reasoning`, and provider options in one place.
 - `resumeAgent()` continues from a previous `state` instead of rebuilding the run manually.
+- Production states include `queued`, `running`, `waiting_approval`, `cancel_requested`, `cancelled`, `timed_out`, `failed`, and `completed`. The legacy `suspended` status is still accepted when loading old persisted runs, but new approval waits use `waiting_approval`.
+
+### Runner And Sessions
+
+`createRunner()` adds a small application/session layer on top of the existing agent runtime. It keeps `runAgent()` as the execution engine while a `SessionService` stores multi-turn session events and the latest resumable `AgentRunState`.
+
+```ts
+import { createAgent, createInMemorySessionService, createRunner } from "@zhivex-ai/sdk";
+
+const agent = createAgent({
+  model: openai("gpt-5"),
+  instructions: "Keep answers concise."
+});
+
+const runner = createRunner({
+  appName: "travel-assistant",
+  agent,
+  sessionService: createInMemorySessionService()
+});
+
+const first = await runner.run({
+  userId: "user_123",
+  sessionId: "trip-planning",
+  prompt: "Remember that I prefer museums."
+});
+
+const next = await runner.run({
+  userId: "user_123",
+  sessionId: first.session.sessionId,
+  prompt: "Plan tomorrow afternoon."
+});
+
+console.log(next.session.events.map((event) => event.type));
+console.log(next.output.outputText);
+```
+
+The in-memory service is useful for local apps and tests. For app runtimes that need to survive process restarts, use a durable session service:
+
+```ts
+import { createFileSessionService, createRunner } from "@zhivex-ai/sdk";
+
+const runner = createRunner({
+  appName: "travel-assistant",
+  agent,
+  sessionService: createFileSessionService({
+    directory: "./tmp/agent-sessions"
+  })
+});
+```
+
+The SDK also exposes `createSqliteSessionService()` and `createPostgresSessionService()` for production applications that already provide compatible database clients. These services store the full `AgentSession` JSON, including events and the latest resumable `AgentRunState`. This layer is SDK-only: it does not introduce workspaces, project API keys, BYOK storage, billing, or an HTTP server.
+
+Durable session records are schema-versioned. New sessions are saved with `schemaVersion: 1`; legacy session JSON without a version is normalized when loaded, while records from a future schema version fail fast.
+
+Durable records also include a `revision` counter. Pass `expectedRevision` to save operations when your app wants optimistic concurrency; if the stored revision changed, the SDK raises `ConflictError`. Omitting `expectedRevision` keeps the compatible last-write-wins behavior.
+
+For explicit migration/validation, use `migrateAgentSessionRecord(record)`. File-backed session stores can be pruned locally with `pruneFileSessionStore({ directory, keepLast, olderThanMs, dryRun })`.
+
+### Declarative Workflows
+
+`createWorkflow()` and `runWorkflow()` run agent workflows on top of `Runner`. The Beta workflow surface supports sequential task steps, parallel groups, and bounded task loops. Each task calls a runner, can read previous step outputs, and can persist its own `outputKey` into the workflow state.
+
+```ts
+import { createWorkflow, runWorkflow } from "@zhivex-ai/sdk";
+
+const workflow = createWorkflow({
+  id: "candidate-review",
+  steps: [
+    {
+      id: "intake",
+      runner,
+      prompt: "Summarize the candidate profile.",
+      outputKey: "intake"
+    },
+    {
+      id: "review",
+      runner,
+      prompt: ({ outputs }) => `Review this intake: ${outputs.intake}`,
+      outputKey: "review"
+    }
+  ]
+});
+
+const result = await runWorkflow(workflow, {
+  userId: "user_123",
+  sessionId: "candidate_456"
+});
+
+console.log(result.status);
+console.log(result.outputs.review);
+```
+
+If a step pauses for approval, the workflow returns `waiting_approval` with a serializable `state`. Call `runWorkflow()` again with that state and approval responses to resume the pending step. `replayWorkflowRun()` inspects a saved workflow state without calling models or tools.
+
+Workflows can also persist their latest state. For compact apps, `SessionService` can keep the state under session metadata. For production-style local state, use a dedicated `WorkflowStateService`:
+
+```ts
+import {
+  createFileSessionService,
+  createFileWorkflowStateService,
+  createWorkflow,
+  loadWorkflowState,
+  runWorkflow
+} from "@zhivex-ai/sdk";
+
+const sessionService = createFileSessionService({
+  directory: ".zhivex/sessions"
+});
+const workflowStateService = createFileWorkflowStateService({
+  directory: ".zhivex/workflow-states"
+});
+
+const workflow = createWorkflow({
+  id: "candidate-review",
+  persistence: {
+    appName: "candidate-review",
+    sessionService,
+    workflowStateService
+  },
+  steps: [
+    { id: "intake", runner, prompt: "Summarize the candidate.", outputKey: "intake" },
+    { id: "review", runner, prompt: ({ outputs }) => `Review: ${outputs.intake}`, outputKey: "review" }
+  ]
+});
+
+const result = await runWorkflow(workflow, {
+  userId: "user_123",
+  sessionId: "candidate_456"
+});
+
+const persisted = await loadWorkflowState(workflow, {
+  userId: "user_123",
+  sessionId: "candidate_456"
+});
+
+const resumed = await runWorkflow(workflow, {
+  userId: "user_123",
+  sessionId: "candidate_456",
+  resumeFromPersistedState: true,
+  approvals
+});
+```
+
+`WorkflowStateService` is the recommended durable workflow-state path. When `workflowStateService` is configured, the full state is stored by `appName`, `userId`, `sessionId`, and workflow key while the session keeps only a lightweight reference. Without it, the compatibility fallback stores state under `session.metadata.workflowRuns[workflow.id]`. Use `persistence.metadataKey` or `persistence.workflowKey` if your app needs a different namespace for the fallback or key.
+
+Workflow run states and dedicated workflow state records are also schema-versioned. New records use `schemaVersion: 1`, and legacy records without a version are normalized on load.
+
+Workflow steps can also fan out with a parallel group. Child steps run concurrently, preserve result order, and write their own `outputKey` values for later sequential steps:
+
+```ts
+const workflow = createWorkflow({
+  steps: [
+    {
+      id: "research",
+      kind: "parallel",
+      failFast: false,
+      steps: [
+        { id: "market", runner, prompt: "Analyze market", outputKey: "market" },
+        { id: "legal", runner, prompt: "Analyze legal risk", outputKey: "legal" }
+      ]
+    },
+    {
+      id: "synthesis",
+      runner,
+      prompt: ({ outputs }) => `Synthesize: ${outputs.market}\n${outputs.legal}`
+    }
+  ]
+});
+```
+
+Use a loop step when a single task should iterate until a condition is met or `maxIterations` is reached:
+
+```ts
+const workflow = createWorkflow({
+  steps: [
+    {
+      id: "rewrite-loop",
+      kind: "loop",
+      maxIterations: 3,
+      step: {
+        id: "rewrite",
+        runner,
+        prompt: ({ outputs }) => `Improve this draft: ${outputs.draft ?? "initial"}`,
+        outputKey: "draft"
+      },
+      until: ({ outputs }) => String(outputs.draft ?? "").includes("approved")
+    }
+  ]
+});
+```
+
+Loop iterations are recorded in the loop result's `children`. If an iteration pauses for approval, pass the saved workflow `state` and approval responses back to `runWorkflow()` to resume that pending iteration.
+
+For local regression suites, workflow evaluations mirror the agent evaluation helpers:
+
+```ts
+import {
+  compareWorkflowEvaluationReports,
+  createWorkflowEvaluationFixture,
+  createWorkflowEvaluationDiffReport,
+  createWorkflowEvaluationReport,
+  runWorkflowEvaluationFixture
+} from "@zhivex-ai/sdk";
+
+const fixture = createWorkflowEvaluationFixture({
+  name: "candidate-review-workflow",
+  dataset: [
+    {
+      name: "happy-path",
+      input: { userId: "user_123", sessionId: "candidate_456" },
+      expectations: {
+        status: "completed",
+        outputContains: { review: "recommended" },
+        stepStatuses: { review: "completed" },
+        timelineContains: ["workflow-start", "workflow-finish"]
+      }
+    }
+  ]
+});
+
+const evaluation = await runWorkflowEvaluationFixture(fixture, { workflow });
+const report = createWorkflowEvaluationReport(evaluation);
+
+console.log(report.passRate);
+
+const diff = createWorkflowEvaluationDiffReport(
+  compareWorkflowEvaluationReports(previousReport, report)
+);
+```
+
+### Artifacts
+
+`ArtifactService` stores JSON-serializable artifacts for a session, workflow run, workflow step, or agent run. The first Beta service implementations are in-memory and file-backed:
+
+```ts
+import { createFileArtifactService } from "@zhivex-ai/sdk";
+
+const artifacts = createFileArtifactService({
+  directory: ".zhivex/artifacts"
+});
+
+const report = await artifacts.saveArtifact({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  workflowRunId: workflowResult.state.runId,
+  workflowStepId: "review",
+  name: "review-report.json",
+  contentType: "application/json",
+  data: {
+    recommendation: "advance",
+    reasons: ["skills match", "salary aligned"]
+  }
+});
+
+const sessionArtifacts = await artifacts.listArtifacts({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456"
+});
+
+const savedReport = await artifacts.loadArtifact({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  id: report.id
+});
+```
+
+The file-backed service writes one JSON file per artifact with a path-safe filename derived from `appName`, `userId`, `sessionId`, and `id`. The SDK also exposes `createSqliteArtifactService()` and `createPostgresArtifactService()` for production applications that already provide compatible database clients.
+
+Binary artifacts use a formal metadata convention in this first cut: store base64 as `data`, set `encoding: "base64"`, and optionally include `size` and `sha256`. The SDK validates provided `size` and `sha256` values but does not calculate hashes automatically yet. Native streaming/binary storage is intentionally left for a later artifact phase.
+
+```ts
+import { createBase64ArtifactData } from "@zhivex-ai/sdk";
+
+await artifacts.saveArtifact({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  name: "resume.pdf",
+  contentType: "application/pdf",
+  ...createBase64ArtifactData(pdfBytes)
+});
+```
+
+For real binary storage, file-backed artifacts can write metadata and bytes separately. `loadArtifact()` returns the JSON metadata, while `loadBinaryArtifact()` returns the bytes:
+
+```ts
+const binary = await artifacts.saveBinaryArtifact({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  name: "resume.pdf",
+  contentType: "application/pdf",
+  data: pdfBytes
+});
+
+const loaded = await artifacts.loadBinaryArtifact({
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  id: binary.id
+});
+```
+
+The file store writes blobs under a path-safe `blobs/` subdirectory and calculates `size` and `sha256` for `saveBinaryArtifact()`. SQLite and Postgres stores keep binary payloads as base64 JSON compatibility records in this Beta cut. For heavy production binaries, prefer app-owned blob/object storage with durable artifact metadata in SQL until native SQL/blob streaming is introduced; `createExternalArtifactReference()` creates the standard metadata shape for that pattern.
+
+Artifact records are schema-versioned as well. New artifacts use `schemaVersion: 1`; old JSON artifacts without a version are accepted and normalized, but future versions are rejected until the SDK has an explicit migration path.
+
+Artifact writes support the same optional optimistic concurrency guard via `expectedRevision`. Integrity helpers can verify binary/base64 artifacts without re-running workflows:
+
+```ts
+import { verifyArtifactIntegrity } from "@zhivex-ai/sdk";
+
+const integrity = await verifyArtifactIntegrity(artifacts, {
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  id: binary.id
+});
+```
+
+For file-backed artifact stores, `inspectFileArtifactStore()` detects orphan blobs, invalid metadata, and metadata that references missing blobs. `cleanupFileArtifactStore()` deletes only orphan blobs.
+
+Workflow helpers can persist outputs, dry replay timelines, and evaluation reports as artifacts explicitly:
+
+```ts
+import {
+  saveWorkflowEvaluationReportAsArtifact,
+  saveWorkflowOutputsAsArtifacts,
+  saveWorkflowReplayAsArtifact
+} from "@zhivex-ai/sdk";
+
+await saveWorkflowOutputsAsArtifacts(workflowResult, {
+  artifactService: artifacts,
+  appName: "candidate-review"
+});
+
+await saveWorkflowReplayAsArtifact(workflowResult, {
+  artifactService: artifacts,
+  appName: "candidate-review"
+});
+
+await saveWorkflowEvaluationReportAsArtifact(evaluation, {
+  artifactService: artifacts,
+  appName: "candidate-review",
+  userId: "user_123",
+  sessionId: "candidate_456",
+  workflowRunId: workflowResult.state.runId
+});
+```
+
+These helpers do not change `runWorkflow()` behavior. They are explicit persistence calls, so applications can choose which outputs or reports become durable artifacts.
+
+### CLI / Dev UX
+
+`@zhivex-ai/sdk` includes a Beta `zhivex-ai` CLI for local SDK state. Inspection commands are dry: they read JSON files, replay workflow state, and build reports without executing models or tools. Execution commands import an app-owned local module, so the app remains responsible for constructing runners, models, tools, and credentials.
+
+```bash
+zhivex-ai sessions list --dir .zhivex/sessions
+zhivex-ai sessions show --dir .zhivex/sessions --app candidate-review --user user_123 --session candidate_456
+
+zhivex-ai artifacts list --dir .zhivex/artifacts --app candidate-review --user user_123 --session candidate_456
+zhivex-ai artifacts show --dir .zhivex/artifacts --app candidate-review --user user_123 --session candidate_456 --id art_123
+zhivex-ai artifacts verify --dir .zhivex/artifacts --app candidate-review --user user_123 --session candidate_456 --id art_123
+zhivex-ai artifacts inspect --dir .zhivex/artifacts
+zhivex-ai artifacts cleanup --dir .zhivex/artifacts --dry-run
+
+zhivex-ai workflow replay --state workflow-state.json
+zhivex-ai workflow report --evaluation workflow-evaluation.json
+zhivex-ai workflow compare --base previous-report.json --target current-report.json
+zhivex-ai workflow run --module ./workflow.mjs --input workflow-input.json --state-out workflow-state.json
+zhivex-ai workflow eval --module ./workflow.mjs --workflow-export workflow --fixture workflow-fixture.json --report-out workflow-report.json
+
+zhivex-ai workflow replay --state workflow-state.json --save-artifact --artifacts-dir .zhivex/artifacts --app candidate-review
+zhivex-ai workflow report --evaluation workflow-evaluation.json --save-artifact --artifacts-dir .zhivex/artifacts --app candidate-review --user user_123 --session candidate_456
+zhivex-ai workflow-states list --dir .zhivex/workflow-states --app candidate-review --user user_123 --session candidate_456
+zhivex-ai workflow-states show --dir .zhivex/workflow-states --app candidate-review --user user_123 --session candidate_456 --workflow default
+zhivex-ai sessions workflow-state show --dir .zhivex/sessions --app candidate-review --user user_123 --session candidate_456 --workflow default
+zhivex-ai artifacts prune --dir .zhivex/artifacts --keep-last 100
+zhivex-ai workflow-states prune --dir .zhivex/workflow-states --older-than-ms 2592000000
+```
+
+Output is JSON pretty-printed by default. Use `workflow-states list/show` for first-class durable workflow state inspection; `sessions workflow-state show` remains available for legacy session-metadata fallback state. Prune commands are dry-run by default; pass `--execute` to delete. The CLI is intentionally local-only and does not introduce auth, workspaces, Gateway calls, or a control plane.
 
 ### Realtime Sessions
 
@@ -379,6 +799,37 @@ These helpers intentionally depend on small driver interfaces instead of bundlin
 - SQLite drivers that expose `db.exec()` plus `db.prepare()` or `db.query()`, such as `better-sqlite3` or Bun SQLite
 - Postgres clients or pools that expose `query(sql, params)`, such as `pg`
 
+### Durable Agent Runs
+
+Built-in run stores support compatible durability primitives for production agent services: schema-versioned state, idempotent run creation, and cooperative cancellation.
+
+```ts
+import { cancelAgentRun, createAgent, createPostgresAgentRunStore, runAgent } from "@zhivex-ai/sdk";
+
+const store = createPostgresAgentRunStore({ client: pgPool });
+const agent = createAgent({
+  model: openai("gpt-5"),
+  store
+});
+
+const first = await runAgent(agent, {
+  prompt: "Draft the customer reply.",
+  idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
+});
+
+await cancelAgentRun(store, first.state.runId, {
+  reason: "User cancelled the request."
+});
+```
+
+- New runs are persisted with `state.schemaVersion === 1`.
+- Legacy states without `schemaVersion` are normalized when loaded or resumed.
+- `idempotencyKey` requires an agent run store that implements `findByIdempotencyKey()`. The built-in in-memory, file, SQLite, and Postgres stores support it.
+- Reusing an existing `idempotencyKey` returns the existing run state instead of creating a duplicate run.
+- `cancelAgentRun()` marks the saved state as `cancel_requested` by default. Pass `{ mode: "final" }` to write a terminal `cancelled` state.
+- Cancellation is durable and cooperative. It gives workers/providers a stable marker to observe, but it does not promise to stop external side effects that already started.
+- Add `policy: { timeoutMs, onTimeout }` to `createAgent()` or `runAgent()` to enforce an SDK-level runtime timeout. The default timeout result is `timed_out`; `onTimeout: "cancel-requested"` writes `cancel_requested` instead. The timeout is propagated to providers through `AbortSignal`.
+
 ### Agent Handoffs
 
 For multi-agent workflows, create a handoff from one completed run and pass it into another agent. The runtime preserves the parent run relationship in `state.parentRunId` and records the handoff on the downstream state.
@@ -399,9 +850,158 @@ const bookingResult = await runAgentHandoff(bookingAgent, handoff);
 console.log(bookingResult.state.parentRunId);
 ```
 
+### Native Subagents
+
+Agents can also expose specialist agents as callable subagent tools. The parent run records child run summaries in `state.childRuns`, and replay/trace helpers include those child links without re-running the child agent.
+
+```ts
+import { createAgent, runAgent } from "@zhivex-ai/sdk";
+
+const researcher = createAgent({
+  id: "researcher",
+  model: openai("gpt-5-mini"),
+  instructions: "Research the requested topic and return concise findings."
+});
+
+const coordinator = createAgent({
+  id: "coordinator",
+  model: openai("gpt-5"),
+  subagents: [
+    {
+      name: "research",
+      agent: researcher,
+      description: "Delegate focused research to the researcher subagent."
+    }
+  ],
+  maxSteps: 3
+});
+
+const result = await runAgent(coordinator, {
+  prompt: "Answer with help from the research specialist."
+});
+
+console.log(result.state.childRuns?.[0]?.parentRunId);
+```
+
+### Subagent Production Controls
+
+For production subagent workflows, use a shared durable run store when parent and child runs need to be audited or cancelled together. Built-in stores can look up child runs by `parentRunId`, and `cancelAgentRunTree()` marks the parent plus all persisted descendants as `cancel_requested` by default. Pass `{ mode: "final" }` when the workflow is known to be terminally cancelled.
+
+```ts
+import {
+  cancelAgentRunTree,
+  createAgent,
+  createPostgresAgentRunStore,
+  runAgent
+} from "@zhivex-ai/sdk";
+
+const store = createPostgresAgentRunStore({ client: pgPool });
+
+const researcher = createAgent({
+  id: "researcher",
+  model: openai("gpt-5-mini"),
+  store
+});
+
+const coordinator = createAgent({
+  id: "coordinator",
+  model: openai("gpt-5"),
+  store,
+  subagents: [{ name: "research", agent: researcher }]
+});
+
+const run = await runAgent(coordinator, {
+  prompt: "Coordinate the research task."
+});
+
+const childRuns = await store.findByParentRunId?.(run.state.runId);
+await cancelAgentRunTree(store, run.state.runId, {
+  reason: "Workflow cancelled by the user."
+});
+```
+
+`createBudgetGuard()` includes `state.childRuns` by default when enforcing step, tool-call, tool-error, and token limits. Pass `includeChildRuns: false` for parent-only limits.
+
+### Hierarchical Agent Traces
+
+Use tree helpers when a persisted parent run needs to be exported with its descendants. These helpers are dry: they load saved state and never call models or tools.
+
+```ts
+import { createAgentRunTreeSnapshot, createHierarchicalAgentTrace } from "@zhivex-ai/sdk";
+
+const tree = await createAgentRunTreeSnapshot(store, run.state.runId);
+const trace = await createHierarchicalAgentTrace(store, run.state.runId, {
+  includeMessages: false
+});
+
+console.log(tree?.totalRuns, trace?.root.children.length);
+```
+
+### Multi-Agent Evaluations
+
+Evaluation expectations can assert child-run behavior in addition to parent output.
+
+```ts
+const result = await runAgentEvaluation(
+  [
+    {
+      name: "research workflow",
+      input: { prompt: "Answer with research." },
+      expectations: {
+        childRunCount: 1,
+        childAgents: ["researcher"],
+        childStatuses: ["completed"],
+        childToolNames: ["research"],
+        childOutputContains: ["source"]
+      }
+    }
+  ],
+  { agent: coordinator }
+);
+```
+
+`createAgentEvaluationReport()` includes child-run totals, child agent counts, and child status counts.
+
+### Parallel Agent Groups
+
+Use `runAgentGroup()` for explicit fan-out from code when you do not want to depend on the model emitting subagent tool calls.
+
+```ts
+import { runAgentGroup } from "@zhivex-ai/sdk";
+
+const group = await runAgentGroup(
+  [
+    { name: "research", agent: researcher },
+    { name: "critic", agent: critic }
+  ],
+  {
+    prompt: "Analyze this task independently.",
+    parentRunId: run.state.runId,
+    stopOnError: true
+  }
+);
+```
+
+With `stopOnError: false`, groups keep all-settled behavior and report every member result. With `stopOnError: true`, the first thrown error or member output with `status: "failed"` or `status: "timed_out"` aborts pending members cooperatively through `AbortSignal`; aborted members are returned as rejected outputs with a stable fail-fast error message.
+
+Use `handoff` for sequential ownership transfer, `subagents` for model-driven delegation inside an agent loop, and `runAgentGroup()` for deterministic fan-out from application code.
+
+### Subagent Defaults
+
+`prepareSubagentsForAgent()` returns a compatible agent definition where subagents inherit missing operational defaults from the parent, such as store, memory, telemetry, tool approvals, and tool execution settings. It does not mutate the original parent or child definitions.
+
+```ts
+import { prepareSubagentsForAgent } from "@zhivex-ai/sdk";
+
+const productionCoordinator = prepareSubagentsForAgent(coordinator, {
+  store,
+  onTelemetryEvent: observer
+});
+```
+
 ### Agent Telemetry
 
-Agents can now emit lifecycle telemetry without wrapping the underlying language model yourself. Attach `onTelemetryEvent` to an agent definition when you want hooks for run start/finish, step start/finish, approval requests, memory loads, state saves, and handoffs.
+Agents can now emit lifecycle telemetry without wrapping the underlying language model yourself. Attach `onTelemetryEvent` to an agent definition when you want hooks for run start/finish, step start/finish, approval requests, memory loads, state saves, handoffs, and subagent runs.
 
 ```ts
 const agent = createAgent({
@@ -412,20 +1012,20 @@ const agent = createAgent({
 });
 ```
 
-If a provider emits an MCP approval request, the run is suspended instead of failing. You can inspect pending approvals with `getAgentApprovalRequests()` and continue with `resumeAgent()`:
+If a provider emits an MCP approval request, the run moves to `waiting_approval` instead of failing. You can inspect pending approvals with `getAgentApprovalRequests()` and continue with `resumeAgent()`. Persisted legacy states with `status: "suspended"` are still accepted for compatibility.
 
 ```ts
 import { createAgent, getAgentApprovalRequests, resumeAgent, runAgent } from "@zhivex-ai/sdk";
 
-const suspended = await runAgent(weatherAgent, {
+const waiting = await runAgent(weatherAgent, {
   prompt: "Search the docs through MCP."
 });
 
-if (suspended.status === "suspended") {
-  const [approval] = getAgentApprovalRequests(suspended.messages);
+if (waiting.status === "waiting_approval") {
+  const [approval] = getAgentApprovalRequests(waiting.messages);
 
   const resumed = await resumeAgent(weatherAgent, {
-    state: suspended.state,
+    state: waiting.state,
     approvals: [
       {
         provider: approval.provider,
@@ -462,6 +1062,39 @@ const agent = createAgent({
   onTelemetryEvent: otelAgentObserver
 });
 ```
+
+### Trace Artifacts And Cost Summaries
+
+For portable debugging and dashboards, trace helpers create serializable artifacts from saved run state or from live agent telemetry. They do not re-run models or tools.
+
+```ts
+import {
+  createAgentTraceArtifact,
+  createAgentTraceCollector,
+  estimateAgentRunCost,
+  summarizeAgentTrace
+} from "@zhivex-ai/sdk";
+
+const trace = createAgentTraceArtifact(savedRunState, {
+  includeMessages: false,
+  includeToolInputs: false
+});
+
+const summary = summarizeAgentTrace(trace, {
+  pricing: { inputCostPer1kTokens: 1, outputCostPer1kTokens: 2, currency: "USD" }
+});
+
+console.log(summary.latency.durationMs);
+console.log(estimateAgentRunCost(savedRunState, { costPer1kTokens: 0.6 }).totalCost);
+
+const collector = createAgentTraceCollector();
+const agent = createAgent({
+  model: openai("gpt-5"),
+  onTelemetryEvent: collector.observer
+});
+```
+
+Use `includeMessages` and `includeToolInputs` only when you need full payloads in exported traces. By default the artifact keeps metadata, lifecycle events, usage, approvals, errors, tool results, and an output preview without copying large message/tool-input payloads.
 
 For SDK-defined local tools, you can now attach a `toolApprovalPolicy` at the agent or request level. The policy runs before local tool execution and can allow or deny the call with a reason:
 
@@ -526,15 +1159,27 @@ Agent stream events currently include:
 
 Those events are exposed both through `streamAgent().eventStream` and through UI/SSE helpers such as `toUIAgentStreamResponse()` and `toUIMessageStream()`.
 
-When you need to reason about provider-specific agent features at runtime, inspect `model.capabilities.agentCapabilities` or use helpers such as `getAgentCapabilities()`, `getAgentSupportTier()`, and `getHostedToolClass()`. Hosted tools now carry a normalized `toolClass` like `web-search`, `file-search`, `remote-mcp`, `computer-use`, `code-execution`, `shell`, `apply-patch`, `tool-search`, `web-extraction`, or `skill`.
+When you need to reason about provider-specific agent features at runtime, inspect `model.capabilities.agentCapabilities` or use helpers such as `getAgentCapabilities()`, `getAgentSupportTier()`, `inspectProviderAgentSupport()`, `createProviderSupportMatrix()`, `renderProviderSupportMatrix()`, `createProviderSupportDriftReport()`, and `getHostedToolClass()`. Hosted tools now carry a normalized `toolClass` like `web-search`, `file-search`, `remote-mcp`, `computer-use`, `code-execution`, `shell`, `apply-patch`, `tool-search`, `web-extraction`, or `skill`.
 
 ```ts
-import { getAgentCapabilities, getAgentSupportTier } from "@zhivex-ai/sdk";
+import {
+  createProviderSupportDriftReport,
+  createProviderSupportMatrix,
+  getAgentCapabilities,
+  getAgentSupportTier,
+  renderProviderSupportMatrix
+} from "@zhivex-ai/sdk";
 
 const capabilities = getAgentCapabilities(openai("gpt-5"));
+const matrix = createProviderSupportMatrix([
+  openai("gpt-5"),
+  openai("gpt-4o-mini")
+]);
 
 console.log(getAgentSupportTier(openai("gpt-5")));
 console.log(capabilities);
+console.log(renderProviderSupportMatrix(matrix));
+console.log(createProviderSupportDriftReport(matrix, { entries: [{ provider: "openai", agentTier: "tier-a" }] }));
 ```
 
 Use the agent tiers as release guidance, not just metadata:
@@ -542,6 +1187,89 @@ Use the agent tiers as release guidance, not just metadata:
 - `Tier A`: choose this when you need approvals, remote MCP, or the strongest hosted-agent story.
 - `Tier B`: good default for portable tool-using agents, especially with local tools or SDK-managed MCP clients.
 - `Tier C`: keep expectations narrower; these providers work well for basic loops, but you should avoid marketing them as full hosted-agent support.
+
+### Safety Policies
+
+Safety policies are stable composition helpers for production agent services. They wrap the existing `toolApprovalPolicy`, guardrail, and `toolExecution` hooks instead of changing the runtime contract.
+
+```ts
+import { applySafetyPolicyToAgent, createAgent, createSafetyPolicy } from "@zhivex-ai/sdk";
+
+const safeAgent = applySafetyPolicyToAgent(
+  createAgent({
+    model: openai("gpt-5"),
+    tools: registry.toToolSet(),
+    maxSteps: 6
+  }),
+  createSafetyPolicy({
+    preset: "review-sensitive",
+    budget: {
+      maxSteps: 6,
+      maxToolCalls: 8,
+      maxToolErrors: 1,
+      maxTotalTokens: 20_000
+    }
+  })
+);
+```
+
+Available presets are `permissive`, `review-sensitive`, and `locked-down`. The approval helper treats `requiresApproval`, Advanced Tool Registry permissions/audit metadata, hosted tool classes, and sensitive tool names as policy inputs. Redaction helpers cover common API keys, bearer/basic auth tokens, optional email addresses, and custom regex rules. Budget guards fail the run through normal guardrail behavior when configured limits are exceeded.
+
+### Agent Replay And Evaluation
+
+For deterministic debugging, `createAgentRunSnapshot()` and `replayAgentRun()` inspect a saved `AgentRunState` without calling a model or re-running tools. For regression suites, `runAgentEvaluation()` executes small datasets against an agent and `judgeAgentEvaluation()` can score the result with either a deterministic function or a `LanguageModel`.
+
+```ts
+import {
+  createAgentEvaluationFixture,
+  createAgentEvaluationReport,
+  createAgentRunSnapshot,
+  createMockLanguageModel,
+  judgeAgentEvaluation,
+  replayAgentRun,
+  runAgentEvaluationFixture
+} from "@zhivex-ai/sdk";
+
+const replay = replayAgentRun(savedRunState);
+console.log(createAgentRunSnapshot(savedRunState));
+console.log(replay.timeline);
+
+const fixture = createAgentEvaluationFixture({
+  name: "weather-regression",
+  dataset: [
+    {
+      name: "weather-answer",
+      input: { prompt: "Weather in Madrid?" },
+      expectations: {
+        status: "completed",
+        outputContains: "Madrid",
+        toolCalls: ["weather"]
+      }
+    }
+  ]
+});
+
+const evaluation = await runAgentEvaluationFixture(fixture, { agent: weatherAgent });
+const report = createAgentEvaluationReport(evaluation);
+
+const judged = await judgeAgentEvaluation(evaluation, (result) => ({
+  score: result.ok ? 1 : 0,
+  feedback: result.ok ? "All cases passed." : "Review failing cases."
+}));
+
+const modelJudge = createMockLanguageModel({
+  responses: [
+    {
+      messages: [{ role: "assistant", parts: [{ type: "text", text: "{\"score\":1,\"feedback\":\"ok\"}" }] }],
+      text: "{\"score\":1,\"feedback\":\"ok\"}"
+    }
+  ]
+});
+
+console.log(report.passRate);
+```
+
+The initial replay helper is intentionally dry: it reconstructs a timeline from saved state and does not execute side effects.
 
 ### Streaming
 
@@ -869,6 +1597,7 @@ The SDK now exposes MCP helpers across the providers that support it:
 - `@zhivex-ai/openai` and `@zhivex-ai/azure-openai`: remote MCP servers map to native Responses API MCP tools, including approval request/response flow.
 - `@zhivex-ai/anthropic`: MCP toolsets map to Anthropic `mcp_servers` plus `mcp_toolset`.
 - `@zhivex-ai/gemini` and `@zhivex-ai/vertex`: `geminiMcpTools()` and `vertexMcpTools()` re-export the shared MCP wrapper for SDK-managed MCP clients.
+- `@zhivex-ai/bedrock`: `createBedrockAgentCoreMcpClient()` and `createBedrockAgentCoreMcpToolSet()` expose AWS-native AgentCore Runtime or Gateway MCP endpoints as SDK-managed callable tools. This is separate from `runtime: "openai"` hosted MCP and approvals.
 
 Use the shared helper when you already have an MCP client in-process:
 
@@ -887,6 +1616,39 @@ const result = await generateText({
   prompt: "Use the MCP tools if needed.",
   tools
 });
+```
+
+For AWS-native remote tools on Bedrock Converse, point the Bedrock AgentCore MCP client at either a runtime ARN or an explicit AgentCore/Gateway endpoint and pass the resulting toolset into the shared agent loop:
+
+```ts
+import { runAgent } from "@zhivex-ai/sdk";
+import { createBedrock, createBedrockAgentCoreMcpToolSet } from "@zhivex-ai/bedrock";
+
+const bedrock = createBedrock({
+  region: process.env.AWS_REGION
+});
+
+const tools = await createBedrockAgentCoreMcpToolSet(
+  {
+    runtimeArn: process.env.AGENTCORE_RUNTIME_ARN,
+    region: process.env.AWS_REGION,
+    bearerToken: process.env.AGENTCORE_BEARER_TOKEN
+  },
+  {
+    toolNamePrefix: "agentcore_"
+  }
+);
+
+const result = await runAgent(
+  {
+    model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
+    tools,
+    maxSteps: 4
+  },
+  {
+    prompt: "Use the AWS AgentCore tools when useful."
+  }
+);
 ```
 
 When you want a richer composition surface, build a registry first and materialize it with `toToolSet()` only at the edge:
@@ -908,6 +1670,54 @@ const mcpTools = await createMcpToolRegistry(myMcpClient, {
 
 const tools = toToolSet(localTools.merge(mcpTools));
 ```
+
+### Advanced Tool Registry
+
+The experimental advanced registry adds stronger tool metadata, permission labels, audit fields, HTTP-backed tools, fixture helpers, inspection helpers, and local test helpers while still converting back to the stable `ToolSet` contract.
+
+```ts
+import {
+  createAdvancedToolRegistry,
+  createHttpTool,
+  createToolPermissionPreset,
+  inspectToolRegistry,
+  recordToolTestFixture,
+  runToolTestFixture,
+  tool
+} from "@zhivex-ai/sdk";
+import { z } from "zod";
+
+const registry = createAdvancedToolRegistry([
+  {
+    tool: tool({
+      name: "weather",
+      schema: z.object({ city: z.string() }),
+      execute: async ({ city }) => ({ city, forecast: "sunny" })
+    }),
+    source: "local",
+    ...createToolPermissionPreset("read-only")
+  },
+  createHttpTool({
+    name: "crm_update",
+    description: "Update CRM notes through an internal service.",
+    schema: z.object({ customerId: z.string(), note: z.string() }),
+    url: "https://internal.example.com/tools/crm-update",
+    headers: {
+      authorization: `Bearer ${process.env.CRM_TOOL_TOKEN}`
+    }
+  })
+]);
+
+const fixture = await recordToolTestFixture(registry, [
+  { toolName: "weather", input: { city: "Madrid" } }
+]);
+const results = await runToolTestFixture(registry, fixture);
+const inspection = inspectToolRegistry(registry);
+
+const tools = registry.toToolSet();
+```
+
+`toToolSet()` preserves compatibility with `generateText()`, `runAgent()`, `streamAgent()`, and provider adapters. Sensitive permissions such as `write`, `filesystem`, `code-execution`, `shell`, and `external-side-effect`, as well as `high` or `critical` audit risk, mark the materialized tool as `requiresApproval`.
 
 For OpenAI and Azure OpenAI remote MCP servers, use the provider helpers and pass approval responses back as `provider-data` parts:
 

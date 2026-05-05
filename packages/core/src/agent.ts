@@ -2,17 +2,28 @@ import { createAgentApprovalMessage, getAgentApprovalRequests } from "./agent-ap
 import { createAgentHandoffMessage } from "./agent-handoff.js";
 import { GuardrailTriggeredError, ValidationError } from "./errors.js";
 import { generateText, normalizeMessages, streamText } from "./generate-text.js";
+import { serializeJsonValue } from "./messages.js";
+import { mergeAbortSignals } from "./runtime.js";
 import { toToolSet } from "./tool-registry.js";
+import { z } from "zod";
 import type {
+  AgentChildRun,
   AgentApprovalRequest,
   AgentApprovalResponse,
   AgentDefinition,
+  AgentGroupMember,
+  AgentGroupRunInput,
+  AgentGroupRunOutput,
   AgentGuardrailTrigger,
   AgentInputGuardrail,
   AgentOutputGuardrail,
+  AgentRunCancellationOptions,
   AgentRunInput,
   AgentRunOutput,
+  AgentRunPolicy,
+  AgentRunStore,
   AgentRunState,
+  AgentRunTreeCancellationResult,
   AgentStep,
   AgentStepRequest,
   AgentStepResponse,
@@ -20,6 +31,7 @@ import type {
   AgentStreamEvent,
   AgentStreamResult,
   AgentTelemetryEvent,
+  CreateSubAgentToolOptions,
   GenerateTextOptions,
   GenerateTextOutput,
   GenerateTextStep,
@@ -27,13 +39,26 @@ import type {
   LanguageModel,
   ModelGenerateInput,
   ModelMessage,
+  PrepareSubagentsForAgentOptions,
   ProviderOptions,
+  SubAgentToolInput,
+  SubAgentToolOutput,
   ToolApprovalDecision,
   ToolApprovalEvent,
+  ToolDefinition,
   ToolExecutionResult
 } from "./types.js";
 
 const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+const AGENT_RUN_STATE_SCHEMA_VERSION = 1;
+const AGENT_GROUP_FAIL_FAST_ABORT_MESSAGE = "Agent group member aborted after fail-fast.";
+
+class AgentPolicyTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Agent run timed out after ${timeoutMs}ms.`);
+    this.name = "AgentPolicyTimeoutError";
+  }
+}
 
 const joinInstructions = (...parts: Array<string | undefined>): string | undefined => {
   const content = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
@@ -110,7 +135,16 @@ const toOutput = (state: AgentRunState): AgentRunOutput => ({
   error: state.error
 });
 
-const cloneState = (state: AgentRunState): AgentRunState => JSON.parse(JSON.stringify(state)) as AgentRunState;
+const normalizeRunState = (state: AgentRunState): AgentRunState => ({
+  ...state,
+  schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION
+});
+
+const normalizeApprovalStatus = (status: AgentStatus): AgentStatus =>
+  status === "suspended" ? "waiting_approval" : status;
+
+const cloneState = (state: AgentRunState): AgentRunState =>
+  JSON.parse(JSON.stringify(normalizeRunState(state))) as AgentRunState;
 
 const createBaseState = (
   provider: string,
@@ -120,14 +154,18 @@ const createBaseState = (
   metadata: Record<string, JsonValue> | undefined,
   agentId: string | undefined,
   runId: string,
-  handoff: AgentRunInput["handoff"]
+  handoff: AgentRunInput["handoff"],
+  parentRunId: string | undefined,
+  idempotencyKey: string | undefined
 ): AgentRunState => {
   const startedAt = Date.now();
 
   return {
+    schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
     runId,
+    idempotencyKey,
     agentId,
-    parentRunId: handoff?.fromRunId,
+    parentRunId: parentRunId ?? handoff?.fromRunId,
     provider,
     modelId,
     status: "running",
@@ -156,6 +194,20 @@ const ensureValidStateInput = (input: AgentRunInput) => {
 
   if (input.prompt !== undefined || input.messages !== undefined || input.system !== undefined || input.handoff !== undefined) {
     throw new ValidationError('Pass either "state" or a fresh "prompt"/"messages" input, but not both.');
+  }
+};
+
+const ensureValidIdempotencyInput = (input: AgentRunInput, store: AgentRunStore | undefined) => {
+  if (!input.idempotencyKey) {
+    return;
+  }
+
+  if (!store) {
+    throw new ValidationError('The "idempotencyKey" option requires an agent run "store".');
+  }
+
+  if (!store.findByIdempotencyKey) {
+    throw new ValidationError('The agent run "store" must implement "findByIdempotencyKey()" to use "idempotencyKey".');
   }
 };
 
@@ -250,10 +302,10 @@ const finalizeState = (
   const pendingApprovals = getAgentApprovalRequests(newSteps.flatMap((step) => step.response?.messages ?? []));
 
   if (pendingApprovals.length) {
-    state.status = "suspended";
+    state.status = "waiting_approval";
     state.error = undefined;
     if (lastStep) {
-      lastStep.status = "suspended";
+      lastStep.status = "waiting_approval";
     }
   } else if (exhausted && unresolvedToolCalls) {
     state.status = "failed";
@@ -288,6 +340,105 @@ const emitTelemetryEvent = async <TModel extends LanguageModel>(
   event: AgentTelemetryEvent
 ) => {
   await agent.onTelemetryEvent?.(event);
+};
+
+const subAgentToolInputSchema = z.object({
+  prompt: z.string().min(1),
+  system: z.string().optional()
+});
+
+const defaultSubAgentToolName = (agent: AgentDefinition): string => {
+  const id = agent.id ?? `${agent.model.provider}_${agent.model.modelId}`;
+  return `subagent_${id.replace(/[^A-Za-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "agent"}`;
+};
+
+const countToolCallsInSteps = (steps: AgentStep[]): number =>
+  steps.reduce((total, step) => total + countToolCalls(step.response?.messages ?? []), 0);
+
+const countToolErrors = (toolResults: ToolExecutionResult[]): number =>
+  toolResults.filter((result) => result.isError).length;
+
+export const createSubAgentTool = <TModel extends LanguageModel>(
+  options: CreateSubAgentToolOptions<TModel>
+): ToolDefinition<typeof subAgentToolInputSchema, SubAgentToolOutput> => {
+  const toolName = options.toolName ?? options.name ?? defaultSubAgentToolName(options.agent);
+  const metadata: Record<string, JsonValue> = {
+    type: "subagent"
+  };
+  if (options.agent.id) {
+    metadata.childAgentId = options.agent.id;
+  }
+  if (options.parentRunId) {
+    metadata.parentRunId = options.parentRunId;
+  }
+  if (options.parentAgentId) {
+    metadata.parentAgentId = options.parentAgentId;
+  }
+
+  return {
+    name: toolName,
+    description:
+      options.description ??
+      `Delegate the task to ${options.agent.id ? `subagent "${options.agent.id}"` : "a subagent"} and return its result.`,
+    schema: subAgentToolInputSchema,
+    requiresApproval: options.requiresApproval,
+    metadata: cloneMetadata(metadata, options.metadata),
+    execute: async (input: SubAgentToolInput) => {
+      await options.onStart?.({
+        toolName,
+        childAgentId: options.agent.id,
+        parentRunId: options.parentRunId
+      });
+      const childMetadata: Record<string, JsonValue> = {
+        subagentToolName: toolName
+      };
+      if (options.parentRunId) {
+        childMetadata.parentRunId = options.parentRunId;
+      }
+      if (options.parentAgentId) {
+        childMetadata.parentAgentId = options.parentAgentId;
+      }
+      const output = await runAgent(options.agent, {
+        prompt: input.prompt,
+        system: joinInstructions(options.system, input.system),
+        parentRunId: options.parentRunId,
+        maxSteps: options.maxSteps,
+        metadata: cloneMetadata(options.metadata, childMetadata)
+      });
+      const childRun: AgentChildRun = {
+        runId: output.state.runId,
+        status: output.status,
+        outputText: output.outputText,
+        steps: output.state.currentStep,
+        toolCalls: countToolCallsInSteps(output.steps),
+        toolErrors: countToolErrors(output.toolResults)
+      };
+      if (output.state.agentId) {
+        childRun.agentId = output.state.agentId;
+      }
+      if (options.parentRunId) {
+        childRun.parentRunId = options.parentRunId;
+      }
+      childRun.toolName = toolName;
+      if (output.usage) {
+        childRun.usage = output.usage;
+      }
+      if (output.state.startedAt !== undefined) {
+        childRun.startedAt = output.state.startedAt;
+      }
+      if (output.state.updatedAt !== undefined) {
+        childRun.updatedAt = output.state.updatedAt;
+      }
+      if (output.error) {
+        childRun.error = output.error;
+      }
+      if (output.state.metadata) {
+        childRun.metadata = output.state.metadata;
+      }
+      await options.onFinish?.(childRun);
+      return serializeJsonValue(childRun) as SubAgentToolOutput;
+    }
+  };
 };
 
 const persistState = async <TModel extends LanguageModel>(agent: AgentDefinition<TModel>, state: AgentRunState) => {
@@ -402,12 +553,30 @@ const resolveContext = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   input: AgentRunInput<TModel>
 ) => {
-  let loadedState = input.state;
+  ensureValidIdempotencyInput(input, agent.store);
+
+  let loadedState = input.state ? normalizeRunState(input.state) : undefined;
+  let loadedByIdempotencyKey = false;
+  if (!loadedState && input.idempotencyKey) {
+    loadedState = await agent.store?.findByIdempotencyKey?.(input.idempotencyKey);
+    if (loadedState) {
+      loadedState = normalizeRunState(loadedState);
+      loadedByIdempotencyKey = true;
+    }
+  }
   if (!loadedState && input.runId && agent.store) {
     loadedState = await agent.store.load(input.runId);
+    if (loadedState) {
+      loadedState = normalizeRunState(loadedState);
+    }
   }
 
-  const normalizedInput = loadedState ? { ...input, state: loadedState } : input;
+  const normalizedInput =
+    loadedState && loadedByIdempotencyKey
+      ? { ...input, prompt: undefined, messages: undefined, system: undefined, handoff: undefined, state: loadedState }
+      : loadedState
+        ? { ...input, state: loadedState }
+        : input;
   ensureValidStateInput(normalizedInput);
 
   const metadata = cloneMetadata(agent.metadata, loadedState?.metadata, input.metadata, input.handoff?.metadata);
@@ -418,7 +587,10 @@ const resolveContext = async <TModel extends LanguageModel>(
     return {
       state: {
         ...loadedState,
+        schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
+        idempotencyKey: loadedState.idempotencyKey ?? input.idempotencyKey,
         agentId: loadedState.agentId ?? agent.id,
+        parentRunId: loadedState.parentRunId ?? input.parentRunId,
         provider: agent.model.provider,
         modelId: agent.model.modelId,
         maxSteps,
@@ -438,7 +610,18 @@ const resolveContext = async <TModel extends LanguageModel>(
   const prepared = await prepareFreshMessages(agent, input, runId);
 
   return {
-    state: createBaseState(agent.model.provider, agent.model.modelId, prepared.messages, maxSteps, metadata, agent.id, runId, input.handoff),
+    state: createBaseState(
+      agent.model.provider,
+      agent.model.modelId,
+      prepared.messages,
+      maxSteps,
+      metadata,
+      agent.id,
+      runId,
+      input.handoff,
+      input.parentRunId,
+      input.idempotencyKey
+    ),
     messages: prepared.messages,
     remainingSteps: maxSteps,
     memoryMessages: prepared.memoryMessages
@@ -450,27 +633,62 @@ const createGenerateOptions = <TModel extends LanguageModel>(
   state: AgentRunState,
   input: AgentRunInput<TModel>,
   messages: ModelMessage[],
-  maxSteps: number
-): GenerateTextOptions<TModel> => ({
-  model: agent.model,
-  messages,
-  tools: toToolSet(input.tools ?? agent.tools),
-  toolChoice: input.toolChoice,
-  toolExecution: input.toolExecution ?? agent.toolExecution,
-  toolApprovalPolicy: input.toolApprovalPolicy ?? agent.toolApprovalPolicy,
-  onToolApprovalDecision: async (event) => {
-    await emitToolApprovalTelemetry(agent, state, event);
-  },
-  maxSteps,
-  temperature: input.temperature ?? agent.temperature,
-  maxTokens: input.maxTokens ?? agent.maxTokens,
-  reasoning: input.reasoning ?? agent.reasoning,
-  providerOptions: input.providerOptions ?? agent.providerOptions,
-  abortSignal: input.abortSignal,
-  timeoutMs: input.timeoutMs,
-  maxRetries: input.maxRetries,
-  retryBackoffMs: input.retryBackoffMs
-});
+  maxSteps: number,
+  abortSignal: AbortSignal | undefined = input.abortSignal
+): GenerateTextOptions<TModel> => {
+  const tools = { ...(toToolSet(input.tools ?? agent.tools) ?? {}) };
+  for (const subagent of agent.subagents ?? []) {
+    const subagentTool = createSubAgentTool({
+      ...subagent,
+      parentRunId: state.runId,
+      parentAgentId: state.agentId,
+      onStart: async ({ toolName, childAgentId }) => {
+        await emitTelemetryEvent(agent, {
+          type: "subagent-start",
+          runId: state.runId,
+          agentId: state.agentId,
+          childAgentId,
+          toolName
+        });
+      },
+      onFinish: async (childRun) => {
+        state.childRuns = [...(state.childRuns ?? []), childRun];
+        await emitTelemetryEvent(agent, {
+          type: "subagent-finish",
+          runId: state.runId,
+          agentId: state.agentId,
+          childRun
+        });
+      }
+    });
+    if (tools[subagentTool.name]) {
+      throw new ValidationError(`Subagent tool "${subagentTool.name}" conflicts with an existing tool.`);
+    }
+    tools[subagentTool.name] = subagentTool;
+  }
+  const finalTools = Object.keys(tools).length ? tools : undefined;
+
+  return {
+    model: agent.model,
+    messages,
+    tools: finalTools,
+    toolChoice: input.toolChoice,
+    toolExecution: input.toolExecution ?? agent.toolExecution,
+    toolApprovalPolicy: input.toolApprovalPolicy ?? agent.toolApprovalPolicy,
+    onToolApprovalDecision: async (event) => {
+      await emitToolApprovalTelemetry(agent, state, event);
+    },
+    maxSteps,
+    temperature: input.temperature ?? agent.temperature,
+    maxTokens: input.maxTokens ?? agent.maxTokens,
+    reasoning: input.reasoning ?? agent.reasoning,
+    providerOptions: input.providerOptions ?? agent.providerOptions,
+    abortSignal,
+    timeoutMs: input.timeoutMs,
+    maxRetries: input.maxRetries,
+    retryBackoffMs: input.retryBackoffMs
+  };
+};
 
 const emptyAsyncIterable = async function* () {
   return;
@@ -484,6 +702,88 @@ const createFailedState = (state: AgentRunState, message: string): AgentRunState
   },
   updatedAt: Date.now()
 });
+
+const createTerminalState = (
+  state: AgentRunState,
+  status: Extract<AgentStatus, "cancel_requested" | "timed_out">,
+  message: string
+): AgentRunState => ({
+  ...state,
+  status,
+  error: {
+    message
+  },
+  cancellationReason: status === "cancel_requested" ? message : state.cancellationReason,
+  cancelledAt: status === "cancel_requested" ? Date.now() : state.cancelledAt,
+  updatedAt: Date.now()
+});
+
+const resolveRunPolicy = <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  input: AgentRunInput<TModel>
+): AgentRunPolicy | undefined => {
+  const policy = {
+    ...(agent.policy ?? {}),
+    ...(input.policy ?? {})
+  };
+  return Object.keys(policy).length ? policy : undefined;
+};
+
+const withAgentPolicyTimeout = async <T>(
+  operation: Promise<T>,
+  timeout: {
+    signal?: AbortSignal;
+    timeoutPromise?: Promise<never>;
+    cleanup: () => void;
+    isTimedOut: () => boolean;
+  }
+): Promise<T> => {
+  if (!timeout.timeoutPromise) {
+    return operation;
+  }
+
+  try {
+    return await Promise.race([operation, timeout.timeoutPromise]);
+  } finally {
+    timeout.cleanup();
+  }
+};
+
+const createAgentAbortContext = (
+  inputAbortSignal: AbortSignal | undefined,
+  policy: AgentRunPolicy | undefined
+) => {
+  if (!policy?.timeoutMs) {
+    return {
+      signal: inputAbortSignal,
+      timeoutPromise: undefined,
+      cleanup: () => undefined,
+      isTimedOut: () => false
+    };
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(new AgentPolicyTimeoutError(policy.timeoutMs!));
+    }, policy.timeoutMs);
+  });
+
+  return {
+    signal: mergeAbortSignals(inputAbortSignal, controller.signal),
+    timeoutPromise,
+    cleanup: () => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    },
+    isTimedOut: () => timedOut
+  };
+};
 
 const emitRunStartTelemetry = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
@@ -548,18 +848,217 @@ export const createAgent = <TModel extends AgentDefinition["model"]>(
   metadata: cloneMetadata(definition.metadata)
 });
 
+export const prepareSubagentsForAgent = <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  options: PrepareSubagentsForAgentOptions = {}
+): AgentDefinition<TModel> => {
+  const store = options.store ?? agent.store;
+  const memory = options.memory ?? agent.memory;
+  const onTelemetryEvent = options.onTelemetryEvent ?? agent.onTelemetryEvent;
+  const toolApprovalPolicy = options.toolApprovalPolicy ?? agent.toolApprovalPolicy;
+  const toolExecution = options.toolExecution ?? agent.toolExecution;
+  const defaultMetadata = cloneMetadata(agent.metadata, options.metadata);
+
+  return {
+    ...agent,
+    metadata: cloneMetadata(agent.metadata),
+    subagents: (agent.subagents ?? []).map((subagent) => ({
+      ...subagent,
+      metadata: cloneMetadata(defaultMetadata, subagent.metadata),
+      agent: {
+        ...subagent.agent,
+        store: subagent.agent.store ?? store,
+        memory: subagent.agent.memory ?? memory,
+        onTelemetryEvent: subagent.agent.onTelemetryEvent ?? onTelemetryEvent,
+        toolApprovalPolicy: subagent.agent.toolApprovalPolicy ?? toolApprovalPolicy,
+        toolExecution: subagent.agent.toolExecution ?? toolExecution,
+        metadata: cloneMetadata(defaultMetadata, subagent.agent.metadata)
+      }
+    }))
+  };
+};
+
+export const runAgentGroup = async (
+  agents: AgentGroupMember[],
+  input: AgentGroupRunInput = {}
+): Promise<AgentGroupRunOutput> => {
+  const { stopOnError, runId: _runId, state: _state, approvals: _approvals, handoff: _handoff, ...sharedInput } = input;
+  const parentRunId = input.parentRunId;
+  const controllers = agents.map(() => new AbortController());
+  let failFastTriggered = false;
+  const isFailingOutput = (output: AgentRunOutput) => output.status === "failed" || output.status === "timed_out";
+  const abortPending = (currentIndex: number) => {
+    if (!stopOnError || failFastTriggered) {
+      return;
+    }
+    failFastTriggered = true;
+    controllers.forEach((controller, index) => {
+      if (index !== currentIndex) {
+        controller.abort();
+      }
+    });
+  };
+
+  const runs = agents.map(async (member, index) => {
+    const runInput = {
+      ...sharedInput,
+      ...(member.input ?? {}),
+      parentRunId: member.input?.parentRunId ?? parentRunId,
+      abortSignal: mergeAbortSignals(input.abortSignal, member.input?.abortSignal, controllers[index]!.signal),
+      metadata: cloneMetadata(input.metadata, member.input?.metadata, {
+        ...(member.name ? { agentGroupMember: member.name } : {})
+      })
+    } as AgentRunInput;
+    try {
+      const output = await runAgent(member.agent, runInput);
+      if (isFailingOutput(output)) {
+        abortPending(index);
+      }
+      return output;
+    } catch (error) {
+      abortPending(index);
+      throw error;
+    }
+  });
+  const settled = await Promise.allSettled(runs);
+  const outputs = settled.map((result, index) => {
+    const member = agents[index]!;
+    if (result.status === "fulfilled") {
+      return {
+        name: member.name,
+        agentId: result.value.state.agentId ?? member.agent.id,
+        status: "fulfilled" as const,
+        output: result.value
+      };
+    }
+
+    return {
+      name: member.name,
+      agentId: member.agent.id,
+      status: "rejected" as const,
+      error: {
+        message:
+          stopOnError && failFastTriggered && controllers[index]!.signal.aborted
+            ? AGENT_GROUP_FAIL_FAST_ABORT_MESSAGE
+            : result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason)
+      }
+    };
+  });
+  const failed = outputs.some(
+    (output) => output.status === "rejected" || output.output?.status === "failed" || output.output?.status === "timed_out"
+  );
+
+  return {
+    status: stopOnError && failed ? "failed" : failed ? "failed" : "completed",
+    parentRunId,
+    outputs
+  };
+};
+
+export const cancelAgentRun = async (
+  store: AgentRunStore,
+  runId: string,
+  options: AgentRunCancellationOptions = {}
+): Promise<AgentRunState | undefined> => {
+  const loadedState = await store.load(runId);
+  if (!loadedState) {
+    return undefined;
+  }
+
+  const cancelledAt = Date.now();
+  const status = options.mode === "final" ? "cancelled" : "cancel_requested";
+  const state = normalizeRunState({
+    ...loadedState,
+    status,
+    cancelledAt,
+    cancellationReason: options.reason,
+    updatedAt: cancelledAt,
+    error: undefined
+  });
+  await store.save(cloneState(state));
+  return cloneState(state);
+};
+
+export const cancelAgentRunTree = async (
+  store: AgentRunStore,
+  runId: string,
+  options: AgentRunCancellationOptions = {}
+): Promise<AgentRunTreeCancellationResult> => {
+  if (!store.findByParentRunId) {
+    throw new ValidationError('The agent run "store" must implement "findByParentRunId()" to cancel an agent run tree.');
+  }
+
+  const cancelledAt = Date.now();
+  const status = options.mode === "final" ? "cancelled" : "cancel_requested";
+  const cancelState = (state: AgentRunState): AgentRunState =>
+    normalizeRunState({
+      ...state,
+      status,
+      cancelledAt,
+      cancellationReason: options.reason,
+      updatedAt: cancelledAt,
+      error: undefined
+    });
+
+  const parent = await store.load(runId);
+  if (!parent) {
+    return {
+      parent: undefined,
+      children: []
+    };
+  }
+
+  const visited = new Set<string>([runId]);
+  const children: AgentRunState[] = [];
+  const collectChildren = async (parentRunId: string): Promise<void> => {
+    const directChildren = await store.findByParentRunId?.(parentRunId);
+    for (const child of directChildren ?? []) {
+      if (visited.has(child.runId)) {
+        continue;
+      }
+      visited.add(child.runId);
+      children.push(child);
+      await collectChildren(child.runId);
+    }
+  };
+
+  await collectChildren(runId);
+
+  const cancelledParent = cancelState(parent);
+  const cancelledChildren = children.map(cancelState);
+  await store.save(cloneState(cancelledParent));
+  for (const child of cancelledChildren) {
+    await store.save(cloneState(child));
+  }
+
+  return {
+    parent: cloneState(cancelledParent),
+    children: cancelledChildren.map(cloneState)
+  };
+};
+
 export const runAgent = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   input: AgentRunInput<TModel> = {}
 ): Promise<AgentRunOutput> => {
   const context = await resolveContext(agent, input);
   await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
+  const currentStatus = normalizeApprovalStatus(context.state.status);
 
-  if (context.state.status === "completed" || context.state.status === "cancelled") {
+  if (
+    currentStatus === "completed" ||
+    currentStatus === "cancelled" ||
+    currentStatus === "cancel_requested" ||
+    currentStatus === "timed_out"
+  ) {
+    context.state.status = currentStatus;
     return toOutput(context.state);
   }
 
-  if (context.state.status === "suspended" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
+  if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
+    context.state.status = currentStatus;
     return toOutput(context.state);
   }
 
@@ -590,8 +1089,14 @@ export const runAgent = async <TModel extends LanguageModel>(
     stepIndex: context.state.currentStep + 1
   });
 
+  const policy = resolveRunPolicy(agent, input);
+  const abortContext = createAgentAbortContext(input.abortSignal, policy);
+
   try {
-    const result = await generateText(createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps));
+    const result = await withAgentPolicyTimeout(
+      generateText(createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps, abortContext.signal)),
+      abortContext
+    );
     const newSteps = mapSteps(result.steps, context.state.currentStep, result.toolResults);
     let output = finalizeState(context.state, result, newSteps, result.toolResults);
 
@@ -613,6 +1118,15 @@ export const runAgent = async <TModel extends LanguageModel>(
 
     return output;
   } catch (error) {
+    if (error instanceof AgentPolicyTimeoutError || abortContext.isTimedOut()) {
+      const status = policy?.onTimeout === "cancel-requested" ? "cancel_requested" : "timed_out";
+      const message = error instanceof Error ? error.message : `Agent run timed out after ${policy?.timeoutMs}ms.`;
+      const timedOutState = createTerminalState(context.state, status, message);
+      await persistState(agent, timedOutState);
+      await emitRunFinishTelemetry(agent, timedOutState);
+      return toOutput(timedOutState);
+    }
+
     const failedState = createFailedState(
       context.state,
       error instanceof Error ? error.message : String(error)
@@ -671,8 +1185,15 @@ export const streamAgent = <TModel extends LanguageModel>(
   const runner = (async () => {
     const context = await resolveContext(agent, input);
     await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
+    const currentStatus = normalizeApprovalStatus(context.state.status);
 
-    if (context.state.status === "completed" || context.state.status === "cancelled") {
+    if (
+      currentStatus === "completed" ||
+      currentStatus === "cancelled" ||
+      currentStatus === "cancel_requested" ||
+      currentStatus === "timed_out"
+    ) {
+      context.state.status = currentStatus;
       publish({ done: true, value: undefined });
       return {
         output: toOutput(context.state),
@@ -680,7 +1201,8 @@ export const streamAgent = <TModel extends LanguageModel>(
       };
     }
 
-    if (context.state.status === "suspended" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
+    if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
+      context.state.status = currentStatus;
       publish({ done: true, value: undefined });
       return {
         output: toOutput(context.state),
@@ -767,7 +1289,11 @@ export const streamAgent = <TModel extends LanguageModel>(
       stepIndex: context.state.currentStep + 1
     });
 
-    const streamResult = streamText(createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps));
+    const policy = resolveRunPolicy(agent, input);
+    const abortContext = createAgentAbortContext(input.abortSignal, policy);
+    const streamResult = streamText(
+      createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps, abortContext.signal)
+    );
     const approvalRequests: AgentApprovalRequest[] = [];
 
     const eventRelay = (async () => {
@@ -812,8 +1338,10 @@ export const streamAgent = <TModel extends LanguageModel>(
 
     const output = (async () => {
       try {
-        await eventRelay;
-        const final = await streamResult.collect();
+        const final = await withAgentPolicyTimeout(
+          eventRelay.then(() => streamResult.collect()),
+          abortContext
+        );
         const newSteps = mapSteps(final.steps, context.state.currentStep, final.toolResults);
         let result = finalizeState(context.state, final, newSteps, final.toolResults);
 
@@ -867,6 +1395,31 @@ export const streamAgent = <TModel extends LanguageModel>(
         publish({ done: true, value: undefined });
         return result;
       } catch (error) {
+        if (error instanceof AgentPolicyTimeoutError || abortContext.isTimedOut()) {
+          const status = policy?.onTimeout === "cancel-requested" ? "cancel_requested" : "timed_out";
+          const message = error instanceof Error ? error.message : `Agent run timed out after ${policy?.timeoutMs}ms.`;
+          const timedOutState = createTerminalState(context.state, status, message);
+          await persistState(agent, timedOutState);
+          await emitRunFinishTelemetry(agent, timedOutState);
+          publish({
+            done: false,
+            value: {
+              type: "error",
+              error: new AgentPolicyTimeoutError(policy?.timeoutMs ?? 0)
+            }
+          });
+          publish({
+            done: false,
+            value: {
+              type: "agent-run-finish",
+              status: timedOutState.status,
+              state: timedOutState
+            }
+          });
+          publish({ done: true, value: undefined });
+          return toOutput(timedOutState);
+        }
+
         const failedState = createFailedState(context.state, error instanceof Error ? error.message : String(error));
         await persistState(agent, failedState);
         await emitRunFinishTelemetry(agent, failedState);

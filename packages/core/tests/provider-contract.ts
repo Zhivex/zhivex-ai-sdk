@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 
+import { inspectProviderAgentSupport } from "../src/index.js";
 import type { AgentSupportTier, EmbeddingModel, LanguageModel, ModelCapabilities } from "../src/index.js";
 
 interface LanguageModelContractOptions {
@@ -25,6 +26,15 @@ export const runLanguageModelContractSuite = (options: LanguageModelContractOpti
     expect(model.capabilities).toMatchObject(options.expectedCapabilities);
     expect(model.capabilities.agentCapabilities).toBeDefined();
     expect(model.capabilities.agentCapabilities?.supportTier).toBe(options.expectedAgentTier);
+    expect(inspectProviderAgentSupport(model)).toMatchObject({
+      provider: options.providerName,
+      modelId: options.modelId,
+      agentTier: options.expectedAgentTier,
+      portableToolLoop: model.capabilities.tools,
+      streaming: model.capabilities.streaming,
+      structuredOutput: model.capabilities.structuredOutput,
+      reasoning: model.capabilities.reasoning
+    });
   });
 
   if (options.createEmbeddingModel) {

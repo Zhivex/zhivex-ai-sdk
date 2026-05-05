@@ -30,6 +30,7 @@ import type {
 } from "./types.js";
 
 const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+const AGENT_RUN_STATE_SCHEMA_VERSION = 1;
 
 const joinInstructions = (...parts: Array<string | undefined>): string | undefined => {
   const content = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
@@ -41,7 +42,13 @@ const cloneMetadata = (...values: Array<Record<string, JsonValue> | undefined>) 
   return Object.keys(merged).length ? merged : undefined;
 };
 
-const cloneState = (state: AgentRunState): AgentRunState => JSON.parse(JSON.stringify(state)) as AgentRunState;
+const normalizeRunState = (state: AgentRunState): AgentRunState => ({
+  ...state,
+  schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION
+});
+
+const cloneState = (state: AgentRunState): AgentRunState =>
+  JSON.parse(JSON.stringify(normalizeRunState(state))) as AgentRunState;
 
 const createBaseState = (
   provider: string,
@@ -53,6 +60,7 @@ const createBaseState = (
 ): AgentRunState => {
   const startedAt = Date.now();
   return {
+    schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
     runId,
     agentId,
     provider,

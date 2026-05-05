@@ -2,19 +2,18 @@
 
 This document compares the current TypeScript SDK in this repository against the Python SDK in `../zhivex-ai-sdk-py` and defines the shortest path to reach feature parity or exceed it.
 
-Scope date: 2026-04-15
+Scope date: 2026-04-29
 
 ## Executive Summary
 
 The TypeScript SDK is already strong in package architecture, provider modularity, gateway composition, and the shared cross-provider contract.
 
-The Python SDK is currently ahead in product maturity for agent workloads. Its advantages are not mostly in the basic generation surface, but in the higher-level platform story around:
+The TypeScript SDK has closed the first agent-platform foundation gaps. The remaining work is less about basic runtime parity and more about richer SDK primitives for tools, safety policies, observability, evaluation, and provider conformance.
 
-- explicit stability and support policy
-- richer agent runtime features
-- durable storage options
-- realtime/live voice support
-- observability surface
+- richer tool platform primitives
+- reusable safety and budget policy helpers
+- replay/debug helpers for agent traces
+- evaluation harnesses for agent regressions
 - broader tests and operational documentation
 
 The TypeScript SDK should aim for:
@@ -41,19 +40,19 @@ Legend:
 | Grounded text | yes | yes | Strong parity |
 | Provider adapters | yes | yes | Strong parity |
 | Gateway routing / fallback | yes | yes | Strong parity |
-| Agent runtime | yes | yes | Partial |
+| Agent runtime | yes | yes | Strong parity |
 | Agent suspend/resume for approvals | yes | yes | Strong parity |
 | Agent handoffs | yes | yes | Strong parity |
-| Agent memory | in-memory + file | in-memory + sqlite + postgres | Partial |
-| Agent run persistence | in-memory + file | in-memory + sqlite + postgres | Partial |
+| Agent memory | in-memory + file + sqlite + postgres | in-memory + sqlite + postgres | Strong parity |
+| Agent run persistence | in-memory + file + sqlite + postgres + idempotency + cancellation | in-memory + sqlite + postgres | Strong parity |
 | MCP tool integration | yes | yes | Partial |
-| Shared tool registry model | basic MCP toolset | richer registry surface | Partial |
-| Guardrails | no first-class API | yes | Gap |
-| Approval policies for local tools | not first-class | yes | Gap |
-| Shared sessions | limited through run state | first-class | Partial |
-| Realtime / live voice | no public equivalent found | yes | Gap |
-| Observability / OTEL helpers | telemetry hooks and middleware | explicit OTEL observer | Partial |
-| Stability / support docs | not explicit enough | explicit Stable/Beta/Experimental + support docs | Gap |
+| Shared tool registry model | tool registry + MCP registry | richer registry surface | Partial |
+| Guardrails | yes | yes | Strong parity |
+| Approval policies for local tools | yes | yes | Strong parity |
+| Shared sessions | serializable run state + live runtime | first-class | Strong parity |
+| Realtime / live voice | yes | yes | Strong parity |
+| Observability / OTEL helpers | telemetry hooks + OTEL helpers | explicit OTEL observer | Strong parity |
+| Stability / support docs | Stable/Beta/Experimental + support docs | explicit Stable/Beta/Experimental + support docs | Strong parity |
 | Packaging modularity | monorepo, per-package npm publishing | single PyPI package | TypeScript stronger |
 | Public API modularity | very strong | strong | TypeScript stronger |
 | Test breadth | good but narrower | broader | Partial |
@@ -66,62 +65,23 @@ Legend:
 - Strong shared contracts for generation, tools, streaming, embeddings, audio, and grounding
 - Good gateway story, including agent-aware routing
 - Good approval-aware remote MCP flow for Tier A providers
-- Good file-backed and in-memory primitives for a first version of agent persistence
+- Durable agent run primitives: schema-versioned state, idempotency-key lookup, cooperative cancellation, and in-memory/file/SQLite/Postgres stores
 
-## Main Gaps vs Python
+## Main Remaining Gaps
 
-### 1. Stability and product contract
+### 1. Tool platform depth
 
-Python has a clearer promise to downstream consumers with:
+The next SDK gap is a richer tool platform surface: remote HTTP tools, stronger typed registry metadata, permission presets, tool audit metadata, and first-class test utilities for tool definitions.
 
-- `STABILITY.md`
-- `SUPPORT.md`
-- `VERSIONING.md`
-- `CHANGELOG.md`
-- production-facing guidance
+### 2. Safety and budget policy helpers
 
-TypeScript has strong code and release mechanics, but not yet the same public contract.
+The runtime has guardrails and local approval policies. The next layer should add reusable presets for secrets/PII redaction, dangerous-tool approvals, per-run budgets, tool-call limits, and timeout/retry policy composition.
 
-### 2. Durable agent state
+### 3. Replay, debugging, and evaluation
 
-TypeScript currently exposes:
+The SDK emits telemetry and serializable run state, but agent teams still need replay helpers, mock providers/tools, dataset runners, judge helpers, and regression reports to validate agent changes before release.
 
-- `createInMemoryAgentRunStore()`
-- `createFileAgentRunStore()`
-- `createInMemoryAgentMemoryStore()`
-- `createFileAgentMemoryStore()`
-
-Python goes further with ready-made durable stores for:
-
-- sqlite
-- postgres
-
-That difference matters for production adoption.
-
-### 3. Guardrails and local approval policies
-
-Python has first-class concepts for:
-
-- input guardrails
-- output guardrails
-- tool approval policies
-- permission-aware tool execution
-
-TypeScript has approval handling for provider-driven MCP approval requests, but does not yet expose the same first-class runtime controls for local tools and safety policy hooks.
-
-### 4. Realtime and live voice
-
-Python exposes a public realtime layer and live-agent support.
-
-TypeScript currently has strong streaming, but not the same public realtime/live voice platform surface.
-
-### 5. Observability
-
-TypeScript has telemetry hooks and middleware, which is a good base.
-
-Python is ahead in productization because it also offers an explicit observability entrypoint and OTEL-oriented story for agent runs.
-
-### 6. Agent platform narrative
+### 4. Agent platform narrative
 
 Python presents the SDK as an agent platform:
 
@@ -132,123 +92,169 @@ Python presents the SDK as an agent platform:
 - checkpoints
 - live runtime flows
 
-TypeScript already contains several building blocks, but the surface still reads more like an SDK with agent features than a full agent platform.
+TypeScript now contains the core building blocks. The remaining work is to package the SDK story around production agent services without turning this repository into a UI or control plane.
 
 ## Priority Roadmap
 
-## P0: Match Python on product maturity
+## P0: Runtime foundation - complete
 
-These items should come first because they improve trust and adoption even before new runtime features ship.
+Completed foundation items:
 
-- Add `STABILITY.md` to define `Stable`, `Beta`, and `Experimental` surfaces for TypeScript.
-- Add `SUPPORT.md` to define provider support tiers and expectations.
-- Add `VERSIONING.md` to explain changeset-driven compatibility and release rules.
-- Expand `README.md` with a narrower, explicit stable surface section.
-- Add a generated or maintained support matrix per provider and feature tier.
+- `STABILITY.md`, `SUPPORT.md`, and `VERSIONING.md`
+- SQLite and Postgres run/memory stores
+- first-class input and output guardrails
+- local tool approval policies
+- realtime sessions and `streamLiveAgent()`
+- OTEL-oriented helpers
+- schema-versioned `AgentRunState`
+- idempotency-key support on built-in run stores
+- cooperative `cancelAgentRun()`
 
-Expected outcome:
+## P1: Tool platform SDK-first - complete
 
-- downstream consumers know what is safe to build on
-- npm releases feel intentional, not just technically publishable
+The experimental tool platform layer is now available without changing the stable `ToolSet` contract.
 
-## P1: Close the biggest runtime gaps
-
-These are the highest-value functional gaps against Python.
-
-- Add `createSqliteAgentRunStore()` and `createSqliteAgentMemoryStore()`
-- Add `createPostgresAgentRunStore()` and `createPostgresAgentMemoryStore()`
-- Add first-class input and output guardrails to the agent runtime
-- Add local tool approval policies for SDK-defined tools
-- Add a first-class tool registry abstraction above raw MCP toolsets when multiple tool sources are combined
-
-Expected outcome:
-
-- TypeScript becomes viable for production agent systems without forcing users to build core persistence and policy layers themselves
-
-## P2: Realtime and observability parity
-
-- Add a public realtime abstraction for providers that support bidirectional realtime sessions
-- Add `streamLiveAgent()` or equivalent live-agent runtime for voice-first workflows
-- Add an OTEL helper package or core helper for agent spans and lifecycle events
-- Expand telemetry event coverage and document recommended ingestion patterns
+- `createAdvancedToolRegistry()` and `AdvancedToolRegistry`
+- advanced entries with `source`, `permissions`, and `audit` metadata
+- `createHttpTool()` for fetch-backed remote HTTP tools
+- `testToolDefinition()` and `testToolRegistry()` for local validation
+- `createToolTestFixture()`, `recordToolTestFixture()`, and `runToolTestFixture()` for fixture-based tool regression tests
+- `createToolPermissionPreset()` for reusable permission/audit presets
+- `inspectToolRegistry()` for portable registry metadata
+- conversion back to stable `ToolSet`
 
 Expected outcome:
 
-- TypeScript reaches Python parity for interactive and voice-first systems
+- app teams can combine and validate tools without inventing their own registry, permission, and audit conventions
 
-## P3: Better-than-Python platform surface
+## P2: Safety and budget policy helpers - complete
+
+- `createSafetyPolicy()` composes approvals, redaction, budget guards, tool execution defaults, and existing guardrails.
+- `createApprovalPolicy()` ships `permissive`, `review-sensitive`, and `locked-down` presets.
+- `createRedactionPolicy()` covers common secrets and optional email/custom regex redaction.
+- `createBudgetGuard()` enforces step, tool-call, tool-error, and token usage limits.
+- `applySafetyPolicyToAgent()` wraps agent definitions without mutating the original agent.
+
+Expected outcome:
+
+- production agent services can adopt default safety controls without building every policy hook from scratch
+
+## P2b: Provider agent parity - complete
+
+- `inspectProviderAgentSupport()` normalizes runtime model capabilities into agent-platform readiness fields.
+- `createProviderSupportMatrix()` creates a serializable matrix from models or model entries.
+- Provider contract tests continue to validate declared agent tiers and capabilities.
+
+Expected outcome:
+
+- provider/model choices can be validated from SDK capabilities instead of copying README tables into downstream apps
+
+## P3: Replay, debugging, and evaluation - complete
+
+- `createAgentRunSnapshot()` and dry `replayAgentRun()` inspect saved `AgentRunState` without executing effects.
+- `createMockLanguageModel()` and `createMockTool()` support deterministic tests.
+- `runAgentEvaluation()` runs dataset cases against agents or agent factories.
+- `createAgentEvaluationFixture()` and `runAgentEvaluationFixture()` make datasets reproducible.
+- `createAgentEvaluationReport()` creates exportable regression summaries.
+- `judgeAgentEvaluation()` supports deterministic judges and optional `LanguageModel` judges.
+
+Expected outcome:
+
+- agent behavior can be tested and debugged as an SDK workflow, not only inside a downstream app
+
+## P4: Better-than-Python platform surface
 
 These are the opportunities where TypeScript can surpass Python rather than just match it.
-
-- First-class edge/runtime-safe adapters for Bun, Node, and fetch-native environments
-- Better typed policy system for guardrails, approvals, and tool permissions
-- Better UI transport story for React/Next.js/SSE/Web Streams
-- Stronger plugin model for combining local tools, hosted tools, and MCP with typed capability inspection
-- More opinionated testing harness for provider contract conformance
-
-Expected outcome:
 
 - TypeScript becomes the best SDK choice for app teams building agent products on web and server runtimes
 
 ## Suggested Work Breakdown
 
-### Phase 1: Contract and maturity
+### Phase 1: Runtime foundation - complete
 
-- Add `STABILITY.md`
-- Add `SUPPORT.md`
-- Add `VERSIONING.md`
-- tighten README around supported public surface
-
-### Phase 2: Durable stores
-
-- add sqlite stores in `packages/core`
-- add postgres stores in `packages/core` or a dedicated storage package if dependency isolation matters
-- add tests covering resume, memory load/save, and concurrent runs
-
-### Phase 3: Runtime policy layer
-
-- introduce `InputGuardrail`, `OutputGuardrail`, and approval policy types
-- wire guardrail lifecycle into `runAgent()` and `streamAgent()`
-- expose telemetry for guardrail triggers and approval decisions
-
-### Phase 4: Realtime platform
-
-- add realtime model/session contracts to `packages/core`
-- implement OpenAI and Gemini first
-- add live-agent orchestration on top
-
-### Phase 5: Product polish
-
+- Stability/support/versioning docs
+- Durable stores
+- Guardrails
+- Local approval policies
+- Realtime/live runtime
 - OTEL helpers
-- richer examples
-- provider parity tests
-- release checklist for stable vs experimental surfaces
+- Idempotency and cooperative cancellation
+
+### Phase 2: Tool platform
+
+- remote HTTP tools - complete
+- richer registry metadata - complete
+- tool test helpers - complete
+- registry documentation - complete
+
+### Phase 3: Safety and budgets
+
+- policy presets - complete
+- redaction helpers - complete
+- runtime/budget caps - complete
+- dangerous-tool approval defaults - complete
+
+### Phase 4: Replay and evaluation
+
+- deterministic mock providers/tools - complete
+- replay from run state - complete
+- dataset runner helpers - complete
+- evaluation fixtures and reports - complete
+- optional model judge helpers - complete
+
+### Phase 5: Observability depth - complete
+
+- exportable agent trace artifacts
+- live trace collector from agent telemetry
+- token cost estimates
+- latency and run summaries
+
+### Phase 6: Native subagent orchestration - complete
+
+- `AgentDefinition.subagents` exposes specialist agents as compatible callable tools.
+- `createSubAgentTool()` supports standalone subagent tool composition.
+- Parent states record `childRuns`, and child states preserve `parentRunId`.
+- Replay and trace artifacts include subagent child-run links.
+- shared budgets include child-run metrics by default
+- built-in stores support parent/child lookup
+- `cancelAgentRunTree()` provides durable cascade cancellation
+- hierarchical tree snapshots and traces export full parent/child run trees
+- evaluation helpers include child-run expectations and report totals
+- `runAgentGroup()` supports explicit parallel fan-out from application code
+- `prepareSubagentsForAgent()` shares operational defaults without mutating definitions
 
 ## Proposed Definition Of Done
 
 The TypeScript SDK should be considered at least equal to Python when all of the following are true:
 
 - TypeScript has explicit `STABILITY`, `SUPPORT`, and `VERSIONING` docs
-- agent persistence includes sqlite and postgres options
-- first-class guardrails exist for agent input and output
-- first-class approval policies exist for local tools
+- agent persistence includes file, sqlite, postgres, idempotency, and cooperative cancellation
+- first-class guardrails and approval policies exist
 - realtime and live-agent support are public and documented
-- observability includes an OTEL-ready path
+- observability includes an OTEL-ready path plus exportable trace/cost artifacts
 - provider support and feature-tier expectations are documented and tested
+- safety policies and provider parity helpers are stable public APIs
 
 The TypeScript SDK should be considered better than Python when, in addition:
 
 - the public typed API is simpler to integrate
 - UI streaming and web transport are stronger
 - provider and tool capability inspection is more ergonomic
+- tool testing, replay, and evaluation helpers are first-class
+- safety policies are reusable SDK primitives instead of downstream glue
+- trace/cost summaries are reusable SDK primitives instead of downstream glue
+- provider parity rendering and drift reports are reusable SDK primitives
+- native subagent orchestration is available without building a separate control plane
 - app teams can build production agent systems with less custom glue code
 
 ## Recommended Immediate Next Steps
 
-1. Ship the maturity contract docs first: `STABILITY.md`, `SUPPORT.md`, `VERSIONING.md`
-2. Implement sqlite stores next because they unlock durable local workflows with low integration cost
-3. Add guardrails and local approval policies before expanding the agent platform further
-4. Add realtime only after the persistence and policy model is stable
+1. Release channel decision: choose stable, beta, rc, or next before versioning
+2. Versioning dry run: apply `bun run version-packages` only when the release channel is chosen
+3. Provider parity follow-up: optional README generation from rendered runtime matrix
+4. Evaluation follow-up: richer judge adapters and run diff helpers
+5. Tool platform follow-up: deeper MCP/hosted-tool metadata
+6. Observability follow-up: optional exporters for external trace stores
 
 ## Notes
 

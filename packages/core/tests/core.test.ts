@@ -6,13 +6,25 @@ import { promises as fs } from "node:fs";
 
 import {
   assistant,
+  createAdvancedToolRegistry,
+  applySafetyPolicyToAgent,
   createCachedGenerateMiddleware,
   createCircuitBreakerMiddleware,
   createFileGenerateCache,
   createInMemoryGenerateCache,
   createModelCatalog,
+  createAgent,
+  createApprovalPolicy,
+  createBudgetGuard,
+  createProviderSupportMatrix,
+  createProviderSupportDriftReport,
+  createRedactionPolicy,
+  createSafetyPolicy,
+  createSubAgentTool,
   createTelemetryMiddleware,
   createToolRegistry,
+  createToolPermissionPreset,
+  createToolTestFixture,
   createTextMessage,
   createUIMessageJsonResponse,
   createUIMessageLinesResponse,
@@ -33,9 +45,13 @@ import {
   googleSearchTool,
   googleUrlContextTool,
   hostedTool,
+  inspectToolRegistry,
+  inspectProviderAgentSupport,
   isHostedToolClass,
+  createHttpTool,
   createMcpToolRegistry,
   streamObject,
+  streamAgent,
   streamText,
   system,
   toSSEResponse,
@@ -44,13 +60,19 @@ import {
   toUIMessageStream,
   toUIMessageStreamResponse,
   wrapLanguageModel,
+  recordToolTestFixture,
+  renderProviderSupportMatrix,
+  runAgent,
+  runToolTestFixture,
   tool,
+  testToolDefinition,
+  testToolRegistry,
   uploadFile,
   predictRaw,
   toToolSet,
   user
 } from "../src/index.js";
-import type { EmbeddingModel, ImageGenerationModel, LanguageModel, MusicGenerationModel, PredictionModel, ProviderAdapter, StreamEvent, ToolSet, VideoGenerationModel } from "../src/index.js";
+import type { AgentRunState, EmbeddingModel, ImageGenerationModel, LanguageModel, MusicGenerationModel, PredictionModel, ProviderAdapter, StreamEvent, ToolSet, VideoGenerationModel } from "../src/index.js";
 import { UnsupportedFeatureError, ValidationError } from "../src/index.js";
 
 const createLanguageModel = (overrides?: Partial<LanguageModel>): LanguageModel => ({
@@ -119,6 +141,28 @@ describe("core helpers", () => {
 
     expect(result.text).toBe("hello world");
     expect(result.messages.at(-1)?.role).toBe("assistant");
+  });
+
+  it("returns only newly generated text when input messages include assistant history", async () => {
+    const result = await generateText({
+      model: createLanguageModel({
+        async generate() {
+          return {
+            messages: [createTextMessage("assistant", "new answer")],
+            text: "new answer",
+            finishReason: "stop"
+          };
+        }
+      }),
+      messages: [
+        createTextMessage("user", "Earlier question"),
+        createTextMessage("assistant", "earlier answer"),
+        createTextMessage("user", "Follow up")
+      ]
+    });
+
+    expect(result.text).toBe("new answer");
+    expect(result.messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
   });
 
   it("passes reasoning config to the common request", async () => {
@@ -332,6 +376,723 @@ describe("core helpers", () => {
     expect(merged.has("weather")).toBe(true);
     expect(merged.has("web")).toBe(true);
     expect(Object.keys(toToolSet(merged) ?? {})).toEqual(["weather", "web"]);
+  });
+
+  it("creates standalone subagent tools", async () => {
+    const subagentTool = createSubAgentTool({
+      agent: createAgent({
+        id: "helper",
+        model: createLanguageModel({
+          async generate() {
+            return {
+              messages: [createTextMessage("assistant", "subagent output")],
+              text: "subagent output"
+            };
+          }
+        })
+      }),
+      parentRunId: "parent-run",
+      name: "helper"
+    });
+
+    const output = await subagentTool.execute({ prompt: "help" });
+
+    expect(subagentTool.metadata).toMatchObject({ type: "subagent", parentRunId: "parent-run" });
+    expect(output).toMatchObject({
+      agentId: "helper",
+      parentRunId: "parent-run",
+      status: "completed",
+      outputText: "subagent output"
+    });
+  });
+
+  it("creates advanced tool registries with audit metadata and compatible tool sets", () => {
+    const weather = tool({
+      name: "weather",
+      schema: z.object({ city: z.string() }),
+      execute: ({ city }) => ({ city, forecast: "sunny" })
+    });
+    const registry = createAdvancedToolRegistry()
+      .register({
+        tool: weather,
+        source: "local",
+        permissions: ["read"],
+        audit: {
+          displayName: "Weather lookup",
+          riskLevel: "low",
+          owner: "sdk",
+          labels: ["test"]
+        }
+      })
+      .tool;
+
+    const advanced = createAdvancedToolRegistry([
+      {
+        tool: registry,
+        source: "local",
+        permissions: ["read"],
+        audit: { riskLevel: "low" }
+      },
+      {
+        tool: hostedTool({
+          name: "web",
+          provider: "openai",
+          type: "web_search"
+        }),
+        source: "hosted",
+        permissions: ["network"],
+        audit: { riskLevel: "medium" }
+      },
+      createHttpTool({
+        name: "notify",
+        schema: z.object({ message: z.string() }),
+        url: "https://example.com/notify"
+      })
+    ]);
+
+    const toolSet = advanced.toToolSet();
+    expect(toolSet.weather?.metadata?.advancedRegistry).toEqual({
+      source: "local",
+      permissions: ["read"],
+      audit: { riskLevel: "low" }
+    });
+    expect(toolSet.weather?.requiresApproval).toBe(false);
+    expect(toolSet.notify?.requiresApproval).toBe(true);
+    expect(toolSet.web?.metadata?.advancedRegistry).toMatchObject({
+      source: "hosted",
+      permissions: ["network"]
+    });
+  });
+
+  it("creates safety approval policies from presets and tool metadata", async () => {
+    const normal = tool({
+      name: "weather",
+      schema: z.object({ city: z.string() }),
+      execute: ({ city }) => ({ city, forecast: "sunny" })
+    });
+    const risky = createAdvancedToolRegistry()
+      .register({
+        tool: tool({
+          name: "deploy",
+          schema: z.object({ target: z.string() }),
+          execute: ({ target }) => ({ target, deployed: true })
+        }),
+        permissions: ["external-side-effect"],
+        audit: { riskLevel: "high" }
+      })
+      .tool;
+    const policy = createApprovalPolicy({ preset: "review-sensitive" });
+
+    const baseRequest = {
+      toolCall: { id: "call", name: "weather", input: { city: "Madrid" } },
+      input: { city: "Madrid" },
+      step: 1,
+      model: createLanguageModel()
+    };
+
+    await expect(Promise.resolve(policy({ ...baseRequest, tool: normal }))).resolves.toMatchObject({ approved: true });
+    await expect(Promise.resolve(policy({ ...baseRequest, toolCall: { id: "call", name: "deploy", input: { target: "prod" } }, tool: risky }))).resolves.toMatchObject({
+      approved: false
+    });
+    await expect(Promise.resolve(createApprovalPolicy({ preset: "permissive" })({ ...baseRequest, tool: risky }))).resolves.toMatchObject({
+      approved: true
+    });
+    await expect(Promise.resolve(createApprovalPolicy({ preset: "locked-down" })({ ...baseRequest, tool: normal }))).resolves.toMatchObject({
+      approved: false
+    });
+  });
+
+  it("redacts common secrets in messages and json metadata", () => {
+    const redaction = createRedactionPolicy({ includeEmails: true });
+    const messages = redaction.redactMessages([
+      user("Bearer abcdefghijklmnop and mike@example.com"),
+      user([{ type: "text", text: "api_key=sk_test_1234567890" }])
+    ]);
+
+    expect(messages[0]?.parts[0]).toMatchObject({ type: "text", text: "[REDACTED] and [REDACTED]" });
+    expect(messages[1]?.parts[0]).toMatchObject({ type: "text", text: "[REDACTED]" });
+    expect(redaction.redactJson({ nested: { token: "Bearer abcdefghijklmnop" } })).toEqual({
+      nested: { token: "[REDACTED]" }
+    });
+  });
+
+  it("applies budget guards to agent output", async () => {
+    const agent = applySafetyPolicyToAgent(
+      createAgent({
+        model: createLanguageModel({
+          async generate() {
+            return {
+              messages: [createTextMessage("assistant", "expensive")],
+              text: "expensive",
+              usage: { inputTokens: 2, outputTokens: 2, totalTokens: 4 }
+            };
+          }
+        })
+      }),
+      createSafetyPolicy({
+        approval: false,
+        redaction: false,
+        budget: createBudgetGuard({ maxTotalTokens: 1 })
+      })
+    );
+
+    const result = await runAgent(agent, { prompt: "hello" });
+
+    expect(result.status).toBe("failed");
+    expect(result.error?.message).toContain("maxTotalTokens limit 1");
+  });
+
+  it("applies budget guards across parent and child runs by default", () => {
+    const state = {
+      schemaVersion: 1,
+      runId: "parent",
+      provider: "test",
+      modelId: "model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [{ toolCallId: "parent-tool", toolName: "parent", isError: true }],
+      currentStep: 1,
+      maxSteps: 5,
+      outputText: "",
+      usage: { totalTokens: 4 },
+      pendingApprovals: [],
+      childRuns: [
+        {
+          runId: "child",
+          parentRunId: "parent",
+          status: "completed",
+          outputText: "child",
+          steps: 2,
+          toolCalls: 3,
+          toolErrors: 1,
+          usage: { totalTokens: 8 }
+        }
+      ]
+    } satisfies AgentRunState;
+
+    const stepGuard = createBudgetGuard({ maxSteps: 2 });
+    const toolGuard = createBudgetGuard({ maxToolCalls: 2 });
+    const errorGuard = createBudgetGuard({ maxToolErrors: 1 });
+    const tokenGuard = createBudgetGuard({ maxTotalTokens: 10 });
+
+    expect(stepGuard.outputGuardrail({ runId: "parent", state, output: { usage: state.usage } as never })?.reason).toContain("including child runs");
+    expect(toolGuard.outputGuardrail({ runId: "parent", state, output: { usage: state.usage } as never })?.metadata).toMatchObject({
+      budgetLimit: "maxToolCalls",
+      actual: 3,
+      includeChildRuns: true
+    });
+    expect(errorGuard.outputGuardrail({ runId: "parent", state, output: { usage: state.usage } as never })?.metadata).toMatchObject({
+      budgetLimit: "maxToolErrors",
+      actual: 2
+    });
+    expect(tokenGuard.outputGuardrail({ runId: "parent", state, output: { usage: state.usage } as never })?.metadata).toMatchObject({
+      budgetLimit: "maxTotalTokens",
+      actual: 12
+    });
+  });
+
+  it("can evaluate budget guards against the parent run only", () => {
+    const state = {
+      schemaVersion: 1,
+      runId: "parent",
+      provider: "test",
+      modelId: "model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 1,
+      maxSteps: 5,
+      outputText: "",
+      usage: { totalTokens: 4 },
+      pendingApprovals: [],
+      childRuns: [
+        {
+          runId: "child",
+          parentRunId: "parent",
+          status: "completed",
+          outputText: "child",
+          steps: 5,
+          toolCalls: 5,
+          toolErrors: 5,
+          usage: { totalTokens: 100 }
+        }
+      ]
+    } satisfies AgentRunState;
+
+    const guard = createBudgetGuard({ maxTotalTokens: 10, includeChildRuns: false });
+
+    expect(guard.outputGuardrail({ runId: "parent", state, output: { usage: state.usage } as never })).toBeUndefined();
+  });
+
+  it("blocks sensitive tools when an agent uses review-sensitive safety policy", async () => {
+    let calls = 0;
+    const agent = applySafetyPolicyToAgent(
+      createAgent({
+        model: createLanguageModel({
+          async generate() {
+            calls += 1;
+            if (calls === 1) {
+              return {
+                messages: [
+                  {
+                    role: "assistant",
+                    parts: [{ type: "tool-call", toolCall: { id: "tool-1", name: "deploy", input: { target: "prod" } } }]
+                  }
+                ],
+                finishReason: "tool-calls"
+              };
+            }
+            return { messages: [createTextMessage("assistant", "done")], text: "done" };
+          }
+        }),
+        tools: createAdvancedToolRegistry([
+          {
+            tool: tool({
+              name: "deploy",
+              schema: z.object({ target: z.string() }),
+              execute: ({ target }) => ({ target, ok: true })
+            }),
+            permissions: ["external-side-effect"],
+            audit: { riskLevel: "high" }
+          }
+        ])
+      }),
+      createSafetyPolicy({ preset: "review-sensitive", redaction: false })
+    );
+
+    const result = await runAgent(agent, { prompt: "deploy", maxSteps: 2 });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolResults).toHaveLength(1);
+    expect(result.toolResults[0]).toMatchObject({ isError: true, toolName: "deploy" });
+    expect(result.toolResults[0]?.error?.message).toContain("requires approval");
+  });
+
+  it("streams a failed agent finish event when a safety budget guard triggers", async () => {
+    const agent = applySafetyPolicyToAgent(
+      createAgent({
+        model: createLanguageModel({
+          async stream() {
+            return (async function* (): AsyncGenerator<StreamEvent> {
+              yield { type: "text-delta", textDelta: "hello" };
+              yield { type: "finish", finishReason: "stop", usage: { totalTokens: 9 } };
+            })();
+          }
+        })
+      }),
+      createSafetyPolicy({
+        approval: false,
+        redaction: false,
+        budget: { maxTotalTokens: 1 }
+      })
+    );
+
+    const result = streamAgent(agent, { prompt: "hello" });
+    const events = [];
+    for await (const event of result.eventStream) {
+      events.push(event);
+    }
+    const final = await result.collect();
+
+    expect(final.status).toBe("failed");
+    expect(events.at(-1)).toMatchObject({ type: "agent-run-finish", status: "failed" });
+  });
+
+  it("inspects provider agent support and creates a serializable support matrix", () => {
+    const model = createLanguageModel({
+      provider: "openai",
+      modelId: "gpt-test",
+      capabilities: {
+        ...createLanguageModel().capabilities,
+        reasoning: true,
+        webSearch: true,
+        realtime: {
+          sessions: true,
+          audioInput: true,
+          audioOutput: true,
+          imageInput: false,
+          tools: true,
+          browserTokens: true
+        },
+        agentCapabilities: {
+          supportTier: "tier-a",
+          toolChoiceNone: true,
+          approvalRequests: true,
+          hostedWebSearch: true,
+          hostedFileSearch: false,
+          remoteMcp: true,
+          computerUse: false,
+          codeExecution: true,
+          shell: true,
+          applyPatch: true,
+          toolSearch: true,
+          webExtraction: false,
+          skills: false,
+          toolsets: true
+        }
+      }
+    });
+
+    expect(inspectProviderAgentSupport(model)).toMatchObject({
+      provider: "openai",
+      modelId: "gpt-test",
+      agentTier: "tier-a",
+      portableToolLoop: true,
+      approvalReady: true,
+      hostedTools: true,
+      remoteMcp: true,
+      codeExecution: true,
+      shell: true,
+      realtime: true,
+      reasoning: true,
+      embeddings: false,
+      audioInput: false,
+      audioOutput: false,
+      browserTokens: true,
+      structuredOutputSummary: "native",
+      reasoningSummary: "yes",
+      hostedToolSummary: "web search, remote MCP, code execution, shell, apply patch, tool search, toolsets"
+    });
+    expect(createProviderSupportMatrix([{ provider: "OpenAI", model }])).toEqual({
+      entries: [
+        expect.objectContaining({
+          provider: "OpenAI",
+          modelId: "gpt-test",
+          agentTier: "tier-a",
+          browserTokens: true
+        })
+      ]
+    });
+    expect(JSON.parse(JSON.stringify(createProviderSupportMatrix([model])))).toEqual(createProviderSupportMatrix([model]));
+  });
+
+  it("renders provider support matrices and reports drift", () => {
+    const model = createLanguageModel({
+      provider: "openai",
+      modelId: "gpt-test",
+      capabilities: {
+        ...createLanguageModel().capabilities,
+        embeddings: true,
+        reasoning: true,
+        webSearch: true,
+        audioInput: true,
+        audioOutput: false,
+        realtime: {
+          sessions: true,
+          audioInput: true,
+          audioOutput: false,
+          imageInput: false,
+          tools: true,
+          browserTokens: true
+        },
+        agentCapabilities: {
+          supportTier: "tier-a",
+          toolChoiceNone: true,
+          approvalRequests: true,
+          hostedWebSearch: true,
+          hostedFileSearch: false,
+          remoteMcp: true,
+          computerUse: false,
+          codeExecution: false,
+          shell: false,
+          applyPatch: false,
+          toolSearch: false,
+          webExtraction: false,
+          skills: false,
+          toolsets: false
+        }
+      }
+    });
+    const matrix = createProviderSupportMatrix([
+      {
+        provider: "OpenAI",
+        model,
+        summary: {
+          structuredOutputSummary: "native",
+          reasoningSummary: "`effort`",
+          hostedToolSummary: "remote MCP"
+        }
+      }
+    ]);
+
+    expect(renderProviderSupportMatrix(matrix)).toContain(
+      "| OpenAI | yes | yes | yes | native | yes | yes | no | yes | yes | `effort` | yes | remote MCP | Tier A |"
+    );
+
+    const providerOnlyReport = createProviderSupportDriftReport(matrix, {
+      entries: [
+        {
+          provider: "OpenAI",
+          agentTier: "tier-a",
+          browserTokens: true
+        }
+      ]
+    });
+    expect(providerOnlyReport).toEqual({
+      ok: true,
+      missing: [],
+      unexpected: [],
+      changed: []
+    });
+
+    const drift = createProviderSupportDriftReport(matrix, {
+      entries: [
+        {
+          provider: "OpenAI",
+          modelId: "gpt-test",
+          reasoning: false
+        },
+        {
+          provider: "Anthropic"
+        }
+      ]
+    });
+
+    expect(drift.ok).toBe(false);
+    expect(drift.changed).toEqual([
+      {
+        provider: "OpenAI",
+        modelId: "gpt-test",
+        field: "reasoning",
+        expected: false,
+        actual: true
+      }
+    ]);
+    expect(drift.missing).toEqual([{ provider: "Anthropic", modelId: undefined }]);
+    expect(drift.unexpected).toEqual([]);
+    expect(JSON.parse(JSON.stringify(drift))).toEqual(drift);
+  });
+
+  it("rejects duplicate advanced registry tool names", () => {
+    const registry = createAdvancedToolRegistry({
+      weather: tool({
+        name: "weather",
+        schema: z.object({ city: z.string() }),
+        execute: ({ city }) => ({ city })
+      })
+    });
+
+    expect(() =>
+      registry.register(
+        tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      )
+    ).toThrow(ValidationError);
+  });
+
+  it("executes HTTP tools through fetch", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url, init) => {
+      requests.push({ url: String(url), init });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }) as typeof fetch;
+
+    try {
+      const entry = createHttpTool({
+        name: "remoteWeather",
+        schema: z.object({ city: z.string() }),
+        url: "https://example.com/weather",
+        headers: { authorization: "Bearer test" }
+      });
+      const result = await testToolDefinition(entry.tool, { city: "Madrid" });
+
+      expect(result).toMatchObject({
+        ok: true,
+        toolName: "remoteWeather",
+        output: { ok: true }
+      });
+      expect(requests[0]?.url).toBe("https://example.com/weather");
+      expect(requests[0]?.init?.method).toBe("POST");
+      expect(requests[0]?.init?.body).toBe(JSON.stringify({ city: "Madrid" }));
+      expect((requests[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer test");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("tests tool definitions and registries with normalized results", async () => {
+    const registry = createAdvancedToolRegistry({
+      echo: tool({
+        name: "echo",
+        schema: z.object({ message: z.string() }),
+        execute: ({ message }) => ({ message })
+      }),
+      fail: tool({
+        name: "fail",
+        schema: z.object({ message: z.string() }),
+        execute: () => {
+          throw new Error("boom");
+        }
+      })
+    });
+
+    await expect(testToolDefinition(registry.toToolSet().echo!, { nope: true })).resolves.toMatchObject({
+      ok: false,
+      toolName: "echo"
+    });
+    const results = await testToolRegistry(registry, [
+      { toolName: "echo", input: { message: "hello" } },
+      { toolName: "fail", input: { message: "hello" } },
+      { toolName: "missing", input: {} }
+    ]);
+
+    expect(results).toEqual([
+      { ok: true, toolName: "echo", output: { message: "hello" } },
+      { ok: false, toolName: "fail", error: { message: "boom" } },
+      { ok: false, toolName: "missing", error: { message: 'Tool "missing" is not registered.' } }
+    ]);
+  });
+
+  it("records and replays experimental tool fixtures", async () => {
+    const registry = createAdvancedToolRegistry({
+      echo: tool({
+        name: "echo",
+        schema: z.object({ message: z.string() }),
+        execute: ({ message }) => ({ message })
+      }),
+      fail: tool({
+        name: "fail",
+        schema: z.object({ message: z.string() }),
+        execute: () => {
+          throw new Error("fixture boom");
+        }
+      })
+    });
+
+    const fixture = await recordToolTestFixture(
+      registry,
+      [
+        { toolName: "echo", input: { message: "hello" } },
+        { toolName: "fail", input: { message: "hello" } }
+      ],
+      { name: "tool-fixture", createdAt: 1 }
+    );
+
+    expect(fixture).toEqual({
+      name: "tool-fixture",
+      cases: [
+        { toolName: "echo", input: { message: "hello" }, expectedOutput: { message: "hello" } },
+        { toolName: "fail", input: { message: "hello" }, expectedErrorContains: "fixture boom" }
+      ],
+      metadata: undefined,
+      createdAt: 1
+    });
+
+    const result = await runToolTestFixture(registry, fixture);
+    expect(result.ok).toBe(true);
+    expect(result.cases.map((testCase) => testCase.ok)).toEqual([true, true]);
+    expect(JSON.parse(JSON.stringify(fixture))).toEqual(fixture);
+  });
+
+  it("reports failing tool fixture expectations", async () => {
+    const registry = createAdvancedToolRegistry({
+      echo: tool({
+        name: "echo",
+        schema: z.object({ message: z.string() }),
+        execute: ({ message }) => ({ message })
+      })
+    });
+    const fixture = createToolTestFixture({
+      createdAt: 1,
+      cases: [
+        {
+          toolName: "echo",
+          input: { message: "hello" },
+          expectedOutput: { message: "different" }
+        }
+      ]
+    });
+
+    const result = await runToolTestFixture(registry, fixture);
+
+    expect(result.ok).toBe(false);
+    expect(result.cases[0]?.failures[0]).toContain("did not match fixture");
+  });
+
+  it("creates permission presets and inspects advanced registries", () => {
+    const preset = createToolPermissionPreset("filesystem-write");
+    const registry = createAdvancedToolRegistry([
+      {
+        tool: tool({
+          name: "write_file",
+          schema: z.object({ path: z.string() }),
+          execute: ({ path }) => ({ path })
+        }),
+        ...preset
+      },
+      {
+        tool: hostedTool({
+          name: "web",
+          provider: "openai",
+          type: "web_search"
+        }),
+        source: "hosted",
+        ...createToolPermissionPreset("network-read")
+      },
+      createHttpTool({
+        name: "notify",
+        schema: z.object({ message: z.string() }),
+        url: "https://example.com/notify"
+      })
+    ]);
+
+    const inspection = inspectToolRegistry(registry);
+
+    expect(inspection.tools).toEqual([
+      expect.objectContaining({
+        name: "write_file",
+        kind: "callable",
+        permissions: ["read", "write", "filesystem"],
+        requiresApproval: true,
+        audit: expect.objectContaining({ riskLevel: "high" })
+      }),
+      expect.objectContaining({
+        name: "web",
+        kind: "hosted",
+        source: "hosted",
+        permissions: ["read", "network"]
+      }),
+      expect.objectContaining({
+        name: "notify",
+        source: "http",
+        permissions: ["network", "external-side-effect"],
+        requiresApproval: true
+      })
+    ]);
+  });
+
+  it("uses advanced registry tool sets with generateText", async () => {
+    let seenTools: ToolSet | undefined;
+    const registry = createAdvancedToolRegistry({
+      weather: tool({
+        name: "weather",
+        schema: z.object({ city: z.string() }),
+        execute: ({ city }) => ({ city, forecast: "sunny" })
+      })
+    });
+
+    const result = await generateText({
+      model: createLanguageModel({
+        async generate(input) {
+          seenTools = input.tools;
+          return { messages: [createTextMessage("assistant", "done")], text: "done" };
+        }
+      }),
+      prompt: "Weather?",
+      tools: registry.toToolSet()
+    });
+
+    expect(result.text).toBe("done");
+    expect(seenTools?.weather).toMatchObject({ name: "weather" });
   });
 
   it("creates MCP tool registries from an MCP client", async () => {

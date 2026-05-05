@@ -1,0 +1,59 @@
+{
+  "agentSession": {
+    "appName": "compat-app",
+    "userId": "compat-user",
+    "sessionId": "compat-session",
+    "metadata": { "source": "fixture" },
+    "state": { "phase": "legacy" },
+    "events": [],
+    "createdAt": 1000,
+    "updatedAt": 1000
+  },
+  "artifactRecord": {
+    "id": "compat-artifact",
+    "appName": "compat-app",
+    "userId": "compat-user",
+    "sessionId": "compat-session",
+    "name": "compat.json",
+    "contentType": "application/json",
+    "data": { "ok": true },
+    "encoding": "json",
+    "storageMode": "json",
+    "createdAt": 1000,
+    "updatedAt": 1000
+  },
+  "workflowRunState": {
+    "workflowId": "compat-workflow",
+    "runId": "compat-run",
+    "userId": "compat-user",
+    "sessionId": "compat-session",
+    "status": "completed",
+    "outputs": { "answer": "ok" },
+    "steps": [],
+    "currentStepIndex": 1,
+    "createdAt": 1000,
+    "updatedAt": 1000
+  },
+  "workflowStateRecord": {
+    "appName": "compat-app",
+    "userId": "compat-user",
+    "sessionId": "compat-session",
+    "workflowKey": "compat-workflow",
+    "state": {
+      "workflowId": "compat-workflow",
+      "runId": "compat-run",
+      "userId": "compat-user",
+      "sessionId": "compat-session",
+      "status": "completed",
+      "outputs": { "answer": "ok" },
+      "steps": [],
+      "currentStepIndex": 1,
+      "createdAt": 1000,
+      "updatedAt": 1000
+    },
+    "status": "completed",
+    "runId": "compat-run",
+    "createdAt": 1000,
+    "updatedAt": 1000
+  }
+}

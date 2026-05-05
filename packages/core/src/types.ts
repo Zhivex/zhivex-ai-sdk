@@ -999,9 +999,26 @@ export interface GenerateTextOutput {
   toolResults: ToolExecutionResult[];
 }
 
-export type AgentStatus = "running" | "completed" | "suspended" | "failed" | "cancelled";
+export type AgentStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  /**
+   * @deprecated Use "waiting_approval". Kept for legacy persisted run states.
+   */
+  | "suspended"
+  | "waiting_approval"
+  | "cancel_requested"
+  | "failed"
+  | "cancelled"
+  | "timed_out";
 
-export type AgentStepStatus = "running" | "completed" | "suspended" | "failed";
+export type AgentStepStatus = "running" | "completed" | "suspended" | "waiting_approval" | "failed";
+
+export interface AgentRunPolicy {
+  timeoutMs?: number;
+  onTimeout?: "fail" | "cancel-requested";
+}
 
 export interface AgentStepRequest {
   messages: ModelMessage[];
@@ -1037,8 +1054,29 @@ export interface AgentStep {
   };
 }
 
-export interface AgentRunState {
+export interface AgentChildRun {
   runId: string;
+  agentId?: string;
+  parentRunId?: string;
+  toolName?: string;
+  status: AgentStatus;
+  outputText: string;
+  steps: number;
+  toolCalls: number;
+  toolErrors: number;
+  usage?: TokenUsage;
+  startedAt?: number;
+  updatedAt?: number;
+  error?: {
+    message: string;
+  };
+  metadata?: Record<string, JsonValue>;
+}
+
+export interface AgentRunState {
+  schemaVersion: 1;
+  runId: string;
+  idempotencyKey?: string;
   agentId?: string;
   parentRunId?: string;
   provider: string;
@@ -1054,10 +1092,13 @@ export interface AgentRunState {
   providerFinishReason?: string;
   usage?: TokenUsage;
   pendingApprovals: AgentApprovalRequest[];
+  childRuns?: AgentChildRun[];
   metadata?: Record<string, JsonValue>;
   handoff?: AgentHandoff;
   startedAt?: number;
   updatedAt?: number;
+  cancelledAt?: number;
+  cancellationReason?: string;
   error?: {
     message: string;
   };
@@ -1065,8 +1106,21 @@ export interface AgentRunState {
 
 export interface AgentRunStore {
   load(runId: string): Promise<AgentRunState | undefined> | AgentRunState | undefined;
+  findByIdempotencyKey?(idempotencyKey: string): Promise<AgentRunState | undefined> | AgentRunState | undefined;
+  findByParentRunId?(parentRunId: string): Promise<AgentRunState[]> | AgentRunState[];
   save(state: AgentRunState): Promise<void> | void;
   delete?(runId: string): Promise<void> | void;
+}
+
+export interface AgentRunCancellationOptions {
+  reason?: string;
+  cascade?: boolean;
+  mode?: "request" | "final";
+}
+
+export interface AgentRunTreeCancellationResult {
+  parent?: AgentRunState;
+  children: AgentRunState[];
 }
 
 export interface AgentMemoryContext {
@@ -1084,6 +1138,7 @@ export interface AgentMemoryStore {
 export interface SqliteStatementLike<TResult extends Record<string, unknown> = Record<string, unknown>> {
   run(params?: readonly unknown[] | Record<string, unknown>): unknown;
   get(params?: readonly unknown[] | Record<string, unknown>): TResult | undefined;
+  all?(params?: readonly unknown[] | Record<string, unknown>): TResult[];
 }
 
 export interface SqliteDatabaseLike {
@@ -1243,6 +1298,21 @@ export interface AgentTelemetryHandoffEvent {
   handoff: AgentHandoff;
 }
 
+export interface AgentTelemetrySubAgentStartEvent {
+  type: "subagent-start";
+  runId: string;
+  agentId?: string;
+  childAgentId?: string;
+  toolName: string;
+}
+
+export interface AgentTelemetrySubAgentFinishEvent {
+  type: "subagent-finish";
+  runId: string;
+  agentId?: string;
+  childRun: AgentChildRun;
+}
+
 export interface AgentTelemetryRunFinishEvent {
   type: "run-finish";
   runId: string;
@@ -1262,6 +1332,8 @@ export type AgentTelemetryEvent =
   | AgentTelemetryGuardrailTriggeredEvent
   | AgentTelemetryStateSavedEvent
   | AgentTelemetryHandoffEvent
+  | AgentTelemetrySubAgentStartEvent
+  | AgentTelemetrySubAgentFinishEvent
   | AgentTelemetryRunFinishEvent;
 
 export type AgentTelemetryObserver = (
@@ -1282,6 +1354,8 @@ export interface AgentDefinition<TModel extends LanguageModel = LanguageModel> {
   inputGuardrails?: AgentInputGuardrail[];
   outputGuardrails?: AgentOutputGuardrail[];
   providerOptions?: ProviderOptionsOf<TModel>;
+  subagents?: AgentSubAgentDefinition[];
+  policy?: AgentRunPolicy;
   metadata?: Record<string, JsonValue>;
   store?: AgentRunStore;
   memory?: AgentMemoryStore;
@@ -1325,9 +1399,11 @@ export interface AgentApprovalResponse {
 export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryOptions &
   GenerateInputSource & {
     runId?: string;
+    idempotencyKey?: string;
     state?: AgentRunState;
     approvals?: AgentApprovalResponse[];
     handoff?: AgentHandoff;
+    parentRunId?: string;
     system?: string;
     tools?: ToolCollection;
     toolChoice?: ToolChoice;
@@ -1338,6 +1414,7 @@ export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryO
     maxTokens?: number;
     reasoning?: ReasoningConfig;
     providerOptions?: ProviderOptionsOf<TModel>;
+    policy?: AgentRunPolicy;
     metadata?: Record<string, JsonValue>;
   };
 
@@ -1354,6 +1431,66 @@ export interface AgentRunOutput {
   error?: {
     message: string;
   };
+}
+
+export interface AgentSubAgentDefinition<TModel extends LanguageModel = LanguageModel> {
+  agent: AgentDefinition<TModel>;
+  name?: string;
+  description?: string;
+  maxSteps?: number;
+  system?: string;
+  metadata?: Record<string, JsonValue>;
+  requiresApproval?: boolean;
+}
+
+export interface SubAgentToolInput {
+  prompt: string;
+  system?: string;
+}
+
+export type SubAgentToolOutput = Record<string, JsonValue>;
+
+export interface CreateSubAgentToolOptions<TModel extends LanguageModel = LanguageModel> extends AgentSubAgentDefinition<TModel> {
+  parentRunId?: string;
+  parentAgentId?: string;
+  toolName?: string;
+  onStart?: (request: { toolName: string; childAgentId?: string; parentRunId?: string }) => void | Promise<void>;
+  onFinish?: (childRun: AgentChildRun) => void | Promise<void>;
+}
+
+export interface AgentGroupMember<TModel extends LanguageModel = LanguageModel> {
+  name?: string;
+  agent: AgentDefinition<TModel>;
+  input?: AgentRunInput<TModel>;
+}
+
+export type AgentGroupRunInput<TModel extends LanguageModel = LanguageModel> = AgentRunInput<TModel> & {
+  stopOnError?: boolean;
+};
+
+export interface AgentGroupMemberResult {
+  name?: string;
+  agentId?: string;
+  status: "fulfilled" | "rejected";
+  output?: AgentRunOutput;
+  error?: {
+    message: string;
+  };
+}
+
+export interface AgentGroupRunOutput {
+  status: "completed" | "failed";
+  parentRunId?: string;
+  outputs: AgentGroupMemberResult[];
+}
+
+export interface PrepareSubagentsForAgentOptions {
+  store?: AgentRunStore;
+  memory?: AgentMemoryStore;
+  onTelemetryEvent?: AgentTelemetryObserver;
+  toolApprovalPolicy?: ToolApprovalPolicy;
+  toolExecution?: ToolExecutionOptions;
+  metadata?: Record<string, JsonValue>;
 }
 
 export type LiveAgentRunInput = GenerateInputSource &

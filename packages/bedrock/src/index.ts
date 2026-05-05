@@ -16,6 +16,7 @@ import {
   UnsupportedFeatureError,
   ValidationError,
   createProviderAdapter,
+  createMcpToolSet,
   hostedTool,
   normalizeFinishReason,
   providerDataPart,
@@ -26,11 +27,18 @@ import {
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
+  type McpCallToolRequest,
+  type McpCallToolResponse,
+  type McpClient,
+  type McpListedTool,
+  type McpListToolsResponse,
+  type McpToolSetOptions,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
   type ProviderAdapter,
-  type StreamEvent
+  type StreamEvent,
+  type ToolSet
 } from "@zhivex-ai/core";
 
 export interface BedrockProviderOptions {
@@ -56,9 +64,49 @@ export interface BedrockServerToolConfig {
   name: string;
   type: string;
   config?: JsonValue;
-  toolClass?: "web-search" | "code-execution" | "custom";
+  toolClass?: "web-search" | "code-execution" | "remote-mcp" | "custom";
   requiresApproval?: boolean;
 }
+
+export interface BedrockWebSearchToolConfig {
+  type?: "web_search";
+  search_context_size?: "small" | "medium" | "large" | "low" | "high";
+}
+
+export interface BedrockCodeExecutionToolConfig {
+  container?: string | { type: "auto"; memory_limit?: "1g" | "4g" | "16g" | "64g"; file_ids?: string[] };
+}
+
+export interface BedrockRemoteMcpToolConfig {
+  server_label?: string;
+  server_url: string;
+  server_description?: string;
+  headers?: Record<string, string>;
+  authorization?: string;
+  require_approval?: "never" | "always" | Record<string, JsonValue>;
+  allowed_tools?: string[] | Record<string, JsonValue>;
+}
+
+export interface BedrockMcpApprovalResponse {
+  approval_request_id: string;
+  approve: boolean;
+  id?: string;
+  reason?: string;
+}
+
+export interface BedrockAgentCoreMcpClientOptions {
+  runtimeArn?: string;
+  endpoint?: string;
+  region?: string;
+  qualifier?: string;
+  bearerToken?: string;
+  authorization?: string;
+  headers?: Record<string, string>;
+  sessionId?: string;
+  fetch?: typeof globalThis.fetch;
+}
+
+export type BedrockAgentCoreMcpToolSetOptions = BedrockAgentCoreMcpClientOptions;
 
 const capabilities: ModelCapabilities = {
   streaming: true,
@@ -92,16 +140,74 @@ const openAICompatibleCapabilities: ModelCapabilities = {
   reasoning: true,
   webSearch: true,
   agentCapabilities: {
-    supportTier: "tier-b",
+    supportTier: "tier-a",
     toolChoiceNone: true,
-    approvalRequests: false,
+    approvalRequests: true,
     hostedWebSearch: true,
     hostedFileSearch: false,
-    remoteMcp: false,
+    remoteMcp: true,
     computerUse: false,
     codeExecution: true,
     toolsets: false
   }
+};
+
+const getHeader = (headers: Headers, name: string) => headers.get(name) ?? headers.get(name.toLowerCase());
+
+const parseAgentCoreRegion = (runtimeArn: string) => runtimeArn.split(":")[3];
+
+const createBedrockAgentCoreMcpEndpoint = (options: BedrockAgentCoreMcpClientOptions) => {
+  if (options.endpoint) {
+    return options.endpoint;
+  }
+
+  if (!options.runtimeArn) {
+    throw new ConfigurationError("Missing Bedrock AgentCore MCP endpoint or runtime ARN.");
+  }
+
+  const region = options.region ?? parseAgentCoreRegion(options.runtimeArn);
+  if (!region) {
+    throw new ConfigurationError("Missing AWS region for Bedrock AgentCore MCP runtime.");
+  }
+
+  const qualifier = options.qualifier ?? "DEFAULT";
+  const encodedArn = encodeURIComponent(options.runtimeArn);
+  return `https://bedrock-agentcore.${region}.amazonaws.com/runtimes/${encodedArn}/invocations?qualifier=${encodeURIComponent(
+    qualifier
+  )}`;
+};
+
+const parseMcpHttpResponse = async (response: Response): Promise<Record<string, unknown>> => {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("text/event-stream")) {
+    for await (const event of streamSSE(response)) {
+      if (event.data === "[DONE]") {
+        break;
+      }
+      const data = event.data.trim();
+      if (data) {
+        return JSON.parse(data) as Record<string, unknown>;
+      }
+    }
+    throw new ProviderHTTPError("Bedrock AgentCore MCP response did not include a JSON-RPC payload.", response.status);
+  }
+
+  return (await response.json()) as Record<string, unknown>;
+};
+
+const requireJsonRpcResult = <T>(json: Record<string, unknown>, method: string): T => {
+  if (json.error && typeof json.error === "object") {
+    const error = json.error as { message?: string; code?: number };
+    throw new ProviderHTTPError(
+      `Bedrock AgentCore MCP ${method} failed: ${error.message ?? "JSON-RPC error"}.`,
+      typeof error.code === "number" ? error.code : 500,
+      {
+        responseBody: JSON.stringify(json)
+      }
+    );
+  }
+
+  return json.result as T;
 };
 
 const supportedImageFormats = new Set(["png", "jpeg", "gif", "webp"]);
@@ -279,6 +385,18 @@ const mapOpenAIToolOutput = (message: ModelMessage) =>
       output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
     }));
 
+const mapOpenAIProviderDataInput = (message: ModelMessage) =>
+  message.parts
+    .filter(
+      (part): part is Extract<ModelMessage["parts"][number], { type: "provider-data" }> =>
+        part.type === "provider-data" &&
+        part.provider === "bedrock" &&
+        part.data !== null &&
+        typeof part.data === "object" &&
+        (part.data as Record<string, unknown>).type === "mcp_approval_response"
+    )
+    .map((part) => part.data as Record<string, unknown>);
+
 const mapOpenAIInput = (messages: ModelMessage[]) => {
   const input: Array<Record<string, unknown>> = [];
 
@@ -287,6 +405,8 @@ const mapOpenAIInput = (messages: ModelMessage[]) => {
       input.push(...mapOpenAIToolOutput(message));
       continue;
     }
+
+    input.push(...mapOpenAIProviderDataInput(message));
 
     const content: Array<Record<string, unknown>> = [];
     for (const part of message.parts) {
@@ -312,6 +432,27 @@ const mapOpenAIInput = (messages: ModelMessage[]) => {
   }
 
   return input;
+};
+
+const getOpenAICompatibleResponseId = (messages: ModelMessage[]) => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const providerData = messages[index]?.parts.find(
+      (part) =>
+        part.type === "provider-data" &&
+        part.provider === "bedrock" &&
+        part.data !== null &&
+        typeof part.data === "object" &&
+        typeof (part.data as Record<string, unknown>).responseId === "string"
+    );
+    if (providerData?.type === "provider-data") {
+      return {
+        responseId: (providerData.data as { responseId: string }).responseId,
+        index
+      };
+    }
+  }
+
+  return undefined;
 };
 
 const mapOpenAITools = (tools: ModelGenerateInput["tools"]) =>
@@ -378,6 +519,14 @@ const parseOpenAICompatibleMessage = (json: any): ModelMessage => {
           input: JSON.parse(item.arguments ?? "{}")
         }
       });
+    }
+    if (
+      item.type &&
+      !["message", "function_call"].includes(item.type) &&
+      item.type !== "function_call_output" &&
+      typeof item === "object"
+    ) {
+      parts.push(providerDataPart("bedrock", item as JsonValue));
     }
   }
 
@@ -647,6 +796,11 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
   async generate(input: ModelGenerateInput<BedrockOpenAICompatibleLanguageModelOptions>): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
+      const previousResponse = getOpenAICompatibleResponseId(input.messages);
+      const messages =
+        previousResponse && previousResponse.index < input.messages.length - 1
+          ? input.messages.slice(previousResponse.index + 1)
+          : input.messages;
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/responses`, {
@@ -658,7 +812,8 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
             signal,
             body: JSON.stringify({
               model: this.modelId,
-              input: mapOpenAIInput(input.messages),
+              ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
+              input: mapOpenAIInput(messages),
               tools: mapOpenAITools(input.tools),
               tool_choice: mapOpenAIToolChoice(input.toolChoice),
               temperature: input.temperature,
@@ -699,6 +854,11 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
 
   async stream(input: ModelGenerateInput<BedrockOpenAICompatibleLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
+    const previousResponse = getOpenAICompatibleResponseId(input.messages);
+    const messages =
+      previousResponse && previousResponse.index < input.messages.length - 1
+        ? input.messages.slice(previousResponse.index + 1)
+        : input.messages;
     const response = await withRetry(
       () =>
         this.fetcher(`${this.baseURL}/responses`, {
@@ -710,7 +870,8 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
           signal,
           body: JSON.stringify({
             model: this.modelId,
-            input: mapOpenAIInput(input.messages),
+            ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
+            input: mapOpenAIInput(messages),
             tools: mapOpenAITools(input.tools),
             tool_choice: mapOpenAIToolChoice(input.toolChoice),
             temperature: input.temperature,
@@ -732,6 +893,27 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
           if (json.type === "response.output_text.delta" && typeof json.delta === "string") {
             yield { type: "text-delta", textDelta: json.delta } satisfies StreamEvent;
           }
+          if (json.type === "response.output_item.done" && json.item?.type === "function_call") {
+            yield {
+              type: "tool-call",
+              toolCall: {
+                id: json.item.call_id ?? json.item.id,
+                name: json.item.name,
+                input: JSON.parse(json.item.arguments ?? "{}")
+              }
+            } satisfies StreamEvent;
+          }
+          if (
+            json.type === "response.output_item.done" &&
+            json.item?.type &&
+            !["message", "function_call", "function_call_output"].includes(json.item.type)
+          ) {
+            yield {
+              type: "provider-data",
+              provider: "bedrock",
+              data: json.item as JsonValue
+            } satisfies StreamEvent;
+          }
           if (json.type === "response.completed") {
             yield {
               type: "finish",
@@ -751,6 +933,69 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
         cleanup();
       }
     })();
+  }
+}
+
+class BedrockAgentCoreMcpClient implements McpClient {
+  private readonly endpoint: string;
+  private readonly fetcher: typeof globalThis.fetch;
+  private sessionId: string | undefined;
+  private requestId = 0;
+
+  constructor(private readonly options: BedrockAgentCoreMcpClientOptions) {
+    this.endpoint = createBedrockAgentCoreMcpEndpoint(options);
+    this.fetcher = options.fetch ?? globalThis.fetch;
+    this.sessionId = options.sessionId;
+  }
+
+  private headers(): Record<string, string> {
+    return {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...(this.options.headers ?? {}),
+      ...(this.options.authorization || this.options.bearerToken
+        ? { Authorization: this.options.authorization ?? `Bearer ${this.options.bearerToken}` }
+        : {}),
+      ...(this.sessionId ? { "Mcp-Session-Id": this.sessionId } : {})
+    };
+  }
+
+  private async request<T>(method: "tools/list" | "tools/call", params?: Record<string, JsonValue>): Promise<T> {
+    const response = await this.fetcher(this.endpoint, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: `bedrock-agentcore-${++this.requestId}`,
+        method,
+        ...(params ? { params } : {})
+      })
+    });
+
+    const returnedSessionId = getHeader(response.headers, "Mcp-Session-Id");
+    if (returnedSessionId) {
+      this.sessionId = returnedSessionId;
+    }
+
+    const json = await parseMcpHttpResponse(response);
+    if (!response.ok) {
+      throw new ProviderHTTPError(`Bedrock AgentCore MCP request failed with status ${response.status}.`, response.status, {
+        responseBody: JSON.stringify(json)
+      });
+    }
+
+    return requireJsonRpcResult<T>(json, method);
+  }
+
+  async listTools(): Promise<McpListToolsResponse | McpListedTool[]> {
+    return this.request<McpListToolsResponse>("tools/list");
+  }
+
+  async callTool(input: McpCallToolRequest): Promise<JsonValue | McpCallToolResponse> {
+    return this.request<McpCallToolResponse>("tools/call", {
+      name: input.name,
+      arguments: input.arguments ?? {}
+    });
   }
 }
 
@@ -803,3 +1048,45 @@ export const bedrockServerTool = (config: BedrockServerToolConfig) =>
     requiresApproval: config.requiresApproval,
     config: config.config ?? {}
   });
+
+export const bedrockWebSearchTool = (config: BedrockWebSearchToolConfig = {}) =>
+  hostedTool({
+    name: "web_search",
+    provider: "bedrock",
+    type: config.type ?? "web_search",
+    toolClass: "web-search",
+    config: config as unknown as JsonValue
+  });
+
+export const bedrockCodeExecutionTool = (config: BedrockCodeExecutionToolConfig = {}) =>
+  hostedTool({
+    name: "code_interpreter",
+    provider: "bedrock",
+    type: "code_interpreter",
+    toolClass: "code-execution",
+    config: config as unknown as JsonValue
+  });
+
+export const bedrockRemoteMcpTool = (config: BedrockRemoteMcpToolConfig) =>
+  hostedTool({
+    name: config.server_label ?? "mcp",
+    provider: "bedrock",
+    type: "mcp",
+    toolClass: "remote-mcp",
+    requiresApproval: config.require_approval !== "never",
+    config: config as unknown as JsonValue
+  });
+
+export const bedrockMcpApprovalResponse = (response: BedrockMcpApprovalResponse) =>
+  providerDataPart("bedrock", {
+    type: "mcp_approval_response",
+    ...response
+  });
+
+export const createBedrockAgentCoreMcpClient = (options: BedrockAgentCoreMcpClientOptions): McpClient =>
+  new BedrockAgentCoreMcpClient(options);
+
+export const createBedrockAgentCoreMcpToolSet = (
+  options: BedrockAgentCoreMcpToolSetOptions,
+  mcpOptions?: McpToolSetOptions
+): Promise<ToolSet> => createMcpToolSet(createBedrockAgentCoreMcpClient(options), mcpOptions);

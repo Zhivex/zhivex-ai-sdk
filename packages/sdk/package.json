@@ -1,11 +1,14 @@
 {
   "name": "@zhivex-ai/sdk",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Unified high-level SDK for multi-provider AI workflows.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "zhivex-ai": "./dist/cli.js"
+  },
   "engines": {
     "node": ">=18.18.0",
     "bun": ">=1.3.7"
@@ -41,6 +44,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^0.7.0"
+    "@zhivex-ai/core": "^0.8.0"
   }
 }
