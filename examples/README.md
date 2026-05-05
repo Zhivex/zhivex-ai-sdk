@@ -7,6 +7,7 @@ This folder contains runnable TypeScript examples for the main public surfaces o
 - `sdk/`: high-level SDK and core helpers
 - `providers/`: one quick-start per provider package
 - `gateway/`: routing and fallback examples
+- `next-runner/`: copy-paste Next.js App Router reference for server-side Runner usage
 - `_shared.ts`: tiny helpers used by the examples
 
 ## Run
@@ -24,6 +25,7 @@ Typical examples:
 ```bash
 bun run examples/sdk/stream-text.ts
 bun run examples/sdk/agent-runtime.ts
+bun run examples/sdk/runner-session.ts
 bun run examples/sdk/agent-stream.ts
 bun run examples/sdk/generate-object.ts
 bun run examples/sdk/messages-and-tools.ts
@@ -35,6 +37,8 @@ bun run examples/gateway/stream-routing.ts
 bun run examples/gateway/object-routing.ts
 bun run examples/providers/openai.ts
 ```
+
+The `examples/sdk/runner-session.ts` example is deterministic and does not require provider credentials. It is useful as a quick smoke for `Runner + SessionService`.
 
 ## Notes
 

@@ -200,13 +200,15 @@ describe("runner sessions", () => {
     const runner = createRunner({ appName: "memory", agent, sessionService });
 
     await runner.run({ userId: "user_1", sessionId: "session_1", prompt: "First" });
-    await runner.run({ userId: "user_1", sessionId: "session_1", prompt: "Second" });
+    const second = await runner.run({ userId: "user_1", sessionId: "session_1", prompt: "Second" });
 
     expect(seenMessages[1]).toEqual([
       { role: "user", text: "First" },
       { role: "assistant", text: "reply 1" },
       { role: "user", text: "Second" }
     ]);
+    expect(second.output.outputText).toBe("reply 2");
+    expect(second.session.lastRunState?.outputText).toBe("reply 2");
   });
 
   it("persists approval waits and resumes from the session state", async () => {

@@ -43,6 +43,8 @@ The manifest classifies runtime exports as `stable`, `beta`, or `experimental`. 
 
 This RC boundary promotes only the Runner/session family to Stable. Workflows, artifacts, workflow state services, durable artifact helpers, CLI inspection/execution UX, and their schema/versioning helpers remain Beta. Advanced tool registry helpers remain Experimental.
 
+The current npm release candidate is published under the `next` dist-tag. Install it with `@zhivex-ai/sdk@next`; it is intentionally not published as `latest` until the RC validation period is complete.
+
 ## Stable
 
 These APIs are the supported public contract for application code and production integrations:

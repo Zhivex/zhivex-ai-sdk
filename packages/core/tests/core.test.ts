@@ -143,6 +143,28 @@ describe("core helpers", () => {
     expect(result.messages.at(-1)?.role).toBe("assistant");
   });
 
+  it("returns only newly generated text when input messages include assistant history", async () => {
+    const result = await generateText({
+      model: createLanguageModel({
+        async generate() {
+          return {
+            messages: [createTextMessage("assistant", "new answer")],
+            text: "new answer",
+            finishReason: "stop"
+          };
+        }
+      }),
+      messages: [
+        createTextMessage("user", "Earlier question"),
+        createTextMessage("assistant", "earlier answer"),
+        createTextMessage("user", "Follow up")
+      ]
+    });
+
+    expect(result.text).toBe("new answer");
+    expect(result.messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
+  });
+
   it("passes reasoning config to the common request", async () => {
     const result = await generateText({
       model: createLanguageModel({

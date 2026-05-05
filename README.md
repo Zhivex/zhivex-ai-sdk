@@ -26,6 +26,28 @@ Runtime export drift is guarded by that manifest, and public declaration drift i
 
 The first post-RC promotion is intentionally narrow: `Runner + SessionService` is Stable, while declarative workflows, artifacts, workflow state services, and the CLI remain Beta.
 
+### Installing The RC
+
+The current release candidate is published on npm under the `next` dist-tag:
+
+```bash
+bun add @zhivex-ai/sdk@next
+```
+
+Use the SDK from server runtimes: Node.js, Bun, Next.js route handlers/server actions, API servers, or background workers. Browser React clients should call your backend instead of importing provider-backed runners directly, because provider credentials, tools, database clients, and durable stores must stay server-side.
+
+For local development, file-backed stores are convenient. For serverless and production deployments, prefer database-backed services such as `createPostgresSessionService()` over file stores, because serverless filesystems are usually ephemeral and not shared across instances.
+
+## Start Here
+
+Use these guides when adopting the SDK in a real app:
+
+- [Quickstart](./docs/QUICKSTART.md): install the RC and run a multi-turn `Runner`.
+- [Next.js Runner Guide](./docs/NEXTJS.md): route handler plus React client shape.
+- [Production Guide](./docs/PRODUCTION.md): store choices, server-only boundaries, identity mapping, concurrency, workflows, and artifacts.
+- [Zhivex API Integration](./docs/ZHIVEX_API_INTEGRATION.md): how this SDK fits inside the Zhivex API without absorbing auth, workspaces, BYOK, billing, or HTTP concerns.
+- [Examples](./examples/README.md): runnable TypeScript examples, including a deterministic runner/session example and a Next.js reference.
+
 ## Why Zhivex AI SDK
 
 - Unified primitives for text generation, streaming, structured output, tools, multimodal messages, and embeddings.

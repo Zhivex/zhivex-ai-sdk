@@ -348,6 +348,7 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
   }
 
   const toolResults: ToolExecutionResult[] = [];
+  const generatedMessages: ModelMessage[] = [];
   let finalResult: GenerateResult | undefined;
 
   for (let step = 0; step < maxSteps; step += 1) {
@@ -359,6 +360,7 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
     const responseMessages = resultMessages(response);
     if (responseMessages.length) {
       allMessages.push(...responseMessages);
+      generatedMessages.push(...responseMessages);
     }
 
     const toolCalls = extractToolCalls(responseMessages);
@@ -386,7 +388,7 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
   }
 
   return {
-    text: getTextFromMessages(allMessages),
+    text: getTextFromMessages(generatedMessages),
     finishReason: finalResult.finishReason,
     providerFinishReason: finalResult.providerFinishReason,
     usage: finalResult.usage,
@@ -462,6 +464,7 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
 
   const runner = async (): Promise<GenerateTextOutput> => {
     const allMessages = [...baseMessages];
+    const generatedMessages: ModelMessage[] = [];
     const steps: GenerateTextOutput["steps"] = [];
     const toolResults: ToolExecutionResult[] = [];
     let finalResult: GenerateResult | undefined;
@@ -532,6 +535,7 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
 
       steps.push({ request, response: finalResult });
       allMessages.push(...stepMessages);
+      generatedMessages.push(...stepMessages);
 
       const toolCalls = extractToolCalls(stepMessages);
       if (!toolCalls.length) {
@@ -570,7 +574,7 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
     publish({ done: true, value: undefined });
 
     return {
-      text: getTextFromMessages(allMessages),
+      text: getTextFromMessages(generatedMessages),
       finishReason: finalResult.finishReason,
       providerFinishReason: finalResult.providerFinishReason,
       usage: finalResult.usage,
