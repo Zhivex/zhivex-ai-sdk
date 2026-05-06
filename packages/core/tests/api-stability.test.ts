@@ -16,18 +16,32 @@ describe("api stability manifest", () => {
       symbol: "createRunner",
       stability: "stable"
     });
+    expect(api.listApiStability("stable")).toContainEqual({
+      symbol: "createProductionSafetyPolicy",
+      stability: "stable"
+    });
+    expect(api.listApiStability("stable")).toContainEqual({
+      symbol: "chunkText",
+      stability: "stable"
+    });
     expect(api.listApiStability("experimental")).toContainEqual({
       symbol: "createAdvancedToolRegistry",
       stability: "experimental"
     });
   });
 
-  it("keeps the RC boundary classifications explicit", () => {
+  it("keeps the stable boundary classifications explicit", () => {
     expect(api.getApiStability("generateText")?.stability).toBe("stable");
     expect(api.getApiStability("runAgent")?.stability).toBe("stable");
     expect(api.getApiStability("createAgent")?.stability).toBe("stable");
 
     expect(api.getApiStability("createRunner")?.stability).toBe("stable");
+    expect(api.getApiStability("createProductionSafetyPolicy")?.stability).toBe("stable");
+    expect(api.getApiStability("createProductionTraceCollector")?.stability).toBe("stable");
+    expect(api.getApiStability("createProductionTraceOptions")?.stability).toBe("stable");
+    expect(api.getApiStability("chunkText")?.stability).toBe("stable");
+    expect(api.getApiStability("embedRetrievalDocuments")?.stability).toBe("stable");
+    expect(api.getApiStability("retrieveContext")?.stability).toBe("stable");
     expect(api.getApiStability("createInMemorySessionService")?.stability).toBe("stable");
     expect(api.getApiStability("createFileSessionService")?.stability).toBe("stable");
     expect(api.getApiStability("createWorkflow")?.stability).toBe("beta");

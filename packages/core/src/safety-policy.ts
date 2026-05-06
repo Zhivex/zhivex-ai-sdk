@@ -388,6 +388,13 @@ const isRedactionPolicy = (value: RedactionPolicyOptions | RedactionPolicy): val
 const isBudgetGuard = (value: BudgetGuardOptions | BudgetGuard): value is BudgetGuard =>
   "outputGuardrail" in value && typeof value.outputGuardrail === "function";
 
+const productionBudgetDefaults: BudgetGuardOptions = {
+  maxSteps: 6,
+  maxToolCalls: 8,
+  maxToolErrors: 1,
+  maxTotalTokens: 20_000
+};
+
 export const createSafetyPolicy = (options: SafetyPolicyOptions = {}): SafetyPolicy => {
   const preset = options.preset ?? "review-sensitive";
   const redaction =
@@ -454,3 +461,25 @@ export const applySafetyPolicyToAgent = <TModel extends AgentDefinition["model"]
       ? agent.maxSteps
       : Math.min(agent.maxSteps ?? policy.budget.limits.maxSteps, policy.budget.limits.maxSteps)
 });
+
+export const createProductionSafetyPolicy = (options: SafetyPolicyOptions = {}): SafetyPolicy => {
+  const redaction =
+    options.redaction && typeof options.redaction === "object" && !isRedactionPolicy(options.redaction)
+      ? { includeEmails: true, ...options.redaction }
+      : options.redaction === undefined
+        ? { includeEmails: true }
+        : options.redaction;
+  const budget =
+    options.budget && typeof options.budget === "object" && !isBudgetGuard(options.budget)
+      ? { ...productionBudgetDefaults, ...options.budget }
+      : options.budget === undefined
+        ? productionBudgetDefaults
+        : options.budget;
+
+  return createSafetyPolicy({
+    preset: "review-sensitive",
+    ...options,
+    redaction,
+    budget
+  });
+};

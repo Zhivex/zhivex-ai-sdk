@@ -1408,6 +1408,20 @@ describe("agent runtime", () => {
     await expect(reloaded.load(first.state.runId)).resolves.toBeUndefined();
   });
 
+  it("rejects Postgres agent stores without query()", () => {
+    expect(() =>
+      createPostgresAgentRunStore({
+        client: {} as PostgresClientLike
+      })
+    ).toThrow(/app-owned Postgres-compatible client/);
+
+    expect(() =>
+      createPostgresAgentMemoryStore({
+        client: {} as PostgresClientLike
+      })
+    ).toThrow(/app-owned Postgres-compatible client/);
+  });
+
   it("looks up and deletes postgres-backed runs by idempotency key", async () => {
     const client = new FakePostgresClient();
     const store = createPostgresAgentRunStore({

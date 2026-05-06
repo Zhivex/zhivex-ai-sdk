@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { ValidationError } from "./errors.js";
+import { assertPostgresClient } from "./postgres-client.js";
 import type {
   AgentMemoryContext,
   AgentMemoryStore,
@@ -439,6 +440,7 @@ export const createSqliteAgentMemoryStore = (options: SqliteAgentMemoryStoreOpti
 };
 
 export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOptions): AgentRunStore => {
+  assertPostgresClient(options.client);
   const tableName = validateIdentifier(options.tableName ?? "zhivex_agent_runs", "tableName");
   const idempotencyTableName = `${tableName}_idempotency`;
   const parentTableName = `${tableName}_parents`;
@@ -550,6 +552,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
 };
 
 export const createPostgresAgentMemoryStore = (options: PostgresAgentMemoryStoreOptions): AgentMemoryStore => {
+  assertPostgresClient(options.client);
   const tableName = validateIdentifier(options.tableName ?? "zhivex_agent_memory", "tableName");
   const keyFor = options.key ?? defaultMemoryKey;
   const selectMessages = options.selectMessages ?? defaultMemoryMessages;

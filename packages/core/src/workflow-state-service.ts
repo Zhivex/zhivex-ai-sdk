@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { ConflictError, ValidationError } from "./errors.js";
+import { assertPostgresClient } from "./postgres-client.js";
 import type { JsonValue, PostgresClientLike, SqliteDatabaseLike, SqliteStatementLike } from "./types.js";
 import { normalizeWorkflowRunState, WORKFLOW_RUN_STATE_SCHEMA_VERSION, type PersistedWorkflowRunState, type WorkflowStatus } from "./workflow.js";
 
@@ -503,6 +504,7 @@ export const createSqliteWorkflowStateService = (options: SqliteWorkflowStateSer
 };
 
 export const createPostgresWorkflowStateService = (options: PostgresWorkflowStateServiceOptions): WorkflowStateService => {
+  assertPostgresClient(options.client);
   const tableName = validateIdentifier(options.tableName ?? "zhivex_workflow_states", "tableName");
   const createSql = `
     CREATE TABLE IF NOT EXISTS ${tableName} (

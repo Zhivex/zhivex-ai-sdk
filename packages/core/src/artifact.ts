@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import { ConflictError, ValidationError } from "./errors.js";
+import { assertPostgresClient } from "./postgres-client.js";
 import type { JsonValue, PostgresClientLike, SqliteDatabaseLike, SqliteStatementLike } from "./types.js";
 
 const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -1108,6 +1109,7 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
 };
 
 export const createPostgresArtifactService = (options: PostgresArtifactServiceOptions): ArtifactService => {
+  assertPostgresClient(options.client);
   const tableName = validateIdentifier(options.tableName ?? "zhivex_artifacts", "tableName");
   const createSql = `
     CREATE TABLE IF NOT EXISTS ${tableName} (

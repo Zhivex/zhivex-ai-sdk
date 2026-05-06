@@ -1,19 +1,19 @@
 # Quickstart
 
-This guide gets a server-side multi-turn agent running with the RC package.
+This guide gets a server-side multi-turn agent running with the stable package.
 
 ## Install
 
-For the current release candidate:
-
-```bash
-bun add @zhivex-ai/sdk@next @zhivex-ai/openai
-```
-
-For stable installs after the RC is promoted:
+For the current stable release:
 
 ```bash
 bun add @zhivex-ai/sdk @zhivex-ai/openai
+```
+
+For prerelease validation:
+
+```bash
+bun add @zhivex-ai/sdk@next @zhivex-ai/openai
 ```
 
 ## Create A Runner

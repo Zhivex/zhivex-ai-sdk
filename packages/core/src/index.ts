@@ -185,6 +185,8 @@ export {
   createAgentTraceArtifact,
   createAgentTraceCollector,
   createHierarchicalAgentTrace,
+  createProductionTraceCollector,
+  createProductionTraceOptions,
   estimateAgentRunCost,
   estimateTokenCost,
   summarizeAgentTrace
@@ -352,6 +354,7 @@ export {
   applySafetyPolicyToAgent,
   createApprovalPolicy,
   createBudgetGuard,
+  createProductionSafetyPolicy,
   createRedactionPolicy,
   createSafetyPolicy
 } from "./safety-policy.js";
@@ -410,6 +413,28 @@ export {
   unsupportedBrowserToken
 } from "./realtime.js";
 export type { RealtimeConnection, RealtimeConnectionFactory, RealtimeEventParser, RealtimePayloadBuilder, RealtimeSessionCallbacks } from "./realtime.js";
+export {
+  chunkText,
+  cosineSimilarity,
+  createRetrievalContextMessage,
+  embedRetrievalDocuments,
+  formatRetrievedContext,
+  rankRetrievedDocuments,
+  retrieveContext
+} from "./retrieval.js";
+export type {
+  ChunkTextOptions,
+  EmbeddedRetrievalDocument,
+  EmbedRetrievalDocumentsInput,
+  FormatRetrievedContextOptions,
+  RankRetrievedDocumentsOptions,
+  RetrievalDocument,
+  RetrieveContextInput,
+  RetrievedDocument,
+  Retriever,
+  VectorStore,
+  VectorStoreQueryInput
+} from "./retrieval.js";
 export { createProviderAdapter, mergeAbortSignals, withRetry, withTimeoutSignal } from "./runtime.js";
 export * from "./stream.js";
 export { createToolRegistry, isToolRegistry, toToolSet, ToolRegistry } from "./tool-registry.js";

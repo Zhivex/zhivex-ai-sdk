@@ -24,6 +24,50 @@ export interface IntegrationLanguageProvider {
   toolChoiceForTool?: (toolName: string) => ToolChoice;
 }
 
+export type IntegrationProviderStatusState = "ready" | "skipped_missing_credentials";
+
+export interface IntegrationProviderStatus {
+  name: string;
+  status: IntegrationProviderStatusState;
+  credentialRequirements: string[];
+  missingRequirements: string[];
+  textModelId: string;
+  embeddingModelId?: string;
+  supports: IntegrationLanguageProvider["supports"];
+}
+
+interface CredentialRequirement {
+  label: string;
+  satisfied: boolean;
+}
+
+const envRequirement = (names: string[]): CredentialRequirement => ({
+  label: names.join(" or "),
+  satisfied: names.some((name) => Boolean(process.env[name]))
+});
+
+const createProviderStatus = (input: {
+  name: string;
+  requirements: CredentialRequirement[];
+  textModelId: string;
+  embeddingModelId?: string;
+  supports: IntegrationLanguageProvider["supports"];
+}): IntegrationProviderStatus => {
+  const missingRequirements = input.requirements
+    .filter((requirement) => !requirement.satisfied)
+    .map((requirement) => requirement.label);
+
+  return {
+    name: input.name,
+    status: missingRequirements.length ? "skipped_missing_credentials" : "ready",
+    credentialRequirements: input.requirements.map((requirement) => requirement.label),
+    missingRequirements,
+    textModelId: input.textModelId,
+    embeddingModelId: input.embeddingModelId,
+    supports: input.supports
+  };
+};
+
 const openAIApiKey = process.env.OPENAI_API_KEY;
 const openAIBaseURL = process.env.OPENAI_BASE_URL;
 const openAITextModelId = process.env.OPENAI_INTEGRATION_MODEL ?? "gpt-5.4-nano";
@@ -80,6 +124,194 @@ const vertexEmbeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ??
 const usableVertexAccessToken = vertexAccessToken && (vertexProjectId || vertexBaseURL) ? vertexAccessToken : undefined;
 
 const hasVertexCredentials = Boolean(usableVertexAccessToken || vertexApiKey);
+const openAISupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: true,
+  reasoning: {
+    effort: "low"
+  }
+};
+const azureOpenAISupports: IntegrationLanguageProvider["supports"] = openAISupports;
+const anthropicSupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "prompted",
+  embeddings: false,
+  reasoning: isAnthropicOpus47OrLaterModel(anthropicTextModelId)
+    ? {
+        effort: "low"
+      }
+    : {
+        budgetTokens: 256
+      }
+};
+const geminiSupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: true,
+  reasoning: {
+    budgetTokens: 256
+  }
+};
+const openRouterSupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: false,
+  reasoning: {
+    effort: "low",
+    budgetTokens: 256
+  }
+};
+const deepSeekSupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: false,
+  reasoning: {
+    effort: "high"
+  }
+};
+const qwenSupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: true,
+  reasoning: {
+    effort: "low"
+  }
+};
+const kimiSupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: false,
+  reasoning: {
+    effort: "low"
+  }
+};
+const bedrockConverseSupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: false
+};
+const bedrockOpenAISupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: false,
+  reasoning: {
+    effort: "low"
+  }
+};
+const vertexSupports: IntegrationLanguageProvider["supports"] = geminiSupports;
+
+const openAIRequirements = [envRequirement(["OPENAI_API_KEY"])];
+const azureOpenAIRequirements = [
+  envRequirement(["AZURE_OPENAI_API_KEY"]),
+  envRequirement(["AZURE_OPENAI_ENDPOINT"])
+];
+const anthropicRequirements = [envRequirement(["ANTHROPIC_API_KEY"])];
+const geminiRequirements = [envRequirement(["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"])];
+const openRouterRequirements = [envRequirement(["OPENROUTER_API_KEY"])];
+const deepSeekRequirements = [envRequirement(["DEEPSEEK_API_KEY"])];
+const qwenRequirements = [envRequirement(["QWEN_API_KEY", "DASHSCOPE_API_KEY"])];
+const kimiRequirements = [envRequirement(["KIMI_API_KEY", "MOONSHOT_API_KEY"])];
+const bedrockConverseRequirements: CredentialRequirement[] = [
+  {
+    label: "AWS_REGION (AWS credentials are also required by the default provider chain)",
+    satisfied: Boolean(bedrockRegion)
+  }
+];
+const bedrockOpenAIRequirements = [
+  envRequirement(["BEDROCK_OPENAI_BASE_URL"]),
+  envRequirement(["BEDROCK_API_KEY", "AWS_BEARER_TOKEN_BEDROCK"])
+];
+const vertexRequirements: CredentialRequirement[] = [
+  {
+    label:
+      "(VERTEX_API_KEY or GOOGLE_API_KEY) or ((VERTEX_ACCESS_TOKEN or GOOGLE_ACCESS_TOKEN) and (GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT or VERTEX_BASE_URL))",
+    satisfied: hasVertexCredentials
+  }
+];
+
+export const integrationProviderStatuses: IntegrationProviderStatus[] = [
+  createProviderStatus({
+    name: "openai",
+    requirements: openAIRequirements,
+    textModelId: openAITextModelId,
+    embeddingModelId: openAIEmbeddingModelId,
+    supports: openAISupports
+  }),
+  createProviderStatus({
+    name: "azure-openai",
+    requirements: azureOpenAIRequirements,
+    textModelId: azureOpenAITextModelId,
+    embeddingModelId: azureOpenAIEmbeddingModelId,
+    supports: azureOpenAISupports
+  }),
+  createProviderStatus({
+    name: "anthropic",
+    requirements: anthropicRequirements,
+    textModelId: anthropicTextModelId,
+    supports: anthropicSupports
+  }),
+  createProviderStatus({
+    name: "gemini",
+    requirements: geminiRequirements,
+    textModelId: geminiTextModelId,
+    embeddingModelId: geminiEmbeddingModelId,
+    supports: geminiSupports
+  }),
+  createProviderStatus({
+    name: "openrouter",
+    requirements: openRouterRequirements,
+    textModelId: openRouterTextModelId,
+    supports: openRouterSupports
+  }),
+  createProviderStatus({
+    name: "deepseek",
+    requirements: deepSeekRequirements,
+    textModelId: deepSeekTextModelId,
+    supports: deepSeekSupports
+  }),
+  createProviderStatus({
+    name: "qwen",
+    requirements: qwenRequirements,
+    textModelId: qwenTextModelId,
+    embeddingModelId: qwenEmbeddingModelId,
+    supports: qwenSupports
+  }),
+  createProviderStatus({
+    name: "kimi",
+    requirements: kimiRequirements,
+    textModelId: kimiTextModelId,
+    supports: kimiSupports
+  }),
+  createProviderStatus({
+    name: "bedrock-converse",
+    requirements: bedrockConverseRequirements,
+    textModelId: bedrockTextModelId,
+    supports: bedrockConverseSupports
+  }),
+  createProviderStatus({
+    name: "bedrock-openai",
+    requirements: bedrockOpenAIRequirements,
+    textModelId: bedrockOpenAITextModelId,
+    supports: bedrockOpenAISupports
+  }),
+  createProviderStatus({
+    name: "vertex",
+    requirements: vertexRequirements,
+    textModelId: vertexTextModelId,
+    embeddingModelId: vertexEmbeddingModelId,
+    supports: vertexSupports
+  })
+];
 
 export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
   ...(openAIApiKey
@@ -96,15 +328,7 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: openAIApiKey,
               baseURL: openAIBaseURL
             }).embeddingModel(openAIEmbeddingModelId),
-          supports: {
-            streaming: true,
-            tools: true,
-            structuredOutputMode: "native",
-            embeddings: true,
-            reasoning: {
-              effort: "low"
-            }
-          },
+          supports: openAISupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
@@ -128,15 +352,7 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               endpoint: azureOpenAIEndpoint,
               apiVersion: azureOpenAIApiVersion
             }).embeddingModel(azureOpenAIEmbeddingModelId),
-          supports: {
-            streaming: true,
-            tools: true,
-            structuredOutputMode: "native",
-            embeddings: true,
-            reasoning: {
-              effort: "low"
-            }
-          },
+          supports: azureOpenAISupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
@@ -154,19 +370,7 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               baseURL: anthropicBaseURL,
               anthropicVersion
             })(anthropicTextModelId),
-          supports: {
-            streaming: true,
-            tools: true,
-            structuredOutputMode: "prompted",
-            embeddings: false,
-            reasoning: isAnthropicOpus47OrLaterModel(anthropicTextModelId)
-              ? {
-                  effort: "low"
-                }
-              : {
-                  budgetTokens: 256
-                }
-          },
+          supports: anthropicSupports,
           toolChoiceForTool: () => "required"
         } satisfies IntegrationLanguageProvider
       ]
@@ -185,15 +389,7 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: geminiApiKey,
               baseURL: geminiBaseURL
             }).embeddingModel(geminiEmbeddingModelId),
-          supports: {
-            streaming: true,
-            tools: true,
-            structuredOutputMode: "native",
-            embeddings: true,
-            reasoning: {
-              budgetTokens: 256
-            }
-          },
+          supports: geminiSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
@@ -210,16 +406,7 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: openRouterApiKey,
               baseURL: openRouterBaseURL
             })(openRouterTextModelId),
-          supports: {
-            streaming: true,
-            tools: true,
-            structuredOutputMode: "native",
-            embeddings: false,
-            reasoning: {
-              effort: "low",
-              budgetTokens: 256
-            }
-          },
+          supports: openRouterSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
@@ -236,15 +423,7 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: deepSeekApiKey,
               baseURL: deepSeekBaseURL
             })(deepSeekTextModelId),
-          supports: {
-            streaming: true,
-            tools: true,
-            structuredOutputMode: "native",
-            embeddings: false,
-            reasoning: {
-              effort: "high"
-            }
-          },
+          supports: deepSeekSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
@@ -266,15 +445,7 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: qwenApiKey,
               baseURL: qwenBaseURL
             }).embeddingModel(qwenEmbeddingModelId),
-          supports: {
-            streaming: true,
-            tools: true,
-            structuredOutputMode: "native",
-            embeddings: true,
-            reasoning: {
-              effort: "low"
-            }
-          },
+          supports: qwenSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
@@ -291,15 +462,7 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: kimiApiKey,
               baseURL: kimiBaseURL
             })(kimiTextModelId),
-          supports: {
-            streaming: true,
-            tools: true,
-            structuredOutputMode: "native",
-            embeddings: false,
-            reasoning: {
-              effort: "low"
-            }
-          },
+          supports: kimiSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
@@ -315,12 +478,7 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
             createBedrock({
               region: bedrockRegion
             })(bedrockTextModelId),
-          supports: {
-            streaming: true,
-            tools: true,
-            structuredOutputMode: "native",
-            embeddings: false
-          },
+          supports: bedrockConverseSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
@@ -338,15 +496,7 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               baseURL: bedrockOpenAIBaseURL,
               apiKey: bedrockOpenAIApiKey
             })(bedrockOpenAITextModelId),
-          supports: {
-            streaming: true,
-            tools: true,
-            structuredOutputMode: "native",
-            embeddings: false,
-            reasoning: {
-              effort: "low"
-            }
-          },
+          supports: bedrockOpenAISupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
@@ -374,15 +524,7 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               location: vertexLocation,
               baseURL: vertexBaseURL
             }).embeddingModel(vertexEmbeddingModelId),
-          supports: {
-            streaming: true,
-            tools: true,
-            structuredOutputMode: "native",
-            embeddings: true,
-            reasoning: {
-              budgetTokens: 256
-            }
-          },
+          supports: vertexSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName

@@ -27,6 +27,16 @@ describe("sdk public surface", () => {
     expect(sdk.createMockTool).toBeTypeOf("function");
     expect(sdk.createProviderSupportDriftReport).toBeTypeOf("function");
     expect(sdk.createProviderSupportMatrix).toBeTypeOf("function");
+    expect(sdk.createProductionSafetyPolicy).toBeTypeOf("function");
+    expect(sdk.createProductionTraceCollector).toBeTypeOf("function");
+    expect(sdk.createProductionTraceOptions).toBeTypeOf("function");
+    expect(sdk.chunkText).toBeTypeOf("function");
+    expect(sdk.cosineSimilarity).toBeTypeOf("function");
+    expect(sdk.createRetrievalContextMessage).toBeTypeOf("function");
+    expect(sdk.embedRetrievalDocuments).toBeTypeOf("function");
+    expect(sdk.formatRetrievedContext).toBeTypeOf("function");
+    expect(sdk.rankRetrievedDocuments).toBeTypeOf("function");
+    expect(sdk.retrieveContext).toBeTypeOf("function");
     expect(sdk.createRedactionPolicy).toBeTypeOf("function");
     expect(sdk.createSafetyPolicy).toBeTypeOf("function");
     expect(sdk.createSubAgentTool).toBeTypeOf("function");
@@ -104,6 +114,12 @@ describe("sdk public surface", () => {
   it("re-exports API stability metadata from core", () => {
     expect(sdk.getApiStability("generateText")?.stability).toBe("stable");
     expect(sdk.getApiStability("createRunner")?.stability).toBe("stable");
+    expect(sdk.getApiStability("createProductionSafetyPolicy")?.stability).toBe("stable");
+    expect(sdk.getApiStability("createProductionTraceCollector")?.stability).toBe("stable");
+    expect(sdk.getApiStability("createProductionTraceOptions")?.stability).toBe("stable");
+    expect(sdk.getApiStability("chunkText")?.stability).toBe("stable");
+    expect(sdk.getApiStability("embedRetrievalDocuments")?.stability).toBe("stable");
+    expect(sdk.getApiStability("retrieveContext")?.stability).toBe("stable");
     expect(sdk.getApiStability("createInMemorySessionService")?.stability).toBe("stable");
     expect(sdk.getApiStability("createFileSessionService")?.stability).toBe("stable");
     expect(sdk.getApiStability("createWorkflow")?.stability).toBe("beta");

@@ -20,6 +20,7 @@
     "test:integration:anthropic": "vitest run --config vitest.integration.config.ts packages/anthropic/tests/anthropic.integration.test.ts",
     "test:integration:gemini": "vitest run --config vitest.integration.config.ts packages/gemini/tests/gemini.integration.test.ts",
     "test:integration:vertex": "vitest run --config vitest.integration.config.ts packages/vertex/tests/vertex.integration.test.ts",
+    "smoke:providers": "bun run scripts/provider-smoke-report.ts && bun run test:integration",
     "typecheck": "tsc --noEmit",
     "version-packages": "changeset version",
     "release": "bun run build && changeset publish"

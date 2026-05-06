@@ -8,6 +8,8 @@ import {
   createOtelAgentObserver,
   createOtelObserver,
   createOtelTelemetryMiddleware,
+  createProductionTraceCollector,
+  createProductionTraceOptions,
   createTextMessage,
   defaultModelCatalog,
   estimateAgentRunCost,
@@ -342,6 +344,33 @@ describe("otel observability", () => {
     expect(collector.getTrace("run_1")?.runId).toBe("run_1");
     collector.reset();
     expect(collector.getEvents()).toEqual([]);
+  });
+
+  it("creates production trace options and collectors with overridable defaults", async () => {
+    expect(createProductionTraceOptions()).toEqual({
+      includeMessages: false,
+      includeToolInputs: false,
+      outputPreviewLength: 500
+    });
+    expect(createProductionTraceOptions({ includeToolInputs: true, outputPreviewLength: 120 })).toEqual({
+      includeMessages: false,
+      includeToolInputs: true,
+      outputPreviewLength: 120
+    });
+
+    const collector = createProductionTraceCollector({ includeToolInputs: true });
+    await collector.observer({
+      type: "run-finish",
+      runId: "run_1",
+      agentId: "assistant",
+      status: "completed",
+      state: baseRunState()
+    });
+
+    expect(collector.getTrace("run_1")?.steps[0]?.toolCalls).toEqual([
+      { id: "call_1", name: "weather", input: { city: "Madrid" } }
+    ]);
+    expect(collector.getTrace("run_1")?.steps[0]?.messages).toBeUndefined();
   });
 
   it("creates low-level span handles from a tracer", async () => {

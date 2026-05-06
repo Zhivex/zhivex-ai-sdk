@@ -21,7 +21,8 @@ import {
   verifyArtifactIntegrity,
   verifyArtifactRecordIntegrity,
   ValidationError,
-  type ArtifactRecord
+  type ArtifactRecord,
+  type PostgresClientLike
 } from "../src/index.js";
 
 class FakeSqliteArtifactStatement<TResult extends Record<string, unknown> = Record<string, unknown>> {
@@ -1083,6 +1084,14 @@ describe("artifact services", () => {
         tableName: "bad-name"
       })
     ).toThrow(ValidationError);
+  });
+
+  it("rejects Postgres artifact clients without query()", () => {
+    expect(() =>
+      createPostgresArtifactService({
+        client: {} as PostgresClientLike
+      })
+    ).toThrow(/app-owned Postgres-compatible client/);
   });
 
   it("exports artifact APIs from the public index", async () => {

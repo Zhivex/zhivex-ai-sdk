@@ -11,6 +11,7 @@ The SDK now documents its public contract and release expectations more explicit
 - [STABILITY.md](./STABILITY.md)
 - [SUPPORT.md](./SUPPORT.md)
 - [VERSIONING.md](./VERSIONING.md)
+- [Release Guide](./docs/RELEASE.md)
 
 For production integrations, prefer supported public package entrypoints and use the provider capability matrix below as the source of truth for cross-provider behavior.
 
@@ -24,11 +25,17 @@ console.log(getApiStability("createWorkflow")?.stability); // "beta"
 
 Runtime export drift is guarded by that manifest, and public declaration drift is guarded by type snapshot tests for `@zhivex-ai/core` and `@zhivex-ai/sdk`.
 
-The first post-RC promotion is intentionally narrow: `Runner + SessionService` is Stable, while declarative workflows, artifacts, workflow state services, and the CLI remain Beta.
+The first stable promotion is intentionally narrow: `Runner + SessionService` is Stable, while declarative workflows, artifacts, workflow state services, and the CLI remain Beta.
 
-### Installing The RC
+### Installing The Stable Package
 
-The current release candidate is published on npm under the `next` dist-tag:
+The current stable package is published on npm under the `latest` dist-tag:
+
+```bash
+bun add @zhivex-ai/sdk
+```
+
+Use `@next` only for prerelease validation:
 
 ```bash
 bun add @zhivex-ai/sdk@next
@@ -42,11 +49,23 @@ For local development, file-backed stores are convenient. For serverless and pro
 
 Use these guides when adopting the SDK in a real app:
 
-- [Quickstart](./docs/QUICKSTART.md): install the RC and run a multi-turn `Runner`.
+- [Quickstart](./docs/QUICKSTART.md): install the stable package and run a multi-turn `Runner`.
 - [Next.js Runner Guide](./docs/NEXTJS.md): route handler plus React client shape.
-- [Production Guide](./docs/PRODUCTION.md): store choices, server-only boundaries, identity mapping, concurrency, workflows, and artifacts.
+- [Production Guide](./docs/PRODUCTION.md): store choices, server-only boundaries, identity mapping, safety, observability, workflows, and artifacts.
+- [Migration Guide](./docs/MIGRATION.md): move from direct provider SDKs, Vercel AI SDK core usage, or simple tool loops.
+- [RAG Guide](./docs/RAG.md): lightweight retrieval contracts, semantic memory boundaries, and app-owned vector store recipes.
+- [Provider Smoke Checks](./docs/PROVIDER_SMOKE.md): live provider readiness report and integration test setup.
 - [Zhivex API Integration](./docs/ZHIVEX_API_INTEGRATION.md): how this SDK fits inside the Zhivex API without absorbing auth, workspaces, BYOK, billing, or HTTP concerns.
 - [Examples](./examples/README.md): runnable TypeScript examples, including a deterministic runner/session example and a Next.js reference.
+
+Production adoption path:
+
+1. Start with `Runner + SessionService`.
+2. Use `createPostgresSessionService()` for shared/serverless production state.
+3. Keep provider credentials, tools, database clients, and safety policies on the server.
+4. Wrap tool-using agents with `createProductionSafetyPolicy()` before exposing them to real users.
+5. Export redacted trace summaries and tool-call audit records from server-side runs.
+6. Use app-owned retrievers/vector stores for long-term semantic memory.
 
 ## Why Zhivex AI SDK
 
@@ -162,6 +181,7 @@ Status shorthand:
 - `endpoint-dependent`: implemented only on a specific provider endpoint or API mode.
 - `env/live-tested`: included in the integration registry and skipped unless credentials are present.
 
+<!-- provider-matrix:start -->
 | Provider | `streamText` | Tools | `toolChoice` | Structured output | Embeddings | Audio in | Audio out | Realtime sessions | Browser tokens | Reasoning | Web search | Hosted tools / MCP | Agent tier |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
@@ -175,6 +195,7 @@ Status shorthand:
 | DeepSeek | yes | yes | yes | JSON object | no | no | no | no | no | `effort` | no | no | Tier B |
 | Bedrock | yes | yes | partial / endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C / A by runtime |
 | Ollama | yes | yes | no | native | yes | no | no | no | no | no | no | no | Tier C |
+<!-- provider-matrix:end -->
 
 Compatibility notes:
 
@@ -1070,7 +1091,7 @@ For portable debugging and dashboards, trace helpers create serializable artifac
 ```ts
 import {
   createAgentTraceArtifact,
-  createAgentTraceCollector,
+  createProductionTraceCollector,
   estimateAgentRunCost,
   summarizeAgentTrace
 } from "@zhivex-ai/sdk";
@@ -1087,7 +1108,7 @@ const summary = summarizeAgentTrace(trace, {
 console.log(summary.latency.durationMs);
 console.log(estimateAgentRunCost(savedRunState, { costPer1kTokens: 0.6 }).totalCost);
 
-const collector = createAgentTraceCollector();
+const collector = createProductionTraceCollector();
 const agent = createAgent({
   model: openai("gpt-5"),
   onTelemetryEvent: collector.observer
@@ -1095,6 +1116,8 @@ const agent = createAgent({
 ```
 
 Use `includeMessages` and `includeToolInputs` only when you need full payloads in exported traces. By default the artifact keeps metadata, lifecycle events, usage, approvals, errors, tool results, and an output preview without copying large message/tool-input payloads.
+
+See [Production Guide](./docs/PRODUCTION.md#observability-export-path) and `examples/sdk/observability-export.ts` for a JSONL export pattern with redacted trace artifacts, tool-call audit records, and reproducible cost/latency summaries.
 
 For SDK-defined local tools, you can now attach a `toolApprovalPolicy` at the agent or request level. The policy runs before local tool execution and can allow or deny the call with a reason:
 
@@ -1193,7 +1216,7 @@ Use the agent tiers as release guidance, not just metadata:
 Safety policies are stable composition helpers for production agent services. They wrap the existing `toolApprovalPolicy`, guardrail, and `toolExecution` hooks instead of changing the runtime contract.
 
 ```ts
-import { applySafetyPolicyToAgent, createAgent, createSafetyPolicy } from "@zhivex-ai/sdk";
+import { applySafetyPolicyToAgent, createAgent, createProductionSafetyPolicy } from "@zhivex-ai/sdk";
 
 const safeAgent = applySafetyPolicyToAgent(
   createAgent({
@@ -1201,19 +1224,11 @@ const safeAgent = applySafetyPolicyToAgent(
     tools: registry.toToolSet(),
     maxSteps: 6
   }),
-  createSafetyPolicy({
-    preset: "review-sensitive",
-    budget: {
-      maxSteps: 6,
-      maxToolCalls: 8,
-      maxToolErrors: 1,
-      maxTotalTokens: 20_000
-    }
-  })
+  createProductionSafetyPolicy()
 );
 ```
 
-Available presets are `permissive`, `review-sensitive`, and `locked-down`. The approval helper treats `requiresApproval`, Advanced Tool Registry permissions/audit metadata, hosted tool classes, and sensitive tool names as policy inputs. Redaction helpers cover common API keys, bearer/basic auth tokens, optional email addresses, and custom regex rules. Budget guards fail the run through normal guardrail behavior when configured limits are exceeded.
+`createProductionSafetyPolicy()` is the recommended first production preset; use `createSafetyPolicy()` directly when a product needs a custom policy shape. Available presets are `permissive`, `review-sensitive`, and `locked-down`. The approval helper treats `requiresApproval`, Advanced Tool Registry permissions/audit metadata, hosted tool classes, and sensitive tool names as policy inputs. Redaction helpers cover common API keys, bearer/basic auth tokens, optional email addresses, and custom regex rules. Budget guards fail the run through normal guardrail behavior when configured limits are exceeded.
 
 ### Agent Replay And Evaluation
 
@@ -1877,6 +1892,8 @@ const result = await embed({
 
 console.log(result.embeddings[0]?.length);
 ```
+
+For RAG-backed agents, use `chunkText()`, `embedRetrievalDocuments()`, `retrieveContext()`, and `createRetrievalContextMessage()` with an app-owned vector store. See [RAG Guide](./docs/RAG.md).
 
 ### Audio
 
