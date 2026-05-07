@@ -9,7 +9,7 @@ Related documents:
 - [README.md](./README.md)
 - [STABILITY.md](./STABILITY.md)
 - [SUPPORT.md](./SUPPORT.md)
-- [docs/RELEASE.md](./docs/RELEASE.md)
+- [docs/maintainers/RELEASE.md](./docs/maintainers/RELEASE.md)
 
 ## Versioning Principles
 
@@ -53,7 +53,7 @@ Changesets is configured to update internal dependencies when needed, but packag
 
 ## Release Expectations
 
-Before publishing, follow the full [Release Guide](./docs/RELEASE.md). The short checklist is:
+Before publishing, follow the full [Release Guide](./docs/maintainers/RELEASE.md). The short checklist is:
 
 1. Run `bun run typecheck`
 2. Run `bun run test`

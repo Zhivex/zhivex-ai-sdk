@@ -11,7 +11,6 @@ The SDK now documents its public contract and release expectations more explicit
 - [STABILITY.md](./STABILITY.md)
 - [SUPPORT.md](./SUPPORT.md)
 - [VERSIONING.md](./VERSIONING.md)
-- [Release Guide](./docs/RELEASE.md)
 
 For production integrations, prefer supported public package entrypoints and use the provider capability matrix below as the source of truth for cross-provider behavior.
 
@@ -54,8 +53,6 @@ Use these guides when adopting the SDK in a real app:
 - [Production Guide](./docs/PRODUCTION.md): store choices, server-only boundaries, identity mapping, safety, observability, workflows, and artifacts.
 - [Migration Guide](./docs/MIGRATION.md): move from direct provider SDKs, Vercel AI SDK core usage, or simple tool loops.
 - [RAG Guide](./docs/RAG.md): lightweight retrieval contracts, semantic memory boundaries, and app-owned vector store recipes.
-- [Provider Smoke Checks](./docs/PROVIDER_SMOKE.md): live provider readiness report and integration test setup.
-- [Zhivex API Integration](./docs/ZHIVEX_API_INTEGRATION.md): how this SDK fits inside the Zhivex API without absorbing auth, workspaces, BYOK, billing, or HTTP concerns.
 - [Examples](./examples/README.md): runnable TypeScript examples, including a deterministic runner/session example and a Next.js reference.
 
 Production adoption path:
@@ -1714,9 +1711,9 @@ const registry = createAdvancedToolRegistry([
   },
   createHttpTool({
     name: "crm_update",
-    description: "Update CRM notes through an internal service.",
+    description: "Update CRM notes through an application-owned service.",
     schema: z.object({ customerId: z.string(), note: z.string() }),
-    url: "https://internal.example.com/tools/crm-update",
+    url: "https://api.example.com/tools/crm-update",
     headers: {
       authorization: `Bearer ${process.env.CRM_TOOL_TOKEN}`
     }
@@ -2109,51 +2106,7 @@ console.log(fromAnthropic.text);
 
 ## Gateway Routing
 
-`@zhivex-ai/gateway` provides a lightweight routing layer for multi-provider setups, including fallback ordering, capability filtering, retry handling, and optional cost-aware decisions.
-
-```ts
-import { createGateway } from "@zhivex-ai/gateway";
-import { createOpenAI } from "@zhivex-ai/openai";
-import { createOllama } from "@zhivex-ai/ollama";
-
-const gateway = createGateway({
-  adapters: {
-    openai: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
-    ollama: createOllama()
-  },
-  maxRetries: 1
-});
-
-const result = await gateway.generate({
-  primary: { provider: "openai", modelId: "gpt-4o-mini" },
-  fallbacks: [{ provider: "ollama", modelId: "llama3.2" }],
-  messages: [{ role: "user", content: "Summarize the benefits of fallback routing." }],
-  routingMode: "balanced"
-});
-
-console.log(result.text);
-console.log(result.providerUsed);
-console.log(result.attempts);
-```
-
-The gateway also supports `streamText()`, `generateObject()`, and `streamObject()` while preserving the selected target for the full request lifecycle, including tool loops.
-
-For agent workloads, the gateway now also supports `runAgent()` and `streamAgent()`. That lets you route by both regular model capabilities and agent-specific capabilities such as `supportTier`, `approvalRequests`, or `remoteMcp`, then execute the whole agent run on the selected provider.
-
-```ts
-const agentResult = await gateway.runAgent({
-  primary: { provider: "bedrock", modelId: "anthropic.claude-v2" },
-  fallbacks: [{ provider: "openai", modelId: "gpt-5" }],
-  prompt: "Use the strongest available agent provider.",
-  requiredAgentCapabilities: {
-    supportTier: "tier-a",
-    approvalRequests: true
-  }
-});
-
-console.log(agentResult.providerUsed);
-console.log(agentResult.routeDecision);
-```
+`@zhivex-ai/gateway` is the optional SDK-local routing and fallback package for multi-provider setups. It is separate from the main `@zhivex-ai/sdk` facade and separate from any Zhivex-hosted Gateway API. See [`packages/gateway/README.md`](./packages/gateway/README.md) for routing examples and package-specific behavior.
 
 ## Public API Surface
 
@@ -2203,6 +2156,8 @@ bun run build
 ```
 
 The integration layer now includes provider-specific tests plus capability-first suites under [`packages/core/tests/`](./packages/core/tests). These capability suites exercise the shared contract across any providers that have credentials available in the current environment.
+
+Maintainer-only release and provider-smoke workflows live under [`docs/maintainers/`](./docs/maintainers/README.md).
 
 ## Design Principles
 
