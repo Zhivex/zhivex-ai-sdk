@@ -54,16 +54,18 @@ For agent workloads, use `runAgent()` or `streamAgent()` to route by both regula
 
 ```ts
 const agentResult = await gateway.runAgent({
-  primary: { provider: "bedrock", modelId: "anthropic.claude-v2" },
-  fallbacks: [{ provider: "openai", modelId: "gpt-5" }],
-  prompt: "Use the strongest available agent provider.",
+  primary: { provider: "kimi", modelId: "kimi-k2.5" },
+  fallbacks: [{ provider: "qwen", modelId: "qwen-plus" }],
+  prompt: "Use hosted retrieval and an MCP map server.",
   requiredAgentCapabilities: {
-    supportTier: "tier-a",
-    approvalRequests: true
+    supportTier: "tier-b",
+    hostedFileSearch: true,
+    remoteMcp: true
   }
 });
 
 console.log(agentResult.providerUsed);
+console.log(agentResult.attempts);
 console.log(agentResult.routeDecision);
 ```
 

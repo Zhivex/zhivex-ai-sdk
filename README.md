@@ -192,7 +192,7 @@ Status shorthand:
 | Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B |
 | Vertex | yes | yes | yes | native | yes | yes | yes | yes | no | model-dependent | yes | native | Tier B |
 | OpenRouter | yes | yes | yes | native | no | no | no | no | no | `effort` + `budgetTokens` | yes | server tools | Tier C |
-| Qwen | yes | yes | yes | native | yes | no | no | no | no | model-dependent | yes | Responses web search, web extractor, code interpreter | Tier B |
+| Qwen | yes | yes | yes | native | yes | no | no | no | no | model-dependent | yes | Responses web search, web extractor, code interpreter, file search, remote MCP, image search; Cloud files, batch, media, speech, realtime | Tier B |
 | Kimi | yes | yes | yes | native | no | no | no | no | no | model-dependent | Formula tool | Formula tools via Chat Completions | Tier C |
 | DeepSeek | yes | yes | yes | JSON object | no | no | no | no | no | `effort` | no | no | Tier B |
 | Bedrock | yes | yes | partial / endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C / A by runtime |
@@ -1582,11 +1582,18 @@ const result = await generateText({
 console.log(result.text);
 ```
 
-Qwen now uses the DashScope-compatible Responses API by default, including hosted web search, web extraction, and code interpreter. Pass `providerOptions: { apiMode: "chat" }` only when you need the legacy Chat Completions path.
+Qwen now uses the DashScope-compatible Responses API by default, including hosted web search, web extraction, code interpreter, file search, remote MCP, and image search tools. Pass `providerOptions: { apiMode: "chat" }` only when you need the legacy Chat Completions path.
 
 ```ts
 import { generateText } from "@zhivex-ai/sdk";
-import { createQwen, qwenCodeInterpreterTool, qwenWebExtractorTool, qwenWebSearchTool } from "@zhivex-ai/qwen";
+import {
+  createQwen,
+  qwenCodeInterpreterTool,
+  qwenFileSearchTool,
+  qwenMcpTool,
+  qwenWebExtractorTool,
+  qwenWebSearchTool
+} from "@zhivex-ai/qwen";
 
 const qwen = createQwen({
   apiKey: process.env.DASHSCOPE_API_KEY
@@ -1598,7 +1605,14 @@ const result = await generateText({
   tools: {
     search: qwenWebSearchTool(),
     extract: qwenWebExtractorTool(),
-    code: qwenCodeInterpreterTool()
+    code: qwenCodeInterpreterTool(),
+    files: qwenFileSearchTool({ vector_store_ids: ["store_1"] }),
+    maps: qwenMcpTool({
+      server_label: "amap-maps",
+      server_protocol: "sse",
+      server_url: "https://dashscope-intl.aliyuncs.com/api/v1/mcps/amap-maps/sse",
+      headers: { Authorization: `Bearer ${process.env.DASHSCOPE_API_KEY}` }
+    })
   }
 });
 

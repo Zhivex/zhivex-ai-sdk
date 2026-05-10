@@ -102,6 +102,9 @@ export interface GatewayAttempt {
   ok: boolean;
   latencyMs: number;
   errorMessage?: string;
+  reasonCode?: "model-capabilities" | "agent-capabilities" | "cost-budget" | "operation-skip" | "provider-error";
+  retry?: number;
+  targetRank?: number;
 }
 
 export interface GatewayResponse {
@@ -176,6 +179,8 @@ export interface GatewayConfig {
     provider: GatewayProviderId;
     modelId: string;
     routeDecision: GatewayResponse["routeDecision"];
+    attempts: GatewayAttempt[];
+    targetRank: number;
   }) => void | Promise<void>;
 }
 

@@ -1,10 +1,34 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createTextMessage, embed, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import {
+  createBatch,
+  createTextMessage,
+  deleteFile,
+  embed,
+  generateImage,
+  generateObject,
+  generateSpeech,
+  generateText,
+  generateVideo,
+  streamText,
+  tool,
+  transcribeAudio,
+  uploadFile,
+  type RealtimeConnection
+} from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
-import { createQwen, qwenCodeInterpreterTool, qwenWebExtractorTool, qwenWebSearchTool } from "../src/index.js";
+import {
+  createQwen,
+  qwenCodeInterpreterTool,
+  qwenFileSearchTool,
+  qwenImageSearchTool,
+  qwenMcpTool,
+  qwenWebExtractorTool,
+  qwenWebSearchImageTool,
+  qwenWebSearchTool
+} from "../src/index.js";
 
 describe("qwen adapter", () => {
   const fetchMock = vi.fn();
@@ -23,13 +47,13 @@ describe("qwen adapter", () => {
       jsonMode: true,
       toolChoice: true,
       parallelToolCalls: true,
-      vision: true,
       files: false,
       audioInput: false,
       audioOutput: false,
       embeddings: true,
       reasoning: true,
-      webSearch: true
+      webSearch: true,
+      vision: false
     }
   });
 
@@ -149,6 +173,22 @@ describe("qwen adapter", () => {
     expect(provider("qwen-plus")).toMatchObject(provider.languageModel("qwen-plus"));
   });
 
+  it("exposes Qwen Responses hosted tools in agent capabilities", () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const agentCapabilities = provider("qwen-plus").capabilities.agentCapabilities;
+
+    expect(agentCapabilities).toMatchObject({
+      supportTier: "tier-b",
+      hostedWebSearch: true,
+      hostedFileSearch: true,
+      remoteMcp: true,
+      codeExecution: true,
+      webExtraction: true,
+      approvalRequests: false,
+      computerUse: false
+    });
+  });
+
   it("streams incremental text", async () => {
     const body = new ReadableStream({
       start(controller) {
@@ -230,6 +270,43 @@ describe("qwen adapter", () => {
     expect(result.object.forecast).toBe("sunny");
     expect(result.objectMode).toBe("native");
     expect(result.toolResults[0]?.toolName).toBe("weather");
+  });
+
+  it("maps native structured output into the Qwen Responses API", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: JSON.stringify({ city: "Madrid", forecast: "sunny" }) }]
+          }
+        ]
+      })
+    );
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateObject({
+      model: provider("qwen-plus"),
+      prompt: "Return weather JSON.",
+      schema: z.object({
+        city: z.string(),
+        forecast: z.string()
+      }),
+      mode: "native"
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as { response_format?: { type: string; json_schema: { strict: boolean } } };
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/responses");
+    expect(body.response_format).toMatchObject({
+      type: "json_schema",
+      json_schema: {
+        strict: true
+      }
+    });
+    expect(result.object.forecast).toBe("sunny");
   });
 
   it("embeds values", async () => {
@@ -460,7 +537,15 @@ describe("qwen adapter", () => {
       tools: {
         search: qwenWebSearchTool(),
         extract: qwenWebExtractorTool({ max_results: 2 }),
-        code: qwenCodeInterpreterTool()
+        code: qwenCodeInterpreterTool(),
+        files: qwenFileSearchTool({ vector_store_ids: ["store_1"] }),
+        mcp: qwenMcpTool({
+          server_label: "amap-maps",
+          server_protocol: "sse",
+          server_url: "https://dashscope-intl.aliyuncs.com/api/v1/mcps/amap-maps/sse"
+        }),
+        imageWeb: qwenWebSearchImageTool(),
+        imageSearch: qwenImageSearchTool()
       }
     });
 
@@ -471,7 +556,72 @@ describe("qwen adapter", () => {
       expect.arrayContaining([
         expect.objectContaining({ type: "web_search" }),
         expect.objectContaining({ type: "web_extractor", max_results: 2 }),
-        expect.objectContaining({ type: "code_interpreter" })
+        expect.objectContaining({ type: "code_interpreter" }),
+        expect.objectContaining({ type: "file_search", vector_store_ids: ["store_1"] }),
+        expect.objectContaining({
+          type: "mcp",
+          server_label: "amap-maps",
+          server_protocol: "sse",
+          server_url: "https://dashscope-intl.aliyuncs.com/api/v1/mcps/amap-maps/sse"
+        }),
+        expect.objectContaining({ type: "web_search_image" }),
+        expect.objectContaining({ type: "image_search" })
+      ])
+    );
+  });
+
+  it("preserves Qwen Responses hosted tool output items as provider data", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [
+          {
+            type: "web_search_call",
+            id: "search_1",
+            action: {
+              type: "search",
+              query: "Qwen docs",
+              sources: [{ type: "url", url: "https://docs.qwencloud.com" }]
+            }
+          },
+          {
+            type: "code_interpreter_call",
+            id: "code_1",
+            code: "print(1)",
+            outputs: [{ type: "logs", logs: "1" }]
+          },
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "done" }]
+          }
+        ]
+      })
+    );
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("qwen-plus"),
+      prompt: "research",
+      tools: {
+        search: qwenWebSearchTool(),
+        code: qwenCodeInterpreterTool()
+      }
+    });
+
+    expect(result.text).toBe("done");
+    expect(result.messages.at(-1)?.parts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "provider-data",
+          provider: "qwen",
+          data: expect.objectContaining({ type: "web_search_call", id: "search_1" })
+        }),
+        expect.objectContaining({
+          type: "provider-data",
+          provider: "qwen",
+          data: expect.objectContaining({ type: "code_interpreter_call", id: "code_1" })
+        })
       ])
     );
   });
@@ -491,5 +641,96 @@ describe("qwen adapter", () => {
         }
       })
     ).rejects.toThrow('Provider "qwen" does not support hosted tools.');
+  });
+
+  it("exposes Qwen Cloud files and batch clients", async () => {
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ id: "file_1", filename: "demo.txt", bytes: 4, status: "processed" }))
+      .mockResolvedValueOnce(Response.json({ id: "file_1", deleted: true }))
+      .mockResolvedValueOnce(Response.json({ id: "batch_1", status: "validating", model: "qwen-plus" }));
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const file = await uploadFile({
+      provider,
+      data: new Uint8Array([1, 2, 3, 4]),
+      mediaType: "text/plain",
+      filename: "demo.txt"
+    });
+    const deleted = await deleteFile({ provider, name: file.name });
+    const batch = await createBatch({
+      provider,
+      modelId: "qwen-plus",
+      fileName: "file_1"
+    });
+
+    expect(file).toMatchObject({ name: "file_1", displayName: "demo.txt", sizeBytes: 4 });
+    expect(deleted.name).toBe("file_1");
+    expect(batch).toMatchObject({ name: "batch_1", model: "qwen-plus", state: "validating" });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/files");
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain("/batches");
+  });
+
+  it("exposes Qwen speech and media models", async () => {
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ text: "hola mundo" }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "audio/mpeg" } }))
+      .mockResolvedValueOnce(Response.json({ data: [{ url: "https://example.com/image.png" }] }))
+      .mockResolvedValueOnce(Response.json({ output: { task_id: "task_1", videos: [{ url: "https://example.com/video.mp4" }] } }));
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const transcript = await transcribeAudio({
+      model: provider.transcriptionModel!("qwen-audio-asr"),
+      audio: { data: new Uint8Array([1]), mediaType: "audio/wav", filename: "audio.wav" }
+    });
+    const speech = await generateSpeech({
+      model: provider.speechModel!("qwen-tts"),
+      input: "hello"
+    });
+    const image = await generateImage({
+      model: provider.imageGenerationModel!("wanx2.1-t2i-turbo"),
+      prompt: "a product icon"
+    });
+    const video = await generateVideo({
+      model: provider.videoGenerationModel!("wanx2.1-t2v-turbo"),
+      prompt: "a product video"
+    });
+
+    expect(transcript.text).toBe("hola mundo");
+    expect(speech.mediaType).toBe("audio/mpeg");
+    expect(image.images[0]?.uri).toBe("https://example.com/image.png");
+    expect(video.operationName).toBe("task_1");
+    expect(video.videos[0]?.uri).toBe("https://example.com/video.mp4");
+  });
+
+  it("exposes Qwen realtime and package-specific rerank helpers", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connection: RealtimeConnection = {
+      async sendJson(payload) {
+        sent.push(payload);
+      },
+      async recvJson() {
+        return undefined;
+      },
+      async close() {}
+    };
+    const connectionFactory = vi.fn(async () => connection);
+    fetchMock.mockResolvedValueOnce(Response.json({ results: [{ index: 0, relevance_score: 0.9 }] }));
+
+    const provider = createQwen({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("qwen-omni-turbo-realtime").connect({ instructions: "be concise" });
+    await session.sendText("hi");
+    await session.close();
+    const rerank = await provider.rerankModel("gte-rerank-v2").rerank({
+      query: "sdk",
+      documents: ["Zhivex SDK"]
+    });
+
+    expect(connectionFactory).toHaveBeenCalled();
+    expect(sent.some((payload) => payload.type === "conversation.item.create")).toBe(true);
+    expect(rerank.results[0]).toMatchObject({ index: 0, document: "Zhivex SDK", relevanceScore: 0.9 });
   });
 });

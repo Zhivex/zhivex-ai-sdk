@@ -184,6 +184,21 @@ const getAttemptTimeoutMs = (config: GatewayConfig, provider: GatewayProviderId)
 
 const retryBackoffMs = (config: GatewayConfig, retry: number) => (config.retryBackoffMs ?? 200) * (retry + 1);
 
+const createAttempt = (
+  target: GatewayModelTarget,
+  ok: boolean,
+  latencyMs: number,
+  targetRank: number,
+  options: Pick<GatewayAttempt, "errorMessage" | "reasonCode" | "retry"> = {}
+): GatewayAttempt => ({
+  provider: target.provider,
+  modelId: target.modelId,
+  ok,
+  latencyMs,
+  targetRank,
+  ...options
+});
+
 const normalizeUsage = (
   usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined,
   inputText: string,
@@ -378,53 +393,53 @@ export const createGateway = (config: GatewayConfig) => {
     const routeDecision = createRouteDecision(mode, intent, orderedTargets);
     const attempts: GatewayAttempt[] = [];
 
-    for (const target of orderedTargets) {
+    for (const [targetIndex, target] of orderedTargets.entries()) {
       const adapter = getAdapter(target.provider);
 
       if (!supportsRequiredCapabilities(adapter, target, buildRequiredCapabilities(request))) {
-        attempts.push({
-          provider: target.provider,
-          modelId: target.modelId,
-          ok: false,
-          latencyMs: 0,
-          errorMessage: "Skipped because model capabilities do not satisfy the request."
-        });
+        attempts.push(
+          createAttempt(target, false, 0, targetIndex, {
+            reasonCode: "model-capabilities",
+            errorMessage: "Skipped because model capabilities do not satisfy the request."
+          })
+        );
         continue;
       }
 
       if (!supportsRequiredAgentCapabilities(adapter, target, request.requiredAgentCapabilities)) {
-        attempts.push({
-          provider: target.provider,
-          modelId: target.modelId,
-          ok: false,
-          latencyMs: 0,
-          errorMessage: "Skipped because agent capabilities do not satisfy the request."
-        });
+        attempts.push(
+          createAttempt(target, false, 0, targetIndex, {
+            reasonCode: "agent-capabilities",
+            errorMessage: "Skipped because agent capabilities do not satisfy the request."
+          })
+        );
         continue;
       }
 
       if (!withinCostBudget(config, request, target)) {
-        attempts.push({
-          provider: target.provider,
-          modelId: target.modelId,
-          ok: false,
-          latencyMs: 0,
-          errorMessage: "Skipped because provider cost exceeds the configured budget."
-        });
+        attempts.push(
+          createAttempt(target, false, 0, targetIndex, {
+            reasonCode: "cost-budget",
+            errorMessage: "Skipped because provider cost exceeds the configured budget."
+          })
+        );
         continue;
       }
 
       await config.onAgentRoute?.({
         provider: target.provider,
         modelId: target.modelId,
-        routeDecision
+        routeDecision,
+        attempts,
+        targetRank: targetIndex
       });
 
       return {
         target,
         attempts,
         routeDecision,
-        startedAt: Date.now()
+        startedAt: Date.now(),
+        targetRank: targetIndex
       };
     }
 
@@ -447,36 +462,33 @@ export const createGateway = (config: GatewayConfig) => {
       const adapter = getAdapter(target.provider);
 
       if (!supportsRequiredCapabilities(adapter, target, requiredCapabilities)) {
-        attempts.push({
-          provider: target.provider,
-          modelId: target.modelId,
-          ok: false,
-          latencyMs: 0,
-          errorMessage: "Skipped because model capabilities do not satisfy the request."
-        });
+        attempts.push(
+          createAttempt(target, false, 0, targetIndex, {
+            reasonCode: "model-capabilities",
+            errorMessage: "Skipped because model capabilities do not satisfy the request."
+          })
+        );
         continue;
       }
 
       if (!withinCostBudget(config, request, target)) {
-        attempts.push({
-          provider: target.provider,
-          modelId: target.modelId,
-          ok: false,
-          latencyMs: 0,
-          errorMessage: "Skipped because provider cost exceeds the configured budget."
-        });
+        attempts.push(
+          createAttempt(target, false, 0, targetIndex, {
+            reasonCode: "cost-budget",
+            errorMessage: "Skipped because provider cost exceeds the configured budget."
+          })
+        );
         continue;
       }
 
       const skipReason = getSkipReason?.(adapter, target);
       if (skipReason) {
-        attempts.push({
-          provider: target.provider,
-          modelId: target.modelId,
-          ok: false,
-          latencyMs: 0,
-          errorMessage: skipReason
-        });
+        attempts.push(
+          createAttempt(target, false, 0, targetIndex, {
+            reasonCode: "operation-skip",
+            errorMessage: skipReason
+          })
+        );
         continue;
       }
 
@@ -494,12 +506,7 @@ export const createGateway = (config: GatewayConfig) => {
           });
 
           const result = await withTimeout(operation(adapter, target), getAttemptTimeoutMs(config, target.provider));
-          attempts.push({
-            provider: target.provider,
-            modelId: target.modelId,
-            ok: true,
-            latencyMs: Date.now() - attemptStartedAt
-          });
+          attempts.push(createAttempt(target, true, Date.now() - attemptStartedAt, targetIndex, { retry }));
 
           return {
             attempts,
@@ -511,13 +518,13 @@ export const createGateway = (config: GatewayConfig) => {
         } catch (error) {
           const normalized = normalizeError(error);
 
-          attempts.push({
-            provider: target.provider,
-            modelId: target.modelId,
-            ok: false,
-            latencyMs: Date.now() - attemptStartedAt,
-            errorMessage: normalized.message
-          });
+          attempts.push(
+            createAttempt(target, false, Date.now() - attemptStartedAt, targetIndex, {
+              reasonCode: "provider-error",
+              errorMessage: normalized.message,
+              retry
+            })
+          );
 
           await config.onAttempt?.({
             provider: target.provider,
@@ -559,36 +566,33 @@ export const createGateway = (config: GatewayConfig) => {
       const adapter = getAdapter(target.provider);
 
       if (!supportsRequiredCapabilities(adapter, target, requiredCapabilities)) {
-        attempts.push({
-          provider: target.provider,
-          modelId: target.modelId,
-          ok: false,
-          latencyMs: 0,
-          errorMessage: "Skipped because model capabilities do not satisfy the request."
-        });
+        attempts.push(
+          createAttempt(target, false, 0, targetIndex, {
+            reasonCode: "model-capabilities",
+            errorMessage: "Skipped because model capabilities do not satisfy the request."
+          })
+        );
         continue;
       }
 
       if (!withinCostBudget(config, request, target)) {
-        attempts.push({
-          provider: target.provider,
-          modelId: target.modelId,
-          ok: false,
-          latencyMs: 0,
-          errorMessage: "Skipped because provider cost exceeds the configured budget."
-        });
+        attempts.push(
+          createAttempt(target, false, 0, targetIndex, {
+            reasonCode: "cost-budget",
+            errorMessage: "Skipped because provider cost exceeds the configured budget."
+          })
+        );
         continue;
       }
 
       const skipReason = getSkipReason?.(adapter, target);
       if (skipReason) {
-        attempts.push({
-          provider: target.provider,
-          modelId: target.modelId,
-          ok: false,
-          latencyMs: 0,
-          errorMessage: skipReason
-        });
+        attempts.push(
+          createAttempt(target, false, 0, targetIndex, {
+            reasonCode: "operation-skip",
+            errorMessage: skipReason
+          })
+        );
         continue;
       }
 
@@ -626,12 +630,7 @@ export const createGateway = (config: GatewayConfig) => {
             }
           })();
 
-          attempts.push({
-            provider: target.provider,
-            modelId: target.modelId,
-            ok: true,
-            latencyMs: Date.now() - attemptStartedAt
-          });
+          attempts.push(createAttempt(target, true, Date.now() - attemptStartedAt, targetIndex, { retry }));
 
           return {
             attempts,
@@ -645,13 +644,13 @@ export const createGateway = (config: GatewayConfig) => {
           };
         } catch (error) {
           const normalized = normalizeError(error);
-          attempts.push({
-            provider: target.provider,
-            modelId: target.modelId,
-            ok: false,
-            latencyMs: Date.now() - attemptStartedAt,
-            errorMessage: normalized.message
-          });
+          attempts.push(
+            createAttempt(target, false, Date.now() - attemptStartedAt, targetIndex, {
+              reasonCode: "provider-error",
+              errorMessage: normalized.message,
+              retry
+            })
+          );
 
           await config.onAttempt?.({
             provider: target.provider,
@@ -837,7 +836,13 @@ export const createGateway = (config: GatewayConfig) => {
         ...createAgentRunInput(request, selection.target)
       });
 
-      return enrichAgentResult(selection.target, selection.attempts, selection.routeDecision, selection.startedAt, result);
+      return enrichAgentResult(
+        selection.target,
+        [...selection.attempts, createAttempt(selection.target, true, Date.now() - selection.startedAt, selection.targetRank, { retry: 0 })],
+        selection.routeDecision,
+        selection.startedAt,
+        result
+      );
     },
 
     streamAgent(request: GatewayAgentRequest): GatewayAgentStreamResult {
@@ -880,7 +885,10 @@ export const createGateway = (config: GatewayConfig) => {
               collect: async () =>
                 enrichAgentResult(
                   selected.target,
-                  selected.attempts,
+                  [
+                    ...selected.attempts,
+                    createAttempt(selected.target, true, Date.now() - selected.startedAt, selected.targetRank, { retry: 0 })
+                  ],
                   selected.routeDecision,
                   selected.startedAt,
                   await streamResult.collect()

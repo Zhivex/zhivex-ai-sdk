@@ -531,6 +531,7 @@ describe("gateway", () => {
 
   it("routes agents according to required agent capabilities and saves state", async () => {
     const store = createInMemoryAgentRunStore();
+    const routeSelections: Array<{ provider: string; targetRank: number; attempts: Array<{ reasonCode?: string }> }> = [];
     const gateway = createGateway({
       adapters: {
         bedrock: createAgentAdapter(async () => ({ text: "too limited" }), createAgentCapableCapabilities({
@@ -559,6 +560,13 @@ describe("gateway", () => {
             toolsets: true
           }
         }))
+      },
+      onAgentRoute(selection) {
+        routeSelections.push({
+          provider: selection.provider,
+          targetRank: selection.targetRank,
+          attempts: selection.attempts.map((attempt) => ({ reasonCode: attempt.reasonCode }))
+        });
       }
     });
 
@@ -576,7 +584,72 @@ describe("gateway", () => {
     expect(result.providerUsed).toBe("openai");
     expect(result.outputText).toBe("agent from openai");
     expect(result.attempts[0]?.errorMessage).toContain("agent capabilities");
+    expect(result.attempts[0]).toMatchObject({
+      provider: "bedrock",
+      reasonCode: "agent-capabilities",
+      targetRank: 0
+    });
+    expect(routeSelections).toEqual([
+      {
+        provider: "openai",
+        targetRank: 1,
+        attempts: [{ reasonCode: "agent-capabilities" }]
+      }
+    ]);
     expect(await store.load(result.state.runId)).toBeDefined();
+  });
+
+  it("routes agents by hosted file search and remote MCP support", async () => {
+    const gateway = createGateway({
+      adapters: {
+        qwen: createAgentAdapter(async () => ({ text: "qwen agent" }), createAgentCapableCapabilities({
+          agentCapabilities: {
+            supportTier: "tier-b",
+            toolChoiceNone: true,
+            approvalRequests: false,
+            hostedWebSearch: true,
+            hostedFileSearch: true,
+            remoteMcp: true,
+            computerUse: false,
+            codeExecution: true,
+            webExtraction: true,
+            toolsets: false
+          }
+        })),
+        kimi: createAgentAdapter(async () => ({ text: "kimi agent" }), createAgentCapableCapabilities({
+          agentCapabilities: {
+            supportTier: "tier-b",
+            toolChoiceNone: true,
+            approvalRequests: false,
+            hostedWebSearch: true,
+            hostedFileSearch: false,
+            remoteMcp: false,
+            computerUse: false,
+            codeExecution: false,
+            toolsets: false
+          }
+        }))
+      }
+    });
+
+    const result = await gateway.runAgent({
+      primary: { provider: "kimi", modelId: "kimi-k2.5" },
+      fallbacks: [{ provider: "qwen", modelId: "qwen-plus" }],
+      prompt: "Use hosted retrieval",
+      requiredAgentCapabilities: {
+        supportTier: "tier-b",
+        hostedFileSearch: true,
+        remoteMcp: true
+      }
+    });
+
+    expect(result.providerUsed).toBe("qwen");
+    expect(result.outputText).toBe("qwen agent");
+    expect(result.attempts[0]).toMatchObject({
+      provider: "kimi",
+      reasonCode: "agent-capabilities",
+      targetRank: 0
+    });
   });
 
   it("streams routed agents and preserves route metadata on the final state", async () => {
@@ -599,6 +672,13 @@ describe("gateway", () => {
     const final = await result.collect();
     expect(chunks.join("")).toBe("streamed agent");
     expect(final.providerUsed).toBe("gemini");
+    expect(final.attempts[0]).toMatchObject({
+      provider: "gemini",
+      ok: true,
+      retry: 0,
+      targetRank: 0
+    });
+    expect(final.routeDecision).toEqual(final.state.routeDecision);
     expect(final.state.routeDecision.orderedTargets[0]).toEqual({
       provider: "gemini",
       modelId: "gemini-2.0-flash"
