@@ -366,6 +366,33 @@ describe("gateway", () => {
     });
   });
 
+  it("preserves the first stream event after probing a target", async () => {
+    const gateway = createGateway({
+      adapters: {
+        openai: createStreamingAdapter(async () =>
+          (async function* () {
+            yield { type: "text-delta" as const, textDelta: "first" };
+            yield { type: "text-delta" as const, textDelta: " second" };
+            yield { type: "finish" as const, finishReason: "stop" as const };
+          })()
+        )
+      }
+    });
+
+    const result = gateway.streamText({
+      primary: { provider: "openai", modelId: "gpt-4o-mini" },
+      messages: [{ role: "user", content: "hello" }]
+    });
+
+    const events = [];
+    for await (const event of result.eventStream) {
+      events.push(event);
+    }
+
+    expect(events.map((event) => event.type)).toEqual(["text-delta", "text-delta", "finish", "finish"]);
+    expect(events[0]).toEqual({ type: "text-delta", textDelta: "first" });
+  });
+
   it("routes generateObject through the chosen provider", async () => {
     const gateway = createGateway({
       adapters: {
@@ -412,6 +439,94 @@ describe("gateway", () => {
 
     expect(result.object).toEqual({ answer: "ok" });
     expect(result.providerUsed).toBe("gemini");
+  });
+
+  it("skips object targets without compatible object output capabilities", async () => {
+    const gateway = createGateway({
+      adapters: {
+        bedrock: createAdapter(async () => ({ text: "{\"answer\":\"bad\"}" })),
+        gemini: createAdapter(async () => ({ text: "{\"answer\":\"ok\"}" }), {
+          streaming: true,
+          tools: false,
+          structuredOutput: false,
+          jsonMode: true,
+          toolChoice: false,
+          parallelToolCalls: false,
+          vision: true,
+          files: false,
+          audioInput: false,
+          audioOutput: false,
+          embeddings: false,
+          reasoning: false,
+          webSearch: false
+        })
+      }
+    });
+
+    const result = await gateway.generateObject({
+      primary: { provider: "bedrock", modelId: "anthropic.claude-v2" },
+      fallbacks: [{ provider: "gemini", modelId: "gemini-2.0-flash" }],
+      messages: [{ role: "user", content: "hello" }],
+      schema: z.object({
+        answer: z.string()
+      })
+    });
+
+    expect(result.providerUsed).toBe("gemini");
+    expect(result.object).toEqual({ answer: "ok" });
+    expect(result.attempts[0]?.errorMessage).toContain("object output");
+  });
+
+  it("routes streamObject with object metadata and preserved first event", async () => {
+    const gateway = createGateway({
+      adapters: {
+        gemini: createStreamingAdapter(
+          async () =>
+            (async function* () {
+              yield { type: "text-delta" as const, textDelta: "{\"answer\":" };
+              yield { type: "text-delta" as const, textDelta: "\"ok\"}" };
+              yield { type: "finish" as const, finishReason: "stop" as const };
+            })(),
+          {
+            streaming: true,
+            tools: false,
+            structuredOutput: false,
+            jsonMode: true,
+            toolChoice: false,
+            parallelToolCalls: false,
+            vision: true,
+            files: false,
+            audioInput: false,
+            audioOutput: false,
+            embeddings: false,
+            reasoning: false,
+            webSearch: false
+          }
+        )
+      }
+    });
+
+    const result = gateway.streamObject({
+      primary: { provider: "gemini", modelId: "gemini-2.0-flash" },
+      messages: [{ role: "user", content: "hello" }],
+      schema: z.object({
+        answer: z.string()
+      })
+    });
+
+    const events = [];
+    for await (const event of result.eventStream) {
+      events.push(event);
+    }
+
+    const final = await result.collect();
+    expect(events[0]).toMatchObject({ type: "text-delta", textDelta: "{\"answer\":" });
+    expect(final.object).toEqual({ answer: "ok" });
+    expect(final.providerUsed).toBe("gemini");
+    expect(final.routeDecision.orderedTargets[0]).toEqual({
+      provider: "gemini",
+      modelId: "gemini-2.0-flash"
+    });
   });
 
   it("routes agents according to required agent capabilities and saves state", async () => {

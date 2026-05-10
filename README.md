@@ -82,6 +82,10 @@ Production adoption path:
 
 - `@zhivex-ai/core`: shared types, message helpers, runtime utilities, stream helpers, middleware, model catalog, and generation primitives.
 
+### Agents
+
+- `@zhivex-ai/agents`: agent-first facade over `core` for applications that only need the portable agent runtime, stores, memory, safety, tracing, evaluation, and provider support helpers.
+
 ### Providers
 
 - `@zhivex-ai/openai`
@@ -128,6 +132,7 @@ bun add @zhivex-ai/azure-openai
 bun add @zhivex-ai/bedrock
 bun add @zhivex-ai/ollama
 bun add @zhivex-ai/gateway
+bun add @zhivex-ai/agents
 ```
 
 If you prefer working directly with the shared contract:
@@ -2108,6 +2113,8 @@ console.log(fromAnthropic.text);
 
 `@zhivex-ai/gateway` is the optional SDK-local routing and fallback package for multi-provider setups. It is separate from the main `@zhivex-ai/sdk` facade and separate from any Zhivex-hosted Gateway API. See [`packages/gateway/README.md`](./packages/gateway/README.md) for routing examples and package-specific behavior.
 
+`generateObject()` and `streamObject()` now route through the same gateway metadata path as text generation. Native object mode requires `structuredOutput`; prompted object mode requires `jsonMode`; auto mode accepts either capability and skips targets that cannot satisfy object output before making a provider call.
+
 ## Public API Surface
 
 The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives from `core`, including:
@@ -2124,12 +2131,15 @@ The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives 
 
 If you are building custom adapters or lower-level integrations, use `@zhivex-ai/core` directly.
 
+If you are building an agent-focused service and do not want the full aggregator surface, use `@zhivex-ai/agents`. It re-exports the current agent contracts from `core`; it does not define a separate runtime.
+
 ## Repository Layout
 
 ```text
 packages/
   core/           Shared contracts, runtime helpers, streams, middleware, catalog
   sdk/            Aggregated public API
+  agents/         Agent-first facade over the core runtime
   openai/         OpenAI adapter
   azure-openai/   Azure OpenAI adapter
   anthropic/      Anthropic adapter

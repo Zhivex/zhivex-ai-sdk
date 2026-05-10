@@ -8,6 +8,7 @@
 
 - `packages/core`: shared contracts, runtime helpers, messages, streaming, embeddings, middleware, catalog utilities, UI helpers, errors, and generation utilities.
 - `packages/sdk`: aggregator package that re-exports the public API from `core`.
+- `packages/agents`: agent-first facade that re-exports the supported agent runtime surface from `core`.
 - `packages/openai`: OpenAI provider.
 - `packages/azure-openai`: Azure OpenAI provider.
 - `packages/anthropic`: Anthropic provider.
@@ -26,6 +27,7 @@ Packages currently publishable to npm:
 
 - `@zhivex-ai/core`
 - `@zhivex-ai/sdk`
+- `@zhivex-ai/agents`
 - `@zhivex-ai/openai`
 - `@zhivex-ai/azure-openai`
 - `@zhivex-ai/anthropic`
