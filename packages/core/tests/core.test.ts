@@ -18,6 +18,7 @@ import {
   createBudgetGuard,
   createProviderSupportMatrix,
   createProviderSupportDriftReport,
+  createProductionSafetyPolicy,
   createRedactionPolicy,
   createSafetyPolicy,
   createSubAgentTool,
@@ -514,6 +515,47 @@ describe("core helpers", () => {
     expect(redaction.redactJson({ nested: { token: "Bearer abcdefghijklmnop" } })).toEqual({
       nested: { token: "[REDACTED]" }
     });
+  });
+
+  it("creates production safety policies with overridable defaults", () => {
+    const policy = createProductionSafetyPolicy();
+
+    expect(policy.preset).toBe("review-sensitive");
+    expect(policy.toolApprovalPolicy).toBeTypeOf("function");
+    expect(policy.redaction?.redactText("ana@example.com")).toBe("[REDACTED]");
+    expect(policy.budget?.limits).toMatchObject({
+      maxSteps: 6,
+      maxToolCalls: 8,
+      maxToolErrors: 1,
+      maxTotalTokens: 20_000
+    });
+
+    const overridden = createProductionSafetyPolicy({
+      redaction: { replacement: "[hidden]" },
+      budget: { maxSteps: 2 },
+      toolExecution: { parallel: false }
+    });
+
+    expect(overridden.redaction?.redactText("ana@example.com")).toBe("[hidden]");
+    expect(overridden.budget?.limits).toMatchObject({
+      maxSteps: 2,
+      maxToolCalls: 8,
+      maxToolErrors: 1,
+      maxTotalTokens: 20_000
+    });
+    expect(overridden.toolExecution?.parallel).toBe(false);
+
+    const disabled = createProductionSafetyPolicy({
+      preset: "permissive",
+      approval: false,
+      redaction: false,
+      budget: false
+    });
+
+    expect(disabled.preset).toBe("permissive");
+    expect(disabled.toolApprovalPolicy).toBeUndefined();
+    expect(disabled.redaction).toBeUndefined();
+    expect(disabled.budget).toBeUndefined();
   });
 
   it("applies budget guards to agent output", async () => {

@@ -15,7 +15,7 @@ const readPackage = async (packageName: string) =>
     publishConfig?: { access?: string };
   };
 
-describe("release candidate package metadata", () => {
+describe("package metadata", () => {
   it("keeps core publish metadata ready for npm packaging", async () => {
     const pkg = await readPackage("core");
     expect(pkg).toMatchObject({

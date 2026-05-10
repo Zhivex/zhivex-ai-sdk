@@ -8,7 +8,7 @@ Recommended entry point for Zhivex AI SDK. Re-exports the high-level public API 
 bun add @zhivex-ai/sdk
 ```
 
-For the current release candidate:
+For prerelease validation:
 
 ```bash
 bun add @zhivex-ai/sdk@next

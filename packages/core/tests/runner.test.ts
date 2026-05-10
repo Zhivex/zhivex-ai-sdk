@@ -590,6 +590,14 @@ describe("runner sessions", () => {
     ).toThrow(ValidationError);
   });
 
+  it("rejects Postgres session clients without query()", () => {
+    expect(() =>
+      createPostgresSessionService({
+        client: {} as PostgresClientLike
+      })
+    ).toThrow(/app-owned Postgres-compatible client/);
+  });
+
   it("detects optimistic concurrency conflicts for sessions", async () => {
     const service = createInMemorySessionService();
     const session = await service.createSession({

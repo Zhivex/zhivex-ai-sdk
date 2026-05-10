@@ -9,6 +9,7 @@ Related documents:
 - [README.md](./README.md)
 - [STABILITY.md](./STABILITY.md)
 - [SUPPORT.md](./SUPPORT.md)
+- [docs/maintainers/RELEASE.md](./docs/maintainers/RELEASE.md)
 
 ## Versioning Principles
 
@@ -52,19 +53,22 @@ Changesets is configured to update internal dependencies when needed, but packag
 
 ## Release Expectations
 
-Before publishing:
+Before publishing, follow the full [Release Guide](./docs/maintainers/RELEASE.md). The short checklist is:
 
 1. Run `bun run typecheck`
 2. Run `bun run test`
 3. Run `bun run build`
-4. Create or review pending changesets
-5. Review package manifests and re-exports
+4. Run `bun run smoke:providers` before meaningful stable or prerelease publishes
+5. Create or review pending changesets
+6. Review package manifests, package dry-run output, and re-exports
 
 For local versioning and release:
 
 1. Run `bun run version-packages`
 2. Re-run validation after versioning
-3. Publish with `bun run release`
+3. Publish stable releases with `bun run release`
+
+Use `bunx changeset publish --tag next` for prereleases. Do not publish prerelease versions to `latest`.
 
 ## Compatibility Expectations
 

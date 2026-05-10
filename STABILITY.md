@@ -26,7 +26,7 @@ Related documents:
 - [SUPPORT.md](./SUPPORT.md)
 - [VERSIONING.md](./VERSIONING.md)
 
-## RC Boundary
+## Stable Release Boundary
 
 The verifiable runtime boundary for `@zhivex-ai/core` is `API_STABILITY_MANIFEST`, exported from both `@zhivex-ai/core` and `@zhivex-ai/sdk`.
 
@@ -41,9 +41,9 @@ listApiStability("beta");
 
 The manifest classifies runtime exports as `stable`, `beta`, or `experimental`. Contract tests fail if `packages/core/src/index.ts` adds a runtime export that is not classified. Type-only exports are guarded separately by declaration snapshots for `@zhivex-ai/core` and `@zhivex-ai/sdk`; intentional public type changes should update those snapshots and the relevant docs together.
 
-This RC boundary promotes only the Runner/session family to Stable. Workflows, artifacts, workflow state services, durable artifact helpers, CLI inspection/execution UX, and their schema/versioning helpers remain Beta. Advanced tool registry helpers remain Experimental.
+This stable boundary promotes only the Runner/session family to Stable. Workflows, artifacts, workflow state services, durable artifact helpers, CLI inspection/execution UX, and their schema/versioning helpers remain Beta. Advanced tool registry helpers remain Experimental.
 
-The current npm release candidate is published under the `next` dist-tag. Install it with `@zhivex-ai/sdk@next`; it is intentionally not published as `latest` until the RC validation period is complete.
+The current stable npm package is published under the `latest` dist-tag. Install it with `@zhivex-ai/sdk`. Use `@next` only for prerelease validation.
 
 ## Stable
 

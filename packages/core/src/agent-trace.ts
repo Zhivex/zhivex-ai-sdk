@@ -327,6 +327,13 @@ export const createAgentTraceArtifact = (
   options: AgentTraceOptions = {}
 ): AgentTraceArtifact => stateToTrace(state, options);
 
+export const createProductionTraceOptions = (options: AgentTraceOptions = {}): AgentTraceOptions => ({
+  includeMessages: false,
+  includeToolInputs: false,
+  outputPreviewLength: 500,
+  ...options
+});
+
 const requireParentLookup = (store: AgentRunStore) => {
   if (!store.findByParentRunId) {
     throw new ValidationError('The agent run "store" must implement "findByParentRunId()" to build hierarchical agent traces.');
@@ -570,3 +577,6 @@ export const createAgentTraceCollector = (options: AgentTraceOptions = {}): Agen
     }
   };
 };
+
+export const createProductionTraceCollector = (options: AgentTraceOptions = {}): AgentTraceCollector =>
+  createAgentTraceCollector(createProductionTraceOptions(options));

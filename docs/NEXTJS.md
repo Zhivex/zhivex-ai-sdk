@@ -5,7 +5,7 @@ Use the SDK from server code: route handlers, server actions, API routes, or job
 ## Install
 
 ```bash
-bun add @zhivex-ai/sdk@next @zhivex-ai/openai
+bun add @zhivex-ai/sdk @zhivex-ai/openai
 ```
 
 ## Route Handler
@@ -64,6 +64,8 @@ export async function POST(request: Request) {
 ```
 
 `postgresClient` and `resolveCurrentUserId()` are app-owned. The SDK does not own auth, tenancy, billing, or database connection management.
+
+The SDK does not import a Postgres driver. Use the driver or managed database client already chosen by your app, and pass a compatible `query(sql, params)` client into `createPostgresSessionService()`.
 
 ## Client Component
 

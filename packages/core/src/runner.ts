@@ -5,6 +5,7 @@ import { resumeAgent, runAgent, streamAgent } from "./agent.js";
 import { ConflictError, ValidationError } from "./errors.js";
 import { normalizeMessages } from "./generate-text.js";
 import { createTextMessage, serializeJsonValue } from "./messages.js";
+import { assertPostgresClient } from "./postgres-client.js";
 import type {
   AgentApprovalRequest,
   AgentDefinition,
@@ -584,6 +585,7 @@ export const createSqliteSessionService = (options: SqliteSessionServiceOptions)
 };
 
 export const createPostgresSessionService = (options: PostgresSessionServiceOptions): SessionService => {
+  assertPostgresClient(options.client);
   const tableName = validateIdentifier(options.tableName ?? "zhivex_agent_sessions", "tableName");
   const createSql = `
     CREATE TABLE IF NOT EXISTS ${tableName} (

@@ -16,6 +16,7 @@ import {
   ValidationError,
   WORKFLOW_RUN_STATE_SCHEMA_VERSION,
   WORKFLOW_STATE_RECORD_SCHEMA_VERSION,
+  type PostgresClientLike,
   type WorkflowStateRecord
 } from "../src/index.js";
 
@@ -347,6 +348,7 @@ describe("workflow state services", () => {
   it("rejects invalid SQL workflow state table names and exports APIs", async () => {
     expect(() => createSqliteWorkflowStateService({ db: new FakeSqliteWorkflowStateDatabase(), tableName: "bad-name" })).toThrow(ValidationError);
     expect(() => createPostgresWorkflowStateService({ client: new FakePostgresWorkflowStateClient(), tableName: "bad-name" })).toThrow(ValidationError);
+    expect(() => createPostgresWorkflowStateService({ client: {} as PostgresClientLike })).toThrow(/app-owned Postgres-compatible client/);
 
     const api = await import("../src/index.js");
     expect(api.createFileWorkflowStateService).toBeTypeOf("function");
