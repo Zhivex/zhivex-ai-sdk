@@ -219,6 +219,29 @@ const buildRequiredCapabilities = (
   ...extra
 });
 
+const objectCapabilitySkipReason = <TSchema extends ZodTypeAny>(
+  adapter: ProviderAdapter,
+  target: GatewayModelTarget,
+  request: GatewayGenerateObjectRequest<TSchema>
+): string | undefined => {
+  const capabilities = adapter.languageModel(target.modelId).capabilities;
+  const mode = request.mode ?? "auto";
+
+  if (mode === "native" && !capabilities.structuredOutput) {
+    return "Skipped because model capabilities do not satisfy native structured output.";
+  }
+
+  if (mode === "prompted" && !capabilities.jsonMode) {
+    return "Skipped because model capabilities do not satisfy prompted JSON output.";
+  }
+
+  if (mode === "auto" && !capabilities.structuredOutput && !capabilities.jsonMode) {
+    return "Skipped because model capabilities do not satisfy object output.";
+  }
+
+  return undefined;
+};
+
 const createTextOptions = (
   adapter: ProviderAdapter,
   target: GatewayModelTarget,
@@ -411,7 +434,8 @@ export const createGateway = (config: GatewayConfig) => {
   const runGenerate = async <TResult extends GenerateTextOutput>(
     request: GatewayRequest,
     operation: (adapter: ProviderAdapter, target: GatewayModelTarget) => Promise<TResult>,
-    extraRequiredCapabilities: NonNullable<GatewayRequest["requiredCapabilities"]> = {}
+    extraRequiredCapabilities: NonNullable<GatewayRequest["requiredCapabilities"]> = {},
+    getSkipReason?: (adapter: ProviderAdapter, target: GatewayModelTarget) => string | undefined
   ) => {
     const attempts: GatewayAttempt[] = [];
     const startedAt = Date.now();
@@ -440,6 +464,18 @@ export const createGateway = (config: GatewayConfig) => {
           ok: false,
           latencyMs: 0,
           errorMessage: "Skipped because provider cost exceeds the configured budget."
+        });
+        continue;
+      }
+
+      const skipReason = getSkipReason?.(adapter, target);
+      if (skipReason) {
+        attempts.push({
+          provider: target.provider,
+          modelId: target.modelId,
+          ok: false,
+          latencyMs: 0,
+          errorMessage: skipReason
         });
         continue;
       }
@@ -510,7 +546,8 @@ export const createGateway = (config: GatewayConfig) => {
   const runStream = async <TStreamResult extends StreamTextResult | StreamObjectResult<any>>(
     request: GatewayRequest,
     operation: (adapter: ProviderAdapter, target: GatewayModelTarget) => TStreamResult,
-    extraRequiredCapabilities: NonNullable<GatewayRequest["requiredCapabilities"]> = {}
+    extraRequiredCapabilities: NonNullable<GatewayRequest["requiredCapabilities"]> = {},
+    getSkipReason?: (adapter: ProviderAdapter, target: GatewayModelTarget) => string | undefined
   ) => {
     const attempts: GatewayAttempt[] = [];
     const startedAt = Date.now();
@@ -543,6 +580,18 @@ export const createGateway = (config: GatewayConfig) => {
         continue;
       }
 
+      const skipReason = getSkipReason?.(adapter, target);
+      if (skipReason) {
+        attempts.push({
+          provider: target.provider,
+          modelId: target.modelId,
+          ok: false,
+          latencyMs: 0,
+          errorMessage: skipReason
+        });
+        continue;
+      }
+
       for (let retry = 0; retry <= maxRetries; retry += 1) {
         const attemptStartedAt = Date.now();
 
@@ -564,6 +613,19 @@ export const createGateway = (config: GatewayConfig) => {
             throw first.value.error;
           }
 
+          const eventStream = (async function* () {
+            if (!first.done) {
+              yield first.value;
+            }
+            for (;;) {
+              const next = await iterator.next();
+              if (next.done) {
+                return;
+              }
+              yield next.value;
+            }
+          })();
+
           attempts.push({
             provider: target.provider,
             modelId: target.modelId,
@@ -576,7 +638,10 @@ export const createGateway = (config: GatewayConfig) => {
             target,
             startedAt,
             routeDecision,
-            streamResult
+            streamResult: {
+              ...streamResult,
+              eventStream
+            } as TStreamResult
           };
         } catch (error) {
           const normalized = normalizeError(error);
@@ -671,7 +736,9 @@ export const createGateway = (config: GatewayConfig) => {
             mode: request.mode,
             schemaName: request.schemaName,
             schemaDescription: request.schemaDescription
-          } as GenerateObjectOptions<TSchema>)
+          } as GenerateObjectOptions<TSchema>),
+        {},
+        (adapter, target) => objectCapabilitySkipReason(adapter, target, request)
       );
 
       return enrichObjectResult(
@@ -694,7 +761,9 @@ export const createGateway = (config: GatewayConfig) => {
             mode: request.mode,
             schemaName: request.schemaName,
             schemaDescription: request.schemaDescription
-          } as GenerateObjectOptions<TSchema>)
+          } as GenerateObjectOptions<TSchema>),
+        {},
+        (adapter, target) => objectCapabilitySkipReason(adapter, target, request)
       );
       let relayPromise: Promise<{
         streamResult: StreamObjectResult<TSchema>;

@@ -9,9 +9,12 @@ import { describe, expect, it } from "vitest";
 
 import coreSnapshot from "./fixtures/api-type-snapshots/core.json" with { type: "json" };
 import sdkSnapshot from "./fixtures/api-type-snapshots/sdk.json" with { type: "json" };
+import agentsSnapshot from "./fixtures/api-type-snapshots/agents.json" with { type: "json" };
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
+const declarationSnapshotTimeoutMs = 30_000;
+type SnapshotPackageName = "agents" | "core" | "sdk";
 
 const walkDeclarationFiles = async (directory: string): Promise<string[]> => {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -25,13 +28,13 @@ const walkDeclarationFiles = async (directory: string): Promise<string[]> => {
   return files.flat().sort();
 };
 
-const declarationHashes = async (packageName: "core" | "sdk"): Promise<Record<string, string>> => {
+const declarationHashes = async (packageName: SnapshotPackageName): Promise<Record<string, string>> => {
   const temp = await mkdtemp(path.join(os.tmpdir(), `zhivex-api-types-${packageName}-`));
   const outDir = path.join(temp, packageName);
   const tsBuildInfoFile = path.join(temp, `${packageName}.tsbuildinfo`);
   const tsc = path.join(repoRoot, "node_modules", ".bin", "tsc");
 
-  if (packageName === "sdk") {
+  if (packageName !== "core") {
     await execFileAsync(tsc, ["-b", path.join(repoRoot, "packages", "core", "tsconfig.json")], { cwd: repoRoot });
   }
 
@@ -59,9 +62,13 @@ const declarationHashes = async (packageName: "core" | "sdk"): Promise<Record<st
 describe("public API type snapshots", () => {
   it("keeps core declaration snapshots explicit", async () => {
     await expect(declarationHashes("core")).resolves.toEqual(coreSnapshot);
-  });
+  }, declarationSnapshotTimeoutMs);
+
+  it("keeps agents declaration snapshots explicit", async () => {
+    await expect(declarationHashes("agents")).resolves.toEqual(agentsSnapshot);
+  }, declarationSnapshotTimeoutMs);
 
   it("keeps sdk declaration snapshots explicit", async () => {
     await expect(declarationHashes("sdk")).resolves.toEqual(sdkSnapshot);
-  });
+  }, declarationSnapshotTimeoutMs);
 });

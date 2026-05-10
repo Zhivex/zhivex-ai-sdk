@@ -1,7 +1,7 @@
 {
-  "name": "@zhivex-ai/gateway",
-  "version": "0.6.0",
-  "description": "Routing and fallback helpers for Zhivex AI SDK.",
+  "name": "@zhivex-ai/agents",
+  "version": "0.2.0",
+  "description": "Agent-first facade for the Zhivex AI SDK runtime.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,7 +24,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Zhivex/zhivex-ai-sdk.git",
-    "directory": "packages/gateway"
+    "directory": "packages/agents"
   },
   "homepage": "https://github.com/Zhivex/zhivex-ai-sdk#readme",
   "bugs": {
@@ -32,9 +32,9 @@
   },
   "keywords": [
     "ai",
+    "agents",
     "sdk",
-    "gateway",
-    "routing",
+    "llm",
     "typescript"
   ],
   "publishConfig": {

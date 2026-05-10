@@ -48,4 +48,20 @@ describe("package metadata", () => {
     });
     expect(pkg.files).toContain("dist");
   });
+
+  it("keeps agents publish metadata ready for npm packaging", async () => {
+    const pkg = await readPackage("agents");
+    expect(pkg).toMatchObject({
+      name: "@zhivex-ai/agents",
+      type: "module",
+      main: "./dist/index.js",
+      types: "./dist/index.d.ts",
+      publishConfig: { access: "public" }
+    });
+    expect(pkg.exports?.["."]).toEqual({
+      types: "./dist/index.d.ts",
+      import: "./dist/index.js"
+    });
+    expect(pkg.files).toContain("dist");
+  });
 });
