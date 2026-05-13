@@ -15,6 +15,7 @@ import {
   createAgentRunTreeSnapshot,
   createAgentTraceArtifact,
   createHierarchicalAgentTrace,
+  createFileAgentMemoryStore,
   createFileAgentRunStore,
   createInMemoryAgentMemoryStore,
   createInMemoryAgentRunStore,
@@ -1228,7 +1229,7 @@ describe("agent runtime", () => {
       prompt: "Persist this"
     });
 
-    const saved = JSON.parse(await readFile(path.join(directory, `${result.state.runId}.json`), "utf8")) as {
+    const saved = JSON.parse(await readFile(path.join(directory, `${encodeURIComponent(result.state.runId)}.json`), "utf8")) as {
       runId: string;
       outputText: string;
     };
@@ -1236,6 +1237,80 @@ describe("agent runtime", () => {
     expect(saved.outputText).toBe("hello world");
     await expect(Promise.resolve(store.findByIdempotencyKey?.("missing-key"))).resolves.toBeUndefined();
     await expect(Promise.resolve(store.findByParentRunId?.("missing-parent"))).resolves.toEqual([]);
+  });
+
+  it("keeps file-backed run ids inside the configured directory", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-store-"));
+    const directory = path.join(root, "runs");
+    const store = createFileAgentRunStore({ directory });
+    const createState = (runId: string): AgentRunState => ({
+      schemaVersion: 1,
+      runId,
+      provider: "test",
+      modelId: "agent-model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: runId,
+      pendingApprovals: []
+    });
+
+    for (const runId of ["../escape", "folder/child", "/tmp/escape"]) {
+      await Promise.resolve(store.save(createState(runId)));
+      await expect(Promise.resolve(store.load(runId))).resolves.toMatchObject({ runId, outputText: runId });
+      await expect(readFile(path.join(directory, `${encodeURIComponent(runId)}.json`), "utf8")).resolves.toContain(runId);
+    }
+
+    await expect(readFile(path.join(root, "escape.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await Promise.resolve(store.delete?.("../escape"));
+    await expect(readFile(path.join(directory, `${encodeURIComponent("../escape")}.json`), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(path.join(root, "escape.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps file-backed memory keys inside the configured directory", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-memory-"));
+    const directory = path.join(root, "memory");
+    const createState = (runId: string, agentId?: string): AgentRunState => ({
+      schemaVersion: 1,
+      runId,
+      agentId,
+      provider: "test",
+      modelId: "agent-model",
+      status: "completed",
+      messages: [{ role: "assistant", content: `memory:${agentId ?? runId}` }],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "",
+      pendingApprovals: []
+    });
+
+    const defaultStore = createFileAgentMemoryStore({ directory });
+    await Promise.resolve(defaultStore.save({ runId: "ignored", agentId: "../memory", state: createState("ignored", "../memory") }));
+    await expect(Promise.resolve(defaultStore.load({ runId: "ignored", agentId: "../memory" }))).resolves.toEqual([
+      { role: "assistant", content: "memory:../memory" }
+    ]);
+    await expect(readFile(path.join(directory, `${encodeURIComponent("../memory")}.json`), "utf8")).resolves.toContain("memory:../memory");
+
+    await Promise.resolve(defaultStore.save({ runId: "../memory-run", state: createState("../memory-run") }));
+    await expect(Promise.resolve(defaultStore.load({ runId: "../memory-run" }))).resolves.toEqual([
+      { role: "assistant", content: "memory:../memory-run" }
+    ]);
+
+    const customStore = createFileAgentMemoryStore({
+      directory,
+      key: () => "/tmp/custom-memory"
+    });
+    await Promise.resolve(customStore.save({ runId: "custom", state: createState("custom") }));
+    await expect(Promise.resolve(customStore.load({ runId: "custom" }))).resolves.toEqual([
+      { role: "assistant", content: "memory:custom" }
+    ]);
+    await expect(readFile(path.join(directory, `${encodeURIComponent("/tmp/custom-memory")}.json`), "utf8")).resolves.toContain("memory:custom");
+    await expect(readFile(path.join(root, "memory.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("looks up file-backed runs by parent run id", async () => {

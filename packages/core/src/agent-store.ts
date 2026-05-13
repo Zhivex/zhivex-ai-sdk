@@ -23,6 +23,7 @@ const cloneMessages = (messages: ModelMessage[]): ModelMessage[] =>
   JSON.parse(JSON.stringify(messages)) as ModelMessage[];
 
 const defaultMemoryKey = (context: AgentMemoryContext) => context.agentId ?? context.runId;
+const fileNameForAgentStoreKey = (key: string): string => `${encodeURIComponent(key)}.json`;
 const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const defaultMemoryMessages = (state: AgentRunState): ModelMessage[] => {
@@ -160,7 +161,7 @@ export const createFileAgentRunStore = (options: {
 }): AgentRunStore => ({
   async load(runId) {
     try {
-      const content = await fs.readFile(path.join(options.directory, `${runId}.json`), "utf8");
+      const content = await fs.readFile(path.join(options.directory, fileNameForAgentStoreKey(runId)), "utf8");
       return normalizeRunState(JSON.parse(content) as AgentRunState);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -220,11 +221,11 @@ export const createFileAgentRunStore = (options: {
   },
   async save(state) {
     await fs.mkdir(options.directory, { recursive: true });
-    await fs.writeFile(path.join(options.directory, `${state.runId}.json`), JSON.stringify(normalizeRunState(state), null, 2), "utf8");
+    await fs.writeFile(path.join(options.directory, fileNameForAgentStoreKey(state.runId)), JSON.stringify(normalizeRunState(state), null, 2), "utf8");
   },
   async delete(runId) {
     try {
-      await fs.unlink(path.join(options.directory, `${runId}.json`));
+      await fs.unlink(path.join(options.directory, fileNameForAgentStoreKey(runId)));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
@@ -265,7 +266,7 @@ export const createFileAgentMemoryStore = (options: {
   return {
     async load(context) {
       try {
-        const file = await fs.readFile(path.join(options.directory, `${keyFor(context)}.json`), "utf8");
+        const file = await fs.readFile(path.join(options.directory, fileNameForAgentStoreKey(keyFor(context))), "utf8");
         return JSON.parse(file) as ModelMessage[];
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -277,7 +278,7 @@ export const createFileAgentMemoryStore = (options: {
     async save(context) {
       await fs.mkdir(options.directory, { recursive: true });
       await fs.writeFile(
-        path.join(options.directory, `${keyFor(context)}.json`),
+        path.join(options.directory, fileNameForAgentStoreKey(keyFor(context))),
         JSON.stringify(selectMessages(context.state), null, 2),
         "utf8"
       );
