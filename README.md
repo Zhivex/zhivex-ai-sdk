@@ -203,7 +203,7 @@ Compatibility notes:
 
 - `structured output` means the SDK can use the shared `generateObject()` / `streamObject()` contract. `native` means schema-aware provider support; `prompted` means SDK fallback prompting instead of provider-native schema enforcement.
 - `Realtime sessions` means the provider package exposes `realtimeModel().connect()` through the shared `RealtimeSession` contract. `Browser tokens` means the provider also exposes `realtimeModel().createBrowserToken()` for short-lived client-side credentials.
-- Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime` / `gpt-realtime-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
+- Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime`, `gpt-realtime-2`, and `gpt-realtime-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
 - Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
 - `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
@@ -703,6 +703,34 @@ for await (const event of session.eventStream()) {
 }
 ```
 
+OpenAI's current realtime audio models use the same shared contract:
+
+```ts
+const voiceAgent = await openai.realtimeModel!("gpt-realtime-2").connect({
+  instructions: "Resolve the user's request while keeping latency low.",
+  reasoning: { effort: "high" },
+  outputAudioMediaType: "audio/pcm",
+  voice: "marin"
+});
+
+const translation = await openai.realtimeModel!("gpt-realtime-translate").connect({
+  translation: {
+    sourceLanguage: "en",
+    targetLanguage: "es"
+  },
+  outputAudioMediaType: "audio/pcm"
+});
+
+const transcription = await openai.realtimeModel!("gpt-realtime-whisper").connect({
+  inputTranscription: {
+    language: "es",
+    includeLogprobs: true
+  },
+  inputAudioMediaType: "audio/pcm",
+  inputSampleRateHz: 24_000
+});
+```
+
 Current shared provider coverage for realtime sessions:
 
 - OpenAI
@@ -715,7 +743,8 @@ Notes:
 - Providers that require auth headers during the WebSocket handshake, such as OpenAI server-side sessions and Vertex, should be given a custom `realtimeConnectionFactory` in Node/Bun.
 - Browser-token helpers are currently exposed for OpenAI and Gemini.
 - Gemini, Vertex, and Azure OpenAI sessions support `sendMedia()` for image inputs such as `image/jpeg`.
-- OpenAI supports `sendMedia()` for image inputs on `gpt-realtime` and `gpt-realtime-mini`, but not on the older `gpt-4o-*-realtime-preview` models.
+- OpenAI supports `sendMedia()` for image inputs on `gpt-realtime`, `gpt-realtime-2`, and `gpt-realtime-mini`, but not on the older `gpt-4o-*-realtime-preview`, `gpt-realtime-translate`, or `gpt-realtime-whisper` models.
+- OpenAI `gpt-realtime-translate` uses realtime translation mode and requires `translation.targetLanguage`; OpenAI `gpt-realtime-whisper` uses realtime transcription mode and emits transcript events without model audio output.
 - Advanced provider-specific session fields can still be passed through `RealtimeSessionConfig.providerOptions`.
 
 For browser-driven interview-style flows, you can send camera frames through the shared contract on providers that support realtime image input:

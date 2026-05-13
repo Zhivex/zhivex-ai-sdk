@@ -1014,6 +1014,174 @@ describe("openai adapter", () => {
     expect(sent[3]).toEqual({ type: "response.create" });
   });
 
+  it("maps GPT Realtime 2 reasoning into realtime session setup", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async (url: string) => {
+      expect(url).toContain("/realtime");
+      expect(url).toContain("model=gpt-realtime-2");
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const model = provider.realtimeModel!("gpt-realtime-2");
+    const session = await model.connect({
+      reasoning: { effort: "high" },
+      outputAudioMediaType: "audio/pcm",
+      voice: "marin"
+    });
+
+    await session.sendAudio({ data: "audio", mediaType: "audio/pcm", isFinal: true });
+    await session.close();
+
+    expect(model.capabilities.reasoning).toBe(true);
+    expect(model.capabilities.realtime).toMatchObject({ audioInput: true, audioOutput: true, tools: true });
+    expect(sent[0]).toMatchObject({
+      type: "session.update",
+      session: expect.objectContaining({
+        type: "realtime",
+        model: "gpt-realtime-2",
+        reasoning: { effort: "high" },
+        output_modalities: ["audio"]
+      })
+    });
+    expect(sent).toContainEqual({ type: "response.create" });
+  });
+
+  it("uses the dedicated realtime translation endpoint and disables tools", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async (url: string) => {
+      expect(url).toContain("/realtime/translations");
+      expect(url).toContain("model=gpt-realtime-translate");
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const model = provider.realtimeModel!("gpt-realtime-translate");
+    const session = await model.connect({
+      translation: { targetLanguage: "es", sourceLanguage: "en" },
+      outputAudioMediaType: "audio/pcm"
+    });
+
+    await session.sendAudio({ data: "audio", mediaType: "audio/pcm", isFinal: true });
+    await expect(session.sendText("hello")).rejects.toThrow(
+      'Provider "openai" model "gpt-realtime-translate" does not support realtime text input in translation mode.'
+    );
+    await session.close();
+
+    expect(model.capabilities).toMatchObject({ tools: false, audioInput: true, audioOutput: true, vision: false });
+    expect(model.capabilities.realtime).toMatchObject({ imageInput: false });
+    expect(sent[0]).toMatchObject({
+      type: "session.update",
+      session: expect.objectContaining({
+        type: "realtime",
+        model: "gpt-realtime-translate",
+        translation: { target_language: "es", source_language: "en" },
+        tools: undefined
+      })
+    });
+    expect(sent).not.toContainEqual({ type: "response.create" });
+  });
+
+  it("uses realtime transcription sessions for GPT Realtime Whisper", async () => {
+    const sent: Record<string, unknown>[] = [];
+    let readCount = 0;
+    const connectionFactory = vi.fn(async (url: string) => {
+      expect(url).toContain("/realtime/transcription_sessions");
+      expect(url).toContain("model=gpt-realtime-whisper");
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          readCount += 1;
+          if (readCount === 1) {
+            return {
+              type: "conversation.item.input_audio_transcription.delta",
+              item_id: "item_1",
+              delta: "Hola"
+            };
+          }
+          if (readCount === 2) {
+            return {
+              type: "conversation.item.input_audio_transcription.completed",
+              item_id: "item_1",
+              transcript: "Hola mundo"
+            };
+          }
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const model = provider.realtimeModel!("gpt-realtime-whisper");
+    const session = await model.connect({
+      inputTranscription: { language: "es", includeLogprobs: true },
+      inputAudioMediaType: "audio/pcm",
+      inputSampleRateHz: 24_000
+    });
+
+    await session.sendAudio({ data: "audio", mediaType: "audio/pcm", isFinal: true });
+    const events = [];
+    for await (const event of session.eventStream()) {
+      events.push(event);
+    }
+    await session.close();
+
+    expect(model.capabilities).toMatchObject({ tools: false, audioInput: true, audioOutput: false, vision: false });
+    expect(model.capabilities.realtime).toMatchObject({ imageInput: false });
+    expect(sent[0]).toMatchObject({
+      type: "session.update",
+      session: expect.objectContaining({
+        type: "transcription",
+        model: "gpt-realtime-whisper",
+        include: ["item.input_audio_transcription.logprobs"],
+        audio: {
+          input: expect.objectContaining({
+            format: { type: "audio/pcm", rate: 24000 },
+            transcription: {
+              model: "gpt-realtime-whisper",
+              language: "es",
+              prompt: undefined
+            }
+          })
+        }
+      })
+    });
+    expect(sent).not.toContainEqual({ type: "response.create" });
+    expect(events).toContainEqual(expect.objectContaining({ type: "realtime-transcript", text: "Hola", isFinal: false }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "realtime-transcript", text: "Hola mundo", isFinal: true }));
+  });
+
   it("rejects realtime image input for OpenAI preview models that do not support it", async () => {
     const connectionFactory = vi.fn(async () => ({
       async sendJson() {},

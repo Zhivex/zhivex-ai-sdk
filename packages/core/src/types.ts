@@ -718,10 +718,23 @@ export interface RealtimeConnectOptions {
 }
 
 export interface RealtimeSessionConfig {
+  mode?: "conversation" | "translation" | "transcription";
   instructions?: string;
   voice?: string;
   tools?: ToolCollection;
   toolChoice?: ToolChoice;
+  reasoning?: ReasoningConfig;
+  inputTranscription?: {
+    model?: string;
+    language?: string;
+    prompt?: string;
+    includeLogprobs?: boolean;
+  };
+  translation?: {
+    targetLanguage: string;
+    sourceLanguage?: string;
+    instructions?: string;
+  };
   inputAudioMediaType?: string;
   outputAudioMediaType?: string;
   inputSampleRateHz?: number;

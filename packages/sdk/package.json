@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/sdk",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Unified high-level SDK for multi-provider AI workflows.",
   "license": "MIT",
   "type": "module",
@@ -44,6 +44,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^0.9.0"
+    "@zhivex-ai/core": "^0.10.0"
   }
 }
