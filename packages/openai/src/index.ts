@@ -366,19 +366,40 @@ const groundedCapabilities: ModelCapabilities = {
   webSearch: true
 };
 
-const openAIRealtimeSupportsImageInput = (modelId: string) => /^(gpt-realtime(?:-mini)?)(?:[-@]|$)/.test(modelId);
+const isOpenAIRealtimeTranslationModel = (modelId: string) => /^gpt-realtime-translate(?:[-@]|$)/.test(modelId);
+const isOpenAIRealtimeTranscriptionModel = (modelId: string) => /^gpt-realtime-whisper(?:[-@]|$)/.test(modelId);
+const inferOpenAIRealtimeMode = (modelId: string, mode?: RealtimeSessionConfig["mode"]): NonNullable<RealtimeSessionConfig["mode"]> => {
+  if (mode) {
+    return mode;
+  }
+  if (isOpenAIRealtimeTranslationModel(modelId)) {
+    return "translation";
+  }
+  if (isOpenAIRealtimeTranscriptionModel(modelId)) {
+    return "transcription";
+  }
+  return "conversation";
+};
+
+const openAIRealtimeSupportsImageInput = (modelId: string) =>
+  /^(?:gpt-realtime|gpt-realtime-mini|gpt-realtime-1\.5|gpt-realtime-2)(?:-\d{4}-\d{2}-\d{2}|@.*)?$/.test(modelId);
 
 const realtimeCapabilities = (modelId: string): ModelCapabilities => ({
   ...capabilities,
   streaming: false,
   audioInput: true,
-  audioOutput: true,
+  audioOutput: !isOpenAIRealtimeTranscriptionModel(modelId),
+  tools: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
+  toolChoice: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
+  parallelToolCalls: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
+  vision: openAIRealtimeSupportsImageInput(modelId),
+  reasoning: /^gpt-realtime-2(?:[-@]|$)/.test(modelId),
   realtime: {
     sessions: true,
     audioInput: true,
-    audioOutput: true,
+    audioOutput: !isOpenAIRealtimeTranscriptionModel(modelId),
     imageInput: openAIRealtimeSupportsImageInput(modelId),
-    tools: true,
+    tools: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
     browserTokens: true
   }
 });
@@ -597,31 +618,64 @@ const mapRealtimeAudioFormat = (mediaType: string | undefined, sampleRateHz: num
     : undefined;
 
 const mapRealtimeSessionConfig = (config: RealtimeSessionConfig, modelId?: string) => {
+  const mode = inferOpenAIRealtimeMode(modelId ?? "", config.mode);
   const tools = mapTools(toToolSet(config.tools));
   const audio = {
     input: {
       format: mapRealtimeAudioFormat(config.inputAudioMediaType, config.inputSampleRateHz),
+      transcription:
+        mode === "transcription" || config.inputTranscription
+          ? {
+              model: config.inputTranscription?.model ?? (mode === "transcription" ? modelId : undefined),
+              language: config.inputTranscription?.language,
+              prompt: config.inputTranscription?.prompt
+            }
+          : undefined,
       turn_detection: config.turnDetection ?? undefined
     },
-    output: {
-      format: mapRealtimeAudioFormat(config.outputAudioMediaType, config.outputSampleRateHz),
-      voice: config.voice
-    }
+    ...(mode === "transcription"
+      ? {}
+      : {
+          output: {
+            format: mapRealtimeAudioFormat(config.outputAudioMediaType, config.outputSampleRateHz),
+            voice: config.voice
+          }
+        })
   };
 
   return {
-    type: "realtime",
+    type: mode === "transcription" ? "transcription" : "realtime",
     model: modelId,
-    instructions: config.instructions,
-    output_modalities: config.outputAudioMediaType || config.voice ? ["audio"] : ["text"],
-    tools,
-    tool_choice: config.toolChoice ? mapToolChoice(config.toolChoice) : undefined,
+    instructions: config.translation?.instructions ?? config.instructions,
+    output_modalities: mode === "transcription" ? undefined : config.outputAudioMediaType || config.voice || mode === "translation" ? ["audio"] : ["text"],
+    tools: mode === "conversation" ? tools : undefined,
+    tool_choice: mode === "conversation" && config.toolChoice ? mapToolChoice(config.toolChoice) : undefined,
+    reasoning:
+      mode === "conversation" && config.reasoning?.effort
+        ? {
+            effort: config.reasoning.effort
+          }
+        : undefined,
+    include:
+      config.inputTranscription?.includeLogprobs && mode === "transcription" ? ["item.input_audio_transcription.logprobs"] : undefined,
+    translation:
+      mode === "translation"
+        ? {
+            target_language: config.translation?.targetLanguage,
+            source_language: config.translation?.sourceLanguage
+          }
+        : undefined,
     audio,
     ...mapRealtimeProviderOptions(config.providerOptions)
   };
 };
 
-const openAIRealtimeURL = (baseURL: string, modelId: string, providerOptions?: Record<string, unknown>) => {
+const openAIRealtimeURL = (
+  baseURL: string,
+  modelId: string,
+  mode: NonNullable<RealtimeSessionConfig["mode"]>,
+  providerOptions?: Record<string, unknown>
+) => {
   const override = providerOptions?.realtime_url;
   if (typeof override === "string" && override) {
     return override;
@@ -629,7 +683,9 @@ const openAIRealtimeURL = (baseURL: string, modelId: string, providerOptions?: R
 
   const url = new URL(baseURL);
   url.protocol = url.protocol === "https:" ? "wss:" : url.protocol === "http:" ? "ws:" : url.protocol;
-  url.pathname = `${url.pathname.replace(/\/+$/, "")}/realtime`;
+  const endpoint =
+    mode === "translation" ? "realtime/translations" : mode === "transcription" ? "realtime/transcription_sessions" : "realtime";
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/${endpoint}`;
   url.searchParams.set("model", modelId);
   const extraQuery = providerOptions?.realtime_query;
   if (extraQuery && typeof extraQuery === "object" && !Array.isArray(extraQuery)) {
@@ -671,6 +727,18 @@ const parseOpenAIRealtimeEvent = (payload: Record<string, unknown>) => {
         channels: typeof payload.channels === "number" ? payload.channels : undefined,
         itemId: typeof payload.item_id === "string" ? payload.item_id : undefined,
         responseId: typeof payload.response_id === "string" ? payload.response_id : undefined,
+        providerMetadata: parseRealtimeProviderMetadata(payload)
+      }
+    ];
+  }
+  if (type === "conversation.item.input_audio_transcription.delta" || type === "input_audio_buffer.transcription.delta") {
+    return [
+      {
+        type: "realtime-transcript" as const,
+        text: String(payload.delta ?? ""),
+        role: "user" as const,
+        isFinal: false,
+        itemId: typeof payload.item_id === "string" ? payload.item_id : undefined,
         providerMetadata: parseRealtimeProviderMetadata(payload)
       }
     ];
@@ -756,10 +824,16 @@ const parseOpenAIRealtimeEvent = (payload: Record<string, unknown>) => {
     ];
   }
   if (type === "error") {
+    const error = payload.error && typeof payload.error === "object" ? (payload.error as Record<string, unknown>) : undefined;
     return [
       {
         type: "realtime-error" as const,
-        message: typeof payload.message === "string" ? payload.message : "Realtime API error.",
+        message:
+          typeof payload.message === "string"
+            ? payload.message
+            : typeof error?.message === "string"
+              ? error.message
+              : "Realtime API error.",
         providerMetadata: parseRealtimeProviderMetadata(payload)
       }
     ];
@@ -1746,13 +1820,38 @@ class OpenAIRealtimeModel implements RealtimeModel {
     this.capabilities = realtimeCapabilities(modelId);
   }
 
+  private resolveConfig(config: RealtimeSessionConfig): RealtimeSessionConfig {
+    const mode = inferOpenAIRealtimeMode(this.modelId, config.mode);
+    if (mode !== "conversation" && (config.tools || config.toolChoice)) {
+      throw new UnsupportedFeatureError(`Provider "openai" model "${this.modelId}" does not support realtime tools in ${mode} mode.`);
+    }
+    if (mode === "translation" && !config.translation?.targetLanguage) {
+      throw new ConfigurationError('OpenAI realtime translation sessions require "translation.targetLanguage".');
+    }
+    if (mode === "transcription" && config.voice) {
+      throw new UnsupportedFeatureError(`Provider "openai" model "${this.modelId}" does not support realtime audio output in transcription mode.`);
+    }
+    return {
+      mode,
+      autoResponse: mode === "conversation",
+      ...config
+    };
+  }
+
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
+    const initialConfig = this.resolveConfig(config);
     const headers = {
       authorization: `Bearer ${this.apiKey}`,
       "openai-beta": "realtime=v1"
     };
     const connection = await (this.connectionFactory ?? openWebSocketConnection)(
-      this.realtimeURL ?? openAIRealtimeURL(this.baseURL, this.modelId, config.providerOptions as Record<string, unknown> | undefined),
+      this.realtimeURL ??
+        openAIRealtimeURL(
+          this.baseURL,
+          this.modelId,
+          inferOpenAIRealtimeMode(this.modelId, initialConfig.mode),
+          initialConfig.providerOptions as Record<string, unknown> | undefined
+        ),
       headers,
       options
     );
@@ -1760,14 +1859,12 @@ class OpenAIRealtimeModel implements RealtimeModel {
       provider: this.provider,
       modelId: this.modelId,
       capabilities: this.capabilities,
-      config: {
-        autoResponse: true,
-        ...config
-      },
+      config: initialConfig,
       connection,
       callbacks: {
         parseEvent: parseOpenAIRealtimeEvent,
         buildAudioPayloads: (frame, sessionConfig) => {
+          const mode = inferOpenAIRealtimeMode(this.modelId, sessionConfig.mode);
           const payloads: Array<Record<string, unknown>> = [
             {
               type: "input_audio_buffer.append",
@@ -1776,7 +1873,7 @@ class OpenAIRealtimeModel implements RealtimeModel {
           ];
           if (frame.isFinal) {
             payloads.push({ type: "input_audio_buffer.commit" });
-            if (sessionConfig.autoResponse ?? true) {
+            if (mode === "conversation" && (sessionConfig.autoResponse ?? true)) {
               payloads.push({ type: "response.create" });
             }
           }
@@ -1808,6 +1905,10 @@ class OpenAIRealtimeModel implements RealtimeModel {
           ];
         },
         buildTextPayloads: (text, sessionConfig) => {
+          const mode = inferOpenAIRealtimeMode(this.modelId, sessionConfig.mode);
+          if (mode !== "conversation") {
+            throw new UnsupportedFeatureError(`Provider "openai" model "${this.modelId}" does not support realtime text input in ${mode} mode.`);
+          }
           const payloads: Array<Record<string, unknown>> = [
             {
               type: "conversation.item.create",
@@ -1824,6 +1925,10 @@ class OpenAIRealtimeModel implements RealtimeModel {
           return payloads;
         },
         buildToolResultPayloads: (result, sessionConfig) => {
+          const mode = inferOpenAIRealtimeMode(this.modelId, sessionConfig.mode);
+          if (mode !== "conversation") {
+            throw new UnsupportedFeatureError(`Provider "openai" model "${this.modelId}" does not support realtime tools in ${mode} mode.`);
+          }
           const payloads: Array<Record<string, unknown>> = [
             {
               type: "conversation.item.create",
@@ -1842,7 +1947,7 @@ class OpenAIRealtimeModel implements RealtimeModel {
         buildUpdatePayloads: (sessionConfig) => [
           {
             type: "session.update",
-            session: mapRealtimeSessionConfig(sessionConfig, this.modelId)
+            session: mapRealtimeSessionConfig(this.resolveConfig(sessionConfig), this.modelId)
           }
         ],
         buildInitialPayloads: (sessionConfig) => [
@@ -1858,7 +1963,8 @@ class OpenAIRealtimeModel implements RealtimeModel {
   }
 
   async createBrowserToken(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions): Promise<RealtimeTokenResult> {
-    const providerOptions = { ...(config.providerOptions ?? {}) };
+    const resolvedConfig = this.resolveConfig(config);
+    const providerOptions = { ...(resolvedConfig.providerOptions ?? {}) };
     const expiresAfter = providerOptions.expires_after;
     delete providerOptions.expires_after;
 
@@ -1871,7 +1977,7 @@ class OpenAIRealtimeModel implements RealtimeModel {
             ...(expiresAfter ? { expires_after: expiresAfter } : {}),
             session: mapRealtimeSessionConfig(
               {
-                ...config,
+                ...resolvedConfig,
                 providerOptions
               },
               this.modelId

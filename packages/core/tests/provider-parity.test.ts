@@ -127,7 +127,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       structuredOutputSummary: "native",
       reasoningSummary: "model-dependent",
-      hostedToolSummary: "Responses web search, web extractor, code interpreter"
+      hostedToolSummary: "Responses web search, web extractor, code interpreter, file search, remote MCP, image search; Cloud files, batch, media, speech, realtime"
     }
   },
   {

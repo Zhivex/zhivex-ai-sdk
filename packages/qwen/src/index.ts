@@ -1,39 +1,90 @@
 import { toJSONSchema } from "zod";
 
 import {
+  CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
   createProviderAdapter,
   hostedTool,
+  openWebSocketConnection,
   isCallableToolDefinition,
   normalizeFinishReason,
   providerDataPart,
   streamSSE,
   withRetry,
   withTimeoutSignal,
+  type AudioFrame,
+  type AudioInput,
+  type BatchCancelInput,
+  type BatchCreateInput,
+  type BatchDeleteInput,
+  type BatchGetInput,
+  type BatchJob,
+  type BatchListInput,
+  type BatchesClient,
   type CallableProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
+  type FileDeleteInput,
+  type FileGetInput,
+  type FileListInput,
+  type FileSearchStore,
+  type FileSearchStoreCreateInput,
+  type FileSearchStoreDeleteInput,
+  type FileSearchStoreGetInput,
+  type FileSearchStoreImportInput,
+  type FileSearchStoreListInput,
+  type FileSearchStoreUploadInput,
+  type FileSearchStoresClient,
+  type FileUploadInput,
+  type FilesClient,
   type GenerateResult,
+  type GeneratedMedia,
+  type ImageGenerationModel,
+  type ImageGenerationResult,
   type JsonValue,
   type LanguageModel,
+  type MediaFrame,
+  type MediaInput,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
+  type PredictionOperation,
   type ProviderAdapter,
-  type StreamEvent
+  type RealtimeConnectOptions,
+  type RealtimeConnectionFactory,
+  type RealtimeEvent,
+  type RealtimeModel,
+  type RealtimeSessionConfig,
+  type SpeechModel,
+  type SpeechResult,
+  type StreamEvent,
+  type ToolExecutionResult,
+  type TranscriptionModel,
+  type TranscriptionResult,
+  type UploadedFile,
+  type VideoGenerationModel,
+  type VideoGenerationResult
 } from "@zhivex-ai/core";
 
 export interface QwenProviderOptions {
   apiKey?: string;
   baseURL?: string;
+  taskBaseURL?: string;
+  realtimeURL?: string;
+  realtimeConnectionFactory?: RealtimeConnectionFactory;
   fetch?: typeof globalThis.fetch;
 }
 
 export interface QwenLanguageModelOptions {
   apiMode?: "responses" | "chat";
+  conversation?: string;
+  instructions?: string;
+  "x-dashscope-session-cache"?: "enable" | "disable";
+  enable_thinking?: boolean;
+  thinking_budget?: number;
   top_p?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
@@ -43,6 +94,41 @@ export interface QwenLanguageModelOptions {
   tool_choice?: "none" | "auto" | "required" | { type: "function"; function: { name: string } };
   [key: string]: unknown;
 }
+
+export interface QwenRerankInput {
+  query: string;
+  documents: string[];
+  topN?: number;
+  providerOptions?: Record<string, unknown>;
+  abortSignal?: AbortSignal;
+  timeoutMs?: number;
+  maxRetries?: number;
+  retryBackoffMs?: number;
+}
+
+export interface QwenRerankResult {
+  results: Array<{ index: number; document: string; relevanceScore: number; providerMetadata?: Record<string, unknown> }>;
+  rawResponse?: unknown;
+}
+
+export interface QwenRerankModel {
+  readonly provider: "qwen";
+  readonly modelId: string;
+  rerank(input: QwenRerankInput): Promise<QwenRerankResult>;
+}
+
+export interface QwenTasksClient {
+  get(input: { name: string; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<PredictionOperation>;
+  cancel(input: { name: string; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<PredictionOperation>;
+}
+
+export type QwenProvider = CallableProviderAdapter &
+  ProviderAdapter & {
+    rawFetch: typeof globalThis.fetch;
+    rerankModel(modelId: string): QwenRerankModel;
+    multimodalEmbeddingModel(modelId: string): EmbeddingModel;
+    tasks: QwenTasksClient;
+  };
 
 const capabilities: ModelCapabilities = {
   streaming: true,
@@ -63,8 +149,8 @@ const capabilities: ModelCapabilities = {
     toolChoiceNone: true,
     approvalRequests: false,
     hostedWebSearch: true,
-    hostedFileSearch: false,
-    remoteMcp: false,
+    hostedFileSearch: true,
+    remoteMcp: true,
     computerUse: false,
     codeExecution: true,
     webExtraction: true,
@@ -99,7 +185,108 @@ const embeddingCapabilities: ModelCapabilities = {
   }
 };
 
-const supportsQwenReasoning = (modelId: string) => /^(qwen-(plus|turbo|max)|qwq|qwen3)/i.test(modelId);
+const qwenTaskBaseURLFrom = (baseURL: string) => {
+  const url = new URL(baseURL);
+  return `${url.protocol}//${url.host}/api/v1`;
+};
+
+const toUint8Array = async (data: string | Uint8Array | ArrayBuffer | Blob): Promise<Uint8Array> => {
+  if (data instanceof Uint8Array) {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  if (typeof Blob !== "undefined" && data instanceof Blob) {
+    return new Uint8Array(await data.arrayBuffer());
+  }
+  return Uint8Array.from(Buffer.from(String(data), "base64"));
+};
+
+const toBase64 = async (data: string | Uint8Array | ArrayBuffer | Blob) =>
+  typeof data === "string" ? data : Buffer.from(await toUint8Array(data)).toString("base64");
+
+const createFile = async (data: string | Uint8Array | ArrayBuffer | Blob, mediaType: string, filename: string) => {
+  const bytes = await toUint8Array(data);
+  return new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], filename, { type: mediaType });
+};
+
+const appendQuery = (url: string, query: Record<string, string | number | undefined>) => {
+  const parsed = new URL(url);
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) {
+      parsed.searchParams.set(key, String(value));
+    }
+  }
+  return parsed.toString();
+};
+
+const providerHeaders = (apiKey: string, providerOptions?: Record<string, unknown>) => {
+  const headers: Record<string, string> = jsonHeaders(apiKey);
+  const sessionCache = providerOptions?.["x-dashscope-session-cache"];
+  if (sessionCache === "enable" || sessionCache === "disable") {
+    headers["x-dashscope-session-cache"] = sessionCache;
+  }
+  return headers;
+};
+
+const stripHeaderOptions = (providerOptions: Record<string, unknown> | undefined) => {
+  const next = { ...(providerOptions ?? {}) };
+  delete next["x-dashscope-session-cache"];
+  return next;
+};
+
+const modelFamily = (modelId: string) => modelId.toLowerCase();
+const supportsQwenReasoning = (modelId: string) => /^(qwen-(plus|turbo|max|flash)|qwq|qwen3|qwen3\.)/i.test(modelId);
+const supportsQwenVision = (modelId: string) => {
+  const model = modelFamily(modelId);
+  return model.includes("vl") || model.includes("omni") || model.includes("vision") || /^qwen3\./.test(model);
+};
+const supportsQwenTools = (modelId: string) => !modelFamily(modelId).includes("embedding");
+const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => ({
+  ...capabilities,
+  vision: supportsQwenVision(modelId),
+  tools: supportsQwenTools(modelId),
+  structuredOutput: supportsQwenTools(modelId),
+  jsonMode: supportsQwenTools(modelId),
+  toolChoice: supportsQwenTools(modelId),
+  parallelToolCalls: supportsQwenTools(modelId),
+  reasoning: supportsQwenReasoning(modelId)
+});
+
+const transcriptionCapabilities: ModelCapabilities = {
+  ...embeddingCapabilities,
+  audioInput: true
+};
+
+const speechCapabilities: ModelCapabilities = {
+  ...embeddingCapabilities,
+  audioOutput: true
+};
+
+const imageGenerationCapabilities: ModelCapabilities = {
+  ...embeddingCapabilities,
+  imageGeneration: true
+};
+
+const videoGenerationCapabilities: ModelCapabilities = {
+  ...embeddingCapabilities,
+  videoGeneration: true
+};
+
+const realtimeCapabilities: ModelCapabilities = {
+  ...capabilities,
+  audioInput: true,
+  audioOutput: true,
+  realtime: {
+    sessions: true,
+    audioInput: true,
+    audioOutput: true,
+    imageInput: true,
+    tools: true,
+    browserTokens: false
+  }
+};
 
 const reasoningContentFromMessage = (message: ModelMessage) =>
   message.parts
@@ -609,10 +796,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {
-    this.capabilities = {
-      ...capabilities,
-      reasoning: supportsQwenReasoning(modelId)
-    };
+    this.capabilities = qwenLanguageCapabilities(modelId);
   }
 
   async generate(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<GenerateResult> {
@@ -624,6 +808,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     try {
       if (apiMode === "responses") {
         const previousResponse = getProviderResponseId(input.messages);
+        const responseProviderOptions = stripHeaderOptions(providerOptions);
         const messages =
           previousResponse && previousResponse.index < input.messages.length - 1
             ? input.messages.slice(previousResponse.index + 1)
@@ -632,18 +817,19 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           () =>
             this.fetcher(`${this.baseURL}/responses`, {
               method: "POST",
-              headers: jsonHeaders(this.apiKey),
+              headers: providerHeaders(this.apiKey, providerOptions),
               signal,
               body: JSON.stringify({
                 model: this.modelId,
                 ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
                 ...(messages.length ? { input: toResponsesInput(messages) } : {}),
+                ...(input.structuredOutput?.mode === "native" ? { response_format: mapStructuredOutput(input) } : {}),
                 tools: mapResponsesTools(input.tools),
                 tool_choice: mapToolChoice(input.toolChoice),
                 temperature: input.temperature,
                 max_output_tokens: input.maxTokens,
                 ...mapReasoning(input),
-                ...providerOptions,
+                ...responseProviderOptions,
                 stream: false
               })
             }),
@@ -725,21 +911,23 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     delete providerOptions.apiMode;
 
     if (apiMode === "responses") {
+      const responseProviderOptions = stripHeaderOptions(providerOptions);
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/responses`, {
             method: "POST",
-            headers: jsonHeaders(this.apiKey),
+            headers: providerHeaders(this.apiKey, providerOptions),
             signal,
             body: JSON.stringify({
               model: this.modelId,
               input: toResponsesInput(input.messages),
+              ...(input.structuredOutput?.mode === "native" ? { response_format: mapStructuredOutput(input) } : {}),
               tools: mapResponsesTools(input.tools),
               tool_choice: mapToolChoice(input.toolChoice),
               temperature: input.temperature,
               max_output_tokens: input.maxTokens,
               ...mapReasoning(input),
-              ...providerOptions,
+              ...responseProviderOptions,
               stream: true
             })
           }),
@@ -894,23 +1082,603 @@ class QwenEmbeddingModel implements EmbeddingModel {
   }
 }
 
+const normalizeUploadedFile = (json: any): UploadedFile => ({
+  name: json.id ?? json.name ?? json.file_id ?? "",
+  uri: json.url ?? json.uri,
+  mimeType: json.mime_type ?? json.mimeType ?? json.content_type,
+  sizeBytes: json.bytes ?? json.size_bytes ?? json.sizeBytes,
+  state: json.status ?? json.state,
+  displayName: json.filename ?? json.display_name ?? json.displayName,
+  rawResponse: json,
+  providerMetadata: json
+});
+
+const normalizeFileSearchStore = (json: any): FileSearchStore => ({
+  name: json.id ?? json.name ?? "",
+  displayName: json.name ?? json.display_name ?? json.displayName,
+  createTime: json.created_at ? String(json.created_at) : json.createTime,
+  updateTime: json.updated_at ? String(json.updated_at) : json.updateTime,
+  rawResponse: json,
+  providerMetadata: json
+});
+
+const normalizeBatchJob = (json: any): BatchJob => ({
+  name: json.id ?? json.name ?? "",
+  model: json.model,
+  state: json.status ?? json.state,
+  done: ["completed", "failed", "cancelled", "expired"].includes(String(json.status ?? json.state ?? "").toLowerCase()),
+  createTime: json.created_at ? String(json.created_at) : json.createTime,
+  updateTime: json.updated_at ? String(json.updated_at) : json.updateTime,
+  rawResponse: json,
+  providerMetadata: json
+});
+
+const normalizeOperation = (json: any): PredictionOperation => ({
+  name: json.task_id ?? json.id ?? json.name ?? "",
+  done: json.output?.task_status ? ["SUCCEEDED", "FAILED", "CANCELED"].includes(json.output.task_status) : json.done,
+  response: json.output ?? json.response,
+  error: json.error,
+  metadata: json.usage ?? json.metadata,
+  rawResponse: json
+});
+
+class QwenFilesClient implements FilesClient {
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async upload(input: FileUploadInput): Promise<UploadedFile> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const form = new FormData();
+    form.set("file", await createFile(input.data, input.mediaType, input.filename ?? input.displayName ?? input.name ?? "file"));
+    form.set("purpose", String(input.providerOptions?.purpose ?? "file-extract"));
+    for (const [key, value] of Object.entries(input.providerOptions ?? {})) {
+      if (key !== "purpose") {
+        form.set(key, typeof value === "string" ? value : JSON.stringify(value));
+      }
+    }
+    try {
+      const response = await withRetry(
+        () => this.fetcher(`${this.baseURL}/files`, { method: "POST", headers: { authorization: `Bearer ${this.apiKey}` }, signal, body: form }),
+        input
+      );
+      return normalizeUploadedFile(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async get(input: FileGetInput): Promise<UploadedFile> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/files/${input.name}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
+      return normalizeUploadedFile(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async list(input: FileListInput = {}) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () => this.fetcher(appendQuery(`${this.baseURL}/files`, { limit: input.pageSize, after: input.pageToken }), { method: "GET", headers: jsonHeaders(this.apiKey), signal }),
+        input
+      );
+      const json = await parseJson(response);
+      return {
+        files: (json.data ?? json.files ?? []).map(normalizeUploadedFile),
+        nextPageToken: json.next ?? json.nextPageToken,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+
+  async delete(input: FileDeleteInput) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/files/${input.name}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }), input);
+      const json = await parseJson(response);
+      return { name: input.name, rawResponse: json };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class QwenFileSearchStoresClient implements FileSearchStoresClient {
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async create(input: FileSearchStoreCreateInput = {}): Promise<FileSearchStore> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/file_search_stores`, {
+            method: "POST",
+            headers: jsonHeaders(this.apiKey),
+            signal,
+            body: JSON.stringify({ name: input.displayName, ...input.providerOptions })
+          }),
+        input
+      );
+      return normalizeFileSearchStore(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async upload(input: FileSearchStoreUploadInput): Promise<PredictionOperation> {
+    const files = new QwenFilesClient(this.apiKey, this.baseURL, this.fetcher);
+    const file = await files.upload(input);
+    return this.importFile({ ...input, fileName: file.name });
+  }
+
+  async importFile(input: FileSearchStoreImportInput): Promise<PredictionOperation> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/file_search_stores/${input.storeName}/files`, {
+            method: "POST",
+            headers: jsonHeaders(this.apiKey),
+            signal,
+            body: JSON.stringify({ file_id: input.fileName, ...input.providerOptions })
+          }),
+        input
+      );
+      return normalizeOperation(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async get(input: FileSearchStoreGetInput): Promise<FileSearchStore> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/file_search_stores/${input.name}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
+      return normalizeFileSearchStore(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async list(input: FileSearchStoreListInput = {}) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () => this.fetcher(appendQuery(`${this.baseURL}/file_search_stores`, { limit: input.pageSize, after: input.pageToken }), { method: "GET", headers: jsonHeaders(this.apiKey), signal }),
+        input
+      );
+      const json = await parseJson(response);
+      return {
+        stores: (json.data ?? json.file_search_stores ?? json.fileSearchStores ?? []).map(normalizeFileSearchStore),
+        nextPageToken: json.next ?? json.nextPageToken,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+
+  async delete(input: FileSearchStoreDeleteInput) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/file_search_stores/${input.name}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }), input);
+      const json = await parseJson(response);
+      return { name: input.name, rawResponse: json };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class QwenBatchesClient implements BatchesClient {
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async create(input: BatchCreateInput): Promise<BatchJob> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/batches`, {
+            method: "POST",
+            headers: jsonHeaders(this.apiKey),
+            signal,
+            body: JSON.stringify({
+              input_file_id: input.fileName,
+              endpoint: input.providerOptions?.endpoint ?? "/v1/chat/completions",
+              completion_window: input.providerOptions?.completion_window ?? "24h",
+              metadata: input.displayName ? { displayName: input.displayName } : undefined,
+              model: input.modelId,
+              requests: input.requests,
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
+      return normalizeBatchJob(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async get(input: BatchGetInput): Promise<BatchJob> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${input.name}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
+      return normalizeBatchJob(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async list(input: BatchListInput = {}) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () => this.fetcher(appendQuery(`${this.baseURL}/batches`, { limit: input.pageSize, after: input.pageToken }), { method: "GET", headers: jsonHeaders(this.apiKey), signal }),
+        input
+      );
+      const json = await parseJson(response);
+      return { batches: (json.data ?? json.batches ?? []).map(normalizeBatchJob), nextPageToken: json.next ?? json.nextPageToken, rawResponse: json };
+    } finally {
+      cleanup();
+    }
+  }
+
+  async cancel(input: BatchCancelInput): Promise<BatchJob> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${input.name}/cancel`, { method: "POST", headers: jsonHeaders(this.apiKey), signal }), input);
+      return normalizeBatchJob(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async delete(input: BatchDeleteInput) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${input.name}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }), input);
+      const json = await parseJson(response);
+      return { name: input.name, rawResponse: json };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class QwenTranscriptionModel implements TranscriptionModel {
+  readonly provider = "qwen";
+  readonly capabilities = transcriptionCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async transcribe(input: { audio: AudioInput; prompt?: string; language?: string; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<TranscriptionResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const form = new FormData();
+    form.set("model", this.modelId);
+    form.set("file", await createFile(input.audio.data, input.audio.mediaType, input.audio.filename ?? "audio"));
+    if (input.prompt) form.set("prompt", input.prompt);
+    if (input.language) form.set("language", input.language);
+    for (const [key, value] of Object.entries(input.providerOptions ?? {})) {
+      form.set(key, typeof value === "string" ? value : JSON.stringify(value));
+    }
+    try {
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${this.apiKey}` }, signal, body: form }), input);
+      const json = await parseJson(response);
+      return { text: json.text ?? json.output?.text ?? "", rawResponse: json };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class QwenSpeechModel implements SpeechModel {
+  readonly provider = "qwen";
+  readonly capabilities = speechCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async generateSpeech(input: { input: string; voice?: string; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<SpeechResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/audio/speech`, {
+            method: "POST",
+            headers: jsonHeaders(this.apiKey),
+            signal,
+            body: JSON.stringify({ model: this.modelId, input: input.input, voice: input.voice ?? "Chelsie", ...input.providerOptions })
+          }),
+        input
+      );
+      if (response.headers.get("content-type")?.includes("application/json")) {
+        const json = await parseJson(response);
+        const audio = json.audio?.data ?? json.output?.audio?.data ?? "";
+        return { audio: Uint8Array.from(Buffer.from(audio, "base64")), mediaType: json.audio?.media_type ?? json.output?.audio?.media_type ?? "audio/mpeg", rawResponse: json };
+      }
+      return { audio: new Uint8Array(await response.arrayBuffer()), mediaType: response.headers.get("content-type") ?? "audio/mpeg" };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+const normalizeGeneratedMedia = (item: any, fallbackMimeType: string): GeneratedMedia => ({
+  uri: item.url ?? item.uri,
+  data: item.b64_json || item.base64 ? Uint8Array.from(Buffer.from(item.b64_json ?? item.base64, "base64")) : undefined,
+  mediaType: item.mime_type ?? item.mediaType ?? fallbackMimeType,
+  text: item.revised_prompt ?? item.text,
+  providerMetadata: item
+});
+
+class QwenImageGenerationModel implements ImageGenerationModel {
+  readonly provider = "qwen";
+  readonly capabilities = imageGenerationCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly taskBaseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async generateImage(input: { prompt: string; images?: MediaInput[]; count?: number; aspectRatio?: string; size?: string; negativePrompt?: string; outputMimeType?: string; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<ImageGenerationResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const endpoint = String(input.providerOptions?.endpoint ?? `${this.baseURL}/images/generations`);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(endpoint, {
+            method: "POST",
+            headers: jsonHeaders(this.apiKey),
+            signal,
+            body: JSON.stringify({
+              model: this.modelId,
+              prompt: input.prompt,
+              n: input.count,
+              size: input.size,
+              negative_prompt: input.negativePrompt,
+              response_format: input.providerOptions?.response_format,
+              input_image: input.images?.[0]?.uri,
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
+      const json = await parseJson(response);
+      const data = json.data ?? json.output?.results ?? json.output?.images ?? [];
+      return {
+        images: data.map((item: any) => normalizeGeneratedMedia(item, input.outputMimeType ?? "image/png")),
+        text: json.output?.text,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class QwenVideoGenerationModel implements VideoGenerationModel {
+  readonly provider = "qwen";
+  readonly capabilities = videoGenerationCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly taskBaseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async generateVideo(input: { prompt: string; image?: MediaInput; count?: number; aspectRatio?: string; negativePrompt?: string; durationSeconds?: number; outputStorageUri?: string; pollIntervalMs?: number; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<VideoGenerationResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.taskBaseURL}/services/aigc/video-generation/generation`, {
+            method: "POST",
+            headers: { ...jsonHeaders(this.apiKey), "X-DashScope-Async": "enable" },
+            signal,
+            body: JSON.stringify({
+              model: this.modelId,
+              input: { prompt: input.prompt, img_url: input.image?.uri, negative_prompt: input.negativePrompt },
+              parameters: { size: input.aspectRatio, duration: input.durationSeconds, n: input.count, output_storage_uri: input.outputStorageUri },
+              ...input.providerOptions
+            })
+          }),
+        input
+      );
+      const json = await parseJson(response);
+      const items = json.output?.results ?? json.output?.videos ?? [];
+      return {
+        videos: items.map((item: any) => normalizeGeneratedMedia(item, "video/mp4")),
+        operationName: json.output?.task_id ?? json.task_id,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class QwenRerankModelImpl implements QwenRerankModel {
+  readonly provider = "qwen" as const;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async rerank(input: QwenRerankInput): Promise<QwenRerankResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/rerank`, {
+            method: "POST",
+            headers: jsonHeaders(this.apiKey),
+            signal,
+            body: JSON.stringify({ model: this.modelId, query: input.query, documents: input.documents, top_n: input.topN, ...input.providerOptions })
+          }),
+        input
+      );
+      const json = await parseJson(response);
+      return {
+        results: (json.results ?? json.output?.results ?? []).map((entry: any) => ({
+          index: entry.index,
+          document: input.documents[entry.index] ?? entry.document?.text ?? "",
+          relevanceScore: entry.relevance_score ?? entry.score ?? 0,
+          providerMetadata: entry
+        })),
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+class QwenTasksClientImpl implements QwenTasksClient {
+  constructor(
+    private readonly apiKey: string,
+    private readonly taskBaseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async get(input: { name: string; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(`${this.taskBaseURL}/tasks/${input.name}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
+      return normalizeOperation(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async cancel(input: { name: string; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(() => this.fetcher(`${this.taskBaseURL}/tasks/${input.name}/cancel`, { method: "POST", headers: jsonHeaders(this.apiKey), signal }), input);
+      return normalizeOperation(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+}
+
+const parseRealtimeEvent = (payload: Record<string, unknown>): RealtimeEvent[] => {
+  const type = String(payload.type ?? "");
+  if (type.includes("text.delta") && typeof payload.delta === "string") {
+    return [{ type: "realtime-text-delta", textDelta: payload.delta, providerMetadata: payload as Record<string, JsonValue> }];
+  }
+  if (type.includes("audio.delta") && typeof payload.delta === "string") {
+    return [{ type: "realtime-audio-output", audio: Uint8Array.from(Buffer.from(payload.delta, "base64")), mediaType: "audio/pcm", providerMetadata: payload as Record<string, JsonValue> }];
+  }
+  if (type.includes("transcript") && typeof payload.text === "string") {
+    return [{ type: "realtime-transcript", text: payload.text, role: type.includes("input") ? "user" : "assistant", isFinal: type.includes("done"), providerMetadata: payload as Record<string, JsonValue> }];
+  }
+  if (type.includes("completed") || type.includes("done")) {
+    return [{ type: "realtime-response-complete", providerMetadata: payload as Record<string, JsonValue> }];
+  }
+  if (type.includes("error")) {
+    return [{ type: "realtime-error", message: String(payload.error ?? payload.message ?? "Qwen realtime error"), providerMetadata: payload as Record<string, JsonValue> }];
+  }
+  return [];
+};
+
+class QwenRealtimeModel implements RealtimeModel {
+  readonly provider = "qwen";
+  readonly capabilities = realtimeCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly realtimeURL: string,
+    private readonly connectionFactory?: RealtimeConnectionFactory
+  ) {}
+
+  async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
+    const url = appendQuery(this.realtimeURL, { model: this.modelId });
+    const connection = await (this.connectionFactory ?? openWebSocketConnection)(url, { authorization: `Bearer ${this.apiKey}` }, options);
+    const session = new CallbackRealtimeSession({
+      provider: this.provider,
+      modelId: this.modelId,
+      capabilities: this.capabilities,
+      config,
+      connection,
+      callbacks: {
+        parseEvent: parseRealtimeEvent,
+        buildInitialPayloads: (value) => [{ type: "session.update", session: { instructions: value.instructions, voice: value.voice, ...value.providerOptions } }],
+        buildAudioPayloads: (frame: AudioFrame) => [{ type: "input_audio_buffer.append", audio: typeof frame.data === "string" ? frame.data : Buffer.from(frame.data as Uint8Array).toString("base64") }],
+        buildMediaPayloads: (frame: MediaFrame) => [{ type: "input_media.append", media_type: frame.mediaType, data: typeof frame.data === "string" ? frame.data : Buffer.from(frame.data as Uint8Array).toString("base64") }],
+        buildTextPayloads: (text) => [{ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text }] } }, { type: "response.create" }],
+        buildToolResultPayloads: (result: ToolExecutionResult) => [{ type: "conversation.item.create", item: { type: "function_call_output", call_id: result.toolCallId, output: JSON.stringify(result.isError ? result.error : result.output ?? null) } }],
+        buildUpdatePayloads: (value) => [{ type: "session.update", session: { instructions: value.instructions, voice: value.voice, ...value.providerOptions } }],
+        buildClosePayloads: () => [{ type: "session.close" }]
+      }
+    });
+    await session.initialize();
+    return session;
+  }
+}
+
 export const createQwen = (
   options: QwenProviderOptions = {}
-): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
+): QwenProvider => {
   const apiKey = options.apiKey ?? process.env.QWEN_API_KEY ?? process.env.DASHSCOPE_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing Qwen API key.");
   }
 
   const baseURL = options.baseURL ?? "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+  const taskBaseURL = options.taskBaseURL ?? qwenTaskBaseURLFrom(baseURL);
+  const realtimeURL = options.realtimeURL ?? "wss://dashscope-intl.aliyuncs.com/compatible-mode/v1/realtime";
   const fetcher = options.fetch ?? globalThis.fetch;
 
   return createProviderAdapter({
     name: "qwen",
     languageModel: (modelId) => new QwenLanguageModel(modelId, apiKey, baseURL, fetcher),
     embeddingModel: (modelId) => new QwenEmbeddingModel(modelId, apiKey, baseURL, fetcher),
+    transcriptionModel: (modelId) => new QwenTranscriptionModel(modelId, apiKey, baseURL, fetcher),
+    speechModel: (modelId) => new QwenSpeechModel(modelId, apiKey, baseURL, fetcher),
+    imageGenerationModel: (modelId) => new QwenImageGenerationModel(modelId, apiKey, baseURL, taskBaseURL, fetcher),
+    videoGenerationModel: (modelId) => new QwenVideoGenerationModel(modelId, apiKey, taskBaseURL, fetcher),
+    realtimeModel: (modelId) => new QwenRealtimeModel(modelId, apiKey, realtimeURL, options.realtimeConnectionFactory),
+    files: new QwenFilesClient(apiKey, baseURL, fetcher),
+    fileSearchStores: new QwenFileSearchStoresClient(apiKey, baseURL, fetcher),
+    batches: new QwenBatchesClient(apiKey, baseURL, fetcher),
+    rerankModel: (modelId: string) => new QwenRerankModelImpl(modelId, apiKey, baseURL, fetcher),
+    multimodalEmbeddingModel: (modelId: string) => new QwenEmbeddingModel(modelId, apiKey, baseURL, fetcher),
+    tasks: new QwenTasksClientImpl(apiKey, taskBaseURL, fetcher),
     rawFetch: fetcher
-  });
+  }) as QwenProvider;
 };
 
 export const qwenWebSearchTool = (config: Record<string, unknown> = {}) =>
@@ -937,5 +1705,41 @@ export const qwenCodeInterpreterTool = (config: Record<string, unknown> = {}) =>
     provider: "qwen",
     type: "code_interpreter",
     toolClass: "code-execution",
+    config: config as unknown as JsonValue
+  });
+
+export const qwenFileSearchTool = (config: Record<string, unknown> = {}) =>
+  hostedTool({
+    name: "file_search",
+    provider: "qwen",
+    type: "file_search",
+    toolClass: "file-search",
+    config: config as unknown as JsonValue
+  });
+
+export const qwenMcpTool = (config: Record<string, unknown>) =>
+  hostedTool({
+    name: typeof config.server_label === "string" ? config.server_label : "mcp",
+    provider: "qwen",
+    type: "mcp",
+    toolClass: "remote-mcp",
+    config: config as unknown as JsonValue
+  });
+
+export const qwenWebSearchImageTool = (config: Record<string, unknown> = {}) =>
+  hostedTool({
+    name: "web_search_image",
+    provider: "qwen",
+    type: "web_search_image",
+    toolClass: "custom",
+    config: config as unknown as JsonValue
+  });
+
+export const qwenImageSearchTool = (config: Record<string, unknown> = {}) =>
+  hostedTool({
+    name: "image_search",
+    provider: "qwen",
+    type: "image_search",
+    toolClass: "custom",
     config: config as unknown as JsonValue
   });

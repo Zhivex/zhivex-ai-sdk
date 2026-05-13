@@ -38,7 +38,7 @@ Provider-specific integration files may cover additional adapter behavior.
 | `gemini` | `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` |
 | `openrouter` | `OPENROUTER_API_KEY` |
 | `deepseek` | `DEEPSEEK_API_KEY` |
-| `qwen` | `QWEN_API_KEY` or `DASHSCOPE_API_KEY` |
+| `qwen` | `QWEN_API_KEY` or `DASHSCOPE_API_KEY`; optional `QWEN_BASE_URL`, `QWEN_TASK_BASE_URL`, and model overrides for speech/media/realtime smoke coverage |
 | `kimi` | `KIMI_API_KEY` or `MOONSHOT_API_KEY` |
 | `bedrock-converse` | `AWS_REGION`; AWS credentials are also required by the default provider chain |
 | `bedrock-openai` | `BEDROCK_OPENAI_BASE_URL`, plus `BEDROCK_API_KEY` or `AWS_BEARER_TOKEN_BEDROCK` |
