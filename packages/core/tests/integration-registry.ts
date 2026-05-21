@@ -88,7 +88,7 @@ const isAnthropicOpus47OrLaterModel = (modelId: string) =>
 
 const geminiApiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const geminiBaseURL = process.env.GEMINI_BASE_URL;
-const geminiTextModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-2.0-flash";
+const geminiTextModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.5-flash";
 const geminiEmbeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-004";
 
 const openRouterApiKey = process.env.OPENROUTER_API_KEY;
@@ -119,7 +119,7 @@ const vertexApiKey = process.env.VERTEX_API_KEY ?? process.env.GOOGLE_API_KEY;
 const vertexProjectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
 const vertexLocation = process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION;
 const vertexBaseURL = process.env.VERTEX_BASE_URL;
-const vertexTextModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-2.0-flash";
+const vertexTextModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-3.5-flash";
 const vertexEmbeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-005";
 const usableVertexAccessToken = vertexAccessToken && (vertexProjectId || vertexBaseURL) ? vertexAccessToken : undefined;
 
@@ -147,15 +147,22 @@ const anthropicSupports: IntegrationLanguageProvider["supports"] = {
         budgetTokens: 256
       }
 };
-const geminiSupports: IntegrationLanguageProvider["supports"] = {
+const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
+
+const createGeminiSupports = (modelId: string): IntegrationLanguageProvider["supports"] => ({
   streaming: true,
   tools: true,
   structuredOutputMode: "native",
   embeddings: true,
-  reasoning: {
-    budgetTokens: 256
-  }
-};
+  reasoning: isGemini3Model(modelId)
+    ? {
+        effort: "low"
+      }
+    : {
+        budgetTokens: 256
+      }
+});
+const geminiSupports: IntegrationLanguageProvider["supports"] = createGeminiSupports(geminiTextModelId);
 const openRouterSupports: IntegrationLanguageProvider["supports"] = {
   streaming: true,
   tools: true,
@@ -208,7 +215,7 @@ const bedrockOpenAISupports: IntegrationLanguageProvider["supports"] = {
     effort: "low"
   }
 };
-const vertexSupports: IntegrationLanguageProvider["supports"] = geminiSupports;
+const vertexSupports: IntegrationLanguageProvider["supports"] = createGeminiSupports(vertexTextModelId);
 
 const openAIRequirements = [envRequirement(["OPENAI_API_KEY"])];
 const azureOpenAIRequirements = [

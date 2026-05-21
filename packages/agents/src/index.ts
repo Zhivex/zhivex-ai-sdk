@@ -7,6 +7,7 @@ export {
   createAgentApprovalMessage,
   createAgentEvaluationFixture,
   createAgentEvaluationReport,
+  createAgentAuditRecord,
   createAgentHandoff,
   createAgentHandoffMessage,
   createAgentRunSnapshot,
@@ -30,7 +31,9 @@ export {
   createProviderSupportDriftReport,
   createProviderSupportMatrix,
   createRedactionPolicy,
+  createReadOnlyToolApprovalPolicy,
   createSafetyPolicy,
+  createSensitiveDataPolicy,
   createSqliteAgentMemoryStore,
   createSqliteAgentRunStore,
   createSubAgentTool,
@@ -55,6 +58,8 @@ export {
   streamAgent,
   streamLiveAgent,
   summarizeAgentTrace,
+  createToolAuditRecords,
+  PRODUCTION_AGENT_KIT_SCHEMA_VERSION,
   toUIAgentStreamResponse
 } from "@zhivex-ai/core";
 
@@ -131,6 +136,8 @@ export type {
   AgentTelemetrySubAgentStartEvent,
   AgentTelemetryToolApprovalEvent,
   AgentTraceArtifact,
+  AgentAuditRecord,
+  AgentAuditRecordOptions,
   AgentTraceCollector,
   AgentTraceEvent,
   AgentTraceOptions,
@@ -154,6 +161,7 @@ export type {
   PostgresAgentMemoryStoreOptions,
   PostgresAgentRunStoreOptions,
   PrepareSubagentsForAgentOptions,
+  ReadOnlyToolApprovalPolicyOptions,
   ProviderAgentSupport,
   ProviderSupportDrift,
   ProviderSupportDriftExpectedEntry,
@@ -165,6 +173,7 @@ export type {
   RedactionPolicy,
   RedactionPolicyOptions,
   RedactionRule,
+  SensitiveDataPolicyOptions,
   RunAgentEvaluationOptions,
   SafetyPolicy,
   SafetyPolicyOptions,
@@ -178,5 +187,7 @@ export type {
   ToolApprovalEvent,
   ToolApprovalObserver,
   ToolApprovalPolicy,
-  ToolApprovalRequest
+  ToolApprovalRequest,
+  ToolAuditRecord,
+  ToolAuditRecordOptions
 } from "@zhivex-ai/core";

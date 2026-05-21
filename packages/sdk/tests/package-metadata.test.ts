@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -14,6 +14,14 @@ const readPackage = async (packageName: string) =>
     files?: string[];
     publishConfig?: { access?: string };
   };
+
+const packagesDir = path.resolve(import.meta.dirname, "../..");
+
+const listWorkspacePackages = async () =>
+  (await readdir(packagesDir, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
 
 describe("package metadata", () => {
   it("keeps core publish metadata ready for npm packaging", async () => {
@@ -63,5 +71,27 @@ describe("package metadata", () => {
       import: "./dist/index.js"
     });
     expect(pkg.files).toContain("dist");
+  });
+
+  it("keeps every workspace package publish-ready", async () => {
+    const packages = await listWorkspacePackages();
+
+    await Promise.all(
+      packages.map(async (packageName) => {
+        const pkg = await readPackage(packageName);
+        expect(pkg.name).toBe(`@zhivex-ai/${packageName}`);
+        expect(pkg).toMatchObject({
+          type: "module",
+          main: "./dist/index.js",
+          types: "./dist/index.d.ts",
+          publishConfig: { access: "public" }
+        });
+        expect(pkg.exports?.["."]).toEqual({
+          types: "./dist/index.d.ts",
+          import: "./dist/index.js"
+        });
+        expect(pkg.files).toContain("dist");
+      })
+    );
   });
 });

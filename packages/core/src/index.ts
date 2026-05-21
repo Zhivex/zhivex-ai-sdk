@@ -371,6 +371,21 @@ export type {
   SafetyPolicyPreset
 } from "./safety-policy.js";
 export {
+  createAgentAuditRecord,
+  createReadOnlyToolApprovalPolicy,
+  createSensitiveDataPolicy,
+  createToolAuditRecords,
+  PRODUCTION_AGENT_KIT_SCHEMA_VERSION
+} from "./production-agent-kit.js";
+export type {
+  AgentAuditRecord,
+  AgentAuditRecordOptions,
+  ReadOnlyToolApprovalPolicyOptions,
+  SensitiveDataPolicyOptions,
+  ToolAuditRecord,
+  ToolAuditRecordOptions
+} from "./production-agent-kit.js";
+export {
   createCachedGenerateMiddleware,
   createCircuitBreakerMiddleware,
   createFileGenerateCache,

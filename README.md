@@ -594,7 +594,7 @@ The file store writes blobs under a path-safe `blobs/` subdirectory and calculat
 
 Artifact records are schema-versioned as well. New artifacts use `schemaVersion: 1`; old JSON artifacts without a version are accepted and normalized, but future versions are rejected until the SDK has an explicit migration path.
 
-Artifact writes support the same optional optimistic concurrency guard via `expectedRevision`. Integrity helpers can verify binary/base64 artifacts without re-running workflows:
+Artifact writes support the same optional optimistic concurrency guard via `expectedRevision`. SQLite and Postgres use database compare-and-swap updates for that guard; the file-backed store is intended for local/dev use and checks the revision before writing but is not a cross-process lock. Integrity helpers can verify SDK-managed binary/base64 artifacts without re-running workflows. External artifact references point at app-owned storage, so verify the external object in the application storage layer:
 
 ```ts
 import { verifyArtifactIntegrity } from "@zhivex-ai/sdk";
@@ -1261,6 +1261,32 @@ const safeAgent = applySafetyPolicyToAgent(
 
 `createProductionSafetyPolicy()` is the recommended first production preset; use `createSafetyPolicy()` directly when a product needs a custom policy shape. Available presets are `permissive`, `review-sensitive`, and `locked-down`. The approval helper treats `requiresApproval`, Advanced Tool Registry permissions/audit metadata, hosted tool classes, and sensitive tool names as policy inputs. Redaction helpers cover common API keys, bearer/basic auth tokens, optional email addresses, and custom regex rules. Budget guards fail the run through normal guardrail behavior when configured limits are exceeded.
 
+For finance, HR, and other audited agent services, the Beta production-agent kit adds opt-in helpers for redacted audit export and conservative read-only tool policies:
+
+```ts
+import {
+  createAgentAuditRecord,
+  createReadOnlyToolApprovalPolicy,
+  createSensitiveDataPolicy,
+  createToolAuditRecords
+} from "@zhivex-ai/sdk";
+
+const redaction = createSensitiveDataPolicy();
+const toolApprovalPolicy = createReadOnlyToolApprovalPolicy();
+
+const agentRecord = createAgentAuditRecord(result.state, {
+  redaction,
+  includeMetadata: true
+});
+const toolRecords = createToolAuditRecords(result.state, {
+  redaction,
+  includeInput: false,
+  includeOutput: false
+});
+```
+
+The audit helpers intentionally omit full messages and tool payloads by default. Keep the generated records server-side and export them to your own log, queue, warehouse, or SIEM.
+
 ### Agent Replay And Evaluation
 
 For deterministic debugging, `createAgentRunSnapshot()` and `replayAgentRun()` inspect a saved `AgentRunState` without calling a model or re-running tools. For regression suites, `runAgentEvaluation()` executes small datasets against an agent and `judgeAgentEvaluation()` can score the result with either a deterministic function or a `LanguageModel`.
@@ -1448,7 +1474,7 @@ const gemini = createGemini({
 });
 
 const recipe = await generateObject({
-  model: gemini("gemini-2.0-flash"),
+  model: gemini("gemini-3.5-flash"),
   prompt: "Return JSON with title and servings.",
   mode: "native",
   schema: z.object({
@@ -1672,7 +1698,7 @@ const gemini = createGemini({
 const tools = await createMcpToolSet(myMcpClient);
 
 const result = await generateText({
-  model: gemini("gemini-2.0-flash"),
+  model: gemini("gemini-3.5-flash"),
   prompt: "Use the MCP tools if needed.",
   tools
 });
@@ -2043,7 +2069,7 @@ const file = await uploadFile({
 const store = await createFileSearchStore({ provider: gemini, displayName: "Docs" });
 
 await generateText({
-  model: gemini("gemini-2.5-flash"),
+  model: gemini("gemini-3.5-flash"),
   prompt: "Answer from the indexed docs and this URL.",
   tools: {
     docs: googleFileSearchTool([store.name]),
@@ -2053,19 +2079,19 @@ await generateText({
 
 await createContextCache({
   provider: gemini,
-  modelId: "gemini-2.5-flash",
+  modelId: "gemini-3.5-flash",
   contents: [{ role: "user", parts: [{ type: "file", data: file.uri ?? file.name, mediaType: "text/plain" }] }]
 });
 
 await createBatch({
   provider: gemini,
-  modelId: "gemini-2.5-flash",
+  modelId: "gemini-3.5-flash",
   requests: [{ request: { contents: [{ parts: [{ text: "Summarize this." }] }] } }]
 });
 
 await createInteraction({
   provider: gemini,
-  modelId: "gemini-3-flash-preview",
+  modelId: "gemini-3.5-flash",
   input: "Run a deep research style interaction."
 });
 
@@ -2079,7 +2105,7 @@ const productionVertex = createVertex({
 });
 
 await generateText({
-  model: vertex("gemini-2.5-flash"),
+  model: vertex("gemini-3.5-flash"),
   prompt: "Use the API-key quickstart path."
 });
 

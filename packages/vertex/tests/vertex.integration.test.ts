@@ -9,7 +9,7 @@ const apiKey = process.env.VERTEX_API_KEY ?? process.env.GOOGLE_API_KEY;
 const projectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
 const location = process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION;
 const baseURL = process.env.VERTEX_BASE_URL;
-const textModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-2.0-flash";
+const textModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-3.5-flash";
 const embeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-005";
 const usableAccessToken = accessToken && (projectId || baseURL) ? accessToken : undefined;
 

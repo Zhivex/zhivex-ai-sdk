@@ -19,8 +19,12 @@ import {
   createProviderSupportMatrix,
   createProviderSupportDriftReport,
   createProductionSafetyPolicy,
+  createAgentAuditRecord,
+  createReadOnlyToolApprovalPolicy,
   createRedactionPolicy,
   createSafetyPolicy,
+  createSensitiveDataPolicy,
+  createToolAuditRecords,
   createSubAgentTool,
   createTelemetryMiddleware,
   createToolRegistry,
@@ -29,6 +33,7 @@ import {
   createTextMessage,
   createUIMessageJsonResponse,
   createUIMessageLinesResponse,
+  defaultModelCatalog,
   embed,
   embedMany,
   getAgentCapabilities,
@@ -2631,5 +2636,128 @@ describe("core helpers", () => {
     expect(catalog.find("openai", "gpt-4o-mini")?.costPer1kTokens).toBe(0.6);
     expect(catalog.find("openai", "fast-openai")?.modelId).toBe("gpt-4o-mini");
     expect(catalog.list()).toHaveLength(1);
+  });
+
+  it("defaults Gemini and Vertex catalog entries to Gemini 3.5 Flash", () => {
+    expect(defaultModelCatalog.find("gemini", "gemini-3.5-flash")).toMatchObject({
+      modelId: "gemini-3.5-flash",
+      recommendedFor: expect.arrayContaining(["reasoning", "speed", "tools", "vision"])
+    });
+    expect(defaultModelCatalog.find("vertex", "gemini-flash-latest")?.modelId).toBe("gemini-3.5-flash");
+  });
+
+  it("includes DeepSeek in the default model catalog", () => {
+    expect(defaultModelCatalog.find("deepseek", "deepseek-v4-flash")).toMatchObject({
+      modelId: "deepseek-v4-flash",
+      recommendedFor: expect.arrayContaining(["reasoning", "speed", "tools"])
+    });
+  });
+
+  it("creates beta production audit records with redaction", async () => {
+    const state: AgentRunState = {
+      schemaVersion: 1,
+      runId: "run_1",
+      agentId: "agent_1",
+      provider: "openai",
+      modelId: "gpt-4o-mini",
+      status: "completed",
+      messages: [],
+      steps: [
+        {
+          index: 1,
+          status: "completed",
+          request: {
+            messages: []
+          },
+          response: {
+            text: "done",
+            messages: [
+              {
+                role: "assistant",
+                parts: [
+                  {
+                    type: "tool-call",
+                    toolCall: {
+                      id: "call_1",
+                      name: "lookup_customer",
+                      input: { email: "ana@example.com", token: "Bearer abcdefghijklmnop" }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          toolResults: [
+            {
+              toolCallId: "call_1",
+              toolName: "lookup_customer",
+              output: { email: "ana@example.com", status: "active" },
+              isError: false
+            }
+          ]
+        }
+      ],
+      toolResults: [
+        {
+          toolCallId: "call_1",
+          toolName: "lookup_customer",
+          output: { email: "ana@example.com", status: "active" },
+          isError: false
+        }
+      ],
+      currentStep: 1,
+      maxSteps: 4,
+      outputText: "Customer ana@example.com is active.",
+      pendingApprovals: [],
+      metadata: { requesterEmail: "owner@example.com" }
+    };
+
+    expect(createSensitiveDataPolicy().redactText("ana@example.com")).toBe("[REDACTED]");
+    expect(createAgentAuditRecord(state, { includeMetadata: true })).toMatchObject({
+      type: "agent_run_audit",
+      runId: "run_1",
+      toolCalls: 1,
+      outputPreview: "Customer [REDACTED] is active.",
+      metadata: { requesterEmail: "[REDACTED]" }
+    });
+    expect(createToolAuditRecords(state, { includeInput: true, includeOutput: true })).toEqual([
+      expect.objectContaining({
+        type: "agent_tool_audit",
+        toolCallId: "call_1",
+        step: 1,
+        input: { email: "[REDACTED]", token: "[REDACTED]" },
+        output: { email: "[REDACTED]", status: "active" }
+      })
+    ]);
+  });
+
+  it("creates a read-only tool approval policy", async () => {
+    const policy = createReadOnlyToolApprovalPolicy();
+    const model = createLanguageModel();
+    const readTool = tool({
+      name: "lookup_customer",
+      schema: z.object({ id: z.string() }),
+      execute: ({ id }) => ({ id })
+    });
+    const writeTool = tool({
+      name: "delete_customer",
+      schema: z.object({ id: z.string() }),
+      execute: ({ id }) => ({ id })
+    });
+
+    await expect(Promise.resolve(policy({
+      toolCall: { id: "call_1", name: "lookup_customer", input: { id: "cus_1" } },
+      tool: readTool,
+      input: { id: "cus_1" },
+      step: 1,
+      model
+    }))).resolves.toMatchObject({ approved: true });
+    await expect(Promise.resolve(policy({
+      toolCall: { id: "call_2", name: "delete_customer", input: { id: "cus_1" } },
+      tool: writeTool,
+      input: { id: "cus_1" },
+      step: 1,
+      model
+    }))).resolves.toMatchObject({ approved: false });
   });
 });

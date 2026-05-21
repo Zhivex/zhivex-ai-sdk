@@ -56,7 +56,7 @@ const file = await uploadFile({
 const store = await createFileSearchStore({ provider: gemini, displayName: "Docs" });
 
 await generateText({
-  model: gemini("gemini-2.5-flash"),
+  model: gemini("gemini-3.5-flash"),
   prompt: "Use the indexed docs and URL context.",
   tools: {
     docs: googleFileSearchTool([store.name]),
@@ -66,19 +66,19 @@ await generateText({
 
 await createContextCache({
   provider: gemini,
-  modelId: "gemini-2.5-flash",
+  modelId: "gemini-3.5-flash",
   contents: [{ role: "user", parts: [{ type: "file", data: file.uri ?? file.name, mediaType: "text/plain" }] }]
 });
 
 await createBatch({
   provider: gemini,
-  modelId: "gemini-2.5-flash",
+  modelId: "gemini-3.5-flash",
   requests: [{ request: { contents: [{ parts: [{ text: "Summarize this." }] }] } }]
 });
 
 await createInteraction({
   provider: gemini,
-  modelId: "gemini-3-flash-preview",
+  modelId: "gemini-3.5-flash",
   input: "Run a deep research style interaction."
 });
 

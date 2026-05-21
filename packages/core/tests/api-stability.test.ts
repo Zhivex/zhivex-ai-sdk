@@ -20,6 +20,10 @@ describe("api stability manifest", () => {
       symbol: "createProductionSafetyPolicy",
       stability: "stable"
     });
+    expect(api.listApiStability("beta")).toContainEqual({
+      symbol: "createAgentAuditRecord",
+      stability: "beta"
+    });
     expect(api.listApiStability("stable")).toContainEqual({
       symbol: "chunkText",
       stability: "stable"
@@ -48,6 +52,9 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("createFileArtifactService")?.stability).toBe("beta");
     expect(api.getApiStability("createFileWorkflowStateService")?.stability).toBe("beta");
     expect(api.getApiStability("verifyArtifactIntegrity")?.stability).toBe("beta");
+    expect(api.getApiStability("createAgentAuditRecord")?.stability).toBe("beta");
+    expect(api.getApiStability("createToolAuditRecords")?.stability).toBe("beta");
+    expect(api.getApiStability("createReadOnlyToolApprovalPolicy")?.stability).toBe("beta");
 
     expect(api.getApiStability("createAdvancedToolRegistry")?.stability).toBe("experimental");
     expect(api.getApiStability("missingSymbol")).toBeUndefined();

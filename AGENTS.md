@@ -19,6 +19,7 @@
 - `packages/openrouter`: OpenRouter provider.
 - `packages/qwen`: Qwen provider.
 - `packages/kimi`: Kimi provider.
+- `packages/deepseek`: DeepSeek provider.
 - `packages/gateway`: gateway / routing layer.
 - `.changeset/`: versioning and release configuration.
 - `README.md`: main source of usage examples and public-facing expectations.
@@ -38,6 +39,7 @@ Packages currently publishable to npm:
 - `@zhivex-ai/openrouter`
 - `@zhivex-ai/qwen`
 - `@zhivex-ai/kimi`
+- `@zhivex-ai/deepseek`
 - `@zhivex-ai/gateway`
 
 ## Stack and Commands

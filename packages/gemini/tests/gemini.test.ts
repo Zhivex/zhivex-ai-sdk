@@ -38,8 +38,8 @@ describe("gemini adapter", () => {
 
   runLanguageModelContractSuite({
     providerName: "gemini",
-    modelId: "gemini-2.0-flash",
-    createModel: () => createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch })("gemini-2.0-flash"),
+    modelId: "gemini-3.5-flash",
+    createModel: () => createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch })("gemini-3.5-flash"),
     createEmbeddingModel: () =>
       createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch }).embeddingModel("text-embedding-004"),
     expectedAgentTier: "tier-b",
@@ -69,9 +69,9 @@ describe("gemini adapter", () => {
 
   runAgentProviderContractSuite({
     providerName: "gemini",
-    modelId: "gemini-2.0-flash",
+    modelId: "gemini-3.5-flash",
     expectedAgentTier: "tier-b",
-    createModel: () => createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch })("gemini-2.0-flash"),
+    createModel: () => createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch })("gemini-3.5-flash"),
     mockSimpleRun: () => {
       fetchMock.mockResolvedValueOnce(
         Response.json({
@@ -476,7 +476,7 @@ describe("gemini adapter", () => {
   });
 
   it("creates, gets, and streams Gemini interactions", async () => {
-    fetchMock.mockResolvedValueOnce(Response.json({ id: "int-1", model: "gemini-3-flash-preview", outputs: [{ text: "hello" }] }));
+    fetchMock.mockResolvedValueOnce(Response.json({ id: "int-1", model: "gemini-3.5-flash", outputs: [{ text: "hello" }] }));
     fetchMock.mockResolvedValueOnce(Response.json({ id: "int-1", status: "completed" }));
     const body = new ReadableStream({
       start(controller) {
@@ -494,11 +494,11 @@ describe("gemini adapter", () => {
     const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const interaction = await createInteraction({
       provider,
-      modelId: "gemini-3-flash-preview",
+      modelId: "gemini-3.5-flash",
       input: "hello"
     });
     const read = await provider.interactions!.get({ id: interaction.id });
-    const stream = await provider.interactions!.stream({ modelId: "gemini-3-flash-preview", input: "hello" });
+    const stream = await provider.interactions!.stream({ modelId: "gemini-3.5-flash", input: "hello" });
     const events = [];
     for await (const event of stream) {
       events.push(event);
@@ -620,7 +620,7 @@ describe("gemini adapter", () => {
 
     const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
     await generateText({
-      model: provider("gemini-3-flash-preview"),
+      model: provider("gemini-3.5-flash"),
       prompt: "hello",
       reasoning: {
         effort: "low"
@@ -641,7 +641,7 @@ describe("gemini adapter", () => {
 
     await expect(
       generateText({
-        model: provider("gemini-3-flash-preview"),
+        model: provider("gemini-3.5-flash"),
         prompt: "hello",
         reasoning: {
           budgetTokens: 512

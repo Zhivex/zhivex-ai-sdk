@@ -266,7 +266,7 @@ describe("gateway", () => {
 
     const result = await gateway.generate({
       primary: { provider: "bedrock", modelId: "anthropic.claude-v2" },
-      fallbacks: [{ provider: "gemini", modelId: "gemini-2.0-flash" }],
+      fallbacks: [{ provider: "gemini", modelId: "gemini-3.5-flash" }],
       messages: [{ role: "user", content: "hello" }],
       requiredCapabilities: {
         tools: true
@@ -300,6 +300,25 @@ describe("gateway", () => {
     expect(result.attempts[0]?.errorMessage).toContain("cost");
   });
 
+  it("includes stable route decision reason codes", async () => {
+    const gateway = createGateway({
+      adapters: {
+        ollama: createAdapter(async () => ({ text: "hello world" }))
+      }
+    });
+
+    const result = await gateway.generate({
+      primary: { provider: "ollama", modelId: "llama3.2" },
+      messages: [{ role: "user", content: "hello" }],
+      routingMode: "quality"
+    });
+
+    expect(result.routeDecision).toMatchObject({
+      reasonCode: "routing-quality",
+      reason: "Ordered by quality mode with chat intent."
+    });
+  });
+
   it("emits attempt callbacks for observability", async () => {
     const attempts: string[] = [];
     const gateway = createGateway({
@@ -307,7 +326,7 @@ describe("gateway", () => {
         ollama: createAdapter(async () => ({ text: "hello world" }))
       },
       onAttempt(attempt) {
-        attempts.push(`${attempt.provider}:${attempt.retry}:${attempt.targetRank}`);
+        attempts.push(`${attempt.provider}:${attempt.retry}:${attempt.targetRank}:${attempt.reasonCode}`);
       }
     });
 
@@ -316,7 +335,46 @@ describe("gateway", () => {
       messages: [{ role: "user", content: "hello" }]
     });
 
-    expect(attempts).toEqual(["ollama:0:0"]);
+    expect(attempts).toEqual(["ollama:0:0:provider-success"]);
+  });
+
+  it("emits skipped target reason codes to attempt callbacks", async () => {
+    const attempts: string[] = [];
+    const gateway = createGateway({
+      adapters: {
+        bedrock: createAdapter(async () => ({ text: "too limited" })),
+        gemini: createAdapter(async () => ({ text: "from gemini" }), {
+          streaming: true,
+          tools: true,
+          structuredOutput: true,
+          jsonMode: true,
+          toolChoice: false,
+          parallelToolCalls: false,
+          vision: true,
+          files: false,
+          audioInput: false,
+          audioOutput: false,
+          embeddings: false,
+          reasoning: false,
+          webSearch: false
+        })
+      },
+      onAttempt(attempt) {
+        attempts.push(`${attempt.provider}:${attempt.reasonCode}`);
+      }
+    });
+
+    const result = await gateway.generate({
+      primary: { provider: "bedrock", modelId: "anthropic.claude-v2" },
+      fallbacks: [{ provider: "gemini", modelId: "gemini-3.5-flash" }],
+      messages: [{ role: "user", content: "hello" }],
+      requiredCapabilities: {
+        tools: true
+      }
+    });
+
+    expect(result.providerUsed).toBe("gemini");
+    expect(attempts).toEqual(["bedrock:model-capabilities", "gemini:provider-success"]);
   });
 
   it("uses model catalog costs when no explicit provider cost is configured", async () => {
@@ -356,7 +414,7 @@ describe("gateway", () => {
 
     const result = gateway.streamText({
       primary: { provider: "openai", modelId: "gpt-4o-mini" },
-      fallbacks: [{ provider: "gemini", modelId: "gemini-2.0-flash" }],
+      fallbacks: [{ provider: "gemini", modelId: "gemini-3.5-flash" }],
       messages: [{ role: "user", content: "hello" }]
     });
 
@@ -430,7 +488,7 @@ describe("gateway", () => {
     });
 
     const result = await gateway.generateObject({
-      primary: { provider: "gemini", modelId: "gemini-2.0-flash" },
+      primary: { provider: "gemini", modelId: "gemini-3.5-flash" },
       messages: [{ role: "user", content: "hello" }],
       schema: z.object({
         answer: z.string()
@@ -465,7 +523,7 @@ describe("gateway", () => {
 
     const result = await gateway.generateObject({
       primary: { provider: "bedrock", modelId: "anthropic.claude-v2" },
-      fallbacks: [{ provider: "gemini", modelId: "gemini-2.0-flash" }],
+      fallbacks: [{ provider: "gemini", modelId: "gemini-3.5-flash" }],
       messages: [{ role: "user", content: "hello" }],
       schema: z.object({
         answer: z.string()
@@ -507,7 +565,7 @@ describe("gateway", () => {
     });
 
     const result = gateway.streamObject({
-      primary: { provider: "gemini", modelId: "gemini-2.0-flash" },
+      primary: { provider: "gemini", modelId: "gemini-3.5-flash" },
       messages: [{ role: "user", content: "hello" }],
       schema: z.object({
         answer: z.string()
@@ -525,7 +583,7 @@ describe("gateway", () => {
     expect(final.providerUsed).toBe("gemini");
     expect(final.routeDecision.orderedTargets[0]).toEqual({
       provider: "gemini",
-      modelId: "gemini-2.0-flash"
+      modelId: "gemini-3.5-flash"
     });
   });
 
@@ -660,7 +718,7 @@ describe("gateway", () => {
     });
 
     const result = gateway.streamAgent({
-      primary: { provider: "gemini", modelId: "gemini-2.0-flash" },
+      primary: { provider: "gemini", modelId: "gemini-3.5-flash" },
       prompt: "Stream this agent answer"
     });
 
@@ -681,7 +739,7 @@ describe("gateway", () => {
     expect(final.routeDecision).toEqual(final.state.routeDecision);
     expect(final.state.routeDecision.orderedTargets[0]).toEqual({
       provider: "gemini",
-      modelId: "gemini-2.0-flash"
+      modelId: "gemini-3.5-flash"
     });
   });
 
