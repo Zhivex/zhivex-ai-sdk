@@ -5,9 +5,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  createAgentRunLedger,
   createFileArtifactService,
   createFileSessionService,
-  createFileWorkflowStateService
+  createFileWorkflowStateService,
+  createTextMessage,
+  type AgentRunState
 } from "@zhivex-ai/core";
 
 import { runCli } from "../src/cli.js";
@@ -29,11 +32,73 @@ const tempDir = async (prefix: string) => fs.mkdtemp(path.join(os.tmpdir(), pref
 const readJson = async <T = unknown>(filePath: string): Promise<T> =>
   JSON.parse(await fs.readFile(filePath, "utf8")) as T;
 
+const baseAgentState = (overrides: Partial<AgentRunState> = {}): AgentRunState => ({
+  schemaVersion: 1,
+  runId: "run_1",
+  agentId: "agent_1",
+  provider: "test",
+  modelId: "model",
+  status: "completed",
+  messages: [createTextMessage("assistant", "done")],
+  steps: [],
+  toolResults: [],
+  currentStep: 1,
+  maxSteps: 4,
+  outputText: "done",
+  pendingApprovals: [],
+  startedAt: 1,
+  updatedAt: 2,
+  ...overrides
+});
+
 describe("zhivex-ai CLI", () => {
   it("prints help output", async () => {
     const capture = createCapture();
     await expect(runCli(["--help"], capture.io)).resolves.toBe(0);
+    expect(capture.stdout[0]).toContain("agents ledger|diff|golden");
     expect(capture.stdout[0]).toContain("sessions list|show|workflow-state|prune");
+  });
+
+  it("creates agent ledgers and golden traces from local JSON", async () => {
+    const directory = await tempDir("zhivex-cli-agents-");
+    const statePath = path.join(directory, "state.json");
+    const ledgerPath = path.join(directory, "ledger.json");
+    const goldenPath = path.join(directory, "golden.json");
+    await fs.writeFile(statePath, JSON.stringify(baseAgentState()), "utf8");
+    const capture = createCapture();
+
+    const ledgerCode = await runCli(["agents", "ledger", "--state", statePath, "--out", ledgerPath], capture.io);
+    const goldenCode = await runCli(["agents", "golden", "--ledger", ledgerPath, "--name", "happy-path", "--out", goldenPath], capture.io);
+
+    expect(ledgerCode).toBe(0);
+    expect(goldenCode).toBe(0);
+    expect(await readJson(ledgerPath)).toMatchObject({
+      type: "agent_run_ledger",
+      runId: "run_1",
+      status: "completed"
+    });
+    expect(await readJson(goldenPath)).toMatchObject({
+      type: "agent_golden_trace",
+      name: "happy-path",
+      expectations: { status: "completed", outputText: "done" }
+    });
+  });
+
+  it("diffs agent ledgers from local JSON", async () => {
+    const directory = await tempDir("zhivex-cli-agents-");
+    const basePath = path.join(directory, "base.json");
+    const targetPath = path.join(directory, "target.json");
+    await fs.writeFile(basePath, JSON.stringify(createAgentRunLedger(baseAgentState())), "utf8");
+    await fs.writeFile(targetPath, JSON.stringify(createAgentRunLedger(baseAgentState({ runId: "run_2", outputText: "changed" }))), "utf8");
+    const capture = createCapture();
+
+    const code = await runCli(["agents", "diff", "--base", basePath, "--target", targetPath], capture.io);
+
+    expect(code).toBe(0);
+    expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+      ok: false,
+      changes: [expect.objectContaining({ field: "outputText" })]
+    });
   });
 
   it("lists file-backed sessions", async () => {

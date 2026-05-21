@@ -6,12 +6,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   compareWorkflowEvaluationReports,
   cleanupFileArtifactStore,
+  createAgentRunLedger,
   createFileArtifactService,
   createFileWorkflowStateService,
   createWorkflowEvaluationDiffReport,
   createWorkflowEvaluationReport,
+  diffAgentRunLedgers,
   normalizeAgentSession,
   normalizeWorkflowRunState,
+  promoteAgentGoldenTrace,
   pruneFileArtifactStore,
   pruneFileSessionStore,
   pruneFileWorkflowStateStore,
@@ -22,7 +25,10 @@ import {
   saveWorkflowReplayAsArtifact,
   inspectFileArtifactStore,
   verifyArtifactIntegrity,
+  type AgentRunLedger,
+  type AgentRunState,
   type AgentSession,
+  type JsonValue,
   type WorkflowDefinition,
   type WorkflowEvaluationCase,
   type WorkflowEvaluationFixture,
@@ -104,6 +110,7 @@ const numberFlag = (flags: Record<string, string | true>, name: string): number 
 const helpText = `zhivex-ai
 
 Commands:
+  agents ledger|diff|golden
   sessions list|show|workflow-state|prune
   artifacts list|show|verify|inspect|cleanup|prune
   workflow replay|report|compare|run|eval
@@ -305,6 +312,52 @@ const runArtifactsCommand = async (subcommand: string | undefined, flags: Record
   return fail(io, "Unknown artifacts command.");
 };
 
+const runAgentsCommand = async (subcommand: string | undefined, flags: Record<string, string | true>, io: CliIO) => {
+  if (subcommand === "ledger") {
+    const state = await readJsonFile<AgentRunState>(requiredFlag(flags, "state"));
+    const ledger = createAgentRunLedger(state, {
+      includeTimeline: !booleanFlag(flags, "no-timeline")
+    });
+    const outputPath = stringFlag(flags, "out");
+    if (outputPath) {
+      await writeJsonFile(outputPath, ledger);
+    }
+    printJson(io, ledger);
+    return 0;
+  }
+
+  if (subcommand === "diff") {
+    const base = await readJsonFile<AgentRunLedger>(requiredFlag(flags, "base"));
+    const target = await readJsonFile<AgentRunLedger>(requiredFlag(flags, "target"));
+    const diff = diffAgentRunLedgers(base, target);
+    const outputPath = stringFlag(flags, "out");
+    if (outputPath) {
+      await writeJsonFile(outputPath, diff);
+    }
+    printJson(io, diff);
+    return 0;
+  }
+
+  if (subcommand === "golden") {
+    const ledger = await readJsonFile<AgentRunLedger>(requiredFlag(flags, "ledger"));
+    const golden = promoteAgentGoldenTrace(ledger, {
+      name: stringFlag(flags, "name"),
+      outputText: stringFlag(flags, "output"),
+      metadata: stringFlag(flags, "metadata")
+        ? await readJsonFile<Record<string, JsonValue>>(requiredFlag(flags, "metadata"))
+        : undefined
+    });
+    const outputPath = stringFlag(flags, "out");
+    if (outputPath) {
+      await writeJsonFile(outputPath, golden);
+    }
+    printJson(io, golden);
+    return 0;
+  }
+
+  return fail(io, "Unknown agents command.");
+};
+
 const loadModuleExport = async <T>(
   modulePath: string,
   exportName: string | undefined,
@@ -469,6 +522,9 @@ export const runCli = async (args: string[], io: CliIO = {}): Promise<number> =>
     }
     if (parsed.command === "artifacts") {
       return await runArtifactsCommand(parsed.subcommand, parsed.flags, io);
+    }
+    if (parsed.command === "agents") {
+      return await runAgentsCommand(parsed.subcommand, parsed.flags, io);
     }
     if (parsed.command === "workflow-states") {
       return await runWorkflowStatesCommand(parsed.subcommand, parsed.flags, io);

@@ -342,6 +342,63 @@ Durable records also include a `revision` counter. Pass `expectedRevision` to sa
 
 For explicit migration/validation, use `migrateAgentSessionRecord(record)`. File-backed session stores can be pruned locally with `pruneFileSessionStore({ directory, keepLast, olderThanMs, dryRun })`.
 
+### Agent Control Plane
+
+`Agent Control Plane` is a Beta layer for production agent operations. It does not replace `createAgent()` or `Runner`; it packages the operational metadata around them so applications can inspect, govern, replay, and route agent runs without binding the product to a single provider.
+
+The first Beta surface includes:
+
+- `createAgentCapsule()`: portable manifest for an agent, its tools, MCP servers, skills, evals, policy, provider, and agent tier.
+- `createAgentToolPolicy()`: permission/risk-aware tool approval policy for read-only, supervised, write-deny, or allow-all modes.
+- `createAgentApprovalQueue()`: provider approval waits as app-facing queue items with approval tokens and resume URLs.
+- `createAgentRunLedger()`: normalized audit, trace, replay timeline, tool audit, summary, and cost record for a run.
+- `diffAgentRunLedgers()` and `promoteAgentGoldenTrace()`: compare run behavior and turn a successful run into a regression fixture.
+- `selectAgentModel()` and `createAgentCapabilityRouter()`: choose models by capabilities such as approvals, remote MCP, structured output, reasoning, streaming, web search, or minimum agent tier.
+- `createAgentControlPlane()`: small facade that runs/resumes/streams an agent and returns a ledger-backed run record.
+
+```ts
+import {
+  createAgent,
+  createAgentCapsule,
+  createAgentControlPlane,
+  createAgentToolPolicy,
+  createAgentRunLedger,
+  createAgentCapabilityRouter
+} from "@zhivex-ai/sdk";
+
+const agent = createAgent({
+  id: "finance-risk",
+  model,
+  tools,
+  toolApprovalPolicy: createAgentToolPolicy({ mode: "read-only" })
+});
+
+const capsule = createAgentCapsule({
+  id: "finance-risk",
+  name: "Finance Risk Agent",
+  version: "0.1.0",
+  agent,
+  skills: [{ id: "reconciliation", path: ".agents/skills/reconciliation/SKILL.md" }],
+  policy: { toolPolicyMode: "read-only", redaction: true }
+});
+
+const router = createAgentCapabilityRouter([openai("gpt-5"), anthropic("claude-opus-4-7")]);
+const selected = router.select({ minTier: "tier-b", approvals: true, remoteMcp: true });
+
+const controlPlane = createAgentControlPlane({ agent: { ...agent, model: selected.model } });
+const record = await controlPlane.run({ prompt: "Reconcile account acct_123." });
+
+const ledger = createAgentRunLedger(record.state, {
+  includeInput: false,
+  includeOutput: false
+});
+
+console.log(capsule.manifest.agentTier);
+console.log(ledger.audit.toolCalls);
+```
+
+The control-plane layer is intentionally SDK-only. Workspaces, billing, project keys, auth, rate limits, and queues remain application-owned or Gateway-owned concerns. Treat provider capability routing as a runtime snapshot: it helps select the best candidate, but does not remove the need for provider-specific integration tests.
+
 ### Declarative Workflows
 
 `createWorkflow()` and `runWorkflow()` run agent workflows on top of `Runner`. The Beta workflow surface supports sequential task steps, parallel groups, and bounded task loops. Each task calls a runner, can read previous step outputs, and can persist its own `outputKey` into the workflow state.
@@ -666,9 +723,13 @@ zhivex-ai workflow-states show --dir .zhivex/workflow-states --app candidate-rev
 zhivex-ai sessions workflow-state show --dir .zhivex/sessions --app candidate-review --user user_123 --session candidate_456 --workflow default
 zhivex-ai artifacts prune --dir .zhivex/artifacts --keep-last 100
 zhivex-ai workflow-states prune --dir .zhivex/workflow-states --older-than-ms 2592000000
+
+zhivex-ai agents ledger --state agent-run-state.json --out run-ledger.json
+zhivex-ai agents diff --base previous-ledger.json --target current-ledger.json
+zhivex-ai agents golden --ledger run-ledger.json --name happy-path --out golden-trace.json
 ```
 
-Output is JSON pretty-printed by default. Use `workflow-states list/show` for first-class durable workflow state inspection; `sessions workflow-state show` remains available for legacy session-metadata fallback state. Prune commands are dry-run by default; pass `--execute` to delete. The CLI is intentionally local-only and does not introduce auth, workspaces, Gateway calls, or a control plane.
+Output is JSON pretty-printed by default. Use `workflow-states list/show` for first-class durable workflow state inspection; `sessions workflow-state show` remains available for legacy session-metadata fallback state. The `agents` commands are dry local control-plane utilities over saved run states and ledgers; they never execute models or tools. Prune commands are dry-run by default; pass `--execute` to delete. The CLI is intentionally local-only and does not introduce auth, workspaces, or Gateway calls.
 
 ### Realtime Sessions
 

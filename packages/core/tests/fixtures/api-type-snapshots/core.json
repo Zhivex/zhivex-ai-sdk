@@ -1,6 +1,7 @@
 {
   "advanced-tool-registry.d.ts": "eece1f8bf7b313afce81aadc6281e8254e170dbd70ff61cd163fd6d705a50ed4",
   "agent-approval.d.ts": "9b02b3a408e78fb23d983d077ddb61ea82912db176f09cd61e5d58a98272c3ef",
+  "agent-control-plane.d.ts": "5984510791679e2ba58afecc5612d368b25cb47048ca1cf03dbef8a0a51ebf15",
   "agent-evaluation.d.ts": "fc270ac5e93d2c6dec74c34db7ff5fde8951d7532ac247ce886c11bf4f78b8f2",
   "agent-handoff.d.ts": "b3cda573c71abd86810dbaf703a95070103ce316035acd6ccb9e60999f9a5cc4",
   "agent-store.d.ts": "dbbaed4b441d0976f49647c279afca4e0e8122f625578795845f8dbd0c76a033",
@@ -17,7 +18,7 @@
   "generate-text.d.ts": "7659c9687aa8026b0dc99adb182baffb40682b59a4bb858c96edbc52850c8730",
   "google.d.ts": "c373b49bacb57103cfe8baf6a3176472eab470d7ecb483c429e33be0d84f8b16",
   "grounded-text.d.ts": "03c1db5935feced5d58f6e0aab44fd47694622477784a2ff16cc471c0baa1144",
-  "index.d.ts": "01105e9e55578b3ae5d4f4228e46c4befd015d09c604a45c7acc402ad80a61e7",
+  "index.d.ts": "6b057cc8ac0ad5492d41137024a9d84b9201afbeafa8dfa8ccaf29f596e709c0",
   "live-agent.d.ts": "b3b9fdf7bf23ecd4417f51ea6c15ec9e24fa8a16afd493c168ecaad8d358fb21",
   "mcp.d.ts": "d7c5875abd207e8c251d42183a7dbba68b8bd2191fe7f4e7811c13eef3d4608c",
   "media.d.ts": "d801c841bebed85d22a39ab18f6691bb44e8ca18d0543cc4305485d20a1c3bfc",

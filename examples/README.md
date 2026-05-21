@@ -26,6 +26,7 @@ Typical examples:
 bun run examples/sdk/runner-session.ts
 bun run examples/sdk/tools-with-safety-policy.ts
 bun run examples/sdk/observability-export.ts
+bun run examples/sdk/agent-control-plane.ts
 bun run examples/sdk/rag-agent.ts
 bun run examples/sdk/stream-text.ts
 bun run examples/sdk/agent-runtime.ts
@@ -46,6 +47,8 @@ The `examples/sdk/runner-session.ts` example is deterministic and does not requi
 `examples/sdk/production-runner.ts` is a production template rather than a directly runnable script. It shows how to wire `Runner + createPostgresSessionService()` with an app-owned Postgres client without importing a database driver into the SDK.
 
 `examples/sdk/observability-export.ts` is deterministic and does not require provider credentials. It shows how to collect an agent trace, compute cost/latency summaries, build tool-call audit records, and redact sensitive fields before a JSONL export.
+
+`examples/sdk/agent-control-plane.ts` is deterministic and does not require provider credentials. It shows how to package an agent capsule, route by provider capability, enforce a read-only tool policy, emit a run ledger, and promote a golden trace.
 
 `examples/sdk/rag-agent.ts` is deterministic and does not require provider credentials. It shows chunking, embedding, local ranking, context injection, and an agent run over retrieved context.
 

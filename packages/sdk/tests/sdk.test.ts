@@ -94,6 +94,16 @@ describe("sdk public surface", () => {
     expect(sdk.inspectToolRegistry).toBeTypeOf("function");
     expect(sdk.recordToolTestFixture).toBeTypeOf("function");
     expect(sdk.runToolTestFixture).toBeTypeOf("function");
+    expect(sdk.createAgentCapsule).toBeTypeOf("function");
+    expect(sdk.inspectAgentCapsule).toBeTypeOf("function");
+    expect(sdk.createAgentToolPolicy).toBeTypeOf("function");
+    expect(sdk.createAgentApprovalQueue).toBeTypeOf("function");
+    expect(sdk.createAgentRunLedger).toBeTypeOf("function");
+    expect(sdk.diffAgentRunLedgers).toBeTypeOf("function");
+    expect(sdk.promoteAgentGoldenTrace).toBeTypeOf("function");
+    expect(sdk.selectAgentModel).toBeTypeOf("function");
+    expect(sdk.createAgentCapabilityRouter).toBeTypeOf("function");
+    expect(sdk.createAgentControlPlane).toBeTypeOf("function");
     expect(sdk.testToolDefinition).toBeTypeOf("function");
     expect(sdk.testToolRegistry).toBeTypeOf("function");
     expect(sdk.createMcpToolRegistry).toBeTypeOf("function");
@@ -126,6 +136,9 @@ describe("sdk public surface", () => {
     expect(sdk.getApiStability("createFileArtifactService")?.stability).toBe("beta");
     expect(sdk.getApiStability("createFileWorkflowStateService")?.stability).toBe("beta");
     expect(sdk.getApiStability("verifyArtifactIntegrity")?.stability).toBe("beta");
+    expect(sdk.getApiStability("createAgentControlPlane")?.stability).toBe("beta");
+    expect(sdk.getApiStability("createAgentCapsule")?.stability).toBe("beta");
+    expect(sdk.getApiStability("createAgentRunLedger")?.stability).toBe("beta");
     expect(sdk.getApiStability("createAdvancedToolRegistry")?.stability).toBe("experimental");
   });
 
