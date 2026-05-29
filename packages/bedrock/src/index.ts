@@ -343,7 +343,7 @@ const mapToolChoice = (
   }
 
   if (toolChoice === "none") {
-    throw new UnsupportedFeatureError('Provider "bedrock" does not support "toolChoice=none".');
+    return undefined;
   }
 
   if (toolChoice === "required") {
@@ -619,6 +619,8 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
         : undefined;
     const { outputConfig: _outputConfig, ...otherProviderOptions } = providerOptions;
     const textFormat = mapStructuredOutput(input.structuredOutput);
+    const tools = input.toolChoice === "none" ? undefined : mapTools(input.tools);
+    const toolChoice = input.toolChoice === "none" ? undefined : mapToolChoice(input.toolChoice);
 
     return {
       modelId: this.modelId,
@@ -628,11 +630,11 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
         temperature: input.temperature,
         maxTokens: input.maxTokens
       },
-      ...(input.tools || input.toolChoice
+      ...(tools || toolChoice
         ? {
             toolConfig: {
-              ...(input.tools ? { tools: mapTools(input.tools) } : {}),
-              ...(input.toolChoice ? { toolChoice: mapToolChoice(input.toolChoice) } : {})
+              ...(tools ? { tools } : {}),
+              ...(toolChoice ? { toolChoice } : {})
             } as ConverseCommandInput["toolConfig"]
           }
         : {}),

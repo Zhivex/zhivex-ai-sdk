@@ -539,6 +539,36 @@ describe("bedrock adapter", () => {
     });
   });
 
+  it("omits Converse tools when common tool choice is none", async () => {
+    sendMock.mockResolvedValueOnce({
+      stopReason: "end_turn",
+      output: {
+        message: {
+          content: [{ text: "hello from bedrock" }]
+        }
+      }
+    });
+
+    const provider = createBedrock({ region: "us-east-1" });
+    await generateText({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "hello",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      },
+      toolChoice: "none"
+    });
+
+    const command = sendMock.mock.calls[0]?.[0] as {
+      input: { toolConfig?: unknown };
+    };
+    expect(command.input.toolConfig).toBeUndefined();
+  });
+
   it("rejects common reasoning config for Bedrock", async () => {
     const provider = createBedrock({ region: "us-east-1" });
 

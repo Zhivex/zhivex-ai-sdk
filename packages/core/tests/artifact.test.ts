@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -340,6 +341,92 @@ describe("artifact services", () => {
         sha256: "not-a-digest"
       })
     ).toThrow(ValidationError);
+  });
+
+  it("auto-calculates size and sha256 for base64 saveArtifact payloads", async () => {
+    const service = createInMemoryArtifactService();
+    const payload = createBase64ArtifactData("hello");
+    const sha256 = createHash("sha256").update(Buffer.from("hello")).digest("hex");
+
+    const artifact = await service.saveArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "base64",
+      name: "hello.txt",
+      contentType: "text/plain",
+      data: payload.data,
+      encoding: payload.encoding
+    });
+
+    expect(artifact).toMatchObject({
+      encoding: "base64",
+      size: 5,
+      sha256
+    });
+    expect(verifyArtifactRecordIntegrity(artifact)).toMatchObject({ ok: true });
+  });
+
+  it("auto-calculates base64 integrity metadata across artifact stores", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-artifacts-base64-"));
+    const payload = createBase64ArtifactData("hello");
+    const sha256 = createHash("sha256").update(Buffer.from("hello")).digest("hex");
+    const stores = [
+      createFileArtifactService({ directory }),
+      createSqliteArtifactService({ db: new FakeSqliteArtifactDatabase() }),
+      createPostgresArtifactService({ client: new FakePostgresArtifactClient() })
+    ];
+
+    for (const [index, service] of stores.entries()) {
+      const artifact = await service.saveArtifact({
+        appName: "app",
+        userId: "user",
+        sessionId: "session",
+        id: `base64-${index}`,
+        name: "hello.txt",
+        contentType: "text/plain",
+        data: payload.data,
+        encoding: payload.encoding
+      });
+
+      expect(artifact).toMatchObject({
+        size: 5,
+        sha256
+      });
+    }
+  });
+
+  it("validates explicit base64 size and sha256 metadata", async () => {
+    const service = createInMemoryArtifactService();
+    const payload = createBase64ArtifactData("hello");
+
+    expect(() =>
+      service.saveArtifact({
+        appName: "app",
+        userId: "user",
+        sessionId: "session",
+        id: "bad-base64-size",
+        name: "hello.txt",
+        contentType: "text/plain",
+        data: payload.data,
+        encoding: payload.encoding,
+        size: 99
+      })
+    ).toThrow('The "size" artifact option does not match the decoded base64 data.');
+
+    expect(() =>
+      service.saveArtifact({
+        appName: "app",
+        userId: "user",
+        sessionId: "session",
+        id: "bad-base64-sha",
+        name: "hello.txt",
+        contentType: "text/plain",
+        data: payload.data,
+        encoding: payload.encoding,
+        sha256: "a".repeat(64)
+      })
+    ).toThrow('The "sha256" artifact option does not match the decoded base64 data.');
   });
 
   it("saves and loads binary artifacts in memory", async () => {

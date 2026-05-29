@@ -285,6 +285,39 @@ const validateArtifactMetadata = (input: Pick<ArtifactSaveInput, "size" | "sha25
   }
 };
 
+const base64Bytes = (value: string): Uint8Array => {
+  const normalized = value.replace(/\s/g, "");
+  if (normalized.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) {
+    throw new ValidationError('Artifact data must be valid base64 when "encoding" is "base64".');
+  }
+  return new Uint8Array(Buffer.from(normalized, "base64"));
+};
+
+const enrichArtifactMetadata = (input: ArtifactSaveInput): Pick<ArtifactSaveInput, "size" | "sha256"> => {
+  validateArtifactMetadata(input);
+  if (input.encoding !== "base64" || typeof input.data !== "string") {
+    return {
+      size: input.size,
+      sha256: input.sha256
+    };
+  }
+
+  const bytes = base64Bytes(input.data);
+  const actualSha256 = sha256Digest(bytes);
+
+  if (input.size !== undefined && input.size !== bytes.byteLength) {
+    throw new ValidationError('The "size" artifact option does not match the decoded base64 data.');
+  }
+  if (input.sha256 !== undefined && input.sha256.toLowerCase() !== actualSha256) {
+    throw new ValidationError('The "sha256" artifact option does not match the decoded base64 data.');
+  }
+
+  return {
+    size: input.size ?? bytes.byteLength,
+    sha256: input.sha256 ?? actualSha256
+  };
+};
+
 const validateIdentifier = (value: string, fieldName: string): string => {
   if (!identifierPattern.test(value)) {
     throw new ValidationError(`The "${fieldName}" option must match the SQL identifier pattern [A-Za-z_][A-Za-z0-9_]*.`);
@@ -355,7 +388,7 @@ const ensurePostgresTable = (() => {
 })();
 
 const createArtifact = (input: ArtifactSaveInput, existing?: ArtifactRecord): ArtifactRecord => {
-  validateArtifactMetadata(input);
+  const integrity = enrichArtifactMetadata(input);
   const now = Date.now();
   return {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
@@ -371,8 +404,8 @@ const createArtifact = (input: ArtifactSaveInput, existing?: ArtifactRecord): Ar
     contentType: input.contentType,
     data: cloneJson(input.data),
     encoding: input.encoding,
-    size: input.size,
-    sha256: input.sha256,
+    size: integrity.size,
+    sha256: integrity.sha256,
     storageMode: input.storageMode ?? "json",
     blobPath: input.blobPath,
     metadata: input.metadata ? cloneJson(input.metadata) : undefined,

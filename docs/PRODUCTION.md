@@ -280,6 +280,8 @@ Use artifacts for outputs you want to keep, inspect, or attach to workflow steps
 
 For large production binaries, prefer app-owned blob storage and keep an SDK artifact record as metadata:
 
+For base64 artifacts stored directly through `saveArtifact()`, set `encoding: "base64"`. The SDK calculates missing `size` and `sha256` metadata and validates any values you provide.
+
 ```ts
 import { createExternalArtifactReference } from "@zhivex-ai/sdk";
 
