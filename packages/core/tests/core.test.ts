@@ -56,6 +56,7 @@ import {
   isHostedToolClass,
   createHttpTool,
   createMcpToolRegistry,
+  normalizeFinishReason,
   streamObject,
   streamAgent,
   streamText,
@@ -2636,6 +2637,18 @@ describe("core helpers", () => {
     expect(catalog.find("openai", "gpt-4o-mini")?.costPer1kTokens).toBe(0.6);
     expect(catalog.find("openai", "fast-openai")?.modelId).toBe("gpt-4o-mini");
     expect(catalog.list()).toHaveLength(1);
+  });
+
+  it("normalizes provider refusals", () => {
+    expect(normalizeFinishReason("refusal")).toBe("refusal");
+  });
+
+  it("defaults Anthropic catalog entries to Claude Opus 4.8", () => {
+    expect(defaultModelCatalog.find("anthropic", "claude-opus-4-8")).toMatchObject({
+      modelId: "claude-opus-4-8",
+      recommendedFor: expect.arrayContaining(["reasoning", "tools"])
+    });
+    expect(defaultModelCatalog.find("anthropic", "claude-opus-4-7")?.modelId).toBe("claude-opus-4-8");
   });
 
   it("defaults Gemini and Vertex catalog entries to Gemini 3.5 Flash", () => {

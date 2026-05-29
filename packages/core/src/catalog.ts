@@ -28,7 +28,13 @@ export const createModelCatalog = (entries: ModelCatalogEntry[]): ModelCatalog =
 export const defaultModelCatalog = createModelCatalog([
   { provider: "openai", modelId: "gpt-4o-mini", costPer1kTokens: 0.6, recommendedFor: ["chat", "tools", "speed"] },
   { provider: "azure-openai", modelId: "gpt-4o-mini", costPer1kTokens: 0.6, recommendedFor: ["chat", "tools"] },
-  { provider: "anthropic", modelId: "claude-opus-4-7", costPer1kTokens: 5, recommendedFor: ["reasoning", "tools"] },
+  {
+    provider: "anthropic",
+    modelId: "claude-opus-4-8",
+    aliases: ["claude-opus-4-7"],
+    costPer1kTokens: 5,
+    recommendedFor: ["reasoning", "tools"]
+  },
   {
     provider: "gemini",
     modelId: "gemini-3.5-flash",
