@@ -92,14 +92,14 @@ describe("vertex adapter", () => {
 
   runLanguageModelContractSuite({
     providerName: "vertex",
-    modelId: "gemini-2.0-flash",
+    modelId: "gemini-3.5-flash",
     createModel: () =>
       createVertex({
         accessToken: "test",
         projectId: "demo-project",
         location: "us-central1",
         fetch: fetchMock as typeof fetch
-      })("gemini-2.0-flash"),
+      })("gemini-3.5-flash"),
     createEmbeddingModel: () =>
       createVertex({
         accessToken: "test",
@@ -134,7 +134,7 @@ describe("vertex adapter", () => {
 
   runAgentProviderContractSuite({
     providerName: "vertex",
-    modelId: "gemini-2.0-flash",
+    modelId: "gemini-3.5-flash",
     expectedAgentTier: "tier-b",
     createModel: () =>
       createVertex({
@@ -142,7 +142,7 @@ describe("vertex adapter", () => {
         projectId: "demo-project",
         location: "us-central1",
         fetch: fetchMock as typeof fetch
-      })("gemini-2.0-flash"),
+      })("gemini-3.5-flash"),
     mockSimpleRun: () => {
       fetchMock.mockResolvedValueOnce(
         Response.json({
@@ -872,7 +872,7 @@ describe("vertex adapter", () => {
       fetch: fetchMock as typeof fetch
     });
     await generateText({
-      model: provider("gemini-3.1-pro-preview"),
+      model: provider("gemini-3.5-flash"),
       prompt: "hello",
       reasoning: {
         effort: "low"
@@ -898,7 +898,7 @@ describe("vertex adapter", () => {
 
     await expect(
       generateText({
-        model: provider("gemini-3.1-pro-preview"),
+        model: provider("gemini-3.5-flash"),
         prompt: "hello",
         reasoning: {
           budgetTokens: 512

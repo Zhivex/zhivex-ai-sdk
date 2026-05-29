@@ -62,7 +62,7 @@ await generateMusic({
 });
 
 await generateText({
-  model: vertex("gemini-2.5-flash"),
+  model: vertex("gemini-3.5-flash"),
   prompt: "Use URL context for the linked source.",
   tools: {
     urls: googleUrlContextTool()
@@ -71,13 +71,13 @@ await generateText({
 
 await createContextCache({
   provider: productionVertex,
-  modelId: "gemini-2.5-flash",
+  modelId: "gemini-3.5-flash",
   contents: [{ role: "user", parts: [{ type: "file", data: "gs://bucket/large.pdf", mediaType: "application/pdf" }] }]
 });
 
 await createBatch({
   provider: productionVertex,
-  modelId: "gemini-2.5-flash",
+  modelId: "gemini-3.5-flash",
   fileName: "files/batch-input"
 });
 

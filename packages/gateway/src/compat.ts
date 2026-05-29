@@ -71,5 +71,6 @@ export const createRouteDecision = (
   mode,
   intent,
   orderedTargets,
+  reasonCode: `routing-${mode}`,
   reason: `Ordered by ${mode} mode with ${intent} intent.`
 });

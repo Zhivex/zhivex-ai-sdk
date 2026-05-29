@@ -96,7 +96,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
   },
   {
     provider: "Gemini",
-    model: gemini("gemini-2.0-flash"),
+    model: gemini("gemini-3.5-flash"),
     summary: {
       structuredOutputSummary: "native",
       reasoningSummary: "model-dependent",
@@ -105,7 +105,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
   },
   {
     provider: "Vertex",
-    model: vertex("gemini-2.0-flash"),
+    model: vertex("gemini-3.5-flash"),
     summary: {
       structuredOutputSummary: "native",
       reasoningSummary: "model-dependent",
@@ -228,8 +228,8 @@ describe("provider parity documentation", () => {
       openai("gpt-4o-mini"),
       azure("gpt-4o-mini"),
       anthropic("claude-3-5-sonnet"),
-      gemini("gemini-2.0-flash"),
-      vertex("gemini-2.0-flash"),
+      gemini("gemini-3.5-flash"),
+      vertex("gemini-3.5-flash"),
       qwen("qwen-plus"),
       deepseek("deepseek-v4-flash"),
       openrouter("openai/gpt-4o-mini"),

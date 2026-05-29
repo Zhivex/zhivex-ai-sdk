@@ -35,12 +35,24 @@ export type GatewayProviderId =
   | "vertex"
   | "qwen"
   | "kimi"
+  | "deepseek"
   | "bedrock"
   | "ollama"
   | "azure-openai"
   | "openrouter";
 export type GatewayRoutingMode = "speed" | "balanced" | "quality";
 export type GatewayTaskIntent = "chat" | "reasoning" | "tool-heavy";
+export type GatewayAttemptReasonCode =
+  | "model-capabilities"
+  | "agent-capabilities"
+  | "cost-budget"
+  | "operation-skip"
+  | "provider-error"
+  | "provider-success";
+export type GatewayRouteDecisionReasonCode =
+  | "routing-speed"
+  | "routing-balanced"
+  | "routing-quality";
 
 export interface GatewayImageAttachment {
   dataUrl: string;
@@ -102,7 +114,7 @@ export interface GatewayAttempt {
   ok: boolean;
   latencyMs: number;
   errorMessage?: string;
-  reasonCode?: "model-capabilities" | "agent-capabilities" | "cost-budget" | "operation-skip" | "provider-error";
+  reasonCode?: GatewayAttemptReasonCode;
   retry?: number;
   targetRank?: number;
 }
@@ -120,6 +132,7 @@ export interface GatewayResponse {
     mode: GatewayRoutingMode;
     intent: GatewayTaskIntent;
     orderedTargets: GatewayModelTarget[];
+    reasonCode?: GatewayRouteDecisionReasonCode;
     reason: string;
   };
   steps: GenerateTextOutput["steps"];

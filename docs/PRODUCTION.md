@@ -146,6 +146,25 @@ const safeAgent = applySafetyPolicyToAgent(
 
 `createProductionSafetyPolicy()` is a stable preset for first production deployments. It uses `review-sensitive`, email redaction, and conservative budget defaults. Pass the same options accepted by `createSafetyPolicy()` when a product needs to override or disable a layer. Use `locked-down` when every tool call should require approval. Use `permissive` only for trusted internal tools or local development.
 
+For audited domains, add the Beta production-agent kit on top of the stable policy:
+
+```ts
+import {
+  createAgentAuditRecord,
+  createReadOnlyToolApprovalPolicy,
+  createSensitiveDataPolicy,
+  createToolAuditRecords
+} from "@zhivex-ai/sdk";
+
+const redaction = createSensitiveDataPolicy();
+const toolApprovalPolicy = createReadOnlyToolApprovalPolicy();
+
+const agentAudit = createAgentAuditRecord(result.state, { redaction });
+const toolAudit = createToolAuditRecords(result.state, { redaction });
+```
+
+`createReadOnlyToolApprovalPolicy()` blocks write/side-effect-looking tools by default and can be used directly as an agent or request `toolApprovalPolicy`. Audit records omit full tool input/output unless explicitly included.
+
 ## Observability Export Path
 
 Agent runs already produce enough SDK data for production dashboards without adding a required telemetry backend. Keep observability server-side, attach a collector or OTEL observer to the agent, and export only redacted records to your log, queue, warehouse, or tracing vendor.
@@ -264,17 +283,22 @@ For large production binaries, prefer app-owned blob storage and keep an SDK art
 ```ts
 import { createExternalArtifactReference } from "@zhivex-ai/sdk";
 
+const externalFile = createExternalArtifactReference({
+  uri: "s3://bucket/path/contract.pdf",
+  metadata: {
+    storageProvider: "s3"
+  }
+});
+
 await artifactService.saveArtifact({
   appName,
   userId,
   sessionId,
   name: "contract.pdf",
   contentType: "application/pdf",
-  data: createExternalArtifactReference({
-    uri: "s3://bucket/path/contract.pdf",
-    storageProvider: "s3"
-  }),
+  ...externalFile,
   metadata: {
+    ...externalFile.metadata,
     kind: "external-file"
   }
 });

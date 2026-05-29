@@ -6,7 +6,7 @@ import { createGemini } from "../src/index.js";
 
 const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const baseURL = process.env.GEMINI_BASE_URL;
-const textModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-2.0-flash";
+const textModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.5-flash";
 const embeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-004";
 
 const describeIntegration = apiKey ? describe.sequential : describe.skip;
