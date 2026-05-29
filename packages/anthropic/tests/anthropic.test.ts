@@ -499,6 +499,212 @@ describe("anthropic adapter", () => {
     });
   });
 
+  it("sends Claude Opus 4.8 fast mode and maps usage speed", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from opus 4.8" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4, speed: "fast" }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("claude-opus-4-8"),
+      prompt: "hello",
+      reasoning: {
+        effort: "xhigh"
+      },
+      providerOptions: {
+        speed: "fast"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      model: string;
+      speed: string;
+      thinking: { type: string };
+      output_config: { effort: string };
+    };
+
+    expect(body).toMatchObject({
+      model: "claude-opus-4-8",
+      speed: "fast",
+      thinking: { type: "adaptive" },
+      output_config: { effort: "xhigh" }
+    });
+    expect(result.usage).toMatchObject({
+      inputTokens: 10,
+      outputTokens: 4,
+      totalTokens: 14,
+      speed: "fast"
+    });
+  });
+
+  it("preserves valid mid-conversation system messages for Claude Opus 4.8", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-opus-4-8"),
+      messages: [
+        { role: "system", parts: [{ type: "text", text: "Initial instruction." }] },
+        { role: "user", parts: [{ type: "text", text: "Start." }] },
+        { role: "system", parts: [{ type: "text", text: "Apply this local instruction." }] },
+        { role: "assistant", parts: [{ type: "text", text: "Ready." }] }
+      ]
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      system: string;
+      messages: Array<{ role: string; content: unknown }>;
+    };
+
+    expect(body.system).toBe("Initial instruction.");
+    expect(body.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "Start." }] },
+      { role: "system", content: "Apply this local instruction." },
+      { role: "assistant", content: [{ type: "text", text: "Ready." }] }
+    ]);
+  });
+
+  it("keeps legacy top-level system mapping before Claude Opus 4.8", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-opus-4-7"),
+      messages: [
+        { role: "user", parts: [{ type: "text", text: "Start." }] },
+        { role: "system", parts: [{ type: "text", text: "Legacy local instruction." }] },
+        { role: "user", parts: [{ type: "text", text: "Continue." }] }
+      ]
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      system: string;
+      messages: Array<{ role: string }>;
+    };
+
+    expect(body.system).toBe("Legacy local instruction.");
+    expect(body.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "Start." }] },
+      { role: "user", content: [{ type: "text", text: "Continue." }] }
+    ]);
+  });
+
+  it("rejects invalid mid-conversation system message placement for Claude Opus 4.8", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("claude-opus-4-8"),
+        messages: [
+          { role: "user", parts: [{ type: "text", text: "Start." }] },
+          { role: "assistant", parts: [{ type: "text", text: "Ready." }] },
+          { role: "system", parts: [{ type: "text", text: "Too late." }] }
+        ]
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" only supports mid-conversation system messages immediately after a user turn on Claude Opus 4.8 or later.'
+    );
+  });
+
+  it("maps Anthropic refusals and preserves stop details", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "I cannot help with that." }],
+        stop_reason: "refusal",
+        stop_details: { type: "refusal", reason: "safety" },
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("claude-opus-4-8"),
+      prompt: "unsafe request"
+    });
+
+    expect(result.finishReason).toBe("refusal");
+    expect(result.providerFinishReason).toBe("refusal");
+    expect(result.steps[0]?.response.rawResponse).toMatchObject({
+      stop_details: { type: "refusal", reason: "safety" }
+    });
+  });
+
+  it("streams Anthropic refusal stop details as provider data", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "event: content_block_delta\n" +
+              'data: {"index":0,"delta":{"type":"text_delta","text":"I cannot help with that."}}\n\n' +
+              "event: message_delta\n" +
+              'data: {"delta":{"stop_reason":"refusal","stop_details":{"type":"refusal","reason":"safety"}},"usage":{"input_tokens":10,"output_tokens":4,"speed":"fast"}}\n\n' +
+              "event: message_stop\n" +
+              "data: {}\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("claude-opus-4-8"),
+      prompt: "unsafe request"
+    });
+
+    const final = await result.collect();
+    const events = [];
+    for await (const event of result.eventStream) {
+      events.push(event);
+    }
+
+    expect(final).toMatchObject({
+      text: "I cannot help with that.",
+      finishReason: "refusal",
+      providerFinishReason: "refusal",
+      usage: {
+        inputTokens: 10,
+        outputTokens: 4,
+        totalTokens: 14,
+        speed: "fast"
+      }
+    });
+    expect(events).toContainEqual({
+      type: "provider-data",
+      provider: "anthropic",
+      data: {
+        type: "stop_details",
+        stop_details: { type: "refusal", reason: "safety" }
+      }
+    });
+  });
+
   it("maps PDF file parts into Anthropic document blocks and enables the Files API beta when needed", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -733,12 +939,12 @@ describe("anthropic adapter", () => {
     ).rejects.toThrow('Provider "anthropic" does not support "reasoning.effort" for this model.');
   });
 
-  it("rejects budgetTokens for Claude Opus 4.7", async () => {
+  it("rejects budgetTokens for Claude Opus 4.8", async () => {
     const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
     await expect(
       generateText({
-        model: provider("claude-opus-4-7"),
+        model: provider("claude-opus-4-8"),
         prompt: "hello",
         reasoning: {
           budgetTokens: 1024
@@ -749,12 +955,12 @@ describe("anthropic adapter", () => {
     );
   });
 
-  it("rejects explicit sampling controls for Claude Opus 4.7", async () => {
+  it("rejects explicit sampling controls for Claude Opus 4.8", async () => {
     const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
     await expect(
       generateText({
-        model: provider("claude-opus-4-7"),
+        model: provider("claude-opus-4-8"),
         prompt: "hello",
         temperature: 0
       })
@@ -764,7 +970,7 @@ describe("anthropic adapter", () => {
 
     await expect(
       generateText({
-        model: provider("claude-opus-4-7"),
+        model: provider("claude-opus-4-8"),
         prompt: "hello",
         providerOptions: {
           top_p: 0.9

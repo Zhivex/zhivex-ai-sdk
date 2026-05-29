@@ -37,6 +37,19 @@ describe("agents package public surface", () => {
     expect(agents.renderProviderSupportMatrix).toBeTypeOf("function");
   });
 
+  it("exports the beta agent control-plane surface", () => {
+    expect(agents.createAgentCapsule).toBeTypeOf("function");
+    expect(agents.inspectAgentCapsule).toBeTypeOf("function");
+    expect(agents.createAgentToolPolicy).toBeTypeOf("function");
+    expect(agents.createAgentApprovalQueue).toBeTypeOf("function");
+    expect(agents.createAgentRunLedger).toBeTypeOf("function");
+    expect(agents.diffAgentRunLedgers).toBeTypeOf("function");
+    expect(agents.promoteAgentGoldenTrace).toBeTypeOf("function");
+    expect(agents.selectAgentModel).toBeTypeOf("function");
+    expect(agents.createAgentCapabilityRouter).toBeTypeOf("function");
+    expect(agents.createAgentControlPlane).toBeTypeOf("function");
+  });
+
   it("does not expose obsolete standalone agent package contracts", () => {
     expect("createAgentRegistry" in agents).toBe(false);
     expect("createInMemoryCheckpointStore" in agents).toBe(false);

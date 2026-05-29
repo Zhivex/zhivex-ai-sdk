@@ -213,6 +213,8 @@ export const normalizeFinishReason = (reason: string | undefined | null): Finish
       return "tool-calls";
     case "content_filter":
       return "content-filter";
+    case "refusal":
+      return "refusal";
     case "error":
       return "error";
     default:

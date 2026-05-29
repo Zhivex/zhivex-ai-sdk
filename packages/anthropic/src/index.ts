@@ -32,6 +32,7 @@ export interface AnthropicProviderOptions {
 }
 
 export interface AnthropicLanguageModelOptions {
+  speed?: "standard" | "fast";
   top_p?: number;
   top_k?: number;
   stop_sequences?: string[];
@@ -99,6 +100,9 @@ const isClaudeSonnet46Model = (modelId: string) => /^claude-sonnet-4-6(?:[-@]|$)
 
 const isClaudeOpus47OrLaterModel = (modelId: string) =>
   /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9])(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const isClaudeOpus48OrLaterModel = (modelId: string) =>
+  /^(?:claude-opus-4-(?:8|9)|claude-opus-[5-9])(?:[-@]|$)/.test(normalizeModelId(modelId));
 
 const supportsAnthropicEffort = (modelId: string) =>
   isClaudeOpus45Model(modelId) ||
@@ -223,18 +227,62 @@ const mapBlockParts = (modelId: string, message: ModelMessage) =>
     }
   });
 
-const systemPromptFromMessages = (messages: ModelMessage[]) =>
-  messages
-    .filter((message) => message.role === "system")
-    .flatMap((message) => message.parts)
+const textFromSystemMessage = (message: ModelMessage) =>
+  message.parts
     .filter((part): part is Extract<ModelMessage["parts"][number], { type: "text" }> => part.type === "text")
     .map((part) => part.text)
     .join("\n");
 
+const leadingSystemMessages = (messages: ModelMessage[]) => {
+  const firstNonSystemIndex = messages.findIndex((message) => message.role !== "system");
+  return messages.slice(0, firstNonSystemIndex === -1 ? messages.length : firstNonSystemIndex);
+};
+
+const systemPromptFromMessages = (modelId: string, messages: ModelMessage[]) => {
+  const systemMessages = isClaudeOpus48OrLaterModel(modelId)
+    ? leadingSystemMessages(messages)
+    : messages.filter((message) => message.role === "system");
+
+  return systemMessages
+    .flatMap((message) => message.parts)
+    .filter((part): part is Extract<ModelMessage["parts"][number], { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+};
+
 const mapMessages = (modelId: string, messages: ModelMessage[]) =>
   messages
-    .filter((message) => message.role !== "system")
-    .map((message) => {
+    .filter((message, index) => {
+      if (message.role !== "system") {
+        return true;
+      }
+
+      if (!isClaudeOpus48OrLaterModel(modelId)) {
+        return false;
+      }
+
+      const firstNonSystemIndex = messages.findIndex((candidate) => candidate.role !== "system");
+      return firstNonSystemIndex !== -1 && index > firstNonSystemIndex;
+    })
+    .map((message, index, mappedMessages) => {
+      if (message.role === "system") {
+        const previousNonSystemMessage = mappedMessages
+          .slice(0, index)
+          .reverse()
+          .find((candidate) => candidate.role !== "system");
+
+        if (previousNonSystemMessage?.role !== "user") {
+          throw new ValidationError(
+            'Provider "anthropic" only supports mid-conversation system messages immediately after a user turn on Claude Opus 4.8 or later.'
+          );
+        }
+
+        return {
+          role: "system",
+          content: textFromSystemMessage(message)
+        };
+      }
+
       if (message.role === "tool") {
         return {
           role: "user",
@@ -534,7 +582,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
             signal,
             body: JSON.stringify({
               model: this.modelId,
-              system: systemPromptFromMessages(input.messages),
+              system: systemPromptFromMessages(this.modelId, input.messages),
               messages: mapMessages(this.modelId, input.messages),
               ...(mcpServers ? { mcp_servers: mcpServers } : {}),
               tools: mapTools(input.tools),
@@ -563,7 +611,8 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
         usage: {
           inputTokens: json.usage?.input_tokens,
           outputTokens: json.usage?.output_tokens,
-          totalTokens: (json.usage?.input_tokens ?? 0) + (json.usage?.output_tokens ?? 0)
+          totalTokens: (json.usage?.input_tokens ?? 0) + (json.usage?.output_tokens ?? 0),
+          speed: json.usage?.speed
         },
         rawResponse: json
       };
@@ -620,7 +669,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
           signal,
           body: JSON.stringify({
             model: this.modelId,
-            system: systemPromptFromMessages(input.messages),
+            system: systemPromptFromMessages(this.modelId, input.messages),
             messages: mapMessages(this.modelId, input.messages),
             ...(mcpServers ? { mcp_servers: mcpServers } : {}),
             tools: mapTools(input.tools),
@@ -639,6 +688,8 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     return (async function* () {
       try {
         const toolBuffers = new Map<number, { id: string; name: string; input: string }>();
+        let stopReason: string | undefined;
+        let usage: GenerateResult["usage"];
 
         for await (const event of streamSSE(response)) {
           const json = JSON.parse(event.data);
@@ -712,6 +763,29 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
             } satisfies StreamEvent;
           }
 
+          if (event.event === "message_delta") {
+            stopReason = json.delta?.stop_reason ?? stopReason;
+            if (json.usage) {
+              usage = {
+                inputTokens: json.usage.input_tokens,
+                outputTokens: json.usage.output_tokens,
+                totalTokens: (json.usage.input_tokens ?? 0) + (json.usage.output_tokens ?? 0),
+                speed: json.usage.speed
+              };
+            }
+
+            if (json.delta?.stop_details) {
+              yield {
+                type: "provider-data",
+                provider: "anthropic",
+                data: {
+                  type: "stop_details",
+                  stop_details: json.delta.stop_details
+                } as JsonValue
+              } satisfies StreamEvent;
+            }
+          }
+
           if (event.event === "content_block_stop") {
             const current = toolBuffers.get(json.index);
             if (current) {
@@ -727,10 +801,12 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
           }
 
           if (event.event === "message_stop") {
+            const providerFinishReason = stopReason ?? json.stop_reason;
             yield {
               type: "finish",
-              finishReason: normalizeFinishReason(json.stop_reason),
-              providerFinishReason: json.stop_reason
+              finishReason: normalizeFinishReason(providerFinishReason),
+              providerFinishReason,
+              ...(usage ? { usage } : {})
             } satisfies StreamEvent;
           }
         }

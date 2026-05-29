@@ -10,13 +10,14 @@ export type PartialJsonValue =
     };
 
 export type MessageRole = "system" | "user" | "assistant" | "tool";
-export type FinishReason = "stop" | "length" | "tool-calls" | "content-filter" | "error" | "unknown";
+export type FinishReason = "stop" | "length" | "tool-calls" | "content-filter" | "refusal" | "error" | "unknown";
 export type StructuredOutputMode = "auto" | "native" | "prompted";
 
 export interface TokenUsage {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  speed?: "standard" | "fast";
 }
 
 export interface ToolCall {
