@@ -701,6 +701,9 @@ These helpers do not change `runWorkflow()` behavior. They are explicit persiste
 `@zhivex-ai/sdk` includes a Beta `zhivex-ai` CLI for local SDK state. Inspection commands are dry: they read JSON files, replay workflow state, and build reports without executing models or tools. Execution commands import an app-owned local module, so the app remains responsible for constructing runners, models, tools, and credentials.
 
 ```bash
+zhivex-ai init agent --dir support-agent --provider openai --model gpt-5
+zhivex-ai doctor --dir support-agent --provider openai
+
 zhivex-ai sessions list --dir .zhivex/sessions
 zhivex-ai sessions show --dir .zhivex/sessions --app candidate-review --user user_123 --session candidate_456
 
@@ -725,11 +728,13 @@ zhivex-ai artifacts prune --dir .zhivex/artifacts --keep-last 100
 zhivex-ai workflow-states prune --dir .zhivex/workflow-states --older-than-ms 2592000000
 
 zhivex-ai agents ledger --state agent-run-state.json --out run-ledger.json
+zhivex-ai agents inspect --ledger run-ledger.json
 zhivex-ai agents diff --base previous-ledger.json --target current-ledger.json
 zhivex-ai agents golden --ledger run-ledger.json --name happy-path --out golden-trace.json
+zhivex-ai agents eval --golden golden-trace.json --ledger run-ledger.json --out agent-eval.json
 ```
 
-Output is JSON pretty-printed by default. Use `workflow-states list/show` for first-class durable workflow state inspection; `sessions workflow-state show` remains available for legacy session-metadata fallback state. The `agents` commands are dry local control-plane utilities over saved run states and ledgers; they never execute models or tools. Prune commands are dry-run by default; pass `--execute` to delete. The CLI is intentionally local-only and does not introduce auth, workspaces, or Gateway calls.
+Output is JSON pretty-printed by default. `init agent` scaffolds a Bun-first agent project with file-backed local sessions, a production safety policy, a provider package, a smoke-test tool, and scripts for doctor/inspect/ledger. `doctor` checks runtime, package metadata, provider dependencies, provider environment variables, TypeScript config, and local store readiness. Use `workflow-states list/show` for first-class durable workflow state inspection; `sessions workflow-state show` remains available for legacy session-metadata fallback state. The `agents` inspection and evaluation commands are dry local control-plane utilities over saved run states and ledgers; they never execute models or tools. Prune commands are dry-run by default; pass `--execute` to delete. The CLI is intentionally local-only and does not introduce auth, workspaces, or Gateway calls.
 
 ### Realtime Sessions
 
