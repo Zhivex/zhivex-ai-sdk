@@ -785,10 +785,12 @@ const translation = await openai.realtimeModel!("gpt-realtime-translate").connec
 const transcription = await openai.realtimeModel!("gpt-realtime-whisper").connect({
   inputTranscription: {
     language: "es",
-    includeLogprobs: true
+    includeLogprobs: true,
+    delay: "low"
   },
   inputAudioMediaType: "audio/pcm",
-  inputSampleRateHz: 24_000
+  inputSampleRateHz: 24_000,
+  noiseReduction: { type: "near_field" }
 });
 ```
 
@@ -806,6 +808,7 @@ Notes:
 - Gemini, Vertex, and Azure OpenAI sessions support `sendMedia()` for image inputs such as `image/jpeg`.
 - OpenAI supports `sendMedia()` for image inputs on `gpt-realtime`, `gpt-realtime-2`, and `gpt-realtime-mini`, but not on the older `gpt-4o-*-realtime-preview`, `gpt-realtime-translate`, or `gpt-realtime-whisper` models.
 - OpenAI `gpt-realtime-translate` uses realtime translation mode and requires `translation.targetLanguage`; OpenAI `gpt-realtime-whisper` uses realtime transcription mode and emits transcript events without model audio output.
+- Gemini and Vertex Live sessions can opt into typed `inputAudioTranscription`, `outputAudioTranscription`, `mediaResolution`, `affectiveDialog`, `proactiveAudio`, and `reasoning` setup fields. For Gemini API preview-only Live features, pass `providerOptions: { apiVersion: "v1alpha" }`.
 - Advanced provider-specific session fields can still be passed through `RealtimeSessionConfig.providerOptions`.
 
 For browser-driven interview-style flows, you can send camera frames through the shared contract on providers that support realtime image input:
@@ -817,9 +820,15 @@ const gemini = createGemini({
   apiKey: process.env.GEMINI_API_KEY
 });
 
-const session = await gemini.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({
+const session = await gemini.realtimeModel!("gemini-3.1-flash-live-preview").connect({
   instructions: "Observe the camera feed and give concise interview feedback.",
-  outputAudioMediaType: "audio/pcm"
+  outputAudioMediaType: "audio/pcm",
+  inputAudioTranscription: true,
+  outputAudioTranscription: true,
+  mediaResolution: "MEDIA_RESOLUTION_LOW",
+  providerOptions: {
+    apiVersion: "v1alpha"
+  }
 });
 
 await session.sendMedia({
@@ -2056,6 +2065,40 @@ const speech = await generateSpeech({
 
 console.log(transcript.text);
 console.log(speech.mediaType, speech.audio.length);
+```
+
+Audio-capable chat models can also receive and return audio through normal language-model generation:
+
+```ts
+import { audioPart, generateText } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const answer = await generateText({
+  model: openai("gpt-audio-mini"),
+  messages: [
+    {
+      role: "user",
+      parts: [
+        { type: "text", text: "Summarize this recording." },
+        audioPart({
+          data: "BASE64_AUDIO",
+          mediaType: "audio/wav"
+        })
+      ]
+    }
+  ],
+  providerOptions: {
+    modalities: ["text", "audio"],
+    audio: { voice: "alloy", format: "wav" }
+  }
+});
+
+console.log(answer.text);
+console.log(answer.audio?.[0]?.mediaType);
 ```
 
 ### Generative Media

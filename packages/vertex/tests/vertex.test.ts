@@ -964,10 +964,19 @@ describe("vertex adapter", () => {
       fetch: fetchMock as typeof fetch
     });
     const result = await generateSpeech({
-      model: provider.speechModel!("gemini-2.5-flash-preview-tts"),
+      model: provider.speechModel!("gemini-3.1-flash-tts-preview"),
       input: "hello there"
     });
 
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.generationConfig).toMatchObject({
+      responseModalities: ["AUDIO"],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: "Kore" }
+        }
+      }
+    });
     expect(Array.from(result.audio)).toEqual([1, 2, 3]);
     expect(result.mediaType).toBe("audio/wav");
   });
@@ -1154,7 +1163,7 @@ describe("vertex adapter", () => {
     const sent: Record<string, unknown>[] = [];
     const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
       expect(url).toBe(
-        "wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.PredictionService.BidiGenerateContent"
+        "wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1alpha.PredictionService.BidiGenerateContent"
       );
       expect(headers).toMatchObject({
         authorization: "Bearer test"
@@ -1174,11 +1183,18 @@ describe("vertex adapter", () => {
       accessToken: "test",
       projectId: "demo-project",
       location: "us-central1",
+      apiVersion: "v1alpha",
       fetch: fetchMock as typeof fetch,
       realtimeConnectionFactory: connectionFactory
     });
     const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({
-      instructions: "Be brief."
+      instructions: "Be brief.",
+      reasoning: { budgetTokens: 256, includeThoughts: true },
+      inputAudioTranscription: true,
+      outputAudioTranscription: true,
+      mediaResolution: "MEDIA_RESOLUTION_LOW",
+      affectiveDialog: true,
+      proactiveAudio: true
     });
 
     await session.sendMedia({ data: "vertex-image", mediaType: "image/jpeg" });
@@ -1188,7 +1204,15 @@ describe("vertex adapter", () => {
     expect(connectionFactory).toHaveBeenCalledOnce();
     expect(sent[0]).toMatchObject({
       setup: expect.objectContaining({
-        model: "models/gemini-live-2.5-flash-native-audio"
+        model: "models/gemini-live-2.5-flash-native-audio",
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        mediaResolution: "MEDIA_RESOLUTION_LOW",
+        enableAffectiveDialog: true,
+        proactivity: { proactiveAudio: true },
+        generationConfig: expect.objectContaining({
+          thinkingConfig: { thinkingBudget: 256, includeThoughts: true }
+        })
       })
     });
     expect(sent[1]).toMatchObject({

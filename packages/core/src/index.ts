@@ -454,6 +454,7 @@ export {
   isCallableToolDefinition,
   isHostedToolDefinition,
   normalizeFinishReason,
+  audioPart,
   providerDataPart,
   resultMessages,
   serializeJsonValue,
