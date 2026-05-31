@@ -765,10 +765,19 @@ describe("gemini adapter", () => {
 
     const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await generateSpeech({
-      model: provider.speechModel!("gemini-2.5-flash-preview-tts"),
+      model: provider.speechModel!("gemini-3.1-flash-tts-preview"),
       input: "hello there"
     });
 
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.generationConfig).toMatchObject({
+      responseModalities: ["AUDIO"],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: "Kore" }
+        }
+      }
+    });
     expect(Array.from(result.audio)).toEqual([1, 2, 3]);
     expect(result.mediaType).toBe("audio/wav");
   });
@@ -913,7 +922,7 @@ describe("gemini adapter", () => {
   it("connects Gemini Live sessions using the websocket endpoint and setup payload", async () => {
     const sent: Record<string, unknown>[] = [];
     const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
-      expect(url).toContain("/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent");
+      expect(url).toContain("/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent");
       expect(url).toContain("key=test");
       expect(headers).toEqual({});
       return {
@@ -932,8 +941,14 @@ describe("gemini adapter", () => {
       fetch: fetchMock as typeof fetch,
       realtimeConnectionFactory: connectionFactory
     });
-    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({
+    const session = await provider.realtimeModel!("gemini-3.1-flash-live-preview").connect({
       instructions: "Be brief.",
+      reasoning: { effort: "low", includeThoughts: true },
+      inputAudioTranscription: true,
+      outputAudioTranscription: true,
+      mediaResolution: "MEDIA_RESOLUTION_LOW",
+      affectiveDialog: true,
+      proactiveAudio: true,
       tools: {
         weather: tool({
           name: "weather",
@@ -941,7 +956,8 @@ describe("gemini adapter", () => {
           execute: () => ({ ok: true })
         })
       },
-      outputAudioMediaType: "audio/pcm"
+      outputAudioMediaType: "audio/pcm",
+      providerOptions: { apiVersion: "v1alpha" }
     });
 
     await session.sendMedia({ data: "image-bytes", mediaType: "image/jpeg" });
@@ -951,7 +967,16 @@ describe("gemini adapter", () => {
     expect(connectionFactory).toHaveBeenCalledOnce();
     expect(sent[0]).toMatchObject({
       setup: expect.objectContaining({
-        model: "models/gemini-live-2.5-flash-native-audio",
+        model: "models/gemini-3.1-flash-live-preview",
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        mediaResolution: "MEDIA_RESOLUTION_LOW",
+        enableAffectiveDialog: true,
+        proactivity: { proactiveAudio: true },
+        generationConfig: expect.objectContaining({
+          responseModalities: ["AUDIO"],
+          thinkingConfig: { thinkingLevel: "low", includeThoughts: true }
+        }),
         tools: [expect.any(Object)]
       })
     });

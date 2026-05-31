@@ -59,6 +59,40 @@ const createTierAModel = () =>
     ]
   });
 
+const createStreamingTierAModel = () =>
+  createMockLanguageModel({
+    provider: "openai",
+    modelId: "gpt-agent",
+    capabilities: {
+      tools: true,
+      streaming: true,
+      toolChoice: true,
+      structuredOutput: true,
+      reasoning: true,
+      webSearch: true,
+      agentCapabilities: {
+        supportTier: "tier-a",
+        approvalRequests: true,
+        remoteMcp: true,
+        hostedWebSearch: true,
+        codeExecution: true,
+        shell: true,
+        toolChoiceNone: true,
+        hostedFileSearch: false,
+        computerUse: false,
+        applyPatch: false,
+        toolSearch: false,
+        webExtraction: false,
+        skills: true,
+        toolsets: true
+      }
+    },
+    streamEvents: [[
+      { type: "text-delta", textDelta: "done" },
+      { type: "finish", finishReason: "stop", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
+    ]]
+  });
+
 const baseState = (overrides: Partial<AgentRunState> = {}): AgentRunState => ({
   schemaVersion: 1,
   runId: "run_1",
@@ -225,6 +259,10 @@ describe("agent control plane", () => {
     ]);
   });
 
+  it("returns an empty approval queue when a run has no pending approvals", () => {
+    expect(createAgentApprovalQueue(baseState())).toEqual([]);
+  });
+
   it("creates ledgers, diffs them, and promotes golden traces", () => {
     const ledger = createAgentRunLedger(baseState(), {
       includeInput: true,
@@ -255,15 +293,18 @@ describe("agent control plane", () => {
 
   it("routes models by agent capability requirements", () => {
     const tierA = createTierAModel();
+    const secondTierA = createTierAModel();
     const tierC = createMockLanguageModel({ provider: "local", modelId: "small", capabilities: { tools: true } });
     const router = createAgentCapabilityRouter([tierC, tierA]);
 
     expect(selectAgentModel([tierC, tierA], { minTier: "tier-b", approvals: true }).model).toBe(tierA);
+    expect(selectAgentModel([tierA, secondTierA], { minTier: "tier-a" }).model).toBe(tierA);
     expect(router.select({ remoteMcp: true }).support).toMatchObject({
       provider: "openai",
       agentTier: "tier-a",
       remoteMcp: true
     });
+    expect(() => selectAgentModel([])).toThrow("No agent model candidates were provided.");
     expect(() => router.select({ allowedProviders: ["missing"] })).toThrow("No agent model candidate");
   });
 
@@ -288,5 +329,47 @@ describe("agent control plane", () => {
     expect(loaded?.runId).toBe(record.state.runId);
     expect(trace?.runId).toBe(record.state.runId);
     expect(controlPlane.inspect().provider.agentTier).toBe("tier-a");
+  });
+
+  it("streams through the control-plane facade", async () => {
+    const agent = createAgent({
+      id: "ops",
+      model: createStreamingTierAModel()
+    });
+    const controlPlane = createAgentControlPlane({ agent });
+
+    const stream = controlPlane.stream({ prompt: "finish" });
+    await expect(stream.collect()).resolves.toMatchObject({
+      status: "completed",
+      outputText: "done"
+    });
+  });
+
+  it("reads run trees and cancels runs through the control-plane facade", async () => {
+    const store = createInMemoryAgentRunStore();
+    const parent = baseState({ runId: "parent", status: "running", outputText: "" });
+    const child = baseState({ runId: "child", parentRunId: "parent", status: "running", outputText: "" });
+    await Promise.resolve(store.save(parent));
+    await Promise.resolve(store.save(child));
+
+    const agent = createAgent({
+      id: "ops",
+      model: createTierAModel(),
+      store
+    });
+    const controlPlane = createAgentControlPlane({ agent });
+
+    await expect(controlPlane.getRunTree("parent")).resolves.toMatchObject({
+      totalRuns: 2,
+      root: { trace: { runId: "parent" } }
+    });
+    await expect(controlPlane.cancel("parent", { reason: "operator" })).resolves.toMatchObject({
+      runId: "parent",
+      status: "cancel_requested",
+      cancellationReason: "operator"
+    });
+    await expect(controlPlane.cancelTree("parent", { reason: "operator" })).resolves.toMatchObject({
+      children: [expect.objectContaining({ runId: "child", status: "cancel_requested" })]
+    });
   });
 });

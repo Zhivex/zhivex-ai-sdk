@@ -197,7 +197,7 @@ describe("provider parity documentation", () => {
       ],
       [
         "| Azure OpenAI | yes | yes | yes | native | yes | no | no | no | no | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |",
-        "| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | no | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |"
+        "| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |"
       ],
       [
         "| Gemini | yes | yes | yes | native | yes | no | no | no | no | model-dependent | yes | native | Tier B |",
@@ -213,7 +213,7 @@ describe("provider parity documentation", () => {
       ],
       [
         "| Bedrock | yes | yes | yes | native | no | no | no | no | no | endpoint-dependent | no | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C |",
-        "| Bedrock | yes | yes | partial / endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C / A by runtime |"
+        "| Bedrock | yes | yes | endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C / A by runtime |"
       ]
     ].reduce(
       (table, [from, to]) => table.replace(from, to),

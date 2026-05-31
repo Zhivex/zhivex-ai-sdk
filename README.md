@@ -187,7 +187,7 @@ Status shorthand:
 | Provider | `streamText` | Tools | `toolChoice` | Structured output | Embeddings | Audio in | Audio out | Realtime sessions | Browser tokens | Reasoning | Web search | Hosted tools / MCP | Agent tier |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
-| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | no | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
+| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
 | Anthropic | yes | yes | yes | prompted | no | no | no | no | no | model-dependent | yes | native MCP, web search, code execution | Tier B |
 | Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B |
 | Vertex | yes | yes | yes | native | yes | yes | yes | yes | no | model-dependent | yes | native | Tier B |
@@ -195,7 +195,7 @@ Status shorthand:
 | Qwen | yes | yes | yes | native | yes | no | no | no | no | model-dependent | yes | Responses web search, web extractor, code interpreter, file search, remote MCP, image search; Cloud files, batch, media, speech, realtime | Tier B |
 | Kimi | yes | yes | yes | native | no | no | no | no | no | model-dependent | Formula tool | Formula tools via Chat Completions | Tier C |
 | DeepSeek | yes | yes | yes | JSON object | no | no | no | no | no | `effort` | no | no | Tier B |
-| Bedrock | yes | yes | partial / endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C / A by runtime |
+| Bedrock | yes | yes | endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C / A by runtime |
 | Ollama | yes | yes | no | native | yes | no | no | no | no | no | no | no | Tier C |
 <!-- provider-matrix:end -->
 
@@ -207,7 +207,7 @@ Compatibility notes:
 - Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
 - `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+ including Opus 4.8, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
-- `partial` for Bedrock Converse `toolChoice` means the SDK supports selecting a specific tool or requiring any tool, but does not currently support `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming. In the SDK's agent matrix, Bedrock Tier A applies to `createBedrock({ runtime: "openai" })`, which exposes Responses hosted tools, remote MCP, and approval requests. AWS-native AgentCore MCP is exposed separately as SDK-managed MCP tools for Converse or any shared agent loop; it does not promote Converse itself to a provider-emitted approval runtime.
+- Bedrock native Converse supports common `toolChoice` values by mapping specific tools and required tools to AWS-native `toolConfig`, and by omitting tool configuration for `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming. In the SDK's agent matrix, Bedrock Tier A applies to `createBedrock({ runtime: "openai" })`, which exposes Responses hosted tools, remote MCP, and approval requests. AWS-native AgentCore MCP is exposed separately as SDK-managed MCP tools for Converse or any shared agent loop; it does not promote Converse itself to a provider-emitted approval runtime.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - DeepSeek is Tier B for portable tool loops plus documented thinking mode on `deepseek-v4-flash` and `deepseek-v4-pro`; it does not expose hosted tools, remote MCP, web search, embeddings, audio, or realtime sessions in this adapter.
 - Kimi Formula tools are exposed as public helpers in `@zhivex-ai/kimi`. The SDK loads or declares Formula tool schemas, maps them into Chat Completions function tools, tracks `function.name -> formula_uri`, and executes the official Formula fiber after a Kimi tool call.
@@ -612,7 +612,7 @@ const savedReport = await artifacts.loadArtifact({
 
 The file-backed service writes one JSON file per artifact with a path-safe filename derived from `appName`, `userId`, `sessionId`, and `id`. The SDK also exposes `createSqliteArtifactService()` and `createPostgresArtifactService()` for production applications that already provide compatible database clients.
 
-Binary artifacts use a formal metadata convention in this first cut: store base64 as `data`, set `encoding: "base64"`, and optionally include `size` and `sha256`. The SDK validates provided `size` and `sha256` values but does not calculate hashes automatically yet. Native streaming/binary storage is intentionally left for a later artifact phase.
+Binary artifacts use a formal metadata convention: store base64 as `data`, set `encoding: "base64"`, and optionally include `size` and `sha256`. When base64 metadata is omitted, `saveArtifact()` calculates `size` and `sha256`; when metadata is provided, the SDK validates it against the decoded bytes. Native streaming/binary storage is intentionally left for a later artifact phase.
 
 ```ts
 import { createBase64ArtifactData } from "@zhivex-ai/sdk";
@@ -785,10 +785,12 @@ const translation = await openai.realtimeModel!("gpt-realtime-translate").connec
 const transcription = await openai.realtimeModel!("gpt-realtime-whisper").connect({
   inputTranscription: {
     language: "es",
-    includeLogprobs: true
+    includeLogprobs: true,
+    delay: "low"
   },
   inputAudioMediaType: "audio/pcm",
-  inputSampleRateHz: 24_000
+  inputSampleRateHz: 24_000,
+  noiseReduction: { type: "near_field" }
 });
 ```
 
@@ -802,10 +804,11 @@ Current shared provider coverage for realtime sessions:
 Notes:
 
 - Providers that require auth headers during the WebSocket handshake, such as OpenAI server-side sessions and Vertex, should be given a custom `realtimeConnectionFactory` in Node/Bun.
-- Browser-token helpers are currently exposed for OpenAI and Gemini.
+- Browser-token helpers are currently exposed for OpenAI, Azure OpenAI, and Gemini.
 - Gemini, Vertex, and Azure OpenAI sessions support `sendMedia()` for image inputs such as `image/jpeg`.
 - OpenAI supports `sendMedia()` for image inputs on `gpt-realtime`, `gpt-realtime-2`, and `gpt-realtime-mini`, but not on the older `gpt-4o-*-realtime-preview`, `gpt-realtime-translate`, or `gpt-realtime-whisper` models.
 - OpenAI `gpt-realtime-translate` uses realtime translation mode and requires `translation.targetLanguage`; OpenAI `gpt-realtime-whisper` uses realtime transcription mode and emits transcript events without model audio output.
+- Gemini and Vertex Live sessions can opt into typed `inputAudioTranscription`, `outputAudioTranscription`, `mediaResolution`, `affectiveDialog`, `proactiveAudio`, and `reasoning` setup fields. For Gemini API preview-only Live features, pass `providerOptions: { apiVersion: "v1alpha" }`.
 - Advanced provider-specific session fields can still be passed through `RealtimeSessionConfig.providerOptions`.
 
 For browser-driven interview-style flows, you can send camera frames through the shared contract on providers that support realtime image input:
@@ -817,9 +820,15 @@ const gemini = createGemini({
   apiKey: process.env.GEMINI_API_KEY
 });
 
-const session = await gemini.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({
+const session = await gemini.realtimeModel!("gemini-3.1-flash-live-preview").connect({
   instructions: "Observe the camera feed and give concise interview feedback.",
-  outputAudioMediaType: "audio/pcm"
+  outputAudioMediaType: "audio/pcm",
+  inputAudioTranscription: true,
+  outputAudioTranscription: true,
+  mediaResolution: "MEDIA_RESOLUTION_LOW",
+  providerOptions: {
+    apiVersion: "v1alpha"
+  }
 });
 
 await session.sendMedia({
@@ -2056,6 +2065,40 @@ const speech = await generateSpeech({
 
 console.log(transcript.text);
 console.log(speech.mediaType, speech.audio.length);
+```
+
+Audio-capable chat models can also receive and return audio through normal language-model generation:
+
+```ts
+import { audioPart, generateText } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const answer = await generateText({
+  model: openai("gpt-audio-mini"),
+  messages: [
+    {
+      role: "user",
+      parts: [
+        { type: "text", text: "Summarize this recording." },
+        audioPart({
+          data: "BASE64_AUDIO",
+          mediaType: "audio/wav"
+        })
+      ]
+    }
+  ],
+  providerOptions: {
+    modalities: ["text", "audio"],
+    audio: { voice: "alloy", format: "wav" }
+  }
+});
+
+console.log(answer.text);
+console.log(answer.audio?.[0]?.mediaType);
 ```
 
 ### Generative Media

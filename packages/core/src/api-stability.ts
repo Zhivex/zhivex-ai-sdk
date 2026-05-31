@@ -69,6 +69,7 @@ const stableSymbols = [
   "createToolRegistry",
   "createUIMessageJsonResponse",
   "createUIMessageLinesResponse",
+  "audioPart",
   "embed",
   "embedMany",
   "embedRetrievalDocuments",

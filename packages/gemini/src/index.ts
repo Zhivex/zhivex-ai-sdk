@@ -665,7 +665,9 @@ const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"], tools: Mode
 const mapRealtimeProviderOptions = (providerOptions: Record<string, unknown> | undefined) =>
   providerOptions
     ? Object.fromEntries(
-        Object.entries(providerOptions).filter(([key]) => !["headers", "realtime_url", "realtime_query", "access_token", "accessToken"].includes(key))
+        Object.entries(providerOptions).filter(
+          ([key]) => !["headers", "realtime_url", "realtime_query", "access_token", "accessToken", "apiVersion", "api_version"].includes(key)
+        )
       )
     : {};
 
@@ -677,7 +679,8 @@ const geminiRealtimeURL = (baseURL: string, apiKey: string, providerOptions?: Re
 
   const url = new URL(baseURL);
   url.protocol = url.protocol === "https:" ? "wss:" : url.protocol === "http:" ? "ws:" : url.protocol;
-  url.pathname = "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+  const apiVersion = providerOptions?.apiVersion ?? providerOptions?.api_version ?? "v1beta";
+  url.pathname = `/ws/google.ai.generativelanguage.${String(apiVersion)}.GenerativeService.BidiGenerateContent`;
   const extraQuery = providerOptions?.realtime_query;
   if (extraQuery && typeof extraQuery === "object" && !Array.isArray(extraQuery)) {
     for (const [key, value] of Object.entries(extraQuery as Record<string, unknown>)) {
@@ -702,6 +705,26 @@ const geminiRealtimeHeaders = (providerOptions?: Record<string, unknown>) =>
       )
     : {};
 
+const mapRealtimeTranscriptionConfig = (value: boolean | Record<string, unknown> | undefined) => {
+  if (value === true) {
+    return {};
+  }
+  return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+};
+
+const mapRealtimeThinkingConfig = (config: RealtimeSessionConfig) => {
+  if (!config.reasoning) {
+    return undefined;
+  }
+
+  const thinkingConfig = {
+    ...(config.reasoning.effort ? { thinkingLevel: config.reasoning.effort } : {}),
+    ...(config.reasoning.budgetTokens !== undefined ? { thinkingBudget: config.reasoning.budgetTokens } : {}),
+    ...(config.reasoning.includeThoughts !== undefined ? { includeThoughts: config.reasoning.includeThoughts } : {})
+  };
+  return Object.keys(thinkingConfig).length ? thinkingConfig : undefined;
+};
+
 const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => ({
   setup: {
     model: `models/${modelId}`,
@@ -717,8 +740,22 @@ const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
             }
           }
         : {}),
-      responseModalities: config.outputAudioMediaType ? ["AUDIO"] : ["TEXT"]
+      responseModalities: config.outputAudioMediaType || config.voice ? ["AUDIO"] : ["TEXT"],
+      ...(mapRealtimeThinkingConfig(config) ? { thinkingConfig: mapRealtimeThinkingConfig(config) } : {})
     },
+    ...(mapRealtimeTranscriptionConfig(config.inputAudioTranscription ?? (config.inputTranscription ? true : undefined))
+      ? {
+          inputAudioTranscription: mapRealtimeTranscriptionConfig(
+            config.inputAudioTranscription ?? (config.inputTranscription ? true : undefined)
+          )
+        }
+      : {}),
+    ...(mapRealtimeTranscriptionConfig(config.outputAudioTranscription)
+      ? { outputAudioTranscription: mapRealtimeTranscriptionConfig(config.outputAudioTranscription) }
+      : {}),
+    ...(config.mediaResolution ? { mediaResolution: config.mediaResolution } : {}),
+    ...(config.affectiveDialog !== undefined ? { enableAffectiveDialog: config.affectiveDialog } : {}),
+    ...(config.proactiveAudio !== undefined ? { proactivity: { proactiveAudio: config.proactiveAudio } } : {}),
     ...(config.instructions
       ? {
           systemInstruction: {
@@ -1941,12 +1978,12 @@ class GeminiSpeechModel implements SpeechModel {
             body: JSON.stringify({
               contents: [{ role: "user", parts: [{ text: input.input }] }],
               generationConfig: {
-                responseModalities: ["AUDIO"]
-              },
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: {
-                    voiceName: input.voice ?? "Kore"
+                responseModalities: ["AUDIO"],
+                speechConfig: {
+                  voiceConfig: {
+                    prebuiltVoiceConfig: {
+                      voiceName: input.voice ?? "Kore"
+                    }
                   }
                 }
               },

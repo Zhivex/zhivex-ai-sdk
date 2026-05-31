@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
+  audioPart,
   createTextMessage,
   embed,
   getAgentCapabilities,
@@ -956,9 +957,9 @@ describe("openai adapter", () => {
       expect(url).toContain("/realtime");
       expect(url).toContain("model=gpt-realtime");
       expect(headers).toMatchObject({
-        authorization: "Bearer test",
-        "openai-beta": "realtime=v1"
+        authorization: "Bearer test"
       });
+      expect(headers).not.toHaveProperty("openai-beta");
       return {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
@@ -1012,6 +1013,62 @@ describe("openai adapter", () => {
       item: expect.objectContaining({ role: "user" })
     });
     expect(sent[3]).toEqual({ type: "response.create" });
+  });
+
+  it("maps OpenAI chat audio input and output for audio-capable models", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: "",
+              audio: {
+                id: "audio_1",
+                data: Buffer.from([1, 2, 3]).toString("base64"),
+                format: "wav",
+                transcript: "The recording contains a greeting."
+              }
+            }
+          }
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await provider("gpt-audio-mini").generate({
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "What is in this recording?" },
+            audioPart({
+              data: new Uint8Array([7, 8, 9]),
+              mediaType: "audio/wav"
+            })
+          ]
+        }
+      ],
+      providerOptions: {
+        modalities: ["text", "audio"],
+        audio: { voice: "alloy", format: "wav" }
+      }
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(provider("gpt-audio-mini").capabilities).toMatchObject({ audioInput: true, audioOutput: true });
+    expect(body.messages[0].content).toContainEqual({
+      type: "input_audio",
+      input_audio: {
+        data: Buffer.from([7, 8, 9]).toString("base64"),
+        format: "wav"
+      }
+    });
+    expect(body.modalities).toEqual(["text", "audio"]);
+    expect(result.text).toBe("The recording contains a greeting.");
+    expect(Array.from(result.audio?.[0]?.data ?? [])).toEqual([1, 2, 3]);
+    expect(result.audio?.[0]?.mediaType).toBe("audio/wav");
   });
 
   it("maps GPT Realtime 2 reasoning into realtime session setup", async () => {
@@ -1145,9 +1202,10 @@ describe("openai adapter", () => {
     });
     const model = provider.realtimeModel!("gpt-realtime-whisper");
     const session = await model.connect({
-      inputTranscription: { language: "es", includeLogprobs: true },
+      inputTranscription: { language: "es", includeLogprobs: true, delay: "low" },
       inputAudioMediaType: "audio/pcm",
-      inputSampleRateHz: 24_000
+      inputSampleRateHz: 24_000,
+      noiseReduction: { type: "near_field" }
     });
 
     await session.sendAudio({ data: "audio", mediaType: "audio/pcm", isFinal: true });
@@ -1171,8 +1229,10 @@ describe("openai adapter", () => {
             transcription: {
               model: "gpt-realtime-whisper",
               language: "es",
-              prompt: undefined
-            }
+              prompt: undefined,
+              delay: "low"
+            },
+            noise_reduction: { type: "near_field" }
           })
         }
       })

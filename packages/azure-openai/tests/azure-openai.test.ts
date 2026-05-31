@@ -911,15 +911,43 @@ describe("azure openai adapter", () => {
     );
   });
 
-  it("reports Azure realtime browser tokens as unsupported", async () => {
+  it("creates Azure realtime browser tokens", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        client_secret: {
+          value: "azure-ephemeral-secret",
+          expires_at_ms: 1234
+        }
+      })
+    );
+
     const provider = createAzureOpenAI({
       apiKey: "test",
       endpoint: "https://example.openai.azure.com",
       fetch: fetchMock as typeof fetch
     });
 
-    await expect(provider.realtimeModel!("gpt-realtime").createBrowserToken?.()).rejects.toThrow(
-      "does not support browser session tokens"
+    const model = provider.realtimeModel!("gpt-realtime");
+    const token = await model.createBrowserToken?.({
+      instructions: "Be helpful.",
+      providerOptions: {
+        expires_after: { anchor: "created_at", seconds: 60 }
+      }
+    });
+
+    expect(model.capabilities.realtime?.browserTokens).toBe(true);
+    expect(token).toEqual({
+      value: "azure-ephemeral-secret",
+      expiresAtMs: 1234,
+      rawResponse: expect.any(Object)
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.openai.azure.com/openai/v1/realtime/client_secrets",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "api-key": "test" }),
+        body: expect.stringContaining("\"model\":\"gpt-realtime\"")
+      })
     );
   });
 });

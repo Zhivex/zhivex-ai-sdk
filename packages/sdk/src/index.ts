@@ -150,6 +150,7 @@ export {
   streamLiveAgent,
   streamText,
   system,
+  audioPart,
   textPart,
   deserializeUIMessage,
   defaultModelCatalog,

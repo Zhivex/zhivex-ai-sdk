@@ -2,6 +2,7 @@ import { UnsupportedFeatureError } from "./errors.js";
 import type {
   AgentCapabilities,
   AgentSupportTier,
+  AudioInput,
   ContentPart,
   FinishReason,
   GenerateResult,
@@ -17,6 +18,15 @@ import type {
 } from "./types.js";
 
 export const textPart = (text: string): ContentPart => ({ type: "text", text });
+
+export const audioPart = (audio: AudioInput & { format?: string; transcript?: string }): ContentPart => ({
+  type: "audio",
+  data: audio.data,
+  mediaType: audio.mediaType,
+  filename: audio.filename,
+  format: audio.format,
+  transcript: audio.transcript
+} as ContentPart);
 
 const normalizeMessageParts = (input: string | ContentPart[]): ContentPart[] => (typeof input === "string" ? [textPart(input)] : input);
 

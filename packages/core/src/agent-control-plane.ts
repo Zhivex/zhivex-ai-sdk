@@ -705,19 +705,24 @@ export const selectAgentModel = (
   candidates: AgentModelCandidate[],
   requirements: AgentCapabilityRequirements = {}
 ): AgentModelSelection => {
+  if (!candidates.length) {
+    throw new ValidationError("No agent model candidates were provided.");
+  }
+
   const matches = candidates
-    .map((candidate) => {
+    .map((candidate, index) => {
       const model = candidateModel(candidate);
       const support = inspectProviderAgentSupport(model);
       return {
         model,
         support,
         score: scoreSupport(support, requirements),
-        reasons: selectionReasons(support, requirements)
+        reasons: selectionReasons(support, requirements),
+        index
       };
     })
     .filter((entry) => matchesRequirements(entry.support, requirements))
-    .sort((left, right) => right.score - left.score);
+    .sort((left, right) => right.score - left.score || left.index - right.index);
 
   const selected = matches[0];
   if (!selected) {

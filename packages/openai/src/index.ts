@@ -26,6 +26,7 @@ import {
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
+  type GeneratedMedia,
   type GenerateResult,
   type GroundedGenerateResult,
   type GroundedLanguageModel,
@@ -316,8 +317,15 @@ const supportsOpenAIComputerUse = (modelId: string) => {
 
 const supportsOpenAIHostedHarnessTools = (modelId: string) => /^gpt-5\.4(?:$|-)/.test(normalizeModelId(modelId));
 
+const supportsOpenAIChatAudio = (modelId: string) => {
+  const normalized = normalizeModelId(modelId);
+  return /^(?:gpt-audio(?:-|$)|gpt-4o(?:-mini)?-audio-preview(?:-|$))/.test(normalized);
+};
+
 const modelCapabilities = (modelId: string): ModelCapabilities => ({
   ...capabilities,
+  audioInput: supportsOpenAIChatAudio(modelId),
+  audioOutput: supportsOpenAIChatAudio(modelId),
   agentCapabilities: {
     ...capabilities.agentCapabilities!,
     computerUse: supportsOpenAIComputerUse(modelId),
@@ -423,10 +431,40 @@ const toUint8Array = (data: AudioInput["data"]) => {
   return Uint8Array.from(Buffer.from(data, "base64"));
 };
 
+const toBase64 = (data: string | Uint8Array | ArrayBuffer) =>
+  typeof data === "string" ? data : Buffer.from(data instanceof Uint8Array ? data : new Uint8Array(data)).toString("base64");
+
 const createAudioFile = (audio: AudioInput) =>
   new File([toUint8Array(audio.data).buffer as ArrayBuffer], audio.filename ?? "audio", {
     type: audio.mediaType
   });
+
+const inferOpenAIAudioFormat = (mediaType: string, explicitFormat?: string) => {
+  if (explicitFormat) {
+    return explicitFormat;
+  }
+
+  const normalized = mediaType.toLowerCase().split(";")[0]?.trim();
+  if (normalized === "audio/wav" || normalized === "audio/x-wav" || normalized === "audio/wave") {
+    return "wav";
+  }
+  if (normalized === "audio/mpeg" || normalized === "audio/mp3") {
+    return "mp3";
+  }
+  if (normalized === "audio/mp4" || normalized === "audio/m4a") {
+    return "mp4";
+  }
+  if (normalized === "audio/ogg") {
+    return "ogg";
+  }
+  if (normalized === "audio/webm") {
+    return "webm";
+  }
+  if (normalized === "audio/pcm" || normalized === "audio/pcm16") {
+    return "pcm16";
+  }
+  return normalized?.replace(/^audio\//, "") || mediaType;
+};
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
@@ -441,8 +479,9 @@ const parseJson = async (response: Response) => {
 const mapContentParts = (message: ModelMessage) => {
   const textParts = message.parts.filter((part) => part.type === "text");
   const imageParts = message.parts.filter((part) => part.type === "image");
+  const audioParts = message.parts.filter((part) => part.type === "audio");
 
-  if (!imageParts.length) {
+  if (!imageParts.length && !audioParts.length) {
     return textParts.map((part) => part.text).join("");
   }
 
@@ -455,6 +494,13 @@ const mapContentParts = (message: ModelMessage) => {
       type: "image_url",
       image_url: {
         url: part.image
+      }
+    })),
+    ...audioParts.map((part) => ({
+      type: "input_audio",
+      input_audio: {
+        data: toBase64(part.data),
+        format: inferOpenAIAudioFormat(part.mediaType, part.format)
       }
     }))
   ];
@@ -628,9 +674,11 @@ const mapRealtimeSessionConfig = (config: RealtimeSessionConfig, modelId?: strin
           ? {
               model: config.inputTranscription?.model ?? (mode === "transcription" ? modelId : undefined),
               language: config.inputTranscription?.language,
-              prompt: config.inputTranscription?.prompt
+              prompt: config.inputTranscription?.prompt,
+              delay: config.inputTranscription?.delay
             }
           : undefined,
+      noise_reduction: config.noiseReduction ?? undefined,
       turn_detection: config.turnDetection ?? undefined
     },
     ...(mode === "transcription"
@@ -1009,12 +1057,35 @@ const parseApplyPatchCallInput = (item: Record<string, unknown>) => ({
   operation: item.operation && typeof item.operation === "object" ? (item.operation as JsonValue) : {}
 });
 
+const parseOpenAIMessageAudio = (message: any): ModelMessage["parts"] => {
+  const audio = message.audio;
+  if (!audio || typeof audio !== "object" || typeof audio.data !== "string") {
+    return [];
+  }
+
+  const format = typeof audio.format === "string" ? audio.format : undefined;
+  const transcript = typeof audio.transcript === "string" ? audio.transcript : undefined;
+  return [
+    {
+      type: "audio",
+      data: audio.data,
+      mediaType: format ? `audio/${format}` : "audio/wav",
+      format,
+      transcript,
+      providerMetadata: audio as Record<string, JsonValue>
+    }
+  ];
+};
+
 const parseAssistantMessage = (message: any): ModelMessage => ({
   role: "assistant",
   parts: [
     ...(typeof message.content === "string" && message.content
       ? [{ type: "text", text: message.content } as const]
+      : typeof message.audio?.transcript === "string" && message.audio.transcript
+        ? [{ type: "text", text: message.audio.transcript } as const]
       : []),
+    ...parseOpenAIMessageAudio(message),
     ...((message.tool_calls ?? []).map((call: any) => ({
       type: "tool-call" as const,
       toolCall: {
@@ -1025,6 +1096,26 @@ const parseAssistantMessage = (message: any): ModelMessage => ({
     })) ?? [])
   ]
 });
+
+const extractAudioOutputs = (message: ModelMessage): GeneratedMedia[] =>
+  message.parts
+    .filter((part): part is Extract<ModelMessage["parts"][number], { type: "audio" }> => part.type === "audio")
+    .map((part) => ({
+      data: toUint8Array(part.data),
+      mediaType: part.mediaType,
+      text: part.transcript,
+      providerMetadata: part.providerMetadata as Record<string, unknown> | undefined
+    }));
+
+const extractMessageText = (message: ModelMessage) =>
+  message.parts
+    .flatMap((part) => {
+      if (part.type === "text") {
+        return [part.text];
+      }
+      return [];
+    })
+    .join("");
 
 const toResponsesInput = (messages: ModelMessage[]) => {
   const input: Array<Record<string, unknown>> = [];
@@ -1392,10 +1483,8 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
 
     return {
       messages: [assistantMessage],
-      text: assistantMessage.parts
-        .filter((part) => part.type === "text")
-        .map((part) => part.text)
-        .join(""),
+      text: extractMessageText(assistantMessage),
+      audio: extractAudioOutputs(assistantMessage),
       finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls),
       providerFinishReason: json.status,
       usage: {
@@ -1444,10 +1533,8 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
 
       return {
         messages: [assistantMessage],
-        text: assistantMessage.parts
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join(""),
+        text: extractMessageText(assistantMessage),
+        audio: extractAudioOutputs(assistantMessage),
         finishReason: normalizeFinishReason(choice?.finish_reason),
         providerFinishReason: choice?.finish_reason,
         usage: {
@@ -1841,8 +1928,7 @@ class OpenAIRealtimeModel implements RealtimeModel {
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
     const initialConfig = this.resolveConfig(config);
     const headers = {
-      authorization: `Bearer ${this.apiKey}`,
-      "openai-beta": "realtime=v1"
+      authorization: `Bearer ${this.apiKey}`
     };
     const connection = await (this.connectionFactory ?? openWebSocketConnection)(
       this.realtimeURL ??

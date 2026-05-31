@@ -56,6 +56,16 @@ export interface ImagePart {
   mediaType?: string;
 }
 
+export interface AudioPart {
+  type: "audio";
+  data: string | Uint8Array | ArrayBuffer;
+  mediaType: string;
+  filename?: string;
+  format?: string;
+  transcript?: string;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
 export interface FilePart {
   type: "file";
   data: string;
@@ -79,7 +89,7 @@ export interface ProviderDataPart {
   data: JsonValue;
 }
 
-export type ContentPart = TextPart | ImagePart | FilePart | ToolCallPart | ToolResultPart | ProviderDataPart;
+export type ContentPart = TextPart | ImagePart | AudioPart | FilePart | ToolCallPart | ToolResultPart | ProviderDataPart;
 
 export interface ModelMessage {
   role: MessageRole;
@@ -164,6 +174,7 @@ export interface StructuredOutputConfig<TSchema extends ZodTypeAny = ZodTypeAny>
 export interface ReasoningConfig {
   effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
   budgetTokens?: number;
+  includeThoughts?: boolean;
 }
 
 export interface StreamTextDeltaEvent {
@@ -274,6 +285,7 @@ export interface GenerateResult {
   message?: ModelMessage;
   messages?: ModelMessage[];
   text?: string;
+  audio?: GeneratedMedia[];
   finishReason?: FinishReason;
   providerFinishReason?: string;
   usage?: TokenUsage;
@@ -730,7 +742,10 @@ export interface RealtimeSessionConfig {
     language?: string;
     prompt?: string;
     includeLogprobs?: boolean;
+    delay?: "minimal" | "low" | "medium" | "high" | "xhigh";
   };
+  inputAudioTranscription?: boolean | Record<string, unknown>;
+  outputAudioTranscription?: boolean | Record<string, unknown>;
   translation?: {
     targetLanguage: string;
     sourceLanguage?: string;
@@ -742,6 +757,10 @@ export interface RealtimeSessionConfig {
   outputSampleRateHz?: number;
   channels?: number;
   turnDetection?: Record<string, unknown> | null;
+  noiseReduction?: Record<string, unknown> | null;
+  mediaResolution?: string;
+  affectiveDialog?: boolean;
+  proactiveAudio?: boolean;
   providerOptions?: ProviderOptions;
   metadata?: Record<string, JsonValue>;
   autoResponse?: boolean;

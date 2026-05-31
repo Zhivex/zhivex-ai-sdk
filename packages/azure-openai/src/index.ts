@@ -17,7 +17,6 @@ import {
   streamSSE,
   toToolSet,
   toolResultPayload,
-  unsupportedBrowserToken,
   withRetry,
   withTimeoutSignal,
   type AudioFrame,
@@ -376,7 +375,7 @@ const realtimeCapabilities: ModelCapabilities = {
     audioOutput: true,
     imageInput: true,
     tools: true,
-    browserTokens: false
+    browserTokens: true
   }
 };
 
@@ -1607,6 +1606,7 @@ class AzureOpenAIRealtimeModel implements RealtimeModel {
     private readonly apiKey: string,
     private readonly endpoint: string,
     private readonly apiVersion: string | undefined,
+    private readonly fetcher: typeof globalThis.fetch,
     private readonly connectionFactory?: RealtimeConnectionFactory,
     private readonly realtimeURL?: string,
     private readonly browserTokenURL?: string
@@ -1715,9 +1715,56 @@ class AzureOpenAIRealtimeModel implements RealtimeModel {
     return session;
   }
 
-  async createBrowserToken(): Promise<RealtimeTokenResult> {
-    void this.browserTokenURL;
-    return unsupportedBrowserToken();
+  async createBrowserToken(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions): Promise<RealtimeTokenResult> {
+    const providerOptions = { ...((config.providerOptions ?? {}) as Record<string, unknown>) };
+    const expiresAfter = providerOptions.expires_after;
+    delete providerOptions.expires_after;
+
+    const url = this.browserTokenURL ?? `${this.endpoint}/openai/v1/realtime/client_secrets`;
+    const response = await withRetry(
+      () =>
+        this.fetcher(url, {
+          method: "POST",
+          headers: jsonHeaders(this.apiKey),
+          body: JSON.stringify({
+            ...(expiresAfter ? { expires_after: expiresAfter } : {}),
+            session: mapRealtimeSessionConfig(
+              {
+                ...config,
+                providerOptions
+              },
+              this.modelId
+            )
+          }),
+          signal: options?.signal
+        }),
+      {
+        timeoutMs: options?.timeoutMs
+      }
+    );
+    const payload = await parseJson(response);
+    const secret = payload.client_secret;
+    const value =
+      secret && typeof secret === "object" && typeof secret.value === "string"
+        ? secret.value
+        : typeof payload.token === "string"
+          ? payload.token
+          : typeof payload.value === "string"
+            ? payload.value
+            : "";
+    const expiresAtMs =
+      secret && typeof secret === "object" && typeof secret.expires_at_ms === "number"
+        ? secret.expires_at_ms
+        : typeof payload.expires_at_ms === "number"
+          ? payload.expires_at_ms
+          : typeof payload.expires_at === "number"
+            ? payload.expires_at * 1000
+            : undefined;
+    return {
+      value,
+      expiresAtMs,
+      rawResponse: payload
+    };
   }
 }
 
@@ -2004,6 +2051,7 @@ export const createAzureOpenAI = (
         apiKey,
         normalizeEndpoint(endpoint),
         apiVersion,
+        fetcher,
         options.realtimeConnectionFactory,
         options.realtimeURL,
         options.browserTokenURL
