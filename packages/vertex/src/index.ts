@@ -654,9 +654,11 @@ const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"], tools: Mode
 const mapRealtimeProviderOptions = (providerOptions: Record<string, unknown> | undefined) =>
   providerOptions
     ? Object.fromEntries(
-        Object.entries(providerOptions).filter(([key]) => !["headers", "realtime_url"].includes(key))
+        Object.entries(providerOptions).filter(([key]) => !["headers", "realtime_url", "translationConfig"].includes(key))
       )
     : {};
+
+const isGeminiLiveTranslateModel = (modelId: string) => /^gemini-3\.5-live-translate(?:-preview)?$/i.test(modelId.trim());
 
 const vertexRealtimeURL = (
   location: string,
@@ -697,6 +699,61 @@ const mapRealtimeThinkingConfig = (config: RealtimeSessionConfig) => {
   return Object.keys(thinkingConfig).length ? thinkingConfig : undefined;
 };
 
+const mapRealtimeTranslationConfig = (config: RealtimeSessionConfig) => {
+  const providerTranslationConfig =
+    config.providerOptions &&
+    typeof config.providerOptions.translationConfig === "object" &&
+    config.providerOptions.translationConfig &&
+    !Array.isArray(config.providerOptions.translationConfig)
+      ? (config.providerOptions.translationConfig as Record<string, unknown>)
+      : {};
+
+  const translationConfig = {
+    ...providerTranslationConfig,
+    ...(config.translation?.targetLanguage ? { targetLanguageCode: config.translation.targetLanguage } : {}),
+    ...(config.translation?.sourceLanguage ? { sourceLanguageCode: config.translation.sourceLanguage } : {})
+  };
+
+  return Object.keys(translationConfig).length ? translationConfig : undefined;
+};
+
+const assertVertexRealtimeTranslateConfig = (config: RealtimeSessionConfig, modelId: string) => {
+  if (!isGeminiLiveTranslateModel(modelId)) {
+    return;
+  }
+
+  if (config.mode && config.mode !== "translation") {
+    throw new UnsupportedFeatureError(
+      'Model "vertex/gemini-3.5-live-translate-preview" only supports realtime translation mode.'
+    );
+  }
+
+  if (!config.translation?.targetLanguage) {
+    throw new UnsupportedFeatureError(
+      'Model "vertex/gemini-3.5-live-translate-preview" requires "translation.targetLanguage".'
+    );
+  }
+
+  const tools = toToolSet(config.tools);
+  if (tools && Object.keys(tools).length > 0) {
+    throw new UnsupportedFeatureError(
+      'Model "vertex/gemini-3.5-live-translate-preview" does not support realtime tools.'
+    );
+  }
+
+  if (config.reasoning) {
+    throw new UnsupportedFeatureError(
+      'Model "vertex/gemini-3.5-live-translate-preview" does not support realtime reasoning.'
+    );
+  }
+
+  if (config.instructions || config.translation?.instructions) {
+    throw new UnsupportedFeatureError(
+      'Model "vertex/gemini-3.5-live-translate-preview" does not support realtime system instructions.'
+    );
+  }
+};
+
 const vertexRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => ({
   setup: {
     model: `models/${modelId}`,
@@ -712,9 +769,10 @@ const vertexRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
             }
           }
         : {}),
-      responseModalities: config.outputAudioMediaType || config.voice ? ["AUDIO"] : ["TEXT"],
+      responseModalities: isGeminiLiveTranslateModel(modelId) || config.outputAudioMediaType || config.voice ? ["AUDIO"] : ["TEXT"],
       ...(mapRealtimeThinkingConfig(config) ? { thinkingConfig: mapRealtimeThinkingConfig(config) } : {})
     },
+    ...(mapRealtimeTranslationConfig(config) ? { translationConfig: mapRealtimeTranslationConfig(config) } : {}),
     ...(mapRealtimeTranscriptionConfig(config.inputAudioTranscription ?? (config.inputTranscription ? true : undefined))
       ? {
           inputAudioTranscription: mapRealtimeTranscriptionConfig(
@@ -2081,6 +2139,8 @@ class VertexRealtimeModel implements RealtimeModel {
   ) {}
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
+    assertVertexRealtimeTranslateConfig(config, this.modelId);
+
     if (this.auth.type === "api-key") {
       throw new UnsupportedFeatureError('Provider "vertex" realtime sessions require accessToken or getAccessToken auth.');
     }
@@ -2114,29 +2174,45 @@ class VertexRealtimeModel implements RealtimeModel {
             }
           }
         ],
-        buildMediaPayloads: (frame) => [
-          {
-            realtimeInput: {
-              media: {
-                mimeType: frame.mediaType,
-                data: encodeMediaFrame(frame)
+        buildMediaPayloads: (frame) => {
+          if (isGeminiLiveTranslateModel(this.modelId)) {
+            throw new UnsupportedFeatureError(
+              'Model "vertex/gemini-3.5-live-translate-preview" only supports audio input.'
+            );
+          }
+
+          return [
+            {
+              realtimeInput: {
+                media: {
+                  mimeType: frame.mediaType,
+                  data: encodeMediaFrame(frame)
+                }
               }
             }
+          ];
+        },
+        buildTextPayloads: (text) => {
+          if (isGeminiLiveTranslateModel(this.modelId)) {
+            throw new UnsupportedFeatureError(
+              'Model "vertex/gemini-3.5-live-translate-preview" only supports audio input.'
+            );
           }
-        ],
-        buildTextPayloads: (text) => [
-          {
-            clientContent: {
-              turns: [
-                {
-                  role: "user",
-                  parts: [{ text }]
-                }
-              ],
-              turnComplete: true
+
+          return [
+            {
+              clientContent: {
+                turns: [
+                  {
+                    role: "user",
+                    parts: [{ text }]
+                  }
+                ],
+                turnComplete: true
+              }
             }
-          }
-        ],
+          ];
+        },
         buildToolResultPayloads: (result) => [
           {
             toolResponse: {
@@ -2150,8 +2226,14 @@ class VertexRealtimeModel implements RealtimeModel {
             }
           }
         ],
-        buildUpdatePayloads: (sessionConfig) => [vertexRealtimeSetup(sessionConfig, this.modelId)],
-        buildInitialPayloads: (sessionConfig) => [vertexRealtimeSetup(sessionConfig, this.modelId)]
+        buildUpdatePayloads: (sessionConfig) => {
+          assertVertexRealtimeTranslateConfig(sessionConfig, this.modelId);
+          return [vertexRealtimeSetup(sessionConfig, this.modelId)];
+        },
+        buildInitialPayloads: (sessionConfig) => {
+          assertVertexRealtimeTranslateConfig(sessionConfig, this.modelId);
+          return [vertexRealtimeSetup(sessionConfig, this.modelId)];
+        }
       }
     });
     await session.initialize();

@@ -6,8 +6,8 @@ import { createGemini } from "../src/index.js";
 
 const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const baseURL = process.env.GEMINI_BASE_URL;
-const textModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.5-flash";
-const embeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-004";
+const textModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.1-flash-lite";
+const embeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "gemini-embedding-001";
 
 const describeIntegration = apiKey ? describe.sequential : describe.skip;
 
@@ -23,7 +23,7 @@ describeIntegration("gemini adapter integration", () => {
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-gemini-ok",
       temperature: 0,
-      maxTokens: 32
+      maxTokens: 128
     });
 
     expect(result.text.toLowerCase()).toContain("integration-gemini-ok");
@@ -35,7 +35,7 @@ describeIntegration("gemini adapter integration", () => {
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-gemini-stream-ok",
       temperature: 0,
-      maxTokens: 32
+      maxTokens: 128
     });
 
     const chunks: string[] = [];
@@ -54,7 +54,7 @@ describeIntegration("gemini adapter integration", () => {
       model: provider()(textModelId),
       prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
       temperature: 0,
-      maxTokens: 32,
+      maxTokens: 128,
       maxSteps: 2,
       tools: {
         sum: tool({

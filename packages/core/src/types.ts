@@ -24,6 +24,7 @@ export interface ToolCall {
   id: string;
   name: string;
   input: JsonValue;
+  providerMetadata?: Record<string, JsonValue>;
 }
 
 export interface ToolExecutionResult {

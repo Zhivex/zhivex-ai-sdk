@@ -40,6 +40,7 @@ export interface AnthropicLanguageModelOptions {
   tool_choice?: { type: "auto" | "none" | "any" | "tool"; name?: string };
   thinking?: AnthropicThinkingConfig;
   output_config?: AnthropicOutputConfig;
+  fallbacks?: AnthropicFallbackConfig[];
   [key: string]: unknown;
 }
 
@@ -56,6 +57,12 @@ export interface AnthropicOutputConfig {
     total: number;
   };
   [key: string]: unknown;
+}
+
+export interface AnthropicFallbackConfig {
+  model: string;
+  max_tokens?: number;
+  thinking?: AnthropicThinkingConfig;
 }
 
 interface MappedAnthropicReasoning {
@@ -91,6 +98,7 @@ const capabilities: ModelCapabilities = {
 };
 
 const normalizeModelId = (modelId: string) => modelId.trim().toLowerCase();
+const SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-06-01";
 
 const isClaudeOpus45Model = (modelId: string) => /^claude-opus-4-5(?:[-@]|$)/.test(normalizeModelId(modelId));
 
@@ -104,18 +112,40 @@ const isClaudeOpus47OrLaterModel = (modelId: string) =>
 const isClaudeOpus48OrLaterModel = (modelId: string) =>
   /^(?:claude-opus-4-(?:8|9)|claude-opus-[5-9])(?:[-@]|$)/.test(normalizeModelId(modelId));
 
+const isClaudeFable5Model = (modelId: string) => /^claude-fable-5(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const isClaudeMythos5Model = (modelId: string) => /^claude-mythos-5(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const isClaudeMythosClass5Model = (modelId: string) => isClaudeFable5Model(modelId) || isClaudeMythos5Model(modelId);
+
+const requiresAnthropicAdaptiveThinking = (modelId: string) => isClaudeMythosClass5Model(modelId);
+
+const supportsAnthropicModernControls = (modelId: string) =>
+  isClaudeOpus47OrLaterModel(modelId) || isClaudeMythosClass5Model(modelId);
+
+const supportsMidConversationSystemMessages = (modelId: string) =>
+  isClaudeOpus48OrLaterModel(modelId) || isClaudeMythosClass5Model(modelId);
+
 const supportsAnthropicEffort = (modelId: string) =>
   isClaudeOpus45Model(modelId) ||
   isClaudeOpus46Model(modelId) ||
   isClaudeSonnet46Model(modelId) ||
-  isClaudeOpus47OrLaterModel(modelId);
+  isClaudeOpus47OrLaterModel(modelId) ||
+  isClaudeMythosClass5Model(modelId);
 
 const supportsAdaptiveThinking = (modelId: string) =>
-  isClaudeOpus46Model(modelId) || isClaudeSonnet46Model(modelId) || isClaudeOpus47OrLaterModel(modelId);
+  isClaudeOpus46Model(modelId) ||
+  isClaudeSonnet46Model(modelId) ||
+  isClaudeOpus47OrLaterModel(modelId) ||
+  isClaudeMythosClass5Model(modelId);
 
 const supportsAnthropicFiles = (modelId: string) => {
   const normalized = normalizeModelId(modelId);
-  return /^claude-3-[5-9](?:[-@]|$)/.test(normalized) || /^claude-(?:opus|sonnet|haiku)-4(?:[-@]|$)/.test(normalized);
+  return (
+    /^claude-3-[5-9](?:[-@]|$)/.test(normalized) ||
+    /^claude-(?:opus|sonnet|haiku)-4(?:[-@]|$)/.test(normalized) ||
+    isClaudeMythosClass5Model(normalized)
+  );
 };
 
 const isAnthropicFileId = (value: string) => /^file_[a-z0-9]+$/i.test(value);
@@ -239,7 +269,7 @@ const leadingSystemMessages = (messages: ModelMessage[]) => {
 };
 
 const systemPromptFromMessages = (modelId: string, messages: ModelMessage[]) => {
-  const systemMessages = isClaudeOpus48OrLaterModel(modelId)
+  const systemMessages = supportsMidConversationSystemMessages(modelId)
     ? leadingSystemMessages(messages)
     : messages.filter((message) => message.role === "system");
 
@@ -257,7 +287,7 @@ const mapMessages = (modelId: string, messages: ModelMessage[]) =>
         return true;
       }
 
-      if (!isClaudeOpus48OrLaterModel(modelId)) {
+      if (!supportsMidConversationSystemMessages(modelId)) {
         return false;
       }
 
@@ -273,7 +303,7 @@ const mapMessages = (modelId: string, messages: ModelMessage[]) =>
 
         if (previousNonSystemMessage?.role !== "user") {
           throw new ValidationError(
-            'Provider "anthropic" only supports mid-conversation system messages immediately after a user turn on Claude Opus 4.8 or later.'
+            'Provider "anthropic" only supports mid-conversation system messages immediately after a user turn on Claude Opus 4.8 or later, Claude Fable 5, or Claude Mythos 5.'
           );
         }
 
@@ -422,6 +452,12 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput): MappedAnthrop
       );
     }
 
+    if (requiresAnthropicAdaptiveThinking(modelId)) {
+      throw new UnsupportedFeatureError(
+        'Provider "anthropic" does not support disabling thinking for Claude Fable 5 or Claude Mythos 5.'
+      );
+    }
+
     return supportsAdaptiveThinking(modelId)
       ? {
           thinking: {
@@ -431,9 +467,9 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput): MappedAnthrop
       : undefined;
   }
 
-  if (effort === "xhigh" && !isClaudeOpus47OrLaterModel(modelId)) {
+  if (effort === "xhigh" && !supportsAnthropicModernControls(modelId)) {
     throw new UnsupportedFeatureError(
-      'Provider "anthropic" does not support "reasoning.effort=xhigh" before Claude Opus 4.7.'
+      'Provider "anthropic" does not support "reasoning.effort=xhigh" before Claude Opus 4.7 or outside Claude Fable/Mythos 5.'
     );
   }
 
@@ -443,9 +479,9 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput): MappedAnthrop
     );
   }
 
-  if (budgetTokens !== undefined && isClaudeOpus47OrLaterModel(modelId)) {
+  if (budgetTokens !== undefined && supportsAnthropicModernControls(modelId)) {
     throw new UnsupportedFeatureError(
-      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later; use "reasoning.effort" instead.'
+      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; use "reasoning.effort" instead.'
     );
   }
 
@@ -455,7 +491,7 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput): MappedAnthrop
           type: "enabled",
           budget_tokens: budgetTokens
         } satisfies AnthropicThinkingConfig)
-      : supportsAdaptiveThinking(modelId) && effort !== undefined
+      : supportsAdaptiveThinking(modelId) && effort !== undefined && !requiresAnthropicAdaptiveThinking(modelId)
         ? ({
             type: "adaptive"
           } satisfies AnthropicThinkingConfig)
@@ -500,6 +536,43 @@ const parseAssistantMessage = (json: any): ModelMessage => ({
     }) ?? []
 });
 
+const assertAnthropicRequestCompatibility = (
+  modelId: string,
+  input: ModelGenerateInput,
+  rawThinking: AnthropicThinkingConfig | undefined,
+  providerOptions: AnthropicLanguageModelOptions
+) => {
+  if (
+    supportsAnthropicModernControls(modelId) &&
+    rawThinking?.type === "enabled" &&
+    typeof rawThinking.budget_tokens === "number"
+  ) {
+    throw new UnsupportedFeatureError(
+      'Provider "anthropic" does not support manual "thinking.enabled + budget_tokens" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; use adaptive thinking and "output_config.effort" instead.'
+    );
+  }
+
+  if (requiresAnthropicAdaptiveThinking(modelId) && rawThinking?.type === "disabled") {
+    throw new UnsupportedFeatureError(
+      'Provider "anthropic" does not support "thinking.disabled" for Claude Fable 5 or Claude Mythos 5; omit "thinking" or use "thinking.display" with adaptive thinking.'
+    );
+  }
+
+  if (supportsAnthropicModernControls(modelId)) {
+    if (input.temperature !== undefined) {
+      throw new UnsupportedFeatureError(
+        'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; omit it from the request.'
+      );
+    }
+
+    if (providerOptions.top_p !== undefined || providerOptions.top_k !== undefined) {
+      throw new UnsupportedFeatureError(
+        'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; omit them from the request.'
+      );
+    }
+  }
+};
+
 class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOptions> {
   readonly provider = "anthropic";
   readonly capabilities: ModelCapabilities;
@@ -517,11 +590,12 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     };
   }
 
-  private headers(withMcpToolset: boolean, withFilesApi: boolean, withCodeExecution: boolean) {
+  private headers(withMcpToolset: boolean, withFilesApi: boolean, withCodeExecution: boolean, extraBetas: string[] = []) {
     const betas = [
       ...(withMcpToolset ? ["mcp-client-2025-11-20"] : []),
       ...(withFilesApi ? ["files-api-2025-04-14"] : []),
-      ...(withCodeExecution ? ["code-execution-2025-08-25"] : [])
+      ...(withCodeExecution ? ["code-execution-2025-08-25"] : []),
+      ...extraBetas
     ];
 
     return {
@@ -541,33 +615,12 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     delete providerOptions.thinking;
     delete providerOptions.output_config;
 
-    if (
-      isClaudeOpus47OrLaterModel(this.modelId) &&
-      rawThinking?.type === "enabled" &&
-      typeof rawThinking.budget_tokens === "number"
-    ) {
-      throw new UnsupportedFeatureError(
-        'Provider "anthropic" does not support manual "thinking.enabled + budget_tokens" for Claude Opus 4.7 or later; use adaptive thinking and "output_config.effort" instead.'
-      );
-    }
-
-    if (isClaudeOpus47OrLaterModel(this.modelId)) {
-      if (input.temperature !== undefined) {
-        throw new UnsupportedFeatureError(
-          'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later; omit it from the request.'
-        );
-      }
-
-      if (providerOptions.top_p !== undefined || providerOptions.top_k !== undefined) {
-        throw new UnsupportedFeatureError(
-          'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later; omit them from the request.'
-        );
-      }
-    }
+    assertAnthropicRequestCompatibility(this.modelId, input, rawThinking, providerOptions);
 
     const reasoning = mapReasoning(this.modelId, input);
     const thinking = mergeOptionalObjects(rawThinking, reasoning?.thinking);
     const outputConfig = mergeOptionalObjects(rawOutputConfig, reasoning?.output_config);
+    const usesServerSideFallback = Boolean(providerOptions.fallbacks?.length);
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
@@ -578,7 +631,9 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
         () =>
           this.fetcher(`${this.baseURL}/messages`, {
             method: "POST",
-            headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, usesCodeExecution),
+            headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, usesCodeExecution, [
+              ...(usesServerSideFallback ? [SERVER_SIDE_FALLBACK_BETA] : [])
+            ]),
             signal,
             body: JSON.stringify({
               model: this.modelId,
@@ -630,33 +685,12 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     delete providerOptions.thinking;
     delete providerOptions.output_config;
 
-    if (
-      isClaudeOpus47OrLaterModel(this.modelId) &&
-      rawThinking?.type === "enabled" &&
-      typeof rawThinking.budget_tokens === "number"
-    ) {
-      throw new UnsupportedFeatureError(
-        'Provider "anthropic" does not support manual "thinking.enabled + budget_tokens" for Claude Opus 4.7 or later; use adaptive thinking and "output_config.effort" instead.'
-      );
-    }
-
-    if (isClaudeOpus47OrLaterModel(this.modelId)) {
-      if (input.temperature !== undefined) {
-        throw new UnsupportedFeatureError(
-          'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later; omit it from the request.'
-        );
-      }
-
-      if (providerOptions.top_p !== undefined || providerOptions.top_k !== undefined) {
-        throw new UnsupportedFeatureError(
-          'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later; omit them from the request.'
-        );
-      }
-    }
+    assertAnthropicRequestCompatibility(this.modelId, input, rawThinking, providerOptions);
 
     const reasoning = mapReasoning(this.modelId, input);
     const thinking = mergeOptionalObjects(rawThinking, reasoning?.thinking);
     const outputConfig = mergeOptionalObjects(rawOutputConfig, reasoning?.output_config);
+    const usesServerSideFallback = Boolean(providerOptions.fallbacks?.length);
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
@@ -665,7 +699,9 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
       () =>
         this.fetcher(`${this.baseURL}/messages`, {
           method: "POST",
-          headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, usesCodeExecution),
+          headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, usesCodeExecution, [
+            ...(usesServerSideFallback ? [SERVER_SIDE_FALLBACK_BETA] : [])
+          ]),
           signal,
           body: JSON.stringify({
             model: this.modelId,
@@ -709,18 +745,9 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
           if (
             event.event === "content_block_start" &&
             typeof json.content_block?.type === "string" &&
-            (json.content_block.type.startsWith("mcp_") ||
-              json.content_block.type === "server_tool_use" ||
-              json.content_block.type.includes("code_execution"))
+            json.content_block.type !== "text" &&
+            json.content_block.type !== "tool_use"
           ) {
-            yield {
-              type: "provider-data",
-              provider: "anthropic",
-              data: json.content_block as JsonValue
-            } satisfies StreamEvent;
-          }
-
-          if (event.event === "content_block_start" && json.content_block?.type === "thinking") {
             yield {
               type: "provider-data",
               provider: "anthropic",
@@ -731,7 +758,8 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
           if (
             event.event === "content_block_delta" &&
             typeof json.delta?.type === "string" &&
-            json.delta.type.includes("code_execution")
+            json.delta.type !== "text_delta" &&
+            json.delta.type !== "input_json_delta"
           ) {
             yield {
               type: "provider-data",
@@ -745,22 +773,6 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
             if (current) {
               current.input += json.delta.partial_json;
             }
-          }
-
-          if (event.event === "content_block_delta" && json.delta?.type === "thinking_delta") {
-            yield {
-              type: "provider-data",
-              provider: "anthropic",
-              data: json.delta as JsonValue
-            } satisfies StreamEvent;
-          }
-
-          if (event.event === "content_block_delta" && json.delta?.type === "signature_delta") {
-            yield {
-              type: "provider-data",
-              provider: "anthropic",
-              data: json.delta as JsonValue
-            } satisfies StreamEvent;
           }
 
           if (event.event === "message_delta") {

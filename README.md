@@ -206,7 +206,7 @@ Compatibility notes:
 - Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime`, `gpt-realtime-2`, and `gpt-realtime-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
 - Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
-- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+ including Opus 4.8, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
+- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Fable 5, Claude Mythos 5, Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+ including Opus 4.8, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Claude Fable 5 and Claude Mythos 5 always use adaptive thinking, so the adapter does not send redundant `thinking: { type: "adaptive" }` for common `reasoning.effort` and rejects `thinking.disabled` or manual thinking budgets before the request is sent. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
 - Bedrock native Converse supports common `toolChoice` values by mapping specific tools and required tools to AWS-native `toolConfig`, and by omitting tool configuration for `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming. In the SDK's agent matrix, Bedrock Tier A applies to `createBedrock({ runtime: "openai" })`, which exposes Responses hosted tools, remote MCP, and approval requests. AWS-native AgentCore MCP is exposed separately as SDK-managed MCP tools for Converse or any shared agent loop; it does not promote Converse itself to a provider-emitted approval runtime.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - DeepSeek is Tier B for portable tool loops plus documented thinking mode on `deepseek-v4-flash` and `deepseek-v4-pro`; it does not expose hosted tools, remote MCP, web search, embeddings, audio, or realtime sessions in this adapter.
@@ -799,6 +799,27 @@ const transcription = await openai.realtimeModel!("gpt-realtime-whisper").connec
 });
 ```
 
+Gemini 3.5 Live Translate uses the same shared translation shape for low-latency speech-to-speech translation:
+
+```ts
+const liveTranslate = await gemini.realtimeModel!("gemini-3.5-live-translate-preview").connect({
+  mode: "translation",
+  translation: {
+    sourceLanguage: "en",
+    targetLanguage: "pl"
+  },
+  inputAudioTranscription: true,
+  outputAudioTranscription: true,
+  outputAudioMediaType: "audio/pcm",
+  providerOptions: {
+    apiVersion: "v1alpha",
+    translationConfig: {
+      echoTargetLanguage: true
+    }
+  }
+});
+```
+
 Current shared provider coverage for realtime sessions:
 
 - OpenAI
@@ -814,6 +835,7 @@ Notes:
 - OpenAI supports `sendMedia()` for image inputs on `gpt-realtime`, `gpt-realtime-2`, and `gpt-realtime-mini`, but not on the older `gpt-4o-*-realtime-preview`, `gpt-realtime-translate`, or `gpt-realtime-whisper` models.
 - OpenAI `gpt-realtime-translate` uses realtime translation mode and requires `translation.targetLanguage`; OpenAI `gpt-realtime-whisper` uses realtime transcription mode and emits transcript events without model audio output.
 - Gemini and Vertex Live sessions can opt into typed `inputAudioTranscription`, `outputAudioTranscription`, `mediaResolution`, `affectiveDialog`, `proactiveAudio`, and `reasoning` setup fields. For Gemini API preview-only Live features, pass `providerOptions: { apiVersion: "v1alpha" }`.
+- Gemini and Vertex `gemini-3.5-live-translate-preview` sessions map `translation.targetLanguage` to Google Live `translationConfig.targetLanguageCode`, emit translated audio plus assistant transcript events, and reject tools, text input, image input, reasoning, and system instructions before the request is sent. Vertex availability still depends on the selected project, region, and model access.
 - Advanced provider-specific session fields can still be passed through `RealtimeSessionConfig.providerOptions`.
 
 For browser-driven interview-style flows, you can send camera frames through the shared contract on providers that support realtime image input:
@@ -1472,10 +1494,12 @@ Provider compatibility for the common `reasoning` option:
 - OpenAI and Azure OpenAI: support `effort`
 - OpenRouter: supports `effort` and `budgetTokens`
 - Anthropic:
+  - Claude Fable 5 and Claude Mythos 5 support `effort`; adaptive thinking is always on, so the adapter sends only `output_config.effort` for common reasoning requests
+  - Claude Fable 5 server-side refusal fallback is available with `providerOptions.fallbacks`; the adapter adds the required `server-side-fallback-2026-06-01` beta header automatically
   - Claude Opus 4.7 and later, including Claude Opus 4.8, support `effort`; `budgetTokens` is rejected
   - Claude Opus 4.5, Claude Opus 4.6, and Claude Sonnet 4.6 support `effort`
   - `budgetTokens` remains available only on Anthropic models that still accept manual thinking
-  - Claude Opus 4.8 accepts provider-specific `providerOptions.speed = "fast"` for fast mode; omit explicit `temperature`, `top_p`, and `top_k`
+  - Claude Fable 5, Claude Mythos 5, and Claude Opus 4.8 accept provider-specific `providerOptions.speed = "fast"` for fast mode; omit explicit `temperature`, `top_p`, and `top_k`
 - Gemini and Vertex:
   - Gemini 3 models support `effort`
   - Gemini 2.5 and earlier models support `budgetTokens`
@@ -1493,6 +1517,21 @@ Provider compatibility for the common `reasoning` option:
   - `effort: "none"` disables thinking mode
   - `budgetTokens` is not supported in the common mapping
 - Ollama and Bedrock: not supported
+
+Claude Fable 5 refusal fallback:
+
+```ts
+const result = await generateText({
+  model: anthropic("claude-fable-5"),
+  prompt: "Help me assess this request.",
+  reasoning: { effort: "high" },
+  providerOptions: {
+    fallbacks: [{ model: "claude-opus-4-8" }]
+  }
+});
+
+console.log(result.providerFinishReason, result.text);
+```
 
 When a provider or model does not support the requested `reasoning` field, the SDK throws an explicit error instead of silently ignoring it. For the broader matrix, see [Provider Compatibility](#provider-compatibility).
 

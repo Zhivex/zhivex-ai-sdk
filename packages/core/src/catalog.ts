@@ -30,6 +30,19 @@ export const defaultModelCatalog = createModelCatalog([
   { provider: "azure-openai", modelId: "gpt-4o-mini", costPer1kTokens: 0.6, recommendedFor: ["chat", "tools"] },
   {
     provider: "anthropic",
+    modelId: "claude-fable-5",
+    aliases: ["claude-mythos-class"],
+    costPer1kTokens: 10,
+    recommendedFor: ["reasoning", "tools", "vision"]
+  },
+  {
+    provider: "anthropic",
+    modelId: "claude-mythos-5",
+    costPer1kTokens: 10,
+    recommendedFor: ["reasoning", "tools", "vision"]
+  },
+  {
+    provider: "anthropic",
     modelId: "claude-opus-4-8",
     aliases: ["claude-opus-4-7"],
     costPer1kTokens: 5,
@@ -43,11 +56,21 @@ export const defaultModelCatalog = createModelCatalog([
     recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
   },
   {
+    provider: "gemini",
+    modelId: "gemini-3.5-live-translate-preview",
+    recommendedFor: ["speed"]
+  },
+  {
     provider: "vertex",
     modelId: "gemini-3.5-flash",
     aliases: ["gemini-flash-latest"],
     costPer1kTokens: 1.5,
     recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
+  },
+  {
+    provider: "vertex",
+    modelId: "gemini-3.5-live-translate-preview",
+    recommendedFor: ["speed"]
   },
   { provider: "qwen", modelId: "qwen-plus", costPer1kTokens: 0.8, recommendedFor: ["chat", "tools", "reasoning"] },
   { provider: "kimi", modelId: "kimi-k2-0905-preview", costPer1kTokens: 2, recommendedFor: ["reasoning", "tools"] },
