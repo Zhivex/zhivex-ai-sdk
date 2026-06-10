@@ -55,8 +55,69 @@ describe("zhivex-ai CLI", () => {
   it("prints help output", async () => {
     const capture = createCapture();
     await expect(runCli(["--help"], capture.io)).resolves.toBe(0);
-    expect(capture.stdout[0]).toContain("agents ledger|diff|golden");
+    expect(capture.stdout[0]).toContain("init agent");
+    expect(capture.stdout[0]).toContain("doctor");
+    expect(capture.stdout[0]).toContain("agents ledger|inspect|diff|golden|eval");
     expect(capture.stdout[0]).toContain("sessions list|show|workflow-state|prune");
+  });
+
+  it("scaffolds a production agent project", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-init-"), "support-agent");
+    const capture = createCapture();
+
+    const code = await runCli([
+      "init",
+      "agent",
+      "--dir",
+      directory,
+      "--name",
+      "Support Agent",
+      "--provider",
+      "openai",
+      "--model",
+      "gpt-5-mini"
+    ], capture.io);
+
+    expect(code).toBe(0);
+    expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+      ok: true,
+      type: "agent_project",
+      appName: "support-agent",
+      provider: "openai",
+      model: "gpt-5-mini"
+    });
+    await expect(readJson(path.join(directory, "package.json"))).resolves.toMatchObject({
+      scripts: {
+        dev: "bun run src/agent.ts",
+        doctor: "zhivex-ai doctor",
+        inspect: "zhivex-ai agents inspect --state .zhivex/runs/latest-agent-state.json"
+      },
+      dependencies: {
+        "@zhivex-ai/sdk": "latest",
+        "@zhivex-ai/openai": "latest"
+      }
+    });
+    await expect(fs.readFile(path.join(directory, "src", "agent.ts"), "utf8")).resolves.toContain("createProductionSafetyPolicy");
+    await expect(fs.readFile(path.join(directory, ".env.example"), "utf8")).resolves.toContain("OPENAI_API_KEY=");
+  });
+
+  it("runs doctor checks for generated projects", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-doctor-"), "support-agent");
+    await runCli(["init", "agent", "--dir", directory], createCapture().io);
+    const capture = createCapture();
+
+    const code = await runCli(["doctor", "--dir", directory, "--provider", "openai"], capture.io);
+
+    expect(code).toBe(0);
+    expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+      ok: true,
+      type: "doctor_report",
+      checks: expect.arrayContaining([
+        expect.objectContaining({ name: "sdk-dependency", status: "pass" }),
+        expect.objectContaining({ name: "openai-dependency", status: "pass" }),
+        expect.objectContaining({ name: "openai-env", status: "warn" })
+      ])
+    });
   });
 
   it("creates agent ledgers and golden traces from local JSON", async () => {
@@ -82,6 +143,61 @@ describe("zhivex-ai CLI", () => {
       name: "happy-path",
       expectations: { status: "completed", outputText: "done" }
     });
+  });
+
+  it("inspects agent ledgers and evaluates golden traces", async () => {
+    const directory = await tempDir("zhivex-cli-agents-");
+    const statePath = path.join(directory, "state.json");
+    const ledgerPath = path.join(directory, "ledger.json");
+    const goldenPath = path.join(directory, "golden.json");
+    const evalPath = path.join(directory, "eval.json");
+    const state = baseAgentState();
+    const ledger = createAgentRunLedger(state);
+    await fs.writeFile(statePath, JSON.stringify(state), "utf8");
+    await fs.writeFile(ledgerPath, JSON.stringify(ledger), "utf8");
+    await fs.writeFile(goldenPath, JSON.stringify({
+      schemaVersion: 1,
+      type: "agent_golden_trace",
+      name: "happy-path",
+      ledger,
+      expectations: {
+        status: "completed",
+        outputText: "done",
+        toolCalls: [],
+        approvals: 0
+      }
+    }), "utf8");
+
+    const inspect = createCapture();
+    const inspectCode = await runCli(["agents", "inspect", "--state", statePath], inspect.io);
+    expect(inspectCode).toBe(0);
+    expect(JSON.parse(inspect.stdout[0]!)).toMatchObject({
+      type: "agent_run_inspection",
+      ok: true,
+      runId: "run_1",
+      toolErrors: 0,
+      approvals: 0
+    });
+
+    const evaluation = createCapture();
+    const evalCode = await runCli([
+      "agents",
+      "eval",
+      "--golden",
+      goldenPath,
+      "--ledger",
+      ledgerPath,
+      "--out",
+      evalPath
+    ], evaluation.io);
+    expect(evalCode).toBe(0);
+    expect(JSON.parse(evaluation.stdout[0]!)).toMatchObject({
+      type: "agent_golden_trace_evaluation",
+      ok: true,
+      name: "happy-path",
+      failures: []
+    });
+    await expect(readJson(evalPath)).resolves.toMatchObject({ ok: true });
   });
 
   it("diffs agent ledgers from local JSON", async () => {

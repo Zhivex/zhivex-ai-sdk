@@ -6,8 +6,9 @@ import { createGemini } from "../src/index.js";
 
 const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const baseURL = process.env.GEMINI_BASE_URL;
-const textModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.5-flash";
-const embeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-004";
+const textModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.1-flash-lite";
+const embeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "gemini-embedding-2";
+const liveModelId = process.env.GEMINI_INTEGRATION_LIVE_MODEL ?? "gemini-3.1-flash-live-preview";
 
 const describeIntegration = apiKey ? describe.sequential : describe.skip;
 
@@ -23,7 +24,7 @@ describeIntegration("gemini adapter integration", () => {
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-gemini-ok",
       temperature: 0,
-      maxTokens: 32
+      maxTokens: 128
     });
 
     expect(result.text.toLowerCase()).toContain("integration-gemini-ok");
@@ -35,7 +36,7 @@ describeIntegration("gemini adapter integration", () => {
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-gemini-stream-ok",
       temperature: 0,
-      maxTokens: 32
+      maxTokens: 128
     });
 
     const chunks: string[] = [];
@@ -54,7 +55,7 @@ describeIntegration("gemini adapter integration", () => {
       model: provider()(textModelId),
       prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
       temperature: 0,
-      maxTokens: 32,
+      maxTokens: 128,
       maxSteps: 2,
       tools: {
         sum: tool({
@@ -102,5 +103,57 @@ describeIntegration("gemini adapter integration", () => {
 
     expect(result.embeddings).toHaveLength(1);
     expect(result.embeddings[0]?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("connects and receives audio plus transcription from the real Gemini Live API", async () => {
+    const session = await provider().realtimeModel!(liveModelId).connect({
+      outputAudioMediaType: "audio/pcm",
+      outputAudioTranscription: true
+    });
+    let transcript = "";
+    let audioBytes = 0;
+    const eventTypes: string[] = [];
+
+    try {
+      const reader = (async () => {
+        for await (const event of session.eventStream()) {
+          eventTypes.push(event.type);
+          if (event.type === "realtime-audio-output") {
+            audioBytes += event.audio.byteLength;
+          }
+          if (event.type === "realtime-transcript" && event.role === "assistant") {
+            transcript += event.text;
+          }
+          if (event.type === "realtime-error") {
+            throw event.error;
+          }
+          if (event.type === "realtime-response-complete" && audioBytes > 0 && transcript) {
+            return;
+          }
+        }
+      })();
+
+      await session.sendText("Say exactly: integration-gemini-live-ok");
+      await Promise.race([
+        reader,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Timed out waiting for Gemini Live audio response. Events seen: ${eventTypes.join(", ") || "none"}`
+                )
+              ),
+            30_000
+          )
+        )
+      ]);
+
+      expect(audioBytes).toBeGreaterThan(0);
+      expect(transcript.toLowerCase()).toContain("integration-gemini-live-ok");
+      expect(eventTypes).toContain("realtime-response-complete");
+    } finally {
+      await session.close();
+    }
   });
 });

@@ -1231,6 +1231,134 @@ describe("vertex adapter", () => {
     });
   });
 
+  it("connects Vertex Gemini 3.5 Live Translate sessions with typed translation config", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
+      expect(url).toBe(
+        "wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1alpha.PredictionService.BidiGenerateContent"
+      );
+      expect(headers).toMatchObject({
+        authorization: "Bearer test"
+      });
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      apiVersion: "v1alpha",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gemini-3.5-live-translate-preview").connect({
+      mode: "translation",
+      translation: {
+        sourceLanguage: "en",
+        targetLanguage: "pl"
+      },
+      inputAudioTranscription: true,
+      outputAudioTranscription: true,
+      providerOptions: {
+        translationConfig: {
+          echoTargetLanguage: true
+        }
+      }
+    });
+
+    await session.sendAudio({ data: "vertex-audio", mediaType: "audio/pcm" });
+    await session.close();
+
+    expect(connectionFactory).toHaveBeenCalledOnce();
+    expect(sent[0]).toMatchObject({
+      setup: {
+        model: "models/gemini-3.5-live-translate-preview",
+        generationConfig: {
+          responseModalities: ["AUDIO"]
+        },
+        translationConfig: {
+          sourceLanguageCode: "en",
+          targetLanguageCode: "pl",
+          echoTargetLanguage: true
+        },
+        inputAudioTranscription: {},
+        outputAudioTranscription: {}
+      }
+    });
+    expect(sent[1]).toMatchObject({
+      realtimeInput: {
+        audio: {
+          mimeType: "audio/pcm",
+          data: "vertex-audio"
+        }
+      }
+    });
+  });
+
+  it("rejects unsupported Vertex Gemini 3.5 Live Translate setup and inputs", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async () => ({
+      async sendJson(payload: Record<string, unknown>) {
+        sent.push(payload);
+      },
+      async recvJson() {
+        return undefined;
+      },
+      async close() {}
+    }));
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      apiVersion: "v1alpha",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+
+    await expect(provider.realtimeModel!("gemini-3.5-live-translate-preview").connect()).rejects.toThrow(
+      'Model "vertex/gemini-3.5-live-translate-preview" requires "translation.targetLanguage".'
+    );
+    await expect(
+      provider.realtimeModel!("gemini-3.5-live-translate-preview").connect({
+        translation: { targetLanguage: "pl" },
+        instructions: "Translate politely."
+      })
+    ).rejects.toThrow('Model "vertex/gemini-3.5-live-translate-preview" does not support realtime system instructions.');
+    await expect(
+      provider.realtimeModel!("gemini-3.5-live-translate-preview").connect({
+        translation: { targetLanguage: "pl" },
+        tools: {
+          weather: tool({
+            name: "weather",
+            schema: z.object({ city: z.string() }),
+            execute: () => ({ ok: true })
+          })
+        }
+      })
+    ).rejects.toThrow('Model "vertex/gemini-3.5-live-translate-preview" does not support realtime tools.');
+
+    const session = await provider.realtimeModel!("gemini-3.5-live-translate-preview").connect({
+      translation: { targetLanguage: "pl" }
+    });
+
+    await expect(session.sendText("hello")).rejects.toThrow(
+      'Model "vertex/gemini-3.5-live-translate-preview" only supports audio input.'
+    );
+    await expect(session.sendMedia({ data: "image", mediaType: "image/jpeg" })).rejects.toThrow(
+      'Model "vertex/gemini-3.5-live-translate-preview" only supports audio input.'
+    );
+    expect(sent).toHaveLength(1);
+    await session.close();
+  });
+
   it("rejects Vertex Live sessions when only API key auth is configured", async () => {
     const provider = createVertex({
       apiKey: "vertex-api-key",

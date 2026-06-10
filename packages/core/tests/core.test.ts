@@ -1991,7 +1991,7 @@ describe("core helpers", () => {
       model: createEmbeddingModel({
         async embed(input) {
           return {
-            embeddings: input.values.map((value, index) => [value.length, index])
+            embeddings: input.values.map((value, index) => [typeof value === "string" ? value.length : 0, index])
           };
         }
       }),
@@ -2643,11 +2643,13 @@ describe("core helpers", () => {
     expect(normalizeFinishReason("refusal")).toBe("refusal");
   });
 
-  it("defaults Anthropic catalog entries to Claude Opus 4.8", () => {
-    expect(defaultModelCatalog.find("anthropic", "claude-opus-4-8")).toMatchObject({
-      modelId: "claude-opus-4-8",
-      recommendedFor: expect.arrayContaining(["reasoning", "tools"])
+  it("defaults Anthropic catalog entries to Claude Fable 5 and keeps Opus aliases", () => {
+    expect(defaultModelCatalog.find("anthropic", "claude-fable-5")).toMatchObject({
+      modelId: "claude-fable-5",
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
     });
+    expect(defaultModelCatalog.find("anthropic", "claude-mythos-class")?.modelId).toBe("claude-fable-5");
+    expect(defaultModelCatalog.find("anthropic", "claude-mythos-5")?.modelId).toBe("claude-mythos-5");
     expect(defaultModelCatalog.find("anthropic", "claude-opus-4-7")?.modelId).toBe("claude-opus-4-8");
   });
 
@@ -2656,7 +2658,14 @@ describe("core helpers", () => {
       modelId: "gemini-3.5-flash",
       recommendedFor: expect.arrayContaining(["reasoning", "speed", "tools", "vision"])
     });
+    expect(defaultModelCatalog.find("gemini", "gemini-3.5-live-translate-preview")).toMatchObject({
+      modelId: "gemini-3.5-live-translate-preview",
+      recommendedFor: expect.arrayContaining(["speed"])
+    });
     expect(defaultModelCatalog.find("vertex", "gemini-flash-latest")?.modelId).toBe("gemini-3.5-flash");
+    expect(defaultModelCatalog.find("vertex", "gemini-3.5-live-translate-preview")?.modelId).toBe(
+      "gemini-3.5-live-translate-preview"
+    );
   });
 
   it("includes DeepSeek in the default model catalog", () => {

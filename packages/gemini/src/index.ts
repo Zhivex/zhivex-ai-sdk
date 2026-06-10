@@ -37,6 +37,7 @@ import {
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
+  type EmbedValue,
   type FileDeleteInput,
   type FileGetInput,
   type FileListInput,
@@ -115,7 +116,7 @@ const capabilities: ModelCapabilities = {
   parallelToolCalls: false,
   vision: true,
   files: true,
-  audioInput: false,
+  audioInput: true,
   audioOutput: false,
   embeddings: true,
   fileSearch: true,
@@ -339,6 +340,24 @@ const mediaInputToPart = (media: MediaInput) =>
         }
       };
 
+const embeddingValueToPart = (value: EmbedValue, modelId: string) => {
+  if (typeof value === "string") {
+    return { text: value };
+  }
+
+  if (modelId !== "gemini-embedding-2") {
+    throw new UnsupportedFeatureError(
+      `Model "gemini/${modelId}" does not support multimodal embedding values. Use "gemini-embedding-2" for Gemini multimodal embeddings.`
+    );
+  }
+
+  if (!value.uri && value.data === undefined) {
+    throw new UnsupportedFeatureError('Provider "gemini" requires embedding media values to include "data" or "uri".');
+  }
+
+  return mediaInputToPart(value);
+};
+
 const collectInlineMedia = (json: any, fallbackMediaType: string): { media: GeneratedMedia[]; text?: string } => {
   const text: string[] = [];
   const media: GeneratedMedia[] = [];
@@ -557,6 +576,13 @@ const mapPart = (part: ModelMessage["parts"][number]) => {
           data: part.image
         }
       };
+    case "audio":
+      return {
+        inlineData: {
+          mimeType: part.mediaType,
+          data: toBase64(part.data)
+        }
+      };
     case "file":
       return {
         fileData: {
@@ -567,13 +593,18 @@ const mapPart = (part: ModelMessage["parts"][number]) => {
     case "tool-call":
       return {
         functionCall: {
+          id: part.toolCall.id,
           name: part.toolCall.name,
           args: part.toolCall.input
-        }
+        },
+        ...(typeof part.toolCall.providerMetadata?.geminiThoughtSignature === "string"
+          ? { thoughtSignature: part.toolCall.providerMetadata.geminiThoughtSignature }
+          : {})
       };
     case "tool-result":
       return {
         functionResponse: {
+          id: part.toolResult.toolCallId,
           name: part.toolResult.toolName,
           response: {
             name: part.toolResult.toolName,
@@ -596,6 +627,25 @@ const mapMessages = (messages: ModelMessage[]) =>
       parts: message.parts.map(mapPart)
     }));
 
+const toGeminiSchema = (schema: unknown): JsonValue => {
+  if (Array.isArray(schema)) {
+    return schema.map(toGeminiSchema) as JsonValue;
+  }
+
+  if (!schema || typeof schema !== "object") {
+    return schema as JsonValue;
+  }
+
+  const mapped: Record<string, JsonValue> = {};
+  for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
+    if (key.startsWith("$") || key === "additionalProperties" || value === undefined) {
+      continue;
+    }
+    mapped[key] = toGeminiSchema(value);
+  }
+  return mapped;
+};
+
 const mapTools = (tools: ModelGenerateInput["tools"]) =>
   tools
     ? (() => {
@@ -605,7 +655,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           .map((tool) => ({
             name: tool.name,
             description: tool.description,
-            parameters: toJSONSchema(tool.schema)
+            parameters: toGeminiSchema(toJSONSchema(tool.schema))
           }));
 
         if (functionDeclarations.length) {
@@ -628,7 +678,16 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
       })()
     : undefined;
 
-const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"], tools: ModelGenerateInput["tools"]) => {
+const mapToolConfig = (
+  toolChoice: ModelGenerateInput["toolChoice"],
+  tools: ModelGenerateInput["tools"],
+  messages: ModelMessage[]
+) => {
+  const latestMessage = messages.at(-1);
+  if (latestMessage?.role === "tool" && toolChoice !== "none") {
+    return undefined;
+  }
+
   if (!toolChoice || toolChoice === "auto") {
     return undefined;
   }
@@ -666,10 +725,23 @@ const mapRealtimeProviderOptions = (providerOptions: Record<string, unknown> | u
   providerOptions
     ? Object.fromEntries(
         Object.entries(providerOptions).filter(
-          ([key]) => !["headers", "realtime_url", "realtime_query", "access_token", "accessToken", "apiVersion", "api_version"].includes(key)
+          ([key]) =>
+            ![
+              "headers",
+              "realtime_url",
+              "realtime_query",
+              "access_token",
+              "accessToken",
+              "apiVersion",
+              "api_version",
+              "translationConfig"
+            ].includes(key)
         )
       )
     : {};
+
+const isGeminiLiveTranslateModel = (modelId: string) => /^gemini-3\.5-live-translate(?:-preview)?$/i.test(modelId.trim());
+const isGemini31FlashLiveModel = (modelId: string) => /^gemini-3\.1-flash-live(?:-preview)?$/i.test(modelId.trim());
 
 const geminiRealtimeURL = (baseURL: string, apiKey: string, providerOptions?: Record<string, unknown>) => {
   const override = providerOptions?.realtime_url;
@@ -725,10 +797,86 @@ const mapRealtimeThinkingConfig = (config: RealtimeSessionConfig) => {
   return Object.keys(thinkingConfig).length ? thinkingConfig : undefined;
 };
 
+const mapRealtimeTranslationConfig = (config: RealtimeSessionConfig) => {
+  const providerTranslationConfig =
+    config.providerOptions &&
+    typeof config.providerOptions.translationConfig === "object" &&
+    config.providerOptions.translationConfig &&
+    !Array.isArray(config.providerOptions.translationConfig)
+      ? (config.providerOptions.translationConfig as Record<string, unknown>)
+      : {};
+
+  const translationConfig = {
+    ...providerTranslationConfig,
+    ...(config.translation?.targetLanguage ? { targetLanguageCode: config.translation.targetLanguage } : {}),
+    ...(config.translation?.sourceLanguage ? { sourceLanguageCode: config.translation.sourceLanguage } : {})
+  };
+
+  return Object.keys(translationConfig).length ? translationConfig : undefined;
+};
+
+const assertGeminiRealtimeTranslateConfig = (config: RealtimeSessionConfig, modelId: string) => {
+  if (!isGeminiLiveTranslateModel(modelId)) {
+    return;
+  }
+
+  if (config.mode && config.mode !== "translation") {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.5-live-translate-preview" only supports realtime translation mode.'
+    );
+  }
+
+  if (!config.translation?.targetLanguage) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.5-live-translate-preview" requires "translation.targetLanguage".'
+    );
+  }
+
+  const tools = toToolSet(config.tools);
+  if (tools && Object.keys(tools).length > 0) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.5-live-translate-preview" does not support realtime tools.'
+    );
+  }
+
+  if (config.reasoning) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.5-live-translate-preview" does not support realtime reasoning.'
+    );
+  }
+
+  if (config.instructions || config.translation?.instructions) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.5-live-translate-preview" does not support realtime system instructions.'
+    );
+  }
+};
+
+const assertGeminiRealtimeConfig = (config: RealtimeSessionConfig, modelId: string) => {
+  assertGeminiRealtimeTranslateConfig(config, modelId);
+
+  if (!isGemini31FlashLiveModel(modelId)) {
+    return;
+  }
+
+  if (config.affectiveDialog !== undefined) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.1-flash-live-preview" does not support realtime affectiveDialog.'
+    );
+  }
+
+  if (config.proactiveAudio !== undefined) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.1-flash-live-preview" does not support realtime proactiveAudio.'
+    );
+  }
+};
+
 const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => ({
   setup: {
     model: `models/${modelId}`,
     generationConfig: {
+      responseModalities: isGeminiLiveTranslateModel(modelId) || config.outputAudioMediaType || config.voice ? ["AUDIO"] : ["TEXT"],
       ...(config.voice
         ? {
             speechConfig: {
@@ -740,9 +888,9 @@ const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
             }
           }
         : {}),
-      responseModalities: config.outputAudioMediaType || config.voice ? ["AUDIO"] : ["TEXT"],
       ...(mapRealtimeThinkingConfig(config) ? { thinkingConfig: mapRealtimeThinkingConfig(config) } : {})
     },
+    ...(mapRealtimeTranslationConfig(config) ? { translationConfig: mapRealtimeTranslationConfig(config) } : {}),
     ...(mapRealtimeTranscriptionConfig(config.inputAudioTranscription ?? (config.inputTranscription ? true : undefined))
       ? {
           inputAudioTranscription: mapRealtimeTranscriptionConfig(
@@ -1019,7 +1167,7 @@ const generationConfig = (modelId: string, input: ModelGenerateInput) => ({
   ...(input.structuredOutput?.mode === "native"
     ? {
         responseMimeType: "application/json",
-        responseSchema: toJSONSchema(input.structuredOutput.schema)
+        responseSchema: toGeminiSchema(toJSONSchema(input.structuredOutput.schema))
       }
     : {})
 });
@@ -1037,7 +1185,10 @@ const parseAssistantMessage = (candidate: any): ModelMessage => ({
           toolCall: {
             id: part.functionCall.id ?? `${part.functionCall.name}-${index}`,
             name: part.functionCall.name,
-            input: part.functionCall.args ?? {}
+            input: part.functionCall.args ?? {},
+            ...(typeof part.thoughtSignature === "string"
+              ? { providerMetadata: { geminiThoughtSignature: part.thoughtSignature } }
+              : {})
           }
         };
       }
@@ -1750,7 +1901,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
               systemInstruction: systemInstruction(input.messages),
               tools: mapTools(input.tools),
               ...input.providerOptions,
-              toolConfig: mapToolConfig(input.toolChoice, input.tools),
+              toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
               generationConfig: generationConfig(this.modelId, input)
             })
           }),
@@ -1789,7 +1940,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
             systemInstruction: systemInstruction(input.messages),
             tools: mapTools(input.tools),
             ...input.providerOptions,
-            toolConfig: mapToolConfig(input.toolChoice, input.tools),
+            toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
             generationConfig: generationConfig(this.modelId, input)
           })
         }),
@@ -1814,7 +1965,10 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
                 toolCall: {
                   id: part.functionCall.id ?? `${part.functionCall.name}-${index}`,
                   name: part.functionCall.name,
-                  input: part.functionCall.args ?? {}
+                  input: part.functionCall.args ?? {},
+                  ...(typeof part.thoughtSignature === "string"
+                    ? { providerMetadata: { geminiThoughtSignature: part.thoughtSignature } }
+                    : {})
                 }
               } satisfies StreamEvent;
             }
@@ -1852,6 +2006,7 @@ class GeminiEmbeddingModel implements EmbeddingModel {
     try {
       const embeddings = await Promise.all(
         input.values.map(async (value) => {
+          const part = embeddingValueToPart(value, this.modelId);
           const response = await withRetry(
             () =>
               this.fetcher(`${this.baseURL}/models/${this.modelId}:embedContent?key=${this.apiKey}`, {
@@ -1859,7 +2014,7 @@ class GeminiEmbeddingModel implements EmbeddingModel {
                 headers: { "content-type": "application/json" },
                 signal,
                 body: JSON.stringify({
-                  content: { parts: [{ text: value }] }
+                  content: { parts: [part] }
                 })
               }),
             input
@@ -2319,6 +2474,8 @@ class GeminiRealtimeModel implements RealtimeModel {
   ) {}
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
+    assertGeminiRealtimeConfig(config, this.modelId);
+
     const providerOptions = (config.providerOptions ?? {}) as Record<string, unknown>;
     const connection = await (this.connectionFactory ?? openWebSocketConnection)(
       this.realtimeURL ?? geminiRealtimeURL(this.baseURL, this.apiKey, providerOptions),
@@ -2343,29 +2500,39 @@ class GeminiRealtimeModel implements RealtimeModel {
             }
           }
         ],
-        buildMediaPayloads: (frame) => [
-          {
-            realtimeInput: {
-              media: {
-                mimeType: frame.mediaType,
-                data: encodeMediaFrame(frame)
+        buildMediaPayloads: (frame) => {
+          if (isGeminiLiveTranslateModel(this.modelId)) {
+            throw new UnsupportedFeatureError(
+              'Model "gemini/gemini-3.5-live-translate-preview" only supports audio input.'
+            );
+          }
+
+          return [
+            {
+              realtimeInput: {
+                media: {
+                  mimeType: frame.mediaType,
+                  data: encodeMediaFrame(frame)
+                }
               }
             }
+          ];
+        },
+        buildTextPayloads: (text) => {
+          if (isGeminiLiveTranslateModel(this.modelId)) {
+            throw new UnsupportedFeatureError(
+              'Model "gemini/gemini-3.5-live-translate-preview" only supports audio input.'
+            );
           }
-        ],
-        buildTextPayloads: (text) => [
-          {
-            clientContent: {
-              turns: [
-                {
-                  role: "user",
-                  parts: [{ text }]
-                }
-              ],
-              turnComplete: true
+
+          return [
+            {
+              realtimeInput: {
+                text
+              }
             }
-          }
-        ],
+          ];
+        },
         buildToolResultPayloads: (result) => [
           {
             toolResponse: {
@@ -2379,8 +2546,14 @@ class GeminiRealtimeModel implements RealtimeModel {
             }
           }
         ],
-        buildUpdatePayloads: (sessionConfig) => [geminiRealtimeSetup(sessionConfig, this.modelId)],
-        buildInitialPayloads: (sessionConfig) => [geminiRealtimeSetup(sessionConfig, this.modelId)]
+        buildUpdatePayloads: (sessionConfig) => {
+          assertGeminiRealtimeConfig(sessionConfig, this.modelId);
+          return [geminiRealtimeSetup(sessionConfig, this.modelId)];
+        },
+        buildInitialPayloads: (sessionConfig) => {
+          assertGeminiRealtimeConfig(sessionConfig, this.modelId);
+          return [geminiRealtimeSetup(sessionConfig, this.modelId)];
+        }
       }
     });
     await session.initialize();

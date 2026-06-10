@@ -542,6 +542,77 @@ describe("anthropic adapter", () => {
     });
   });
 
+  it("maps Claude Fable 5 effort without redundant thinking config and enables server-side fallback", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from fable 5" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-fable-5"),
+      prompt: "hello",
+      reasoning: {
+        effort: "high"
+      },
+      providerOptions: {
+        fallbacks: [{ model: "claude-opus-4-8" }]
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
+    const body = JSON.parse(String(requestInit.body)) as {
+      model: string;
+      thinking?: unknown;
+      output_config: { effort: string };
+      fallbacks: Array<{ model: string }>;
+    };
+
+    expect(headers["anthropic-beta"]).toBe("server-side-fallback-2026-06-01");
+    expect(body).toMatchObject({
+      model: "claude-fable-5",
+      output_config: { effort: "high" },
+      fallbacks: [{ model: "claude-opus-4-8" }]
+    });
+    expect(body.thinking).toBeUndefined();
+  });
+
+  it("allows summarized thinking display on Claude Mythos 5", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from mythos 5" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-mythos-5"),
+      prompt: "hello",
+      providerOptions: {
+        thinking: {
+          type: "adaptive",
+          display: "summarized"
+        }
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      thinking: { type: string; display?: string };
+    };
+
+    expect(body.thinking).toEqual({
+      type: "adaptive",
+      display: "summarized"
+    });
+  });
+
   it("preserves valid mid-conversation system messages for Claude Opus 4.8", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -621,7 +692,7 @@ describe("anthropic adapter", () => {
         ]
       })
     ).rejects.toThrow(
-      'Provider "anthropic" only supports mid-conversation system messages immediately after a user turn on Claude Opus 4.8 or later.'
+      'Provider "anthropic" only supports mid-conversation system messages immediately after a user turn on Claude Opus 4.8 or later, Claude Fable 5, or Claude Mythos 5.'
     );
   });
 
@@ -701,6 +772,52 @@ describe("anthropic adapter", () => {
       data: {
         type: "stop_details",
         stop_details: { type: "refusal", reason: "safety" }
+      }
+    });
+  });
+
+  it("streams Anthropic fallback blocks as provider data", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "event: content_block_start\n" +
+              'data: {"index":0,"content_block":{"type":"fallback","from":{"model":"claude-fable-5"},"to":{"model":"claude-opus-4-8"}}}\n\n' +
+              "event: content_block_delta\n" +
+              'data: {"index":1,"delta":{"type":"text_delta","text":"fallback served"}}\n\n' +
+              "event: message_stop\n" +
+              'data: {"stop_reason":"end_turn"}\n\n'
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("claude-fable-5"),
+      prompt: "unsafe request",
+      providerOptions: {
+        fallbacks: [{ model: "claude-opus-4-8" }]
+      }
+    });
+
+    const final = await result.collect();
+    expect(final.text).toBe("fallback served");
+    expect(final.messages.at(-1)?.parts).toContainEqual({
+      type: "provider-data",
+      provider: "anthropic",
+      data: {
+        type: "fallback",
+        from: { model: "claude-fable-5" },
+        to: { model: "claude-opus-4-8" }
       }
     });
   });
@@ -951,7 +1068,47 @@ describe("anthropic adapter", () => {
         }
       })
     ).rejects.toThrow(
-      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later; use "reasoning.effort" instead.'
+      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; use "reasoning.effort" instead.'
+    );
+  });
+
+  it("rejects disabled or manual thinking on Claude Fable 5", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("claude-fable-5"),
+        prompt: "hello",
+        reasoning: {
+          effort: "none"
+        }
+      })
+    ).rejects.toThrow('Provider "anthropic" does not support disabling thinking for Claude Fable 5 or Claude Mythos 5.');
+
+    await expect(
+      generateText({
+        model: provider("claude-fable-5"),
+        prompt: "hello",
+        providerOptions: {
+          thinking: {
+            type: "disabled"
+          }
+        }
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" does not support "thinking.disabled" for Claude Fable 5 or Claude Mythos 5; omit "thinking" or use "thinking.display" with adaptive thinking.'
+    );
+
+    await expect(
+      generateText({
+        model: provider("claude-fable-5"),
+        prompt: "hello",
+        reasoning: {
+          budgetTokens: 1024
+        }
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; use "reasoning.effort" instead.'
     );
   });
 
@@ -965,7 +1122,7 @@ describe("anthropic adapter", () => {
         temperature: 0
       })
     ).rejects.toThrow(
-      'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later; omit it from the request.'
+      'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; omit it from the request.'
     );
 
     await expect(
@@ -977,7 +1134,7 @@ describe("anthropic adapter", () => {
         }
       })
     ).rejects.toThrow(
-      'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later; omit them from the request.'
+      'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; omit them from the request.'
     );
   });
 });

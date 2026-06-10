@@ -83,13 +83,13 @@ const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
 const anthropicBaseURL = process.env.ANTHROPIC_BASE_URL;
 const anthropicVersion = process.env.ANTHROPIC_VERSION;
 const anthropicTextModelId = process.env.ANTHROPIC_INTEGRATION_MODEL ?? "claude-3-5-sonnet";
-const isAnthropicOpus47OrLaterModel = (modelId: string) =>
-  /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9])(?:[-@]|$)/.test(modelId);
+const usesModernAnthropicControls = (modelId: string) =>
+  /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9]|claude-(?:fable|mythos)-5)(?:[-@]|$)/.test(modelId);
 
 const geminiApiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const geminiBaseURL = process.env.GEMINI_BASE_URL;
-const geminiTextModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.5-flash";
-const geminiEmbeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-004";
+const geminiTextModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.1-flash-lite";
+const geminiEmbeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "gemini-embedding-2";
 
 const openRouterApiKey = process.env.OPENROUTER_API_KEY;
 const openRouterBaseURL = process.env.OPENROUTER_BASE_URL;
@@ -139,7 +139,7 @@ const anthropicSupports: IntegrationLanguageProvider["supports"] = {
   tools: true,
   structuredOutputMode: "prompted",
   embeddings: false,
-  reasoning: isAnthropicOpus47OrLaterModel(anthropicTextModelId)
+  reasoning: usesModernAnthropicControls(anthropicTextModelId)
     ? {
         effort: "low"
       }

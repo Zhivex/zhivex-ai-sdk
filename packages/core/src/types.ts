@@ -24,6 +24,7 @@ export interface ToolCall {
   id: string;
   name: string;
   input: JsonValue;
+  providerMetadata?: Record<string, JsonValue>;
 }
 
 export interface ToolExecutionResult {
@@ -311,6 +312,8 @@ export interface MediaInput {
   filename?: string;
   providerMetadata?: Record<string, unknown>;
 }
+
+export type EmbedValue = string | MediaInput;
 
 export interface GeneratedMedia {
   data?: Uint8Array;
@@ -2062,14 +2065,14 @@ export type UIMessageChunk =
   | UIAgentRunFinishChunk;
 
 export interface EmbedInput {
-  values: string[];
+  values: EmbedValue[];
 }
 
 export interface EmbedOptions extends RetryOptions {
   model: EmbeddingModel;
-  value: string | string[];
+  value: EmbedValue | EmbedValue[];
 }
 
 export interface EmbedOutput extends EmbedResult {
-  values: string[];
+  values: EmbedValue[];
 }

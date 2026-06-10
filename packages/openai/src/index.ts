@@ -1682,6 +1682,12 @@ class OpenAIEmbeddingModel implements EmbeddingModel {
 
   async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
+    const values = input.values.map((value) => {
+      if (typeof value !== "string") {
+        throw new UnsupportedFeatureError('Provider "openai" does not support multimodal embedding values.');
+      }
+      return value;
+    });
 
     try {
       const response = await withRetry(
@@ -1692,7 +1698,7 @@ class OpenAIEmbeddingModel implements EmbeddingModel {
             signal,
             body: JSON.stringify({
               model: this.modelId,
-              input: input.values
+              input: values
             })
           }),
         input
