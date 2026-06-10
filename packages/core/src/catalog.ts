@@ -57,7 +57,100 @@ export const defaultModelCatalog = createModelCatalog([
   },
   {
     provider: "gemini",
+    modelId: "gemini-3.1-pro-preview",
+    recommendedFor: ["chat", "reasoning", "vision", "tools"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-3.1-pro-preview-customtools",
+    recommendedFor: ["chat", "reasoning", "tools"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-3-flash-preview",
+    recommendedFor: ["chat", "speed", "vision", "tools"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-3.1-flash-lite",
+    recommendedFor: ["chat", "speed", "vision"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-3.1-flash-image",
+    recommendedFor: ["vision", "speed"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-3-pro-image",
+    recommendedFor: ["vision", "reasoning"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-2.5-flash-image",
+    recommendedFor: ["vision", "speed"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-3.1-flash-live-preview",
+    recommendedFor: ["speed", "vision", "tools"]
+  },
+  {
+    provider: "gemini",
     modelId: "gemini-3.5-live-translate-preview",
+    recommendedFor: ["speed"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-3.1-flash-tts-preview",
+    recommendedFor: ["speed"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-embedding-2",
+    recommendedFor: ["vision"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-robotics-er-1.6-preview",
+    recommendedFor: ["vision", "reasoning"]
+  },
+  {
+    provider: "gemini",
+    modelId: "veo-3.1-generate-preview",
+    recommendedFor: ["vision"]
+  },
+  {
+    provider: "gemini",
+    modelId: "veo-3.1-fast-generate-preview",
+    recommendedFor: ["vision", "speed"]
+  },
+  {
+    provider: "gemini",
+    modelId: "imagen-4.0-generate-001",
+    recommendedFor: ["vision"]
+  },
+  {
+    provider: "gemini",
+    modelId: "imagen-4.0-fast-generate-001",
+    recommendedFor: ["vision", "speed"]
+  },
+  {
+    provider: "gemini",
+    modelId: "imagen-4.0-ultra-generate-001",
+    recommendedFor: ["vision"]
+  },
+  {
+    provider: "gemini",
+    modelId: "lyria-3-clip-preview"
+  },
+  {
+    provider: "gemini",
+    modelId: "lyria-3-pro-preview"
+  },
+  {
+    provider: "gemini",
+    modelId: "lyria-realtime-exp",
     recommendedFor: ["speed"]
   },
   {

@@ -200,7 +200,7 @@ describe("provider parity documentation", () => {
         "| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |"
       ],
       [
-        "| Gemini | yes | yes | yes | native | yes | no | no | no | no | model-dependent | yes | native | Tier B |",
+        "| Gemini | yes | yes | yes | native | yes | yes | no | no | no | model-dependent | yes | native | Tier B |",
         "| Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B |"
       ],
       [

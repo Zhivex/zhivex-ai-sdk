@@ -1991,7 +1991,7 @@ describe("core helpers", () => {
       model: createEmbeddingModel({
         async embed(input) {
           return {
-            embeddings: input.values.map((value, index) => [value.length, index])
+            embeddings: input.values.map((value, index) => [typeof value === "string" ? value.length : 0, index])
           };
         }
       }),

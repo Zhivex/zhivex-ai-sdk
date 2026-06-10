@@ -37,6 +37,7 @@ import {
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
+  type EmbedValue,
   type FileDeleteInput,
   type FileGetInput,
   type FileListInput,
@@ -115,7 +116,7 @@ const capabilities: ModelCapabilities = {
   parallelToolCalls: false,
   vision: true,
   files: true,
-  audioInput: false,
+  audioInput: true,
   audioOutput: false,
   embeddings: true,
   fileSearch: true,
@@ -339,6 +340,24 @@ const mediaInputToPart = (media: MediaInput) =>
         }
       };
 
+const embeddingValueToPart = (value: EmbedValue, modelId: string) => {
+  if (typeof value === "string") {
+    return { text: value };
+  }
+
+  if (modelId !== "gemini-embedding-2") {
+    throw new UnsupportedFeatureError(
+      `Model "gemini/${modelId}" does not support multimodal embedding values. Use "gemini-embedding-2" for Gemini multimodal embeddings.`
+    );
+  }
+
+  if (!value.uri && value.data === undefined) {
+    throw new UnsupportedFeatureError('Provider "gemini" requires embedding media values to include "data" or "uri".');
+  }
+
+  return mediaInputToPart(value);
+};
+
 const collectInlineMedia = (json: any, fallbackMediaType: string): { media: GeneratedMedia[]; text?: string } => {
   const text: string[] = [];
   const media: GeneratedMedia[] = [];
@@ -557,6 +576,13 @@ const mapPart = (part: ModelMessage["parts"][number]) => {
           data: part.image
         }
       };
+    case "audio":
+      return {
+        inlineData: {
+          mimeType: part.mediaType,
+          data: toBase64(part.data)
+        }
+      };
     case "file":
       return {
         fileData: {
@@ -715,6 +741,7 @@ const mapRealtimeProviderOptions = (providerOptions: Record<string, unknown> | u
     : {};
 
 const isGeminiLiveTranslateModel = (modelId: string) => /^gemini-3\.5-live-translate(?:-preview)?$/i.test(modelId.trim());
+const isGemini31FlashLiveModel = (modelId: string) => /^gemini-3\.1-flash-live(?:-preview)?$/i.test(modelId.trim());
 
 const geminiRealtimeURL = (baseURL: string, apiKey: string, providerOptions?: Record<string, unknown>) => {
   const override = providerOptions?.realtime_url;
@@ -825,10 +852,31 @@ const assertGeminiRealtimeTranslateConfig = (config: RealtimeSessionConfig, mode
   }
 };
 
+const assertGeminiRealtimeConfig = (config: RealtimeSessionConfig, modelId: string) => {
+  assertGeminiRealtimeTranslateConfig(config, modelId);
+
+  if (!isGemini31FlashLiveModel(modelId)) {
+    return;
+  }
+
+  if (config.affectiveDialog !== undefined) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.1-flash-live-preview" does not support realtime affectiveDialog.'
+    );
+  }
+
+  if (config.proactiveAudio !== undefined) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.1-flash-live-preview" does not support realtime proactiveAudio.'
+    );
+  }
+};
+
 const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => ({
   setup: {
     model: `models/${modelId}`,
     generationConfig: {
+      responseModalities: isGeminiLiveTranslateModel(modelId) || config.outputAudioMediaType || config.voice ? ["AUDIO"] : ["TEXT"],
       ...(config.voice
         ? {
             speechConfig: {
@@ -840,7 +888,6 @@ const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
             }
           }
         : {}),
-      responseModalities: isGeminiLiveTranslateModel(modelId) || config.outputAudioMediaType || config.voice ? ["AUDIO"] : ["TEXT"],
       ...(mapRealtimeThinkingConfig(config) ? { thinkingConfig: mapRealtimeThinkingConfig(config) } : {})
     },
     ...(mapRealtimeTranslationConfig(config) ? { translationConfig: mapRealtimeTranslationConfig(config) } : {}),
@@ -1959,6 +2006,7 @@ class GeminiEmbeddingModel implements EmbeddingModel {
     try {
       const embeddings = await Promise.all(
         input.values.map(async (value) => {
+          const part = embeddingValueToPart(value, this.modelId);
           const response = await withRetry(
             () =>
               this.fetcher(`${this.baseURL}/models/${this.modelId}:embedContent?key=${this.apiKey}`, {
@@ -1966,7 +2014,7 @@ class GeminiEmbeddingModel implements EmbeddingModel {
                 headers: { "content-type": "application/json" },
                 signal,
                 body: JSON.stringify({
-                  content: { parts: [{ text: value }] }
+                  content: { parts: [part] }
                 })
               }),
             input
@@ -2426,7 +2474,7 @@ class GeminiRealtimeModel implements RealtimeModel {
   ) {}
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
-    assertGeminiRealtimeTranslateConfig(config, this.modelId);
+    assertGeminiRealtimeConfig(config, this.modelId);
 
     const providerOptions = (config.providerOptions ?? {}) as Record<string, unknown>;
     const connection = await (this.connectionFactory ?? openWebSocketConnection)(
@@ -2479,14 +2527,8 @@ class GeminiRealtimeModel implements RealtimeModel {
 
           return [
             {
-              clientContent: {
-                turns: [
-                  {
-                    role: "user",
-                    parts: [{ text }]
-                  }
-                ],
-                turnComplete: true
+              realtimeInput: {
+                text
               }
             }
           ];
@@ -2505,11 +2547,11 @@ class GeminiRealtimeModel implements RealtimeModel {
           }
         ],
         buildUpdatePayloads: (sessionConfig) => {
-          assertGeminiRealtimeTranslateConfig(sessionConfig, this.modelId);
+          assertGeminiRealtimeConfig(sessionConfig, this.modelId);
           return [geminiRealtimeSetup(sessionConfig, this.modelId)];
         },
         buildInitialPayloads: (sessionConfig) => {
-          assertGeminiRealtimeTranslateConfig(sessionConfig, this.modelId);
+          assertGeminiRealtimeConfig(sessionConfig, this.modelId);
           return [geminiRealtimeSetup(sessionConfig, this.modelId)];
         }
       }

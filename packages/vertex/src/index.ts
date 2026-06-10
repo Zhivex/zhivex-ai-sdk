@@ -1541,6 +1541,12 @@ class VertexEmbeddingModel implements EmbeddingModel {
 
   async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
+    const values = input.values.map((value) => {
+      if (typeof value !== "string") {
+        throw new UnsupportedFeatureError('Provider "vertex" does not support multimodal embedding values.');
+      }
+      return value;
+    });
 
     try {
       const response = await withRetry(
@@ -1550,7 +1556,7 @@ class VertexEmbeddingModel implements EmbeddingModel {
             headers: this.headers(),
             signal,
             body: JSON.stringify({
-              instances: input.values.map((value) => ({
+              instances: values.map((value) => ({
                 content: value
               }))
             })

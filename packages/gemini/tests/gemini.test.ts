@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
+  audioPart,
   embedMany,
   createBatch,
   createContextCache,
@@ -41,7 +42,7 @@ describe("gemini adapter", () => {
     modelId: "gemini-3.5-flash",
     createModel: () => createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch })("gemini-3.5-flash"),
     createEmbeddingModel: () =>
-      createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch }).embeddingModel("gemini-embedding-001"),
+      createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch }).embeddingModel("gemini-embedding-2"),
     expectedAgentTier: "tier-b",
     expectedCapabilities: {
       streaming: true,
@@ -52,7 +53,7 @@ describe("gemini adapter", () => {
       parallelToolCalls: false,
       vision: true,
       files: true,
-      audioInput: false,
+      audioInput: true,
       audioOutput: false,
       embeddings: true,
       fileSearch: true,
@@ -169,6 +170,48 @@ describe("gemini adapter", () => {
     expect(provider("gemini-2.0-flash")).toMatchObject(provider.languageModel("gemini-2.0-flash"));
   });
 
+  it("maps audio parts to Gemini inlineData for text generation", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "the audio says hello" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gemini-3.5-flash"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "Transcribe the short clip." },
+            audioPart({ mediaType: "audio/wav", data: new Uint8Array([1, 2, 3, 4]) })
+          ]
+        }
+      ]
+    });
+
+    expect(result.text).toBe("the audio says hello");
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      contents: Array<{ parts: Array<Record<string, unknown>> }>;
+    };
+    expect(body.contents[0]?.parts).toEqual([
+      { text: "Transcribe the short clip." },
+      {
+        inlineData: {
+          mimeType: "audio/wav",
+          data: "AQIDBA=="
+        }
+      }
+    ]);
+  });
+
   it("supports structured output on top of provider text", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -225,13 +268,73 @@ describe("gemini adapter", () => {
 
     const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await embedMany({
-      model: provider.embeddingModel("gemini-embedding-001"),
+      model: provider.embeddingModel("gemini-embedding-2"),
       value: ["hello", "world"]
     });
 
     expect(result.embeddings).toEqual([
       [0.5, 0.6],
       [0.7, 0.8]
+    ]);
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      content: { parts: Array<Record<string, unknown>> };
+    };
+    expect(firstBody.content.parts).toEqual([{ text: "hello" }]);
+  });
+
+  it("embeds inline media with gemini-embedding-2", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        embedding: { values: [0.1, 0.2] }
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await embedMany({
+      model: provider.embeddingModel("gemini-embedding-2"),
+      value: [{ data: new Uint8Array([5, 6, 7]), mediaType: "image/png" }]
+    });
+
+    expect(result.embeddings).toEqual([[0.1, 0.2]]);
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      content: { parts: Array<Record<string, unknown>> };
+    };
+    expect(body.content.parts).toEqual([
+      {
+        inlineData: {
+          mimeType: "image/png",
+          data: "BQYH"
+        }
+      }
+    ]);
+  });
+
+  it("embeds file media with gemini-embedding-2", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        embedding: { values: [0.3, 0.4] }
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await embedMany({
+      model: provider.embeddingModel("gemini-embedding-2"),
+      value: [{ uri: "gs://bucket/sample.wav", mediaType: "audio/wav" }]
+    });
+
+    expect(result.embeddings).toEqual([[0.3, 0.4]]);
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      content: { parts: Array<Record<string, unknown>> };
+    };
+    expect(body.content.parts).toEqual([
+      {
+        fileData: {
+          mimeType: "audio/wav",
+          fileUri: "gs://bucket/sample.wav"
+        }
+      }
     ]);
   });
 
@@ -914,7 +1017,7 @@ describe("gemini adapter", () => {
 
     const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await generateImage({
-      model: provider.imageGenerationModel!("gemini-3.1-flash-image-preview"),
+      model: provider.imageGenerationModel!("gemini-3.1-flash-image"),
       prompt: "draw a banana",
       aspectRatio: "1:1",
       size: "1K"
@@ -1056,8 +1159,6 @@ describe("gemini adapter", () => {
       inputAudioTranscription: true,
       outputAudioTranscription: true,
       mediaResolution: "MEDIA_RESOLUTION_LOW",
-      affectiveDialog: true,
-      proactiveAudio: true,
       tools: {
         weather: tool({
           name: "weather",
@@ -1080,8 +1181,6 @@ describe("gemini adapter", () => {
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         mediaResolution: "MEDIA_RESOLUTION_LOW",
-        enableAffectiveDialog: true,
-        proactivity: { proactiveAudio: true },
         generationConfig: expect.objectContaining({
           responseModalities: ["AUDIO"],
           thinkingConfig: { thinkingLevel: "low", includeThoughts: true }
@@ -1098,11 +1197,24 @@ describe("gemini adapter", () => {
       }
     });
     expect(sent[2]).toMatchObject({
-      clientContent: {
-        turns: [{ role: "user", parts: [{ text: "hello gemini" }] }],
-        turnComplete: true
+      realtimeInput: {
+        text: "hello gemini"
       }
     });
+  });
+
+  it("rejects Gemini 3.1 Live affective dialog and proactive audio before connecting", async () => {
+    const connectionFactory = vi.fn();
+    const provider = createGemini({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const model = provider.realtimeModel!("gemini-3.1-flash-live-preview");
+
+    await expect(model.connect({ affectiveDialog: true })).rejects.toThrow(/affectiveDialog/);
+    await expect(model.connect({ proactiveAudio: true })).rejects.toThrow(/proactiveAudio/);
+    expect(connectionFactory).not.toHaveBeenCalled();
   });
 
   it("connects Gemini 3.5 Live Translate sessions with typed translation config", async () => {

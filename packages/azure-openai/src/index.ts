@@ -1389,6 +1389,12 @@ class AzureOpenAIEmbeddingModel implements EmbeddingModel {
 
   async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
+    const values = input.values.map((value) => {
+      if (typeof value !== "string") {
+        throw new UnsupportedFeatureError('Provider "azure-openai" does not support multimodal embedding values.');
+      }
+      return value;
+    });
 
     try {
       const response = await withRetry(
@@ -1399,7 +1405,7 @@ class AzureOpenAIEmbeddingModel implements EmbeddingModel {
             signal,
             body: JSON.stringify({
               model: this.modelId,
-              input: input.values
+              input: values
             })
           }),
         input
@@ -2013,6 +2019,12 @@ export const createAzureOpenAI = (
       new (class extends AzureOpenAIEmbeddingModel {
         async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
           const { signal, cleanup } = withTimeoutSignal(input);
+          const values = input.values.map((value) => {
+            if (typeof value !== "string") {
+              throw new UnsupportedFeatureError('Provider "azure-openai" does not support multimodal embedding values.');
+            }
+            return value;
+          });
 
           try {
             const response = await withRetry(
@@ -2023,7 +2035,7 @@ export const createAzureOpenAI = (
                   signal,
                   body: JSON.stringify({
                     model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
-                    input: input.values
+                    input: values
                   })
                 }),
               input

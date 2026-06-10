@@ -834,7 +834,7 @@ Notes:
 - Gemini, Vertex, and Azure OpenAI sessions support `sendMedia()` for image inputs such as `image/jpeg`.
 - OpenAI supports `sendMedia()` for image inputs on `gpt-realtime`, `gpt-realtime-2`, and `gpt-realtime-mini`, but not on the older `gpt-4o-*-realtime-preview`, `gpt-realtime-translate`, or `gpt-realtime-whisper` models.
 - OpenAI `gpt-realtime-translate` uses realtime translation mode and requires `translation.targetLanguage`; OpenAI `gpt-realtime-whisper` uses realtime transcription mode and emits transcript events without model audio output.
-- Gemini and Vertex Live sessions can opt into typed `inputAudioTranscription`, `outputAudioTranscription`, `mediaResolution`, `affectiveDialog`, `proactiveAudio`, and `reasoning` setup fields. For Gemini API preview-only Live features, pass `providerOptions: { apiVersion: "v1alpha" }`.
+- Gemini and Vertex Live sessions can opt into typed `inputAudioTranscription`, `outputAudioTranscription`, `mediaResolution`, `affectiveDialog`, `proactiveAudio`, and `reasoning` setup fields where the selected model supports them. Gemini `gemini-3.1-flash-live-preview` rejects `affectiveDialog` and `proactiveAudio` before opening a WebSocket. For Gemini API preview-only Live features, pass `providerOptions: { apiVersion: "v1alpha" }`.
 - Gemini and Vertex `gemini-3.5-live-translate-preview` sessions map `translation.targetLanguage` to Google Live `translationConfig.targetLanguageCode`, emit translated audio plus assistant transcript events, and reject tools, text input, image input, reasoning, and system instructions before the request is sent. Vertex availability still depends on the selected project, region, and model access.
 - Advanced provider-specific session fields can still be passed through `RealtimeSessionConfig.providerOptions`.
 
@@ -2079,6 +2079,27 @@ const result = await embed({
 console.log(result.embeddings[0]?.length);
 ```
 
+Gemini supports multimodal embedding values through `gemini-embedding-2`; other embedding providers remain text-only unless their adapter explicitly documents media support.
+
+```ts
+import { embed } from "@zhivex-ai/sdk";
+import { createGemini } from "@zhivex-ai/gemini";
+
+const gemini = createGemini({
+  apiKey: process.env.GEMINI_API_KEY
+});
+
+const imageEmbedding = await embed({
+  model: gemini.embeddingModel("gemini-embedding-2"),
+  value: {
+    uri: "gs://my-bucket/product-photo.png",
+    mediaType: "image/png"
+  }
+});
+
+console.log(imageEmbedding.embeddings[0]?.length);
+```
+
 For RAG-backed agents, use `chunkText()`, `embedRetrievalDocuments()`, `retrieveContext()`, and `createRetrievalContextMessage()` with an app-owned vector store. See [RAG Guide](./docs/RAG.md).
 
 ### Audio
@@ -2145,6 +2166,37 @@ console.log(answer.text);
 console.log(answer.audio?.[0]?.mediaType);
 ```
 
+Gemini language models can receive audio parts for understanding and summarization through `generateText()`:
+
+```ts
+import { audioPart, generateText } from "@zhivex-ai/sdk";
+import { createGemini } from "@zhivex-ai/gemini";
+
+const gemini = createGemini({
+  apiKey: process.env.GEMINI_API_KEY
+});
+
+const summary = await generateText({
+  model: gemini("gemini-3.5-flash"),
+  messages: [
+    {
+      role: "user",
+      parts: [
+        { type: "text", text: "Summarize this recording." },
+        audioPart({
+          data: "BASE64_AUDIO",
+          mediaType: "audio/wav"
+        })
+      ]
+    }
+  ]
+});
+
+console.log(summary.text);
+```
+
+For Gemini audio output, use `speechModel()` with `generateSpeech()` for TTS or `realtimeModel()` for Live sessions; regular Gemini `generateText()` keeps audio output disabled.
+
 ### Generative Media
 
 Use the shared media primitives with Google models that expose image, video, or music generation.
@@ -2158,7 +2210,7 @@ const gemini = createGemini({
 });
 
 const image = await generateImage({
-  model: gemini.imageGenerationModel!("gemini-3.1-flash-image-preview"),
+  model: gemini.imageGenerationModel!("gemini-3.1-flash-image"),
   prompt: "Create a crisp product shot of a matte black espresso cup"
 });
 

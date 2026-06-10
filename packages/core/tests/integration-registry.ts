@@ -89,7 +89,7 @@ const usesModernAnthropicControls = (modelId: string) =>
 const geminiApiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const geminiBaseURL = process.env.GEMINI_BASE_URL;
 const geminiTextModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.1-flash-lite";
-const geminiEmbeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "gemini-embedding-001";
+const geminiEmbeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "gemini-embedding-2";
 
 const openRouterApiKey = process.env.OPENROUTER_API_KEY;
 const openRouterBaseURL = process.env.OPENROUTER_BASE_URL;

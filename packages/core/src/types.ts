@@ -313,6 +313,8 @@ export interface MediaInput {
   providerMetadata?: Record<string, unknown>;
 }
 
+export type EmbedValue = string | MediaInput;
+
 export interface GeneratedMedia {
   data?: Uint8Array;
   uri?: string;
@@ -2063,14 +2065,14 @@ export type UIMessageChunk =
   | UIAgentRunFinishChunk;
 
 export interface EmbedInput {
-  values: string[];
+  values: EmbedValue[];
 }
 
 export interface EmbedOptions extends RetryOptions {
   model: EmbeddingModel;
-  value: string | string[];
+  value: EmbedValue | EmbedValue[];
 }
 
 export interface EmbedOutput extends EmbedResult {
-  values: string[];
+  values: EmbedValue[];
 }
