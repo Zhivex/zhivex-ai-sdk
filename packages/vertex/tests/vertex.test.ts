@@ -501,6 +501,21 @@ describe("vertex adapter", () => {
 
     expect(result.object.title).toBe("Tea");
     expect(result.objectMode).toBe("native");
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      generationConfig: { responseSchema: Record<string, unknown> };
+    };
+    expect(body.generationConfig.responseSchema).toMatchObject({
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        servings: { type: "number" }
+      },
+      required: ["title", "servings"]
+    });
+    expect(JSON.stringify(body.generationConfig.responseSchema)).not.toContain("$schema");
+    expect(JSON.stringify(body.generationConfig.responseSchema)).not.toContain("additionalProperties");
   });
 
   it("embeds content in batches", async () => {
@@ -549,15 +564,24 @@ describe("vertex adapter", () => {
       model: provider("gemini-2.0-flash"),
       prompt: "hello",
       providerOptions: {
+        contents: [{ role: "user", parts: [{ text: "override" }] }],
+        generationConfig: { responseMimeType: "text/plain" },
         topP: 0.95,
         candidateCount: 1
       }
     });
 
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    const body = JSON.parse(String(requestInit.body)) as { topP: number; candidateCount: number };
+    const body = JSON.parse(String(requestInit.body)) as {
+      contents: Array<{ parts: Array<{ text: string }> }>;
+      generationConfig: { responseMimeType?: string };
+      topP: number;
+      candidateCount: number;
+    };
     expect(body.topP).toBe(0.95);
     expect(body.candidateCount).toBe(1);
+    expect(body.contents[0]?.parts[0]?.text).toBe("hello");
+    expect(body.generationConfig.responseMimeType).not.toBe("text/plain");
   });
 
   it("maps common tool choice to Vertex toolConfig", async () => {

@@ -1897,10 +1897,10 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
             headers: { "content-type": "application/json" },
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: mapTools(input.tools),
-              ...input.providerOptions,
               toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
               generationConfig: generationConfig(this.modelId, input)
             })
@@ -1936,10 +1936,10 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
           headers: { "content-type": "application/json" },
           signal,
           body: JSON.stringify({
+            ...input.providerOptions,
             contents: mapMessages(input.messages),
             systemInstruction: systemInstruction(input.messages),
             tools: mapTools(input.tools),
-            ...input.providerOptions,
             toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
             generationConfig: generationConfig(this.modelId, input)
           })
@@ -2425,6 +2425,7 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
             headers: { "content-type": "application/json" },
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: [{ googleSearch: {} }],
@@ -2433,8 +2434,7 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
                 temperature: input.temperature,
                 maxTokens: input.maxTokens,
                 reasoning: input.reasoning
-              } as ModelGenerateInput),
-              ...input.providerOptions
+              } as ModelGenerateInput)
             })
           }),
         input

@@ -356,6 +356,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
@@ -364,8 +365,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
               temperature: input.temperature,
               max_tokens: input.maxTokens,
               stream: false,
-              ...reasoning,
-              ...input.providerOptions
+              ...reasoning
             })
           }),
         input
@@ -407,6 +407,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
           headers: jsonHeaders(this.apiKey),
           signal,
           body: JSON.stringify({
+            ...input.providerOptions,
             model: this.modelId,
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
@@ -416,8 +417,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
             max_tokens: input.maxTokens,
             stream: true,
             stream_options: { include_usage: true },
-            ...reasoning,
-            ...input.providerOptions
+            ...reasoning
           })
         }),
       input

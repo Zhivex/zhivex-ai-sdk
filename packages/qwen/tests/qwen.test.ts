@@ -144,6 +144,44 @@ describe("qwen adapter", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/responses");
   });
 
+  it("does not let provider options override Responses request fields", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "safe qwen" }] }]
+      })
+    );
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("qwen-plus"),
+      prompt: "hello",
+      maxTokens: 32,
+      providerOptions: {
+        model: "override-model",
+        input: "override-input",
+        stream: true,
+        max_output_tokens: 1,
+        custom_flag: "kept"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      model: string;
+      input: unknown;
+      stream: boolean;
+      max_output_tokens: number;
+      custom_flag?: string;
+    };
+    expect(body.model).toBe("qwen-plus");
+    expect(body.input).not.toBe("override-input");
+    expect(body.stream).toBe(false);
+    expect(body.max_output_tokens).toBe(32);
+    expect(body.custom_flag).toBe("kept");
+  });
+
   it("keeps Chat Completions available through apiMode: chat", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({

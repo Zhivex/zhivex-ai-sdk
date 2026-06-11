@@ -813,6 +813,7 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
             },
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
               input: mapOpenAIInput(messages),
@@ -820,7 +821,6 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
               tool_choice: mapOpenAIToolChoice(input.toolChoice),
               temperature: input.temperature,
               max_output_tokens: input.maxTokens,
-              ...input.providerOptions,
               stream: false
             })
           }),
@@ -871,6 +871,7 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
           },
           signal,
           body: JSON.stringify({
+            ...input.providerOptions,
             model: this.modelId,
             ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
             input: mapOpenAIInput(messages),
@@ -878,7 +879,6 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
             tool_choice: mapOpenAIToolChoice(input.toolChoice),
             temperature: input.temperature,
             max_output_tokens: input.maxTokens,
-            ...input.providerOptions,
             stream: true
           })
         }),

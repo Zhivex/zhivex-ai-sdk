@@ -59,6 +59,7 @@ import {
   normalizeFinishReason,
   streamObject,
   streamAgent,
+  streamSSE,
   streamText,
   system,
   toSSEResponse,
@@ -80,7 +81,7 @@ import {
   user
 } from "../src/index.js";
 import type { AgentRunState, EmbeddingModel, ImageGenerationModel, LanguageModel, MusicGenerationModel, PredictionModel, ProviderAdapter, StreamEvent, ToolSet, VideoGenerationModel } from "../src/index.js";
-import { UnsupportedFeatureError, ValidationError } from "../src/index.js";
+import { ParseError, ProviderHTTPError, UnsupportedFeatureError, ValidationError } from "../src/index.js";
 
 const createLanguageModel = (overrides?: Partial<LanguageModel>): LanguageModel => ({
   provider: "test",
@@ -1885,6 +1886,34 @@ describe("core helpers", () => {
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     expect(body).toContain("event: message");
     expect(body).toContain('data: {"hello":"world"}');
+  });
+
+  it("truncates oversized provider HTTP response bodies", () => {
+    const oversizedBody = `${"x".repeat(70 * 1024)}secret-tail`;
+    const error = new ProviderHTTPError("provider failed", 500, { responseBody: oversizedBody });
+
+    expect(error.responseBody).toContain("truncated");
+    expect(error.responseBody).not.toContain("secret-tail");
+  });
+
+  it("limits streaming error response bodies", async () => {
+    const response = new Response(`${"x".repeat(128)}secret-tail`, { status: 500 });
+
+    await expect(streamSSE(response, { maxErrorBodyChars: 16 }).next()).rejects.toMatchObject({
+      responseBody: expect.stringContaining("truncated")
+    });
+  });
+
+  it("rejects SSE events that exceed the configured event limit", async () => {
+    const response = new Response(`data: ${"x".repeat(32)}\n\n`);
+
+    await expect(streamSSE(response, { maxEventChars: 16 }).next()).rejects.toBeInstanceOf(ParseError);
+  });
+
+  it("rejects incomplete SSE buffers that exceed the configured buffer limit", async () => {
+    const response = new Response(`data: ${"x".repeat(32)}`);
+
+    await expect(streamSSE(response, { maxBufferChars: 16 }).next()).rejects.toBeInstanceOf(ParseError);
   });
 
   it("maps model messages into UI messages", () => {

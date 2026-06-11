@@ -1253,6 +1253,7 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
@@ -1260,13 +1261,12 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
               ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-              ...input.providerOptions,
               ...mapReasoning(input),
               stream: false
             })
-          }),
-        input
-      );
+	                    }),
+	                    input
+	                  );
 
       const json = await parseJson(response);
       const choice = json.choices?.[0];
@@ -1302,6 +1302,7 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
           headers: jsonHeaders(this.apiKey),
           signal,
           body: JSON.stringify({
+            ...input.providerOptions,
             model: this.modelId,
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
@@ -1309,7 +1310,6 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
             response_format: mapStructuredOutput(input),
             temperature: input.temperature,
             ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-            ...input.providerOptions,
             ...mapReasoning(input),
             stream: true,
             stream_options: { include_usage: true }
@@ -1515,10 +1515,10 @@ class AzureOpenAISpeechModel implements SpeechModel {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               input: input.input,
-              voice: input.voice ?? "alloy",
-              ...input.providerOptions
+              voice: input.voice ?? "alloy"
             })
           }),
         input
@@ -1573,12 +1573,12 @@ class AzureOpenAIGroundedLanguageModel implements GroundedLanguageModel {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               input: toResponsesInput(input.messages),
               tools: [{ type: "web_search_preview" }],
               temperature: input.temperature,
-              max_output_tokens: input.maxTokens,
-              ...input.providerOptions
+              max_output_tokens: input.maxTokens
             })
           }),
         input
@@ -1822,6 +1822,7 @@ export const createAzureOpenAI = (
                     headers: jsonHeaders(apiKey),
                     signal,
                     body: JSON.stringify({
+                      ...input.providerOptions,
                       model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
                       ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
                       ...(messages.length ? { input: toResponsesInput(messages) } : {}),
@@ -1830,7 +1831,6 @@ export const createAzureOpenAI = (
                       text: mapResponsesStructuredOutput(input),
                       temperature: input.temperature,
                       max_output_tokens: input.maxTokens,
-                      ...input.providerOptions,
                       ...mapReasoning(input)
                     })
                   }),
@@ -1862,6 +1862,7 @@ export const createAzureOpenAI = (
                   headers: jsonHeaders(apiKey),
                   signal,
                   body: JSON.stringify({
+                    ...input.providerOptions,
                     model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
                     messages: mapMessages(input.messages),
                     tools: mapTools(input.tools),
@@ -1869,7 +1870,6 @@ export const createAzureOpenAI = (
                     response_format: mapStructuredOutput(input),
                     temperature: input.temperature,
                     ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-                    ...input.providerOptions,
                     ...mapReasoning(input),
                     stream: false
                   })
@@ -1910,6 +1910,7 @@ export const createAzureOpenAI = (
                   headers: jsonHeaders(apiKey),
                   signal,
                   body: JSON.stringify({
+                    ...input.providerOptions,
                     model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
                     input: toResponsesInput(input.messages),
                     tools: mapResponsesTools(input.tools),
@@ -1917,7 +1918,6 @@ export const createAzureOpenAI = (
                     text: mapResponsesStructuredOutput(input),
                     temperature: input.temperature,
                     max_output_tokens: input.maxTokens,
-                    ...input.providerOptions,
                     ...mapReasoning(input),
                     stream: true
                   })
@@ -1941,15 +1941,15 @@ export const createAzureOpenAI = (
                 method: "POST",
                 headers: jsonHeaders(apiKey),
                 signal,
-                  body: JSON.stringify({
-                    model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
-                    messages: mapMessages(input.messages),
-                    tools: mapTools(input.tools),
-                    tool_choice: mapToolChoice(input.toolChoice),
-                    response_format: mapStructuredOutput(input),
-                    temperature: input.temperature,
-                  ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
+                body: JSON.stringify({
                   ...input.providerOptions,
+                  model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
+                  messages: mapMessages(input.messages),
+                  tools: mapTools(input.tools),
+                  tool_choice: mapToolChoice(input.toolChoice),
+                  response_format: mapStructuredOutput(input),
+                  temperature: input.temperature,
+                  ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
                   ...mapReasoning(input),
                   stream: true,
                   stream_options: { include_usage: true }

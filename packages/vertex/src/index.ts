@@ -585,6 +585,25 @@ const mapMessages = (messages: ModelMessage[]) =>
       parts: message.parts.map(mapPart)
     }));
 
+const toVertexSchema = (schema: unknown): JsonValue => {
+  if (Array.isArray(schema)) {
+    return schema.map(toVertexSchema) as JsonValue;
+  }
+
+  if (!schema || typeof schema !== "object") {
+    return schema as JsonValue;
+  }
+
+  const mapped: Record<string, JsonValue> = {};
+  for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
+    if (key.startsWith("$") || key === "additionalProperties" || value === undefined) {
+      continue;
+    }
+    mapped[key] = toVertexSchema(value);
+  }
+  return mapped;
+};
+
 const mapTools = (tools: ModelGenerateInput["tools"]) =>
   tools
     ? (() => {
@@ -1025,7 +1044,7 @@ const generationConfig = (modelId: string, input: ModelGenerateInput) => ({
   ...(input.structuredOutput?.mode === "native"
     ? {
         responseMimeType: "application/json",
-        responseSchema: toJSONSchema(input.structuredOutput.schema)
+        responseSchema: toVertexSchema(toJSONSchema(input.structuredOutput.schema))
       }
     : {})
 });
@@ -1429,10 +1448,10 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
             headers: this.headers(),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: mapTools(input.tools),
-              ...input.providerOptions,
               toolConfig: mapToolConfig(input.toolChoice, input.tools),
               generationConfig: generationConfig(this.modelId, input)
             })
@@ -1468,10 +1487,10 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
           headers: this.headers(),
           signal,
           body: JSON.stringify({
+            ...input.providerOptions,
             contents: mapMessages(input.messages),
             systemInstruction: systemInstruction(input.messages),
             tools: mapTools(input.tools),
-            ...input.providerOptions,
             toolConfig: mapToolConfig(input.toolChoice, input.tools),
             generationConfig: generationConfig(this.modelId, input)
           })
@@ -2097,6 +2116,7 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
             headers: this.headers(),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: [{ googleSearch: {} }],
@@ -2105,8 +2125,7 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
                 temperature: input.temperature,
                 maxTokens: input.maxTokens,
                 reasoning: input.reasoning
-              } as ModelGenerateInput),
-              ...input.providerOptions
+              } as ModelGenerateInput)
             })
           }),
         input

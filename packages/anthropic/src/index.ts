@@ -636,6 +636,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
             ]),
             signal,
             body: JSON.stringify({
+              ...providerOptions,
               model: this.modelId,
               system: systemPromptFromMessages(this.modelId, input.messages),
               messages: mapMessages(this.modelId, input.messages),
@@ -644,7 +645,6 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
               tool_choice: mapToolChoice(input.toolChoice),
               temperature: input.temperature,
               max_tokens: input.maxTokens ?? 1024,
-              ...providerOptions,
               ...(outputConfig ? { output_config: outputConfig } : {}),
               ...(thinking ? { thinking } : {})
             })
@@ -704,6 +704,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
           ]),
           signal,
           body: JSON.stringify({
+            ...providerOptions,
             model: this.modelId,
             system: systemPromptFromMessages(this.modelId, input.messages),
             messages: mapMessages(this.modelId, input.messages),
@@ -713,7 +714,6 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
             temperature: input.temperature,
             max_tokens: input.maxTokens ?? 1024,
             stream: true,
-            ...providerOptions,
             ...(outputConfig ? { output_config: outputConfig } : {}),
             ...(thinking ? { thinking } : {})
           })
