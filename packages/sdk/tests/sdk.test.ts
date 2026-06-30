@@ -4,6 +4,7 @@ import * as sdk from "../src/index.js";
 
 describe("sdk public surface", () => {
   it("exports the shared helpers from core", () => {
+    expect(sdk.Agent).toBeTypeOf("function");
     expect(sdk.generateText).toBeTypeOf("function");
     expect(sdk.AdvancedToolRegistry).toBeTypeOf("function");
     expect(sdk.cancelAgentRun).toBeTypeOf("function");

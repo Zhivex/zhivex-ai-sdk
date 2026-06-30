@@ -2,6 +2,8 @@
 
 This guide gets a server-side multi-turn agent running with the stable package.
 
+For the full agent surface, including tools, approvals, streaming, stores, evaluation, and provider routing, see [Agents Guide](./AGENTS.md).
+
 ## Install
 
 For the current stable release:
@@ -16,19 +18,55 @@ For prerelease validation:
 bun add @zhivex-ai/sdk@next @zhivex-ai/openai
 ```
 
+## Create An Agent
+
+`Agent` is the stable agent-first entry point. It keeps reusable model settings, instructions, tools, safety, memory, and operational defaults in one place.
+
+```ts
+import { Agent, tool } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+import { z } from "zod";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const agent = new Agent({
+  model: openai("gpt-4o-mini"),
+  instructions: "You are a concise product assistant.",
+  maxSteps: 3,
+  tools: {
+    lookupDocs: tool({
+      name: "lookupDocs",
+      schema: z.object({ query: z.string() }),
+      execute: async ({ query }) => ({ query, answer: "Use Runner for multi-turn app sessions." })
+    })
+  }
+});
+
+const result = await agent.run({
+  prompt: "What should I use for a multi-turn app?"
+});
+
+console.log(result.outputText);
+console.log(result.state);
+```
+
+Use `agent.stream()` for lifecycle/text streaming and `agent.resume()` when a saved run state is waiting for approvals. The functional `createAgent()` / `runAgent()` API remains available for plain-object definitions and existing integrations.
+
 ## Create A Runner
 
 `Runner + SessionService` is the recommended first integration point. It wraps the existing agent runtime without replacing it, adds multi-turn context, and persists session events plus the latest resumable run state.
 
 ```ts
-import { createAgent, createFileSessionService, createRunner } from "@zhivex-ai/sdk";
+import { Agent, createFileSessionService, createRunner } from "@zhivex-ai/sdk";
 import { createOpenAI } from "@zhivex-ai/openai";
 
 const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-const agent = createAgent({
+const agent = new Agent({
   model: openai("gpt-4o-mini"),
   instructions: "You are a concise product assistant."
 });

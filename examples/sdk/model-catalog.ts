@@ -10,9 +10,8 @@ const customCatalog = createModelCatalog([
   },
   {
     provider: "anthropic",
-    modelId: "claude-3-5-sonnet",
-    costPer1kTokens: 3,
-    recommendedFor: ["reasoning", "tools"]
+    modelId: "claude-sonnet-5",
+    recommendedFor: ["chat", "reasoning", "tools", "vision"]
   }
 ]);
 

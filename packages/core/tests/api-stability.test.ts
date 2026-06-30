@@ -9,6 +9,10 @@ describe("api stability manifest", () => {
 
   it("lists entries by stability level", () => {
     expect(api.listApiStability("stable")).toContainEqual({
+      symbol: "Agent",
+      stability: "stable"
+    });
+    expect(api.listApiStability("stable")).toContainEqual({
       symbol: "generateText",
       stability: "stable"
     });
@@ -39,6 +43,7 @@ describe("api stability manifest", () => {
   });
 
   it("keeps the stable boundary classifications explicit", () => {
+    expect(api.getApiStability("Agent")?.stability).toBe("stable");
     expect(api.getApiStability("generateText")?.stability).toBe("stable");
     expect(api.getApiStability("runAgent")?.stability).toBe("stable");
     expect(api.getApiStability("createAgent")?.stability).toBe("stable");

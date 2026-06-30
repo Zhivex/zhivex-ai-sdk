@@ -30,6 +30,11 @@ export const defaultModelCatalog = createModelCatalog([
   { provider: "azure-openai", modelId: "gpt-4o-mini", costPer1kTokens: 0.6, recommendedFor: ["chat", "tools"] },
   {
     provider: "anthropic",
+    modelId: "claude-sonnet-5",
+    recommendedFor: ["chat", "reasoning", "tools", "vision"]
+  },
+  {
+    provider: "anthropic",
     modelId: "claude-fable-5",
     aliases: ["claude-mythos-class"],
     costPer1kTokens: 10,

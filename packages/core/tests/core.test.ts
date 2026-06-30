@@ -2672,7 +2672,11 @@ describe("core helpers", () => {
     expect(normalizeFinishReason("refusal")).toBe("refusal");
   });
 
-  it("defaults Anthropic catalog entries to Claude Fable 5 and keeps Opus aliases", () => {
+  it("defaults Anthropic catalog entries to Claude Sonnet 5 and keeps Opus aliases", () => {
+    expect(defaultModelCatalog.find("anthropic", "claude-sonnet-5")).toMatchObject({
+      modelId: "claude-sonnet-5",
+      recommendedFor: expect.arrayContaining(["chat", "reasoning", "tools", "vision"])
+    });
     expect(defaultModelCatalog.find("anthropic", "claude-fable-5")).toMatchObject({
       modelId: "claude-fable-5",
       recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])

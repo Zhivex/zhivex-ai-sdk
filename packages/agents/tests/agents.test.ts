@@ -4,10 +4,12 @@ import * as agents from "../src/index.js";
 
 describe("agents package public surface", () => {
   it("exports the agent runtime facade from core", () => {
+    expect(agents.Agent).toBeTypeOf("function");
     expect(agents.createAgent).toBeTypeOf("function");
     expect(agents.runAgent).toBeTypeOf("function");
     expect(agents.resumeAgent).toBeTypeOf("function");
     expect(agents.streamAgent).toBeTypeOf("function");
+    expect(agents.tool).toBeTypeOf("function");
     expect(agents.runAgentGroup).toBeTypeOf("function");
     expect(agents.createAgentHandoff).toBeTypeOf("function");
     expect(agents.runAgentHandoff).toBeTypeOf("function");

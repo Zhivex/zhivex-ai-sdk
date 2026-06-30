@@ -8,7 +8,7 @@ const anthropic = createAnthropic({
 });
 
 const result = await generateText({
-  model: anthropic("claude-3-5-sonnet"),
+  model: anthropic("claude-sonnet-5"),
   prompt: "Say hello from the Anthropic adapter."
 });
 

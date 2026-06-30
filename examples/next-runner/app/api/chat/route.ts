@@ -1,4 +1,4 @@
-import { createAgent, createFileSessionService, createRunner } from "@zhivex-ai/sdk";
+import { Agent, createFileSessionService, createRunner } from "@zhivex-ai/sdk";
 import { createOpenAI } from "@zhivex-ai/openai";
 
 export const runtime = "nodejs";
@@ -7,7 +7,7 @@ const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-const agent = createAgent({
+const agent = new Agent({
   model: openai("gpt-4o-mini"),
   instructions: "You are a concise support assistant."
 });

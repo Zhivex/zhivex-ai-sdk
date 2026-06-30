@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
+  Agent,
   agentApprovalResponsePart,
   cancelAgentRun,
   cancelAgentRunTree,
@@ -310,6 +311,117 @@ class FakePostgresClient implements PostgresClientLike {
 }
 
 describe("agent runtime", () => {
+  it("runs, streams, and resumes through the Agent class facade", async () => {
+    let calls = 0;
+    const agent = new Agent({
+      id: "class-agent",
+      model: createLanguageModel({
+        async generate() {
+          calls += 1;
+          return {
+            messages: [createTextMessage("assistant", `reply ${calls}`)],
+            text: `reply ${calls}`,
+            finishReason: "stop"
+          };
+        },
+        async stream() {
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "streamed" };
+            yield { type: "finish", finishReason: "stop" };
+          })();
+        }
+      }),
+      maxSteps: 2,
+      metadata: { owner: "agents-release" }
+    });
+
+    const run = await agent.run({ prompt: "Hello" });
+    expect(run.status).toBe("completed");
+    expect(run.outputText).toBe("reply 1");
+    expect(run.state.agentId).toBe("class-agent");
+    expect(run.state.metadata).toEqual({ owner: "agents-release" });
+
+    const defaultRun = await agent.run();
+    expect(defaultRun.status).toBe("completed");
+    expect(defaultRun.outputText).toBe("reply 2");
+
+    let approvalCalls = 0;
+    const approvalAgent = new Agent({
+      model: createLanguageModel({
+        async generate(input) {
+          approvalCalls += 1;
+          if (approvalCalls === 1) {
+            return {
+              messages: [
+                {
+                  role: "assistant",
+                  parts: [
+                    {
+                      type: "provider-data",
+                      provider: "openai",
+                      data: {
+                        type: "mcp_approval_request",
+                        id: "mcpr_class",
+                        arguments: "{}",
+                        name: "fetch_docs"
+                      }
+                    }
+                  ]
+                }
+              ],
+              text: "Need approval",
+              finishReason: "stop"
+            };
+          }
+
+          const sawApprovalResponse = input.messages.some((message) =>
+            message.parts.some(
+              (part) =>
+                part.type === "provider-data" &&
+                part.provider === "openai" &&
+                (part.data as { type?: string }).type === "mcp_approval_response"
+            )
+          );
+
+          return {
+            messages: [createTextMessage("assistant", sawApprovalResponse ? "Approved" : "Missing approval")],
+            text: sawApprovalResponse ? "Approved" : "Missing approval",
+            finishReason: "stop"
+          };
+        }
+      }),
+      maxSteps: 2
+    });
+    const waiting = await approvalAgent.run({ prompt: "Fetch docs" });
+    expect(waiting.status).toBe("waiting_approval");
+
+    const resumed = await approvalAgent.resume({
+      state: waiting.state,
+      approvals: [
+        {
+          provider: "openai",
+          approvalRequestId: "mcpr_class",
+          approve: true
+        }
+      ]
+    });
+    expect(resumed.status).toBe("completed");
+    expect(resumed.outputText).toBe("Approved");
+
+    const streamed = agent.stream({ prompt: "Stream" });
+    await expect(Array.fromAsync(streamed.textStream)).resolves.toEqual(["streamed"]);
+    await expect(streamed.collect()).resolves.toMatchObject({
+      status: "completed",
+      outputText: "streamed"
+    });
+
+    expect(agent.toDefinition()).toMatchObject({
+      id: "class-agent",
+      maxSteps: 2,
+      metadata: { owner: "agents-release" }
+    });
+  });
+
   it("runs a simple agent and returns serializable state", async () => {
     const agent = createAgent({
       id: "assistant-1",

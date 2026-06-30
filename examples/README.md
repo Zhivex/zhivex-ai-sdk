@@ -5,6 +5,7 @@ This folder contains runnable TypeScript examples for the main public surfaces o
 ## Layout
 
 - `sdk/`: high-level SDK and core helpers
+- `agents/`: agent-only facade examples for `@zhivex-ai/agents`
 - `providers/`: one quick-start per provider package
 - `gateway/`: routing and fallback examples
 - `next-runner/`: copy-paste Next.js App Router reference for server-side Runner usage
@@ -23,6 +24,9 @@ Most examples require provider credentials in environment variables. The files s
 Typical examples:
 
 ```bash
+bun run examples/sdk/full-agent.ts
+bun run examples/agents/full-agent.ts
+bun run examples/agents/approval-hitl.ts
 bun run examples/sdk/runner-session.ts
 bun run examples/sdk/tools-with-safety-policy.ts
 bun run examples/sdk/observability-export.ts
@@ -44,6 +48,12 @@ bun run examples/providers/openai.ts
 
 The `examples/sdk/runner-session.ts` example is deterministic and does not require provider credentials. It is useful as a quick smoke for `Runner + SessionService`.
 
+`examples/sdk/full-agent.ts` is deterministic and does not require provider credentials. It is the fastest smoke for the stable `Agent` class, local tool loops, serializable run state, and streaming from the aggregator package.
+
+`examples/agents/full-agent.ts` and `examples/agents/approval-hitl.ts` are deterministic and do not require provider credentials. They show the smaller `@zhivex-ai/agents` facade, including a tool-using run and a human-in-the-loop approval/resume cycle.
+
+`examples/next-runner` shows both JSON and streaming App Router handlers. The streaming route emits NDJSON text and finish events from `runner.stream()` so a React client can render incremental agent output while preserving the final session id.
+
 `examples/sdk/production-runner.ts` is a production template rather than a directly runnable script. It shows how to wire `Runner + createPostgresSessionService()` with an app-owned Postgres client without importing a database driver into the SDK.
 
 `examples/sdk/observability-export.ts` is deterministic and does not require provider credentials. It shows how to collect an agent trace, compute cost/latency summaries, build tool-call audit records, and redact sensitive fields before a JSONL export.
@@ -60,4 +70,4 @@ For migration-oriented snippets from direct provider SDKs, Vercel AI SDK core us
 - A few deterministic local examples import from the workspace source tree so they can run without provider credentials or a packed install.
 - Some providers do not support every capability. The examples follow the actual adapter capabilities in this repo.
 - `zod` is used in structured output and tool examples.
-- Agent examples currently focus on the shared runtime, local tools, lifecycle streaming, and SSE/UI transport. Approval-based MCP flows are documented in the root `README.md` because they require a provider-specific remote MCP setup.
+- Agent examples focus on the shared runtime, local tools, lifecycle streaming, SSE/UI transport, and deterministic approval/resume flows. Provider-native remote MCP approvals still require provider-specific setup and are documented in the root `README.md`.

@@ -9,7 +9,7 @@ const baseURL = process.env.ANTHROPIC_BASE_URL;
 const anthropicVersion = process.env.ANTHROPIC_VERSION;
 const textModelId = process.env.ANTHROPIC_INTEGRATION_MODEL ?? "claude-3-5-sonnet";
 const usesModernAnthropicControls = (modelId: string) =>
-  /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9]|claude-(?:fable|mythos)-5)(?:[-@]|$)/.test(modelId);
+  /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9]|claude-(?:sonnet|fable|mythos)-5)(?:[-@]|$)/.test(modelId);
 const anthropicTemperature = usesModernAnthropicControls(textModelId) ? undefined : 0;
 
 const describeIntegration = apiKey ? describe.sequential : describe.skip;

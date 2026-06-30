@@ -54,6 +54,7 @@ export type {
   ApiStabilityLevel
 } from "./api-stability.js";
 export {
+  Agent,
   cancelAgentRun,
   cancelAgentRunTree,
   createAgent,

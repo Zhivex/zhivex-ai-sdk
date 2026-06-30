@@ -20,9 +20,9 @@ import type {
   AgentRunCancellationOptions,
   AgentRunInput,
   AgentRunOutput,
+  AgentRunState,
   AgentRunPolicy,
   AgentRunStore,
-  AgentRunState,
   AgentRunTreeCancellationResult,
   AgentStep,
   AgentStepRequest,
@@ -847,6 +847,69 @@ export const createAgent = <TModel extends AgentDefinition["model"]>(
   ...definition,
   metadata: cloneMetadata(definition.metadata)
 });
+
+export class Agent<TModel extends LanguageModel = LanguageModel> implements AgentDefinition<TModel> {
+  id?: string;
+  model: TModel;
+  instructions?: string;
+  tools?: AgentDefinition<TModel>["tools"];
+  maxSteps?: number;
+  temperature?: number;
+  maxTokens?: number;
+  reasoning?: AgentDefinition<TModel>["reasoning"];
+  toolExecution?: AgentDefinition<TModel>["toolExecution"];
+  toolApprovalPolicy?: AgentDefinition<TModel>["toolApprovalPolicy"];
+  inputGuardrails?: AgentDefinition<TModel>["inputGuardrails"];
+  outputGuardrails?: AgentDefinition<TModel>["outputGuardrails"];
+  providerOptions?: AgentDefinition<TModel>["providerOptions"];
+  subagents?: AgentDefinition<TModel>["subagents"];
+  policy?: AgentRunPolicy;
+  metadata?: Record<string, JsonValue>;
+  store?: AgentRunStore;
+  memory?: AgentDefinition<TModel>["memory"];
+  onTelemetryEvent?: AgentDefinition<TModel>["onTelemetryEvent"];
+
+  constructor(definition: AgentDefinition<TModel>) {
+    Object.assign(this, createAgent(definition));
+    this.model = definition.model;
+  }
+
+  toDefinition(): AgentDefinition<TModel> {
+    return createAgent({
+      id: this.id,
+      model: this.model,
+      instructions: this.instructions,
+      tools: this.tools,
+      maxSteps: this.maxSteps,
+      temperature: this.temperature,
+      maxTokens: this.maxTokens,
+      reasoning: this.reasoning,
+      toolExecution: this.toolExecution,
+      toolApprovalPolicy: this.toolApprovalPolicy,
+      inputGuardrails: this.inputGuardrails,
+      outputGuardrails: this.outputGuardrails,
+      providerOptions: this.providerOptions,
+      subagents: this.subagents,
+      policy: this.policy,
+      metadata: this.metadata,
+      store: this.store,
+      memory: this.memory,
+      onTelemetryEvent: this.onTelemetryEvent
+    });
+  }
+
+  run(input: AgentRunInput<TModel> = {}): Promise<AgentRunOutput> {
+    return runAgent(this.toDefinition(), input);
+  }
+
+  resume(input: AgentRunInput<TModel> & { state: AgentRunState }): Promise<AgentRunOutput> {
+    return resumeAgent(this.toDefinition(), input);
+  }
+
+  stream(input: AgentRunInput<TModel> = {}): AgentStreamResult {
+    return streamAgent(this.toDefinition(), input);
+  }
+}
 
 export const prepareSubagentsForAgent = <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,

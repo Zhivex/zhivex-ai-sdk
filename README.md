@@ -49,8 +49,12 @@ For local development, file-backed stores are convenient. For serverless and pro
 Use these guides when adopting the SDK in a real app:
 
 - [Quickstart](./docs/QUICKSTART.md): install the stable package and run a multi-turn `Runner`.
+- [Agents Guide](./docs/AGENTS.md): build portable, resumable, governable agents with tools, approvals, streaming, stores, tracing, evaluations, and provider routing.
 - [Next.js Runner Guide](./docs/NEXTJS.md): route handler plus React client shape.
 - [Production Guide](./docs/PRODUCTION.md): store choices, server-only boundaries, identity mapping, safety, observability, workflows, and artifacts.
+- [Workflows Guide](./docs/WORKFLOWS.md): deterministic multi-step agent workflows, durable state, replay, and workflow evaluations.
+- [Agent Observability Guide](./docs/OBSERVABILITY.md): traces, audit records, ledgers, golden traces, evaluations, and local inspection.
+- [Workspace Agents Guide](./docs/WORKSPACE_AGENTS.md): shell/apply-patch harnesses, app-owned execution boundaries, approvals, and safety requirements.
 - [Migration Guide](./docs/MIGRATION.md): move from direct provider SDKs, Vercel AI SDK core usage, or simple tool loops.
 - [RAG Guide](./docs/RAG.md): lightweight retrieval contracts, semantic memory boundaries, and app-owned vector store recipes.
 - [Examples](./examples/README.md): runnable TypeScript examples, including a deterministic runner/session example and a Next.js reference.
@@ -206,7 +210,7 @@ Compatibility notes:
 - Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime`, `gpt-realtime-2`, and `gpt-realtime-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
 - Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
-- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Fable 5, Claude Mythos 5, Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+ including Opus 4.8, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Claude Fable 5 and Claude Mythos 5 always use adaptive thinking, so the adapter does not send redundant `thinking: { type: "adaptive" }` for common `reasoning.effort` and rejects `thinking.disabled` or manual thinking budgets before the request is sent. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
+- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Sonnet 5, Claude Fable 5, Claude Mythos 5, Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+ including Opus 4.8, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Claude Fable 5 and Claude Mythos 5 always use adaptive thinking, so the adapter does not send redundant `thinking: { type: "adaptive" }` for common `reasoning.effort` and rejects `thinking.disabled` or manual thinking budgets before the request is sent. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
 - Bedrock native Converse supports common `toolChoice` values by mapping specific tools and required tools to AWS-native `toolConfig`, and by omitting tool configuration for `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming. In the SDK's agent matrix, Bedrock Tier A applies to `createBedrock({ runtime: "openai" })`, which exposes Responses hosted tools, remote MCP, and approval requests. AWS-native AgentCore MCP is exposed separately as SDK-managed MCP tools for Converse or any shared agent loop; it does not promote Converse itself to a provider-emitted approval runtime.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - DeepSeek is Tier B for portable tool loops plus documented thinking mode on `deepseek-v4-flash` and `deepseek-v4-pro`; it does not expose hosted tools, remote MCP, web search, embeddings, audio, or realtime sessions in this adapter.
@@ -230,7 +234,7 @@ const anthropic = createAnthropic({
 });
 
 const result = await generateText({
-  model: anthropic("claude-opus-4-8"),
+  model: anthropic("claude-sonnet-5"),
   system: "Be concise and technical.",
   prompt: "Explain what a provider adapter does."
 });
@@ -240,15 +244,16 @@ console.log(result.text);
 
 ### Agent Runtime
 
-For reusable multi-step assistants, `createAgent()` and `runAgent()` provide a small agent runtime on top of the shared tool loop. Agent runs return a serializable `state` object so you can inspect or resume the run later.
+For reusable multi-step assistants, `Agent` is the stable agent-first API. It wraps the shared tool loop and exposes `run()`, `stream()`, `resume()`, and `toDefinition()` while preserving the same serializable state contract used by `createAgent()` and `runAgent()`.
 
 Relevant runnable examples:
 
+- [`examples/sdk/full-agent.ts`](./examples/sdk/full-agent.ts)
 - [`examples/sdk/agent-runtime.ts`](./examples/sdk/agent-runtime.ts)
 - [`examples/sdk/agent-stream.ts`](./examples/sdk/agent-stream.ts)
 
 ```ts
-import { createAgent, runAgent, tool } from "@zhivex-ai/sdk";
+import { Agent, tool } from "@zhivex-ai/sdk";
 import { createOpenAI } from "@zhivex-ai/openai";
 import { z } from "zod";
 
@@ -256,7 +261,7 @@ const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-const weatherAgent = createAgent({
+const weatherAgent = new Agent({
   model: openai("gpt-5"),
   instructions: "Be concise and use tools when they help.",
   maxSteps: 4,
@@ -269,7 +274,7 @@ const weatherAgent = createAgent({
   }
 });
 
-const run = await runAgent(weatherAgent, {
+const run = await weatherAgent.run({
   prompt: "How's the weather in Madrid?"
 });
 
@@ -280,11 +285,13 @@ console.log(run.state);
 
 What the runtime guarantees:
 
-- `runAgent()` always returns the final `state`, including `steps`, `toolResults`, `messages`, `usage`, and `pendingApprovals`.
+- `Agent.run()` and `runAgent()` always return the final `state`, including `steps`, `toolResults`, `messages`, `usage`, and `pendingApprovals`.
 - `state` is JSON-serializable and can be persisted by your app.
-- `createAgent()` keeps reusable defaults such as `instructions`, `tools`, `maxSteps`, `reasoning`, and provider options in one place.
-- `resumeAgent()` continues from a previous `state` instead of rebuilding the run manually.
+- `Agent` and `createAgent()` keep reusable defaults such as `instructions`, `tools`, `maxSteps`, `reasoning`, and provider options in one place.
+- `Agent.resume()` and `resumeAgent()` continue from a previous `state` instead of rebuilding the run manually.
 - Production states include `queued`, `running`, `waiting_approval`, `cancel_requested`, `cancelled`, `timed_out`, `failed`, and `completed`. The legacy `suspended` status is still accepted when loading old persisted runs, but new approval waits use `waiting_approval`.
+
+Prefer `Agent` for new application code and docs. Use `createAgent()` / `runAgent()` when you want a functional API, plain object definitions, or compatibility with existing code.
 
 ### Runner And Sessions
 
@@ -382,7 +389,7 @@ const capsule = createAgentCapsule({
   policy: { toolPolicyMode: "read-only", redaction: true }
 });
 
-const router = createAgentCapabilityRouter([openai("gpt-5"), anthropic("claude-opus-4-8")]);
+const router = createAgentCapabilityRouter([openai("gpt-5"), anthropic("claude-sonnet-5")]);
 const selected = router.select({ minTier: "tier-b", approvals: true, remoteMcp: true });
 
 const controlPlane = createAgentControlPlane({ agent: { ...agent, model: selected.model } });
@@ -1494,12 +1501,13 @@ Provider compatibility for the common `reasoning` option:
 - OpenAI and Azure OpenAI: support `effort`
 - OpenRouter: supports `effort` and `budgetTokens`
 - Anthropic:
+  - Claude Sonnet 5 supports `effort`, adaptive thinking, files, fast mode, and mid-conversation system messages; omit explicit `temperature`, `top_p`, and `top_k`
   - Claude Fable 5 and Claude Mythos 5 support `effort`; adaptive thinking is always on, so the adapter sends only `output_config.effort` for common reasoning requests
   - Claude Fable 5 server-side refusal fallback is available with `providerOptions.fallbacks`; the adapter adds the required `server-side-fallback-2026-06-01` beta header automatically
   - Claude Opus 4.7 and later, including Claude Opus 4.8, support `effort`; `budgetTokens` is rejected
   - Claude Opus 4.5, Claude Opus 4.6, and Claude Sonnet 4.6 support `effort`
   - `budgetTokens` remains available only on Anthropic models that still accept manual thinking
-  - Claude Fable 5, Claude Mythos 5, and Claude Opus 4.8 accept provider-specific `providerOptions.speed = "fast"` for fast mode; omit explicit `temperature`, `top_p`, and `top_k`
+  - Claude Sonnet 5, Claude Fable 5, Claude Mythos 5, and Claude Opus 4.8 accept provider-specific `providerOptions.speed = "fast"` for fast mode
 - Gemini and Vertex:
   - Gemini 3 models support `effort`
   - Gemini 2.5 and earlier models support `budgetTokens`
@@ -1645,7 +1653,7 @@ const anthropic = createAnthropic({
 });
 
 const result = await generateText({
-  model: anthropic("claude-opus-4-8"),
+  model: anthropic("claude-sonnet-5"),
   messages: [user("What is the weather in Madrid?")],
   maxSteps: 2,
   tools: {
@@ -1741,7 +1749,7 @@ const anthropic = createAnthropic({
 });
 
 const result = await generateText({
-  model: anthropic("claude-opus-4-8"),
+  model: anthropic("claude-sonnet-5"),
   prompt: "Research this API change and verify the migration with code.",
   tools: {
     web: anthropicWebSearchTool(),
@@ -1999,7 +2007,7 @@ When the selected model supports tool selection, you can control it through the 
 
 ```ts
 const forcedToolResult = await generateText({
-  model: anthropic("claude-opus-4-8"),
+  model: anthropic("claude-sonnet-5"),
   messages: [user("What is the weather in Madrid?")],
   tools: {
     weather: tool({
@@ -2371,7 +2379,7 @@ const fromOpenAI = await generateText({
 });
 
 const fromAnthropic = await generateText({
-  model: anthropic("claude-opus-4-8"),
+  model: anthropic("claude-sonnet-5"),
   prompt
 });
 

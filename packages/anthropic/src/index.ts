@@ -106,6 +106,8 @@ const isClaudeOpus46Model = (modelId: string) => /^claude-opus-4-6(?:[-@]|$)/.te
 
 const isClaudeSonnet46Model = (modelId: string) => /^claude-sonnet-4-6(?:[-@]|$)/.test(normalizeModelId(modelId));
 
+const isClaudeSonnet5Model = (modelId: string) => /^claude-sonnet-5(?:[-@]|$)/.test(normalizeModelId(modelId));
+
 const isClaudeOpus47OrLaterModel = (modelId: string) =>
   /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9])(?:[-@]|$)/.test(normalizeModelId(modelId));
 
@@ -121,22 +123,24 @@ const isClaudeMythosClass5Model = (modelId: string) => isClaudeFable5Model(model
 const requiresAnthropicAdaptiveThinking = (modelId: string) => isClaudeMythosClass5Model(modelId);
 
 const supportsAnthropicModernControls = (modelId: string) =>
-  isClaudeOpus47OrLaterModel(modelId) || isClaudeMythosClass5Model(modelId);
+  isClaudeOpus47OrLaterModel(modelId) || isClaudeSonnet5Model(modelId) || isClaudeMythosClass5Model(modelId);
 
 const supportsMidConversationSystemMessages = (modelId: string) =>
-  isClaudeOpus48OrLaterModel(modelId) || isClaudeMythosClass5Model(modelId);
+  isClaudeOpus48OrLaterModel(modelId) || isClaudeSonnet5Model(modelId) || isClaudeMythosClass5Model(modelId);
 
 const supportsAnthropicEffort = (modelId: string) =>
   isClaudeOpus45Model(modelId) ||
   isClaudeOpus46Model(modelId) ||
   isClaudeSonnet46Model(modelId) ||
   isClaudeOpus47OrLaterModel(modelId) ||
+  isClaudeSonnet5Model(modelId) ||
   isClaudeMythosClass5Model(modelId);
 
 const supportsAdaptiveThinking = (modelId: string) =>
   isClaudeOpus46Model(modelId) ||
   isClaudeSonnet46Model(modelId) ||
   isClaudeOpus47OrLaterModel(modelId) ||
+  isClaudeSonnet5Model(modelId) ||
   isClaudeMythosClass5Model(modelId);
 
 const supportsAnthropicFiles = (modelId: string) => {
@@ -144,6 +148,7 @@ const supportsAnthropicFiles = (modelId: string) => {
   return (
     /^claude-3-[5-9](?:[-@]|$)/.test(normalized) ||
     /^claude-(?:opus|sonnet|haiku)-4(?:[-@]|$)/.test(normalized) ||
+    /^claude-(?:opus|sonnet|haiku)-5(?:[-@]|$)/.test(normalized) ||
     isClaudeMythosClass5Model(normalized)
   );
 };
@@ -303,7 +308,7 @@ const mapMessages = (modelId: string, messages: ModelMessage[]) =>
 
         if (previousNonSystemMessage?.role !== "user") {
           throw new ValidationError(
-            'Provider "anthropic" only supports mid-conversation system messages immediately after a user turn on Claude Opus 4.8 or later, Claude Fable 5, or Claude Mythos 5.'
+            'Provider "anthropic" only supports mid-conversation system messages immediately after a user turn on Claude Opus 4.8 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5.'
           );
         }
 
@@ -469,7 +474,7 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput): MappedAnthrop
 
   if (effort === "xhigh" && !supportsAnthropicModernControls(modelId)) {
     throw new UnsupportedFeatureError(
-      'Provider "anthropic" does not support "reasoning.effort=xhigh" before Claude Opus 4.7 or outside Claude Fable/Mythos 5.'
+      'Provider "anthropic" does not support "reasoning.effort=xhigh" before Claude Opus 4.7 or outside Claude Sonnet/Fable/Mythos 5.'
     );
   }
 
@@ -481,7 +486,7 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput): MappedAnthrop
 
   if (budgetTokens !== undefined && supportsAnthropicModernControls(modelId)) {
     throw new UnsupportedFeatureError(
-      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; use "reasoning.effort" instead.'
+      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; use "reasoning.effort" instead.'
     );
   }
 
@@ -548,7 +553,7 @@ const assertAnthropicRequestCompatibility = (
     typeof rawThinking.budget_tokens === "number"
   ) {
     throw new UnsupportedFeatureError(
-      'Provider "anthropic" does not support manual "thinking.enabled + budget_tokens" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; use adaptive thinking and "output_config.effort" instead.'
+      'Provider "anthropic" does not support manual "thinking.enabled + budget_tokens" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; use adaptive thinking and "output_config.effort" instead.'
     );
   }
 
@@ -561,13 +566,13 @@ const assertAnthropicRequestCompatibility = (
   if (supportsAnthropicModernControls(modelId)) {
     if (input.temperature !== undefined) {
       throw new UnsupportedFeatureError(
-        'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; omit it from the request.'
+        'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit it from the request.'
       );
     }
 
     if (providerOptions.top_p !== undefined || providerOptions.top_k !== undefined) {
       throw new UnsupportedFeatureError(
-        'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; omit them from the request.'
+        'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit them from the request.'
       );
     }
   }
