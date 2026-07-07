@@ -69,7 +69,7 @@ const capabilities: ModelCapabilities = {
   toolChoice: true,
   parallelToolCalls: true,
   vision: true,
-  files: false,
+  files: true,
   audioInput: false,
   audioOutput: false,
   embeddings: false,
@@ -88,7 +88,19 @@ const capabilities: ModelCapabilities = {
   }
 };
 
-const supportsKimiReasoning = (modelId: string) => /kimi-k2\.5|kimi-k2-thinking/i.test(modelId);
+const isKimiK27CodeModel = (modelId: string) => /^kimi-k2\.7-code(?:$|-)/i.test(modelId);
+const supportsKimiReasoning = (modelId: string) => /kimi-k2\.7-code|kimi-k2\.6|kimi-k2\.5|kimi-k2-thinking/i.test(modelId);
+
+const toKimiMediaUrl = (data: string, mediaType: string) =>
+  /^(?:data:|https?:\/\/)/i.test(data) ? data : `data:${mediaType};base64,${data}`;
+
+const isKimiMultimodalContentBlock = (value: unknown): value is JsonValue => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const type = (value as Record<string, unknown>).type;
+  return type === "text" || type === "image_url" || type === "video_url";
+};
 
 const kimiToolMetadata = (definition: { formulaUri: string; parameters?: JsonValue }) => ({
   "kimi.formula_uri": definition.formulaUri,
@@ -164,8 +176,12 @@ const parseJson = async (response: Response) => {
 const mapContentParts = (message: ModelMessage) => {
   const textParts = message.parts.filter((part) => part.type === "text");
   const imageParts = message.parts.filter((part) => part.type === "image");
+  const mediaFileParts = message.parts.filter(
+    (part): part is Extract<ModelMessage["parts"][number], { type: "file" }> =>
+      part.type === "file" && /^(?:image|video)\//i.test(part.mediaType)
+  );
 
-  if (!imageParts.length) {
+  if (!imageParts.length && !mediaFileParts.length) {
     return textParts.map((part) => part.text).join("");
   }
 
@@ -179,8 +195,29 @@ const mapContentParts = (message: ModelMessage) => {
       image_url: {
         url: part.image
       }
-    }))
+    })),
+    ...mediaFileParts.map((part) => {
+      const url = toKimiMediaUrl(part.data, part.mediaType);
+      return part.mediaType.toLowerCase().startsWith("video/")
+        ? {
+            type: "video_url",
+            video_url: {
+              url
+            }
+          }
+        : {
+            type: "image_url",
+            image_url: {
+              url
+            }
+          };
+    })
   ];
+};
+
+const mapToolResultContent = (toolResult: Extract<ModelMessage["parts"][number], { type: "tool-result" }>["toolResult"]) => {
+  const output = toolResult.isError ? toolResult.error : toolResult.output;
+  return Array.isArray(output) && output.every(isKimiMultimodalContentBlock) ? output : JSON.stringify(output);
 };
 
 const mapMessages = (messages: ModelMessage[]) =>
@@ -191,10 +228,7 @@ const mapMessages = (messages: ModelMessage[]) =>
       return {
         role: "tool",
         tool_call_id: toolResult?.type === "tool-result" ? toolResult.toolResult.toolCallId : undefined,
-        content:
-          toolResult?.type === "tool-result"
-            ? JSON.stringify(toolResult.toolResult.isError ? toolResult.toolResult.error : toolResult.toolResult.output)
-            : ""
+        content: toolResult?.type === "tool-result" ? mapToolResultContent(toolResult.toolResult) : ""
       };
     }
 
@@ -278,9 +312,13 @@ const mapStructuredOutput = (input: ModelGenerateInput) => {
   };
 };
 
-const mapReasoning = (input: ModelGenerateInput) => {
+const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
   if (!input.reasoning) {
     return undefined;
+  }
+
+  if (input.reasoning.effort === "none" && isKimiK27CodeModel(modelId)) {
+    throw new UnsupportedFeatureError('Provider "kimi" does not support disabling thinking for Kimi K2.7 Code models.');
   }
 
   if (input.reasoning.budgetTokens !== undefined) {
@@ -292,6 +330,35 @@ const mapReasoning = (input: ModelGenerateInput) => {
       type: input.reasoning.effort === "none" ? "disabled" : "enabled"
     }
   };
+};
+
+const assertKimiRequestCompatibility = (modelId: string, input: ModelGenerateInput<KimiLanguageModelOptions>) => {
+  if (!isKimiK27CodeModel(modelId)) {
+    return;
+  }
+
+  const providerOptions = input.providerOptions ?? {};
+  const rawThinking = providerOptions.thinking;
+  if (
+    rawThinking &&
+    typeof rawThinking === "object" &&
+    !Array.isArray(rawThinking) &&
+    (rawThinking as Record<string, unknown>).type === "disabled"
+  ) {
+    throw new UnsupportedFeatureError('Provider "kimi" does not support "thinking.type=disabled" for Kimi K2.7 Code models.');
+  }
+
+  if (input.temperature !== undefined && input.temperature !== 1) {
+    throw new UnsupportedFeatureError('Provider "kimi" requires "temperature" to remain 1.0 for Kimi K2.7 Code models.');
+  }
+
+  if (providerOptions.top_p !== undefined && providerOptions.top_p !== 0.95) {
+    throw new UnsupportedFeatureError('Provider "kimi" requires "top_p" to remain 0.95 for Kimi K2.7 Code models.');
+  }
+
+  if (providerOptions.n !== undefined && providerOptions.n !== 1) {
+    throw new UnsupportedFeatureError('Provider "kimi" requires "n" to remain 1 for Kimi K2.7 Code models.');
+  }
 };
 
 const parseAssistantMessage = (message: any): ModelMessage => ({
@@ -348,7 +415,8 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const reasoning = mapReasoning(input);
+      assertKimiRequestCompatibility(this.modelId, input);
+      const reasoning = mapReasoning(this.modelId, input);
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
@@ -398,7 +466,8 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
 
   async stream(input: ModelGenerateInput<KimiLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
-    const reasoning = mapReasoning(input);
+    assertKimiRequestCompatibility(this.modelId, input);
+    const reasoning = mapReasoning(this.modelId, input);
 
     const response = await withRetry(
       () =>

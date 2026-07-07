@@ -11,8 +11,8 @@ describe("kimi adapter", () => {
 
   runLanguageModelContractSuite({
     providerName: "kimi",
-    modelId: "kimi-k2-0905-preview",
-    createModel: () => createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch })("kimi-k2-0905-preview"),
+    modelId: "kimi-k2.6",
+    createModel: () => createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch })("kimi-k2.6"),
     expectedAgentTier: "tier-c",
     expectedCapabilities: {
       streaming: true,
@@ -22,20 +22,20 @@ describe("kimi adapter", () => {
       toolChoice: true,
       parallelToolCalls: true,
       vision: true,
-      files: false,
+      files: true,
       audioInput: false,
       audioOutput: false,
       embeddings: false,
-      reasoning: false,
+      reasoning: true,
       webSearch: false
     }
   });
 
   runAgentProviderContractSuite({
     providerName: "kimi",
-    modelId: "kimi-k2-0905-preview",
+    modelId: "kimi-k2.6",
     expectedAgentTier: "tier-c",
-    createModel: () => createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch })("kimi-k2-0905-preview"),
+    createModel: () => createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch })("kimi-k2.6"),
     mockSimpleRun: () => {
       fetchMock.mockResolvedValueOnce(
         Response.json({
@@ -284,6 +284,9 @@ describe("kimi adapter", () => {
   it("declares reasoning support for thinking-capable Kimi models", () => {
     const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
+    expect(provider("kimi-k2.7-code").capabilities.reasoning).toBe(true);
+    expect(provider("kimi-k2.7-code-highspeed").capabilities.reasoning).toBe(true);
+    expect(provider("kimi-k2.6").capabilities.reasoning).toBe(true);
     expect(provider("kimi-k2.5").capabilities.reasoning).toBe(true);
     expect(provider("kimi-k2-thinking").capabilities.reasoning).toBe(true);
   });
@@ -311,6 +314,71 @@ describe("kimi adapter", () => {
     expect(body.thinking).toEqual({
       type: "enabled"
     });
+  });
+
+  it("rejects disabled thinking and non-default sampling for Kimi K2.7 Code", async () => {
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("kimi-k2.7-code"),
+        prompt: "hello",
+        reasoning: {
+          effort: "none"
+        }
+      })
+    ).rejects.toThrow('Provider "kimi" does not support disabling thinking for Kimi K2.7 Code models.');
+
+    await expect(
+      generateText({
+        model: provider("kimi-k2.7-code-highspeed"),
+        prompt: "hello",
+        temperature: 0.2
+      })
+    ).rejects.toThrow('Provider "kimi" requires "temperature" to remain 1.0 for Kimi K2.7 Code models.');
+
+    await expect(
+      generateText({
+        model: provider("kimi-k2.7-code"),
+        prompt: "hello",
+        providerOptions: {
+          top_p: 0.8
+        }
+      })
+    ).rejects.toThrow('Provider "kimi" requires "top_p" to remain 0.95 for Kimi K2.7 Code models.');
+  });
+
+  it("maps image and video file parts for current Kimi multimodal models", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "described" } }]
+      })
+    );
+
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("kimi-k2.6"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "Describe these files." },
+            { type: "file", mediaType: "image/png", data: "iVBORw0KGgo=" },
+            { type: "file", mediaType: "video/mp4", data: "AAAAIGZ0eXA=" }
+          ]
+        }
+      ]
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      messages: Array<{ content: Array<Record<string, any>> }>;
+    };
+    expect(body.messages[0]?.content).toEqual([
+      { type: "text", text: "Describe these files." },
+      { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
+      { type: "video_url", video_url: { url: "data:video/mp4;base64,AAAAIGZ0eXA=" } }
+    ]);
   });
 
   it("rejects unsupported tool choice when Kimi reasoning is enabled", async () => {
@@ -392,6 +460,50 @@ describe("kimi adapter", () => {
     expect(followupBody.messages.find((message) => message.role === "assistant")?.reasoning_content).toBe(
       "Need to inspect the weather tool first."
     );
+  });
+
+  it("preserves Kimi multimodal tool results instead of stringifying them", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "watched" } }]
+      })
+    );
+
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("kimi-k2.7-code"),
+      messages: [
+        {
+          role: "tool",
+          parts: [
+            {
+              type: "tool-result",
+              toolResult: {
+                toolCallId: "call_1",
+                isError: false,
+                output: [
+                  { type: "video_url", video_url: { url: "data:video/mp4;base64,AAAAIGZ0eXA=" } },
+                  { type: "text", text: "Clip from checkout.mp4" }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    expect(body.messages[0]).toEqual({
+      role: "tool",
+      tool_call_id: "call_1",
+      content: [
+        { type: "video_url", video_url: { url: "data:video/mp4;base64,AAAAIGZ0eXA=" } },
+        { type: "text", text: "Clip from checkout.mp4" }
+      ]
+    });
   });
 
   it("streams reasoning content as provider data for Kimi", async () => {

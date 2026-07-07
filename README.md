@@ -210,7 +210,7 @@ Compatibility notes:
 - Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime`, `gpt-realtime-2`, and `gpt-realtime-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
 - Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
-- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example `tool_search` is accepted on the current `gpt-5.4` family in this SDK, while `gpt-5.4-nano`, `gpt-5.1`, and legacy `gpt-4o-mini` are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Sonnet 5, Claude Fable 5, Claude Mythos 5, Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+ including Opus 4.8, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking. Claude Fable 5 and Claude Mythos 5 always use adaptive thinking, so the adapter does not send redundant `thinking: { type: "adaptive" }` for common `reasoning.effort` and rejects `thinking.disabled` or manual thinking budgets before the request is sent. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning is currently limited to thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
+- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example Responses computer use is accepted on `gpt-5.5` and the current `gpt-5.4` family, while `tool_search` remains limited to the supported `gpt-5.4` variants in this SDK and unsupported combinations are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Sonnet 5, Claude Fable 5, Claude Mythos 5, Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+ including Opus 4.8, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking such as Claude Haiku 4.5. Claude Fable 5 and Claude Mythos 5 always use adaptive thinking, so the adapter does not send redundant `thinking: { type: "adaptive" }` for common `reasoning.effort` and rejects `thinking.disabled` or manual thinking budgets before the request is sent. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen3.7-plus`, `qwen3.7-max`, `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning currently maps to `thinking.enabled/disabled` for `kimi-k2.6`, `kimi-k2.5`, and legacy thinking models; `kimi-k2.7-code` and `kimi-k2.7-code-highspeed` are always-thinking models and reject disabled thinking plus non-default sampling controls before a request is sent. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
 - Bedrock native Converse supports common `toolChoice` values by mapping specific tools and required tools to AWS-native `toolConfig`, and by omitting tool configuration for `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming. In the SDK's agent matrix, Bedrock Tier A applies to `createBedrock({ runtime: "openai" })`, which exposes Responses hosted tools, remote MCP, and approval requests. AWS-native AgentCore MCP is exposed separately as SDK-managed MCP tools for Converse or any shared agent loop; it does not promote Converse itself to a provider-emitted approval runtime.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - DeepSeek is Tier B for portable tool loops plus documented thinking mode on `deepseek-v4-flash` and `deepseek-v4-pro`; it does not expose hosted tools, remote MCP, web search, embeddings, audio, or realtime sessions in this adapter.
@@ -1503,20 +1503,23 @@ Provider compatibility for the common `reasoning` option:
 - Anthropic:
   - Claude Sonnet 5 supports `effort`, adaptive thinking, files, fast mode, and mid-conversation system messages; omit explicit `temperature`, `top_p`, and `top_k`
   - Claude Fable 5 and Claude Mythos 5 support `effort`; adaptive thinking is always on, so the adapter sends only `output_config.effort` for common reasoning requests
+  - Claude Mythos 5 remains limited-availability upstream; use it only for approved Anthropic accounts
   - Claude Fable 5 server-side refusal fallback is available with `providerOptions.fallbacks`; the adapter adds the required `server-side-fallback-2026-06-01` beta header automatically
   - Claude Opus 4.7 and later, including Claude Opus 4.8, support `effort`; `budgetTokens` is rejected
   - Claude Opus 4.5, Claude Opus 4.6, and Claude Sonnet 4.6 support `effort`
+  - Claude Haiku 4.5 supports extended thinking through `budgetTokens`; it does not use the modern `effort` mapping
   - `budgetTokens` remains available only on Anthropic models that still accept manual thinking
   - Claude Sonnet 5, Claude Fable 5, Claude Mythos 5, and Claude Opus 4.8 accept provider-specific `providerOptions.speed = "fast"` for fast mode
 - Gemini and Vertex:
   - Gemini 3 models support `effort`
   - Gemini 2.5 and earlier models support `budgetTokens`
 - Qwen:
-  - supported on reasoning-capable model families such as `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`
+  - supported on reasoning-capable model families such as `qwen3.7-plus`, `qwen3.7-max`, `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`
   - maps to `enable_thinking`, and `budgetTokens` maps to `thinking_budget`
 - Kimi:
-  - supported on thinking-capable models such as `kimi-k2.5` and `kimi-k2-thinking`
+  - supported on thinking-capable models such as `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6`, `kimi-k2.5`, and legacy `kimi-k2-thinking`
   - maps to Kimi `thinking.enabled/disabled`
+  - `kimi-k2.7-code` and `kimi-k2.7-code-highspeed` do not support disabling thinking, custom `temperature`, custom `top_p`, or `n` values other than `1`
   - `budgetTokens` is not supported in the common mapping
   - when reasoning is enabled, `toolChoice` must stay `auto` or `none`
 - DeepSeek:
@@ -1760,7 +1763,7 @@ const result = await generateText({
 console.log(result.text);
 ```
 
-Qwen now uses the DashScope-compatible Responses API by default, including hosted web search, web extraction, code interpreter, file search, remote MCP, and image search tools. Pass `providerOptions: { apiMode: "chat" }` only when you need the legacy Chat Completions path.
+Qwen now uses the DashScope-compatible Responses API by default, including hosted web search, web extraction, code interpreter, file search, remote MCP, and image search tools. Current catalog examples prefer `qwen3.7-plus` for multimodal reasoning, `qwen3.7-max` for text reasoning, and `qwen-image-2.0-pro` for image generation. Pass `providerOptions: { apiMode: "chat" }` only when you need the legacy Chat Completions path.
 
 ```ts
 import { generateText } from "@zhivex-ai/sdk";
@@ -1778,7 +1781,7 @@ const qwen = createQwen({
 });
 
 const result = await generateText({
-  model: qwen("qwen-plus"),
+  model: qwen("qwen3.7-plus"),
   prompt: "Find current docs, extract the relevant page, and check a sample with code.",
   tools: {
     search: qwenWebSearchTool(),
@@ -2258,6 +2261,7 @@ import {
   createFileSearchStore,
   createInteraction,
   generateText,
+  googleComputerUseTool,
   googleFileSearchTool,
   googleUrlContextTool,
   predictRaw,
@@ -2302,6 +2306,33 @@ await createInteraction({
   provider: gemini,
   modelId: "gemini-3.5-flash",
   input: "Run a deep research style interaction."
+});
+
+const computer = await createInteraction({
+  provider: gemini,
+  modelId: "gemini-3.5-flash",
+  input: "Open the dashboard and find the failed checkout.",
+  tools: {
+    computer: googleComputerUseTool({ environment: "browser" })
+  }
+});
+
+await createInteraction({
+  provider: gemini,
+  modelId: "gemini-3.5-flash",
+  previousInteractionId: computer.id,
+  input: [
+    {
+      screenshot: "data:image/png;base64,...",
+      function_response: {
+        name: "computer_use",
+        response: { status: "clicked" }
+      }
+    }
+  ],
+  tools: {
+    computer: googleComputerUseTool({ environment: "browser" })
+  }
 });
 
 const vertex = createVertex({

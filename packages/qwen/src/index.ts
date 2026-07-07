@@ -240,7 +240,12 @@ const modelFamily = (modelId: string) => modelId.toLowerCase();
 const supportsQwenReasoning = (modelId: string) => /^(qwen-(plus|turbo|max|flash)|qwq|qwen3|qwen3\.)/i.test(modelId);
 const supportsQwenVision = (modelId: string) => {
   const model = modelFamily(modelId);
-  return model.includes("vl") || model.includes("omni") || model.includes("vision") || /^qwen3\./.test(model);
+  return (
+    model.includes("vl") ||
+    model.includes("omni") ||
+    model.includes("vision") ||
+    /^qwen3\.7-plus(?:$|-)/.test(model)
+  );
 };
 const supportsQwenTools = (modelId: string) => !modelFamily(modelId).includes("embedding");
 const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => ({

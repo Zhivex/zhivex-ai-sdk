@@ -312,7 +312,7 @@ const supportsOpenAIToolSearch = (modelId: string) => {
 
 const supportsOpenAIComputerUse = (modelId: string) => {
   const normalized = normalizeModelId(modelId);
-  return /^gpt-5\.4(?:$|-20|-pro|-mini)/.test(normalized);
+  return /^(?:gpt-5\.5|gpt-5\.4)(?:$|-20|-pro|-mini)/.test(normalized);
 };
 
 const supportsOpenAIHostedHarnessTools = (modelId: string) => /^gpt-5\.4(?:$|-)/.test(normalizeModelId(modelId));

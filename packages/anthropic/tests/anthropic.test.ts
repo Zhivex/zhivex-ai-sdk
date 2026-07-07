@@ -453,6 +453,40 @@ describe("anthropic adapter", () => {
     });
   });
 
+  it("maps Claude Haiku 4.5 extended thinking through budget tokens", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from haiku 4.5" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 8, output_tokens: 3 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-haiku-4-5-20251001"),
+      prompt: "hello",
+      reasoning: {
+        budgetTokens: 4096
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      model: string;
+      thinking: { type: string; budget_tokens: number };
+      output_config?: unknown;
+    };
+    expect(body).toMatchObject({
+      model: "claude-haiku-4-5-20251001",
+      thinking: {
+        type: "enabled",
+        budget_tokens: 4096
+      }
+    });
+    expect(body.output_config).toBeUndefined();
+  });
+
   it("sends adaptive thinking config on streaming requests for Claude Opus 4.7", async () => {
     const body = new ReadableStream({
       start(controller) {

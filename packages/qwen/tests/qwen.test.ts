@@ -122,6 +122,22 @@ describe("qwen adapter", () => {
     fetchMock.mockReset();
   });
 
+  it("declares current Qwen 3.7 model capabilities without overclaiming vision on max", () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    expect(provider("qwen3.7-plus").capabilities).toMatchObject({
+      reasoning: true,
+      vision: true,
+      tools: true
+    });
+    expect(provider("qwen3.7-max").capabilities).toMatchObject({
+      reasoning: true,
+      vision: false,
+      tools: true
+    });
+    expect(provider("qwen3.5-omni-plus").capabilities.vision).toBe(true);
+  });
+
   it("maps Responses API results to the common contract by default", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({

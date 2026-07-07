@@ -26,6 +26,9 @@ export const createModelCatalog = (entries: ModelCatalogEntry[]): ModelCatalog =
 });
 
 export const defaultModelCatalog = createModelCatalog([
+  { provider: "openai", modelId: "gpt-5.5", costPer1kTokens: 5, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
+  { provider: "openai", modelId: "gpt-5.4", costPer1kTokens: 2.5, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
+  { provider: "openai", modelId: "gpt-5.4-mini", costPer1kTokens: 0.75, recommendedFor: ["chat", "tools", "speed", "vision"] },
   { provider: "openai", modelId: "gpt-4o-mini", costPer1kTokens: 0.6, recommendedFor: ["chat", "tools", "speed"] },
   { provider: "azure-openai", modelId: "gpt-4o-mini", costPer1kTokens: 0.6, recommendedFor: ["chat", "tools"] },
   {
@@ -52,6 +55,13 @@ export const defaultModelCatalog = createModelCatalog([
     aliases: ["claude-opus-4-7"],
     costPer1kTokens: 5,
     recommendedFor: ["reasoning", "tools"]
+  },
+  {
+    provider: "anthropic",
+    modelId: "claude-haiku-4-5-20251001",
+    aliases: ["claude-haiku-4-5"],
+    costPer1kTokens: 1,
+    recommendedFor: ["chat", "reasoning", "speed", "vision"]
   },
   {
     provider: "gemini",
@@ -170,8 +180,22 @@ export const defaultModelCatalog = createModelCatalog([
     modelId: "gemini-3.5-live-translate-preview",
     recommendedFor: ["speed"]
   },
+  { provider: "qwen", modelId: "qwen3.7-max", costPer1kTokens: 1.6, recommendedFor: ["chat", "tools", "reasoning"] },
+  { provider: "qwen", modelId: "qwen3.7-plus", costPer1kTokens: 0.8, recommendedFor: ["chat", "tools", "reasoning", "vision"] },
+  { provider: "qwen", modelId: "qwen3.6-flash", costPer1kTokens: 0.2, recommendedFor: ["chat", "speed", "tools"] },
+  { provider: "qwen", modelId: "qwen3.5-omni-plus", recommendedFor: ["chat", "vision", "speed"] },
+  { provider: "qwen", modelId: "qwen-image-2.0-pro", recommendedFor: ["vision"] },
   { provider: "qwen", modelId: "qwen-plus", costPer1kTokens: 0.8, recommendedFor: ["chat", "tools", "reasoning"] },
-  { provider: "kimi", modelId: "kimi-k2-0905-preview", costPer1kTokens: 2, recommendedFor: ["reasoning", "tools"] },
+  {
+    provider: "kimi",
+    modelId: "kimi-k2.7-code",
+    aliases: ["kimi-k2.7-code-highspeed"],
+    costPer1kTokens: 2,
+    recommendedFor: ["chat", "reasoning", "tools", "vision"]
+  },
+  { provider: "kimi", modelId: "kimi-k2.6", costPer1kTokens: 2, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
+  { provider: "kimi", modelId: "kimi-k2.5", costPer1kTokens: 2, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
+  { provider: "kimi", modelId: "kimi-k2-0905-preview", costPer1kTokens: 2, recommendedFor: ["tools"] },
   { provider: "deepseek", modelId: "deepseek-v4-flash", costPer1kTokens: 0.4, recommendedFor: ["chat", "tools", "reasoning", "speed"] },
   { provider: "openrouter", modelId: "openai/gpt-4o-mini", costPer1kTokens: 0.7, recommendedFor: ["chat", "tools"] },
   { provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet", costPer1kTokens: 3, recommendedFor: ["reasoning"] },

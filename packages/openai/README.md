@@ -18,6 +18,7 @@ import { generateText, getAgentCapabilities } from "@zhivex-ai/core";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+console.log(getAgentCapabilities(openai("gpt-5.5")).computerUse);
 console.log(getAgentCapabilities(openai("gpt-5.4")).toolSearch);
 console.log(getAgentCapabilities(openai("gpt-5.4-nano")).toolSearch);
 

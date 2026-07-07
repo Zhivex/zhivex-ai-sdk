@@ -614,6 +614,8 @@ describe("openai adapter", () => {
     expect(getAgentCapabilities(provider("gpt-4o-mini")).codeExecution).toBe(true);
     expect(getAgentCapabilities(provider("gpt-4o-mini")).shell).toBe(false);
     expect(getAgentCapabilities(provider("gpt-5.4")).shell).toBe(true);
+    expect(getAgentCapabilities(provider("gpt-5.5")).computerUse).toBe(true);
+    expect(getAgentCapabilities(provider("gpt-5.5")).toolSearch).toBe(false);
   });
 
   it("maps OpenAI agent built-in helpers into Responses tools", async () => {
@@ -660,6 +662,7 @@ describe("openai adapter", () => {
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
     expect(getAgentCapabilities(provider("gpt-5.4")).toolSearch).toBe(true);
     expect(getAgentCapabilities(provider("gpt-5.4-nano")).toolSearch).toBe(false);
+    expect(getAgentCapabilities(provider("gpt-5.5")).computerUse).toBe(true);
 
     await expect(
       generateText({
