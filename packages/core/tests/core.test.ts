@@ -59,6 +59,7 @@ import {
   normalizeFinishReason,
   streamObject,
   streamAgent,
+  streamSSE,
   streamText,
   system,
   toSSEResponse,
@@ -80,7 +81,7 @@ import {
   user
 } from "../src/index.js";
 import type { AgentRunState, EmbeddingModel, ImageGenerationModel, LanguageModel, MusicGenerationModel, PredictionModel, ProviderAdapter, StreamEvent, ToolSet, VideoGenerationModel } from "../src/index.js";
-import { UnsupportedFeatureError, ValidationError } from "../src/index.js";
+import { ParseError, ProviderHTTPError, UnsupportedFeatureError, ValidationError } from "../src/index.js";
 
 const createLanguageModel = (overrides?: Partial<LanguageModel>): LanguageModel => ({
   provider: "test",
@@ -1887,6 +1888,34 @@ describe("core helpers", () => {
     expect(body).toContain('data: {"hello":"world"}');
   });
 
+  it("truncates oversized provider HTTP response bodies", () => {
+    const oversizedBody = `${"x".repeat(70 * 1024)}secret-tail`;
+    const error = new ProviderHTTPError("provider failed", 500, { responseBody: oversizedBody });
+
+    expect(error.responseBody).toContain("truncated");
+    expect(error.responseBody).not.toContain("secret-tail");
+  });
+
+  it("limits streaming error response bodies", async () => {
+    const response = new Response(`${"x".repeat(128)}secret-tail`, { status: 500 });
+
+    await expect(streamSSE(response, { maxErrorBodyChars: 16 }).next()).rejects.toMatchObject({
+      responseBody: expect.stringContaining("truncated")
+    });
+  });
+
+  it("rejects SSE events that exceed the configured event limit", async () => {
+    const response = new Response(`data: ${"x".repeat(32)}\n\n`);
+
+    await expect(streamSSE(response, { maxEventChars: 16 }).next()).rejects.toBeInstanceOf(ParseError);
+  });
+
+  it("rejects incomplete SSE buffers that exceed the configured buffer limit", async () => {
+    const response = new Response(`data: ${"x".repeat(32)}`);
+
+    await expect(streamSSE(response, { maxBufferChars: 16 }).next()).rejects.toBeInstanceOf(ParseError);
+  });
+
   it("maps model messages into UI messages", () => {
     const message = toUIMessage(createTextMessage("assistant", "hello"), "assistant-1");
 
@@ -2643,7 +2672,22 @@ describe("core helpers", () => {
     expect(normalizeFinishReason("refusal")).toBe("refusal");
   });
 
-  it("defaults Anthropic catalog entries to Claude Fable 5 and keeps Opus aliases", () => {
+  it("defaults OpenAI catalog entries to current GPT-5 models", () => {
+    expect(defaultModelCatalog.find("openai", "gpt-5.5")).toMatchObject({
+      modelId: "gpt-5.5",
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
+    });
+    expect(defaultModelCatalog.find("openai", "gpt-5.4-mini")).toMatchObject({
+      modelId: "gpt-5.4-mini",
+      recommendedFor: expect.arrayContaining(["speed", "tools", "vision"])
+    });
+  });
+
+  it("defaults Anthropic catalog entries to Claude Sonnet 5 and keeps Opus aliases", () => {
+    expect(defaultModelCatalog.find("anthropic", "claude-sonnet-5")).toMatchObject({
+      modelId: "claude-sonnet-5",
+      recommendedFor: expect.arrayContaining(["chat", "reasoning", "tools", "vision"])
+    });
     expect(defaultModelCatalog.find("anthropic", "claude-fable-5")).toMatchObject({
       modelId: "claude-fable-5",
       recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
@@ -2651,6 +2695,7 @@ describe("core helpers", () => {
     expect(defaultModelCatalog.find("anthropic", "claude-mythos-class")?.modelId).toBe("claude-fable-5");
     expect(defaultModelCatalog.find("anthropic", "claude-mythos-5")?.modelId).toBe("claude-mythos-5");
     expect(defaultModelCatalog.find("anthropic", "claude-opus-4-7")?.modelId).toBe("claude-opus-4-8");
+    expect(defaultModelCatalog.find("anthropic", "claude-haiku-4-5")?.modelId).toBe("claude-haiku-4-5-20251001");
   });
 
   it("defaults Gemini and Vertex catalog entries to Gemini 3.5 Flash", () => {
@@ -2666,6 +2711,30 @@ describe("core helpers", () => {
     expect(defaultModelCatalog.find("vertex", "gemini-3.5-live-translate-preview")?.modelId).toBe(
       "gemini-3.5-live-translate-preview"
     );
+  });
+
+  it("includes current Qwen and Kimi catalog entries", () => {
+    expect(defaultModelCatalog.find("qwen", "qwen3.7-plus")).toMatchObject({
+      modelId: "qwen3.7-plus",
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
+    });
+    expect(defaultModelCatalog.find("qwen", "qwen3.7-max")).toMatchObject({
+      modelId: "qwen3.7-max",
+      recommendedFor: expect.arrayContaining(["reasoning", "tools"])
+    });
+    expect(defaultModelCatalog.find("qwen", "qwen-image-2.0-pro")).toMatchObject({
+      modelId: "qwen-image-2.0-pro",
+      recommendedFor: expect.arrayContaining(["vision"])
+    });
+    expect(defaultModelCatalog.find("kimi", "kimi-k2.7-code")).toMatchObject({
+      modelId: "kimi-k2.7-code",
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
+    });
+    expect(defaultModelCatalog.find("kimi", "kimi-k2.7-code-highspeed")?.modelId).toBe("kimi-k2.7-code");
+    expect(defaultModelCatalog.find("kimi", "kimi-k2.6")).toMatchObject({
+      modelId: "kimi-k2.6",
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
+    });
   });
 
   it("includes DeepSeek in the default model catalog", () => {

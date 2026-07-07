@@ -2,16 +2,78 @@ import { ParseError, ProviderHTTPError } from "./errors.js";
 import type { AgentStreamResult, StreamTextResult, UIMessageChunk } from "./types.js";
 import { toUIMessageStream } from "./ui.js";
 
-const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
+const DEFAULT_SSE_MAX_EVENT_CHARS = 1024 * 1024;
+const DEFAULT_SSE_ERROR_BODY_MAX_CHARS = 64 * 1024;
+
+export interface StreamSSEOptions {
+  maxBufferChars?: number;
+  maxEventChars?: number;
+  maxErrorBodyChars?: number;
+}
+
+const normalizePositiveLimit = (value: number | undefined, fallback: number) => {
+  if (value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.floor(value));
+};
+
+const appendTruncationNotice = (body: string, omittedChars: number) =>
+  `${body}\n...[truncated after receiving ${omittedChars} additional characters]`;
+
+const readBoundedResponseText = async (response: Response, maxChars: number) => {
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const errorDecoder = new TextDecoder();
+  let body = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      const chunk = done ? errorDecoder.decode() : errorDecoder.decode(value, { stream: true });
+      if (chunk) {
+        const remainingChars = maxChars - body.length;
+        if (remainingChars <= 0) {
+          await reader.cancel("Provider error response body exceeded maximum size.").catch(() => {});
+          return appendTruncationNotice(body, chunk.length);
+        }
+
+        if (chunk.length > remainingChars) {
+          await reader.cancel("Provider error response body exceeded maximum size.").catch(() => {});
+          return appendTruncationNotice(body + chunk.slice(0, remainingChars), chunk.length - remainingChars);
+        }
+
+        body += chunk;
+      }
+
+      if (done) {
+        return body;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+};
+
 export async function* streamSSE(
-  response: Response
+  response: Response,
+  options: StreamSSEOptions = {}
 ): AsyncGenerator<{ event?: string; data: string }, void, undefined> {
+  const maxEventChars = normalizePositiveLimit(options.maxEventChars, DEFAULT_SSE_MAX_EVENT_CHARS);
+  const maxBufferChars = normalizePositiveLimit(options.maxBufferChars, maxEventChars);
+  const maxErrorBodyChars = normalizePositiveLimit(options.maxErrorBodyChars, DEFAULT_SSE_ERROR_BODY_MAX_CHARS);
+
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readBoundedResponseText(response, maxErrorBodyChars);
     throw new ProviderHTTPError(`Streaming request failed with status ${response.status}.`, response.status, {
-      responseBody: body
+      responseBody: body,
+      responseBodyMaxChars: maxErrorBodyChars
     });
   }
 
@@ -21,6 +83,12 @@ export async function* streamSSE(
 
   let buffer = "";
   const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+
+  const cancelForLimit = async (message: string): Promise<never> => {
+    await reader.cancel(message).catch(() => {});
+    throw new ParseError(message);
+  };
 
   const parseEvent = (rawEvent: string) => {
     let event: string | undefined;
@@ -38,32 +106,47 @@ export async function* streamSSE(
     return data.length ? { event, data } : undefined;
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
-
+  try {
     while (true) {
-      const separatorMatch = buffer.match(/\r?\n\r?\n/);
-      if (!separatorMatch) {
+      const { done, value } = await reader.read();
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+
+      while (true) {
+        const separatorMatch = buffer.match(/\r?\n\r?\n/);
+        if (!separatorMatch) {
+          if (buffer.length > maxBufferChars) {
+            await cancelForLimit(`SSE buffer exceeded ${maxBufferChars} characters before an event separator.`);
+          }
+          break;
+        }
+
+        const separatorIndex = separatorMatch.index ?? 0;
+        if (separatorIndex > maxEventChars) {
+          await cancelForLimit(`SSE event exceeded ${maxEventChars} characters.`);
+        }
+
+        const rawEvent = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + separatorMatch[0].length);
+        const parsed = parseEvent(rawEvent);
+        if (parsed) {
+          yield parsed;
+        }
+      }
+
+      if (done) {
+        if (buffer.length > maxEventChars) {
+          await cancelForLimit(`SSE event exceeded ${maxEventChars} characters.`);
+        }
+
+        const parsed = parseEvent(buffer);
+        if (parsed) {
+          yield parsed;
+        }
         break;
       }
-
-      const separatorIndex = separatorMatch.index ?? 0;
-      const rawEvent = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + separatorMatch[0].length);
-      const parsed = parseEvent(rawEvent);
-      if (parsed) {
-        yield parsed;
-      }
     }
-
-    if (done) {
-      const parsed = parseEvent(buffer);
-      if (parsed) {
-        yield parsed;
-      }
-      break;
-    }
+  } finally {
+    reader.releaseLock();
   }
 }
 

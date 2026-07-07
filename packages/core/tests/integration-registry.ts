@@ -84,7 +84,7 @@ const anthropicBaseURL = process.env.ANTHROPIC_BASE_URL;
 const anthropicVersion = process.env.ANTHROPIC_VERSION;
 const anthropicTextModelId = process.env.ANTHROPIC_INTEGRATION_MODEL ?? "claude-3-5-sonnet";
 const usesModernAnthropicControls = (modelId: string) =>
-  /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9]|claude-(?:fable|mythos)-5)(?:[-@]|$)/.test(modelId);
+  /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9]|claude-(?:sonnet|fable|mythos)-5)(?:[-@]|$)/.test(modelId);
 
 const geminiApiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const geminiBaseURL = process.env.GEMINI_BASE_URL;

@@ -312,7 +312,7 @@ const supportsOpenAIToolSearch = (modelId: string) => {
 
 const supportsOpenAIComputerUse = (modelId: string) => {
   const normalized = normalizeModelId(modelId);
-  return /^gpt-5\.4(?:$|-20|-pro|-mini)/.test(normalized);
+  return /^(?:gpt-5\.5|gpt-5\.4)(?:$|-20|-pro|-mini)/.test(normalized);
 };
 
 const supportsOpenAIHostedHarnessTools = (modelId: string) => /^gpt-5\.4(?:$|-)/.test(normalizeModelId(modelId));
@@ -1462,6 +1462,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
           headers: jsonHeaders(this.apiKey),
           signal,
           body: JSON.stringify({
+            ...input.providerOptions,
             model: this.modelId,
             ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
             ...(messages.length ? { input: toResponsesInput(messages) } : {}),
@@ -1470,7 +1471,6 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             text: mapResponsesStructuredOutput(input),
             temperature: input.temperature,
             max_output_tokens: input.maxTokens,
-            ...input.providerOptions,
             ...mapReasoning(input)
           })
         }),
@@ -1511,6 +1511,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
@@ -1518,7 +1519,6 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
               ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-              ...input.providerOptions,
               ...mapReasoning(input),
               stream: false
             })
@@ -1560,6 +1560,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               input: toResponsesInput(input.messages),
               tools: mapResponsesTools(input.tools),
@@ -1567,7 +1568,6 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               text: mapResponsesStructuredOutput(input),
               temperature: input.temperature,
               max_output_tokens: input.maxTokens,
-              ...input.providerOptions,
               ...mapReasoning(input),
               stream: true
             })
@@ -1592,6 +1592,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
           headers: jsonHeaders(this.apiKey),
           signal,
           body: JSON.stringify({
+            ...input.providerOptions,
             model: this.modelId,
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
@@ -1599,7 +1600,6 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             response_format: mapStructuredOutput(input),
             temperature: input.temperature,
             ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-            ...input.providerOptions,
             ...mapReasoning(input),
             stream: true,
             stream_options: { include_usage: true }
@@ -1808,10 +1808,10 @@ class OpenAISpeechModel implements SpeechModel {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               input: input.input,
-              voice: input.voice ?? "alloy",
-              ...input.providerOptions
+              voice: input.voice ?? "alloy"
             })
           }),
         input
@@ -1867,12 +1867,12 @@ class OpenAIGroundedLanguageModel implements GroundedLanguageModel {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               input: toResponsesInput(input.messages),
               tools: [{ type: "web_search_preview" }],
               temperature: input.temperature,
-              max_output_tokens: input.maxTokens,
-              ...input.providerOptions
+              max_output_tokens: input.maxTokens
             })
           }),
         input

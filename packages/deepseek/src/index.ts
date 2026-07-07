@@ -267,6 +267,7 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
@@ -276,7 +277,6 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
               max_tokens: input.maxTokens,
               stream: false,
               ...(hasPreservedReasoning(input.messages) ? { preserve_thinking: true } : {}),
-              ...input.providerOptions,
               ...mapReasoning(input)
             })
           }),
@@ -317,6 +317,7 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
           headers: jsonHeaders(this.apiKey),
           signal,
           body: JSON.stringify({
+            ...input.providerOptions,
             model: this.modelId,
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
@@ -327,7 +328,6 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
             stream: true,
             stream_options: { include_usage: true },
             ...(hasPreservedReasoning(input.messages) ? { preserve_thinking: true } : {}),
-            ...input.providerOptions,
             ...mapReasoning(input)
           })
         }),

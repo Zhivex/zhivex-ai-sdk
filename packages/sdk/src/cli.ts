@@ -173,7 +173,7 @@ const providerTemplates = {
     packageName: "@zhivex-ai/anthropic",
     factoryName: "createAnthropic",
     envName: "ANTHROPIC_API_KEY",
-    defaultModel: "claude-opus-4-8"
+    defaultModel: "claude-sonnet-5"
   },
   gemini: {
     packageName: "@zhivex-ai/gemini",

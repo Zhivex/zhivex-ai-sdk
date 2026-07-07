@@ -247,10 +247,10 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
 
   private toRequestBody(input: ModelGenerateInput, stream: boolean) {
     return {
+      ...input.providerOptions,
       model: this.modelId,
       messages: mapMessages(input.messages),
       tools: mapTools(input.tools),
-      ...input.providerOptions,
       format: mapFormat(input) ?? input.providerOptions?.format,
       options: {
         ...(typeof input.providerOptions?.options === "object" && input.providerOptions?.options

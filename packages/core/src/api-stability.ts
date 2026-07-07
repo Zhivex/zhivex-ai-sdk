@@ -6,6 +6,7 @@ export interface ApiStabilityEntry {
 }
 
 const stableSymbols = [
+  "Agent",
   "ConfigurationError",
   "GuardrailTriggeredError",
   "ParseError",

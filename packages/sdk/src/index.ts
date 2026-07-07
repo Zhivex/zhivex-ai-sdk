@@ -1,6 +1,7 @@
 export {
   AGENT_CONTROL_PLANE_SCHEMA_VERSION,
   API_STABILITY_MANIFEST,
+  Agent,
   assistant,
   agentApprovalResponsePart,
   AdvancedToolRegistry,

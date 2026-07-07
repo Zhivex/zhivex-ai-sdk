@@ -28,7 +28,7 @@ const qwen = createQwen({
 });
 
 const result = await generateText({
-  model: qwen("qwen-plus"),
+  model: qwen("qwen3.7-plus"),
   prompt: "Search current docs, extract the relevant page, and validate a calculation.",
   tools: {
     search: qwenWebSearchTool(),
@@ -76,7 +76,7 @@ const file = await uploadFile({
 
 await createBatch({
   provider: qwen,
-  modelId: "qwen-plus",
+  modelId: "qwen3.7-plus",
   fileName: file.name
 });
 
@@ -91,12 +91,12 @@ await generateSpeech({
 });
 
 await generateImage({
-  model: qwen.imageGenerationModel("wanx2.1-t2i-turbo"),
+  model: qwen.imageGenerationModel("qwen-image-2.0-pro"),
   prompt: "A clean product icon"
 });
 ```
 
-For provider-specific surfaces without a shared cross-provider contract, use `qwen.rerankModel()`, `qwen.multimodalEmbeddingModel()`, and `qwen.tasks`.
+Current first-class model IDs include `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, and `qwen-image-2.0-pro`. `qwen3.7-plus` is marked vision-capable in the SDK; `qwen3.7-max` stays text/reasoning-only until Qwen documents image understanding for that SKU. For provider-specific surfaces without a shared cross-provider contract, use `qwen.rerankModel()`, `qwen.multimodalEmbeddingModel()`, and `qwen.tasks`.
 
 Repository and full documentation:
 

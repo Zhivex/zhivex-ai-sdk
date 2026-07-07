@@ -240,7 +240,12 @@ const modelFamily = (modelId: string) => modelId.toLowerCase();
 const supportsQwenReasoning = (modelId: string) => /^(qwen-(plus|turbo|max|flash)|qwq|qwen3|qwen3\.)/i.test(modelId);
 const supportsQwenVision = (modelId: string) => {
   const model = modelFamily(modelId);
-  return model.includes("vl") || model.includes("omni") || model.includes("vision") || /^qwen3\./.test(model);
+  return (
+    model.includes("vl") ||
+    model.includes("omni") ||
+    model.includes("vision") ||
+    /^qwen3\.7-plus(?:$|-)/.test(model)
+  );
 };
 const supportsQwenTools = (modelId: string) => !modelFamily(modelId).includes("embedding");
 const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => ({
@@ -820,6 +825,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               headers: providerHeaders(this.apiKey, providerOptions),
               signal,
               body: JSON.stringify({
+                ...responseProviderOptions,
                 model: this.modelId,
                 ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
                 ...(messages.length ? { input: toResponsesInput(messages) } : {}),
@@ -829,7 +835,6 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
                 temperature: input.temperature,
                 max_output_tokens: input.maxTokens,
                 ...mapReasoning(input),
-                ...responseProviderOptions,
                 stream: false
               })
             }),
@@ -864,6 +869,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...providerOptions,
               model: this.modelId,
               messages: mapMessages(input.messages),
               tools: mapChatTools(input.tools),
@@ -872,8 +878,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               temperature: input.temperature,
               max_tokens: input.maxTokens,
               stream: false,
-              ...mapReasoning(input),
-              ...providerOptions
+              ...mapReasoning(input)
             })
           }),
         input
@@ -919,6 +924,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             headers: providerHeaders(this.apiKey, providerOptions),
             signal,
             body: JSON.stringify({
+              ...responseProviderOptions,
               model: this.modelId,
               input: toResponsesInput(input.messages),
               ...(input.structuredOutput?.mode === "native" ? { response_format: mapStructuredOutput(input) } : {}),
@@ -927,7 +933,6 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               temperature: input.temperature,
               max_output_tokens: input.maxTokens,
               ...mapReasoning(input),
-              ...responseProviderOptions,
               stream: true
             })
           }),
@@ -950,6 +955,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           headers: jsonHeaders(this.apiKey),
           signal,
           body: JSON.stringify({
+            ...providerOptions,
             model: this.modelId,
             messages: mapMessages(input.messages),
             tools: mapChatTools(input.tools),
@@ -959,8 +965,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             max_tokens: input.maxTokens,
             stream: true,
             stream_options: { include_usage: true },
-            ...mapReasoning(input),
-            ...providerOptions
+            ...mapReasoning(input)
           })
         }),
       input
@@ -1212,7 +1217,7 @@ class QwenFileSearchStoresClient implements FileSearchStoresClient {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
-            body: JSON.stringify({ name: input.displayName, ...input.providerOptions })
+            body: JSON.stringify({ ...input.providerOptions, name: input.displayName })
           }),
         input
       );
@@ -1237,7 +1242,7 @@ class QwenFileSearchStoresClient implements FileSearchStoresClient {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
-            body: JSON.stringify({ file_id: input.fileName, ...input.providerOptions })
+            body: JSON.stringify({ ...input.providerOptions, file_id: input.fileName })
           }),
         input
       );
@@ -1304,13 +1309,13 @@ class QwenBatchesClient implements BatchesClient {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               input_file_id: input.fileName,
               endpoint: input.providerOptions?.endpoint ?? "/v1/chat/completions",
               completion_window: input.providerOptions?.completion_window ?? "24h",
               metadata: input.displayName ? { displayName: input.displayName } : undefined,
               model: input.modelId,
-              requests: input.requests,
-              ...input.providerOptions
+              requests: input.requests
             })
           }),
         input
@@ -1418,7 +1423,7 @@ class QwenSpeechModel implements SpeechModel {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
-            body: JSON.stringify({ model: this.modelId, input: input.input, voice: input.voice ?? "Chelsie", ...input.providerOptions })
+            body: JSON.stringify({ ...input.providerOptions, model: this.modelId, input: input.input, voice: input.voice ?? "Chelsie" })
           }),
         input
       );
@@ -1465,14 +1470,14 @@ class QwenImageGenerationModel implements ImageGenerationModel {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               prompt: input.prompt,
               n: input.count,
               size: input.size,
               negative_prompt: input.negativePrompt,
               response_format: input.providerOptions?.response_format,
-              input_image: input.images?.[0]?.uri,
-              ...input.providerOptions
+              input_image: input.images?.[0]?.uri
             })
           }),
         input
@@ -1511,10 +1516,10 @@ class QwenVideoGenerationModel implements VideoGenerationModel {
             headers: { ...jsonHeaders(this.apiKey), "X-DashScope-Async": "enable" },
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               input: { prompt: input.prompt, img_url: input.image?.uri, negative_prompt: input.negativePrompt },
-              parameters: { size: input.aspectRatio, duration: input.durationSeconds, n: input.count, output_storage_uri: input.outputStorageUri },
-              ...input.providerOptions
+              parameters: { size: input.aspectRatio, duration: input.durationSeconds, n: input.count, output_storage_uri: input.outputStorageUri }
             })
           }),
         input
@@ -1551,7 +1556,7 @@ class QwenRerankModelImpl implements QwenRerankModel {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
-            body: JSON.stringify({ model: this.modelId, query: input.query, documents: input.documents, top_n: input.topN, ...input.providerOptions })
+            body: JSON.stringify({ ...input.providerOptions, model: this.modelId, query: input.query, documents: input.documents, top_n: input.topN })
           }),
         input
       );

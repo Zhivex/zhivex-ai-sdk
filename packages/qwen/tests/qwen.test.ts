@@ -122,6 +122,22 @@ describe("qwen adapter", () => {
     fetchMock.mockReset();
   });
 
+  it("declares current Qwen 3.7 model capabilities without overclaiming vision on max", () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    expect(provider("qwen3.7-plus").capabilities).toMatchObject({
+      reasoning: true,
+      vision: true,
+      tools: true
+    });
+    expect(provider("qwen3.7-max").capabilities).toMatchObject({
+      reasoning: true,
+      vision: false,
+      tools: true
+    });
+    expect(provider("qwen3.5-omni-plus").capabilities.vision).toBe(true);
+  });
+
   it("maps Responses API results to the common contract by default", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -142,6 +158,44 @@ describe("qwen adapter", () => {
     expect(result.usage?.totalTokens).toBe(7);
     expect(result.messages.at(-1)?.parts[0]).toMatchObject({ type: "text", text: "hello from qwen" });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/responses");
+  });
+
+  it("does not let provider options override Responses request fields", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "safe qwen" }] }]
+      })
+    );
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("qwen-plus"),
+      prompt: "hello",
+      maxTokens: 32,
+      providerOptions: {
+        model: "override-model",
+        input: "override-input",
+        stream: true,
+        max_output_tokens: 1,
+        custom_flag: "kept"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      model: string;
+      input: unknown;
+      stream: boolean;
+      max_output_tokens: number;
+      custom_flag?: string;
+    };
+    expect(body.model).toBe("qwen-plus");
+    expect(body.input).not.toBe("override-input");
+    expect(body.stream).toBe(false);
+    expect(body.max_output_tokens).toBe(32);
+    expect(body.custom_flag).toBe("kept");
   });
 
   it("keeps Chat Completions available through apiMode: chat", async () => {

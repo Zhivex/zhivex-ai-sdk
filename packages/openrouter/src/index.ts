@@ -281,6 +281,7 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
             headers: jsonHeaders(this.apiKey, this.appName, this.appURL),
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               model: this.modelId,
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
@@ -289,7 +290,6 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
               temperature: input.temperature,
               max_tokens: input.maxTokens,
               stream: false,
-              ...input.providerOptions,
               reasoning: mapReasoning(input)
             })
           }),
@@ -330,6 +330,7 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
           headers: jsonHeaders(this.apiKey, this.appName, this.appURL),
           signal,
           body: JSON.stringify({
+            ...input.providerOptions,
             model: this.modelId,
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
@@ -339,7 +340,6 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
             max_tokens: input.maxTokens,
             stream: true,
             stream_options: { include_usage: true },
-            ...input.providerOptions,
             reasoning: mapReasoning(input)
           })
         }),

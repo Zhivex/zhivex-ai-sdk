@@ -453,6 +453,40 @@ describe("anthropic adapter", () => {
     });
   });
 
+  it("maps Claude Haiku 4.5 extended thinking through budget tokens", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from haiku 4.5" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 8, output_tokens: 3 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-haiku-4-5-20251001"),
+      prompt: "hello",
+      reasoning: {
+        budgetTokens: 4096
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      model: string;
+      thinking: { type: string; budget_tokens: number };
+      output_config?: unknown;
+    };
+    expect(body).toMatchObject({
+      model: "claude-haiku-4-5-20251001",
+      thinking: {
+        type: "enabled",
+        budget_tokens: 4096
+      }
+    });
+    expect(body.output_config).toBeUndefined();
+  });
+
   it("sends adaptive thinking config on streaming requests for Claude Opus 4.7", async () => {
     const body = new ReadableStream({
       start(controller) {
@@ -530,6 +564,49 @@ describe("anthropic adapter", () => {
 
     expect(body).toMatchObject({
       model: "claude-opus-4-8",
+      speed: "fast",
+      thinking: { type: "adaptive" },
+      output_config: { effort: "xhigh" }
+    });
+    expect(result.usage).toMatchObject({
+      inputTokens: 10,
+      outputTokens: 4,
+      totalTokens: 14,
+      speed: "fast"
+    });
+  });
+
+  it("maps Claude Sonnet 5 as a modern adaptive-thinking model", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from sonnet 5" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4, speed: "fast" }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("claude-sonnet-5"),
+      prompt: "hello",
+      reasoning: {
+        effort: "xhigh"
+      },
+      providerOptions: {
+        speed: "fast"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      model: string;
+      speed: string;
+      thinking: { type: string };
+      output_config: { effort: string };
+    };
+
+    expect(body).toMatchObject({
+      model: "claude-sonnet-5",
       speed: "fast",
       thinking: { type: "adaptive" },
       output_config: { effort: "xhigh" }
@@ -647,6 +724,40 @@ describe("anthropic adapter", () => {
     ]);
   });
 
+  it("preserves valid mid-conversation system messages for Claude Sonnet 5", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from anthropic" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-sonnet-5"),
+      messages: [
+        { role: "system", parts: [{ type: "text", text: "Initial instruction." }] },
+        { role: "user", parts: [{ type: "text", text: "Start." }] },
+        { role: "system", parts: [{ type: "text", text: "Apply this local instruction." }] },
+        { role: "assistant", parts: [{ type: "text", text: "Ready." }] }
+      ]
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      system: string;
+      messages: Array<{ role: string; content: unknown }>;
+    };
+
+    expect(body.system).toBe("Initial instruction.");
+    expect(body.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "Start." }] },
+      { role: "system", content: "Apply this local instruction." },
+      { role: "assistant", content: [{ type: "text", text: "Ready." }] }
+    ]);
+  });
+
   it("keeps legacy top-level system mapping before Claude Opus 4.8", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -692,7 +803,7 @@ describe("anthropic adapter", () => {
         ]
       })
     ).rejects.toThrow(
-      'Provider "anthropic" only supports mid-conversation system messages immediately after a user turn on Claude Opus 4.8 or later, Claude Fable 5, or Claude Mythos 5.'
+      'Provider "anthropic" only supports mid-conversation system messages immediately after a user turn on Claude Opus 4.8 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5.'
     );
   });
 
@@ -1068,7 +1179,23 @@ describe("anthropic adapter", () => {
         }
       })
     ).rejects.toThrow(
-      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; use "reasoning.effort" instead.'
+      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; use "reasoning.effort" instead.'
+    );
+  });
+
+  it("rejects budgetTokens for Claude Sonnet 5", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("claude-sonnet-5"),
+        prompt: "hello",
+        reasoning: {
+          budgetTokens: 1024
+        }
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; use "reasoning.effort" instead.'
     );
   });
 
@@ -1108,7 +1235,7 @@ describe("anthropic adapter", () => {
         }
       })
     ).rejects.toThrow(
-      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; use "reasoning.effort" instead.'
+      'Provider "anthropic" does not support "reasoning.budgetTokens" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; use "reasoning.effort" instead.'
     );
   });
 
@@ -1122,7 +1249,7 @@ describe("anthropic adapter", () => {
         temperature: 0
       })
     ).rejects.toThrow(
-      'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; omit it from the request.'
+      'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit it from the request.'
     );
 
     await expect(
@@ -1134,7 +1261,33 @@ describe("anthropic adapter", () => {
         }
       })
     ).rejects.toThrow(
-      'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later, Claude Fable 5, or Claude Mythos 5; omit them from the request.'
+      'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit them from the request.'
+    );
+  });
+
+  it("rejects explicit sampling controls for Claude Sonnet 5", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("claude-sonnet-5"),
+        prompt: "hello",
+        temperature: 0
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit it from the request.'
+    );
+
+    await expect(
+      generateText({
+        model: provider("claude-sonnet-5"),
+        prompt: "hello",
+        providerOptions: {
+          top_p: 0.9
+        }
+      })
+    ).rejects.toThrow(
+      'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit them from the request.'
     );
   });
 });

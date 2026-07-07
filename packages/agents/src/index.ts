@@ -1,5 +1,6 @@
 export {
   AGENT_CONTROL_PLANE_SCHEMA_VERSION,
+  Agent,
   agentApprovalResponsePart,
   applySafetyPolicyToAgent,
   cancelAgentRun,
@@ -73,7 +74,8 @@ export {
   summarizeAgentTrace,
   createToolAuditRecords,
   PRODUCTION_AGENT_KIT_SCHEMA_VERSION,
-  toUIAgentStreamResponse
+  toUIAgentStreamResponse,
+  tool
 } from "@zhivex-ai/core";
 
 export type {
@@ -195,6 +197,7 @@ export type {
   HierarchicalAgentTrace,
   HierarchicalAgentTraceNode,
   LatencySummary,
+  LanguageModel,
   LiveAgentDefinition,
   LiveAgentRunInput,
   LiveAgentRunOutput,

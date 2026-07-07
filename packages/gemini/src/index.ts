@@ -19,6 +19,7 @@ import {
   unsupportedBrowserToken,
   withRetry,
   withTimeoutSignal,
+  type AnyToolDefinition,
   type AudioInput,
   type BatchCreateInput,
   type BatchJob,
@@ -55,6 +56,7 @@ import {
   type GeneratedMedia,
   type GroundedGenerateResult,
   type GroundedLanguageModel,
+  type HostedToolDefinition,
   type ImageGenerationModel,
   type ImageGenerationResult,
   type InteractionCreateInput,
@@ -82,6 +84,7 @@ import {
   type SpeechModel,
   type SpeechResult,
   type StreamEvent,
+  type ToolSet,
   type TranscriptionModel,
   type TranscriptionResult,
   type UploadedFile,
@@ -677,6 +680,45 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
         return mappedTools.length ? mappedTools : undefined;
       })()
     : undefined;
+
+const isGeminiComputerUseTool = (tool: AnyToolDefinition): tool is HostedToolDefinition =>
+  isHostedToolDefinition(tool) &&
+  (tool.toolClass === "computer-use" || tool.type === "computerUse" || tool.type === "computer_use");
+
+const mapInteractionComputerUseTool = (tool: HostedToolDefinition) => {
+  const config = tool.config && typeof tool.config === "object" ? { ...(tool.config as Record<string, unknown>) } : {};
+  const screen = config.screen;
+  delete config.screen;
+
+  return {
+    type: "computer_use",
+    ...(typeof config.environment === "string"
+      ? {}
+      : typeof screen === "string"
+        ? { environment: screen }
+        : {}),
+    ...config
+  };
+};
+
+const mapInteractionTools = (tools: ToolSet) => {
+  const generatedContentTools = mapTools(tools);
+  if (!generatedContentTools) {
+    return undefined;
+  }
+
+  return Object.values(tools).some(isGeminiComputerUseTool)
+    ? generatedContentTools.map((tool) => {
+        const entries = Object.entries(tool);
+        if (entries.length !== 1 || !["computerUse", "computer_use"].includes(entries[0]?.[0] ?? "")) {
+          return tool;
+        }
+
+        const computerUseTool = Object.values(tools).find(isGeminiComputerUseTool);
+        return computerUseTool ? mapInteractionComputerUseTool(computerUseTool) : tool;
+      })
+    : generatedContentTools;
+};
 
 const mapToolConfig = (
   toolChoice: ModelGenerateInput["toolChoice"],
@@ -1669,12 +1711,13 @@ class GeminiInteractionsClient implements InteractionsClient {
   }
 
   private body(input: InteractionCreateInput, stream = false) {
+    const tools = input.tools ? toToolSet(input.tools) : undefined;
     return {
       ...(input.modelId ? { model: input.modelId } : {}),
       ...(input.agent ? { agent: input.agent } : {}),
       input: input.input,
       ...(input.previousInteractionId ? { previous_interaction_id: input.previousInteractionId } : {}),
-      ...(input.tools ? { tools: mapTools(toToolSet(input.tools)) } : {}),
+      ...(tools ? { tools: mapInteractionTools(tools) } : {}),
       ...(input.background !== undefined ? { background: input.background } : {}),
       ...(input.store !== undefined ? { store: input.store } : {}),
       ...(stream ? { stream: true } : {}),
@@ -1897,10 +1940,10 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
             headers: { "content-type": "application/json" },
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: mapTools(input.tools),
-              ...input.providerOptions,
               toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
               generationConfig: generationConfig(this.modelId, input)
             })
@@ -1936,10 +1979,10 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
           headers: { "content-type": "application/json" },
           signal,
           body: JSON.stringify({
+            ...input.providerOptions,
             contents: mapMessages(input.messages),
             systemInstruction: systemInstruction(input.messages),
             tools: mapTools(input.tools),
-            ...input.providerOptions,
             toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
             generationConfig: generationConfig(this.modelId, input)
           })
@@ -2425,6 +2468,7 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
             headers: { "content-type": "application/json" },
             signal,
             body: JSON.stringify({
+              ...input.providerOptions,
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: [{ googleSearch: {} }],
@@ -2433,8 +2477,7 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
                 temperature: input.temperature,
                 maxTokens: input.maxTokens,
                 reasoning: input.reasoning
-              } as ModelGenerateInput),
-              ...input.providerOptions
+              } as ModelGenerateInput)
             })
           }),
         input

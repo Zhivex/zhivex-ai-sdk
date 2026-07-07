@@ -13,7 +13,7 @@ bun add @zhivex-ai/sdk @zhivex-ai/openai
 `app/api/chat/route.ts`:
 
 ```ts
-import { createAgent, createPostgresSessionService, createRunner } from "@zhivex-ai/sdk";
+import { Agent, createPostgresSessionService, createRunner } from "@zhivex-ai/sdk";
 import { createOpenAI } from "@zhivex-ai/openai";
 
 export const runtime = "nodejs";
@@ -22,7 +22,7 @@ const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-const agent = createAgent({
+const agent = new Agent({
   model: openai("gpt-4o-mini"),
   instructions: "You are a concise support assistant."
 });
@@ -142,7 +142,7 @@ Do not use this as the primary production store on Vercel/serverless deployments
 
 ## Streaming Shape
 
-For streaming UIs, keep the same server boundary and expose a stream from the route handler. The SDK runtime can stream through `runner.stream()`, while your route decides whether the wire format is SSE, UI chunks, or a custom protocol.
+For streaming UIs, keep the same server boundary and expose a stream from the route handler. The SDK runtime can stream through `runner.stream()`, while your route decides whether the wire format is SSE, UI chunks, NDJSON, or a custom protocol.
 
 ```ts
 const stream = runner.stream({
@@ -152,23 +152,45 @@ const stream = runner.stream({
 });
 
 const encoder = new TextEncoder();
+const encode = (event: unknown) => encoder.encode(`${JSON.stringify(event)}\n`);
 
 return new Response(
   new ReadableStream({
     async start(controller) {
-      for await (const chunk of stream.textStream) {
-        controller.enqueue(encoder.encode(chunk));
+      try {
+        for await (const text of stream.textStream) {
+          controller.enqueue(encode({ type: "text", text }));
+        }
+
+        const result = await stream.collect();
+        controller.enqueue(
+          encode({
+            type: "finish",
+            sessionId: result.session.sessionId,
+            status: result.output.status
+          })
+        );
+      } catch (error) {
+        controller.enqueue(
+          encode({
+            type: "error",
+            error: error instanceof Error ? error.message : String(error)
+          })
+        );
+      } finally {
+        controller.close();
       }
-      await stream.collect();
-      controller.close();
     }
   }),
   {
     headers: {
-      "content-type": "text/plain; charset=utf-8"
+      "cache-control": "no-cache",
+      "content-type": "application/x-ndjson; charset=utf-8"
     }
   }
 );
 ```
 
 Use `stream.collect()` to persist the final session state after the stream completes.
+
+The repo example in `examples/next-runner` includes both `/api/chat` for simple JSON responses and `/api/chat/stream` for incremental NDJSON responses.

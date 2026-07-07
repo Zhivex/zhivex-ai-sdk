@@ -721,6 +721,119 @@ describe("gemini adapter", () => {
     expect(events.filter((event) => event.type === "text-delta").map((event: any) => event.textDelta).join("")).toBe("hello");
   });
 
+  it("maps Gemini computer use tools to the Interactions API shape", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "int-1",
+        model: "gemini-3.5-flash",
+        outputs: [
+          {
+            function_call: {
+              name: "computer_use",
+              args: {
+                action: "click",
+                x: 120,
+                y: 240,
+                intent: "press the submit button"
+              }
+            }
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const interaction = await createInteraction({
+      provider,
+      modelId: "gemini-3.5-flash",
+      input: "Open the checkout page and submit the form.",
+      tools: {
+        computer: googleComputerUseTool({ screen: "browser" })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      model: string;
+      tools: Array<Record<string, unknown>>;
+    };
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/interactions?key=test");
+    expect(body.model).toBe("gemini-3.5-flash");
+    expect(body.tools).toEqual([{ type: "computer_use", environment: "browser" }]);
+    expect(interaction.outputs?.[0]).toMatchObject({
+      function_call: {
+        name: "computer_use",
+        args: {
+          intent: "press the submit button"
+        }
+      }
+    });
+  });
+
+  it("streams Gemini computer use actions as provider data for browser loops", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"output":{"function_call":{"name":"computer_use","args":{"action":"click","x":120,"y":240,"intent":"press submit"}}}}\n\n' +
+              'data: {"status":"completed"}\n\n'
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const stream = await provider.interactions!.stream({
+      modelId: "gemini-3.5-flash",
+      input: [{ screenshot: "data:image/png;base64,abc123" }],
+      previousInteractionId: "int-1",
+      tools: {
+        computer: googleComputerUseTool({ environment: "browser" })
+      }
+    });
+
+    const events = [];
+    for await (const event of stream) {
+      events.push(event);
+    }
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const requestBody = JSON.parse(String(requestInit.body)) as {
+      previous_interaction_id: string;
+      tools: Array<Record<string, unknown>>;
+    };
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/interactions?key=test&alt=sse");
+    expect(requestBody.previous_interaction_id).toBe("int-1");
+    expect(requestBody.tools).toEqual([{ type: "computer_use", environment: "browser" }]);
+    expect(events).toContainEqual({
+      type: "provider-data",
+      provider: "gemini",
+      data: {
+        output: {
+          function_call: {
+            name: "computer_use",
+            args: {
+              action: "click",
+              x: 120,
+              y: 240,
+              intent: "press submit"
+            }
+          }
+        }
+      }
+    });
+    expect(events.at(-1)).toEqual({ type: "finish", finishReason: "stop" });
+  });
+
   it("runs Gemini raw prediction helpers and operation fetches", async () => {
     fetchMock.mockResolvedValueOnce(Response.json({ predictions: [{ ok: true }] }));
     fetchMock.mockResolvedValueOnce(Response.json({ name: "operations/1", done: false }));
