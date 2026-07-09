@@ -169,6 +169,12 @@ const providerTemplates = {
     envName: "OPENAI_API_KEY",
     defaultModel: "gpt-5"
   },
+  meta: {
+    packageName: "@zhivex-ai/meta",
+    factoryName: "createMeta",
+    envName: "MODEL_API_KEY",
+    defaultModel: "muse-spark-1.1"
+  },
   anthropic: {
     packageName: "@zhivex-ai/anthropic",
     factoryName: "createAnthropic",
