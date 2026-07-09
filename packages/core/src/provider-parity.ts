@@ -91,6 +91,8 @@ const hostedSummary = (agent: ReturnType<typeof getAgentCapabilities>): string =
     agent.toolSearch ? "tool search" : undefined,
     agent.webExtraction ? "web extraction" : undefined,
     agent.skills ? "skills" : undefined,
+    agent.programmaticToolCalling ? "programmatic tool calling" : undefined,
+    agent.multiAgent ? "multi-agent" : undefined,
     agent.toolsets ? "toolsets" : undefined
   ].filter((feature): feature is string => Boolean(feature));
   return features.length ? features.join(", ") : "no";

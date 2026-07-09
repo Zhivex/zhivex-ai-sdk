@@ -15,7 +15,10 @@ export type StructuredOutputMode = "auto" | "native" | "prompted";
 
 export interface TokenUsage {
   inputTokens?: number;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
   outputTokens?: number;
+  reasoningTokens?: number;
   totalTokens?: number;
   speed?: "standard" | "fast";
 }
@@ -35,6 +38,7 @@ export interface ToolExecutionResult {
     message: string;
   };
   isError: boolean;
+  providerMetadata?: Record<string, JsonValue>;
 }
 
 export type ToolChoice =
@@ -49,12 +53,14 @@ export type ToolChoice =
 export interface TextPart {
   type: "text";
   text: string;
+  providerMetadata?: Record<string, JsonValue>;
 }
 
 export interface ImagePart {
   type: "image";
   image: string;
   mediaType?: string;
+  providerMetadata?: Record<string, JsonValue>;
 }
 
 export interface AudioPart {
@@ -72,6 +78,7 @@ export interface FilePart {
   data: string;
   mediaType: string;
   filename?: string;
+  providerMetadata?: Record<string, JsonValue>;
 }
 
 export interface ToolCallPart {
@@ -115,9 +122,13 @@ export interface ModelCapabilities {
   fileSearch?: boolean;
   urlContext?: boolean;
   contextCaching?: boolean;
+  explicitPromptCaching?: boolean;
   batch?: boolean;
   interactions?: boolean;
   rawPrediction?: boolean;
+  reasoningEfforts?: Array<NonNullable<ReasoningConfig["effort"]>>;
+  reasoningModes?: Array<NonNullable<ReasoningConfig["mode"]>>;
+  reasoningContexts?: Array<NonNullable<ReasoningConfig["context"]>>;
   computerUse?: boolean;
   reasoning: boolean;
   webSearch: boolean;
@@ -146,6 +157,8 @@ export interface AgentCapabilities {
   toolSearch?: boolean;
   webExtraction?: boolean;
   skills?: boolean;
+  programmaticToolCalling?: boolean;
+  multiAgent?: boolean;
   toolsets: boolean;
 }
 
@@ -173,7 +186,9 @@ export interface StructuredOutputConfig<TSchema extends ZodTypeAny = ZodTypeAny>
 }
 
 export interface ReasoningConfig {
-  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  mode?: "standard" | "pro";
+  context?: "auto" | "current_turn" | "all_turns";
   budgetTokens?: number;
   includeThoughts?: boolean;
 }

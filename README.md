@@ -176,6 +176,105 @@ console.log(result.usage);
 
 The high-level API accepts either a `prompt` or explicit `messages`, and returns normalized output including text, messages, finish reason, usage, tool results, and execution steps.
 
+## OpenAI GPT-5.6
+
+The OpenAI adapter recognizes `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. The `gpt-5.6` alias selects Sol. All GPT-5.6 variants use the Responses API by default in this adapter; pass `providerOptions.apiMode: "chat"` only when you explicitly need Chat Completions and are not using Responses-only tools or Multi-agent.
+
+GPT-5.6 is currently an upstream limited preview for approved organizations, with API and Codex access granted separately and no public enrollment. For prompts above 272K input tokens, the entire request is billed at 2x the input rate and 1.5x the output rate. See [OpenAI's preview access notes](https://help.openai.com/en/articles/20001325-a-preview-of-gpt-5-6-sol-terra-and-luna) and the [GPT-5.6 Sol model page](https://developers.openai.com/api/docs/models/gpt-5.6-sol).
+
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const result = await generateText({
+  model: openai("gpt-5.6"),
+  prompt: "Review this architecture and identify its highest-risk assumption.",
+  reasoning: {
+    effort: "max",
+    mode: "pro",
+    context: "all_turns"
+  },
+  providerOptions: {
+    apiMode: "responses",
+    safety_identifier: "user_8f2a"
+  }
+});
+
+console.log(result.text);
+```
+
+`reasoning.mode` and `reasoning.context` are Responses-only. The adapter rejects them in Chat Completions instead of silently omitting them. `reasoning.effort`, including `"max"`, works through the endpoint-specific mapping.
+
+For stateless or Zero Data Retention flows, set `providerOptions.store: false`. The adapter adds `reasoning.encrypted_content` to the include list and replays the returned reasoning/output items instead of relying on `previous_response_id`.
+
+`providerOptions.safety_identifier` should be a stable, non-PII identifier for the end user.
+
+OpenAI prompt caching can use request-level controls and explicit content breakpoints. Set a breakpoint either with `providerMetadata.openai.prompt_cache_breakpoint` on a text, image, or file part, or place `openAIPromptCacheBreakpoint()` immediately after the content block to cache:
+
+```ts
+import { user } from "@zhivex-ai/sdk";
+import { openAIPromptCacheBreakpoint } from "@zhivex-ai/openai";
+
+const cached = await generateText({
+  model: openai("gpt-5.6-terra"),
+  messages: [
+    user([
+      { type: "text", text: "Reusable project documentation" },
+      openAIPromptCacheBreakpoint(),
+      { type: "text", text: "Summarize the deployment constraints." }
+    ])
+  ],
+  providerOptions: {
+    prompt_cache_key: "project-docs-v1",
+    prompt_cache_options: { mode: "explicit", ttl: "30m" }
+  }
+});
+```
+
+`prompt_cache_retention` remains available as a legacy alternative for older model families; do not combine it with `prompt_cache_options` for GPT-5.6. The normalized usage object exposes `cachedInputTokens` and `cacheWriteTokens` for cache cost tracking.
+
+The GPT-5.6 Responses integration also includes Programmatic Tool Calling and the Multi-agent beta. Programmatic callable tools declare their permitted caller and optional output schema through `openAIProgrammaticTool()`. Multi-agent mode adds the required beta header automatically and keeps the root agent's final answer:
+
+```ts
+import { tool } from "@zhivex-ai/sdk";
+import {
+  openAIProgrammaticTool,
+  openAIProgrammaticToolCallingTool
+} from "@zhivex-ai/openai";
+import { z } from "zod";
+
+const lookup = openAIProgrammaticTool(
+  tool({
+    name: "lookup",
+    schema: z.object({ id: z.string() }),
+    execute: ({ id }) => ({ id, status: "ready" })
+  }),
+  {
+    allowedCallers: ["programmatic"],
+    outputSchema: z.object({ id: z.string(), status: z.string() })
+  }
+);
+
+await generateText({
+  model: openai("gpt-5.6-luna"),
+  prompt: "Check the records and delegate independent verification.",
+  maxSteps: 4,
+  tools: {
+    program: openAIProgrammaticToolCallingTool(),
+    lookup
+  },
+  providerOptions: {
+    multi_agent: { enabled: true, max_concurrent_subagents: 2 }
+  }
+});
+```
+
+See [`@zhivex-ai/openai`](./packages/openai/README.md) for model capability gates and GPT-5.6-specific provider options.
+
+For GPT-5.6 Computer Use GA, use `openAIComputerTool()` and provide the app-owned action executor that returns a `computer_screenshot`. The legacy `openAIComputerUseTool()` preview helper remains available for older integrations. `openAIShellTool()` supports local skills in an app-owned execution root; `openAIHostedShellTool()` is the separate provider-executed path for `container_auto` or `container_reference` and never re-runs commands locally. Hosted networking is off by default. If enabled, restrict `network_policy.allowed_domains`, scope `domain_secrets` to their exact domain, and treat every allowlisted host as a possible prompt-injection exfiltration channel. See OpenAI's [Hosted Shell safety guidance](https://developers.openai.com/api/docs/guides/tools-shell#network-access).
+
 ## Provider Compatibility
 
 The SDK aims to keep the application-facing contract stable, but capability parity is not identical across providers yet. Use this matrix as the source of truth for the currently implemented SDK behavior.
@@ -190,7 +289,7 @@ Status shorthand:
 <!-- provider-matrix:start -->
 | Provider | `streamText` | Tools | `toolChoice` | Structured output | Embeddings | Audio in | Audio out | Realtime sessions | Browser tokens | Reasoning | Web search | Hosted tools / MCP | Agent tier |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
+| OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent; GPT-5.6 `max` / `pro` / context | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
 | Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
 | Anthropic | yes | yes | yes | prompted | no | no | no | no | no | model-dependent | yes | native MCP, web search, code execution | Tier B |
 | Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B |
@@ -210,7 +309,7 @@ Compatibility notes:
 - Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime`, `gpt-realtime-2`, and `gpt-realtime-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
 - Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
-- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI and Azure OpenAI expose model-specific agent capabilities at runtime; for example Responses computer use is accepted on `gpt-5.5` and the current `gpt-5.4` family, while `tool_search` remains limited to the supported `gpt-5.4` variants in this SDK and unsupported combinations are rejected before a request is sent. Anthropic reasoning currently maps `effort` on Claude Sonnet 5, Claude Fable 5, Claude Mythos 5, Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+ including Opus 4.8, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking such as Claude Haiku 4.5. Claude Fable 5 and Claude Mythos 5 always use adaptive thinking, so the adapter does not send redundant `thinking: { type: "adaptive" }` for common `reasoning.effort` and rejects `thinking.disabled` or manual thinking budgets before the request is sent. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen3.7-plus`, `qwen3.7-max`, `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning currently maps to `thinking.enabled/disabled` for `kimi-k2.6`, `kimi-k2.5`, and legacy thinking models; `kimi-k2.7-code` and `kimi-k2.7-code-highspeed` are always-thinking models and reject disabled thinking plus non-default sampling controls before a request is sent. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
+- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI exposes GPT-5.6 Sol, Terra, Luna, and the `gpt-5.6` alias through Responses by default, with Programmatic Tool Calling, Multi-agent, explicit prompt cache breakpoints, and model-gated agent tools. Tool Search and Computer Use are also accepted on GPT-5.5 base and GPT-5.4 base/mini; shell, apply patch, and skills have their own documented gates. Unsupported combinations are rejected before a request is sent. Azure OpenAI retains its deployment- and API-version-dependent capability mapping. Anthropic reasoning currently maps `effort` on Claude Sonnet 5, Claude Fable 5, Claude Mythos 5, Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+ including Opus 4.8, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking such as Claude Haiku 4.5. Claude Fable 5 and Claude Mythos 5 always use adaptive thinking, so the adapter does not send redundant `thinking: { type: "adaptive" }` for common `reasoning.effort` and rejects `thinking.disabled` or manual thinking budgets before the request is sent. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen3.7-plus`, `qwen3.7-max`, `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning currently maps to `thinking.enabled/disabled` for `kimi-k2.6`, `kimi-k2.5`, and legacy thinking models; `kimi-k2.7-code` and `kimi-k2.7-code-highspeed` are always-thinking models and reject disabled thinking plus non-default sampling controls before a request is sent. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
 - Bedrock native Converse supports common `toolChoice` values by mapping specific tools and required tools to AWS-native `toolConfig`, and by omitting tool configuration for `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming. In the SDK's agent matrix, Bedrock Tier A applies to `createBedrock({ runtime: "openai" })`, which exposes Responses hosted tools, remote MCP, and approval requests. AWS-native AgentCore MCP is exposed separately as SDK-managed MCP tools for Converse or any shared agent loop; it does not promote Converse itself to a provider-emitted approval runtime.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - DeepSeek is Tier B for portable tool loops plus documented thinking mode on `deepseek-v4-flash` and `deepseek-v4-pro`; it does not expose hosted tools, remote MCP, web search, embeddings, audio, or realtime sessions in this adapter.
@@ -1498,7 +1597,8 @@ console.log(result.text);
 
 Provider compatibility for the common `reasoning` option:
 
-- OpenAI and Azure OpenAI: support `effort`
+- OpenAI: supports `effort`; GPT-5.6 adds `effort: "max"` and the Responses-only `mode` / `context` controls
+- Azure OpenAI: supports `effort`
 - OpenRouter: supports `effort` and `budgetTokens`
 - Anthropic:
   - Claude Sonnet 5 supports `effort`, adaptive thinking, files, fast mode, and mid-conversation system messages; omit explicit `temperature`, `top_p`, and `top_k`
@@ -1704,7 +1804,7 @@ const result = await generateText({
 console.log(result.text);
 ```
 
-OpenAI and Azure OpenAI can expose Responses agent tools through provider helpers. `shell` and `apply_patch` are SDK-managed local harness tools, so they require an explicit approval policy by default:
+OpenAI and Azure OpenAI can expose Responses agent tools through provider helpers. In this OpenAI example, `openAIShellTool()` and `openAIApplyPatchTool()` are SDK-managed local harnesses, so they require an explicit approval policy by default. Provider-executed OpenAI shell uses the separate `openAIHostedShellTool()`. This local example attaches a skill directory to the GPT-5.6 shell environment:
 
 ```ts
 import { generateText } from "@zhivex-ai/sdk";
@@ -1715,7 +1815,7 @@ const openai = createOpenAI({
 });
 
 const result = await generateText({
-  model: openai("gpt-5"),
+  model: openai("gpt-5.6-sol"),
   prompt: "Inspect package scripts and propose a tiny patch.",
   maxSteps: 4,
   toolApprovalPolicy({ toolCall }) {
@@ -1724,7 +1824,16 @@ const result = await generateText({
       : { approved: true };
   },
   tools: {
-    shell: openAIShellTool({ cwd: process.cwd(), timeoutMs: 10_000 }),
+    shell: openAIShellTool({
+      rootDir: process.cwd(),
+      timeoutMs: 10_000,
+      environment: {
+        type: "local",
+        skills: [
+          { name: "repo-rules", path: ".agents/skills/repo-rules" }
+        ]
+      }
+    }),
     patch: openAIApplyPatchTool({
       async applyOperation(operation) {
         return {

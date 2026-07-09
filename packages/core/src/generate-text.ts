@@ -58,7 +58,13 @@ const validateReasoning = (options: Pick<GenerateTextOptions, "model" | "reasoni
     );
   }
 
-  if (reasoning.effort === undefined && reasoning.budgetTokens === undefined) {
+  if (
+    reasoning.effort === undefined &&
+    reasoning.mode === undefined &&
+    reasoning.context === undefined &&
+    reasoning.budgetTokens === undefined &&
+    reasoning.includeThoughts === undefined
+  ) {
     throw new ValidationError('The "reasoning" config must include at least one supported field.');
   }
 
@@ -67,6 +73,36 @@ const validateReasoning = (options: Pick<GenerateTextOptions, "model" | "reasoni
     (!Number.isInteger(reasoning.budgetTokens) || reasoning.budgetTokens <= 0)
   ) {
     throw new ValidationError('The "reasoning.budgetTokens" field must be a positive integer.');
+  }
+
+  const capabilities = options.model.capabilities;
+  if (
+    reasoning.effort !== undefined &&
+    ((capabilities.reasoningEfforts !== undefined &&
+      !capabilities.reasoningEfforts.includes(reasoning.effort)) ||
+      (reasoning.effort === "max" && capabilities.reasoningEfforts === undefined))
+  ) {
+    throw new UnsupportedFeatureError(
+      `Model "${options.model.provider}/${options.model.modelId}" does not support reasoning effort "${reasoning.effort}".`
+    );
+  }
+
+  if (
+    reasoning.mode !== undefined &&
+    !capabilities.reasoningModes?.includes(reasoning.mode)
+  ) {
+    throw new UnsupportedFeatureError(
+      `Model "${options.model.provider}/${options.model.modelId}" does not support reasoning mode "${reasoning.mode}".`
+    );
+  }
+
+  if (
+    reasoning.context !== undefined &&
+    !capabilities.reasoningContexts?.includes(reasoning.context)
+  ) {
+    throw new UnsupportedFeatureError(
+      `Model "${options.model.provider}/${options.model.modelId}" does not support reasoning context "${reasoning.context}".`
+    );
   }
 };
 
@@ -199,7 +235,8 @@ const executeTools = async (
         error: {
           message: approval.reason ?? `Tool "${call.name}" was denied by the approval policy.`
         },
-        isError: true
+        isError: true,
+        providerMetadata: call.providerMetadata
       } satisfies ToolExecutionResult;
       return;
     }
@@ -220,7 +257,8 @@ const executeTools = async (
         toolCallId: call.id,
         toolName: call.name,
         output,
-        isError: false
+        isError: false,
+        providerMetadata: call.providerMetadata
       } satisfies ToolExecutionResult;
       results[index] = result;
 
@@ -241,7 +279,8 @@ const executeTools = async (
         toolCallId: call.id,
         toolName: call.name,
         error: { message: error instanceof Error ? error.message : "Tool execution failed." },
-        isError: true
+        isError: true,
+        providerMetadata: call.providerMetadata
       } satisfies ToolExecutionResult;
       results[index] = result;
 

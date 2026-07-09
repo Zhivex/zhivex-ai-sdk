@@ -390,7 +390,7 @@ describe("gateway", () => {
       primary: { provider: "openai", modelId: "gpt-4o-mini" },
       fallbacks: [{ provider: "ollama", modelId: "llama3.2" }],
       messages: [{ role: "user", content: "hello" }],
-      maxCostPer1kTokens: 0.2
+      maxCostPer1kTokens: 0.0005
     });
 
     expect(result.providerUsed).toBe("ollama");
