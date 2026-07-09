@@ -30,6 +30,7 @@ export const defaultModelCatalog = createModelCatalog([
   { provider: "openai", modelId: "gpt-5.4", costPer1kTokens: 2.5, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
   { provider: "openai", modelId: "gpt-5.4-mini", costPer1kTokens: 0.75, recommendedFor: ["chat", "tools", "speed", "vision"] },
   { provider: "openai", modelId: "gpt-4o-mini", costPer1kTokens: 0.6, recommendedFor: ["chat", "tools", "speed"] },
+  { provider: "meta", modelId: "muse-spark-1.1", costPer1kTokens: 2.75, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
   { provider: "azure-openai", modelId: "gpt-4o-mini", costPer1kTokens: 0.6, recommendedFor: ["chat", "tools"] },
   {
     provider: "anthropic",

@@ -4,6 +4,7 @@
     { "path": "./packages/core" },
     { "path": "./packages/agents" },
     { "path": "./packages/openai" },
+    { "path": "./packages/meta" },
     { "path": "./packages/deepseek" },
     { "path": "./packages/qwen" },
     { "path": "./packages/kimi" },

@@ -30,6 +30,7 @@ import type { ZodTypeAny } from "zod";
 
 export type GatewayProviderId =
   | "openai"
+  | "meta"
   | "anthropic"
   | "gemini"
   | "vertex"
