@@ -10,7 +10,10 @@ Start from the repository root.
 git status --short
 git branch --show-current
 bun pm whoami
+bun run release:check
 ```
+
+Stable publishing must run from `main`. The release check compares every workspace version and internal dependency range with the live npm registry. It blocks divergent-branch publishes, versions behind npm, unresolved internal dependencies, immutable-version metadata drift, and stale `latest` tags that the pending release cannot repair.
 
 The working tree should contain only intended release changes. Review pending changesets:
 
@@ -62,6 +65,8 @@ bun run release
 ```
 
 `bun run release` publishes with the default npm dist-tag. Use it only when the versions are stable and should become `latest`.
+
+The command runs the registry consistency check before publishing and verifies the published versions and dist-tags again afterward. If npm authentication fails, fix authentication and rerun the command; do not publish individual dependent packages around the failed batch.
 
 Before publishing, verify that no package version contains a prerelease suffix such as `-next.0`, `-alpha.0`, `-beta.0`, or `-rc.0`.
 
@@ -140,11 +145,13 @@ If the release included provider packages, install and import those provider pac
 Do not publish if any of these are true:
 
 - validation fails
+- the current branch is not `main`
 - changesets do not match the packages changed
 - `smoke:providers` reports an unexpected configured-provider failure
 - a prerelease version would publish to `latest`
 - package dry-run includes unexpected files
 - package manifests have unexpected `exports`, `types`, `files`, or dependency ranges
+- `bun run release:check` reports registry, dist-tag, or internal dependency drift
 - npm authentication or scope access is unclear
 
 Publishing is irreversible enough to deserve a pause. Fix the issue, rerun the relevant checks, and only then continue.
