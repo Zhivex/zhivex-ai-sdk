@@ -56,7 +56,7 @@ describe("package metadata", () => {
       type: "module",
       main: "./dist/index.js",
       types: "./dist/index.d.ts",
-      bin: { "zhivex-ai": "./dist/cli.js" },
+      bin: { "zhivex-ai": "dist/cli.js" },
       publishConfig: { access: "public" }
     });
     expect(pkg.exports?.["."]).toEqual({

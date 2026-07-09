@@ -13,7 +13,7 @@ export const workspaceAliases = {
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["packages/**/tests/**/*.test.ts"],
+    include: ["packages/**/tests/**/*.test.ts", "scripts/**/*.test.ts"],
     exclude: ["**/node_modules/**", "packages/**/tests/**/*.integration.test.ts"]
   },
   resolve: {

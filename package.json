@@ -23,7 +23,9 @@
     "smoke:providers": "bun run scripts/provider-smoke-report.ts && bun run test:integration",
     "typecheck": "tsc --noEmit",
     "version-packages": "changeset version",
-    "release": "bun run build && changeset publish"
+    "release:check": "bun run scripts/check-release-readiness.ts",
+    "release:verify": "bun run scripts/check-release-readiness.ts --postpublish",
+    "release": "bun run release:check && bun run build && changeset publish && bun run release:verify"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
