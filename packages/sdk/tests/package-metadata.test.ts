@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -17,11 +17,20 @@ const readPackage = async (packageName: string) =>
 
 const packagesDir = path.resolve(import.meta.dirname, "../..");
 
-const listWorkspacePackages = async () =>
-  (await readdir(packagesDir, { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
+const listWorkspacePackages = async () => {
+  const directories = (await readdir(packagesDir, { withFileTypes: true })).filter((entry) => entry.isDirectory());
+  const packages = await Promise.all(
+    directories.map(async (entry) => {
+      try {
+        await access(path.join(packagesDir, entry.name, "package.json"));
+        return entry.name;
+      } catch {
+        return undefined;
+      }
+    })
+  );
+  return packages.filter((packageName): packageName is string => Boolean(packageName)).sort();
+};
 
 describe("package metadata", () => {
   it("keeps core publish metadata ready for npm packaging", async () => {

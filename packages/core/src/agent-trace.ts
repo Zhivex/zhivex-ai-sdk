@@ -17,10 +17,19 @@ import type {
 
 export interface TokenPricing {
   inputCostPer1kTokens?: number;
+  cachedInputCostPer1kTokens?: number;
+  cacheWriteCostPer1kTokens?: number;
   outputCostPer1kTokens?: number;
   totalCostPer1kTokens?: number;
   costPer1kTokens?: number;
+  longContextPricing?: LongContextPricing;
   currency?: string;
+}
+
+export interface LongContextPricing {
+  inputTokenThreshold: number;
+  inputMultiplier: number;
+  outputMultiplier: number;
 }
 
 export interface CostEstimate {
@@ -454,15 +463,45 @@ export const estimateTokenCost = (
   }
 
   const inputRate = pricing.inputCostPer1kTokens ?? pricing.costPer1kTokens ?? pricing.totalCostPer1kTokens;
+  const cachedInputRate = pricing.cachedInputCostPer1kTokens ?? inputRate;
+  const cacheWriteRate = pricing.cacheWriteCostPer1kTokens ?? inputRate;
   const outputRate = pricing.outputCostPer1kTokens ?? pricing.costPer1kTokens ?? pricing.totalCostPer1kTokens;
   const totalRate = pricing.totalCostPer1kTokens ?? pricing.costPer1kTokens;
-  const inputCost =
-    inputRate !== undefined && normalizedUsage.inputTokens !== undefined
-      ? (normalizedUsage.inputTokens / 1000) * inputRate
-      : undefined;
+  const appliesLongContextPricing =
+    normalizedUsage.inputTokens !== undefined &&
+    pricing.longContextPricing !== undefined &&
+    normalizedUsage.inputTokens > pricing.longContextPricing.inputTokenThreshold;
+  const inputMultiplier = appliesLongContextPricing
+    ? pricing.longContextPricing?.inputMultiplier ?? 1
+    : 1;
+  const outputMultiplier = appliesLongContextPricing
+    ? pricing.longContextPricing?.outputMultiplier ?? 1
+    : 1;
+  const inputCost = (() => {
+    if (inputRate === undefined || normalizedUsage.inputTokens === undefined) {
+      return undefined;
+    }
+
+    const inputTokens = Math.max(0, normalizedUsage.inputTokens);
+    const cachedInputTokens = Math.min(
+      inputTokens,
+      Math.max(0, normalizedUsage.cachedInputTokens ?? 0)
+    );
+    const cacheWriteTokens = Math.min(
+      inputTokens - cachedInputTokens,
+      Math.max(0, normalizedUsage.cacheWriteTokens ?? 0)
+    );
+    const uncachedInputTokens = inputTokens - cachedInputTokens - cacheWriteTokens;
+
+    return inputMultiplier * (
+      (uncachedInputTokens / 1000) * inputRate +
+      (cachedInputTokens / 1000) * (cachedInputRate ?? inputRate) +
+      (cacheWriteTokens / 1000) * (cacheWriteRate ?? inputRate)
+    );
+  })();
   const outputCost =
     outputRate !== undefined && normalizedUsage.outputTokens !== undefined
-      ? (normalizedUsage.outputTokens / 1000) * outputRate
+      ? outputMultiplier * (normalizedUsage.outputTokens / 1000) * outputRate
       : undefined;
   const totalCost =
     inputCost !== undefined || outputCost !== undefined
@@ -495,11 +534,25 @@ const resolvePricing = (
   }
 
   const entry = pricing.find(stateOrTrace.provider, stateOrTrace.modelId);
-  return entry?.costPer1kTokens === undefined
-    ? undefined
-    : {
-        costPer1kTokens: entry.costPer1kTokens
-      };
+  if (
+    entry?.costPer1kTokens === undefined &&
+    entry?.inputCostPer1kTokens === undefined &&
+    entry?.cachedInputCostPer1kTokens === undefined &&
+    entry?.cacheWriteCostPer1kTokens === undefined &&
+    entry?.outputCostPer1kTokens === undefined &&
+    entry?.longContextPricing === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    inputCostPer1kTokens: entry.inputCostPer1kTokens,
+    cachedInputCostPer1kTokens: entry.cachedInputCostPer1kTokens,
+    cacheWriteCostPer1kTokens: entry.cacheWriteCostPer1kTokens,
+    outputCostPer1kTokens: entry.outputCostPer1kTokens,
+    costPer1kTokens: entry.costPer1kTokens,
+    longContextPricing: entry.longContextPricing
+  };
 };
 
 export const estimateAgentRunCost = (

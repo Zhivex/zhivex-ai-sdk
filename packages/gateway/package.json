@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/gateway",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "description": "Routing and fallback helpers for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -41,6 +41,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^0.15.1"
+    "@zhivex-ai/core": "^0.16.1"
   }
 }

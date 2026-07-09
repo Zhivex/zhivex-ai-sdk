@@ -340,7 +340,10 @@ const addUsage = (usage: TokenUsage | undefined, next: TokenUsage | undefined): 
 
   return {
     inputTokens: (usage?.inputTokens ?? 0) + (next?.inputTokens ?? 0) || undefined,
+    cachedInputTokens: (usage?.cachedInputTokens ?? 0) + (next?.cachedInputTokens ?? 0) || undefined,
+    cacheWriteTokens: (usage?.cacheWriteTokens ?? 0) + (next?.cacheWriteTokens ?? 0) || undefined,
     outputTokens: (usage?.outputTokens ?? 0) + (next?.outputTokens ?? 0) || undefined,
+    reasoningTokens: (usage?.reasoningTokens ?? 0) + (next?.reasoningTokens ?? 0) || undefined,
     totalTokens: (usage?.totalTokens ?? 0) + (next?.totalTokens ?? 0) || undefined
   };
 };

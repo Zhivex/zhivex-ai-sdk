@@ -1193,6 +1193,8 @@ describe("core helpers", () => {
       toolSearch: false,
       webExtraction: false,
       skills: false,
+      programmaticToolCalling: false,
+      multiAgent: false,
       toolsets: false
     });
   });

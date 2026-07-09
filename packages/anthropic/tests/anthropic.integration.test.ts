@@ -12,7 +12,7 @@ const usesModernAnthropicControls = (modelId: string) =>
   /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9]|claude-(?:sonnet|fable|mythos)-5)(?:[-@]|$)/.test(modelId);
 const anthropicTemperature = usesModernAnthropicControls(textModelId) ? undefined : 0;
 
-const describeIntegration = apiKey ? describe.sequential : describe.skip;
+const describeIntegration = apiKey ? (describe.sequential ?? describe.skip) : describe.skip;
 
 describeIntegration("anthropic adapter integration", () => {
   const provider = () =>

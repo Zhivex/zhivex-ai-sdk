@@ -21,7 +21,13 @@ import {
   createOpenAI,
   openAIApplyPatchTool,
   openAICodeInterpreterTool,
+  openAIComputerTool,
+  openAIComputerUseTool,
+  openAIHostedShellTool,
   openAIMcpApprovalResponse,
+  openAIProgrammaticTool,
+  openAIProgrammaticToolCallingTool,
+  openAIPromptCacheBreakpoint,
   openAIRemoteMcpTool,
   openAIShellTool,
   openAIToolSearchTool,
@@ -282,24 +288,11 @@ describe("openai adapter", () => {
     expect(firstRequest.stream).toBe(true);
 
     const secondRequest = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)) as {
+      previous_response_id?: string;
       input: Array<Record<string, unknown>>;
     };
+    expect(secondRequest.previous_response_id).toBe("resp_1");
     expect(secondRequest.input).toEqual([
-      {
-        role: "user",
-        content: [{ type: "input_text", text: "Use hosted web search if needed, then weather." }]
-      },
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "function_call",
-            call_id: "call_1",
-            name: "weather",
-            arguments: JSON.stringify({ city: "Madrid" })
-          }
-        ]
-      },
       {
         type: "function_call_output",
         call_id: "call_1",
@@ -615,7 +608,7 @@ describe("openai adapter", () => {
     expect(getAgentCapabilities(provider("gpt-4o-mini")).shell).toBe(false);
     expect(getAgentCapabilities(provider("gpt-5.4")).shell).toBe(true);
     expect(getAgentCapabilities(provider("gpt-5.5")).computerUse).toBe(true);
-    expect(getAgentCapabilities(provider("gpt-5.5")).toolSearch).toBe(false);
+    expect(getAgentCapabilities(provider("gpt-5.5")).toolSearch).toBe(true);
   });
 
   it("maps OpenAI agent built-in helpers into Responses tools", async () => {
@@ -651,7 +644,7 @@ describe("openai adapter", () => {
     expect(body.tools).toEqual(
       expect.arrayContaining([
         { type: "code_interpreter", container: { type: "auto" } },
-        { type: "shell" },
+        expect.objectContaining({ type: "shell" }),
         { type: "apply_patch" },
         { type: "tool_search" }
       ])
@@ -735,9 +728,12 @@ describe("openai adapter", () => {
     expect(secondBody.input[0]).toMatchObject({
       type: "shell_call_output",
       call_id: "call_shell",
-      output: {
-        stdout: "ran:echo hi"
-      }
+      output: [
+        expect.objectContaining({
+          stdout: "ran:echo hi",
+          outcome: { type: "exit", exit_code: 0 }
+        })
+      ]
     });
   });
 
@@ -881,6 +877,875 @@ describe("openai adapter", () => {
         }
       })
     ).rejects.toThrow('Provider "openai" does not support "reasoning.budgetTokens".');
+  });
+
+  it("reports the current GPT-5.6, GPT-5.5, and GPT-5.4 tool capability matrix", () => {
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    for (const modelId of ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+      const model = provider(modelId);
+      expect(model.capabilities).toMatchObject({
+        files: true,
+        explicitPromptCaching: true,
+        reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+        reasoningModes: ["standard", "pro"],
+        reasoningContexts: ["auto", "current_turn", "all_turns"]
+      });
+      expect(getAgentCapabilities(model)).toMatchObject({
+        computerUse: true,
+        shell: true,
+        applyPatch: true,
+        skills: true,
+        toolSearch: true,
+        programmaticToolCalling: true,
+        multiAgent: true
+      });
+    }
+
+    expect(getAgentCapabilities(provider("gpt-5.5"))).toMatchObject({
+      computerUse: true,
+      shell: true,
+      applyPatch: true,
+      skills: true,
+      toolSearch: true
+    });
+    expect(getAgentCapabilities(provider("gpt-5.5-pro"))).toMatchObject({
+      computerUse: false,
+      shell: true,
+      applyPatch: false,
+      skills: false,
+      toolSearch: false
+    });
+    expect(getAgentCapabilities(provider("gpt-5.4-mini"))).toMatchObject({
+      computerUse: true,
+      shell: true,
+      applyPatch: true,
+      skills: true,
+      toolSearch: true
+    });
+    expect(getAgentCapabilities(provider("gpt-5.4-nano"))).toMatchObject({
+      computerUse: false,
+      shell: true,
+      applyPatch: true,
+      skills: true,
+      toolSearch: false
+    });
+  });
+
+  it("uses Responses by default for GPT-5.6 and maps endpoint-specific reasoning and usage", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_56",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "reasoned" }] }],
+        usage: {
+          input_tokens: 20,
+          input_tokens_details: { cached_tokens: 8, cache_write_tokens: 4 },
+          output_tokens: 10,
+          output_tokens_details: { reasoning_tokens: 6 },
+          total_tokens: 30
+        }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "chat" } }]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const responseResult = await generateText({
+      model: provider("gpt-5.6-terra"),
+      prompt: "hard problem",
+      maxTokens: 512,
+      reasoning: {
+        effort: "max",
+        mode: "pro",
+        context: "all_turns",
+        includeThoughts: true
+      }
+    });
+    await generateText({
+      model: provider("gpt-5.6-luna"),
+      prompt: "chat override",
+      maxTokens: 128,
+      reasoning: { effort: "high" },
+      providerOptions: { apiMode: "chat" }
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.openai.com/v1/responses");
+    const responsesBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(responsesBody).toMatchObject({
+      model: "gpt-5.6-terra",
+      max_output_tokens: 512,
+      reasoning: { effort: "max", mode: "pro", context: "all_turns", summary: "auto" }
+    });
+    expect(responsesBody.reasoning_effort).toBeUndefined();
+    expect(responsesBody.max_completion_tokens).toBeUndefined();
+    expect(responseResult.usage).toMatchObject({
+      cachedInputTokens: 8,
+      cacheWriteTokens: 4,
+      reasoningTokens: 6
+    });
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("https://api.openai.com/v1/chat/completions");
+    const chatBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(chatBody).toMatchObject({
+      model: "gpt-5.6-luna",
+      reasoning_effort: "high",
+      max_completion_tokens: 128
+    });
+    expect(chatBody.apiMode).toBeUndefined();
+    expect(chatBody.reasoning).toBeUndefined();
+  });
+
+  it("does not send Responses-only encrypted reasoning includes to Chat with store false", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ choices: [{ finish_reason: "stop", message: { content: "chat" } }] })
+    );
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-5.6"),
+      prompt: "chat",
+      providerOptions: { apiMode: "chat", store: false }
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.store).toBe(false);
+    expect(body.include).toBeUndefined();
+  });
+
+  it("passes GPT-5.6 cache and safety controls and explicit breakpoints to Responses", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_cache",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "cached" }] }]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-5.6"),
+      messages: [
+        {
+          role: "system",
+          parts: [
+            {
+              type: "text",
+              text: "Stable system prefix",
+              providerMetadata: {
+                openai: { prompt_cache_breakpoint: { mode: "explicit" } }
+              }
+            }
+          ]
+        },
+        {
+          role: "user",
+          parts: [{ type: "text", text: "Question" }, openAIPromptCacheBreakpoint()]
+        }
+      ],
+      providerOptions: {
+        prompt_cache_key: "tenant:acme:v1",
+        prompt_cache_options: { mode: "explicit", ttl: "30m" },
+        safety_identifier: "user_123"
+      }
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body).toMatchObject({
+      prompt_cache_key: "tenant:acme:v1",
+      prompt_cache_options: { mode: "explicit", ttl: "30m" },
+      safety_identifier: "user_123"
+    });
+    expect(body.input[0].content[0].prompt_cache_breakpoint).toEqual({ mode: "explicit" });
+    expect(body.input[1].content[0].prompt_cache_breakpoint).toEqual({ mode: "explicit" });
+  });
+
+  it("maps named GPT-5.6 tool choice to the Responses shape", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_choice",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "ok" }] }]
+      })
+    );
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-5.6"),
+      prompt: "weather",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      },
+      toolChoice: { type: "tool", toolName: "weather" }
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.tool_choice).toEqual({ type: "function", name: "weather" });
+  });
+
+  it("enables Multi-agent with the beta header and returns only the root final answer", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_agents",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            agent: { agent_name: "/root/reviewer" },
+            phase: "final_answer",
+            content: [{ type: "output_text", text: "subagent text" }]
+          },
+          {
+            type: "message",
+            agent: { agent_name: "/root" },
+            phase: "analysis",
+            content: [{ type: "output_text", text: "root analysis" }]
+          },
+          {
+            type: "multi_agent_call_output",
+            call_id: "spawn_1",
+            output: []
+          },
+          {
+            type: "message",
+            agent: { agent_name: "/root" },
+            phase: "final_answer",
+            content: [{ type: "output_text", text: "root final" }]
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-5.6-sol"),
+      prompt: "review",
+      providerOptions: {
+        multi_agent: { enabled: true, max_concurrent_subagents: 4 }
+      }
+    });
+
+    expect(result.text).toBe("root final");
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(request.headers).get("OpenAI-Beta")).toContain("responses_multi_agent=v1");
+    expect(JSON.parse(String(request.body)).multi_agent).toEqual({
+      enabled: true,
+      max_concurrent_subagents: 4
+    });
+  });
+
+  it("filters streamed Multi-agent text to the root final-answer item", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","agent":{"agent_name":"/root/reviewer"},"phase":"final_answer","content":[]}}\n\n' +
+              'data: {"type":"response.output_text.delta","output_index":0,"delta":"subagent"}\n\n' +
+              'data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","agent":{"agent_name":"/root/reviewer"},"phase":"final_answer","content":[{"type":"output_text","text":"subagent"}]}}\n\n' +
+              'data: {"type":"response.output_item.added","output_index":1,"item":{"type":"message","content":[]}}\n\n' +
+              'data: {"type":"response.output_text.delta","output_index":1,"delta":"root final"}\n\n' +
+              'data: {"type":"response.output_item.done","output_index":1,"item":{"type":"message","agent":{"agent_name":"/root"},"phase":"final_answer","content":[{"type":"output_text","text":"root final"}]}}\n\n' +
+              'data: {"type":"response.completed","response":{"id":"resp_agents_stream","status":"completed"}}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("gpt-5.6-sol"),
+      prompt: "review",
+      providerOptions: { multi_agent: { enabled: true } }
+    });
+
+    expect((await result.collect()).text).toBe("root final");
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(request.headers).get("OpenAI-Beta")).toContain("responses_multi_agent=v1");
+  });
+
+  it("supports Programmatic Tool Calling and preserves caller during continuation", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_program",
+        status: "completed",
+        output: [
+          {
+            type: "program",
+            id: "prog_1",
+            call_id: "call_program",
+            code: "text(JSON.stringify(await tools.inventory({sku: 'a'})))",
+            fingerprint: "opaque"
+          },
+          {
+            type: "function_call",
+            call_id: "call_inventory",
+            name: "inventory",
+            arguments: JSON.stringify({ sku: "a" }),
+            caller: { type: "program", caller_id: "call_program" }
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_program_done",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "done" }] }]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-5.6-sol"),
+      prompt: "check inventory",
+      maxSteps: 2,
+      tools: {
+        inventory: openAIProgrammaticTool(
+          tool({
+            name: "inventory",
+            schema: z.object({ sku: z.string() }),
+            execute: ({ sku }) => ({ sku, available: 4 })
+          }),
+          {
+            outputSchema: z.object({ sku: z.string(), available: z.number() })
+          }
+        ),
+        programmatic: openAIProgrammaticToolCallingTool()
+      }
+    });
+
+    expect(result.text).toBe("done");
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(firstBody.tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "function",
+          name: "inventory",
+          allowed_callers: ["programmatic"],
+          output_schema: expect.objectContaining({ type: "object" })
+        }),
+        { type: "programmatic_tool_calling" }
+      ])
+    );
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(secondBody.previous_response_id).toBe("resp_program");
+    expect(secondBody.input).toEqual([
+      {
+        type: "function_call_output",
+        call_id: "call_inventory",
+        output: JSON.stringify({ sku: "a", available: 4 }),
+        caller: { type: "program", caller_id: "call_program" }
+      }
+    ]);
+  });
+
+  it("continues Programmatic Tool Calling internally until a final message", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_program_output",
+        status: "completed",
+        output: [
+          {
+            type: "program_output",
+            id: "program_output_1",
+            call_id: "call_program",
+            result: JSON.stringify({ total: 7 }),
+            status: "completed"
+          }
+        ],
+        usage: { input_tokens: 4, output_tokens: 3, total_tokens: 7 }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_program_final",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "total is 7" }] }],
+        usage: { input_tokens: 2, output_tokens: 4, total_tokens: 6 }
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-5.6-sol"),
+      prompt: "calculate",
+      tools: { programmatic: openAIProgrammaticToolCallingTool() }
+    });
+
+    expect(result.text).toBe("total is 7");
+    expect(result.usage).toMatchObject({ inputTokens: 6, outputTokens: 7, totalTokens: 13 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const continuationBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(continuationBody.previous_response_id).toBe("resp_program_output");
+    expect(continuationBody.input).toBeUndefined();
+  });
+
+  it("does not continue incomplete Programmatic Tool Calling responses", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_program_incomplete",
+        status: "incomplete",
+        output: [
+          {
+            type: "program_output",
+            call_id: "call_program",
+            result: "{}",
+            status: "incomplete"
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-5.6"),
+      prompt: "calculate",
+      tools: { programmatic: openAIProgrammaticToolCallingTool() }
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.providerFinishReason).toBe("incomplete");
+  });
+
+  it("preserves Responses refusals in non-streaming and streaming results", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_refusal",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "refusal", refusal: "I cannot help with that." }]
+          }
+        ]
+      })
+    );
+    const streamBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","content":[]}}\n\n' +
+              'data: {"type":"response.refusal.delta","output_index":0,"delta":"I cannot help."}\n\n' +
+              'data: {"type":"response.completed","response":{"id":"resp_refusal_stream","status":"completed"}}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(streamBody, { status: 200, headers: { "content-type": "text/event-stream" } })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const generated = await generateText({ model: provider("gpt-5.6"), prompt: "unsafe" });
+    const streamed = await streamText({ model: provider("gpt-5.6"), prompt: "unsafe" }).collect();
+
+    expect(generated).toMatchObject({ text: "I cannot help with that.", finishReason: "refusal" });
+    expect(streamed).toMatchObject({ text: "I cannot help.", finishReason: "refusal" });
+  });
+
+  it("throws terminal Responses SSE errors", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"type":"error","error":{"message":"multi-agent failed"}}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(
+      streamText({ model: provider("gpt-5.6"), prompt: "review" }).collect()
+    ).rejects.toThrow("multi-agent failed");
+  });
+
+  it("uses the correctness-preserving non-SSE path when streaming Programmatic Tool Calling", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_stream_program_output",
+        status: "completed",
+        output: [
+          {
+            type: "program_output",
+            call_id: "call_program",
+            result: "{}",
+            status: "completed"
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_stream_program_final",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "stream final" }] }]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("gpt-5.6"),
+      prompt: "calculate",
+      tools: { programmatic: openAIProgrammaticToolCallingTool() }
+    });
+
+    expect((await result.collect()).text).toBe("stream final");
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(firstBody.stream).toBeUndefined();
+  });
+
+  it("replays encrypted reasoning and raw output items for store false continuations", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_stateless",
+        status: "completed",
+        output: [
+          { type: "reasoning", id: "rs_1", encrypted_content: "encrypted" },
+          {
+            type: "function_call",
+            call_id: "call_stateless",
+            name: "lookup",
+            arguments: "{}",
+            caller: { type: "program", caller_id: "call_program" }
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_stateless_done",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "ok" }] }]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-5.6"),
+      prompt: "lookup",
+      maxSteps: 2,
+      providerOptions: { store: false },
+      tools: {
+        lookup: tool({ name: "lookup", schema: z.object({}), execute: () => ({ ok: true }) })
+      }
+    });
+
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(firstBody.include).toContain("reasoning.encrypted_content");
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(secondBody.previous_response_id).toBeUndefined();
+    expect(secondBody.input).toEqual(
+      expect.arrayContaining([
+        { type: "reasoning", id: "rs_1", encrypted_content: "encrypted" },
+        expect.objectContaining({ type: "function_call", call_id: "call_stateless" }),
+        expect.objectContaining({
+          type: "function_call_output",
+          call_id: "call_stateless",
+          caller: { type: "program", caller_id: "call_program" }
+        })
+      ])
+    );
+  });
+
+  it("preserves all internal Programmatic Tool Calling outputs across store false tool steps", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_stateless_program",
+        status: "completed",
+        output: [
+          {
+            type: "program_output",
+            call_id: "call_program",
+            result: JSON.stringify({ stage: 1 }),
+            status: "completed"
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_stateless_call",
+        status: "completed",
+        output: [
+          {
+            type: "function_call",
+            call_id: "call_lookup",
+            name: "lookup",
+            arguments: "{}",
+            caller: { type: "program", caller_id: "call_program" }
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_stateless_final",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "complete" }] }]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-5.6"),
+      prompt: "run program",
+      maxSteps: 2,
+      providerOptions: { store: false },
+      tools: {
+        lookup: openAIProgrammaticTool(
+          tool({ name: "lookup", schema: z.object({}), execute: () => ({ ok: true }) })
+        ),
+        programmatic: openAIProgrammaticToolCallingTool()
+      }
+    });
+
+    expect(result.text).toBe("complete");
+    const thirdBody = JSON.parse(String((fetchMock.mock.calls[2]?.[1] as RequestInit).body));
+    expect(thirdBody.previous_response_id).toBeUndefined();
+    expect(thirdBody.input).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "program_output", call_id: "call_program" }),
+        expect.objectContaining({ type: "function_call", call_id: "call_lookup" }),
+        expect.objectContaining({
+          type: "function_call_output",
+          call_id: "call_lookup",
+          caller: { type: "program", caller_id: "call_program" }
+        })
+      ])
+    );
+  });
+
+  it("executes GPT-5.6 Computer Use GA actions and returns an original screenshot", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_computer",
+        status: "completed",
+        output: [
+          {
+            type: "computer_call",
+            call_id: "call_computer",
+            actions: [{ type: "click", x: 10, y: 20 }, { type: "screenshot" }]
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_computer_done",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "finished" }] }]
+      })
+    );
+
+    const execute = vi.fn(() => ({
+      type: "computer_screenshot" as const,
+      image_url: "data:image/png;base64,aGVsbG8="
+    }));
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-5.6-luna"),
+      prompt: "click",
+      maxSteps: 2,
+      toolApprovalPolicy: () => true,
+      tools: { computer: openAIComputerTool({ execute }) }
+    });
+
+    expect(result.text).toBe("finished");
+    expect(execute).toHaveBeenCalledWith({
+      actions: [{ type: "click", x: 10, y: 20 }, { type: "screenshot" }]
+    });
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(firstBody.tools).toContainEqual({ type: "computer" });
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(secondBody.input).toEqual([
+      {
+        type: "computer_call_output",
+        call_id: "call_computer",
+        output: {
+          type: "computer_screenshot",
+          image_url: "data:image/png;base64,aGVsbG8=",
+          detail: "original"
+        }
+      }
+    ]);
+  });
+
+  it("maps Shell environments with skills and serializes batched command outputs", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_shell_batch",
+        status: "completed",
+        output: [
+          {
+            type: "shell_call",
+            call_id: "call_shell_batch",
+            action: {
+              commands: ["pwd", "ls"],
+              timeout_ms: 5000,
+              max_output_length: 2000
+            }
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_shell_done",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "shell done" }] }]
+      })
+    );
+
+    const execute = vi.fn(() => [
+      { stdout: "/tmp\n", stderr: "", outcome: { type: "exit" as const, exit_code: 0 }, maxOutputLength: 2000 },
+      { stdout: "a.txt\n", stderr: "", outcome: { type: "exit" as const, exit_code: 0 }, maxOutputLength: 2000 }
+    ]);
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-5.6-terra"),
+      prompt: "inspect",
+      maxSteps: 2,
+      toolApprovalPolicy: () => true,
+      tools: {
+        terminal: openAIShellTool({
+          name: "terminal",
+          execute,
+          environment: {
+            type: "local",
+            skills: [{ name: "repo", description: "Inspect the repository", path: "/skills/repo" }]
+          }
+        })
+      }
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ action: expect.objectContaining({ commands: ["pwd", "ls"] }) })
+    );
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(firstBody.tools[0]).toEqual({
+      type: "shell",
+      environment: {
+        type: "local",
+        skills: [{ name: "repo", description: "Inspect the repository", path: "/skills/repo" }]
+      }
+    });
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(secondBody.input[0]).toEqual({
+      type: "shell_call_output",
+      call_id: "call_shell_batch",
+      max_output_length: 2000,
+      output: [
+        { stdout: "/tmp\n", stderr: "", outcome: { type: "exit", exit_code: 0 } },
+        { stdout: "a.txt\n", stderr: "", outcome: { type: "exit", exit_code: 0 } }
+      ]
+    });
+  });
+
+  it("keeps hosted Shell and preview Computer calls as provider data instead of executing locally", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_hosted_shell",
+        status: "completed",
+        output: [
+          {
+            type: "shell_call",
+            call_id: "hosted_shell_1",
+            action: { commands: ["python -V"] },
+            status: "completed"
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_preview_computer",
+        status: "completed",
+        output: [
+          {
+            type: "computer_call",
+            call_id: "preview_1",
+            action: { type: "screenshot" },
+            status: "completed"
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const hostedResult = await generateText({
+      model: provider("gpt-5.6-sol"),
+      prompt: "run hosted",
+      maxSteps: 2,
+      tools: {
+        shell: openAIHostedShellTool({
+          environment: {
+            type: "container_auto",
+            skills: [{ type: "skill_reference", skill_id: "skill_123", version: "latest" }],
+            network_policy: {
+              type: "allowlist",
+              allowed_domains: ["example.com"],
+              domain_secrets: [{ domain: "example.com", name: "API_TOKEN", value: "secret" }]
+            }
+          }
+        })
+      }
+    });
+    const previewResult = await generateText({
+      model: provider("gpt-5.4"),
+      prompt: "legacy preview",
+      maxSteps: 2,
+      tools: {
+        computer: openAIComputerUseTool({
+          environment: "browser",
+          display_width: 1280,
+          display_height: 720
+        })
+      }
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(hostedResult.toolCalls ?? []).toHaveLength(0);
+    expect(hostedResult.messages.at(-1)?.parts).toContainEqual(
+      expect.objectContaining({
+        type: "provider-data",
+        data: expect.objectContaining({ type: "shell_call", call_id: "hosted_shell_1" })
+      })
+    );
+    expect(previewResult.toolCalls ?? []).toHaveLength(0);
+    expect(previewResult.messages.at(-1)?.parts).toContainEqual(
+      expect.objectContaining({
+        type: "provider-data",
+        data: expect.objectContaining({ type: "computer_call", action: { type: "screenshot" } })
+      })
+    );
+
+    const hostedBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(hostedBody.tools[0]).toMatchObject({
+      type: "shell",
+      environment: {
+        type: "container_auto",
+        skills: [{ type: "skill_reference", skill_id: "skill_123", version: "latest" }],
+        network_policy: { type: "allowlist", allowed_domains: ["example.com"] }
+      }
+    });
   });
 
   it("transcribes audio through the shared contract", async () => {

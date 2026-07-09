@@ -113,6 +113,7 @@ type OpenAIRemoteMcpToolSharedConfig = {
   authorization?: string;
   require_approval?: OpenAIMcpRequireApproval;
   allowed_tools?: OpenAIMcpAllowedTools;
+  allowed_callers?: OpenAIProgrammaticToolCaller[];
 };
 
 export type OpenAIRemoteMcpToolConfig =
@@ -131,6 +132,24 @@ export interface OpenAIComputerUseToolConfig {
   display_height?: number;
 }
 
+export interface OpenAIComputerCallInput {
+  actions: JsonValue[];
+}
+
+export interface OpenAIComputerScreenshotOutput {
+  type: "computer_screenshot";
+  image_url: string;
+  detail?: "original";
+}
+
+export interface OpenAIComputerToolConfig {
+  name?: string;
+  requiresApproval?: boolean;
+  execute: (
+    input: OpenAIComputerCallInput
+  ) => Promise<OpenAIComputerScreenshotOutput> | OpenAIComputerScreenshotOutput;
+}
+
 export interface OpenAICodeInterpreterToolConfig {
   container:
     | string
@@ -139,6 +158,7 @@ export interface OpenAICodeInterpreterToolConfig {
         memory_limit?: "1g" | "4g" | "16g" | "64g";
         file_ids?: string[];
       };
+  allowed_callers?: OpenAIProgrammaticToolCaller[];
 }
 
 export interface OpenAIShellToolConfig {
@@ -147,13 +167,50 @@ export interface OpenAIShellToolConfig {
   rootDir?: string;
   timeoutMs?: number;
   maxOutputLength?: number;
-  execute?: (input: OpenAIShellToolInput) => Promise<OpenAIShellToolOutput> | OpenAIShellToolOutput;
+  allowedCallers?: OpenAIProgrammaticToolCaller[];
+  environment?: OpenAILocalShellEnvironment;
+  execute?: (
+    input: OpenAIShellToolInput
+  ) => Promise<OpenAIShellToolOutput | OpenAIShellToolOutput[]> | OpenAIShellToolOutput | OpenAIShellToolOutput[];
+}
+
+export type OpenAIHostedShellEnvironment =
+  | {
+      type: "container_auto";
+      skills?: Array<{ type: "skill_reference"; skill_id: string; version?: number | "latest" }>;
+      network_policy?: OpenAIHostedShellNetworkPolicy;
+    }
+  | {
+      type: "container_reference";
+      container_id: string;
+      skills?: Array<{ type: "skill_reference"; skill_id: string; version?: number | "latest" }>;
+      network_policy?: OpenAIHostedShellNetworkPolicy;
+    };
+
+export interface OpenAIHostedShellNetworkPolicy {
+  type: "allowlist";
+  allowed_domains: string[];
+  domain_secrets?: Array<{ domain: string; name: string; value: string }>;
+}
+
+export interface OpenAILocalShellEnvironment {
+  type: "local";
+  skills?: Array<{ name: string; description?: string; path: string }>;
+}
+
+export type OpenAIShellEnvironment = OpenAIHostedShellEnvironment | OpenAILocalShellEnvironment;
+
+export interface OpenAIHostedShellToolConfig {
+  environment: OpenAIHostedShellEnvironment;
+  allowedCallers?: OpenAIProgrammaticToolCaller[];
 }
 
 export interface OpenAIShellToolInput {
   command?: string;
   action?: {
     command?: string;
+    commands?: string[];
+    timeout_ms?: number;
     max_output_length?: number;
     maxOutputLength?: number;
   };
@@ -167,6 +224,7 @@ export interface OpenAIShellToolOutput {
   outcome: {
     type: "exit" | "timeout";
     exitCode?: number;
+    exit_code?: number;
   };
   maxOutputLength?: number;
 }
@@ -180,6 +238,7 @@ export interface OpenAIApplyPatchOperation {
 export interface OpenAIApplyPatchToolConfig {
   name?: string;
   rootDir?: string;
+  allowedCallers?: OpenAIProgrammaticToolCaller[];
   applyOperation: (operation: OpenAIApplyPatchOperation) => Promise<OpenAIApplyPatchToolOutput> | OpenAIApplyPatchToolOutput;
 }
 
@@ -196,7 +255,30 @@ export interface OpenAIToolSearchToolConfig {
   [key: string]: unknown;
 }
 
+export type OpenAIProgrammaticToolCaller = "direct" | "programmatic";
+
+export interface OpenAIProgrammaticToolOptions {
+  allowedCallers?: OpenAIProgrammaticToolCaller[];
+  outputSchema?: z.ZodTypeAny;
+}
+
+export interface OpenAIPromptCacheOptions {
+  mode?: "implicit" | "explicit";
+  ttl?: "30m";
+}
+
+export interface OpenAIMultiAgentOptions {
+  enabled: boolean;
+  max_concurrent_subagents?: number;
+}
+
 const openAIResponsesToolMetadataKey = "openai.responses_tool_type";
+const openAIResponsesFunctionConfigMetadataKey = "openai.responses_function_config";
+
+const openAIResponsesFunctionConfig = (tool: ToolDefinition) => {
+  const config = tool.metadata?.[openAIResponsesFunctionConfigMetadataKey];
+  return config && typeof config === "object" && !Array.isArray(config) ? (config as Record<string, unknown>) : undefined;
+};
 
 const openAILocalResponsesToolType = (tool: ToolDefinition) => {
   const type = tool.metadata?.[openAIResponsesToolMetadataKey];
@@ -259,15 +341,42 @@ export interface OpenAIMcpListTools {
   tools?: JsonValue;
 }
 
-export type OpenAIProviderData = { responseId: string } | OpenAIMcpApprovalRequest | OpenAIMcpApprovalResponse | OpenAIMcpCall | OpenAIMcpListTools;
+export interface OpenAIPromptCacheBreakpointData {
+  type: "prompt_cache_breakpoint";
+  mode: "explicit";
+}
+
+export interface OpenAIResponsesOutputData {
+  type: "responses_output";
+  items: JsonValue[];
+}
+
+export type OpenAIProviderData =
+  | { responseId: string }
+  | OpenAIMcpApprovalRequest
+  | OpenAIMcpApprovalResponse
+  | OpenAIMcpCall
+  | OpenAIMcpListTools
+  | OpenAIPromptCacheBreakpointData
+  | OpenAIResponsesOutputData;
 
 export interface OpenAILanguageModelOptions {
+  apiMode?: "auto" | "chat" | "responses";
+  headers?: Record<string, string>;
+  betas?: string[];
   top_p?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
   stop?: string | string[];
   seed?: number;
   user?: string;
+  safety_identifier?: string;
+  prompt_cache_key?: string;
+  prompt_cache_options?: OpenAIPromptCacheOptions;
+  prompt_cache_retention?: "in_memory" | "24h";
+  multi_agent?: OpenAIMultiAgentOptions;
+  include?: string[];
+  store?: boolean;
   tool_choice?: "none" | "auto" | "required" | { type: "function"; function: { name: string } };
   [key: string]: unknown;
 }
@@ -305,17 +414,35 @@ const capabilities: ModelCapabilities = {
 
 const normalizeModelId = (modelId: string) => modelId.trim().toLowerCase();
 
-const supportsOpenAIToolSearch = (modelId: string) => {
-  const normalized = normalizeModelId(modelId);
-  return /^gpt-5\.4(?:$|-20|-pro)/.test(normalized);
-};
+const isOpenAIGpt56Model = (modelId: string) => /^gpt-5\.6(?:$|-(?:sol|terra|luna)(?:-|$)|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
+const isOpenAIGpt55BaseModel = (modelId: string) => /^gpt-5\.5(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
+const isOpenAIGpt55ProModel = (modelId: string) => /^gpt-5\.5-pro(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
+const isOpenAIGpt54BaseModel = (modelId: string) => /^gpt-5\.4(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
+const isOpenAIGpt54MiniModel = (modelId: string) => /^gpt-5\.4-mini(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
+const isOpenAIGpt54NanoModel = (modelId: string) => /^gpt-5\.4-nano(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
+const isOpenAIGpt54ProModel = (modelId: string) => /^gpt-5\.4-pro(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
 
-const supportsOpenAIComputerUse = (modelId: string) => {
-  const normalized = normalizeModelId(modelId);
-  return /^(?:gpt-5\.5|gpt-5\.4)(?:$|-20|-pro|-mini)/.test(normalized);
-};
+const supportsOpenAIToolSearch = (modelId: string) =>
+  isOpenAIGpt56Model(modelId) || isOpenAIGpt55BaseModel(modelId) || isOpenAIGpt54BaseModel(modelId) || isOpenAIGpt54MiniModel(modelId);
 
-const supportsOpenAIHostedHarnessTools = (modelId: string) => /^gpt-5\.4(?:$|-)/.test(normalizeModelId(modelId));
+const supportsOpenAIComputerUse = (modelId: string) =>
+  isOpenAIGpt56Model(modelId) || isOpenAIGpt55BaseModel(modelId) || isOpenAIGpt54BaseModel(modelId) || isOpenAIGpt54MiniModel(modelId);
+
+const supportsOpenAIShell = (modelId: string) =>
+  isOpenAIGpt56Model(modelId) ||
+  isOpenAIGpt55BaseModel(modelId) ||
+  isOpenAIGpt55ProModel(modelId) ||
+  isOpenAIGpt54BaseModel(modelId) ||
+  isOpenAIGpt54MiniModel(modelId) ||
+  isOpenAIGpt54NanoModel(modelId) ||
+  isOpenAIGpt54ProModel(modelId);
+
+const supportsOpenAIApplyPatchAndSkills = (modelId: string) =>
+  isOpenAIGpt56Model(modelId) ||
+  isOpenAIGpt55BaseModel(modelId) ||
+  isOpenAIGpt54BaseModel(modelId) ||
+  isOpenAIGpt54MiniModel(modelId) ||
+  isOpenAIGpt54NanoModel(modelId);
 
 const supportsOpenAIChatAudio = (modelId: string) => {
   const normalized = normalizeModelId(modelId);
@@ -324,15 +451,24 @@ const supportsOpenAIChatAudio = (modelId: string) => {
 
 const modelCapabilities = (modelId: string): ModelCapabilities => ({
   ...capabilities,
+  explicitPromptCaching: isOpenAIGpt56Model(modelId),
+  files: isOpenAIGpt56Model(modelId),
+  reasoningEfforts: isOpenAIGpt56Model(modelId)
+    ? ["none", "low", "medium", "high", "xhigh", "max"]
+    : undefined,
+  reasoningModes: isOpenAIGpt56Model(modelId) ? ["standard", "pro"] : undefined,
+  reasoningContexts: isOpenAIGpt56Model(modelId) ? ["auto", "current_turn", "all_turns"] : undefined,
   audioInput: supportsOpenAIChatAudio(modelId),
   audioOutput: supportsOpenAIChatAudio(modelId),
   agentCapabilities: {
     ...capabilities.agentCapabilities!,
     computerUse: supportsOpenAIComputerUse(modelId),
-    shell: supportsOpenAIHostedHarnessTools(modelId),
-    applyPatch: supportsOpenAIHostedHarnessTools(modelId),
-    skills: supportsOpenAIHostedHarnessTools(modelId),
-    toolSearch: supportsOpenAIToolSearch(modelId)
+    shell: supportsOpenAIShell(modelId),
+    applyPatch: supportsOpenAIApplyPatchAndSkills(modelId),
+    skills: supportsOpenAIApplyPatchAndSkills(modelId),
+    toolSearch: supportsOpenAIToolSearch(modelId),
+    programmaticToolCalling: isOpenAIGpt56Model(modelId),
+    multiAgent: isOpenAIGpt56Model(modelId)
   }
 });
 
@@ -417,6 +553,53 @@ const jsonHeaders = (apiKey: string) => ({
   authorization: `Bearer ${apiKey}`
 });
 
+const resolveOpenAILanguageRequestOptions = (providerOptions: Record<string, unknown> | undefined, apiKey: string) => {
+  const bodyOptions = { ...(providerOptions ?? {}) } as OpenAILanguageModelOptions;
+  const apiMode = bodyOptions.apiMode ?? "auto";
+  const customHeaders = { ...(bodyOptions.headers ?? {}) };
+  const betaValues = new Set(bodyOptions.betas ?? []);
+  const multiAgentEnabled = bodyOptions.multi_agent?.enabled === true;
+  if (multiAgentEnabled) {
+    betaValues.add("responses_multi_agent=v1");
+  }
+
+  const existingBetaHeaderKey = Object.keys(customHeaders).find((key) => key.toLowerCase() === "openai-beta");
+  if (existingBetaHeaderKey) {
+    for (const value of customHeaders[existingBetaHeaderKey]?.split(",") ?? []) {
+      if (value.trim()) {
+        betaValues.add(value.trim());
+      }
+    }
+    delete customHeaders[existingBetaHeaderKey];
+  }
+
+  delete bodyOptions.apiMode;
+  delete bodyOptions.headers;
+  delete bodyOptions.betas;
+
+  return {
+    apiMode,
+    bodyOptions,
+    multiAgentEnabled,
+    headers: {
+      ...jsonHeaders(apiKey),
+      ...customHeaders,
+      ...(betaValues.size ? { "OpenAI-Beta": [...betaValues].join(",") } : {})
+    }
+  };
+};
+
+const openAIResponsesBodyOptions = (
+  options: OpenAILanguageModelOptions,
+  modelId: string
+): OpenAILanguageModelOptions =>
+  options.store === false && isOpenAIGpt56Model(modelId)
+    ? {
+        ...options,
+        include: [...new Set([...(options.include ?? []), "reasoning.encrypted_content"])]
+      }
+    : options;
+
 const getRequestOptions = (input: Pick<ModelGenerateInput, "abortSignal" | "timeoutMs">) => withTimeoutSignal(input);
 
 const toUint8Array = (data: AudioInput["data"]) => {
@@ -476,34 +659,93 @@ const parseJson = async (response: Response) => {
   return response.json();
 };
 
-const mapContentParts = (message: ModelMessage) => {
-  const textParts = message.parts.filter((part) => part.type === "text");
-  const imageParts = message.parts.filter((part) => part.type === "image");
-  const audioParts = message.parts.filter((part) => part.type === "audio");
+const isOpenAIPromptCacheBreakpointPart = (
+  part: ModelMessage["parts"][number]
+): part is Extract<ModelMessage["parts"][number], { type: "provider-data" }> =>
+  part.type === "provider-data" &&
+  part.provider === "openai" &&
+  part.data !== null &&
+  typeof part.data === "object" &&
+  (part.data as Record<string, unknown>).type === "prompt_cache_breakpoint";
 
-  if (!imageParts.length && !audioParts.length) {
-    return textParts.map((part) => part.text).join("");
+const promptCacheBreakpointForContentPart = (part: ModelMessage["parts"][number]) => {
+  const metadata = (part as ModelMessage["parts"][number] & { providerMetadata?: Record<string, unknown> })
+    .providerMetadata;
+  const openAIMetadata =
+    metadata?.openai && typeof metadata.openai === "object" && !Array.isArray(metadata.openai)
+      ? (metadata.openai as Record<string, unknown>)
+      : metadata;
+  const breakpoint = openAIMetadata?.prompt_cache_breakpoint;
+  return breakpoint && typeof breakpoint === "object" && !Array.isArray(breakpoint)
+    ? { prompt_cache_breakpoint: { mode: "explicit" } }
+    : {};
+};
+
+const imageDetailForPart = (part: Extract<ModelMessage["parts"][number], { type: "image" }>) => {
+  const metadata = (part as typeof part & { providerMetadata?: Record<string, unknown> }).providerMetadata;
+  const detail = metadata?.openaiDetail ??
+    (metadata?.openai && typeof metadata.openai === "object" && !Array.isArray(metadata.openai)
+      ? (metadata.openai as Record<string, unknown>).detail
+      : undefined);
+  return detail === "auto" || detail === "low" || detail === "high" || detail === "original" ? detail : undefined;
+};
+
+const markLastContentBlockForPromptCaching = (content: Array<Record<string, unknown>>) => {
+  const last = content.at(-1);
+  if (!last) {
+    throw new ConfigurationError("OpenAI prompt cache breakpoints must follow a cacheable content part.");
+  }
+  last.prompt_cache_breakpoint = { mode: "explicit" };
+};
+
+const mapContentParts = (message: ModelMessage) => {
+  const hasRichContent = message.parts.some(
+    (part) =>
+      part.type === "image" ||
+      part.type === "audio" ||
+      part.type === "file" ||
+      Object.keys(promptCacheBreakpointForContentPart(part)).length > 0 ||
+      isOpenAIPromptCacheBreakpointPart(part)
+  );
+  if (!hasRichContent) {
+    return message.parts
+      .filter((part): part is Extract<ModelMessage["parts"][number], { type: "text" }> => part.type === "text")
+      .map((part) => part.text)
+      .join("");
   }
 
-  return [
-    ...textParts.map((part) => ({
-      type: "text",
-      text: part.text
-    })),
-    ...imageParts.map((part) => ({
-      type: "image_url",
-      image_url: {
-        url: part.image
-      }
-    })),
-    ...audioParts.map((part) => ({
-      type: "input_audio",
-      input_audio: {
-        data: toBase64(part.data),
-        format: inferOpenAIAudioFormat(part.mediaType, part.format)
-      }
-    }))
-  ];
+  const content: Array<Record<string, unknown>> = [];
+  for (const part of message.parts) {
+    if (part.type === "text") {
+      content.push({ type: "text", text: part.text, ...promptCacheBreakpointForContentPart(part) });
+    } else if (part.type === "image") {
+      const detail = imageDetailForPart(part);
+      content.push({
+        type: "image_url",
+        image_url: { url: part.image, ...(detail ? { detail } : {}) },
+        ...promptCacheBreakpointForContentPart(part)
+      });
+    } else if (part.type === "file") {
+      content.push({
+        type: "file",
+        file: { file_id: part.data },
+        ...promptCacheBreakpointForContentPart(part)
+      });
+    } else if (part.type === "audio") {
+      content.push({
+        type: "input_audio",
+        input_audio: {
+          data: toBase64(part.data),
+          format: inferOpenAIAudioFormat(part.mediaType, part.format)
+        },
+        ...promptCacheBreakpointForContentPart(part)
+      });
+    } else if (isOpenAIPromptCacheBreakpointPart(part)) {
+      markLastContentBlockForPromptCaching(content);
+    }
+  }
+
+  return content;
 };
 
 const mapMessages = (messages: ModelMessage[]) =>
@@ -546,6 +788,21 @@ const mapMessages = (messages: ModelMessage[]) =>
 const hasResponsesOnlyTools = (tools: ModelGenerateInput["tools"]) =>
   Object.values(tools ?? {}).some((tool) => isHostedToolDefinition(tool) || (isCallableToolDefinition(tool) && openAILocalResponsesToolType(tool)));
 
+const hasProgrammaticToolCalling = (tools: ModelGenerateInput["tools"]) =>
+  Object.values(tools ?? {}).some((tool) =>
+    isHostedToolDefinition(tool)
+      ? tool.type === "programmatic_tool_calling"
+      : openAILocalResponsesToolType(tool) === "programmatic_tool_calling"
+  );
+
+const localResponsesTools = (tools: ModelGenerateInput["tools"]) =>
+  new Map(
+    Object.values(tools ?? {})
+      .filter(isCallableToolDefinition)
+      .map((tool) => [openAILocalResponsesToolType(tool), tool.name] as const)
+      .filter((entry): entry is readonly [string, string] => Boolean(entry[0]))
+  );
+
 const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInput["tools"]) => {
   const currentCapabilities = modelCapabilities(modelId).agentCapabilities;
   for (const definition of Object.values(tools ?? {})) {
@@ -556,9 +813,29 @@ const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInpu
     if (type === "computer_use_preview" && !currentCapabilities?.computerUse) {
       throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses computer_use tool.`);
     }
-    if ((type === "shell" || type === "apply_patch") && !supportsOpenAIHostedHarnessTools(modelId)) {
+    if (type === "computer" && !currentCapabilities?.computerUse) {
+      throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses computer tool.`);
+    }
+    if (type === "shell" && !supportsOpenAIShell(modelId)) {
       throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses ${type} tool.`);
     }
+    if (type === "apply_patch" && !supportsOpenAIApplyPatchAndSkills(modelId)) {
+      throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses ${type} tool.`);
+    }
+    if (type === "skill" && !currentCapabilities?.skills) {
+      throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses skills tool.`);
+    }
+    if (type === "programmatic_tool_calling" && !isOpenAIGpt56Model(modelId)) {
+      throw new UnsupportedFeatureError(
+        `Provider "openai" model "${modelId}" does not support Programmatic Tool Calling.`
+      );
+    }
+  }
+};
+
+const assertOpenAIResponsesOptionsSupported = (modelId: string, options: OpenAILanguageModelOptions) => {
+  if (options.multi_agent?.enabled && !isOpenAIGpt56Model(modelId)) {
+    throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support Multi-agent.`);
   }
 };
 
@@ -611,7 +888,8 @@ const mapResponsesTools = (input: ModelGenerateInput["tools"]) =>
             type: "function",
             name: tool.name,
             description: tool.description,
-            parameters: toJSONSchema(tool.schema)
+            parameters: toJSONSchema(tool.schema),
+            ...openAIResponsesFunctionConfig(tool)
           };
         }
 
@@ -642,6 +920,16 @@ const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
     function: {
       name: toolChoice.toolName
     }
+  };
+};
+
+const mapResponsesToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
+  if (!toolChoice || typeof toolChoice === "string") {
+    return toolChoice;
+  }
+  return {
+    type: "function",
+    name: toolChoice.toolName
   };
 };
 
@@ -928,18 +1216,54 @@ const mapResponsesStructuredOutput = (input: ModelGenerateInput) => {
   };
 };
 
-const mapReasoning = (input: ModelGenerateInput) => {
+const getOpenAIReasoning = (input: ModelGenerateInput) => {
   if (!input.reasoning) {
-    return {};
+    return undefined;
   }
 
   if (input.reasoning.budgetTokens !== undefined) {
     throw new UnsupportedFeatureError('Provider "openai" does not support "reasoning.budgetTokens".');
   }
 
+  return input.reasoning as typeof input.reasoning & {
+    mode?: "standard" | "pro";
+    context?: "auto" | "current_turn" | "all_turns";
+  };
+};
+
+const mapChatReasoning = (input: ModelGenerateInput) => {
+  const reasoning = getOpenAIReasoning(input);
+  if (!reasoning) {
+    return {};
+  }
+  if (reasoning.mode !== undefined || reasoning.context !== undefined) {
+    throw new UnsupportedFeatureError(
+      'Provider "openai" only supports "reasoning.mode" and "reasoning.context" through the Responses API.'
+    );
+  }
+
   return {
-    reasoning_effort: input.reasoning.effort,
+    ...(reasoning.effort !== undefined ? { reasoning_effort: reasoning.effort } : {}),
     max_completion_tokens: input.maxTokens
+  };
+};
+
+const mapResponsesReasoning = (input: ModelGenerateInput, providerReasoning?: unknown) => {
+  const reasoning = getOpenAIReasoning(input);
+  if (!reasoning) {
+    return {};
+  }
+
+  return {
+    reasoning: {
+      ...(providerReasoning && typeof providerReasoning === "object" && !Array.isArray(providerReasoning)
+        ? providerReasoning
+        : {}),
+      ...(reasoning.effort !== undefined ? { effort: reasoning.effort } : {}),
+      ...(reasoning.mode !== undefined ? { mode: reasoning.mode } : {}),
+      ...(reasoning.context !== undefined ? { context: reasoning.context } : {}),
+      ...(reasoning.includeThoughts ? { summary: "auto" } : {})
+    }
   };
 };
 
@@ -974,21 +1298,56 @@ const serializeToolOutput = (message: ModelMessage) =>
   message.parts
     .filter((part): part is Extract<ModelMessage["parts"][number], { type: "tool-result" }> => part.type === "tool-result")
     .map((part) => {
-      if (part.toolResult.toolName === "shell") {
+      const responsesToolType = part.toolResult.providerMetadata?.responsesToolType;
+      if (part.toolResult.toolName === "shell" || responsesToolType === "shell") {
+        const rawOutput = part.toolResult.output;
+        const rawOutputs = Array.isArray(rawOutput)
+          ? rawOutput
+          : rawOutput && typeof rawOutput === "object" && Array.isArray((rawOutput as Record<string, unknown>).output)
+            ? ((rawOutput as Record<string, unknown>).output as unknown[])
+            : rawOutput
+              ? [rawOutput]
+              : [];
+        const firstRawOutput =
+          rawOutputs[0] && typeof rawOutputs[0] === "object"
+            ? (rawOutputs[0] as Record<string, unknown>)
+            : undefined;
+        const output = rawOutputs.map((entry) => {
+          const result = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+          const outcome =
+            result.outcome && typeof result.outcome === "object"
+              ? (result.outcome as Record<string, unknown>)
+              : { type: "exit", exit_code: 0 };
+          return {
+            stdout: typeof result.stdout === "string" ? result.stdout : "",
+            stderr: typeof result.stderr === "string" ? result.stderr : "",
+            outcome: {
+              type: outcome.type ?? "exit",
+              exit_code: outcome.exit_code ?? outcome.exitCode
+            }
+          };
+        });
         return {
           type: "shell_call_output",
           call_id: part.toolResult.toolCallId,
+          max_output_length:
+            rawOutput && typeof rawOutput === "object"
+              ? ((rawOutput as Record<string, unknown>).max_output_length ??
+                (rawOutput as Record<string, unknown>).maxOutputLength ??
+                firstRawOutput?.max_output_length ??
+                firstRawOutput?.maxOutputLength)
+              : undefined,
           output: part.toolResult.isError
-            ? {
+            ? [{
                 stdout: "",
                 stderr: part.toolResult.error?.message ?? "Shell execution failed.",
-                outcome: { type: "exit", exitCode: 1 }
-              }
-            : part.toolResult.output
+                outcome: { type: "exit", exit_code: 1 }
+              }]
+            : output
         };
       }
 
-      if (part.toolResult.toolName === "apply_patch") {
+      if (part.toolResult.toolName === "apply_patch" || responsesToolType === "apply_patch") {
         const output = part.toolResult.output;
         const outputRecord =
           output && typeof output === "object" && !Array.isArray(output)
@@ -1002,10 +1361,26 @@ const serializeToolOutput = (message: ModelMessage) =>
         };
       }
 
+      if (part.toolResult.toolName === "computer" || responsesToolType === "computer") {
+        if (part.toolResult.isError) {
+          throw new Error(
+            `OpenAI computer action execution failed: ${part.toolResult.error?.message ?? "unknown error"}`
+          );
+        }
+        return {
+          type: "computer_call_output",
+          call_id: part.toolResult.toolCallId,
+          output: part.toolResult.output
+        };
+      }
+
       return {
         type: "function_call_output",
         call_id: part.toolResult.toolCallId,
-        output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
+        output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null),
+        ...(part.toolResult.providerMetadata?.caller !== undefined
+          ? { caller: part.toolResult.providerMetadata.caller }
+          : {})
       };
     });
 
@@ -1017,9 +1392,27 @@ const serializeProviderDataInput = (message: ModelMessage) =>
         part.provider === "openai" &&
         part.data !== null &&
         typeof part.data === "object" &&
-        (part.data as Record<string, unknown>).type === "mcp_approval_response"
+        typeof (part.data as Record<string, unknown>).type === "string" &&
+        !["prompt_cache_breakpoint", "responses_output"].includes(
+          (part.data as Record<string, unknown>).type as string
+        )
     )
     .map((part) => part.data as Record<string, unknown>);
+
+const serializedResponsesOutput = (message: ModelMessage) =>
+  message.parts.flatMap((part) => {
+    if (
+      part.type !== "provider-data" ||
+      part.provider !== "openai" ||
+      !part.data ||
+      typeof part.data !== "object" ||
+      (part.data as Record<string, unknown>).type !== "responses_output" ||
+      !Array.isArray((part.data as Record<string, unknown>).items)
+    ) {
+      return [];
+    }
+    return (part.data as unknown as OpenAIResponsesOutputData).items as Array<Record<string, unknown>>;
+  });
 
 const parseResponsesProviderData = (item: unknown) => {
   if (!item || typeof item !== "object") {
@@ -1029,7 +1422,7 @@ const parseResponsesProviderData = (item: unknown) => {
   const typedItem = item as Record<string, unknown>;
   if (
     typeof typedItem.type !== "string" ||
-    ["message", "function_call", "shell_call", "apply_patch_call"].includes(typedItem.type)
+    ["message", "function_call"].includes(typedItem.type)
   ) {
     return undefined;
   }
@@ -1040,7 +1433,14 @@ const parseResponsesProviderData = (item: unknown) => {
 const parseShellCallInput = (item: Record<string, unknown>) => {
   const action = item.action && typeof item.action === "object" ? (item.action as Record<string, unknown>) : undefined;
   return {
-    command: typeof action?.command === "string" ? action.command : typeof item.command === "string" ? item.command : undefined,
+    command:
+      typeof action?.command === "string"
+        ? action.command
+        : Array.isArray(action?.commands) && typeof action.commands[0] === "string"
+          ? action.commands[0]
+          : typeof item.command === "string"
+            ? item.command
+            : undefined,
     action: action as JsonValue | undefined,
     maxOutputLength:
       typeof action?.max_output_length === "number"
@@ -1126,25 +1526,52 @@ const toResponsesInput = (messages: ModelMessage[]) => {
       continue;
     }
 
+    const rawResponsesOutput = serializedResponsesOutput(message);
+    if (message.role === "assistant" && rawResponsesOutput.length) {
+      input.push(...rawResponsesOutput);
+      continue;
+    }
+
     input.push(...serializeProviderDataInput(message));
 
     const content: Array<Record<string, unknown>> = [];
+    const assistantOutputItems: Array<Record<string, unknown>> = [];
     for (const part of message.parts) {
       switch (part.type) {
         case "text":
-          content.push({ type: "input_text", text: part.text });
+          content.push({ type: "input_text", text: part.text, ...promptCacheBreakpointForContentPart(part) });
           break;
         case "image":
-          content.push({ type: "input_image", image_url: part.image });
+          const detail = imageDetailForPart(part);
+          content.push({
+            type: "input_image",
+            image_url: part.image,
+            ...(detail ? { detail } : {}),
+            ...promptCacheBreakpointForContentPart(part)
+          });
+          break;
+        case "file":
+          content.push({
+            type: "input_file",
+            file_id: part.data,
+            ...promptCacheBreakpointForContentPart(part)
+          });
           break;
         case "tool-call":
           if (message.role === "assistant") {
-            content.push({
+            const caller = part.toolCall.providerMetadata?.caller;
+            assistantOutputItems.push({
               type: "function_call",
               call_id: part.toolCall.id,
               name: part.toolCall.name,
-              arguments: JSON.stringify(part.toolCall.input)
+              arguments: JSON.stringify(part.toolCall.input),
+              ...(caller !== undefined ? { caller } : {})
             });
+          }
+          break;
+        case "provider-data":
+          if (isOpenAIPromptCacheBreakpointPart(part)) {
+            markLastContentBlockForPromptCaching(content);
           }
           break;
       }
@@ -1156,55 +1583,86 @@ const toResponsesInput = (messages: ModelMessage[]) => {
         content
       });
     }
+    input.push(...assistantOutputItems);
   }
 
   return input;
 };
 
-const parseResponsesAssistantMessage = (json: any): ModelMessage => {
+const parseResponsesAssistantMessage = (
+  json: any,
+  multiAgentEnabled = false,
+  localTools: Map<string, string> = new Map()
+): ModelMessage => {
   const parts: ModelMessage["parts"] = [];
 
   for (const [index, item] of (json.output ?? []).entries()) {
     if (item?.type === "message") {
+      if (multiAgentEnabled && (item.agent?.agent_name !== "/root" || item.phase !== "final_answer")) {
+        continue;
+      }
       for (const content of item.content ?? []) {
         if (typeof content?.text === "string" && content.text) {
           parts.push({ type: "text", text: content.text });
+        } else if (typeof content?.refusal === "string" && content.refusal) {
+          parts.push({ type: "text", text: content.refusal });
         }
       }
       continue;
     }
 
     if (item?.type === "function_call") {
+      const callId = item.call_id ?? item.id ?? `${item.name}-${index}`;
       parts.push({
         type: "tool-call",
         toolCall: {
-          id: item.call_id ?? item.id ?? `${item.name}-${index}`,
+          id: callId,
           name: item.name,
-          input: JSON.parse(item.arguments ?? "{}")
+          input: JSON.parse(item.arguments ?? "{}"),
+          ...(item.caller && typeof item.caller === "object"
+            ? { providerMetadata: { caller: item.caller as JsonValue } }
+            : {})
         }
       });
       continue;
     }
 
-    if (item?.type === "shell_call") {
+    if (item?.type === "shell_call" && localTools.has("shell")) {
       parts.push({
         type: "tool-call",
         toolCall: {
           id: item.call_id ?? item.id ?? `shell-${index}`,
-          name: "shell",
-          input: parseShellCallInput(item) as JsonValue
+          name: localTools.get("shell")!,
+          input: parseShellCallInput(item) as JsonValue,
+          providerMetadata: { responsesToolType: "shell" }
         }
       });
       continue;
     }
 
-    if (item?.type === "apply_patch_call") {
+    if (item?.type === "apply_patch_call" && localTools.has("apply_patch")) {
       parts.push({
         type: "tool-call",
         toolCall: {
           id: item.call_id ?? item.id ?? `apply_patch-${index}`,
-          name: "apply_patch",
-          input: parseApplyPatchCallInput(item) as JsonValue
+          name: localTools.get("apply_patch")!,
+          input: parseApplyPatchCallInput(item) as JsonValue,
+          providerMetadata: { responsesToolType: "apply_patch" }
+        }
+      });
+      continue;
+    }
+
+    if (item?.type === "computer_call" && localTools.has("computer")) {
+      parts.push({
+        type: "tool-call",
+        toolCall: {
+          id: item.call_id ?? item.id ?? `computer-${index}`,
+          name: localTools.get("computer")!,
+          input: {
+            actions: Array.isArray(item.actions) ? item.actions : []
+          } as JsonValue,
+          providerMetadata: { responsesToolType: "computer" }
         }
       });
       continue;
@@ -1216,7 +1674,16 @@ const parseResponsesAssistantMessage = (json: any): ModelMessage => {
     }
   }
 
-  if (!parts.some((part) => part.type === "text") && typeof json.output_text === "string" && json.output_text) {
+  if (Array.isArray(json.output) && json.output.length) {
+    parts.push(
+      providerDataPart("openai", {
+        type: "responses_output",
+        items: json.output
+      } as JsonValue)
+    );
+  }
+
+  if (!multiAgentEnabled && !parts.some((part) => part.type === "text") && typeof json.output_text === "string" && json.output_text) {
     parts.push({ type: "text", text: json.output_text });
   }
 
@@ -1236,9 +1703,17 @@ const parseResponsesAssistantMessage = (json: any): ModelMessage => {
   };
 };
 
-const normalizeResponsesFinishReason = (status: string | undefined, hasToolCalls: boolean) => {
+const normalizeResponsesFinishReason = (
+  status: string | undefined,
+  hasToolCalls: boolean,
+  hasRefusal = false
+) => {
   if (hasToolCalls) {
     return "tool-calls" as const;
+  }
+
+  if (hasRefusal) {
+    return "refusal" as const;
   }
 
   if (status === "completed") {
@@ -1252,11 +1727,57 @@ const normalizeResponsesFinishReason = (status: string | undefined, hasToolCalls
   return normalizeFinishReason(status);
 };
 
+const mapResponsesUsage = (usage: any) =>
+  usage
+    ? {
+        inputTokens: usage.input_tokens,
+        cachedInputTokens: usage.input_tokens_details?.cached_tokens,
+        cacheWriteTokens: usage.input_tokens_details?.cache_write_tokens,
+        outputTokens: usage.output_tokens,
+        reasoningTokens: usage.output_tokens_details?.reasoning_tokens,
+        totalTokens: usage.total_tokens
+      }
+    : undefined;
+
+const mapChatUsage = (usage: any) =>
+  usage
+    ? {
+        inputTokens: usage.prompt_tokens,
+        cachedInputTokens: usage.prompt_tokens_details?.cached_tokens,
+        cacheWriteTokens: usage.prompt_tokens_details?.cache_write_tokens,
+        outputTokens: usage.completion_tokens,
+        reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
+        totalTokens: usage.total_tokens
+      }
+    : undefined;
+
+const addTokenUsage = (
+  left: ReturnType<typeof mapResponsesUsage>,
+  right: ReturnType<typeof mapResponsesUsage>
+): ReturnType<typeof mapResponsesUsage> => {
+  if (!left) return right;
+  if (!right) return left;
+  const sum = (a: number | undefined, b: number | undefined) =>
+    a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0);
+  return {
+    inputTokens: sum(left.inputTokens, right.inputTokens),
+    cachedInputTokens: sum(left.cachedInputTokens, right.cachedInputTokens),
+    cacheWriteTokens: sum(left.cacheWriteTokens, right.cacheWriteTokens),
+    outputTokens: sum(left.outputTokens, right.outputTokens),
+    reasoningTokens: sum(left.reasoningTokens, right.reasoningTokens),
+    totalTokens: sum(left.totalTokens, right.totalTokens)
+  };
+};
+
 const streamResponses = async function* (
-  response: Response
+  response: Response,
+  multiAgentEnabled = false,
+  localTools: Map<string, string> = new Map()
 ): AsyncGenerator<StreamEvent, void, undefined> {
-  const toolBuffers = new Map<string, { callId: string; name: string; args: string; emitted: boolean }>();
+  const toolBuffers = new Map<string, { callId: string; name: string; args: string; caller?: JsonValue; emitted: boolean }>();
+  const outputAgents = new Map<number, { agentName?: string }>();
   let sawToolCalls = false;
+  let sawRefusal = false;
 
   const emitToolCall = (key: string) => {
     const toolCall = toolBuffers.get(key);
@@ -1272,7 +1793,8 @@ const streamResponses = async function* (
       toolCall: {
         id: toolCall.callId,
         name: toolCall.name,
-        input: JSON.parse(toolCall.args || "{}")
+        input: JSON.parse(toolCall.args || "{}"),
+        ...(toolCall.caller !== undefined ? { providerMetadata: { caller: toolCall.caller } } : {})
       }
     } satisfies StreamEvent;
   };
@@ -1285,16 +1807,52 @@ const streamResponses = async function* (
     const json = JSON.parse(event.data);
     const type = json.type as string | undefined;
 
-    if (type === "response.output_text.delta" && typeof json.delta === "string") {
+    if (type === "error") {
+      throw new ProviderHTTPError(
+        `OpenAI Responses stream failed: ${json.error?.message ?? json.message ?? "unknown error"}`,
+        500,
+        { responseBody: JSON.stringify(json) }
+      );
+    }
+
+    if (
+      type === "response.output_text.delta" &&
+      typeof json.delta === "string" &&
+      (!multiAgentEnabled ||
+        (outputAgents.get(json.output_index)?.agentName ?? "/root") === "/root")
+    ) {
+      yield { type: "text-delta", textDelta: json.delta } satisfies StreamEvent;
+      continue;
+    }
+
+    if (
+      type === "response.refusal.delta" &&
+      typeof json.delta === "string" &&
+      (!multiAgentEnabled ||
+        (outputAgents.get(json.output_index)?.agentName ?? "/root") === "/root")
+    ) {
+      sawRefusal = true;
       yield { type: "text-delta", textDelta: json.delta } satisfies StreamEvent;
       continue;
     }
 
     if (type === "response.output_item.added" || type === "response.output_item.done") {
       const item = json.item;
+      let handledLocalToolCall = false;
+      if (typeof json.output_index === "number" && item?.type === "message") {
+        outputAgents.set(json.output_index, {
+          agentName: item.agent?.agent_name
+        });
+      }
       if (item?.type === "function_call") {
         const key = item.id ?? json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
-        const existing = toolBuffers.get(key) ?? {
+        const existing: {
+          callId: string;
+          name: string;
+          args: string;
+          caller?: JsonValue;
+          emitted: boolean;
+        } = toolBuffers.get(key) ?? {
           callId: item.call_id ?? key,
           name: item.name ?? "",
           args: "",
@@ -1302,6 +1860,9 @@ const streamResponses = async function* (
         };
         existing.callId = item.call_id ?? existing.callId;
         existing.name ||= item.name ?? "";
+        if (item.caller && typeof item.caller === "object") {
+          existing.caller = item.caller as JsonValue;
+        }
         if (typeof item.arguments === "string") {
           existing.args = item.arguments;
         }
@@ -1315,36 +1876,66 @@ const streamResponses = async function* (
         }
       }
 
-      if (item?.type === "shell_call" && type === "response.output_item.done") {
+      if (item?.type === "shell_call" && type === "response.output_item.done" && localTools.has("shell")) {
         yield {
           type: "tool-call",
           toolCall: {
             id: item.call_id ?? item.id ?? `${json.output_index ?? "shell"}`,
-            name: "shell",
-            input: parseShellCallInput(item) as JsonValue
+            name: localTools.get("shell")!,
+            input: parseShellCallInput(item) as JsonValue,
+            providerMetadata: { responsesToolType: "shell" }
           }
         } satisfies StreamEvent;
         sawToolCalls = true;
+        handledLocalToolCall = true;
       }
 
-      if (item?.type === "apply_patch_call" && type === "response.output_item.done") {
+      if (item?.type === "apply_patch_call" && type === "response.output_item.done" && localTools.has("apply_patch")) {
         yield {
           type: "tool-call",
           toolCall: {
             id: item.call_id ?? item.id ?? `${json.output_index ?? "apply_patch"}`,
-            name: "apply_patch",
-            input: parseApplyPatchCallInput(item) as JsonValue
+            name: localTools.get("apply_patch")!,
+            input: parseApplyPatchCallInput(item) as JsonValue,
+            providerMetadata: { responsesToolType: "apply_patch" }
           }
         } satisfies StreamEvent;
         sawToolCalls = true;
+        handledLocalToolCall = true;
+      }
+
+      if (item?.type === "computer_call" && type === "response.output_item.done" && localTools.has("computer")) {
+        yield {
+          type: "tool-call",
+          toolCall: {
+            id: item.call_id ?? item.id ?? `${json.output_index ?? "computer"}`,
+            name: localTools.get("computer")!,
+            input: {
+              actions: Array.isArray(item.actions) ? item.actions : []
+            } as JsonValue,
+            providerMetadata: { responsesToolType: "computer" }
+          }
+        } satisfies StreamEvent;
+        sawToolCalls = true;
+        handledLocalToolCall = true;
       }
 
       const providerData = parseResponsesProviderData(item);
-      if (providerData && type === "response.output_item.done") {
+      if (providerData && type === "response.output_item.done" && !handledLocalToolCall) {
         yield {
           type: "provider-data",
           provider: "openai",
           data: providerData
+        } satisfies StreamEvent;
+      }
+      if (item && type === "response.output_item.done") {
+        yield {
+          type: "provider-data",
+          provider: "openai",
+          data: {
+            type: "responses_output",
+            items: [item]
+          } as JsonValue
         } satisfies StreamEvent;
       }
       continue;
@@ -1384,20 +1975,45 @@ const streamResponses = async function* (
 
     if (type === "response.completed" || type === "response.failed" || type === "response.incomplete") {
       const responseData = json.response ?? {};
+      if (typeof responseData.id === "string") {
+        yield {
+          type: "provider-data",
+          provider: "openai",
+          data: { responseId: responseData.id }
+        } satisfies StreamEvent;
+      }
       yield {
         type: "finish",
-        finishReason: normalizeResponsesFinishReason(responseData.status, sawToolCalls),
+        finishReason: normalizeResponsesFinishReason(responseData.status, sawToolCalls, sawRefusal),
         providerFinishReason: responseData.status,
-        usage: responseData.usage
-          ? {
-              inputTokens: responseData.usage.input_tokens,
-              outputTokens: responseData.usage.output_tokens,
-              totalTokens: responseData.usage.total_tokens
-            }
-          : undefined
+        usage: mapResponsesUsage(responseData.usage)
       } satisfies StreamEvent;
     }
   }
+};
+
+const streamGenerateResult = async function* (result: GenerateResult): AsyncGenerator<StreamEvent, void, undefined> {
+  for (const message of result.messages ?? (result.message ? [result.message] : [])) {
+    for (const part of message.parts) {
+      if (part.type === "text" && part.text) {
+        yield { type: "text-delta", textDelta: part.text } satisfies StreamEvent;
+      } else if (part.type === "tool-call") {
+        yield { type: "tool-call", toolCall: part.toolCall } satisfies StreamEvent;
+      } else if (part.type === "provider-data") {
+        yield {
+          type: "provider-data",
+          provider: part.provider,
+          data: part.data
+        } satisfies StreamEvent;
+      }
+    }
+  }
+  yield {
+    type: "finish",
+    finishReason: result.finishReason,
+    providerFinishReason: result.providerFinishReason,
+    usage: result.usage
+  } satisfies StreamEvent;
 };
 
 const extractSources = (value: any): GroundedGenerateResult["sources"] => {
@@ -1444,82 +2060,153 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
     this.capabilities = modelCapabilities(modelId);
   }
 
-  private usesResponsesAPI(input: ModelGenerateInput) {
-    return hasResponsesOnlyTools(input.tools);
+  private usesResponsesAPI(input: ModelGenerateInput, options: ReturnType<typeof resolveOpenAILanguageRequestOptions>) {
+    const requiresResponses = hasResponsesOnlyTools(input.tools) || options.multiAgentEnabled;
+    if (options.apiMode === "chat") {
+      if (requiresResponses) {
+        throw new UnsupportedFeatureError(
+          'Provider "openai" cannot use apiMode "chat" with Responses-only tools or Multi-agent.'
+        );
+      }
+      return false;
+    }
+    return options.apiMode === "responses" || requiresResponses || isOpenAIGpt56Model(this.modelId);
   }
 
-  private async generateViaResponses(input: ModelGenerateInput, signal: AbortSignal | undefined): Promise<GenerateResult> {
+  private async generateViaResponses(
+    input: ModelGenerateInput,
+    signal: AbortSignal | undefined,
+    options: ReturnType<typeof resolveOpenAILanguageRequestOptions>
+  ): Promise<GenerateResult> {
+    const responseBodyOptions = openAIResponsesBodyOptions(options.bodyOptions, this.modelId);
     assertResponsesToolsSupported(this.modelId, input.tools);
-    const previousResponse = getProviderResponseId(input.messages);
+    assertOpenAIResponsesOptionsSupported(this.modelId, responseBodyOptions);
+    const previousResponse = responseBodyOptions.store === false ? undefined : getProviderResponseId(input.messages);
     const messages =
       previousResponse && previousResponse.index < input.messages.length - 1
         ? input.messages.slice(previousResponse.index + 1)
         : input.messages;
-    const response = await withRetry(
-      () =>
-        this.fetcher(`${this.baseURL}/responses`, {
-          method: "POST",
-          headers: jsonHeaders(this.apiKey),
-          signal,
-          body: JSON.stringify({
-            ...input.providerOptions,
-            model: this.modelId,
-            ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-            ...(messages.length ? { input: toResponsesInput(messages) } : {}),
-            tools: mapResponsesTools(input.tools),
-            tool_choice: mapToolChoice(input.toolChoice),
-            text: mapResponsesStructuredOutput(input),
-            temperature: input.temperature,
-            max_output_tokens: input.maxTokens,
-            ...mapReasoning(input)
-          })
-        }),
-      input
-    );
+    let nextPreviousResponseId = previousResponse?.responseId;
+    let nextInput = messages.length ? toResponsesInput(messages) : [];
+    let accumulatedUsage: ReturnType<typeof mapResponsesUsage>;
+    let statelessInternalOutputs: Array<Record<string, unknown>> = [];
 
-    const json = await parseJson(response);
-    const assistantMessage = parseResponsesAssistantMessage(json);
-    const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
+    for (let continuation = 0; continuation < 8; continuation += 1) {
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/responses`, {
+            method: "POST",
+            headers: options.headers,
+            signal,
+            body: JSON.stringify({
+              ...responseBodyOptions,
+              model: this.modelId,
+              ...(nextPreviousResponseId ? { previous_response_id: nextPreviousResponseId } : {}),
+              ...(nextInput.length ? { input: nextInput } : {}),
+              tools: mapResponsesTools(input.tools),
+              ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
+              text: mapResponsesStructuredOutput(input),
+              temperature: input.temperature,
+              max_output_tokens: input.maxTokens,
+              ...mapResponsesReasoning(input, responseBodyOptions.reasoning)
+            })
+          }),
+        input
+      );
 
-    return {
-      messages: [assistantMessage],
-      text: extractMessageText(assistantMessage),
-      audio: extractAudioOutputs(assistantMessage),
-      finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls),
-      providerFinishReason: json.status,
-      usage: {
-        inputTokens: json.usage?.input_tokens,
-        outputTokens: json.usage?.output_tokens,
-        totalTokens: json.usage?.total_tokens
-      },
-      rawResponse: json
-    };
+      const json = await parseJson(response);
+      accumulatedUsage = addTokenUsage(accumulatedUsage, mapResponsesUsage(json.usage));
+      const assistantMessage = parseResponsesAssistantMessage(
+        json,
+        options.multiAgentEnabled,
+        localResponsesTools(input.tools)
+      );
+      const currentOutput = Array.isArray(json.output)
+        ? (json.output as Array<Record<string, unknown>>)
+        : [];
+      const completeStatelessOutput = [...statelessInternalOutputs, ...currentOutput];
+      if (responseBodyOptions.store === false && completeStatelessOutput.length) {
+        assistantMessage.parts = assistantMessage.parts.filter(
+          (part) =>
+            part.type !== "provider-data" ||
+            part.provider !== "openai" ||
+            !part.data ||
+            typeof part.data !== "object" ||
+            (part.data as Record<string, unknown>).type !== "responses_output"
+        );
+        assistantMessage.parts.push(
+          providerDataPart("openai", {
+            type: "responses_output",
+            items: completeStatelessOutput
+          } as unknown as JsonValue)
+        );
+      }
+      const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
+      const hasRefusal = (json.output ?? []).some((item: any) =>
+        item?.type === "message" &&
+        (item.content ?? []).some((content: any) => content?.type === "refusal")
+      );
+      const hasFinalMessage = (json.output ?? []).some(
+        (item: any) =>
+          item?.type === "message" &&
+          (!options.multiAgentEnabled || (item.agent?.agent_name === "/root" && item.phase === "final_answer"))
+      );
+      const shouldContinueProgram =
+        hasProgrammaticToolCalling(input.tools) &&
+        json.status === "completed" &&
+        !hasToolCalls &&
+        !hasFinalMessage &&
+        (json.output ?? []).some((item: any) => item?.type === "program" || item?.type === "program_output");
+
+      if (!shouldContinueProgram) {
+        return {
+          messages: [assistantMessage],
+          text: extractMessageText(assistantMessage),
+          audio: extractAudioOutputs(assistantMessage),
+          finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls, hasRefusal),
+          providerFinishReason: json.status,
+          usage: accumulatedUsage,
+          rawResponse: json
+        };
+      }
+
+      if (responseBodyOptions.store === false) {
+        statelessInternalOutputs = completeStatelessOutput;
+        nextInput = [...nextInput, ...currentOutput];
+      } else {
+        nextPreviousResponseId = json.id;
+        nextInput = [];
+      }
+    }
+
+    throw new ProviderHTTPError("OpenAI Programmatic Tool Calling exceeded 8 internal continuations.", 500);
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     const { signal, cleanup } = getRequestOptions(input);
+    const options = resolveOpenAILanguageRequestOptions(input.providerOptions, this.apiKey);
 
     try {
-      if (this.usesResponsesAPI(input)) {
-        return await this.generateViaResponses(input, signal);
+      if (this.usesResponsesAPI(input, options)) {
+        return await this.generateViaResponses(input, signal, options);
       }
 
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
             method: "POST",
-            headers: jsonHeaders(this.apiKey),
+            headers: options.headers,
             signal,
             body: JSON.stringify({
-              ...input.providerOptions,
+              ...options.bodyOptions,
               model: this.modelId,
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
-              tool_choice: mapToolChoice(input.toolChoice),
+              ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
               ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-              ...mapReasoning(input),
+              ...mapChatReasoning(input),
               stream: false
             })
           }),
@@ -1537,11 +2224,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
         audio: extractAudioOutputs(assistantMessage),
         finishReason: normalizeFinishReason(choice?.finish_reason),
         providerFinishReason: choice?.finish_reason,
-        usage: {
-          inputTokens: json.usage?.prompt_tokens,
-          outputTokens: json.usage?.completion_tokens,
-          totalTokens: json.usage?.total_tokens
-        },
+        usage: mapChatUsage(json.usage),
         rawResponse: json
       };
     } finally {
@@ -1550,25 +2233,44 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
   }
 
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
-    if (this.usesResponsesAPI(input)) {
+    const options = resolveOpenAILanguageRequestOptions(input.providerOptions, this.apiKey);
+    if (this.usesResponsesAPI(input, options)) {
+      const responseBodyOptions = openAIResponsesBodyOptions(options.bodyOptions, this.modelId);
       assertResponsesToolsSupported(this.modelId, input.tools);
+      assertOpenAIResponsesOptionsSupported(this.modelId, responseBodyOptions);
       const { signal, cleanup } = getRequestOptions(input);
+      if (hasProgrammaticToolCalling(input.tools)) {
+        const result = await this.generateViaResponses(input, signal, options);
+        return (async function* () {
+          try {
+            yield* streamGenerateResult(result);
+          } finally {
+            cleanup();
+          }
+        })();
+      }
+      const previousResponse = responseBodyOptions.store === false ? undefined : getProviderResponseId(input.messages);
+      const messages =
+        previousResponse && previousResponse.index < input.messages.length - 1
+          ? input.messages.slice(previousResponse.index + 1)
+          : input.messages;
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/responses`, {
             method: "POST",
-            headers: jsonHeaders(this.apiKey),
+            headers: options.headers,
             signal,
             body: JSON.stringify({
-              ...input.providerOptions,
+              ...responseBodyOptions,
               model: this.modelId,
-              input: toResponsesInput(input.messages),
+              ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
+              ...(messages.length ? { input: toResponsesInput(messages) } : {}),
               tools: mapResponsesTools(input.tools),
-              tool_choice: mapToolChoice(input.toolChoice),
+              ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
               text: mapResponsesStructuredOutput(input),
               temperature: input.temperature,
               max_output_tokens: input.maxTokens,
-              ...mapReasoning(input),
+              ...mapResponsesReasoning(input, responseBodyOptions.reasoning),
               stream: true
             })
           }),
@@ -1577,7 +2279,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
 
       return (async function* () {
         try {
-          yield* streamResponses(response);
+          yield* streamResponses(response, options.multiAgentEnabled, localResponsesTools(input.tools));
         } finally {
           cleanup();
         }
@@ -1589,18 +2291,18 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {
           method: "POST",
-          headers: jsonHeaders(this.apiKey),
+          headers: options.headers,
           signal,
           body: JSON.stringify({
-            ...input.providerOptions,
+            ...options.bodyOptions,
             model: this.modelId,
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
-            tool_choice: mapToolChoice(input.toolChoice),
+            ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
             response_format: mapStructuredOutput(input),
             temperature: input.temperature,
             ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-            ...mapReasoning(input),
+            ...mapChatReasoning(input),
             stream: true,
             stream_options: { include_usage: true }
           })
@@ -1652,13 +2354,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               type: "finish",
               finishReason: normalizeFinishReason(choice.finish_reason),
               providerFinishReason: choice.finish_reason,
-              usage: json.usage
-                ? {
-                    inputTokens: json.usage.prompt_tokens,
-                    outputTokens: json.usage.completion_tokens,
-                    totalTokens: json.usage.total_tokens
-                  }
-                : undefined
+              usage: mapChatUsage(json.usage)
             } satisfies StreamEvent;
           }
         }
@@ -1858,21 +2554,24 @@ class OpenAIGroundedLanguageModel implements GroundedLanguageModel {
     providerOptions?: Record<string, unknown>;
   }): Promise<GroundedGenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
+    const options = resolveOpenAILanguageRequestOptions(input.providerOptions, this.apiKey);
+    const responseBodyOptions = openAIResponsesBodyOptions(options.bodyOptions, this.modelId);
 
     try {
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/responses`, {
             method: "POST",
-            headers: jsonHeaders(this.apiKey),
+            headers: options.headers,
             signal,
             body: JSON.stringify({
-              ...input.providerOptions,
+              ...responseBodyOptions,
               model: this.modelId,
               input: toResponsesInput(input.messages),
               tools: [{ type: "web_search_preview" }],
               temperature: input.temperature,
-              max_output_tokens: input.maxTokens
+              max_output_tokens: input.maxTokens,
+              ...mapResponsesReasoning(input as ModelGenerateInput, responseBodyOptions.reasoning)
             })
           }),
         input
@@ -1882,11 +2581,7 @@ class OpenAIGroundedLanguageModel implements GroundedLanguageModel {
       return {
         text: json.output_text ?? "",
         sources: extractSources(json),
-        usage: {
-          inputTokens: json.usage?.input_tokens,
-          outputTokens: json.usage?.output_tokens,
-          totalTokens: json.usage?.total_tokens
-        },
+        usage: mapResponsesUsage(json.usage),
         finishReason: normalizeFinishReason(json.status),
         providerFinishReason: json.status,
         rawResponse: json
@@ -2175,6 +2870,28 @@ export const openAIToolSearchTool = (config: OpenAIToolSearchToolConfig = {}) =>
     config: config as unknown as JsonValue
   });
 
+export const openAIProgrammaticToolCallingTool = () =>
+  hostedTool({
+    name: "programmatic_tool_calling",
+    provider: "openai",
+    type: "programmatic_tool_calling",
+    toolClass: "code-execution"
+  });
+
+export const openAIProgrammaticTool = <TSchema extends z.ZodTypeAny, TResult>(
+  definition: ToolDefinition<TSchema, TResult>,
+  options: OpenAIProgrammaticToolOptions = {}
+): ToolDefinition<TSchema, TResult> => ({
+  ...definition,
+  metadata: {
+    ...definition.metadata,
+    [openAIResponsesFunctionConfigMetadataKey]: {
+      allowed_callers: options.allowedCallers ?? ["programmatic"],
+      ...(options.outputSchema ? { output_schema: toJSONSchema(options.outputSchema) } : {})
+    } as unknown as JsonValue
+  }
+});
+
 export const openAIRemoteMcpTool = (config: OpenAIRemoteMcpToolConfig) =>
   hostedTool({
     name: config.server_label ?? "mcp",
@@ -2191,6 +2908,12 @@ export const openAIMcpApprovalResponse = (response: Omit<OpenAIMcpApprovalRespon
     ...response
   });
 
+export const openAIPromptCacheBreakpoint = () =>
+  providerDataPart("openai", {
+    type: "prompt_cache_breakpoint",
+    mode: "explicit"
+  });
+
 export const openAIComputerUseTool = (config: OpenAIComputerUseToolConfig) =>
   hostedTool({
     name: "computer",
@@ -2200,62 +2923,109 @@ export const openAIComputerUseTool = (config: OpenAIComputerUseToolConfig) =>
     config: config as unknown as JsonValue
   });
 
+export const openAIComputerTool = (
+  config: OpenAIComputerToolConfig
+): ToolDefinition<z.ZodType<OpenAIComputerCallInput>, JsonValue> => ({
+  name: config.name ?? "computer",
+  description: "Execute batched actions requested by the OpenAI Responses computer tool and return a screenshot.",
+  requiresApproval: config.requiresApproval ?? true,
+  metadata: {
+    [openAIResponsesToolMetadataKey]: "computer",
+    "openai.responses_tool_config": {}
+  },
+  schema: z.object({
+    actions: z.array(z.record(z.string(), z.unknown()))
+  }) as z.ZodType<OpenAIComputerCallInput>,
+  execute: async (input) => {
+    const output = await config.execute(input);
+    return {
+      ...output,
+      detail: "original"
+    } as unknown as JsonValue;
+  }
+});
+
 const runOpenAIShellCommand = async (
   input: OpenAIShellToolInput,
   config: OpenAIShellToolConfig
-): Promise<OpenAIShellToolOutput> => {
+): Promise<OpenAIShellToolOutput[]> => {
   if (config.execute) {
-    return config.execute(input);
+    const result = await config.execute(input);
+    return Array.isArray(result) ? result : [result];
   }
 
-  const command = input.command ?? input.action?.command;
-  if (!command) {
+  const commands =
+    input.action?.commands?.length
+      ? input.action.commands
+      : [input.command ?? input.action?.command].filter((command): command is string => Boolean(command));
+  if (!commands.length) {
     throw new Error("OpenAI shell tool did not provide a command.");
   }
 
   const { exec } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const execAsync = promisify(exec);
-  const maxBuffer = Math.max(1024, config.maxOutputLength ?? input.maxOutputLength ?? input.max_output_length ?? input.action?.maxOutputLength ?? input.action?.max_output_length ?? 20000);
+  const maxBuffer = Math.max(
+    1024,
+    config.maxOutputLength ??
+      input.maxOutputLength ??
+      input.max_output_length ??
+      input.action?.maxOutputLength ??
+      input.action?.max_output_length ??
+      20000
+  );
   const cwd = config.rootDir
     ? await assertOpenAIToolPathInsideRoot(config.rootDir, config.cwd ?? ".", "shell cwd")
     : config.cwd;
 
-  try {
-    const result = await execAsync(command, {
-      cwd,
-      timeout: config.timeoutMs,
-      maxBuffer
-    });
-    return {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      outcome: {
-        type: "exit",
-        exitCode: 0
-      },
-      maxOutputLength: maxBuffer
-    };
-  } catch (error) {
-    const err = error as {
-      stdout?: string;
-      stderr?: string;
-      code?: number;
-      signal?: string;
-      killed?: boolean;
-      message?: string;
-    };
-    return {
-      stdout: err.stdout ?? "",
-      stderr: err.stderr ?? err.message ?? "",
-      outcome: {
-        type: err.killed || err.signal === "SIGTERM" ? "timeout" : "exit",
-        exitCode: typeof err.code === "number" ? err.code : 1
-      },
-      maxOutputLength: maxBuffer
-    };
+  const output: OpenAIShellToolOutput[] = [];
+  for (const command of commands) {
+    try {
+      const result = await execAsync(command, {
+        cwd,
+        timeout: config.timeoutMs ?? input.action?.timeout_ms,
+        maxBuffer
+      });
+      output.push({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        outcome: { type: "exit", exit_code: 0 },
+        maxOutputLength: maxBuffer
+      });
+    } catch (error) {
+      const err = error as {
+        stdout?: string;
+        stderr?: string;
+        code?: number;
+        signal?: string;
+        killed?: boolean;
+        message?: string;
+      };
+      output.push({
+        stdout: err.stdout ?? "",
+        stderr: err.stderr ?? err.message ?? "",
+        outcome: {
+          type: err.killed || err.signal === "SIGTERM" ? "timeout" : "exit",
+          exit_code: typeof err.code === "number" ? err.code : 1
+        },
+        maxOutputLength: maxBuffer
+      });
+    }
   }
+  return output;
 };
+
+export const openAIHostedShellTool = (config: OpenAIHostedShellToolConfig) =>
+  hostedTool({
+    name: "shell",
+    provider: "openai",
+    type: "shell",
+    toolClass: "shell",
+    config: {
+      environment: config.environment,
+      ...(config.allowedCallers ? { allowed_callers: config.allowedCallers } : {})
+    } as unknown as JsonValue
+  });
 
 export const openAIShellTool = (config: OpenAIShellToolConfig = {}): ToolDefinition<z.ZodType<OpenAIShellToolInput>, JsonValue> => ({
   name: config.name ?? "shell",
@@ -2263,13 +3033,18 @@ export const openAIShellTool = (config: OpenAIShellToolConfig = {}): ToolDefinit
   requiresApproval: true,
   metadata: {
     [openAIResponsesToolMetadataKey]: "shell",
-    "openai.responses_tool_config": {}
+    "openai.responses_tool_config": {
+      environment: config.environment ?? { type: "local" },
+      ...(config.allowedCallers ? { allowed_callers: config.allowedCallers } : {})
+    } as unknown as JsonValue
   },
   schema: z.object({
     command: z.string().optional(),
     action: z
       .object({
         command: z.string().optional(),
+        commands: z.array(z.string()).optional(),
+        timeout_ms: z.number().optional(),
         max_output_length: z.number().optional(),
         maxOutputLength: z.number().optional()
       })
@@ -2300,7 +3075,9 @@ export const openAIApplyPatchTool = (
   requiresApproval: true,
   metadata: {
     [openAIResponsesToolMetadataKey]: "apply_patch",
-    "openai.responses_tool_config": {}
+    "openai.responses_tool_config": {
+      ...(config.allowedCallers ? { allowed_callers: config.allowedCallers } : {})
+    }
   },
   schema: z.object({
     operation: z

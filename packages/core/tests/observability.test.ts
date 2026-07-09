@@ -256,7 +256,7 @@ describe("otel observability", () => {
       currency: "USD",
       usage: { inputTokens: 30, outputTokens: 15, totalTokens: 45 }
     });
-    expect(estimateAgentRunCost(baseRunState(), defaultModelCatalog).totalCost).toBeCloseTo(0.027);
+    expect(estimateAgentRunCost(baseRunState(), defaultModelCatalog).totalCost).toBeCloseTo(0.000027);
 
     const summary = summarizeAgentTrace(trace, {
       pricing: { costPer1kTokens: 1 }
