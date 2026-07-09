@@ -7,8 +7,8 @@ import { integrationLanguageProviders } from "./integration-registry.js";
 const toolProviders = integrationLanguageProviders.filter((provider) => provider.supports.tools);
 const structuredOutputProviders = integrationLanguageProviders.filter((provider) => provider.supports.structuredOutputMode);
 
-const describeToolIntegration = toolProviders.length ? describe.sequential : describe.skip;
-const describeStructuredOutputIntegration = structuredOutputProviders.length ? describe.sequential : describe.skip;
+const describeToolIntegration = toolProviders.length ? (describe.sequential ?? describe.skip) : describe.skip;
+const describeStructuredOutputIntegration = structuredOutputProviders.length ? (describe.sequential ?? describe.skip) : describe.skip;
 
 describeToolIntegration("tool calling capability integration", () => {
   for (const provider of toolProviders) {
@@ -39,6 +39,7 @@ describeToolIntegration("tool calling capability integration", () => {
   }
 });
 
+
 describeStructuredOutputIntegration("structured output capability integration", () => {
   for (const provider of structuredOutputProviders) {
     it(`${provider.name} returns structured output through the common SDK contract`, async () => {
@@ -59,4 +60,3 @@ describeStructuredOutputIntegration("structured output capability integration", 
     });
   }
 });
-

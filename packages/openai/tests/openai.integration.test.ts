@@ -9,7 +9,7 @@ const baseURL = process.env.OPENAI_BASE_URL;
 const textModelId = process.env.OPENAI_INTEGRATION_MODEL ?? "gpt-5.4-nano";
 const embeddingModelId = process.env.OPENAI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-3-small";
 
-const describeIntegration = apiKey ? describe.sequential : describe.skip;
+const describeIntegration = apiKey ? (describe.sequential ?? describe.skip) : describe.skip;
 
 describeIntegration("openai adapter integration", () => {
   const provider = () =>

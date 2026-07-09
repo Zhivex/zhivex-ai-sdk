@@ -14,7 +14,7 @@ const embeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ?? "text
 const usableAccessToken = accessToken && (projectId || baseURL) ? accessToken : undefined;
 
 const hasVertexCredentials = Boolean(usableAccessToken || apiKey);
-const describeIntegration = hasVertexCredentials ? describe.sequential : describe.skip;
+const describeIntegration = hasVertexCredentials ? (describe.sequential ?? describe.skip) : describe.skip;
 
 describeIntegration("vertex adapter integration", () => {
   const provider = () =>

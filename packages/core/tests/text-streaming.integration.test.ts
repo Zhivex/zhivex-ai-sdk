@@ -6,8 +6,8 @@ import { integrationLanguageProviders } from "./integration-registry.js";
 const textProviders = integrationLanguageProviders;
 const streamingProviders = integrationLanguageProviders.filter((provider) => provider.supports.streaming);
 
-const describeTextIntegration = textProviders.length ? describe.sequential : describe.skip;
-const describeStreamingIntegration = streamingProviders.length ? describe.sequential : describe.skip;
+const describeTextIntegration = textProviders.length ? (describe.sequential ?? describe.skip) : describe.skip;
+const describeStreamingIntegration = streamingProviders.length ? (describe.sequential ?? describe.skip) : describe.skip;
 
 describeTextIntegration("generateText capability integration", () => {
   for (const provider of textProviders) {
@@ -25,6 +25,7 @@ describeTextIntegration("generateText capability integration", () => {
     });
   }
 });
+
 
 describeStreamingIntegration("streamText capability integration", () => {
   for (const provider of streamingProviders) {
@@ -48,4 +49,3 @@ describeStreamingIntegration("streamText capability integration", () => {
     });
   }
 });
-

@@ -10,7 +10,7 @@ const textModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.1-flash-li
 const embeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "gemini-embedding-2";
 const liveModelId = process.env.GEMINI_INTEGRATION_LIVE_MODEL ?? "gemini-3.1-flash-live-preview";
 
-const describeIntegration = apiKey ? describe.sequential : describe.skip;
+const describeIntegration = apiKey ? (describe.sequential ?? describe.skip) : describe.skip;
 
 describeIntegration("gemini adapter integration", () => {
   const provider = () =>

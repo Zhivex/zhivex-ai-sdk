@@ -4,7 +4,7 @@ import { generateText } from "../src/index.js";
 import { integrationLanguageProviders } from "./integration-registry.js";
 
 const reasoningProviders = integrationLanguageProviders.filter((provider) => provider.supports.reasoning);
-const describeReasoningIntegration = reasoningProviders.length ? describe.sequential : describe.skip;
+const describeReasoningIntegration = reasoningProviders.length ? (describe.sequential ?? describe.skip) : describe.skip;
 
 describeReasoningIntegration("reasoning capability integration", () => {
   for (const provider of reasoningProviders) {

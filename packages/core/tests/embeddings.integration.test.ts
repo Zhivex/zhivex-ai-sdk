@@ -7,7 +7,7 @@ const embeddingProviders = integrationLanguageProviders.filter(
   (provider) => provider.supports.embeddings && provider.createEmbeddingModel
 );
 
-const describeEmbeddingIntegration = embeddingProviders.length ? describe.sequential : describe.skip;
+const describeEmbeddingIntegration = embeddingProviders.length ? (describe.sequential ?? describe.skip) : describe.skip;
 
 describeEmbeddingIntegration("embeddings capability integration", () => {
   for (const provider of embeddingProviders) {
@@ -23,4 +23,3 @@ describeEmbeddingIntegration("embeddings capability integration", () => {
     });
   }
 });
-
