@@ -16,6 +16,7 @@ import { createBedrock } from "../../bedrock/src/index.js";
 import { createDeepSeek } from "../../deepseek/src/index.js";
 import { createGemini } from "../../gemini/src/index.js";
 import { createKimi } from "../../kimi/src/index.js";
+import { createMeta } from "../../meta/src/index.js";
 import { createOllama } from "../../ollama/src/index.js";
 import { createOpenAI } from "../../openai/src/index.js";
 import { createOpenRouter } from "../../openrouter/src/index.js";
@@ -47,6 +48,7 @@ const extractReadmeProviderMatrix = async () => {
 
 const fetchMock = vi.fn();
 const openai = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+const meta = createMeta({ apiKey: "test", fetch: fetchMock as typeof fetch });
 const azure = createAzureOpenAI({
   apiKey: "test",
   endpoint: "https://example.openai.azure.com",
@@ -75,6 +77,14 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       reasoningSummary: "`effort`",
       hostedToolSummary: "model-dependent Responses hosted tools, remote MCP, shell/apply patch harness"
+    }
+  },
+  {
+    provider: "Meta",
+    model: meta("muse-spark-1.1"),
+    summary: {
+      reasoningSummary: "`effort`",
+      hostedToolSummary: "Responses web search, tool search, Files API, prompt caching"
     }
   },
   {
@@ -174,6 +184,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
 const expectedDrift: ProviderSupportDriftExpectedMatrix = {
   entries: [
     { provider: "openai", agentTier: "tier-a", approvalReady: true, remoteMcp: true },
+    { provider: "meta", agentTier: "tier-b", hostedTools: true, webSearch: true },
     { provider: "azure-openai", agentTier: "tier-a", approvalReady: true, remoteMcp: true },
     { provider: "anthropic", agentTier: "tier-b", hostedTools: true, codeExecution: true, webSearch: true },
     { provider: "gemini", agentTier: "tier-b", structuredOutput: true, embeddings: true, webSearch: true },
@@ -226,6 +237,7 @@ describe("provider parity documentation", () => {
   it("keeps high-value provider tier and capability expectations drift-free", () => {
     const matrix = createProviderSupportMatrix([
       openai("gpt-4o-mini"),
+      meta("muse-spark-1.1"),
       azure("gpt-4o-mini"),
       anthropic("claude-3-5-sonnet"),
       gemini("gemini-3.5-flash"),

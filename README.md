@@ -93,6 +93,7 @@ Production adoption path:
 ### Providers
 
 - `@zhivex-ai/openai`
+- `@zhivex-ai/meta`
 - `@zhivex-ai/azure-openai`
 - `@zhivex-ai/anthropic`
 - `@zhivex-ai/gemini`
@@ -126,6 +127,7 @@ Additional providers are opt-in:
 
 ```bash
 bun add @zhivex-ai/anthropic
+bun add @zhivex-ai/meta
 bun add @zhivex-ai/gemini
 bun add @zhivex-ai/vertex
 bun add @zhivex-ai/qwen
@@ -191,6 +193,7 @@ Status shorthand:
 | Provider | `streamText` | Tools | `toolChoice` | Structured output | Embeddings | Audio in | Audio out | Realtime sessions | Browser tokens | Reasoning | Web search | Hosted tools / MCP | Agent tier |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
+| Meta | yes | yes | yes | native | no | no | no | no | no | `effort` | yes | Responses web search, tool search, Files API, prompt caching | Tier B |
 | Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
 | Anthropic | yes | yes | yes | prompted | no | no | no | no | no | model-dependent | yes | native MCP, web search, code execution | Tier B |
 | Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B |
