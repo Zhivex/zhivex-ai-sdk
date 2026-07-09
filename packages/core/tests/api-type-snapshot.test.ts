@@ -35,7 +35,9 @@ const declarationHashes = async (packageName: SnapshotPackageName): Promise<Reco
   const tsc = path.join(repoRoot, "node_modules", ".bin", "tsc");
 
   if (packageName !== "core") {
-    await execFileAsync(tsc, ["-b", path.join(repoRoot, "packages", "core", "tsconfig.json")], { cwd: repoRoot });
+    await execFileAsync(tsc, ["-b", path.join(repoRoot, "packages", "core", "tsconfig.json"), "--force"], {
+      cwd: repoRoot
+    });
   }
 
   await execFileAsync(tsc, [
