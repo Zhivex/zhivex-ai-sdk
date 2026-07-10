@@ -242,6 +242,7 @@ export type {
   AgentRunCostPricing,
   AgentRunTreeNode,
   AgentRunTreeSnapshot,
+  AgentTraceApproval,
   AgentTraceArtifact,
   AgentTraceCollector,
   AgentTraceEvent,
@@ -499,6 +500,7 @@ export type {
   VectorStoreQueryInput
 } from "./retrieval.js";
 export { createProviderAdapter, mergeAbortSignals, withRetry, withTimeoutSignal } from "./runtime.js";
+export * from "./response.js";
 export * from "./stream.js";
 export { createToolRegistry, isToolRegistry, toToolSet, ToolRegistry } from "./tool-registry.js";
 export * from "./types.js";

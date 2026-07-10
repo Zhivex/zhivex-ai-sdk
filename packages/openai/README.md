@@ -8,6 +8,22 @@ OpenAI adapter for Zhivex AI SDK.
 bun add @zhivex-ai/openai @zhivex-ai/core zod
 ```
 
+## Audio response limits
+
+Transcription and speech responses are bounded before JSON parsing or binary buffering. Defaults are 16 MiB for speech, 4 MiB for transcription JSON, and 64 KiB for error bodies. Override them at provider creation time when your application requires a stricter policy:
+
+```ts
+const openai = createOpenAI({
+  responseLimits: {
+    speechBytes: 16 * 1024 * 1024,
+    transcriptionBytes: 1024 * 1024,
+    errorBodyBytes: 64 * 1024
+  }
+});
+```
+
+Oversized successful bodies throw `ProviderResponseTooLargeError`. Provider HTTP errors keep their original status and expose only a bounded, possibly truncated `responseBody`.
+
 ## GPT-5.6
 
 The adapter recognizes the three GPT-5.6 model IDs and their shared SDK surface:

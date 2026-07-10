@@ -350,12 +350,20 @@ describe("otel observability", () => {
     expect(createProductionTraceOptions()).toEqual({
       includeMessages: false,
       includeToolInputs: false,
-      outputPreviewLength: 500
+      includeToolOutputs: false,
+      includeApprovalArguments: false,
+      includeOutputText: false,
+      outputPreviewLength: 500,
+      redaction: { includeEmails: true }
     });
     expect(createProductionTraceOptions({ includeToolInputs: true, outputPreviewLength: 120 })).toEqual({
       includeMessages: false,
       includeToolInputs: true,
-      outputPreviewLength: 120
+      includeToolOutputs: false,
+      includeApprovalArguments: false,
+      includeOutputText: false,
+      outputPreviewLength: 120,
+      redaction: { includeEmails: true }
     });
 
     const collector = createProductionTraceCollector({ includeToolInputs: true });

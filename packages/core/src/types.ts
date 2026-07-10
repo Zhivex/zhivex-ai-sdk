@@ -944,7 +944,16 @@ export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny, TResult
   schema: TSchema;
   metadata?: Record<string, JsonValue>;
   requiresApproval?: boolean;
-  execute: (input: z.infer<TSchema>) => Promise<TResult> | TResult;
+  execute: (input: z.infer<TSchema>, context?: ToolExecutionContext) => Promise<TResult> | TResult;
+}
+
+export interface ToolExecutionContext {
+  abortSignal?: AbortSignal;
+  toolCall: ToolCall;
+  step: number;
+  model: LanguageModel | RealtimeModel;
+  request?: ModelGenerateInput;
+  realtimeConfig?: RealtimeSessionConfig;
 }
 
 export type HostedToolClass =

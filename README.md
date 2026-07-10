@@ -93,6 +93,7 @@ Production adoption path:
 ### Providers
 
 - `@zhivex-ai/openai`
+- `@zhivex-ai/xai`
 - `@zhivex-ai/meta`
 - `@zhivex-ai/azure-openai`
 - `@zhivex-ai/anthropic`
@@ -127,6 +128,7 @@ Additional providers are opt-in:
 
 ```bash
 bun add @zhivex-ai/anthropic
+bun add @zhivex-ai/xai
 bun add @zhivex-ai/meta
 bun add @zhivex-ai/gemini
 bun add @zhivex-ai/vertex
@@ -292,6 +294,7 @@ Status shorthand:
 | Provider | `streamText` | Tools | `toolChoice` | Structured output | Embeddings | Audio in | Audio out | Realtime sessions | Browser tokens | Reasoning | Web search | Hosted tools / MCP | Agent tier |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent; GPT-5.6 `max` / `pro` / context | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
+| xAI | yes | yes | yes | native | no | no | no | no | no | Grok 4.5 `low` / `medium` / `high` | yes | Responses Web Search, X Search, code execution, Collections search, Files API, prompt caching | Tier B |
 | Meta | yes | yes | yes | native | no | no | no | no | no | `effort` | yes | Responses web search, tool search, Files API, prompt caching | Tier B |
 | Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
 | Anthropic | yes | yes | yes | prompted | no | no | no | no | no | model-dependent | yes | native MCP, web search, code execution | Tier B |
@@ -313,6 +316,7 @@ Compatibility notes:
 - Gemini and Vertex also expose Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana, Imagen, Veo, and Lyria.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
 - `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI exposes GPT-5.6 Sol, Terra, Luna, and the `gpt-5.6` alias through Responses by default, with Programmatic Tool Calling, Multi-agent, explicit prompt cache breakpoints, and model-gated agent tools. Tool Search and Computer Use are also accepted on GPT-5.5 base and GPT-5.4 base/mini; shell, apply patch, and skills have their own documented gates. Unsupported combinations are rejected before a request is sent. Azure OpenAI retains its deployment- and API-version-dependent capability mapping. Anthropic reasoning currently maps `effort` on Claude Sonnet 5, Claude Fable 5, Claude Mythos 5, Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+ including Opus 4.8, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking such as Claude Haiku 4.5. Claude Fable 5 and Claude Mythos 5 always use adaptive thinking, so the adapter does not send redundant `thinking: { type: "adaptive" }` for common `reasoning.effort` and rejects `thinking.disabled` or manual thinking budgets before the request is sent. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen reasoning currently maps to `enable_thinking` plus optional `thinking_budget` on supported model families such as `qwen3.7-plus`, `qwen3.7-max`, `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`. Kimi reasoning currently maps to `thinking.enabled/disabled` for `kimi-k2.6`, `kimi-k2.5`, and legacy thinking models; `kimi-k2.7-code` and `kimi-k2.7-code-highspeed` are always-thinking models and reject disabled thinking plus non-default sampling controls before a request is sent. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
+- xAI uses Responses by default. Grok 4.5 supports `low`, `medium`, and `high` reasoning effort, with `high` as the provider default. Use `providerOptions.conversationId` to route Responses requests through `prompt_cache_key`; Chat compatibility mode sends the same value through `x-grok-conv-id`.
 - Bedrock native Converse supports common `toolChoice` values by mapping specific tools and required tools to AWS-native `toolConfig`, and by omitting tool configuration for `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming. In the SDK's agent matrix, Bedrock Tier A applies to `createBedrock({ runtime: "openai" })`, which exposes Responses hosted tools, remote MCP, and approval requests. AWS-native AgentCore MCP is exposed separately as SDK-managed MCP tools for Converse or any shared agent loop; it does not promote Converse itself to a provider-emitted approval runtime.
 - Kimi thinking mode has an extra provider rule reflected in the SDK: when reasoning is enabled, forced tool choice is not supported and `toolChoice` must remain `auto` or `none`.
 - DeepSeek is Tier B for portable tool loops plus documented thinking mode on `deepseek-v4-flash` and `deepseek-v4-pro`; it does not expose hosted tools, remote MCP, web search, embeddings, audio, or realtime sessions in this adapter.
@@ -507,6 +511,8 @@ console.log(ledger.audit.toolCalls);
 ```
 
 The control-plane layer is intentionally SDK-only. Workspaces, billing, project keys, auth, rate limits, and queues remain application-owned or Gateway-owned concerns. Treat provider capability routing as a runtime snapshot: it helps select the best candidate, but does not remove the need for provider-specific integration tests.
+
+Approval queue tokens are cryptographically random opaque values. Persist them server-side, enforce the queue item's `expiresAt`, compare and consume the token before resuming a run, and never treat `resumeUrl` alone as authorization.
 
 ### Declarative Workflows
 
@@ -756,7 +762,7 @@ const loaded = await artifacts.loadBinaryArtifact({
 });
 ```
 
-The file store writes blobs under a path-safe `blobs/` subdirectory and calculates `size` and `sha256` for `saveBinaryArtifact()`. SQLite and Postgres stores keep binary payloads as base64 JSON compatibility records in this Beta cut. For heavy production binaries, prefer app-owned blob/object storage with durable artifact metadata in SQL until native SQL/blob streaming is introduced; `createExternalArtifactReference()` creates the standard metadata shape for that pattern.
+The file store writes blobs under a path-safe `blobs/` subdirectory and calculates `size` and `sha256` for `saveBinaryArtifact()`. Blob paths are SDK-managed: callers cannot set them, and file-store metadata that points outside the expected blob location is rejected before any read, prune, or delete. SQLite and Postgres stores keep binary payloads as base64 JSON compatibility records in this Beta cut. For heavy production binaries, prefer app-owned blob/object storage with durable artifact metadata in SQL until native SQL/blob streaming is introduced; `createExternalArtifactReference()` creates the standard metadata shape for that pattern.
 
 Artifact records are schema-versioned as well. New artifacts use `schemaVersion: 1`; old JSON artifacts without a version are accepted and normalized, but future versions are rejected until the SDK has an explicit migration path.
 
@@ -1335,7 +1341,10 @@ import {
 
 const trace = createAgentTraceArtifact(savedRunState, {
   includeMessages: false,
-  includeToolInputs: false
+  includeToolInputs: false,
+  includeToolOutputs: false,
+  includeApprovalArguments: false,
+  includeOutputText: false
 });
 
 const summary = summarizeAgentTrace(trace, {
@@ -1352,7 +1361,7 @@ const agent = createAgent({
 });
 ```
 
-Use `includeMessages` and `includeToolInputs` only when you need full payloads in exported traces. By default the artifact keeps metadata, lifecycle events, usage, approvals, errors, tool results, and an output preview without copying large message/tool-input payloads.
+Trace payloads are fail-closed by default: full messages, tool inputs, tool outputs, approval arguments, and full output text are omitted unless their corresponding `include*` option is enabled. `createProductionTraceCollector()` also redacts common credentials and email addresses from the remaining preview and metadata. Enable full payload flags only for an approved server-side destination.
 
 See [Production Guide](./docs/PRODUCTION.md#observability-export-path) and `examples/sdk/observability-export.ts` for a JSONL export pattern with redacted trace artifacts, tool-call audit records, and reproducible cost/latency summaries.
 
@@ -1875,6 +1884,32 @@ const result = await generateText({
 console.log(result.text);
 ```
 
+xAI exposes Grok 4.5 through Responses by default, including Web Search, X Search, code execution, and Collections search:
+
+```ts
+import { generateText } from "@zhivex-ai/core";
+import {
+  createXAI,
+  xAICodeExecutionTool,
+  xAIWebSearchTool,
+  xAIXSearchTool
+} from "@zhivex-ai/xai";
+
+const xai = createXAI({ apiKey: process.env.XAI_API_KEY });
+
+const result = await generateText({
+  model: xai("grok-4.5"),
+  prompt: "Research the latest release and verify the comparison with code.",
+  reasoning: { effort: "medium" },
+  providerOptions: { conversationId: "release-check" },
+  tools: {
+    web: xAIWebSearchTool(),
+    x: xAIXSearchTool(),
+    code: xAICodeExecutionTool()
+  }
+});
+```
+
 Qwen now uses the DashScope-compatible Responses API by default, including hosted web search, web extraction, code interpreter, file search, remote MCP, and image search tools. Current catalog examples prefer `qwen3.7-plus` for multimodal reasoning, `qwen3.7-max` for text reasoning, and `qwen-image-2.0-pro` for image generation. Pass `providerOptions: { apiMode: "chat" }` only when you need the legacy Chat Completions path.
 
 ```ts
@@ -1922,6 +1957,8 @@ The SDK now exposes MCP helpers across the providers that support it:
 - `@zhivex-ai/anthropic`: MCP toolsets map to Anthropic `mcp_servers` plus `mcp_toolset`.
 - `@zhivex-ai/gemini` and `@zhivex-ai/vertex`: `geminiMcpTools()` and `vertexMcpTools()` re-export the shared MCP wrapper for SDK-managed MCP clients.
 - `@zhivex-ai/bedrock`: `createBedrockAgentCoreMcpClient()` and `createBedrockAgentCoreMcpToolSet()` expose AWS-native AgentCore Runtime or Gateway MCP endpoints as SDK-managed callable tools. This is separate from `runtime: "openai"` hosted MCP and approvals.
+
+SDK-managed MCP tools are supervised by default. A tool runs without approval only when the MCP server explicitly declares `readOnlyHint: true` and does not declare destructive or open-world behavior. Missing annotations, `destructiveHint: true`, or `openWorldHint: true` set `requiresApproval` and risk metadata automatically.
 
 Use the shared helper when you already have an MCP client in-process:
 
@@ -2228,6 +2265,21 @@ For RAG-backed agents, use `chunkText()`, `embedRetrievalDocuments()`, `retrieve
 ### Audio
 
 Use the shared audio primitives when you want a provider-agnostic contract for transcription or text-to-speech.
+
+Audio adapters bound provider responses before buffering or parsing them. The defaults are 16 MiB for decoded speech, 4 MiB for transcription JSON, and 64 KiB for provider error bodies. Configure stricter application limits when creating OpenAI, Azure OpenAI, or Qwen providers:
+
+```ts
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  responseLimits: {
+    speechBytes: 16 * 1024 * 1024,
+    transcriptionBytes: 1024 * 1024,
+    errorBodyBytes: 64 * 1024
+  }
+});
+```
+
+`Content-Length` is used for early rejection, while chunked bodies are counted as they are read. Oversized successful responses throw `ProviderResponseTooLargeError`; oversized provider error bodies remain `ProviderHTTPError` instances with a bounded, truncated `responseBody`. Qwen validates decoded base64 size before allocation and omits the encoded audio payload from `rawResponse` after decoding.
 
 ```ts
 import { generateSpeech, transcribeAudio } from "@zhivex-ai/sdk";

@@ -214,6 +214,20 @@ describe("vertex adapter", () => {
     googleAuthMockState.nextToken = "adc-token";
   });
 
+  it("keeps rawFetch unauthenticated for arbitrary destinations", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("ok"));
+    const provider = createVertex({
+      accessToken: "vertex-secret",
+      projectId: "demo-project",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await provider.rawFetch("https://attacker.invalid/collect");
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://attacker.invalid/collect");
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("authorization")).toBeNull();
+  });
+
   it("authenticates Vertex requests with an API key", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({

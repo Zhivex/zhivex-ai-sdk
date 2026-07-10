@@ -22,6 +22,7 @@ import { createOpenAI } from "../../openai/src/index.js";
 import { createOpenRouter } from "../../openrouter/src/index.js";
 import { createQwen } from "../../qwen/src/index.js";
 import { createVertex } from "../../vertex/src/index.js";
+import { createXAI } from "../../xai/src/index.js";
 
 const README_PATH = path.resolve(import.meta.dirname, "../../../README.md");
 const MATRIX_START = "<!-- provider-matrix:start -->";
@@ -48,6 +49,7 @@ const extractReadmeProviderMatrix = async () => {
 
 const fetchMock = vi.fn();
 const openai = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+const xai = createXAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
 const meta = createMeta({ apiKey: "test", fetch: fetchMock as typeof fetch });
 const azure = createAzureOpenAI({
   apiKey: "test",
@@ -77,6 +79,14 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       reasoningSummary: "`effort`",
       hostedToolSummary: "model-dependent Responses hosted tools, remote MCP, shell/apply patch harness"
+    }
+  },
+  {
+    provider: "xAI",
+    model: xai("grok-4.5"),
+    summary: {
+      reasoningSummary: "Grok 4.5 `low` / `medium` / `high`",
+      hostedToolSummary: "Responses Web Search, X Search, code execution, Collections search, Files API, prompt caching"
     }
   },
   {
@@ -184,6 +194,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
 const expectedDrift: ProviderSupportDriftExpectedMatrix = {
   entries: [
     { provider: "openai", agentTier: "tier-a", approvalReady: true, remoteMcp: true },
+    { provider: "xai", agentTier: "tier-b", hostedTools: true, codeExecution: true, webSearch: true },
     { provider: "meta", agentTier: "tier-b", hostedTools: true, webSearch: true },
     { provider: "azure-openai", agentTier: "tier-a", approvalReady: true, remoteMcp: true },
     { provider: "anthropic", agentTier: "tier-b", hostedTools: true, codeExecution: true, webSearch: true },
@@ -237,6 +248,7 @@ describe("provider parity documentation", () => {
   it("keeps high-value provider tier and capability expectations drift-free", () => {
     const matrix = createProviderSupportMatrix([
       openai("gpt-4o-mini"),
+      xai("grok-4.5"),
       meta("muse-spark-1.1"),
       azure("gpt-4o-mini"),
       anthropic("claude-3-5-sonnet"),

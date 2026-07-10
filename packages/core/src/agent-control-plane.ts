@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import { cancelAgentRun, cancelAgentRunTree, resumeAgent, runAgent, streamAgent } from "./agent.js";
 import { createAgentRunSnapshot, replayAgentRun, type AgentReplayResult, type AgentRunSnapshot } from "./agent-evaluation.js";
 import {
@@ -562,7 +564,7 @@ export const createAgentApprovalQueue = (
     approvalRequestId: approval.id,
     name: approval.name,
     arguments: approval.arguments,
-    approvalToken: `${options.tokenPrefix ?? "appr"}_${state.runId}_${approval.id}`,
+    approvalToken: `${options.tokenPrefix ?? "appr"}_${randomBytes(32).toString("base64url")}`,
     resumeUrl: typeof options.resumeUrl === "function" ? options.resumeUrl(approval, state) : options.resumeUrl,
     reason: typeof options.reason === "function" ? options.reason(approval, state) : options.reason,
     expiresAt: typeof options.expiresAt === "function" ? options.expiresAt(approval, state) : options.expiresAt,

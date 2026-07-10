@@ -1583,6 +1583,8 @@ describe("core helpers", () => {
 
   it("turns tool timeouts into error results and can stop on tool error", async () => {
     let call = 0;
+    let timeoutSignalAborted = false;
+    let executionContextCallId: string | undefined;
     const model = createLanguageModel({
       capabilities: {
         streaming: true,
@@ -1627,8 +1629,16 @@ describe("core helpers", () => {
         slow: tool({
           name: "slow",
           schema: z.object({}),
-          async execute() {
-            await new Promise((resolve) => setTimeout(resolve, 20));
+          async execute(_input, context) {
+            executionContextCallId = context?.toolCall.id;
+            await new Promise<void>((resolve, reject) => {
+              const timer = setTimeout(resolve, 20);
+              context?.abortSignal?.addEventListener("abort", () => {
+                timeoutSignalAborted = true;
+                clearTimeout(timer);
+                reject(new Error("aborted"));
+              }, { once: true });
+            });
             return { ok: true };
           }
         })
@@ -1639,6 +1649,8 @@ describe("core helpers", () => {
       toolName: "slow",
       isError: true
     });
+    expect(timeoutSignalAborted).toBe(true);
+    expect(executionContextCallId).toBe("1");
 
     call = 0;
     await expect(

@@ -1140,6 +1140,9 @@ describe("bedrock adapter", () => {
                     path: { type: "string" }
                   },
                   required: ["path"]
+                },
+                annotations: {
+                  readOnlyHint: true
                 }
               }
             ]

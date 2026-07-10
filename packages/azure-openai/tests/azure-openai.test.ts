@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { embed, generateGroundedText, generateSpeech, generateText, getAgentCapabilities, hostedTool, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
+import { embed, generateGroundedText, generateSpeech, generateText, getAgentCapabilities, hostedTool, ProviderResponseTooLargeError, streamText, tool, transcribeAudio } from "@zhivex-ai/core";
 import { z } from "zod";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
@@ -808,6 +808,23 @@ describe("azure openai adapter", () => {
     });
 
     expect(Array.from(result.audio)).toEqual([4, 5, 6]);
+  });
+
+  it("enforces configured Azure speech response limits", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(new Uint8Array([1, 2, 3, 4]), {
+        headers: { "content-type": "audio/mpeg", "content-length": "4" }
+      })
+    );
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch,
+      responseLimits: { speechBytes: 3 }
+    });
+    await expect(
+      generateSpeech({ model: provider.speechModel!("gpt-4o-mini-tts"), input: "hello" })
+    ).rejects.toBeInstanceOf(ProviderResponseTooLargeError);
   });
 
   it("generates grounded text with sources", async () => {

@@ -116,7 +116,9 @@ if (waiting.status === "waiting_approval") {
 }
 ```
 
-For app-facing queues, use `createAgentApprovalQueue()` to turn pending requests into items with approval tokens, reasons, expiration, and resume URLs.
+For app-facing queues, use `createAgentApprovalQueue()` to turn pending requests into items with cryptographically random approval tokens, reasons, expiration, and resume URLs. Persist the opaque token server-side, compare it before accepting an approval, enforce `expiresAt` in the application, and consume it once; the SDK does not provide an HTTP authorization boundary.
+
+Tool execution timeouts abort the `AbortSignal` passed as the second argument to `tool.execute(input, context)`. Tools that perform I/O should forward `context.abortSignal` to their client so cancellation stops the underlying work; timeout cancellation is cooperative for tools that ignore the signal.
 
 ## Streaming And UI
 

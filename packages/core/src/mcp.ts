@@ -214,6 +214,32 @@ const normalizeListedTools = async (client: McpClient): Promise<McpListedTool[]>
 
 const getToolName = (name: string, prefix?: string) => (prefix ? `${prefix}${name}` : name);
 
+const mcpToolSecurityMetadata = (annotations: McpToolAnnotations | undefined) => {
+  const explicitlyReadOnly = annotations?.readOnlyHint === true;
+  const destructive = annotations?.destructiveHint === true;
+  const openWorld = annotations?.openWorldHint === true;
+  const requiresApproval = !explicitlyReadOnly || destructive || openWorld;
+  const permissions = [
+    explicitlyReadOnly ? "read" : "external-side-effect",
+    ...(destructive ? ["write"] : []),
+    ...(openWorld ? ["network"] : [])
+  ];
+
+  return {
+    requiresApproval,
+    advancedRegistry: {
+      source: "mcp",
+      permissions,
+      audit: {
+        riskLevel: destructive ? "high" : requiresApproval ? "medium" : "low",
+        description: explicitlyReadOnly
+          ? "MCP server declares this tool read-only."
+          : "MCP tool requires approval because it is not explicitly read-only."
+      }
+    }
+  };
+};
+
 export const createMcpToolSet = async (client: McpClient, options: McpToolSetOptions = {}): Promise<ToolSet> => {
   const include = options.includeTools ? new Set(options.includeTools) : undefined;
   const exclude = options.excludeTools ? new Set(options.excludeTools) : undefined;
@@ -235,6 +261,7 @@ export const createMcpToolSet = async (client: McpClient, options: McpToolSetOpt
   return Object.fromEntries(
     toolEntries.map((listedTool) => {
       const toolName = getToolName(listedTool.name, options.toolNamePrefix);
+      const security = mcpToolSecurityMetadata(listedTool.annotations);
       if (seenNames.has(toolName)) {
         throw new Error(`Duplicate MCP tool name "${toolName}".`);
       }
@@ -251,8 +278,10 @@ export const createMcpToolSet = async (client: McpClient, options: McpToolSetOpt
             source: "mcp",
             originalName: listedTool.name,
             inputSchema: listedTool.inputSchema ?? null,
-            annotations: listedTool.annotations ?? null
+            annotations: listedTool.annotations ?? null,
+            advancedRegistry: security.advancedRegistry
           }) as Record<string, JsonValue>,
+          requiresApproval: security.requiresApproval,
           execute: async (input) =>
             serializeJsonValue(
               await client.callTool({

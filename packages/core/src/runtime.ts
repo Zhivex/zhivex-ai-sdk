@@ -31,17 +31,24 @@ export const mergeAbortSignals = (...signals: Array<AbortSignal | undefined>) =>
 };
 
 export const withTimeoutSignal = (options: RetryOptions) => {
-  if (!options.timeoutMs) {
-    return { signal: options.abortSignal, cleanup: () => {} };
-  }
-
   const controller = new AbortController();
-  const signal = mergeAbortSignals(options.abortSignal, controller.signal);
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  const abortFromCaller = () => controller.abort(options.abortSignal?.reason);
+  if (options.abortSignal?.aborted) {
+    abortFromCaller();
+  } else {
+    options.abortSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
+  const timeout = options.timeoutMs ? setTimeout(() => controller.abort(), options.timeoutMs) : undefined;
 
   return {
-    signal,
-    cleanup: () => clearTimeout(timeout)
+    signal: controller.signal,
+    abort: (reason?: unknown) => controller.abort(reason),
+    cleanup: () => {
+      options.abortSignal?.removeEventListener("abort", abortFromCaller);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
   };
 };
 

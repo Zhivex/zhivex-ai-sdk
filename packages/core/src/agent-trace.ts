@@ -1,6 +1,7 @@
 import type { ModelCatalog } from "./catalog.js";
 import { ValidationError } from "./errors.js";
 import { createAgentRunSnapshot, replayAgentRun, type AgentRunSnapshot } from "./agent-evaluation.js";
+import { createRedactionPolicy, type RedactionPolicy, type RedactionPolicyOptions } from "./safety-policy.js";
 import type {
   AgentRunStore,
   AgentRunState,
@@ -76,6 +77,15 @@ export interface AgentTraceEvent {
   data?: JsonValue;
 }
 
+export interface AgentTraceApproval {
+  provider: string;
+  id: string;
+  name: string;
+  serverLabel?: string;
+  arguments?: string;
+  rawData?: JsonValue;
+}
+
 export interface AgentTraceArtifact {
   runId: string;
   agentId?: string;
@@ -88,7 +98,7 @@ export interface AgentTraceArtifact {
   steps: AgentTraceStep[];
   childRuns: AgentRunState["childRuns"];
   events: AgentTraceEvent[];
-  approvals: AgentRunState["pendingApprovals"];
+  approvals: AgentTraceApproval[];
   usage?: TokenUsage;
   outputText?: string;
   outputPreview: string;
@@ -99,7 +109,11 @@ export interface AgentTraceArtifact {
 export interface AgentTraceOptions {
   includeMessages?: boolean;
   includeToolInputs?: boolean;
+  includeToolOutputs?: boolean;
+  includeApprovalArguments?: boolean;
+  includeOutputText?: boolean;
   outputPreviewLength?: number;
+  redaction?: RedactionPolicy | RedactionPolicyOptions | false;
 }
 
 export interface AgentTraceSummary {
@@ -162,8 +176,63 @@ const toJsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(val
 const duration = (startedAt?: number, finishedAt?: number): number | undefined =>
   startedAt !== undefined && finishedAt !== undefined ? Math.max(0, finishedAt - startedAt) : undefined;
 
-const preview = (text: string, length = 500): string =>
-  text.length > length ? `${text.slice(0, Math.max(0, length))}...` : text;
+const resolveTraceRedaction = (
+  redaction: AgentTraceOptions["redaction"]
+): RedactionPolicy | undefined => {
+  if (redaction === false || redaction === undefined) {
+    return undefined;
+  }
+  if ("redactJson" in redaction && typeof redaction.redactJson === "function") {
+    return redaction;
+  }
+  return createRedactionPolicy(redaction);
+};
+
+const preview = (text: string, length = 500, redaction?: RedactionPolicy): string => {
+  const redacted = redaction ? redaction.redactText(text) : text;
+  return redacted.length > length ? `${redacted.slice(0, Math.max(0, length))}...` : redacted;
+};
+
+const sanitizeTraceJson = (
+  value: JsonValue | undefined,
+  options: Required<Pick<AgentTraceOptions,
+    "includeMessages" | "includeToolInputs" | "includeToolOutputs" | "includeApprovalArguments" | "includeOutputText">>,
+  redaction?: RedactionPolicy
+): JsonValue | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeTraceJson(item, options, redaction) as JsonValue);
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value).flatMap(([key, item]) => {
+      if ((!options.includeToolInputs && key === "input") ||
+          (!options.includeToolOutputs && key === "output") ||
+          (!options.includeApprovalArguments && (key === "arguments" || key === "rawData")) ||
+          (!options.includeMessages && (key === "messages" || key === "contextMessages")) ||
+          (!options.includeOutputText && key === "outputText")) {
+        return [];
+      }
+      return [[key, sanitizeTraceJson(item, options, redaction) as JsonValue] as const];
+    });
+    const sanitized = Object.fromEntries(entries) as JsonValue;
+    return redaction ? redaction.redactJson(sanitized) : sanitized;
+  }
+  return redaction && typeof value === "string" ? redaction.redactText(value) : value;
+};
+
+const sanitizeToolResult = (
+  result: ToolExecutionResult,
+  includeOutput: boolean,
+  redaction?: RedactionPolicy
+): ToolExecutionResult => {
+  const copy = cloneJson(result);
+  if (!includeOutput) {
+    delete copy.output;
+  }
+  return redaction ? redaction.redactJson(copy as unknown as JsonValue) as unknown as ToolExecutionResult : copy;
+};
 
 const toTraceToolCall = (toolCall: ToolCall, includeInput: boolean): AgentTraceToolCall => ({
   id: toolCall.id,
@@ -298,6 +367,17 @@ const stateToTrace = (
 ): AgentTraceArtifact => {
   const includeMessages = options.includeMessages ?? false;
   const includeToolInputs = options.includeToolInputs ?? false;
+  const includeToolOutputs = options.includeToolOutputs ?? false;
+  const includeApprovalArguments = options.includeApprovalArguments ?? false;
+  const includeOutputText = options.includeOutputText ?? false;
+  const redaction = resolveTraceRedaction(options.redaction);
+  const sanitizationOptions = {
+    includeMessages,
+    includeToolInputs,
+    includeToolOutputs,
+    includeApprovalArguments,
+    includeOutputText
+  };
 
   return {
     runId: state.runId,
@@ -315,19 +395,49 @@ const stateToTrace = (
       finishedAt: step.finishedAt,
       durationMs: duration(step.startedAt, step.finishedAt),
       toolCalls: getToolCallsFromMessages(step.response?.messages ?? [], includeToolInputs),
-      toolResults: cloneJson(step.toolResults),
+      toolResults: step.toolResults.map((result) => sanitizeToolResult(result, includeToolOutputs, redaction)),
       usage: normalizeUsage(stepUsage(step)),
-      ...(includeMessages ? { messages: cloneJson(step.response?.messages ?? []) } : {}),
+      ...(includeMessages
+        ? { messages: redaction
+            ? redaction.redactMessages(cloneJson(step.response?.messages ?? []))
+            : cloneJson(step.response?.messages ?? []) }
+        : {}),
       error: step.error
+        ? sanitizeTraceJson(step.error as unknown as JsonValue, sanitizationOptions, redaction) as AgentStep["error"]
+        : undefined
     })),
-    childRuns: cloneJson(state.childRuns ?? []),
-    events: cloneJson(events),
-    approvals: cloneJson(state.pendingApprovals),
+    childRuns: sanitizeTraceJson(
+      cloneJson(state.childRuns ?? []) as unknown as JsonValue,
+      sanitizationOptions,
+      redaction
+    ) as AgentRunState["childRuns"],
+    events: events.map((event) => ({
+      ...event,
+      data: sanitizeTraceJson(event.data, sanitizationOptions, redaction)
+    })),
+    approvals: state.pendingApprovals.map((approval) => ({
+      provider: approval.provider,
+      id: approval.id,
+      name: approval.name,
+      serverLabel: approval.serverLabel,
+      ...(includeApprovalArguments
+        ? {
+            arguments: redaction ? redaction.redactText(approval.arguments) : approval.arguments,
+            rawData: sanitizeTraceJson(approval.rawData, sanitizationOptions, redaction)
+          }
+        : {})
+    })),
     usage: normalizeUsage(state.usage),
-    outputText: options.outputPreviewLength === 0 ? undefined : state.outputText,
-    outputPreview: preview(state.outputText, options.outputPreviewLength),
-    error: state.error,
+    outputText: includeOutputText
+      ? (redaction ? redaction.redactText(state.outputText) : state.outputText)
+      : undefined,
+    outputPreview: preview(state.outputText, options.outputPreviewLength, redaction),
+    error: state.error
+      ? sanitizeTraceJson(state.error as unknown as JsonValue, sanitizationOptions, redaction) as AgentRunState["error"]
+      : undefined,
     cancellationReason: state.cancellationReason
+      ? (redaction ? redaction.redactText(state.cancellationReason) : state.cancellationReason)
+      : undefined
   };
 };
 
@@ -339,7 +449,11 @@ export const createAgentTraceArtifact = (
 export const createProductionTraceOptions = (options: AgentTraceOptions = {}): AgentTraceOptions => ({
   includeMessages: false,
   includeToolInputs: false,
+  includeToolOutputs: false,
+  includeApprovalArguments: false,
+  includeOutputText: false,
   outputPreviewLength: 500,
+  redaction: { includeEmails: true },
   ...options
 });
 

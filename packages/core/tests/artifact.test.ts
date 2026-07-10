@@ -901,6 +901,52 @@ describe("artifact services", () => {
     );
   });
 
+  it("rejects file artifact blob paths outside the managed blobs directory", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-artifacts-security-"));
+    const directory = path.join(root, "store");
+    const victimPath = path.join(root, "victim.txt");
+    const service = createFileArtifactService({ directory });
+    await fs.writeFile(victimPath, "sensitive", "utf8");
+
+    const injected = await service.saveArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "injected",
+      name: "injected.json",
+      contentType: "application/json",
+      data: null,
+      storageMode: "binary",
+      blobPath: "../victim.txt"
+    } as never);
+    expect(injected.blobPath).toBeUndefined();
+
+    const binary = await service.saveBinaryArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "binary",
+      name: "binary.bin",
+      contentType: "application/octet-stream",
+      data: new Uint8Array([1])
+    });
+    const metadataPath = path.join(directory, "app__user__session__binary.json");
+    await fs.writeFile(metadataPath, JSON.stringify({ ...binary, blobPath: "../victim.txt" }), "utf8");
+
+    const lookup = { appName: "app", userId: "user", sessionId: "session", id: "binary" };
+    await expect(service.loadBinaryArtifact(lookup)).rejects.toThrow("unsafe blobPath");
+    await expect(service.deleteArtifact(lookup)).rejects.toThrow("unsafe blobPath");
+    expect(await fs.readFile(victimPath, "utf8")).toBe("sensitive");
+
+    const inspection = await inspectFileArtifactStore({ directory });
+    expect(inspection.artifacts).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: "binary" })]));
+    expect(inspection.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "invalid-metadata", path: metadataPath })
+    ]));
+    await pruneFileArtifactStore({ directory, keepLast: 0, dryRun: false });
+    expect(await fs.readFile(victimPath, "utf8")).toBe("sensitive");
+  });
+
   it("returns undefined for missing file artifacts", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-artifacts-"));
     const service = createFileArtifactService({ directory });

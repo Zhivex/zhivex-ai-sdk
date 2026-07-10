@@ -3,7 +3,12 @@ import { toJSONSchema } from "zod";
 import {
   CallbackRealtimeSession,
   ConfigurationError,
+  decodeBase64WithLimit,
   ProviderHTTPError,
+  readBodyWithLimit,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
+  resolveAudioResponseLimits,
   UnsupportedFeatureError,
   createProviderAdapter,
   hostedTool,
@@ -16,6 +21,7 @@ import {
   withTimeoutSignal,
   type AudioFrame,
   type AudioInput,
+  type AudioResponseLimits,
   type BatchCancelInput,
   type BatchCreateInput,
   type BatchDeleteInput,
@@ -76,6 +82,7 @@ export interface QwenProviderOptions {
   realtimeURL?: string;
   realtimeConnectionFactory?: RealtimeConnectionFactory;
   fetch?: typeof globalThis.fetch;
+  responseLimits?: AudioResponseLimits;
 }
 
 export interface QwenLanguageModelOptions {
@@ -311,15 +318,30 @@ const jsonHeaders = (apiKey: string) => ({
   authorization: `Bearer ${apiKey}`
 });
 
-const parseJson = async (response: Response) => {
+const parseJson = async (
+  response: Response,
+  options: {
+    maxBytes?: number;
+    errorBodyBytes?: number;
+    endpoint?: string;
+    abort?: (reason?: unknown) => void;
+  } = {}
+) => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response, options.errorBodyBytes);
     throw new ProviderHTTPError(`Qwen request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
 
-  return response.json();
+  return options.maxBytes
+    ? readJsonWithLimit<any>(response, {
+        maxBytes: options.maxBytes,
+        provider: "qwen",
+        endpoint: options.endpoint,
+        abort: options.abort
+      })
+    : response.json();
 };
 
 const mapContentParts = (message: ModelMessage) => {
@@ -1380,22 +1402,31 @@ class QwenTranscriptionModel implements TranscriptionModel {
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly responseLimits = resolveAudioResponseLimits()
   ) {}
 
   async transcribe(input: { audio: AudioInput; prompt?: string; language?: string; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<TranscriptionResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
+    const { signal, cleanup, abort } = withTimeoutSignal(input);
     const form = new FormData();
+    for (const [key, value] of Object.entries(input.providerOptions ?? {})) {
+      if (["model", "file", "prompt", "language"].includes(key)) {
+        continue;
+      }
+      form.set(key, typeof value === "string" ? value : JSON.stringify(value));
+    }
     form.set("model", this.modelId);
     form.set("file", await createFile(input.audio.data, input.audio.mediaType, input.audio.filename ?? "audio"));
     if (input.prompt) form.set("prompt", input.prompt);
     if (input.language) form.set("language", input.language);
-    for (const [key, value] of Object.entries(input.providerOptions ?? {})) {
-      form.set(key, typeof value === "string" ? value : JSON.stringify(value));
-    }
     try {
       const response = await withRetry(() => this.fetcher(`${this.baseURL}/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${this.apiKey}` }, signal, body: form }), input);
-      const json = await parseJson(response);
+      const json = await parseJson(response, {
+        maxBytes: this.responseLimits.transcriptionBytes,
+        errorBodyBytes: this.responseLimits.errorBodyBytes,
+        endpoint: "audio/transcriptions",
+        abort
+      });
       return { text: json.text ?? json.output?.text ?? "", rawResponse: json };
     } finally {
       cleanup();
@@ -1411,11 +1442,12 @@ class QwenSpeechModel implements SpeechModel {
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly responseLimits = resolveAudioResponseLimits()
   ) {}
 
   async generateSpeech(input: { input: string; voice?: string; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<SpeechResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
+    const { signal, cleanup, abort } = withTimeoutSignal(input);
     try {
       const response = await withRetry(
         () =>
@@ -1428,11 +1460,52 @@ class QwenSpeechModel implements SpeechModel {
         input
       );
       if (response.headers.get("content-type")?.includes("application/json")) {
-        const json = await parseJson(response);
+        const json = await parseJson(response, {
+          maxBytes: this.responseLimits.speechJsonBytes,
+          errorBodyBytes: this.responseLimits.errorBodyBytes,
+          endpoint: "audio/speech",
+          abort
+        });
         const audio = json.audio?.data ?? json.output?.audio?.data ?? "";
-        return { audio: Uint8Array.from(Buffer.from(audio, "base64")), mediaType: json.audio?.media_type ?? json.output?.audio?.media_type ?? "audio/mpeg", rawResponse: json };
+        const decodedAudio = decodeBase64WithLimit(String(audio), {
+          maxBytes: this.responseLimits.speechBytes,
+          provider: "qwen",
+          endpoint: "audio/speech",
+          abort
+        });
+        const rawResponse = {
+          ...json,
+          ...(json.audio && typeof json.audio === "object"
+            ? { audio: { ...json.audio, data: undefined, data_omitted: true } }
+            : {}),
+          ...(json.output && typeof json.output === "object"
+            ? {
+                output: {
+                  ...json.output,
+                  ...(json.output.audio && typeof json.output.audio === "object"
+                    ? { audio: { ...json.output.audio, data: undefined, data_omitted: true } }
+                    : {})
+                }
+              }
+            : {})
+        };
+        return { audio: decodedAudio, mediaType: json.audio?.media_type ?? json.output?.audio?.media_type ?? "audio/mpeg", rawResponse };
       }
-      return { audio: new Uint8Array(await response.arrayBuffer()), mediaType: response.headers.get("content-type") ?? "audio/mpeg" };
+      if (!response.ok) {
+        const body = await readErrorBodyWithLimit(response, this.responseLimits.errorBodyBytes);
+        throw new ProviderHTTPError(`Qwen request failed with status ${response.status}.`, response.status, {
+          responseBody: body
+        });
+      }
+      return {
+        audio: await readBodyWithLimit(response, {
+          maxBytes: this.responseLimits.speechBytes,
+          provider: "qwen",
+          endpoint: "audio/speech",
+          abort
+        }),
+        mediaType: response.headers.get("content-type") ?? "audio/mpeg"
+      };
     } finally {
       cleanup();
     }
@@ -1461,7 +1534,9 @@ class QwenImageGenerationModel implements ImageGenerationModel {
 
   async generateImage(input: { prompt: string; images?: MediaInput[]; count?: number; aspectRatio?: string; size?: string; negativePrompt?: string; outputMimeType?: string; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<ImageGenerationResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
-    const endpoint = String(input.providerOptions?.endpoint ?? `${this.baseURL}/images/generations`);
+    const providerOptions = { ...(input.providerOptions ?? {}) };
+    delete providerOptions.endpoint;
+    const endpoint = `${this.baseURL}/images/generations`;
     try {
       const response = await withRetry(
         () =>
@@ -1470,13 +1545,13 @@ class QwenImageGenerationModel implements ImageGenerationModel {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
-              ...input.providerOptions,
+              ...providerOptions,
               model: this.modelId,
               prompt: input.prompt,
               n: input.count,
               size: input.size,
               negative_prompt: input.negativePrompt,
-              response_format: input.providerOptions?.response_format,
+              response_format: providerOptions.response_format,
               input_image: input.images?.[0]?.uri
             })
           }),
@@ -1672,13 +1747,14 @@ export const createQwen = (
   const taskBaseURL = options.taskBaseURL ?? qwenTaskBaseURLFrom(baseURL);
   const realtimeURL = options.realtimeURL ?? "wss://dashscope-intl.aliyuncs.com/compatible-mode/v1/realtime";
   const fetcher = options.fetch ?? globalThis.fetch;
+  const responseLimits = resolveAudioResponseLimits(options.responseLimits);
 
   return createProviderAdapter({
     name: "qwen",
     languageModel: (modelId) => new QwenLanguageModel(modelId, apiKey, baseURL, fetcher),
     embeddingModel: (modelId) => new QwenEmbeddingModel(modelId, apiKey, baseURL, fetcher),
-    transcriptionModel: (modelId) => new QwenTranscriptionModel(modelId, apiKey, baseURL, fetcher),
-    speechModel: (modelId) => new QwenSpeechModel(modelId, apiKey, baseURL, fetcher),
+    transcriptionModel: (modelId) => new QwenTranscriptionModel(modelId, apiKey, baseURL, fetcher, responseLimits),
+    speechModel: (modelId) => new QwenSpeechModel(modelId, apiKey, baseURL, fetcher, responseLimits),
     imageGenerationModel: (modelId) => new QwenImageGenerationModel(modelId, apiKey, baseURL, taskBaseURL, fetcher),
     videoGenerationModel: (modelId) => new QwenVideoGenerationModel(modelId, apiKey, taskBaseURL, fetcher),
     realtimeModel: (modelId) => new QwenRealtimeModel(modelId, apiKey, realtimeURL, options.realtimeConnectionFactory),

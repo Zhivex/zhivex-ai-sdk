@@ -12,6 +12,7 @@ import {
   toolResultPart,
   validateMessageParts
 } from "./messages.js";
+import { mergeAbortSignals } from "./runtime.js";
 import { toToolSet } from "./tool-registry.js";
 import type {
   GenerateResult,
@@ -27,14 +28,24 @@ import type {
   ToolExecutionResult
 } from "./types.js";
 
-const withToolTimeout = async <T>(operation: Promise<T>, timeoutMs?: number): Promise<T> => {
+const withToolTimeout = async <T>(
+  operation: (signal: AbortSignal | undefined) => Promise<T>,
+  timeoutMs?: number,
+  abortSignal?: AbortSignal
+): Promise<T> => {
   if (!timeoutMs) {
-    return operation;
+    return operation(abortSignal);
   }
 
+  const controller = new AbortController();
+  const signal = mergeAbortSignals(abortSignal, controller.signal);
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Tool execution timed out after ${timeoutMs}ms.`)), timeoutMs);
-    operation
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`Tool execution timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+    Promise.resolve()
+      .then(() => operation(signal))
       .then((value) => {
         clearTimeout(timer);
         resolve(value);
@@ -252,7 +263,17 @@ const executeTools = async (
     });
 
     try {
-      const output = serializeJsonValue(await withToolTimeout(Promise.resolve(tool.execute(parsedInput)), timeoutMs));
+      const output = serializeJsonValue(await withToolTimeout(
+        async (abortSignal) => tool.execute(parsedInput, {
+          abortSignal,
+          toolCall: call,
+          step: context.step,
+          model: options.model,
+          request: context.request
+        }),
+        timeoutMs,
+        context.request.abortSignal
+      ));
       const result = {
         toolCallId: call.id,
         toolName: call.name,

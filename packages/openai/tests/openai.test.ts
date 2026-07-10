@@ -11,6 +11,8 @@ import {
   generateSpeech,
   generateText,
   hostedTool,
+  ProviderHTTPError,
+  ProviderResponseTooLargeError,
   streamText,
   tool,
   transcribeAudio
@@ -1765,6 +1767,24 @@ describe("openai adapter", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/audio/transcriptions");
   });
 
+  it("uploads only the selected audio view and protects reserved multipart fields", async () => {
+    const backing = Uint8Array.from([9, 1, 2, 8]);
+    fetchMock.mockImplementationOnce(async (_url, init: RequestInit) => {
+      const form = init.body as FormData;
+      const file = form.get("file") as File;
+      expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual([1, 2]);
+      expect(form.get("model")).toBe("gpt-4o-mini-transcribe");
+      return Response.json({ text: "safe transcript" });
+    });
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await transcribeAudio({
+      model: provider.transcriptionModel!("gpt-4o-mini-transcribe"),
+      audio: { data: backing.subarray(1, 3), mediaType: "audio/wav" },
+      providerOptions: { model: "attacker-model", file: "not-a-file" }
+    });
+  });
+
   it("generates speech through the shared contract", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(new Uint8Array([1, 2, 3]), {
@@ -1781,6 +1801,56 @@ describe("openai adapter", () => {
 
     expect(result.mediaType).toBe("audio/mpeg");
     expect(Array.from(result.audio)).toEqual([1, 2, 3]);
+  });
+
+  it("limits speech bodies and releases the reader when a timeout aborts streaming", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(Uint8Array.from([1, 2, 3, 4]), {
+        headers: { "content-type": "audio/mpeg", "content-length": "4" }
+      })
+    );
+    const limited = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      responseLimits: { speechBytes: 3 }
+    });
+    await expect(
+      generateSpeech({ model: limited.speechModel!("gpt-4o-mini-tts"), input: "hello" })
+    ).rejects.toBeInstanceOf(ProviderResponseTooLargeError);
+
+    let response: Response | undefined;
+    fetchMock.mockImplementationOnce(async (_url, init: RequestInit) => {
+      const signal = init.signal!;
+      response = new Response(
+        new ReadableStream({
+          start(controller) {
+            signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+          }
+        }),
+        { headers: { "content-type": "audio/mpeg" } }
+      );
+      return response;
+    });
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(
+      generateSpeech({ model: provider.speechModel!("gpt-4o-mini-tts"), input: "hello", timeoutMs: 1 })
+    ).rejects.toBeDefined();
+    expect(response?.body?.locked).toBe(false);
+  });
+
+  it("bounds provider error bodies while preserving ProviderHTTPError", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("abcdefgh", { status: 500 }));
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      responseLimits: { errorBodyBytes: 4 }
+    });
+    const promise = generateSpeech({ model: provider.speechModel!("gpt-4o-mini-tts"), input: "hello" });
+    await expect(promise).rejects.toBeInstanceOf(ProviderHTTPError);
+    await expect(promise).rejects.toMatchObject({
+      status: 500,
+      responseBody: "abcd\n...[truncated at 4 bytes]"
+    });
   });
 
   it("generates grounded text with normalized sources", async () => {
