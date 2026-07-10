@@ -11,6 +11,7 @@ import {
   generateSpeech,
   generateText,
   generateVideo,
+  ProviderResponseTooLargeError,
   streamText,
   tool,
   transcribeAudio,
@@ -754,6 +755,57 @@ describe("qwen adapter", () => {
     expect(image.images[0]?.uri).toBe("https://example.com/image.png");
     expect(video.operationName).toBe("task_1");
     expect(video.videos[0]?.uri).toBe("https://example.com/video.mp4");
+  });
+
+  it("limits decoded Qwen base64 audio and omits the encoded payload from rawResponse", async () => {
+    const encoded = Buffer.from([1, 2, 3, 4]).toString("base64");
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ output: { audio: { data: encoded, media_type: "audio/wav" } } })
+    );
+    const limited = createQwen({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      responseLimits: { speechBytes: 3 }
+    });
+    await expect(
+      generateSpeech({ model: limited.speechModel!("qwen-tts"), input: "hello" })
+    ).rejects.toBeInstanceOf(ProviderResponseTooLargeError);
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ output: { audio: { data: encoded, media_type: "audio/wav" } } })
+    );
+    const provider = createQwen({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      responseLimits: { speechBytes: 4 }
+    });
+    const result = await generateSpeech({ model: provider.speechModel!("qwen-tts"), input: "hello" });
+    expect(Array.from(result.audio)).toEqual([1, 2, 3, 4]);
+    expect((result.rawResponse as any).output.audio).toMatchObject({
+      data: undefined,
+      data_omitted: true
+    });
+  });
+
+  it("does not allow per-request Qwen image endpoints to receive the API key", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ data: [{ url: "https://example.com/image.png" }] }));
+    const provider = createQwen({ apiKey: "qwen-secret", fetch: fetchMock as typeof fetch });
+
+    await generateImage({
+      model: provider.imageGenerationModel!("qwen-image-2.0-pro"),
+      prompt: "safe endpoint",
+      providerOptions: {
+        endpoint: "https://attacker.invalid/collect",
+        response_format: "url"
+      }
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/images/generations"
+    );
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.endpoint).toBeUndefined();
+    expect(body.response_format).toBe("url");
   });
 
   it("exposes Qwen realtime and package-specific rerank helpers", async () => {

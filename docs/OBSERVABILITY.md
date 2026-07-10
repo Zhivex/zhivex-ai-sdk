@@ -23,7 +23,11 @@ import { createAgentTraceArtifact, estimateAgentRunCost, summarizeAgentTrace } f
 
 const trace = createAgentTraceArtifact(result.state, {
   includeMessages: false,
-  includeToolInputs: false
+  includeToolInputs: false,
+  includeToolOutputs: false,
+  includeApprovalArguments: false,
+  includeOutputText: false,
+  redaction: { includeEmails: true }
 });
 
 const summary = summarizeAgentTrace(trace, {
@@ -37,7 +41,7 @@ const cost = estimateAgentRunCost(result.state, {
 });
 ```
 
-Trace helpers inspect saved state. They do not call models or tools.
+Trace helpers inspect saved state. They do not call models or tools. Full output text, tool payloads, and approval arguments are omitted by default; every sensitive payload family requires an explicit `include*` opt-in.
 
 ## Audit Records
 

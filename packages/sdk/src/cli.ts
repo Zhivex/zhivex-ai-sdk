@@ -169,6 +169,12 @@ const providerTemplates = {
     envName: "OPENAI_API_KEY",
     defaultModel: "gpt-5"
   },
+  xai: {
+    packageName: "@zhivex-ai/xai",
+    factoryName: "createXAI",
+    envName: "XAI_API_KEY",
+    defaultModel: "grok-4.5"
+  },
   meta: {
     packageName: "@zhivex-ai/meta",
     factoryName: "createMeta",

@@ -2286,7 +2286,8 @@ export const createVertex = (
     (auth.type === "api-key"
       ? `https://aiplatform.googleapis.com/${apiVersion}`
       : `https://${location}-aiplatform.googleapis.com/${apiVersion}/projects/${projectId}/locations/${location}`);
-  const fetcher = createVertexAuthenticatedFetch(options.fetch ?? globalThis.fetch, auth);
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = createVertexAuthenticatedFetch(rawFetch, auth);
 
   return createProviderAdapter({
     name: "vertex",
@@ -2310,7 +2311,7 @@ export const createVertex = (
     caches: new VertexContextCachesClient(baseURL, "", fetcher),
     batches: new VertexBatchesClient(baseURL, "", fetcher),
     predictionModel: (modelId) => new VertexPredictionModel(modelId, baseURL, "", fetcher),
-    rawFetch: fetcher
+    rawFetch
   });
 };
 

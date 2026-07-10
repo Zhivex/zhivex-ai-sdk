@@ -43,6 +43,34 @@ export class ProviderHTTPError extends ZhivexAIError {
   readonly responseBody?: unknown;
 }
 
+export class ProviderResponseTooLargeError extends ZhivexAIError {
+  readonly maxBytes: number;
+  readonly receivedBytes: number;
+  readonly contentLength?: number;
+  readonly provider?: string;
+  readonly endpoint?: string;
+
+  constructor(options: {
+    maxBytes: number;
+    receivedBytes: number;
+    contentLength?: number;
+    provider?: string;
+    endpoint?: string;
+    cause?: unknown;
+  }) {
+    const source = [options.provider, options.endpoint].filter(Boolean).join(" ");
+    super(
+      `${source ? `${source} response` : "Provider response"} exceeded the ${options.maxBytes}-byte limit after receiving ${options.receivedBytes} bytes.`,
+      { cause: options.cause }
+    );
+    this.maxBytes = options.maxBytes;
+    this.receivedBytes = options.receivedBytes;
+    this.contentLength = options.contentLength;
+    this.provider = options.provider;
+    this.endpoint = options.endpoint;
+  }
+}
+
 export class ValidationError extends ZhivexAIError {}
 export class ConflictError extends ZhivexAIError {}
 export class ParseError extends ZhivexAIError {}

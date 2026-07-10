@@ -1,6 +1,7 @@
 import { GuardrailTriggeredError, ValidationError } from "./errors.js";
 import { normalizeMessages } from "./generate-text.js";
 import { createTextMessage, getTextFromParts, isCallableToolDefinition, serializeJsonValue, toolResultPart } from "./messages.js";
+import { mergeAbortSignals } from "./runtime.js";
 import { toToolSet } from "./tool-registry.js";
 import type {
   AgentGuardrailTrigger,
@@ -183,14 +184,24 @@ const emitRunFinishTelemetry = async <TModel extends RealtimeModel>(agent: LiveA
   });
 };
 
-const withToolTimeout = async <T>(operation: Promise<T>, timeoutMs?: number): Promise<T> => {
+const withToolTimeout = async <T>(
+  operation: (signal: AbortSignal | undefined) => Promise<T>,
+  timeoutMs?: number,
+  abortSignal?: AbortSignal
+): Promise<T> => {
   if (!timeoutMs) {
-    return operation;
+    return operation(abortSignal);
   }
 
+  const controller = new AbortController();
+  const signal = mergeAbortSignals(abortSignal, controller.signal);
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Tool execution timed out after ${timeoutMs}ms.`)), timeoutMs);
-    operation
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`Tool execution timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+    Promise.resolve()
+      .then(() => operation(signal))
       .then((value) => {
         clearTimeout(timer);
         resolve(value);
@@ -557,8 +568,15 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
           try {
             const output = serializeJsonValue(
               await withToolTimeout(
-                Promise.resolve(definition.execute(parsed.data)),
-                (input.toolExecution ?? agent.toolExecution)?.timeoutMs
+                async (abortSignal) => definition.execute(parsed.data, {
+                  abortSignal,
+                  toolCall: event.toolCall,
+                  step: 1,
+                  model: agent.model,
+                  realtimeConfig
+                }),
+                (input.toolExecution ?? agent.toolExecution)?.timeoutMs,
+                input.abortSignal
               )
             );
             const result = {

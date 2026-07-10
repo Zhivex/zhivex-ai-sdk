@@ -8,6 +8,20 @@ Azure OpenAI adapter for Zhivex AI SDK.
 bun add @zhivex-ai/azure-openai
 ```
 
+## Audio response limits
+
+Azure transcription and speech responses are bounded before JSON parsing or binary buffering. Configure application-specific limits through `createAzureOpenAI({ responseLimits })`; defaults are 16 MiB for speech, 4 MiB for transcription JSON, and 64 KiB for error bodies.
+
+```ts
+const azure = createAzureOpenAI({
+  endpoint: process.env.AZURE_OPENAI_ENDPOINT,
+  responseLimits: {
+    speechBytes: 16 * 1024 * 1024,
+    transcriptionBytes: 1024 * 1024
+  }
+});
+```
+
 ## Capability notes
 
 The adapter exposes model-specific agent capabilities at runtime and validates hosted Responses tools before sending requests. Tools such as `tool_search`, `computer_use_preview`, shell, apply patch, and skills are therefore accepted only for model families the SDK marks as supported.

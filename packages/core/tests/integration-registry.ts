@@ -9,6 +9,7 @@ import { createOpenAI } from "../../openai/src/index.js";
 import { createOpenRouter } from "../../openrouter/src/index.js";
 import { createQwen } from "../../qwen/src/index.js";
 import { createVertex } from "../../vertex/src/index.js";
+import { createXAI } from "../../xai/src/index.js";
 
 export interface IntegrationLanguageProvider {
   name: string;
@@ -73,6 +74,10 @@ const openAIBaseURL = process.env.OPENAI_BASE_URL;
 const openAITextModelId = process.env.OPENAI_INTEGRATION_MODEL ?? "gpt-5.4-nano";
 const openAIEmbeddingModelId = process.env.OPENAI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-3-small";
 
+const xaiApiKey = process.env.XAI_API_KEY;
+const xaiBaseURL = process.env.XAI_BASE_URL;
+const xaiTextModelId = process.env.XAI_INTEGRATION_MODEL ?? "grok-4.5";
+
 const azureOpenAIApiKey = process.env.AZURE_OPENAI_API_KEY;
 const azureOpenAIEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
 const azureOpenAIApiVersion = process.env.AZURE_OPENAI_API_VERSION;
@@ -134,6 +139,15 @@ const openAISupports: IntegrationLanguageProvider["supports"] = {
   }
 };
 const azureOpenAISupports: IntegrationLanguageProvider["supports"] = openAISupports;
+const xaiSupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: false,
+  reasoning: {
+    effort: "low"
+  }
+};
 const anthropicSupports: IntegrationLanguageProvider["supports"] = {
   streaming: true,
   tools: true,
@@ -218,6 +232,7 @@ const bedrockOpenAISupports: IntegrationLanguageProvider["supports"] = {
 const vertexSupports: IntegrationLanguageProvider["supports"] = createGeminiSupports(vertexTextModelId);
 
 const openAIRequirements = [envRequirement(["OPENAI_API_KEY"])];
+const xaiRequirements = [envRequirement(["XAI_API_KEY"])];
 const azureOpenAIRequirements = [
   envRequirement(["AZURE_OPENAI_API_KEY"]),
   envRequirement(["AZURE_OPENAI_ENDPOINT"])
@@ -253,6 +268,12 @@ export const integrationProviderStatuses: IntegrationProviderStatus[] = [
     textModelId: openAITextModelId,
     embeddingModelId: openAIEmbeddingModelId,
     supports: openAISupports
+  }),
+  createProviderStatus({
+    name: "xai",
+    requirements: xaiRequirements,
+    textModelId: xaiTextModelId,
+    supports: xaiSupports
   }),
   createProviderStatus({
     name: "azure-openai",
@@ -336,6 +357,23 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               baseURL: openAIBaseURL
             }).embeddingModel(openAIEmbeddingModelId),
           supports: openAISupports,
+          toolChoiceForTool: (toolName) => ({
+            type: "tool",
+            toolName
+          })
+        } satisfies IntegrationLanguageProvider
+      ]
+    : []),
+  ...(xaiApiKey
+    ? [
+        {
+          name: "xai",
+          createModel: () =>
+            createXAI({
+              apiKey: xaiApiKey,
+              baseURL: xaiBaseURL
+            })(xaiTextModelId),
+          supports: xaiSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName

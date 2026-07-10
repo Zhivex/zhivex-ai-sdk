@@ -44,6 +44,7 @@ bun run examples/gateway/basic-routing.ts
 bun run examples/gateway/stream-routing.ts
 bun run examples/gateway/object-routing.ts
 bun run examples/providers/openai.ts
+bun run examples/providers/xai.ts
 ```
 
 The `examples/sdk/runner-session.ts` example is deterministic and does not require provider credentials. It is useful as a quick smoke for `Runner + SessionService`.

@@ -4,6 +4,10 @@ import {
   CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
+  readBodyWithLimit,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
+  resolveAudioResponseLimits,
   openWebSocketConnection,
   hostedTool,
   providerDataPart,
@@ -22,6 +26,7 @@ import {
   withTimeoutSignal,
   type AudioFrame,
   type AudioInput,
+  type AudioResponseLimits,
   type CallableProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
@@ -56,6 +61,7 @@ export interface OpenAIProviderOptions {
   realtimeURL?: string;
   browserTokenURL?: string;
   realtimeConnectionFactory?: RealtimeConnectionFactory;
+  responseLimits?: AudioResponseLimits;
 }
 
 export interface OpenAIWebSearchToolConfig {
@@ -617,10 +623,12 @@ const toUint8Array = (data: AudioInput["data"]) => {
 const toBase64 = (data: string | Uint8Array | ArrayBuffer) =>
   typeof data === "string" ? data : Buffer.from(data instanceof Uint8Array ? data : new Uint8Array(data)).toString("base64");
 
-const createAudioFile = (audio: AudioInput) =>
-  new File([toUint8Array(audio.data).buffer as ArrayBuffer], audio.filename ?? "audio", {
+const createAudioFile = (audio: AudioInput) => {
+  const bytes = toUint8Array(audio.data);
+  return new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], audio.filename ?? "audio", {
     type: audio.mediaType
   });
+};
 
 const inferOpenAIAudioFormat = (mediaType: string, explicitFormat?: string) => {
   if (explicitFormat) {
@@ -649,14 +657,30 @@ const inferOpenAIAudioFormat = (mediaType: string, explicitFormat?: string) => {
   return normalized?.replace(/^audio\//, "") || mediaType;
 };
 
-const parseJson = async (response: Response) => {
+const parseJson = async (
+  response: Response,
+  options: {
+    maxBytes?: number;
+    errorBodyBytes?: number;
+    provider?: string;
+    endpoint?: string;
+    abort?: (reason?: unknown) => void;
+  } = {}
+) => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response, options.errorBodyBytes);
     throw new ProviderHTTPError(`OpenAI request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
-  return response.json();
+  return options.maxBytes
+    ? readJsonWithLimit<any>(response, {
+        maxBytes: options.maxBytes,
+        provider: options.provider ?? "openai",
+        endpoint: options.endpoint,
+        abort: options.abort
+      })
+    : response.json();
 };
 
 const isOpenAIPromptCacheBreakpointPart = (
@@ -2423,7 +2447,8 @@ class OpenAITranscriptionModel implements TranscriptionModel {
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly responseLimits = resolveAudioResponseLimits()
   ) {}
 
   async transcribe(input: {
@@ -2436,8 +2461,14 @@ class OpenAITranscriptionModel implements TranscriptionModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<TranscriptionResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
+    const { signal, cleanup, abort } = withTimeoutSignal(input);
     const form = new FormData();
+    for (const [key, value] of Object.entries(input.providerOptions ?? {})) {
+      if (["model", "file", "prompt", "language"].includes(key)) {
+        continue;
+      }
+      form.set(key, typeof value === "string" ? value : JSON.stringify(value));
+    }
     form.set("model", this.modelId);
     form.set("file", createAudioFile(input.audio));
     if (input.prompt) {
@@ -2445,10 +2476,6 @@ class OpenAITranscriptionModel implements TranscriptionModel {
     }
     if (input.language) {
       form.set("language", input.language);
-    }
-
-    for (const [key, value] of Object.entries(input.providerOptions ?? {})) {
-      form.set(key, typeof value === "string" ? value : JSON.stringify(value));
     }
 
     try {
@@ -2463,7 +2490,12 @@ class OpenAITranscriptionModel implements TranscriptionModel {
         input
       );
 
-      const json = await parseJson(response);
+      const json = await parseJson(response, {
+        maxBytes: this.responseLimits.transcriptionBytes,
+        errorBodyBytes: this.responseLimits.errorBodyBytes,
+        endpoint: "audio/transcriptions",
+        abort
+      });
       return {
         text: json.text ?? "",
         rawResponse: json
@@ -2482,7 +2514,8 @@ class OpenAISpeechModel implements SpeechModel {
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly responseLimits = resolveAudioResponseLimits()
   ) {}
 
   async generateSpeech(input: {
@@ -2494,7 +2527,7 @@ class OpenAISpeechModel implements SpeechModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<SpeechResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
+    const { signal, cleanup, abort } = withTimeoutSignal(input);
 
     try {
       const response = await withRetry(
@@ -2514,14 +2547,19 @@ class OpenAISpeechModel implements SpeechModel {
       );
 
       if (!response.ok) {
-        const body = await response.text();
+        const body = await readErrorBodyWithLimit(response, this.responseLimits.errorBodyBytes);
         throw new ProviderHTTPError(`OpenAI request failed with status ${response.status}.`, response.status, {
           responseBody: body
         });
       }
 
       return {
-        audio: new Uint8Array(await response.arrayBuffer()),
+        audio: await readBodyWithLimit(response, {
+          maxBytes: this.responseLimits.speechBytes,
+          provider: "openai",
+          endpoint: "audio/speech",
+          abort
+        }),
         mediaType: response.headers.get("content-type") ?? "audio/mpeg",
         rawResponse: undefined
       };
@@ -2812,13 +2850,14 @@ export const createOpenAI = (
 
   const baseURL = options.baseURL ?? "https://api.openai.com/v1";
   const fetcher = options.fetch ?? globalThis.fetch;
+  const responseLimits = resolveAudioResponseLimits(options.responseLimits);
 
   return createProviderAdapter({
     name: "openai",
     languageModel: (modelId) => new OpenAILanguageModel(modelId, apiKey, baseURL, fetcher),
     embeddingModel: (modelId) => new OpenAIEmbeddingModel(modelId, apiKey, baseURL, fetcher),
-    transcriptionModel: (modelId) => new OpenAITranscriptionModel(modelId, apiKey, baseURL, fetcher),
-    speechModel: (modelId) => new OpenAISpeechModel(modelId, apiKey, baseURL, fetcher),
+    transcriptionModel: (modelId) => new OpenAITranscriptionModel(modelId, apiKey, baseURL, fetcher, responseLimits),
+    speechModel: (modelId) => new OpenAISpeechModel(modelId, apiKey, baseURL, fetcher, responseLimits),
     realtimeModel: (modelId) =>
       new OpenAIRealtimeModel(
         modelId,

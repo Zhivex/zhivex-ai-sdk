@@ -113,6 +113,7 @@ const model: LanguageModel = {
 
 const collector = createProductionTraceCollector({
   includeToolInputs: true,
+  includeToolOutputs: true,
   outputPreviewLength: 160
 });
 
@@ -173,6 +174,8 @@ const trace =
   collector.getTrace(result.state.runId) ??
   createAgentTraceArtifact(result.state, {
     includeToolInputs: true,
+    includeToolOutputs: true,
+    redaction: { includeEmails: true },
     outputPreviewLength: 160
   });
 

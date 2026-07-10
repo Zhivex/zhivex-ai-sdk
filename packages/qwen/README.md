@@ -8,6 +8,20 @@ Qwen adapter for Zhivex AI SDK.
 bun add @zhivex-ai/qwen
 ```
 
+## Audio response limits
+
+`createQwen({ responseLimits })` bounds transcription JSON, binary speech, JSON/base64 speech, and provider error bodies before large allocations. Speech defaults to 16 MiB decoded; base64 size is checked before decoding. The encoded audio field is omitted from `SpeechResult.rawResponse` after decoding so the result does not retain both representations.
+
+```ts
+const qwen = createQwen({
+  responseLimits: {
+    speechBytes: 16 * 1024 * 1024,
+    transcriptionBytes: 1024 * 1024,
+    errorBodyBytes: 64 * 1024
+  }
+});
+```
+
 ## Hosted tools
 
 Qwen uses the DashScope-compatible Responses API by default. The adapter exposes helpers for Qwen built-in hosted tools and remote MCP:

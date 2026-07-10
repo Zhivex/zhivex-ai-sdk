@@ -9,10 +9,12 @@ import {
   createAgentCapsule,
   createAgentControlPlane,
   createAgentRunLedger,
+  createAgentTraceArtifact,
   createAgentToolPolicy,
   createInMemoryAgentRunStore,
   createMockLanguageModel,
   createTextMessage,
+  createProductionTraceOptions,
   diffAgentRunLedgers,
   inspectAgentCapsule,
   promoteAgentGoldenTrace,
@@ -252,15 +254,59 @@ describe("agent control plane", () => {
         type: "agent_approval_queue_item",
         runId: "run_1",
         approvalRequestId: "approval_1",
-        approvalToken: "token_run_1_approval_1",
         resumeUrl: "/runs/run_1/resume",
         expiresAt: 123
       })
     ]);
+    expect(queue[0]?.approvalToken).toMatch(/^token_[A-Za-z0-9_-]{43}$/);
+    expect(queue[0]?.approvalToken).not.toContain("run_1");
+    expect(createAgentApprovalQueue(
+      baseState({ status: "waiting_approval", pendingApprovals: queue.map((item) => ({
+        provider: item.provider,
+        id: item.approvalRequestId,
+        name: item.name,
+        arguments: item.arguments,
+        rawData: item.rawData
+      })) }),
+      { tokenPrefix: "token" }
+    )[0]?.approvalToken).not.toBe(queue[0]?.approvalToken);
   });
 
   it("returns an empty approval queue when a run has no pending approvals", () => {
     expect(createAgentApprovalQueue(baseState())).toEqual([]);
+  });
+
+  it("omits and redacts sensitive production trace payloads by default", () => {
+    const state = baseState({
+      outputText: "Bearer highly-sensitive-token",
+      pendingApprovals: [{
+        provider: "openai",
+        id: "approval_1",
+        name: "remote_mcp",
+        arguments: JSON.stringify({ token: "approval-secret" }),
+        rawData: { type: "mcp_approval_request", arguments: "approval-secret" }
+      }]
+    });
+    state.steps[0]!.toolResults[0]!.output = { token: "tool-output-secret" };
+
+    const trace = createAgentTraceArtifact(state, createProductionTraceOptions());
+    expect(trace.outputText).toBeUndefined();
+    expect(trace.outputPreview).toBe("[REDACTED]");
+    expect(trace.steps[0]?.toolResults[0]?.output).toBeUndefined();
+    expect(trace.approvals[0]?.arguments).toBeUndefined();
+    expect(JSON.stringify(trace)).not.toContain("highly-sensitive-token");
+    expect(JSON.stringify(trace)).not.toContain("tool-output-secret");
+    expect(JSON.stringify(trace)).not.toContain("approval-secret");
+
+    const explicit = createAgentTraceArtifact(state, {
+      includeOutputText: true,
+      includeToolOutputs: true,
+      includeApprovalArguments: true,
+      redaction: false
+    });
+    expect(explicit.outputText).toBe("Bearer highly-sensitive-token");
+    expect(explicit.steps[0]?.toolResults[0]?.output).toEqual({ token: "tool-output-secret" });
+    expect(explicit.approvals[0]?.arguments).toContain("approval-secret");
   });
 
   it("creates ledgers, diffs them, and promotes golden traces", () => {

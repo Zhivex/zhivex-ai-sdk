@@ -42,7 +42,6 @@ export interface ArtifactSaveInput {
   size?: number;
   sha256?: string;
   storageMode?: ArtifactStorageMode;
-  blobPath?: string;
   expectedRevision?: number;
   metadata?: Record<string, JsonValue>;
 }
@@ -387,7 +386,11 @@ const ensurePostgresTable = (() => {
   };
 })();
 
-const createArtifact = (input: ArtifactSaveInput, existing?: ArtifactRecord): ArtifactRecord => {
+const createArtifact = (
+  input: ArtifactSaveInput,
+  existing?: ArtifactRecord,
+  internal?: { blobPath?: string }
+): ArtifactRecord => {
   const integrity = enrichArtifactMetadata(input);
   const now = Date.now();
   return {
@@ -407,7 +410,7 @@ const createArtifact = (input: ArtifactSaveInput, existing?: ArtifactRecord): Ar
     size: integrity.size,
     sha256: integrity.sha256,
     storageMode: input.storageMode ?? "json",
-    blobPath: input.blobPath,
+    blobPath: internal?.blobPath,
     metadata: input.metadata ? cloneJson(input.metadata) : undefined,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now
@@ -427,6 +430,25 @@ const fileNameForArtifact = (input: ArtifactLookup): string =>
 
 const blobPathForArtifact = (input: ArtifactLookup): string =>
   path.join("blobs", [input.appName, input.userId, input.sessionId, input.id].map((part) => encodeURIComponent(part)).join("__") + ".bin");
+
+const resolveFileArtifactBlobPath = (directory: string, artifact: ArtifactRecord): string | undefined => {
+  if (!artifact.blobPath) {
+    return undefined;
+  }
+
+  const expectedBlobPath = blobPathForArtifact(artifact);
+  if (path.normalize(artifact.blobPath) !== expectedBlobPath) {
+    throw new ValidationError(`Artifact "${artifact.id}" has an unsafe blobPath.`);
+  }
+
+  const root = path.resolve(directory);
+  const resolved = path.resolve(root, artifact.blobPath);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new ValidationError(`Artifact "${artifact.id}" blobPath escapes the configured directory.`);
+  }
+
+  return resolved;
+};
 
 const lookupFromArtifact = (artifact: ArtifactRecord): ArtifactLookup => ({
   appName: artifact.appName,
@@ -596,6 +618,7 @@ export const inspectFileArtifactStore = async (
     const metadataPath = path.join(options.directory, entry);
     try {
       const artifact = normalizeArtifactRecord(JSON.parse(await fs.readFile(metadataPath, "utf8")) as ArtifactRecord);
+      const fullBlobPath = resolveFileArtifactBlobPath(options.directory, artifact);
       artifacts.push(artifact);
       if (artifact.blobPath) {
         referencedBlobPaths.add(path.normalize(artifact.blobPath));
@@ -609,14 +632,13 @@ export const inspectFileArtifactStore = async (
             message: `Artifact "${artifact.id}" has no blobPath.`
           });
         } else {
-          const fullBlobPath = path.join(options.directory, artifact.blobPath);
           try {
-            await fs.stat(fullBlobPath);
+            await fs.stat(fullBlobPath!);
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code === "ENOENT") {
               issues.push({
                 type: "missing-blob",
-                path: fullBlobPath,
+                path: fullBlobPath!,
                 artifact,
                 message: `Artifact "${artifact.id}" references a missing blob.`
               });
@@ -702,7 +724,7 @@ export const pruneFileArtifactStore = async (
         }
       });
       if (artifact.blobPath) {
-        await fs.unlink(path.join(options.directory, artifact.blobPath)).catch((error: NodeJS.ErrnoException) => {
+        await fs.unlink(resolveFileArtifactBlobPath(options.directory, artifact)!).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== "ENOENT") {
             throw error;
           }
@@ -805,7 +827,9 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
   const load = async (input: ArtifactLookup): Promise<ArtifactRecord | undefined> => {
     try {
       const content = await fs.readFile(filePath(input), "utf8");
-      return normalizeArtifactRecord(JSON.parse(content) as ArtifactRecord);
+      const artifact = normalizeArtifactRecord(JSON.parse(content) as ArtifactRecord);
+      resolveFileArtifactBlobPath(options.directory, artifact);
+      return artifact;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return undefined;
@@ -861,9 +885,8 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         encoding: "base64",
         size: bytes.byteLength,
         sha256,
-        storageMode: "binary",
-        blobPath
-      }, existing);
+        storageMode: "binary"
+      }, existing, { blobPath });
       await fs.mkdir(path.dirname(binaryPath(lookup)), { recursive: true });
       await fs.writeFile(binaryPath(lookup), bytes);
       await save(artifact);
@@ -880,7 +903,7 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         return undefined;
       }
       try {
-        const data = await fs.readFile(path.join(options.directory, artifact.blobPath));
+        const data = await fs.readFile(resolveFileArtifactBlobPath(options.directory, artifact)!);
         return {
           artifact,
           data: new Uint8Array(data)
@@ -911,6 +934,7 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         }
         const content = await fs.readFile(path.join(options.directory, entry), "utf8");
         const artifact = normalizeArtifactRecord(JSON.parse(content) as ArtifactRecord);
+        resolveFileArtifactBlobPath(options.directory, artifact);
         if (matchesListInput(artifact, input)) {
           artifacts.push(cloneArtifact(artifact));
         }
@@ -930,7 +954,7 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
       }
       if (artifact?.blobPath) {
         try {
-          await fs.unlink(path.join(options.directory, artifact.blobPath));
+          await fs.unlink(resolveFileArtifactBlobPath(options.directory, artifact)!);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
             throw error;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createMcpToolSet, streamText } from "../src/index.js";
+import { createApprovalPolicy, createMcpToolSet, streamText } from "../src/index.js";
 import type { LanguageModel, StreamEvent } from "../src/index.js";
 
 describe("mcp helpers", () => {
@@ -48,8 +48,17 @@ describe("mcp helpers", () => {
       source: "mcp",
       originalName: "echo",
       inputSchema: null,
-      annotations: null
+      annotations: null,
+      advancedRegistry: {
+        source: "mcp",
+        permissions: ["external-side-effect"],
+        audit: {
+          riskLevel: "medium",
+          description: "MCP tool requires approval because it is not explicitly read-only."
+        }
+      }
     });
+    expect(echo.requiresApproval).toBe(true);
   });
 
   it("builds zod validation from MCP input schemas and preserves annotations", async () => {
@@ -108,8 +117,17 @@ describe("mcp helpers", () => {
       annotations: {
         readOnlyHint: true,
         title: "Weather"
+      },
+      advancedRegistry: {
+        source: "mcp",
+        permissions: ["read"],
+        audit: {
+          riskLevel: "low",
+          description: "MCP server declares this tool read-only."
+        }
       }
     });
+    expect(weather.requiresApproval).toBe(false);
   });
 
   it("uses safe unknown-schema fallbacks for unsupported MCP schemas", async () => {
@@ -137,6 +155,40 @@ describe("mcp helpers", () => {
     }
 
     expect(mystery.schema.safeParse({ any: "value" }).success).toBe(true);
+    expect(mystery.requiresApproval).toBe(true);
+  });
+
+  it("requires approval for destructive and open-world MCP tools", async () => {
+    const tools = await createMcpToolSet({
+      async listTools() {
+        return [{
+          name: "archive_customer",
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: true,
+            openWorldHint: true
+          }
+        }];
+      },
+      async callTool() {
+        return { ok: true };
+      }
+    });
+    const archive = tools.archive_customer;
+    if (!archive || !("execute" in archive)) {
+      throw new Error("Expected a callable MCP tool.");
+    }
+
+    expect(archive.requiresApproval).toBe(true);
+    const decision = await createApprovalPolicy({ preset: "review-sensitive" })({
+      tool: archive,
+      toolCall: { id: "call_1", name: archive.name, input: {} },
+      input: {},
+      step: 1,
+      model: {} as never,
+      request: { messages: [] }
+    });
+    expect(decision).toMatchObject({ approved: false });
   });
 
   it("preserves provider-data events in streamed assistant messages", async () => {

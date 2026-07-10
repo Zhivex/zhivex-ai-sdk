@@ -4,6 +4,10 @@ import {
   CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
+  readBodyWithLimit,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
+  resolveAudioResponseLimits,
   openWebSocketConnection,
   hostedTool,
   providerDataPart,
@@ -21,6 +25,7 @@ import {
   withTimeoutSignal,
   type AudioFrame,
   type AudioInput,
+  type AudioResponseLimits,
   type CallableProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
@@ -55,6 +60,7 @@ export interface AzureOpenAIProviderOptions {
   realtimeConnectionFactory?: RealtimeConnectionFactory;
   realtimeURL?: string;
   browserTokenURL?: string;
+  responseLimits?: AudioResponseLimits;
 }
 
 export interface AzureOpenAIWebSearchToolConfig {
@@ -384,14 +390,29 @@ const jsonHeaders = (apiKey: string) => ({
   "api-key": apiKey
 });
 
-const parseJson = async (response: Response) => {
+const parseJson = async (
+  response: Response,
+  options: {
+    maxBytes?: number;
+    errorBodyBytes?: number;
+    endpoint?: string;
+    abort?: (reason?: unknown) => void;
+  } = {}
+) => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response, options.errorBodyBytes);
     throw new ProviderHTTPError(`Azure OpenAI request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
-  return response.json();
+  return options.maxBytes
+    ? readJsonWithLimit<any>(response, {
+        maxBytes: options.maxBytes,
+        provider: "azure-openai",
+        endpoint: options.endpoint,
+        abort: options.abort
+      })
+    : response.json();
 };
 
 const toUint8Array = (data: AudioInput["data"]) => {
@@ -406,10 +427,12 @@ const toUint8Array = (data: AudioInput["data"]) => {
   return Uint8Array.from(Buffer.from(data, "base64"));
 };
 
-const createAudioFile = (audio: AudioInput) =>
-  new File([toUint8Array(audio.data).buffer as ArrayBuffer], audio.filename ?? "audio", {
+const createAudioFile = (audio: AudioInput) => {
+  const bytes = toUint8Array(audio.data);
+  return new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], audio.filename ?? "audio", {
     type: audio.mediaType
   });
+};
 
 const mapContentParts = (message: ModelMessage) => {
   const textParts = message.parts.filter((part) => part.type === "text");
@@ -1434,7 +1457,8 @@ class AzureOpenAITranscriptionModel implements TranscriptionModel {
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly urlResolver: (modelId: string, path: AzurePath) => string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly responseLimits = resolveAudioResponseLimits()
   ) {}
 
   async transcribe(input: {
@@ -1447,8 +1471,14 @@ class AzureOpenAITranscriptionModel implements TranscriptionModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<TranscriptionResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
+    const { signal, cleanup, abort } = withTimeoutSignal(input);
     const form = new FormData();
+    for (const [key, value] of Object.entries(input.providerOptions ?? {})) {
+      if (["model", "file", "prompt", "language"].includes(key)) {
+        continue;
+      }
+      form.set(key, typeof value === "string" ? value : JSON.stringify(value));
+    }
     form.set("file", createAudioFile(input.audio));
     form.set("model", this.modelId);
     if (input.prompt) {
@@ -1456,10 +1486,6 @@ class AzureOpenAITranscriptionModel implements TranscriptionModel {
     }
     if (input.language) {
       form.set("language", input.language);
-    }
-
-    for (const [key, value] of Object.entries(input.providerOptions ?? {})) {
-      form.set(key, typeof value === "string" ? value : JSON.stringify(value));
     }
 
     try {
@@ -1474,7 +1500,12 @@ class AzureOpenAITranscriptionModel implements TranscriptionModel {
         input
       );
 
-      const json = await parseJson(response);
+      const json = await parseJson(response, {
+        maxBytes: this.responseLimits.transcriptionBytes,
+        errorBodyBytes: this.responseLimits.errorBodyBytes,
+        endpoint: "audio/transcriptions",
+        abort
+      });
       return {
         text: json.text ?? "",
         rawResponse: json
@@ -1493,7 +1524,8 @@ class AzureOpenAISpeechModel implements SpeechModel {
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly urlResolver: (modelId: string, path: AzurePath) => string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly responseLimits = resolveAudioResponseLimits()
   ) {}
 
   async generateSpeech(input: {
@@ -1505,7 +1537,7 @@ class AzureOpenAISpeechModel implements SpeechModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<SpeechResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
+    const { signal, cleanup, abort } = withTimeoutSignal(input);
 
     try {
       const response = await withRetry(
@@ -1525,14 +1557,19 @@ class AzureOpenAISpeechModel implements SpeechModel {
       );
 
       if (!response.ok) {
-        const body = await response.text();
+        const body = await readErrorBodyWithLimit(response, this.responseLimits.errorBodyBytes);
         throw new ProviderHTTPError(`Azure OpenAI request failed with status ${response.status}.`, response.status, {
           responseBody: body
         });
       }
 
       return {
-        audio: new Uint8Array(await response.arrayBuffer()),
+        audio: await readBodyWithLimit(response, {
+          maxBytes: this.responseLimits.speechBytes,
+          provider: "azure-openai",
+          endpoint: "audio/speech",
+          abort
+        }),
         mediaType: response.headers.get("content-type") ?? "audio/mpeg",
         rawResponse: undefined
       };
@@ -1795,6 +1832,7 @@ export const createAzureOpenAI = (
     ? `${normalizeEndpoint(endpoint)}/openai/deployments/{deployment}?api-version=${apiVersion}`
     : `${normalizeEndpoint(endpoint)}/openai/v1`;
   const fetcher = options.fetch ?? globalThis.fetch;
+  const responseLimits = resolveAudioResponseLimits(options.responseLimits);
 
   const resolveURL = (modelId: string, path: AzurePath) =>
     baseURL.includes("{deployment}")
@@ -2055,8 +2093,8 @@ export const createAzureOpenAI = (
           }
         }
       })(modelId, apiKey, baseURL, fetcher),
-    transcriptionModel: (modelId) => new AzureOpenAITranscriptionModel(modelId, apiKey, resolveURL, fetcher),
-    speechModel: (modelId) => new AzureOpenAISpeechModel(modelId, apiKey, resolveURL, fetcher),
+    transcriptionModel: (modelId) => new AzureOpenAITranscriptionModel(modelId, apiKey, resolveURL, fetcher, responseLimits),
+    speechModel: (modelId) => new AzureOpenAISpeechModel(modelId, apiKey, resolveURL, fetcher, responseLimits),
     realtimeModel: (modelId) =>
       new AzureOpenAIRealtimeModel(
         modelId,

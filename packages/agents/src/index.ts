@@ -178,6 +178,7 @@ export type {
   AgentTelemetrySubAgentFinishEvent,
   AgentTelemetrySubAgentStartEvent,
   AgentTelemetryToolApprovalEvent,
+  AgentTraceApproval,
   AgentTraceArtifact,
   AgentAuditRecord,
   AgentAuditRecordOptions,
