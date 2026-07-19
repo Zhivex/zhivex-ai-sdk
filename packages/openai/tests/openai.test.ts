@@ -362,8 +362,12 @@ describe("openai adapter", () => {
       partial: true,
       id: "ig_1",
       index: 0,
-      image: { mediaType: "image/webp", data: partialBytes }
+      image: { mediaType: "image/webp" }
     });
+    const partialImageData = imageEvents[0]?.image.data;
+    expect(partialImageData).toBeInstanceOf(Uint8Array);
+    expect(partialImageData).toHaveLength(partialBytes.byteLength);
+    expect(Buffer.compare(Buffer.from(partialImageData!), Buffer.from(partialBytes))).toBe(0);
     expect(imageEvents[1]).toMatchObject({
       type: "image-generation",
       provider: "openai",
