@@ -1876,6 +1876,113 @@ describe("core helpers", () => {
     expect(chunks).toEqual(["hello", " world"]);
   });
 
+  it("broadcasts transient partial images to live consumers without breaking textStream", async () => {
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const partialImage = { data: new Uint8Array([1, 2, 3]), mediaType: "image/png" };
+    const finalImage = { data: new Uint8Array([4, 5, 6]), mediaType: "image/png" };
+    const result = streamText({
+      model: createLanguageModel({
+        async stream() {
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            await ready;
+            yield {
+              type: "image-generation",
+              provider: "test",
+              image: partialImage,
+              partial: true,
+              id: "image-1",
+              index: 0
+            };
+            yield { type: "text-delta", textDelta: "done" };
+            yield {
+              type: "image-generation",
+              provider: "test",
+              image: finalImage,
+              partial: false,
+              id: "image-1"
+            };
+            yield { type: "finish", finishReason: "stop" };
+          })();
+        }
+      }),
+      prompt: "Draw"
+    });
+
+    const eventsPromise = (async () => {
+      const events: StreamEvent[] = [];
+      for await (const event of result.eventStream) events.push(event);
+      return events;
+    })();
+    const textPromise = (async () => {
+      const chunks: string[] = [];
+      for await (const chunk of result.textStream) chunks.push(chunk);
+      return chunks;
+    })();
+    await Promise.resolve();
+    release();
+
+    const [events, chunks, collected] = await Promise.all([eventsPromise, textPromise, result.collect()]);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "image-generation",
+      partial: true,
+      image: partialImage
+    }));
+    expect(chunks).toEqual(["done"]);
+    expect(collected.steps[0]?.response.images).toEqual([finalImage]);
+  });
+
+  it("does not retain partial binary images for late event or text replay", async () => {
+    const partialImage = { data: new Uint8Array(2 * 1024 * 1024), mediaType: "image/png" };
+    const finalImage = { data: new Uint8Array([9]), mediaType: "image/png" };
+    const result = streamText({
+      model: createLanguageModel({
+        async stream() {
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield {
+              type: "image-generation",
+              provider: "test",
+              image: partialImage,
+              partial: true,
+              id: "image-1",
+              index: 0
+            };
+            yield { type: "text-delta", textDelta: "complete" };
+            yield {
+              type: "image-generation",
+              provider: "test",
+              image: finalImage,
+              partial: false,
+              id: "image-1"
+            };
+            yield { type: "finish", finishReason: "stop" };
+          })();
+        }
+      }),
+      prompt: "Draw"
+    });
+
+    const collected = await result.collect();
+    const replayedEvents: StreamEvent[] = [];
+    for await (const event of result.eventStream) replayedEvents.push(event);
+    const replayedText: string[] = [];
+    for await (const chunk of result.textStream) replayedText.push(chunk);
+
+    expect(replayedEvents).not.toContainEqual(expect.objectContaining({
+      type: "image-generation",
+      partial: true
+    }));
+    expect(replayedEvents).toContainEqual(expect.objectContaining({
+      type: "image-generation",
+      partial: false,
+      image: finalImage
+    }));
+    expect(replayedText).toEqual(["complete"]);
+    expect(collected.steps[0]?.response.images).toEqual([finalImage]);
+  });
+
   it("converts streamText into a text Response", async () => {
     const result = streamText({
       model: createLanguageModel(),
@@ -2695,6 +2802,17 @@ describe("core helpers", () => {
       modelId: "gpt-5.4-mini",
       recommendedFor: expect.arrayContaining(["speed", "tools", "vision"])
     });
+    expect(defaultModelCatalog.find("openai", "gpt-image-2")).toMatchObject({
+      modelId: "gpt-image-2",
+      recommendedFor: expect.arrayContaining(["vision"])
+    });
+    expect(defaultModelCatalog.find("openai", "gpt-realtime-2.1")).toMatchObject({
+      modelId: "gpt-realtime-2.1",
+      recommendedFor: expect.arrayContaining(["speed", "tools", "vision"])
+    });
+    expect(defaultModelCatalog.find("openai", "gpt-realtime-2.1-mini")?.modelId).toBe(
+      "gpt-realtime-2.1-mini"
+    );
   });
 
   it("defaults Anthropic catalog entries to Claude Sonnet 5 and keeps Opus aliases", () => {
@@ -2712,16 +2830,56 @@ describe("core helpers", () => {
     expect(defaultModelCatalog.find("anthropic", "claude-haiku-4-5")?.modelId).toBe("claude-haiku-4-5-20251001");
   });
 
-  it("defaults Gemini and Vertex catalog entries to Gemini 3.5 Flash", () => {
+  it("tracks current Gemini Developer API and Vertex model IDs", () => {
     expect(defaultModelCatalog.find("gemini", "gemini-3.5-flash")).toMatchObject({
       modelId: "gemini-3.5-flash",
+      inputCostPer1kTokens: 0.0015,
+      cachedInputCostPer1kTokens: 0.00015,
+      outputCostPer1kTokens: 0.009,
       recommendedFor: expect.arrayContaining(["reasoning", "speed", "tools", "vision"])
     });
+    expect(defaultModelCatalog.find("gemini", "gemini-3.1-flash-lite-image")).toMatchObject({
+      modelId: "gemini-3.1-flash-lite-image",
+      recommendedFor: expect.arrayContaining(["speed", "vision"])
+    });
+    expect(defaultModelCatalog.find("gemini", "gemini-omni-flash-preview")).toMatchObject({
+      modelId: "gemini-omni-flash-preview",
+      recommendedFor: expect.arrayContaining(["speed", "vision"])
+    });
+    expect(defaultModelCatalog.find("gemini", "veo-3.1-lite-generate-preview")?.modelId).toBe(
+      "veo-3.1-lite-generate-preview"
+    );
     expect(defaultModelCatalog.find("gemini", "gemini-3.5-live-translate-preview")).toMatchObject({
       modelId: "gemini-3.5-live-translate-preview",
       recommendedFor: expect.arrayContaining(["speed"])
     });
-    expect(defaultModelCatalog.find("vertex", "gemini-flash-latest")?.modelId).toBe("gemini-3.5-flash");
+    expect(defaultModelCatalog.find("gemini", "gemini-3.1-flash-tts-preview")?.modelId).toBe(
+      "gemini-3.1-flash-tts-preview"
+    );
+    expect(defaultModelCatalog.find("gemini", "imagen-4.0-generate-001")).toBeUndefined();
+    expect(defaultModelCatalog.find("gemini", "gemini-3-flash-preview")?.modelId).toBe("gemini-3-flash-preview");
+    expect(defaultModelCatalog.find("vertex", "gemini-flash-latest")).toMatchObject({
+      modelId: "gemini-3.5-flash",
+      inputCostPer1kTokens: 0.0015,
+      cachedInputCostPer1kTokens: 0.00015,
+      outputCostPer1kTokens: 0.009
+    });
+    expect(defaultModelCatalog.find("vertex", "gemini-3.1-flash-lite")?.modelId).toBe("gemini-3.1-flash-lite");
+    expect(defaultModelCatalog.find("vertex", "gemini-3.1-flash-lite-image")?.modelId).toBe(
+      "gemini-3.1-flash-lite-image"
+    );
+    expect(defaultModelCatalog.find("vertex", "gemini-embedding-2")?.modelId).toBe("gemini-embedding-2");
+    expect(defaultModelCatalog.find("vertex", "gemini-3.1-flash-tts-preview")?.modelId).toBe(
+      "gemini-3.1-flash-tts-preview"
+    );
+    expect(defaultModelCatalog.find("vertex", "veo-3.1-generate-001")?.modelId).toBe("veo-3.1-generate-001");
+    expect(defaultModelCatalog.find("vertex", "veo-3.1-lite-generate-001")?.modelId).toBe(
+      "veo-3.1-lite-generate-001"
+    );
+    expect(defaultModelCatalog.find("vertex", "veo-3.1-lite-generate-preview")).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "veo-3.1-generate-preview")).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "lyria-002")?.modelId).toBe("lyria-002");
+    expect(defaultModelCatalog.find("vertex", "lyria-3-clip-preview")).toBeUndefined();
     expect(defaultModelCatalog.find("vertex", "gemini-3.5-live-translate-preview")?.modelId).toBe(
       "gemini-3.5-live-translate-preview"
     );
@@ -2736,9 +2894,25 @@ describe("core helpers", () => {
       modelId: "qwen3.7-max",
       recommendedFor: expect.arrayContaining(["reasoning", "tools"])
     });
+    expect(defaultModelCatalog.find("qwen", "qwen3.6-flash")).toMatchObject({
+      modelId: "qwen3.6-flash",
+      recommendedFor: expect.arrayContaining(["speed", "tools", "vision"])
+    });
+    expect(defaultModelCatalog.find("qwen", "qwen3-vl-embedding")?.modelId).toBe("qwen3-vl-embedding");
+    expect(defaultModelCatalog.find("qwen", "qwen3-rerank")?.modelId).toBe("qwen3-rerank");
+    expect(defaultModelCatalog.find("qwen", "qwen3-asr-flash")?.modelId).toBe("qwen3-asr-flash");
+    expect(defaultModelCatalog.find("qwen", "qwen3-tts-flash")?.modelId).toBe("qwen3-tts-flash");
+    expect(defaultModelCatalog.find("qwen", "wan2.7-t2v")?.modelId).toBe("wan2.7-t2v");
     expect(defaultModelCatalog.find("qwen", "qwen-image-2.0-pro")).toMatchObject({
       modelId: "qwen-image-2.0-pro",
       recommendedFor: expect.arrayContaining(["vision"])
+    });
+    expect(defaultModelCatalog.find("kimi", "kimi-k3")).toMatchObject({
+      modelId: "kimi-k3",
+      inputCostPer1kTokens: 0.003,
+      cachedInputCostPer1kTokens: 0.0003,
+      outputCostPer1kTokens: 0.015,
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
     });
     expect(defaultModelCatalog.find("kimi", "kimi-k2.7-code")).toMatchObject({
       modelId: "kimi-k2.7-code",
@@ -2754,8 +2928,20 @@ describe("core helpers", () => {
   it("includes DeepSeek in the default model catalog", () => {
     expect(defaultModelCatalog.find("deepseek", "deepseek-v4-flash")).toMatchObject({
       modelId: "deepseek-v4-flash",
+      inputCostPer1kTokens: 0.00014,
+      cachedInputCostPer1kTokens: 0.0000028,
+      outputCostPer1kTokens: 0.00028,
       recommendedFor: expect.arrayContaining(["reasoning", "speed", "tools"])
     });
+    expect(defaultModelCatalog.find("deepseek", "deepseek-v4-pro")).toMatchObject({
+      modelId: "deepseek-v4-pro",
+      inputCostPer1kTokens: 0.000435,
+      cachedInputCostPer1kTokens: 0.000003625,
+      outputCostPer1kTokens: 0.00087,
+      recommendedFor: expect.arrayContaining(["chat", "reasoning", "tools"])
+    });
+    expect(defaultModelCatalog.find("deepseek", "deepseek-chat")).toBeUndefined();
+    expect(defaultModelCatalog.find("deepseek", "deepseek-reasoner")).toBeUndefined();
   });
 
   it("creates beta production audit records with redaction", async () => {

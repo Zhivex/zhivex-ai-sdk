@@ -7,19 +7,21 @@ import {
   UnsupportedFeatureError,
   createMcpToolSet,
   createProviderAdapter,
+  decodeBase64WithLimit,
   encodeAudioFrame,
   encodeMediaFrame,
   isCallableToolDefinition,
   isHostedToolDefinition,
   normalizeFinishReason,
   openWebSocketConnection,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
   streamSSE,
   toToolSet,
   toolResultPayload,
   unsupportedBrowserToken,
   withRetry,
   withTimeoutSignal,
-  type AnyToolDefinition,
   type AudioInput,
   type BatchCreateInput,
   type BatchJob,
@@ -59,8 +61,13 @@ import {
   type HostedToolDefinition,
   type ImageGenerationModel,
   type ImageGenerationResult,
+  type Interaction,
+  type InteractionCancelInput,
+  type InteractionContent,
   type InteractionCreateInput,
+  type InteractionDeleteInput,
   type InteractionGetInput,
+  type InteractionResumeInput,
   type InteractionsClient,
   type JsonValue,
   type LanguageModel,
@@ -172,6 +179,7 @@ const transcriptionCapabilities: ModelCapabilities = {
 
 const speechCapabilities: ModelCapabilities = {
   ...transcriptionCapabilities,
+  streaming: true,
   audioInput: false,
   audioOutput: true
 };
@@ -278,14 +286,23 @@ const realtimeCapabilities: ModelCapabilities = {
   }
 };
 
-const parseJson = async (response: Response) => {
+const MIB = 1024 * 1024;
+const MAX_JSON_RESPONSE_BYTES = 128 * MIB;
+const MAX_MEDIA_RESPONSE_BYTES = 64 * MIB;
+const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
+
+const parseJson = async (response: Response): Promise<any> => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response, MAX_ERROR_RESPONSE_BYTES);
     throw new ProviderHTTPError(`Gemini request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
-  return response.json();
+  return readJsonWithLimit(response, {
+    maxBytes: MAX_JSON_RESPONSE_BYTES,
+    provider: "gemini",
+    endpoint: response.url || undefined
+  });
 };
 
 const toBase64 = (data: AudioInput["data"]) => {
@@ -361,7 +378,44 @@ const embeddingValueToPart = (value: EmbedValue, modelId: string) => {
   return mediaInputToPart(value);
 };
 
-const collectInlineMedia = (json: any, fallbackMediaType: string): { media: GeneratedMedia[]; text?: string } => {
+const sanitizeMediaResponse = (value: unknown, parentKey?: string): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeMediaResponse(item, parentKey));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.entries(record)
+      .filter(([key]) => {
+        if (["videoBytes", "bytesBase64Encoded", "imageBytes", "audioContent"].includes(key)) {
+          return false;
+        }
+        return key !== "data" || !(
+          parentKey === "inlineData" ||
+          parentKey === "inline_data" ||
+          "mimeType" in record ||
+          "mime_type" in record
+        );
+      })
+      .map(([key, nested]) => [key, sanitizeMediaResponse(nested, key)])
+  );
+};
+
+const decodeMedia = (data: string, endpoint: string) =>
+  decodeBase64WithLimit(data, {
+    maxBytes: MAX_MEDIA_RESPONSE_BYTES,
+    provider: "gemini",
+    endpoint
+  });
+
+const collectInlineMedia = (
+  json: any,
+  fallbackMediaType: string,
+  endpoint: string
+): { media: GeneratedMedia[]; text?: string } => {
   const text: string[] = [];
   const media: GeneratedMedia[] = [];
   const candidates = Array.isArray(json.candidates) ? json.candidates : [];
@@ -375,7 +429,7 @@ const collectInlineMedia = (json: any, fallbackMediaType: string): { media: Gene
       const inlineData = part.inlineData ?? part.inline_data;
       if (inlineData?.data) {
         media.push({
-          data: Uint8Array.from(Buffer.from(inlineData.data, "base64")),
+          data: decodeMedia(inlineData.data, endpoint),
           mediaType: inlineData.mimeType ?? inlineData.mime_type ?? fallbackMediaType,
           text: typeof part.text === "string" ? part.text : undefined
         });
@@ -400,7 +454,7 @@ const mediaInputToVeoImage = (media: MediaInput) =>
         mimeType: media.mediaType
       };
 
-const collectVideos = (json: any): GeneratedMedia[] => {
+const collectVideos = (json: any, endpoint: string): GeneratedMedia[] => {
   const samples =
     json.response?.generateVideoResponse?.generatedSamples ??
     json.response?.generatedVideos ??
@@ -409,17 +463,17 @@ const collectVideos = (json: any): GeneratedMedia[] => {
 
   return (Array.isArray(samples) ? samples : [])
     .map((sample: any) => sample.video ?? sample)
-    .map((video: any) => ({
+    .map((video: any): GeneratedMedia => ({
       data: video.videoBytes
-        ? Uint8Array.from(Buffer.from(video.videoBytes, "base64"))
+        ? decodeMedia(video.videoBytes, endpoint)
         : video.bytesBase64Encoded
-          ? Uint8Array.from(Buffer.from(video.bytesBase64Encoded, "base64"))
+          ? decodeMedia(video.bytesBase64Encoded, endpoint)
           : undefined,
       uri: video.uri ?? video.gcsUri,
       mediaType: video.mimeType ?? "video/mp4",
-      providerMetadata: video
+      providerMetadata: sanitizeMediaResponse(video) as Record<string, unknown>
     }))
-    .filter((video: GeneratedMedia) => video.data || video.uri);
+    .filter((video) => Boolean(video.data || video.uri));
 };
 
 const dataToBytes = async (data: FileUploadInput["data"]): Promise<Uint8Array> => {
@@ -484,15 +538,56 @@ const normalizeBatchJob = (json: any): BatchJob => ({
   providerMetadata: json
 });
 
-const normalizeInteraction = (json: any) => ({
-  id: json.id ?? json.name ?? "",
-  name: json.name,
-  model: json.model,
-  status: json.status,
-  outputs: json.outputs,
-  rawResponse: json,
-  providerMetadata: json
-});
+const normalizeInteractionUsage = (usage: any) =>
+  usage && typeof usage === "object"
+    ? {
+        inputTokens: usage.total_input_tokens ?? usage.prompt_tokens ?? usage.inputTokens,
+        cachedInputTokens: usage.total_cached_tokens ?? usage.cached_input_tokens ?? usage.cachedInputTokens,
+        outputTokens: usage.total_output_tokens ?? usage.completion_tokens ?? usage.outputTokens,
+        reasoningTokens: usage.total_thought_tokens ?? usage.reasoning_tokens ?? usage.reasoningTokens,
+        totalTokens: usage.total_tokens ?? usage.totalTokens
+      }
+    : undefined;
+
+const interactionContent = (step: any): InteractionContent[] =>
+  Array.isArray(step?.content) ? step.content.filter((content: unknown) => content && typeof content === "object") : [];
+
+const normalizeInteraction = (json: any): Interaction => {
+  const steps = Array.isArray(json.steps) ? json.steps : undefined;
+  const latestModelOutput = steps?.slice().reverse().find((step: any) => step?.type === "model_output");
+  const latestContent = interactionContent(latestModelOutput);
+  const derivedOutputs = latestContent.length
+    ? latestContent
+    : steps?.filter((step: any) => step?.type === "function_call");
+  const text = latestContent
+    .filter((content) => content.type === "text" && typeof content.text === "string")
+    .map((content) => content.text)
+    .join("");
+  const findOutput = (type: string) => latestContent.slice().reverse().find((content) => content.type === type);
+
+  return {
+    id: json.id ?? json.name ?? "",
+    name: json.name,
+    model: json.model,
+    agent: json.agent,
+    status: json.status,
+    object: json.object,
+    createTime: json.created ?? json.createTime,
+    updateTime: json.updated ?? json.updateTime,
+    previousInteractionId: json.previous_interaction_id ?? json.previousInteractionId,
+    environmentId: json.environment_id ?? json.environmentId,
+    steps,
+    outputs: Array.isArray(json.outputs) ? json.outputs : derivedOutputs,
+    outputText: json.output_text ?? json.outputText ?? (text || undefined),
+    outputImage: json.output_image ?? json.outputImage ?? findOutput("image"),
+    outputAudio: json.output_audio ?? json.outputAudio ?? findOutput("audio"),
+    outputVideo: json.output_video ?? json.outputVideo ?? findOutput("video"),
+    usage: normalizeInteractionUsage(json.usage),
+    error: json.error,
+    rawResponse: json,
+    providerMetadata: json
+  };
+};
 
 const normalizeOperation = (json: any): PredictionOperation => ({
   name: json.name ?? "",
@@ -681,43 +776,81 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
       })()
     : undefined;
 
-const isGeminiComputerUseTool = (tool: AnyToolDefinition): tool is HostedToolDefinition =>
-  isHostedToolDefinition(tool) &&
-  (tool.toolClass === "computer-use" || tool.type === "computerUse" || tool.type === "computer_use");
+const interactionHostedToolTypes: Record<string, string> = {
+  googleSearch: "google_search",
+  google_search: "google_search",
+  googleMaps: "google_maps",
+  google_maps: "google_maps",
+  urlContext: "url_context",
+  url_context: "url_context",
+  fileSearch: "file_search",
+  file_search: "file_search",
+  codeExecution: "code_execution",
+  code_execution: "code_execution",
+  computerUse: "computer_use",
+  computer_use: "computer_use"
+};
 
-const mapInteractionComputerUseTool = (tool: HostedToolDefinition) => {
-  const config = tool.config && typeof tool.config === "object" ? { ...(tool.config as Record<string, unknown>) } : {};
-  const screen = config.screen;
-  delete config.screen;
+const interactionConfigKey = (key: string) => key.replace(/[A-Z]/g, (character) => `_${character.toLowerCase()}`);
+
+const mapInteractionConfigValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(mapInteractionConfigValue);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, nestedValue]) => [
+      interactionConfigKey(key),
+      mapInteractionConfigValue(nestedValue)
+    ])
+  );
+};
+
+const mapInteractionHostedTool = (tool: HostedToolDefinition) => {
+  if (tool.provider && tool.provider !== "gemini") {
+    throw new UnsupportedFeatureError(
+      `Provider "gemini" does not support hosted tools declared for provider "${tool.provider}".`
+    );
+  }
+
+  const type = interactionHostedToolTypes[tool.type];
+  if (!type) {
+    throw new UnsupportedFeatureError(
+      `Provider "gemini" does not support hosted tool type "${tool.type}" through the Interactions API.`
+    );
+  }
+
+  const rawConfig = tool.config && typeof tool.config === "object"
+    ? { ...(tool.config as Record<string, unknown>) }
+    : {};
+  if (type === "computer_use" && rawConfig.environment === undefined && typeof rawConfig.screen === "string") {
+    rawConfig.environment = rawConfig.screen;
+  }
+  delete rawConfig.screen;
+  delete rawConfig.type;
 
   return {
-    type: "computer_use",
-    ...(typeof config.environment === "string"
-      ? {}
-      : typeof screen === "string"
-        ? { environment: screen }
-        : {}),
-    ...config
+    type,
+    ...(mapInteractionConfigValue(rawConfig) as Record<string, unknown>)
   };
 };
 
 const mapInteractionTools = (tools: ToolSet) => {
-  const generatedContentTools = mapTools(tools);
-  if (!generatedContentTools) {
-    return undefined;
-  }
+  const mapped = Object.values(tools).map((tool) => {
+    if (isCallableToolDefinition(tool)) {
+      return {
+        type: "function",
+        name: tool.name,
+        ...(tool.description ? { description: tool.description } : {}),
+        parameters: toGeminiSchema(toJSONSchema(tool.schema))
+      };
+    }
+    return mapInteractionHostedTool(tool);
+  });
 
-  return Object.values(tools).some(isGeminiComputerUseTool)
-    ? generatedContentTools.map((tool) => {
-        const entries = Object.entries(tool);
-        if (entries.length !== 1 || !["computerUse", "computer_use"].includes(entries[0]?.[0] ?? "")) {
-          return tool;
-        }
-
-        const computerUseTool = Object.values(tools).find(isGeminiComputerUseTool);
-        return computerUseTool ? mapInteractionComputerUseTool(computerUseTool) : tool;
-      })
-    : generatedContentTools;
+  return mapped.length ? mapped : undefined;
 };
 
 const mapToolConfig = (
@@ -962,6 +1095,7 @@ const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
   if ("setupComplete" in payload) {
     return [];
   }
+  const providerMetadata = sanitizeMediaResponse(payload) as Record<string, JsonValue>;
 
   const serverContent =
     typeof payload.serverContent === "object" && payload.serverContent
@@ -988,7 +1122,7 @@ const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
         events.push({
           type: "realtime-text-delta" as const,
           textDelta: typedPart.text,
-          providerMetadata: payload as Record<string, JsonValue>
+          providerMetadata
         });
       }
       const inline =
@@ -1000,9 +1134,9 @@ const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
       if (inline && typeof inline.data === "string" && inline.data) {
         events.push({
           type: "realtime-audio-output" as const,
-          audio: Buffer.from(inline.data, "base64"),
+          audio: decodeMedia(inline.data, "realtime"),
           mediaType: typeof inline.mimeType === "string" ? inline.mimeType : typeof inline.mime_type === "string" ? inline.mime_type : "audio/pcm",
-          providerMetadata: payload as Record<string, JsonValue>
+          providerMetadata
         });
       }
       if (typedPart.functionCall && typeof typedPart.functionCall === "object") {
@@ -1030,7 +1164,7 @@ const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
         text: inputTranscription.text,
         role: "user" as const,
         isFinal: Boolean(serverContent.turnComplete ?? serverContent.turn_complete),
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       });
     }
 
@@ -1046,7 +1180,7 @@ const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
         text: outputTranscription.text,
         role: "assistant" as const,
         isFinal: Boolean(serverContent.turnComplete ?? serverContent.turn_complete),
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       });
     }
 
@@ -1054,14 +1188,14 @@ const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
       events.push({
         type: "realtime-response-complete" as const,
         reason: "generation-complete",
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       });
     }
     if (serverContent.turnComplete || serverContent.turn_complete) {
       events.push({
         type: "realtime-response-complete" as const,
         reason: "turn-complete",
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       });
     }
 
@@ -1109,7 +1243,7 @@ const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
               ? sessionResumption.new_handle
               : undefined,
         resumable: typeof sessionResumption.resumable === "boolean" ? sessionResumption.resumable : undefined,
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       }
     ];
   }
@@ -1130,7 +1264,7 @@ const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
             : typeof goAway.time_left_ms === "number"
               ? goAway.time_left_ms
               : undefined,
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       }
     ];
   }
@@ -1140,7 +1274,7 @@ const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
       {
         type: "realtime-end" as const,
         reason: "error",
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       }
     ];
   }
@@ -1718,6 +1852,12 @@ class GeminiInteractionsClient implements InteractionsClient {
       input: input.input,
       ...(input.previousInteractionId ? { previous_interaction_id: input.previousInteractionId } : {}),
       ...(tools ? { tools: mapInteractionTools(tools) } : {}),
+      ...(input.systemInstruction ? { system_instruction: input.systemInstruction } : {}),
+      ...(input.responseFormat !== undefined ? { response_format: input.responseFormat } : {}),
+      ...(input.generationConfig !== undefined ? { generation_config: input.generationConfig } : {}),
+      ...(input.agentConfig !== undefined ? { agent_config: input.agentConfig } : {}),
+      ...(input.environment !== undefined ? { environment: input.environment } : {}),
+      ...(input.labels !== undefined ? { labels: input.labels } : {}),
       ...(input.background !== undefined ? { background: input.background } : {}),
       ...(input.store !== undefined ? { store: input.store } : {}),
       ...(stream ? { stream: true } : {}),
@@ -1754,41 +1894,223 @@ class GeminiInteractionsClient implements InteractionsClient {
     }
   }
 
-  async stream(input: InteractionCreateInput): Promise<AsyncIterable<StreamEvent>> {
+  async cancel(input: InteractionCancelInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.url(`interactions/${input.id}/cancel`), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal
+          }),
+        input
+      );
+      return normalizeInteraction(await parseJson(response));
+    } finally {
+      cleanup();
+    }
+  }
+
+  async delete(input: InteractionDeleteInput) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () => this.fetcher(this.url(`interactions/${input.id}`), { method: "DELETE", signal }),
+        input
+      );
+      if (!response.ok) {
+        await parseJson(response);
+      }
+      const text = await response.text();
+      return {
+        id: input.id,
+        rawResponse: text ? JSON.parse(text) : undefined
+      };
+    } finally {
+      cleanup();
+    }
+  }
+
+  private async requestInteractionStream(
+    input: InteractionCreateInput | InteractionResumeInput
+  ): Promise<AsyncIterable<StreamEvent>> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const resumeInput = "id" in input ? input : undefined;
     const response = await withRetry(
       () =>
-        this.fetcher(this.url("interactions", { alt: "sse" }), {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          signal,
-          body: JSON.stringify(this.body(input, true))
-        }),
+        resumeInput
+          ? this.fetcher(
+              this.url(`interactions/${resumeInput.id}`, {
+                stream: "true",
+                last_event_id: resumeInput.lastEventId
+              }),
+              {
+                method: "GET",
+                headers: { accept: "text/event-stream" },
+                signal
+              }
+            )
+          : this.fetcher(this.url("interactions"), {
+              method: "POST",
+              headers: {
+                accept: "text/event-stream",
+                "content-type": "application/json"
+              },
+              signal,
+              body: JSON.stringify(this.body(input as InteractionCreateInput, true))
+            }),
       input
     );
 
     return (async function* () {
+      const functionCalls = new Map<
+        number,
+        { id?: string; name?: string; arguments?: JsonValue; partialArguments: string }
+      >();
+      let finished = false;
       try {
         for await (const event of streamSSE(response)) {
           const json = JSON.parse(event.data);
-          const text =
-            json.text ??
-            json.delta?.text ??
-            json.output?.text ??
-            (Array.isArray(json.outputs) ? json.outputs.find((output: any) => typeof output.text === "string")?.text : undefined);
-          if (typeof text === "string" && text) {
-            yield { type: "text-delta", textDelta: text } satisfies StreamEvent;
-          } else {
+          const eventType = json.event_type ?? json.type ?? event.event;
+          if (eventType === "error") {
+            const providerError = json.error;
+            const providerMessage = typeof providerError?.message === "string" ? providerError.message : undefined;
+            const providerStatus = typeof providerError?.code === "number" && providerError.code >= 400 && providerError.code <= 599
+              ? providerError.code
+              : 500;
+            throw new ProviderHTTPError(
+              providerMessage
+                ? `Gemini Interactions stream failed: ${providerMessage}`
+                : "Gemini Interactions stream failed.",
+              providerStatus,
+              { responseBody: JSON.stringify(json) }
+            );
+          }
+          const index = typeof json.index === "number" ? json.index : -1;
+          let normalized = false;
+
+          if (eventType === "step.start") {
+            const step = json.step;
+            if (step?.type === "function_call" && index >= 0) {
+              functionCalls.set(index, {
+                id: step.id,
+                name: step.name,
+                arguments: step.arguments,
+                partialArguments: ""
+              });
+            }
+            for (const content of interactionContent(step)) {
+              if (content.type === "text" && typeof content.text === "string" && content.text) {
+                yield { type: "text-delta", textDelta: content.text } satisfies StreamEvent;
+                normalized = true;
+              }
+            }
+          } else if (eventType === "step.delta") {
+            const delta = json.delta;
+            if (delta?.type === "text" && typeof delta.text === "string" && delta.text) {
+              yield { type: "text-delta", textDelta: delta.text } satisfies StreamEvent;
+              normalized = true;
+            } else if (delta?.type === "arguments" && index >= 0) {
+              const call = functionCalls.get(index);
+              if (call && typeof delta.partial_arguments === "string") {
+                call.partialArguments += delta.partial_arguments;
+              }
+            }
+          } else if (eventType === "step.stop" && index >= 0) {
+            const call = functionCalls.get(index);
+            if (call?.name) {
+              let argumentsValue = call.arguments;
+              if (argumentsValue === undefined && call.partialArguments) {
+                try {
+                  argumentsValue = JSON.parse(call.partialArguments) as JsonValue;
+                } catch {
+                  // Preserve malformed or partial provider arguments as provider data below.
+                }
+              }
+              if (argumentsValue !== undefined) {
+                yield {
+                  type: "tool-call",
+                  toolCall: {
+                    id: call.id ?? `interaction-step-${index}`,
+                    name: call.name,
+                    input: argumentsValue,
+                    providerMetadata: { interactionStepIndex: index }
+                  }
+                } satisfies StreamEvent;
+                normalized = true;
+              }
+              functionCalls.delete(index);
+            }
+          }
+
+          if (!normalized && !["step.start", "step.delta", "step.stop"].includes(eventType ?? "")) {
+            const legacyText =
+              json.text ??
+              json.delta?.text ??
+              json.output?.text ??
+              (Array.isArray(json.outputs)
+                ? json.outputs.find((output: any) => typeof output.text === "string")?.text
+                : undefined);
+            if (typeof legacyText === "string" && legacyText) {
+              yield { type: "text-delta", textDelta: legacyText } satisfies StreamEvent;
+              normalized = true;
+            }
+          }
+
+          const emittedProviderEvent = typeof json.event_id === "string" && json.event_id.length > 0;
+          if (emittedProviderEvent) {
             yield { type: "provider-data", provider: "gemini", data: json } satisfies StreamEvent;
           }
-          if (json.status === "completed" || json.done) {
-            yield { type: "finish", finishReason: "stop" } satisfies StreamEvent;
+
+          if (!normalized && !emittedProviderEvent) {
+            yield { type: "provider-data", provider: "gemini", data: json } satisfies StreamEvent;
+          }
+
+          const status = json.interaction?.status ?? json.status;
+          const terminalStatus = eventType === "interaction.completed" ? status ?? "completed" : status;
+          const isStatusEvent = eventType === "interaction.status_update" || eventType === "interaction.requires_action";
+          const isLegacyTerminalStatus = !eventType && [
+            "requires_action",
+            "completed",
+            "failed",
+            "cancelled",
+            "incomplete",
+            "budget_exceeded"
+          ].includes(status);
+          if (!finished && (eventType === "interaction.completed" || isStatusEvent || isLegacyTerminalStatus || json.done)) {
+            const finishReason = terminalStatus === "requires_action"
+              ? "tool-calls"
+              : terminalStatus === "incomplete" || terminalStatus === "budget_exceeded"
+                ? "length"
+                : terminalStatus === "failed" || terminalStatus === "cancelled"
+                  ? "error"
+                  : terminalStatus === "completed" || json.done
+                    ? "stop"
+                    : undefined;
+            if (finishReason) {
+              finished = true;
+              yield {
+                type: "finish",
+                finishReason,
+                providerFinishReason: terminalStatus,
+                usage: normalizeInteractionUsage(json.interaction?.usage ?? json.metadata?.total_usage ?? json.usage)
+              } satisfies StreamEvent;
+            }
           }
         }
       } finally {
         cleanup();
       }
     })();
+  }
+
+  async stream(input: InteractionCreateInput): Promise<AsyncIterable<StreamEvent>> {
+    return this.requestInteractionStream(input);
+  }
+
+  async resume(input: InteractionResumeInput): Promise<AsyncIterable<StreamEvent>> {
+    return this.requestInteractionStream(input);
   }
 }
 
@@ -2194,13 +2516,72 @@ class GeminiSpeechModel implements SpeechModel {
       const json = await parseJson(response);
       const audioPart = json.candidates?.[0]?.content?.parts?.find((part: any) => part.inlineData?.data);
       return {
-        audio: Uint8Array.from(Buffer.from(audioPart?.inlineData?.data ?? "", "base64")),
+        audio: decodeMedia(audioPart?.inlineData?.data ?? "", "models.generateContent"),
         mediaType: audioPart?.inlineData?.mimeType ?? "audio/wav",
-        rawResponse: json
+        rawResponse: sanitizeMediaResponse(json)
       };
     } finally {
       cleanup();
     }
+  }
+
+  async streamSpeech(input: {
+    input: string;
+    voice?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<AsyncIterable<SpeechResult>> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const response = await withRetry(
+      () =>
+        this.fetcher(`${this.baseURL}/models/${this.modelId}:streamGenerateContent?alt=sse&key=${this.apiKey}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          signal,
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: input.input }] }],
+            generationConfig: {
+              responseModalities: ["AUDIO"],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: input.voice ?? "Kore"
+                  }
+                }
+              }
+            },
+            ...input.providerOptions
+          })
+        }),
+      input
+    );
+
+    return (async function* () {
+      try {
+        for await (const event of streamSSE(response)) {
+          if (event.data === "[DONE]") {
+            continue;
+          }
+          const json = JSON.parse(event.data);
+          const parts = json.candidates?.[0]?.content?.parts ?? [];
+          for (const part of parts) {
+            if (typeof part.inlineData?.data !== "string") {
+              continue;
+            }
+            yield {
+              audio: decodeMedia(part.inlineData.data, "models.streamGenerateContent"),
+              mediaType: part.inlineData.mimeType ?? "audio/pcm",
+              rawResponse: sanitizeMediaResponse(json)
+            } satisfies SpeechResult;
+          }
+        }
+      } finally {
+        cleanup();
+      }
+    })();
   }
 }
 
@@ -2270,11 +2651,11 @@ class GeminiImageGenerationModel implements ImageGenerationModel {
       );
 
       const json = await parseJson(response);
-      const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "image/png");
+      const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "image/png", "models.generateContent");
       return {
         images: media,
         text,
-        rawResponse: json
+        rawResponse: sanitizeMediaResponse(json)
       };
     } finally {
       cleanup();
@@ -2336,11 +2717,11 @@ class GeminiMusicGenerationModel implements MusicGenerationModel {
       );
 
       const json = await parseJson(response);
-      const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "audio/mpeg");
+      const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "audio/mpeg", "models.generateContent");
       return {
         audio: media,
         text,
-        rawResponse: json
+        rawResponse: sanitizeMediaResponse(json)
       };
     } finally {
       cleanup();
@@ -2426,9 +2807,9 @@ class GeminiVideoGenerationModel implements VideoGenerationModel {
       }
 
       return {
-        videos: collectVideos(operation),
+        videos: collectVideos(operation, "models.predictLongRunning"),
         operationName,
-        rawResponse: operation
+        rawResponse: sanitizeMediaResponse(operation)
       };
     } finally {
       cleanup();

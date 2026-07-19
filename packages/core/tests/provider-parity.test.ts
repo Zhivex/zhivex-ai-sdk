@@ -78,7 +78,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     model: openai("gpt-4o-mini"),
     summary: {
       reasoningSummary: "`effort`",
-      hostedToolSummary: "model-dependent Responses hosted tools, remote MCP, shell/apply patch harness"
+      hostedToolSummary: "model-dependent Responses hosted tools including image generation, remote MCP, shell/apply patch harness"
     }
   },
   {
@@ -145,17 +145,17 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     provider: "Qwen",
     model: qwen("qwen-plus"),
     summary: {
-      structuredOutputSummary: "native",
-      reasoningSummary: "model-dependent",
-      hostedToolSummary: "Responses web search, web extractor, code interpreter, file search, remote MCP, image search; Cloud files, batch, media, speech, realtime"
+      structuredOutputSummary: "JSON object + schema prompt",
+      reasoningSummary: "Responses effort / Chat budget",
+      hostedToolSummary: "Responses hosted tools; Cloud files, batch, multimodal embeddings, rerank, ASR, TTS, image, video, realtime"
     }
   },
   {
     provider: "Kimi",
-    model: kimi("kimi-k2.5"),
+    model: kimi("kimi-k3"),
     summary: {
       structuredOutputSummary: "native",
-      reasoningSummary: "model-dependent",
+      reasoningSummary: "K3 `max`; K2.x model-dependent",
       hostedToolSummary: "Formula tools via Chat Completions"
     }
   },
@@ -164,7 +164,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     model: deepseek("deepseek-v4-flash"),
     summary: {
       structuredOutputSummary: "JSON object",
-      reasoningSummary: "`effort`",
+      reasoningSummary: "`none` / `high` / `max`",
       hostedToolSummary: "no"
     }
   },
@@ -214,8 +214,8 @@ describe("provider parity documentation", () => {
   it("keeps the README compatibility matrix aligned with runtime provider metadata", async () => {
     const rendered = [
       [
-        "| OpenAI | yes | yes | yes | native | yes | no | no | no | no | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |",
-        "| OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent; GPT-5.6 `max` / `pro` / context | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |"
+        "| OpenAI | yes | yes | yes | native | yes | no | no | no | no | `effort` | yes | model-dependent Responses hosted tools including image generation, remote MCP, shell/apply patch harness | Tier A |",
+        "| OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent; GPT-5.6 `max` / `pro` / context | yes | model-dependent Responses hosted tools including image generation, remote MCP, shell/apply patch harness | Tier A |"
       ],
       [
         "| Azure OpenAI | yes | yes | yes | native | yes | no | no | no | no | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |",
@@ -226,12 +226,16 @@ describe("provider parity documentation", () => {
         "| Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B |"
       ],
       [
-        "| Vertex | yes | yes | yes | native | yes | no | no | no | no | model-dependent | yes | native | Tier B |",
+        "| Vertex | yes | yes | yes | native | yes | yes | no | no | no | model-dependent | yes | native | Tier B |",
         "| Vertex | yes | yes | yes | native | yes | yes | yes | yes | no | model-dependent | yes | native | Tier B |"
       ],
       [
-        "| Kimi | yes | yes | yes | native | no | no | no | no | no | model-dependent | no | Formula tools via Chat Completions | Tier C |",
-        "| Kimi | yes | yes | yes | native | no | no | no | no | no | model-dependent | Formula tool | Formula tools via Chat Completions | Tier C |"
+        "| Qwen | yes | yes | yes | JSON object + schema prompt | yes | no | no | no | no | Responses effort / Chat budget | yes | Responses hosted tools; Cloud files, batch, multimodal embeddings, rerank, ASR, TTS, image, video, realtime | Tier B |",
+        "| Qwen | yes | yes | yes | JSON object + schema prompt | yes | model-dependent | yes | yes | no | Responses effort / Chat budget | yes | Responses hosted tools; Cloud files, batch, multimodal embeddings, rerank, ASR, TTS, image, video, realtime | Tier B |"
+      ],
+      [
+        "| Kimi | yes | yes | yes | native | no | no | no | no | no | K3 `max`; K2.x model-dependent | no | Formula tools via Chat Completions | Tier C |",
+        "| Kimi | yes | yes | yes | native | no | no | no | no | no | K3 `max`; K2.x model-dependent | Formula tool | Formula tools via Chat Completions | Tier C |"
       ],
       [
         "| Bedrock | yes | yes | yes | native | no | no | no | no | no | endpoint-dependent | no | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C |",
@@ -257,7 +261,7 @@ describe("provider parity documentation", () => {
       qwen("qwen-plus"),
       deepseek("deepseek-v4-flash"),
       openrouter("openai/gpt-4o-mini"),
-      kimi("kimi-k2.5"),
+      kimi("kimi-k3"),
       ollama("llama3.2"),
       bedrockConverse("anthropic.claude-3-5-sonnet"),
       bedrockOpenAI("openai.gpt-oss-120b-1:0")

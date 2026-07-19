@@ -1,9 +1,17 @@
 import { toJSONSchema, z } from "zod";
 
 import {
+  createOpenAIImageGenerationModel,
+  normalizeOpenAIImageGenerationCall,
+  normalizeOpenAIImageGenerationPartialImage,
+  type OpenAIImageOutputFormat
+} from "./image-generation.js";
+
+import {
   CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
+  ProviderResponseTooLargeError,
   readBodyWithLimit,
   readErrorBodyWithLimit,
   readJsonWithLimit,
@@ -50,9 +58,49 @@ import {
   type SpeechResult,
   type StreamEvent,
   type ToolDefinition,
+  type ToolExecutionResult,
   type TranscriptionModel,
   type TranscriptionResult
 } from "@zhivex-ai/core";
+
+const MIB = 1024 * 1024;
+const DEFAULT_HOSTED_IMAGE_EVENT_BYTES = 32 * MIB;
+const DEFAULT_HOSTED_IMAGE_TOTAL_BYTES = 128 * MIB;
+const HOSTED_IMAGE_EVENT_JSON_OVERHEAD_CHARS = MIB;
+
+export interface OpenAIResponseLimits extends AudioResponseLimits {
+  /** Maximum decoded bytes in one hosted image partial or final SSE event. Defaults to 32 MiB. */
+  hostedImageEventBytes?: number;
+  /** Maximum decoded hosted image bytes across one Responses SSE stream. Defaults to 128 MiB. */
+  hostedImageTotalBytes?: number;
+}
+
+type ResolvedOpenAIResponseLimits = ReturnType<typeof resolveAudioResponseLimits> & {
+  hostedImageEventBytes: number;
+  hostedImageTotalBytes: number;
+};
+
+const normalizeOpenAIResponseLimit = (value: number | undefined, fallback: number, name: string) => {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
+    throw new ConfigurationError(`The "${name}" response limit must be a positive safe integer.`);
+  }
+  return resolved;
+};
+
+const resolveOpenAIResponseLimits = (limits: OpenAIResponseLimits = {}): ResolvedOpenAIResponseLimits => ({
+  ...resolveAudioResponseLimits(limits),
+  hostedImageEventBytes: normalizeOpenAIResponseLimit(
+    limits.hostedImageEventBytes,
+    DEFAULT_HOSTED_IMAGE_EVENT_BYTES,
+    "hostedImageEventBytes"
+  ),
+  hostedImageTotalBytes: normalizeOpenAIResponseLimit(
+    limits.hostedImageTotalBytes,
+    DEFAULT_HOSTED_IMAGE_TOTAL_BYTES,
+    "hostedImageTotalBytes"
+  )
+});
 
 export interface OpenAIProviderOptions {
   apiKey?: string;
@@ -61,7 +109,21 @@ export interface OpenAIProviderOptions {
   realtimeURL?: string;
   browserTokenURL?: string;
   realtimeConnectionFactory?: RealtimeConnectionFactory;
-  responseLimits?: AudioResponseLimits;
+  responseLimits?: OpenAIResponseLimits;
+}
+
+export interface OpenAIRealtimeProviderOptions {
+  /** Additional headers for the Realtime connection or client-secret request. */
+  headers?: Record<string, string>;
+  /** Stable, privacy-preserving end-user identifier sent as OpenAI-Safety-Identifier. */
+  safety_identifier?: string;
+  /** Override the WebSocket URL for this session. */
+  realtime_url?: string;
+  /** Additional query parameters for the Realtime WebSocket URL. */
+  realtime_query?: Record<string, string | number | boolean>;
+  /** Client-secret expiration settings passed at the request top level. */
+  expires_after?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 export interface OpenAIWebSearchToolConfig {
@@ -347,6 +409,41 @@ export interface OpenAIMcpListTools {
   tools?: JsonValue;
 }
 
+export const openAIRealtimeMcpMetadataKey = "openai.realtime_mcp";
+
+export interface OpenAIRealtimeMcpMetadata {
+  type: "mcp_list_tools" | "mcp_approval_request" | "mcp_approval_response" | "mcp_call";
+  status:
+    | "in_progress"
+    | "completed"
+    | "failed"
+    | "approval_required"
+    | "approved"
+    | "rejected"
+    | "arguments_delta"
+    | "arguments_done";
+  item_id?: string;
+  approval_request_id?: string;
+  server_label?: string;
+  name?: string;
+  approve?: boolean;
+  reason?: string;
+  arguments?: JsonValue;
+  delta?: JsonValue;
+  tools?: JsonValue;
+  output?: JsonValue;
+  error?: JsonValue;
+  raw_event?: JsonValue;
+}
+
+export interface OpenAIRealtimeMcpApprovalResultOptions {
+  approvalRequestId: string;
+  name: string;
+  approve: boolean;
+  reason?: string;
+  itemId?: string;
+}
+
 export interface OpenAIPromptCacheBreakpointData {
   type: "prompt_cache_breakpoint";
   mode: "explicit";
@@ -383,7 +480,13 @@ export interface OpenAILanguageModelOptions {
   multi_agent?: OpenAIMultiAgentOptions;
   include?: string[];
   store?: boolean;
-  tool_choice?: "none" | "auto" | "required" | { type: "function"; function: { name: string } };
+  tool_choice?:
+    | "none"
+    | "auto"
+    | "required"
+    | { type: "function"; function: { name: string } }
+    | { type: "function"; name: string }
+    | { type: "image_generation" };
   [key: string]: unknown;
 }
 
@@ -531,19 +634,45 @@ const inferOpenAIRealtimeMode = (modelId: string, mode?: RealtimeSessionConfig["
   return "conversation";
 };
 
+const isOpenAIRealtimeReasoningModel = (modelId: string) =>
+  /^gpt-realtime-2(?:\.1(?:-mini)?)?(?:-\d{4}-\d{2}-\d{2}|@.*)?$/.test(modelId);
+
 const openAIRealtimeSupportsImageInput = (modelId: string) =>
-  /^(?:gpt-realtime|gpt-realtime-mini|gpt-realtime-1\.5|gpt-realtime-2)(?:-\d{4}-\d{2}-\d{2}|@.*)?$/.test(modelId);
+  /^(?:gpt-realtime|gpt-realtime-mini|gpt-realtime-1\.5|gpt-realtime-2(?:\.1(?:-mini)?)?)(?:-\d{4}-\d{2}-\d{2}|@.*)?$/.test(
+    modelId
+  );
 
 const realtimeCapabilities = (modelId: string): ModelCapabilities => ({
   ...capabilities,
   streaming: false,
+  structuredOutput: false,
+  jsonMode: false,
+  embeddings: false,
   audioInput: true,
   audioOutput: !isOpenAIRealtimeTranscriptionModel(modelId),
   tools: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
   toolChoice: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
   parallelToolCalls: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
   vision: openAIRealtimeSupportsImageInput(modelId),
-  reasoning: /^gpt-realtime-2(?:[-@]|$)/.test(modelId),
+  reasoning: isOpenAIRealtimeReasoningModel(modelId),
+  webSearch: false,
+  agentCapabilities: {
+    ...capabilities.agentCapabilities!,
+    supportTier:
+      isOpenAIRealtimeTranslationModel(modelId) || isOpenAIRealtimeTranscriptionModel(modelId) ? "tier-c" : "tier-a",
+    toolChoiceNone: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
+    approvalRequests: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
+    computerUse: false,
+    codeExecution: false,
+    shell: false,
+    applyPatch: false,
+    toolSearch: false,
+    skills: false,
+    toolsets: false
+  },
   realtime: {
     sessions: true,
     audioInput: true,
@@ -558,6 +687,38 @@ const jsonHeaders = (apiKey: string) => ({
   "content-type": "application/json",
   authorization: `Bearer ${apiKey}`
 });
+
+const resolveOpenAIRealtimeHeaders = (
+  apiKey: string,
+  providerOptions: Record<string, unknown> | undefined,
+  includeContentType = false
+) => {
+  const rawHeaders = providerOptions?.headers;
+  const customHeaders =
+    rawHeaders && typeof rawHeaders === "object" && !Array.isArray(rawHeaders)
+      ? { ...(rawHeaders as Record<string, string>) }
+      : {};
+  const safetyIdentifier = providerOptions?.safety_identifier;
+
+  for (const key of Object.keys(customHeaders)) {
+    const normalizedKey = key.toLowerCase();
+    if (
+      normalizedKey === "authorization" ||
+      normalizedKey === "content-type" ||
+      (typeof safetyIdentifier === "string" && safetyIdentifier && normalizedKey === "openai-safety-identifier")
+    ) {
+      delete customHeaders[key];
+    }
+  }
+
+  return {
+    ...(includeContentType ? jsonHeaders(apiKey) : { authorization: `Bearer ${apiKey}` }),
+    ...customHeaders,
+    ...(typeof safetyIdentifier === "string" && safetyIdentifier
+      ? { "OpenAI-Safety-Identifier": safetyIdentifier }
+      : {})
+  };
+};
 
 const resolveOpenAILanguageRequestOptions = (providerOptions: Record<string, unknown> | undefined, apiKey: string) => {
   const bodyOptions = { ...(providerOptions ?? {}) } as OpenAILanguageModelOptions;
@@ -827,6 +988,32 @@ const localResponsesTools = (tools: ModelGenerateInput["tools"]) =>
       .filter((entry): entry is readonly [string, string] => Boolean(entry[0]))
   );
 
+const responsesImageGenerationConfig = (
+  tools: ModelGenerateInput["tools"],
+  limits?: Pick<ResolvedOpenAIResponseLimits, "hostedImageEventBytes" | "hostedImageTotalBytes">
+) => {
+  const definition = Object.values(tools ?? {}).find(
+    (tool) => isHostedToolDefinition(tool) && tool.provider === "openai" && tool.type === "image_generation"
+  );
+  if (!definition || !isHostedToolDefinition(definition)) {
+    return undefined;
+  }
+  const outputFormat =
+    definition.config && typeof definition.config === "object" &&
+    ["png", "jpeg", "webp"].includes(String((definition.config as Record<string, unknown>).output_format))
+      ? ((definition.config as Record<string, unknown>).output_format as OpenAIImageOutputFormat)
+      : "png";
+  return {
+    outputFormat,
+    ...(limits
+      ? {
+          eventMaxBytes: limits.hostedImageEventBytes,
+          totalMaxBytes: limits.hostedImageTotalBytes
+        }
+      : {})
+  };
+};
+
 const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInput["tools"]) => {
   const currentCapabilities = modelCapabilities(modelId).agentCapabilities;
   for (const definition of Object.values(tools ?? {})) {
@@ -886,6 +1073,37 @@ const mapTools = (input: ModelGenerateInput["tools"]) =>
         if (tool.provider && tool.provider !== "openai") {
           throw new UnsupportedFeatureError(
             `Provider "openai" does not support hosted tools declared for provider "${tool.provider}".`
+          );
+        }
+
+        return {
+          type: tool.type,
+          ...(tool.config && typeof tool.config === "object" ? tool.config : {})
+        };
+      })
+    : undefined;
+
+const mapRealtimeTools = (input: ModelGenerateInput["tools"]) =>
+  input
+    ? Object.values(input).map((tool) => {
+        if (isCallableToolDefinition(tool)) {
+          return {
+            type: "function",
+            name: tool.name,
+            description: tool.description,
+            parameters: toJSONSchema(tool.schema)
+          };
+        }
+
+        if (tool.provider && tool.provider !== "openai") {
+          throw new UnsupportedFeatureError(
+            `Provider "openai" does not support hosted tools declared for provider "${tool.provider}".`
+          );
+        }
+
+        if (tool.type !== "mcp") {
+          throw new UnsupportedFeatureError(
+            `Provider "openai" Realtime does not support the hosted tool type "${tool.type}". Use function or MCP tools.`
           );
         }
 
@@ -957,13 +1175,25 @@ const mapResponsesToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) =>
   };
 };
 
+const mapRealtimeToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
+  if (!toolChoice || typeof toolChoice === "string") {
+    return toolChoice;
+  }
+  return {
+    type: "function",
+    name: toolChoice.toolName
+  };
+};
+
 const mapRealtimeProviderOptions = (providerOptions: Record<string, unknown> | undefined) => {
   if (!providerOptions) {
     return {};
   }
 
   return Object.fromEntries(
-    Object.entries(providerOptions).filter(([key]) => !["headers", "realtime_url", "realtime_query", "expires_after"].includes(key))
+    Object.entries(providerOptions).filter(
+      ([key]) => !["headers", "safety_identifier", "realtime_url", "realtime_query", "expires_after"].includes(key)
+    )
   );
 };
 
@@ -977,7 +1207,7 @@ const mapRealtimeAudioFormat = (mediaType: string | undefined, sampleRateHz: num
 
 const mapRealtimeSessionConfig = (config: RealtimeSessionConfig, modelId?: string) => {
   const mode = inferOpenAIRealtimeMode(modelId ?? "", config.mode);
-  const tools = mapTools(toToolSet(config.tools));
+  const tools = mapRealtimeTools(toToolSet(config.tools));
   const audio = {
     input: {
       format: mapRealtimeAudioFormat(config.inputAudioMediaType, config.inputSampleRateHz),
@@ -1009,7 +1239,7 @@ const mapRealtimeSessionConfig = (config: RealtimeSessionConfig, modelId?: strin
     instructions: config.translation?.instructions ?? config.instructions,
     output_modalities: mode === "transcription" ? undefined : config.outputAudioMediaType || config.voice || mode === "translation" ? ["audio"] : ["text"],
     tools: mode === "conversation" ? tools : undefined,
-    tool_choice: mode === "conversation" && config.toolChoice ? mapToolChoice(config.toolChoice) : undefined,
+    tool_choice: mode === "conversation" && config.toolChoice ? mapRealtimeToolChoice(config.toolChoice) : undefined,
     reasoning:
       mode === "conversation" && config.reasoning?.effort
         ? {
@@ -1060,10 +1290,130 @@ const openAIRealtimeURL = (
 
 const parseRealtimeProviderMetadata = (payload: Record<string, unknown>) => payload as Record<string, JsonValue>;
 
+const parseRealtimeJsonValue = (value: unknown): JsonValue => {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as JsonValue;
+    } catch {
+      return value;
+    }
+  }
+  return value == null ? null : (value as JsonValue);
+};
+
+const openAIRealtimeMcpProviderDataEvent = (
+  payload: Record<string, unknown>,
+  data: Record<string, JsonValue>
+) => [
+  {
+    type: "realtime-provider-data" as const,
+    provider: "openai",
+    data: {
+      ...data,
+      raw_event: payload as unknown as JsonValue
+    }
+  }
+];
+
+const openAIRealtimeMcpCommonData = (payload: Record<string, unknown>, item?: Record<string, unknown>) => {
+  const itemId = typeof payload.item_id === "string" ? payload.item_id : typeof item?.id === "string" ? item.id : undefined;
+  const serverLabel =
+    typeof payload.server_label === "string"
+      ? payload.server_label
+      : typeof item?.server_label === "string"
+        ? item.server_label
+        : undefined;
+  const name = typeof payload.name === "string" ? payload.name : typeof item?.name === "string" ? item.name : undefined;
+
+  return {
+    ...(itemId ? { item_id: itemId } : {}),
+    ...(serverLabel ? { server_label: serverLabel } : {}),
+    ...(name ? { name } : {})
+  };
+};
+
 const parseOpenAIRealtimeEvent = (payload: Record<string, unknown>) => {
   const type = String(payload.type ?? "");
   if (type === "session.created" || type === "session.updated") {
     return [];
+  }
+  if (type === "mcp_list_tools.in_progress" || type === "mcp_list_tools.completed" || type === "mcp_list_tools.failed") {
+    const status = type.slice("mcp_list_tools.".length) as "in_progress" | "completed" | "failed";
+    return openAIRealtimeMcpProviderDataEvent(payload, {
+      type: "mcp_list_tools",
+      status,
+      ...openAIRealtimeMcpCommonData(payload),
+      ...(payload.error !== undefined ? { error: parseRealtimeJsonValue(payload.error) } : {})
+    });
+  }
+  if (type === "conversation.item.done") {
+    const item = payload.item && typeof payload.item === "object" ? (payload.item as Record<string, unknown>) : undefined;
+    if (item?.type === "mcp_list_tools") {
+      return openAIRealtimeMcpProviderDataEvent(payload, {
+        type: "mcp_list_tools",
+        status: "completed",
+        ...openAIRealtimeMcpCommonData(payload, item),
+        ...(item.tools !== undefined ? { tools: parseRealtimeJsonValue(item.tools) } : {})
+      });
+    }
+    if (item?.type === "mcp_approval_request") {
+      const approvalRequestId = typeof item.id === "string" ? item.id : undefined;
+      return openAIRealtimeMcpProviderDataEvent(payload, {
+        type: "mcp_approval_request",
+        status: "approval_required",
+        ...openAIRealtimeMcpCommonData(payload, item),
+        ...(approvalRequestId ? { approval_request_id: approvalRequestId } : {}),
+        ...(item.arguments !== undefined ? { arguments: parseRealtimeJsonValue(item.arguments) } : {})
+      });
+    }
+    if (item?.type === "mcp_approval_response") {
+      const approve = item.approve === true;
+      return openAIRealtimeMcpProviderDataEvent(payload, {
+        type: "mcp_approval_response",
+        status: approve ? "approved" : "rejected",
+        approve,
+        ...openAIRealtimeMcpCommonData(payload, item),
+        ...(typeof item.approval_request_id === "string" ? { approval_request_id: item.approval_request_id } : {}),
+        ...(typeof item.reason === "string" ? { reason: item.reason } : {})
+      });
+    }
+  }
+  if (type === "response.mcp_call_arguments.delta" || type === "response.mcp_call_arguments.done") {
+    const isDone = type.endsWith(".done");
+    return openAIRealtimeMcpProviderDataEvent(payload, {
+      type: "mcp_call",
+      status: isDone ? "arguments_done" : "arguments_delta",
+      ...openAIRealtimeMcpCommonData(payload),
+      ...(isDone && payload.arguments !== undefined
+        ? { arguments: parseRealtimeJsonValue(payload.arguments) }
+        : payload.delta !== undefined
+          ? { delta: parseRealtimeJsonValue(payload.delta) }
+          : {})
+    });
+  }
+  if (type === "response.mcp_call.in_progress" || type === "response.mcp_call.completed" || type === "response.mcp_call.failed") {
+    const status = type.slice("response.mcp_call.".length) as "in_progress" | "completed" | "failed";
+    return openAIRealtimeMcpProviderDataEvent(payload, {
+      type: "mcp_call",
+      status,
+      ...openAIRealtimeMcpCommonData(payload),
+      ...(payload.output !== undefined ? { output: parseRealtimeJsonValue(payload.output) } : {}),
+      ...(payload.error !== undefined ? { error: parseRealtimeJsonValue(payload.error) } : {})
+    });
+  }
+  if (type === "response.output_item.done") {
+    const item = payload.item && typeof payload.item === "object" ? (payload.item as Record<string, unknown>) : undefined;
+    if (item?.type === "mcp_call") {
+      return openAIRealtimeMcpProviderDataEvent(payload, {
+        type: "mcp_call",
+        status: item.status === "failed" ? "failed" : "completed",
+        ...openAIRealtimeMcpCommonData(payload, item),
+        ...(item.arguments !== undefined ? { arguments: parseRealtimeJsonValue(item.arguments) } : {}),
+        ...(item.output !== undefined ? { output: parseRealtimeJsonValue(item.output) } : {}),
+        ...(item.error !== undefined ? { error: parseRealtimeJsonValue(item.error) } : {}),
+        ...(typeof item.approval_request_id === "string" ? { approval_request_id: item.approval_request_id } : {})
+      });
+    }
   }
   if (type === "response.text.delta" || type === "response.output_text.delta") {
     return [
@@ -1446,7 +1796,7 @@ const parseResponsesProviderData = (item: unknown) => {
   const typedItem = item as Record<string, unknown>;
   if (
     typeof typedItem.type !== "string" ||
-    ["message", "function_call"].includes(typedItem.type)
+    ["message", "function_call", "image_generation_call"].includes(typedItem.type)
   ) {
     return undefined;
   }
@@ -1727,6 +2077,15 @@ const parseResponsesAssistantMessage = (
   };
 };
 
+const extractResponsesImageOutputs = (
+  response: Record<string, unknown>,
+  outputFormat: OpenAIImageOutputFormat = "png"
+): GeneratedMedia[] =>
+  (Array.isArray(response.output) ? response.output : []).flatMap((item) => {
+    const normalized = normalizeOpenAIImageGenerationCall(item, outputFormat);
+    return normalized?.image ? [normalized.image] : [];
+  });
+
 const normalizeResponsesFinishReason = (
   status: string | undefined,
   hasToolCalls: boolean,
@@ -1796,12 +2155,33 @@ const addTokenUsage = (
 const streamResponses = async function* (
   response: Response,
   multiAgentEnabled = false,
-  localTools: Map<string, string> = new Map()
+  localTools: Map<string, string> = new Map(),
+  imageGeneration?: {
+    outputFormat: OpenAIImageOutputFormat;
+    eventMaxBytes?: number;
+    totalMaxBytes?: number;
+  }
 ): AsyncGenerator<StreamEvent, void, undefined> {
   const toolBuffers = new Map<string, { callId: string; name: string; args: string; caller?: JsonValue; emitted: boolean }>();
   const outputAgents = new Map<number, { agentName?: string }>();
+  const hostedImageEventMaxBytes = imageGeneration?.eventMaxBytes ?? DEFAULT_HOSTED_IMAGE_EVENT_BYTES;
+  const hostedImageTotalMaxBytes = imageGeneration?.totalMaxBytes ?? DEFAULT_HOSTED_IMAGE_TOTAL_BYTES;
+  let hostedImageBytes = 0;
   let sawToolCalls = false;
   let sawRefusal = false;
+
+  const recordHostedImageBytes = (image: GeneratedMedia) => {
+    const receivedBytes = hostedImageBytes + (image.data?.byteLength ?? 0);
+    if (receivedBytes > hostedImageTotalMaxBytes) {
+      throw new ProviderResponseTooLargeError({
+        maxBytes: hostedImageTotalMaxBytes,
+        receivedBytes,
+        provider: "openai",
+        endpoint: "hosted image generation stream"
+      });
+    }
+    hostedImageBytes = receivedBytes;
+  };
 
   const emitToolCall = (key: string) => {
     const toolCall = toolBuffers.get(key);
@@ -1823,13 +2203,40 @@ const streamResponses = async function* (
     } satisfies StreamEvent;
   };
 
-  for await (const event of streamSSE(response)) {
+  const maxHostedImageEventChars = Math.min(
+    Number.MAX_SAFE_INTEGER,
+    4 * Math.ceil(hostedImageEventMaxBytes / 3) + HOSTED_IMAGE_EVENT_JSON_OVERHEAD_CHARS
+  );
+  for await (const event of streamSSE(response, imageGeneration
+    ? { maxEventChars: maxHostedImageEventChars, maxBufferChars: maxHostedImageEventChars }
+    : undefined)) {
     if (event.data === "[DONE]") {
       return;
     }
 
     const json = JSON.parse(event.data);
     const type = json.type as string | undefined;
+
+    if (type === "response.image_generation_call.partial_image") {
+      const normalized = normalizeOpenAIImageGenerationPartialImage(
+        json,
+        imageGeneration?.outputFormat ?? "png",
+        hostedImageEventMaxBytes
+      );
+      if (normalized) {
+        recordHostedImageBytes(normalized.image);
+        yield {
+          type: "image-generation",
+          provider: "openai",
+          image: normalized.image,
+          partial: true,
+          id: normalized.callId,
+          index: normalized.partialImageIndex,
+          providerMetadata: normalized.providerMetadata as Record<string, JsonValue>
+        } satisfies StreamEvent;
+      }
+      continue;
+    }
 
     if (type === "error") {
       throw new ProviderHTTPError(
@@ -1863,6 +2270,25 @@ const streamResponses = async function* (
     if (type === "response.output_item.added" || type === "response.output_item.done") {
       const item = json.item;
       let handledLocalToolCall = false;
+
+      if (item?.type === "image_generation_call" && type === "response.output_item.done") {
+        const normalized = normalizeOpenAIImageGenerationCall(
+          item,
+          imageGeneration?.outputFormat ?? "png",
+          hostedImageEventMaxBytes
+        );
+        if (normalized?.image) {
+          recordHostedImageBytes(normalized.image);
+          yield {
+            type: "image-generation",
+            provider: "openai",
+            image: normalized.image,
+            partial: false,
+            id: normalized.id,
+            providerMetadata: normalized.providerMetadata as Record<string, JsonValue>
+          } satisfies StreamEvent;
+        }
+      }
       if (typeof json.output_index === "number" && item?.type === "message") {
         outputAgents.set(json.output_index, {
           agentName: item.agent?.agent_name
@@ -2032,6 +2458,14 @@ const streamGenerateResult = async function* (result: GenerateResult): AsyncGene
       }
     }
   }
+  for (const image of result.images ?? []) {
+    yield {
+      type: "image-generation",
+      provider: "openai",
+      image,
+      partial: false
+    } satisfies StreamEvent;
+  }
   yield {
     type: "finish",
     finishReason: result.finishReason,
@@ -2079,7 +2513,8 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly responseLimits: ResolvedOpenAIResponseLimits
   ) {
     this.capabilities = modelCapabilities(modelId);
   }
@@ -2187,6 +2622,10 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
           messages: [assistantMessage],
           text: extractMessageText(assistantMessage),
           audio: extractAudioOutputs(assistantMessage),
+          images: extractResponsesImageOutputs(
+            json,
+            responsesImageGenerationConfig(input.tools)?.outputFormat
+          ),
           finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls, hasRefusal),
           providerFinishReason: json.status,
           usage: accumulatedUsage,
@@ -2300,10 +2739,16 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
           }),
         input
       );
+      const imageGeneration = responsesImageGenerationConfig(input.tools, this.responseLimits);
 
       return (async function* () {
         try {
-          yield* streamResponses(response, options.multiAgentEnabled, localResponsesTools(input.tools));
+          yield* streamResponses(
+            response,
+            options.multiAgentEnabled,
+            localResponsesTools(input.tools),
+            imageGeneration
+          );
         } finally {
           cleanup();
         }
@@ -2666,16 +3111,15 @@ class OpenAIRealtimeModel implements RealtimeModel {
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
     const initialConfig = this.resolveConfig(config);
-    const headers = {
-      authorization: `Bearer ${this.apiKey}`
-    };
+    const providerOptions = initialConfig.providerOptions as Record<string, unknown> | undefined;
+    const headers = resolveOpenAIRealtimeHeaders(this.apiKey, providerOptions);
     const connection = await (this.connectionFactory ?? openWebSocketConnection)(
       this.realtimeURL ??
         openAIRealtimeURL(
           this.baseURL,
           this.modelId,
           inferOpenAIRealtimeMode(this.modelId, initialConfig.mode),
-          initialConfig.providerOptions as Record<string, unknown> | undefined
+          providerOptions
         ),
       headers,
       options
@@ -2754,6 +3198,28 @@ class OpenAIRealtimeModel implements RealtimeModel {
           if (mode !== "conversation") {
             throw new UnsupportedFeatureError(`Provider "openai" model "${this.modelId}" does not support realtime tools in ${mode} mode.`);
           }
+          const mcpMetadata = result.providerMetadata?.[openAIRealtimeMcpMetadataKey];
+          if (mcpMetadata && typeof mcpMetadata === "object" && !Array.isArray(mcpMetadata)) {
+            const approval = mcpMetadata as Record<string, JsonValue>;
+            if (
+              approval.type === "mcp_approval_response" &&
+              typeof approval.approval_request_id === "string" &&
+              typeof approval.approve === "boolean"
+            ) {
+              return [
+                {
+                  type: "conversation.item.create",
+                  item: {
+                    ...(typeof approval.id === "string" ? { id: approval.id } : {}),
+                    type: "mcp_approval_response",
+                    approval_request_id: approval.approval_request_id,
+                    approve: approval.approve,
+                    ...(typeof approval.reason === "string" ? { reason: approval.reason } : {})
+                  }
+                }
+              ];
+            }
+          }
           const payloads: Array<Record<string, unknown>> = [
             {
               type: "conversation.item.create",
@@ -2797,7 +3263,7 @@ class OpenAIRealtimeModel implements RealtimeModel {
       () =>
         this.fetcher(this.browserTokenURL ?? `${this.baseURL}/realtime/client_secrets`, {
           method: "POST",
-          headers: jsonHeaders(this.apiKey),
+          headers: resolveOpenAIRealtimeHeaders(this.apiKey, providerOptions, true),
           body: JSON.stringify({
             ...(expiresAfter ? { expires_after: expiresAfter } : {}),
             session: mapRealtimeSessionConfig(
@@ -2850,14 +3316,16 @@ export const createOpenAI = (
 
   const baseURL = options.baseURL ?? "https://api.openai.com/v1";
   const fetcher = options.fetch ?? globalThis.fetch;
-  const responseLimits = resolveAudioResponseLimits(options.responseLimits);
+  const responseLimits = resolveOpenAIResponseLimits(options.responseLimits);
 
   return createProviderAdapter({
     name: "openai",
-    languageModel: (modelId) => new OpenAILanguageModel(modelId, apiKey, baseURL, fetcher),
+    languageModel: (modelId) => new OpenAILanguageModel(modelId, apiKey, baseURL, fetcher, responseLimits),
     embeddingModel: (modelId) => new OpenAIEmbeddingModel(modelId, apiKey, baseURL, fetcher),
     transcriptionModel: (modelId) => new OpenAITranscriptionModel(modelId, apiKey, baseURL, fetcher, responseLimits),
     speechModel: (modelId) => new OpenAISpeechModel(modelId, apiKey, baseURL, fetcher, responseLimits),
+    imageGenerationModel: (modelId) =>
+      createOpenAIImageGenerationModel({ modelId, apiKey, baseURL, fetch: fetcher }),
     realtimeModel: (modelId) =>
       new OpenAIRealtimeModel(
         modelId,
@@ -2946,6 +3414,29 @@ export const openAIMcpApprovalResponse = (response: Omit<OpenAIMcpApprovalRespon
     type: "mcp_approval_response",
     ...response
   });
+
+export const openAIRealtimeMcpApprovalResult = (
+  response: OpenAIRealtimeMcpApprovalResultOptions
+): ToolExecutionResult => ({
+  toolCallId: response.approvalRequestId,
+  toolName: response.name,
+  output: {
+    type: "mcp_approval_response",
+    approve: response.approve,
+    ...(response.reason ? { reason: response.reason } : {})
+  },
+  isError: false,
+  providerMetadata: {
+    [openAIRealtimeMcpMetadataKey]: {
+      type: "mcp_approval_response",
+      status: response.approve ? "approved" : "rejected",
+      approval_request_id: response.approvalRequestId,
+      approve: response.approve,
+      ...(response.itemId ? { id: response.itemId } : {}),
+      ...(response.reason ? { reason: response.reason } : {})
+    }
+  }
+});
 
 export const openAIPromptCacheBreakpoint = () =>
   providerDataPart("openai", {
@@ -3129,3 +3620,5 @@ export const openAIApplyPatchTool = (
   }) as z.ZodType<OpenAIApplyPatchToolInput>,
   execute: async ({ operation }) => applyOpenAIPatchOperation(operation, config) as unknown as JsonValue
 });
+
+export * from "./image-generation.js";

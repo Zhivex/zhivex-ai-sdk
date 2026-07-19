@@ -8,12 +8,15 @@ import {
   UnsupportedFeatureError,
   createMcpToolSet,
   createProviderAdapter,
+  decodeBase64WithLimit,
   encodeAudioFrame,
   encodeMediaFrame,
   isCallableToolDefinition,
   isHostedToolDefinition,
   normalizeFinishReason,
   openWebSocketConnection,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
   streamSSE,
   toToolSet,
   toolResultPayload,
@@ -108,7 +111,7 @@ const capabilities: ModelCapabilities = {
   parallelToolCalls: false,
   vision: true,
   files: true,
-  audioInput: false,
+  audioInput: true,
   audioOutput: false,
   embeddings: true,
   fileSearch: false,
@@ -161,6 +164,7 @@ const transcriptionCapabilities: ModelCapabilities = {
 
 const speechCapabilities: ModelCapabilities = {
   ...transcriptionCapabilities,
+  streaming: true,
   audioInput: false,
   audioOutput: true
 };
@@ -267,15 +271,24 @@ const realtimeCapabilities: ModelCapabilities = {
   }
 };
 
-const parseJson = async (response: Response) => {
+const MIB = 1024 * 1024;
+const MAX_JSON_RESPONSE_BYTES = 128 * MIB;
+const MAX_MEDIA_RESPONSE_BYTES = 64 * MIB;
+const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
+
+const parseJson = async (response: Response): Promise<any> => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response, MAX_ERROR_RESPONSE_BYTES);
     throw new ProviderHTTPError(`Vertex request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
 
-  return response.json();
+  return readJsonWithLimit(response, {
+    maxBytes: MAX_JSON_RESPONSE_BYTES,
+    provider: "vertex",
+    endpoint: response.url || undefined
+  });
 };
 
 const toBase64 = (data: AudioInput["data"]) => {
@@ -333,7 +346,44 @@ const mediaInputToPart = (media: MediaInput) =>
         }
       };
 
-const collectInlineMedia = (json: any, fallbackMediaType: string): { media: GeneratedMedia[]; text?: string } => {
+const sanitizeMediaResponse = (value: unknown, parentKey?: string): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeMediaResponse(item, parentKey));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.entries(record)
+      .filter(([key]) => {
+        if (["videoBytes", "bytesBase64Encoded", "imageBytes", "audioContent"].includes(key)) {
+          return false;
+        }
+        return key !== "data" || !(
+          parentKey === "inlineData" ||
+          parentKey === "inline_data" ||
+          "mimeType" in record ||
+          "mime_type" in record
+        );
+      })
+      .map(([key, nested]) => [key, sanitizeMediaResponse(nested, key)])
+  );
+};
+
+const decodeMedia = (data: string, endpoint: string) =>
+  decodeBase64WithLimit(data, {
+    maxBytes: MAX_MEDIA_RESPONSE_BYTES,
+    provider: "vertex",
+    endpoint
+  });
+
+const collectInlineMedia = (
+  json: any,
+  fallbackMediaType: string,
+  endpoint: string
+): { media: GeneratedMedia[]; text?: string } => {
   const text: string[] = [];
   const media: GeneratedMedia[] = [];
   const candidates = Array.isArray(json.candidates) ? json.candidates : [];
@@ -347,7 +397,7 @@ const collectInlineMedia = (json: any, fallbackMediaType: string): { media: Gene
       const inlineData = part.inlineData ?? part.inline_data;
       if (inlineData?.data) {
         media.push({
-          data: Uint8Array.from(Buffer.from(inlineData.data, "base64")),
+          data: decodeMedia(inlineData.data, endpoint),
           mediaType: inlineData.mimeType ?? inlineData.mime_type ?? fallbackMediaType,
           text: typeof part.text === "string" ? part.text : undefined
         });
@@ -372,7 +422,7 @@ const mediaInputToVeoImage = (media: MediaInput) =>
         mimeType: media.mediaType
       };
 
-const collectVideos = (json: any): GeneratedMedia[] => {
+const collectVideos = (json: any, endpoint: string): GeneratedMedia[] => {
   const samples =
     json.response?.generateVideoResponse?.generatedSamples ??
     json.response?.generatedVideos ??
@@ -381,20 +431,21 @@ const collectVideos = (json: any): GeneratedMedia[] => {
 
   return (Array.isArray(samples) ? samples : [])
     .map((sample: any) => sample.video ?? sample)
-    .map((video: any) => ({
+    .map((video: any): GeneratedMedia => ({
       data: video.videoBytes
-        ? Uint8Array.from(Buffer.from(video.videoBytes, "base64"))
+        ? decodeMedia(video.videoBytes, endpoint)
         : video.bytesBase64Encoded
-          ? Uint8Array.from(Buffer.from(video.bytesBase64Encoded, "base64"))
+          ? decodeMedia(video.bytesBase64Encoded, endpoint)
           : undefined,
       uri: video.uri ?? video.gcsUri,
       mediaType: video.mimeType ?? "video/mp4",
-      providerMetadata: video
+      providerMetadata: sanitizeMediaResponse(video) as Record<string, unknown>
     }))
-    .filter((video: GeneratedMedia) => video.data || video.uri);
+    .filter((video) => Boolean(video.data || video.uri));
 };
 
 const isImagenModel = (modelId: string) => modelId.startsWith("imagen-") || modelId.startsWith("imagegeneration@");
+const isVeoModel = (modelId: string) => modelId.startsWith("veo-");
 
 const normalizeCachedContent = (json: any): CachedContent => ({
   name: json.name ?? "",
@@ -548,6 +599,13 @@ const mapPart = (part: ModelMessage["parts"][number]) => {
           data: part.image
         }
       };
+    case "audio":
+      return {
+        inlineData: {
+          mimeType: part.mediaType,
+          data: toBase64(part.data)
+        }
+      };
     case "file":
       return {
         fileData: {
@@ -558,13 +616,18 @@ const mapPart = (part: ModelMessage["parts"][number]) => {
     case "tool-call":
       return {
         functionCall: {
+          id: part.toolCall.id,
           name: part.toolCall.name,
           args: part.toolCall.input
-        }
+        },
+        ...(typeof part.toolCall.providerMetadata?.geminiThoughtSignature === "string"
+          ? { thoughtSignature: part.toolCall.providerMetadata.geminiThoughtSignature }
+          : {})
       };
     case "tool-result":
       return {
         functionResponse: {
+          id: part.toolResult.toolCallId,
           name: part.toolResult.toolName,
           response: {
             name: part.toolResult.toolName,
@@ -627,6 +690,17 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
             );
           }
 
+          if (tool.type === "googleMaps") {
+            const config =
+              tool.config && typeof tool.config === "object" && !Array.isArray(tool.config)
+                ? { ...(tool.config as Record<string, JsonValue>) }
+                : {};
+            delete config.latitude;
+            delete config.longitude;
+            mappedTools.push({ googleMaps: config });
+            continue;
+          }
+
           mappedTools.push({
             [tool.type]: tool.config && typeof tool.config === "object" ? tool.config : {}
           });
@@ -636,13 +710,41 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
       })()
     : undefined;
 
-const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"], tools: ModelGenerateInput["tools"]) => {
-  if (!toolChoice || toolChoice === "auto") {
+const mapGoogleMapsRetrievalConfig = (tools: ModelGenerateInput["tools"]) => {
+  const mapsTool = Object.values(tools ?? {})
+    .filter(isHostedToolDefinition)
+    .find((tool) => tool.type === "googleMaps");
+  if (!mapsTool || !mapsTool.config || typeof mapsTool.config !== "object" || Array.isArray(mapsTool.config)) {
     return undefined;
+  }
+
+  const config = mapsTool.config as Record<string, JsonValue>;
+  const latitude = config.latitude;
+  const longitude = config.longitude;
+  if (latitude === undefined && longitude === undefined) {
+    return undefined;
+  }
+  if (typeof latitude !== "number" || typeof longitude !== "number") {
+    throw new ConfigurationError('Provider "vertex" Google Maps grounding requires both numeric latitude and longitude.');
+  }
+
+  return {
+    latLng: {
+      latitude,
+      longitude
+    }
+  };
+};
+
+const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"], tools: ModelGenerateInput["tools"]) => {
+  const retrievalConfig = mapGoogleMapsRetrievalConfig(tools);
+  if (!toolChoice || toolChoice === "auto") {
+    return retrievalConfig ? { retrievalConfig } : undefined;
   }
 
   if (toolChoice === "none") {
     return {
+      ...(retrievalConfig ? { retrievalConfig } : {}),
       functionCallingConfig: {
         mode: "NONE"
       }
@@ -651,6 +753,7 @@ const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"], tools: Mode
 
   if (toolChoice === "required") {
     return {
+      ...(retrievalConfig ? { retrievalConfig } : {}),
       functionCallingConfig: {
         mode: "ANY"
       }
@@ -663,6 +766,7 @@ const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"], tools: Mode
   }
 
   return {
+    ...(retrievalConfig ? { retrievalConfig } : {}),
     functionCallingConfig: {
       mode: "ANY",
       allowedFunctionNames: [toolChoice.toolName]
@@ -686,7 +790,8 @@ const vertexRealtimeURL = (
   override?: string
 ) => {
   const candidate = override ?? (typeof providerOptions?.realtime_url === "string" ? providerOptions.realtime_url : undefined);
-  return candidate || `wss://${location}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.${apiVersion}.PredictionService.BidiGenerateContent`;
+  const host = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
+  return candidate || `wss://${host}/ws/google.cloud.aiplatform.${apiVersion}.LlmBidiService/BidiGenerateContent`;
 };
 
 const vertexRealtimeHeaders = (accessToken: string, providerOptions?: Record<string, unknown>) => ({
@@ -821,6 +926,7 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
   if ("setupComplete" in payload) {
     return [];
   }
+  const providerMetadata = sanitizeMediaResponse(payload) as Record<string, JsonValue>;
 
   const serverContent =
     typeof payload.serverContent === "object" && payload.serverContent
@@ -847,7 +953,7 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
         events.push({
           type: "realtime-text-delta" as const,
           textDelta: typedPart.text,
-          providerMetadata: payload as Record<string, JsonValue>
+          providerMetadata
         });
       }
       const inline =
@@ -859,9 +965,9 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
       if (inline && typeof inline.data === "string" && inline.data) {
         events.push({
           type: "realtime-audio-output" as const,
-          audio: Buffer.from(inline.data, "base64"),
+          audio: decodeMedia(inline.data, "realtime"),
           mediaType: typeof inline.mimeType === "string" ? inline.mimeType : typeof inline.mime_type === "string" ? inline.mime_type : "audio/pcm",
-          providerMetadata: payload as Record<string, JsonValue>
+          providerMetadata
         });
       }
       if (typedPart.functionCall && typeof typedPart.functionCall === "object") {
@@ -889,7 +995,7 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
         text: inputTranscription.text,
         role: "user" as const,
         isFinal: Boolean(serverContent.turnComplete ?? serverContent.turn_complete),
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       });
     }
 
@@ -905,7 +1011,7 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
         text: outputTranscription.text,
         role: "assistant" as const,
         isFinal: Boolean(serverContent.turnComplete ?? serverContent.turn_complete),
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       });
     }
 
@@ -913,14 +1019,14 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
       events.push({
         type: "realtime-response-complete" as const,
         reason: "generation-complete",
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       });
     }
     if (serverContent.turnComplete || serverContent.turn_complete) {
       events.push({
         type: "realtime-response-complete" as const,
         reason: "turn-complete",
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       });
     }
 
@@ -944,7 +1050,7 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
               ? sessionResumption.new_handle
               : undefined,
         resumable: typeof sessionResumption.resumable === "boolean" ? sessionResumption.resumable : undefined,
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       }
     ];
   }
@@ -965,7 +1071,7 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
             : typeof goAway.time_left_ms === "number"
               ? goAway.time_left_ms
               : undefined,
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       }
     ];
   }
@@ -975,7 +1081,7 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
       {
         type: "realtime-end" as const,
         reason: "error",
-        providerMetadata: payload as Record<string, JsonValue>
+        providerMetadata
       }
     ];
   }
@@ -1062,7 +1168,10 @@ const parseAssistantMessage = (candidate: any): ModelMessage => ({
           toolCall: {
             id: part.functionCall.id ?? `${part.functionCall.name}-${index}`,
             name: part.functionCall.name,
-            input: part.functionCall.args ?? {}
+            input: part.functionCall.args ?? {},
+            ...(typeof part.thoughtSignature === "string"
+              ? { providerMetadata: { geminiThoughtSignature: part.thoughtSignature } }
+              : {})
           }
         };
       }
@@ -1516,7 +1625,10 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
                 toolCall: {
                   id: part.functionCall.id ?? `${part.functionCall.name}-${index}`,
                   name: part.functionCall.name,
-                  input: part.functionCall.args ?? {}
+                  input: part.functionCall.args ?? {},
+                  ...(typeof part.thoughtSignature === "string"
+                    ? { providerMetadata: { geminiThoughtSignature: part.thoughtSignature } }
+                    : {})
                 }
               } satisfies StreamEvent;
             }
@@ -1682,8 +1794,8 @@ class VertexSpeechModel implements SpeechModel {
     private readonly fetcher: typeof globalThis.fetch
   ) {}
 
-  private url() {
-    return `${this.baseURL}/publishers/google/models/${this.modelId}:generateContent`;
+  private url(method = "generateContent") {
+    return `${this.baseURL}/publishers/google/models/${this.modelId}:${method}`;
   }
 
   private headers() {
@@ -1731,13 +1843,72 @@ class VertexSpeechModel implements SpeechModel {
       const json = await parseJson(response);
       const audioPart = json.candidates?.[0]?.content?.parts?.find((part: any) => part.inlineData?.data);
       return {
-        audio: Uint8Array.from(Buffer.from(audioPart?.inlineData?.data ?? "", "base64")),
+        audio: decodeMedia(audioPart?.inlineData?.data ?? "", "models.generateContent"),
         mediaType: audioPart?.inlineData?.mimeType ?? "audio/wav",
-        rawResponse: json
+        rawResponse: sanitizeMediaResponse(json)
       };
     } finally {
       cleanup();
     }
+  }
+
+  async streamSpeech(input: {
+    input: string;
+    voice?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<AsyncIterable<SpeechResult>> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const response = await withRetry(
+      () =>
+        this.fetcher(`${this.url("streamGenerateContent")}?alt=sse`, {
+          method: "POST",
+          headers: this.headers(),
+          signal,
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: input.input }] }],
+            generationConfig: {
+              responseModalities: ["AUDIO"],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: input.voice ?? "Kore"
+                  }
+                }
+              }
+            },
+            ...input.providerOptions
+          })
+        }),
+      input
+    );
+
+    return (async function* () {
+      try {
+        for await (const event of streamSSE(response)) {
+          if (event.data === "[DONE]") {
+            continue;
+          }
+          const json = JSON.parse(event.data);
+          const parts = json.candidates?.[0]?.content?.parts ?? [];
+          for (const part of parts) {
+            if (typeof part.inlineData?.data !== "string") {
+              continue;
+            }
+            yield {
+              audio: decodeMedia(part.inlineData.data, "models.streamGenerateContent"),
+              mediaType: part.inlineData.mimeType ?? "audio/pcm",
+              rawResponse: sanitizeMediaResponse(json)
+            } satisfies SpeechResult;
+          }
+        }
+      } finally {
+        cleanup();
+      }
+    })();
   }
 }
 
@@ -1806,18 +1977,18 @@ class VertexImageGenerationModel implements ImageGenerationModel {
           .map((prediction: any) => ({
             data:
               prediction.bytesBase64Encoded || prediction.imageBytes
-                ? Uint8Array.from(Buffer.from(prediction.bytesBase64Encoded ?? prediction.imageBytes, "base64"))
+                ? decodeMedia(prediction.bytesBase64Encoded ?? prediction.imageBytes, "models.predict")
                 : undefined,
             uri: prediction.gcsUri ?? prediction.uri,
             mediaType: prediction.mimeType ?? input.outputMimeType ?? "image/png",
             text: prediction.prompt ?? prediction.text,
-            providerMetadata: prediction
+            providerMetadata: sanitizeMediaResponse(prediction)
           }))
           .filter((image: GeneratedMedia) => image.data || image.uri);
 
         return {
           images,
-          rawResponse: json
+          rawResponse: sanitizeMediaResponse(json)
         };
       }
 
@@ -1859,11 +2030,11 @@ class VertexImageGenerationModel implements ImageGenerationModel {
       );
 
       const json = await parseJson(response);
-      const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "image/png");
+      const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "image/png", "models.generateContent");
       return {
         images: media,
         text,
-        rawResponse: json
+        rawResponse: sanitizeMediaResponse(json)
       };
     } finally {
       cleanup();
@@ -1927,11 +2098,11 @@ class VertexMusicGenerationModel implements MusicGenerationModel {
         const json = await parseJson(response);
         return {
           audio: (Array.isArray(json.predictions) ? json.predictions : []).map((prediction: any) => ({
-            data: Uint8Array.from(Buffer.from(prediction.audioContent ?? "", "base64")),
+            data: decodeMedia(prediction.audioContent ?? "", "models.predict"),
             mediaType: prediction.mimeType ?? "audio/wav",
-            providerMetadata: prediction
+            providerMetadata: sanitizeMediaResponse(prediction)
           })),
-          rawResponse: json
+          rawResponse: sanitizeMediaResponse(json)
         };
       }
 
@@ -1964,11 +2135,11 @@ class VertexMusicGenerationModel implements MusicGenerationModel {
       );
 
       const json = await parseJson(response);
-      const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "audio/mpeg");
+      const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "audio/mpeg", "models.generateContent");
       return {
         audio: media,
         text,
-        rawResponse: json
+        rawResponse: sanitizeMediaResponse(json)
       };
     } finally {
       cleanup();
@@ -2064,9 +2235,9 @@ class VertexVideoGenerationModel implements VideoGenerationModel {
       }
 
       return {
-        videos: collectVideos(operation),
+        videos: collectVideos(operation, "models.predictLongRunning"),
         operationName,
-        rawResponse: operation
+        rawResponse: sanitizeMediaResponse(operation)
       };
     } finally {
       cleanup();
@@ -2279,13 +2450,20 @@ export const createVertex = (
     throw new ConfigurationError("Missing Vertex project ID.");
   }
 
-  const location = options.location ?? process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1";
-  const apiVersion = options.apiVersion ?? "v1beta1";
+  const location = options.location ?? process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION ?? "global";
+  const apiVersion = options.apiVersion ?? "v1";
+  const apiHost = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
   const baseURL =
     options.baseURL ??
     (auth.type === "api-key"
       ? `https://aiplatform.googleapis.com/${apiVersion}`
-      : `https://${location}-aiplatform.googleapis.com/${apiVersion}/projects/${projectId}/locations/${location}`);
+      : `https://${apiHost}/${apiVersion}/projects/${projectId}/locations/${location}`);
+  const veoLocation = location === "global" ? "us-central1" : location;
+  const veoBaseURL =
+    options.baseURL ??
+    (auth.type === "api-key"
+      ? baseURL
+      : `https://${veoLocation}-aiplatform.googleapis.com/${apiVersion}/projects/${projectId}/locations/${veoLocation}`);
   const rawFetch = options.fetch ?? globalThis.fetch;
   const fetcher = createVertexAuthenticatedFetch(rawFetch, auth);
 
@@ -2296,7 +2474,8 @@ export const createVertex = (
     transcriptionModel: (modelId) => new VertexTranscriptionModel(modelId, baseURL, "", fetcher),
     speechModel: (modelId) => new VertexSpeechModel(modelId, baseURL, "", fetcher),
     imageGenerationModel: (modelId) => new VertexImageGenerationModel(modelId, baseURL, "", fetcher),
-    videoGenerationModel: (modelId) => new VertexVideoGenerationModel(modelId, baseURL, "", fetcher),
+    videoGenerationModel: (modelId) =>
+      new VertexVideoGenerationModel(modelId, isVeoModel(modelId) ? veoBaseURL : baseURL, "", fetcher),
     musicGenerationModel: (modelId) => new VertexMusicGenerationModel(modelId, baseURL, "", fetcher),
     realtimeModel: (modelId) =>
       new VertexRealtimeModel(

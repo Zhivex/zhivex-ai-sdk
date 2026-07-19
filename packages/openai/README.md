@@ -67,6 +67,69 @@ Multi-turn Responses normally continue through `previous_response_id`. With `pro
 
 Use `providerOptions.safety_identifier` for a stable, non-PII identifier for the end user. It is sent as an OpenAI request field; do not put email addresses, names, or other direct personal data in it.
 
+## GPT Image 2 and hosted image generation
+
+Use the shared image contract for direct Image API generations. `gpt-image-2` supports the current square, portrait, landscape, and wide output sizes exposed by OpenAI. See the official [GPT Image 2 model page](https://developers.openai.com/api/docs/models/gpt-image-2) and [image generation guide](https://developers.openai.com/api/docs/guides/image-generation).
+
+```ts
+import { generateImage } from "@zhivex-ai/core";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const result = await generateImage({
+  model: openai.imageGenerationModel!("gpt-image-2"),
+  prompt: "A clean editorial illustration of a distributed system",
+  aspectRatio: "16:9",
+  outputMimeType: "image/webp",
+  providerOptions: {
+    quality: "high"
+  }
+});
+
+console.log(result.images[0]?.mediaType);
+```
+
+For conversational generation, edits, reference images, or progressive previews, use the provider-hosted Responses tool. Buffered and collected text calls expose final media on `result.steps.at(-1)?.response.images`; streaming calls emit typed `image-generation` events:
+
+```ts
+import { streamText } from "@zhivex-ai/core";
+import {
+  openAIImageGenerationTool,
+  openAIImageGenerationToolChoice
+} from "@zhivex-ai/openai";
+
+const stream = await streamText({
+  model: openai("gpt-5.6"),
+  prompt: "Generate a wide product concept, then refine its lighting.",
+  tools: {
+    image: openAIImageGenerationTool({
+      action: "auto",
+      output_format: "webp",
+      partial_images: 2,
+      size: "1536x864"
+    })
+  },
+  providerOptions: {
+    tool_choice: openAIImageGenerationToolChoice()
+  }
+});
+
+for await (const event of stream) {
+  if (event.type === "image-generation") {
+    console.log(event.partial, event.image.mediaType, event.image.data?.byteLength);
+  }
+}
+```
+
+Partial images are transient live stream events: they are not copied into collected messages or replayed to consumers that subscribe after generation. The shared `ImageGenerationModel` path is buffered; use the Responses tool when you need partial-image streaming or image edits.
+
+## Realtime 2.1 and remote MCP
+
+`gpt-realtime-2.1` and `gpt-realtime-2.1-mini` use the GA Realtime tool shape and support image input. A stable `providerOptions.safety_identifier` is sent as the `OpenAI-Safety-Identifier` header for both server WebSocket sessions and browser client-secret creation.
+
+Remote MCP lifecycle, calls, failures, and approval requests arrive as `realtime-provider-data` events so provider-executed MCP is not confused with an app-executed function tool. Return an approval with `openAIRealtimeMcpApprovalResult()` through `session.sendToolResult()`. See OpenAI's [Realtime MCP guide](https://developers.openai.com/api/docs/guides/realtime-mcp).
+
 ## Prompt caching
 
 OpenAI prompt cache controls pass through `providerOptions`. Explicit breakpoints can be attached directly to a cacheable text, image, or file part through `providerMetadata`, or inserted immediately after a cacheable part with `openAIPromptCacheBreakpoint()`.

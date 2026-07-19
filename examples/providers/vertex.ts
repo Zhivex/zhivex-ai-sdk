@@ -6,11 +6,11 @@ import { requiredEnv } from "../_shared";
 const vertex = createVertex({
   accessToken: requiredEnv("VERTEX_ACCESS_TOKEN"),
   projectId: requiredEnv("VERTEX_PROJECT_ID"),
-  location: process.env.VERTEX_LOCATION ?? "us-central1"
+  location: process.env.VERTEX_LOCATION ?? "global"
 });
 
 const result = await generateText({
-  model: vertex("gemini-2.0-flash"),
+  model: vertex("gemini-3.5-flash"),
   prompt: "Say hello from the Vertex adapter."
 });
 

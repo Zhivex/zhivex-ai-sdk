@@ -480,45 +480,88 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
     throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
   }
 
-  const subscribers = new Set<(value: IteratorResult<StreamEvent>) => void>();
-  const history: IteratorResult<StreamEvent>[] = [];
+  type PublishedStreamItem = {
+    sequence: number;
+    result: IteratorResult<StreamEvent>;
+  };
+  type StreamSubscriber = {
+    accepts: (event: StreamEvent) => boolean;
+    queue: PublishedStreamItem[];
+    wake?: () => void;
+  };
+
+  const subscribers = new Set<StreamSubscriber>();
+  const history: PublishedStreamItem[] = [];
+  let sequence = 0;
   let done = false;
   let finalResultPromise: Promise<GenerateTextOutput> | undefined;
 
-  const publish = (value: IteratorResult<StreamEvent>) => {
-    history.push(value);
-    for (const subscriber of subscribers) {
-      subscriber(value);
+  const publish = (result: IteratorResult<StreamEvent>) => {
+    const item = { sequence, result } satisfies PublishedStreamItem;
+    sequence += 1;
+
+    // Progressive binary previews are useful only to live consumers. Retaining
+    // them for collect(), textStream, or a late eventStream replay duplicates
+    // potentially large buffers without changing the final generated result.
+    if (result.done || result.value.type !== "image-generation" || !result.value.partial) {
+      history.push(item);
     }
-    if (value.done) {
+
+    for (const subscriber of subscribers) {
+      if (result.done || subscriber.accepts(result.value)) {
+        subscriber.queue.push(item);
+        subscriber.wake?.();
+        subscriber.wake = undefined;
+      }
+    }
+    if (result.done) {
       done = true;
     }
   };
 
-  const createEventStream = async function* () {
-    let cursor = 0;
+  const createEventStream = async function* (
+    accepts: (event: StreamEvent) => boolean = () => true
+  ) {
+    const replayThrough = sequence;
+    const subscriber: StreamSubscriber = { accepts, queue: [] };
+    if (!done) {
+      subscribers.add(subscriber);
+    }
 
-    while (true) {
-      while (cursor < history.length) {
-        const item = history[cursor];
-        cursor += 1;
-        if (item.done) {
+    try {
+      for (const item of history) {
+        if (item.sequence >= replayThrough) {
+          break;
+        }
+        if (item.result.done) {
           return;
         }
-        yield item.value;
+        if (accepts(item.result.value)) {
+          yield item.result.value;
+        }
       }
 
-      if (done) {
-        return;
-      }
+      while (true) {
+        while (subscriber.queue.length) {
+          const item = subscriber.queue.shift()!;
+          if (item.result.done) {
+            return;
+          }
+          yield item.result.value;
+        }
 
-      await new Promise<IteratorResult<StreamEvent>>((resolve) => {
-        const subscriber = (value: IteratorResult<StreamEvent>) => {
-          subscribers.delete(subscriber);
-          resolve(value);
-        };
-        subscribers.add(subscriber);
-      });
+        if (done) {
+          return;
+        }
+
+        await new Promise<void>((resolve) => {
+          subscriber.wake = resolve;
+        });
+      }
+    } finally {
+      subscribers.delete(subscriber);
+      subscriber.queue.length = 0;
+      subscriber.wake = undefined;
     }
   };
 
@@ -534,6 +577,7 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
       const stream = await streamModel(request);
       const stepMessages: ModelMessage[] = [];
       let textBuffer = "";
+      const generatedImages: NonNullable<GenerateResult["images"]> = [];
       let finishReason = normalizeFinishReason("stop");
       let providerFinishReason: string | undefined;
       let usage = undefined;
@@ -569,6 +613,10 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
           }
         }
 
+        if (event.type === "image-generation" && !event.partial) {
+          generatedImages.push(event.image);
+        }
+
         if (event.type === "finish") {
           finishReason = event.finishReason;
           providerFinishReason = event.providerFinishReason;
@@ -588,6 +636,7 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
       finalResult = {
         messages: stepMessages,
         text: textBuffer,
+        images: generatedImages.length ? generatedImages : undefined,
         finishReason,
         providerFinishReason,
         usage
@@ -653,7 +702,7 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
   return {
     eventStream: createEventStream(),
     textStream: (async function* () {
-      for await (const event of createEventStream()) {
+      for await (const event of createEventStream((candidate) => candidate.type === "text-delta")) {
         if (event.type === "text-delta") {
           yield event.textDelta;
         }

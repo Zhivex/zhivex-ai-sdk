@@ -17,6 +17,7 @@ import {
   generateSpeech,
   generateText,
   generateVideo,
+  streamSpeech,
   getContextCache,
   googleComputerUseTool,
   googleFileSearchTool,
@@ -25,6 +26,7 @@ import {
   importFileToFileSearchStore,
   predictLongRunning,
   predictRaw,
+  resumeInteraction,
   streamText,
   uploadFile,
   tool,
@@ -140,6 +142,32 @@ describe("gemini adapter", () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
+  });
+
+  it("rejects oversized Gemini JSON responses before buffering them", async () => {
+    const contentLength = 129 * 1024 * 1024;
+    fetchMock.mockResolvedValueOnce(
+      new Response("{}", { status: 200, headers: { "content-length": String(contentLength) } })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(generateText({ model: provider("gemini-3.5-flash"), prompt: "hello" })).rejects.toMatchObject({
+      name: "ProviderResponseTooLargeError",
+      maxBytes: 128 * 1024 * 1024,
+      contentLength
+    });
+  });
+
+  it("truncates Gemini error response bodies", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("x".repeat(100_000), { status: 500 }));
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const request = generateText({ model: provider("gemini-3.5-flash"), prompt: "hello" });
+    await expect(request).rejects.toMatchObject({
+      name: "ProviderHTTPError",
+      status: 500,
+      responseBody: expect.stringContaining("truncated")
+    });
   });
 
   it("maps generated text into the common contract", async () => {
@@ -688,11 +716,41 @@ describe("gemini adapter", () => {
   });
 
   it("creates, gets, and streams Gemini interactions", async () => {
-    fetchMock.mockResolvedValueOnce(Response.json({ id: "int-1", model: "gemini-3.5-flash", outputs: [{ text: "hello" }] }));
-    fetchMock.mockResolvedValueOnce(Response.json({ id: "int-1", status: "completed" }));
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "int-1",
+        model: "gemini-3.5-flash",
+        status: "completed",
+        steps: [{ type: "model_output", content: [{ type: "text", text: "hello" }] }]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "int-1",
+        status: "completed",
+        steps: [
+          { type: "user_input", content: [{ type: "text", text: "hello" }] },
+          { type: "thought", signature: "thought-signature" },
+          { type: "model_output", content: [{ type: "text", text: "hello" }] }
+        ]
+      })
+    );
     const body = new ReadableStream({
       start(controller) {
-        controller.enqueue(new TextEncoder().encode("data: {\"text\":\"hel\"}\n\ndata: {\"text\":\"lo\",\"status\":\"completed\"}\n\n"));
+        controller.enqueue(
+          new TextEncoder().encode(
+            'event: interaction.created\n' +
+              'data: {"event_type":"interaction.created","interaction":{"id":"int-1","status":"in_progress"}}\n\n' +
+              'event: step.start\n' +
+              'data: {"event_type":"step.start","index":0,"step":{"type":"model_output","content":[{"type":"text","text":"hel"}]}}\n\n' +
+              'event: step.delta\n' +
+              'data: {"event_type":"step.delta","index":0,"delta":{"type":"text","text":"lo"}}\n\n' +
+              'event: step.stop\n' +
+              'data: {"event_type":"step.stop","index":0,"status":"done"}\n\n' +
+              'event: interaction.completed\n' +
+              'data: {"event_type":"interaction.completed","interaction":{"id":"int-1","status":"completed","usage":{"total_input_tokens":4,"total_output_tokens":2,"total_tokens":6}}}\n\n'
+          )
+        );
         controller.close();
       }
     });
@@ -717,8 +775,51 @@ describe("gemini adapter", () => {
     }
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/interactions?key=test");
+    expect(interaction.steps?.[0]).toMatchObject({ type: "model_output" });
+    expect(interaction.outputs).toEqual([{ type: "text", text: "hello" }]);
+    expect(interaction.outputText).toBe("hello");
     expect(read.status).toBe("completed");
+    expect(read.steps?.map((step) => step.type)).toEqual(["user_input", "thought", "model_output"]);
     expect(events.filter((event) => event.type === "text-delta").map((event: any) => event.textDelta).join("")).toBe("hello");
+    expect(events.at(-1)).toEqual({
+      type: "finish",
+      finishReason: "stop",
+      providerFinishReason: "completed",
+      usage: {
+        inputTokens: 4,
+        cachedInputTokens: undefined,
+        outputTokens: 2,
+        reasoningTokens: undefined,
+        totalTokens: 6
+      }
+    });
+
+    const streamRequest = fetchMock.mock.calls[2]?.[1] as RequestInit;
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain("/interactions?key=test");
+    expect(new Headers(streamRequest.headers).get("accept")).toBe("text/event-stream");
+  });
+
+  it("treats Gemini Interactions error events as terminal provider errors", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        'event: error\ndata: {"event_type":"error","error":{"code":429,"message":"Quota exhausted"}}\n\n',
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const stream = await provider.interactions!.stream({ modelId: "gemini-3.5-flash", input: "hello" });
+    const consume = async () => {
+      for await (const _event of stream) {
+        // The provider error must terminate the stream before an event is exposed.
+      }
+    };
+
+    await expect(consume()).rejects.toMatchObject({
+      name: "ProviderHTTPError",
+      status: 429,
+      message: "Gemini Interactions stream failed: Quota exhausted"
+    });
   });
 
   it("maps Gemini computer use tools to the Interactions API shape", async () => {
@@ -726,16 +827,16 @@ describe("gemini adapter", () => {
       Response.json({
         id: "int-1",
         model: "gemini-3.5-flash",
-        outputs: [
+        status: "requires_action",
+        steps: [
           {
-            function_call: {
-              name: "computer_use",
-              args: {
-                action: "click",
-                x: 120,
-                y: 240,
-                intent: "press the submit button"
-              }
+            type: "function_call",
+            id: "call-1",
+            name: "click",
+            arguments: {
+              x: 120,
+              y: 240,
+              intent: "press the submit button"
             }
           }
         ]
@@ -761,14 +862,224 @@ describe("gemini adapter", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/interactions?key=test");
     expect(body.model).toBe("gemini-3.5-flash");
     expect(body.tools).toEqual([{ type: "computer_use", environment: "browser" }]);
-    expect(interaction.outputs?.[0]).toMatchObject({
-      function_call: {
-        name: "computer_use",
-        args: {
-          intent: "press the submit button"
-        }
+    expect(interaction.steps?.[0]).toMatchObject({
+      type: "function_call",
+      name: "click",
+      arguments: {
+        intent: "press the submit button"
       }
     });
+    expect(interaction.outputs?.[0]).toMatchObject({ type: "function_call", name: "click" });
+  });
+
+  it("maps callable and hosted tools to current Interactions declarations", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "int-tools",
+        status: "completed",
+        steps: [{ type: "model_output", content: [{ type: "text", text: "done" }] }]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await createInteraction({
+      provider,
+      modelId: "gemini-3.5-flash",
+      input: "Use the available tools.",
+      tools: {
+        weather: tool({
+          name: "get_weather",
+          description: "Get the weather for a city.",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, temperature: 20 })
+        }),
+        search: hostedTool({ name: "search", provider: "gemini", type: "googleSearch", config: { searchTypes: ["web_search"] } }),
+        maps: hostedTool({
+          name: "maps",
+          provider: "gemini",
+          type: "googleMaps",
+          config: { latitude: -34.6, longitude: -58.38, enableWidget: true }
+        }),
+        urls: googleUrlContextTool(),
+        files: googleFileSearchTool(["fileSearchStores/demo"]),
+        code: hostedTool({ name: "code", provider: "gemini", type: "codeExecution", config: {} }),
+        computer: googleComputerUseTool({
+          environment: "desktop",
+          disabledSafetyPolicies: ["data_modification"],
+          enablePromptInjectionDetection: true
+        })
+      }
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      tools: Array<Record<string, unknown>>;
+    };
+    expect(body.tools[0]).toMatchObject({
+      type: "function",
+      name: "get_weather",
+      description: "Get the weather for a city.",
+      parameters: {
+        type: "object",
+        properties: { city: { type: "string" } },
+        required: ["city"]
+      }
+    });
+    expect(body.tools.slice(1)).toEqual([
+      { type: "google_search", search_types: ["web_search"] },
+      { type: "google_maps", latitude: -34.6, longitude: -58.38, enable_widget: true },
+      { type: "url_context" },
+      { type: "file_search", file_search_store_names: ["fileSearchStores/demo"] },
+      { type: "code_execution" },
+      {
+        type: "computer_use",
+        environment: "desktop",
+        disabled_safety_policies: ["data_modification"],
+        enable_prompt_injection_detection: true
+      }
+    ]);
+  });
+
+  it("normalizes Antigravity and Gemini Omni interaction conveniences", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "int-agent",
+        agent: "antigravity-preview-05-2026",
+        environment_id: "env-1",
+        status: "completed",
+        steps: [{ type: "model_output", content: [{ type: "text", text: "Saved the report." }] }]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "int-video",
+        model: "gemini-omni-flash-preview",
+        status: "completed",
+        steps: [
+          {
+            type: "model_output",
+            content: [{ type: "video", mime_type: "video/mp4", data: "AAAAIGZ0eXBpc29t" }]
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const agentInteraction = await createInteraction({
+      provider,
+      agent: "antigravity-preview-05-2026",
+      input: "Create a report.",
+      environment: "remote",
+      systemInstruction: "Save deliverables in the workspace.",
+      agentConfig: { type: "antigravity", max_total_tokens: "250000" },
+      background: true,
+      store: true
+    });
+    const videoInteraction = await createInteraction({
+      provider,
+      modelId: "gemini-omni-flash-preview",
+      input: "Generate a cinematic sunset.",
+      responseFormat: { type: "video", aspect_ratio: "9:16" },
+      generationConfig: { video_config: { task: "text_to_video" } }
+    });
+
+    const agentBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    const videoBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(agentBody).toMatchObject({
+      agent: "antigravity-preview-05-2026",
+      environment: "remote",
+      system_instruction: "Save deliverables in the workspace.",
+      agent_config: { type: "antigravity", max_total_tokens: "250000" },
+      background: true,
+      store: true
+    });
+    expect(agentInteraction.environmentId).toBe("env-1");
+    expect(agentInteraction.outputText).toBe("Saved the report.");
+    expect(videoBody).toMatchObject({
+      model: "gemini-omni-flash-preview",
+      response_format: { type: "video", aspect_ratio: "9:16" },
+      generation_config: { video_config: { task: "text_to_video" } }
+    });
+    expect(videoInteraction.outputVideo).toEqual({
+      type: "video",
+      mime_type: "video/mp4",
+      data: "AAAAIGZ0eXBpc29t"
+    });
+  });
+
+  it("cancels and deletes stored Gemini interactions", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ id: "int-background", agent: "antigravity-preview-05-2026", status: "cancelled", steps: [] })
+    );
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const cancelled = await provider.interactions!.cancel({ id: "int-background" });
+    const deleted = await provider.interactions!.delete({ id: "int-background" });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/interactions/int-background/cancel?key=test");
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe("POST");
+    expect(cancelled.status).toBe("cancelled");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/interactions/int-background?key=test");
+    expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBe("DELETE");
+    expect(deleted).toEqual({ id: "int-background", rawResponse: undefined });
+  });
+
+  it("resumes a stored interaction stream from the last event id", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        [
+          'event: step.delta\ndata: {"event_id":"event-42","event_type":"step.delta","index":0,"delta":{"type":"text","text":"continued"}}',
+          "",
+          'event: interaction.completed\ndata: {"event_type":"interaction.completed","interaction":{"id":"int-background","status":"completed"}}',
+          ""
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } }
+      )
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const events = [];
+    for await (const event of await resumeInteraction({
+      provider,
+      id: "int-background",
+      lastEventId: "event-41"
+    })) {
+      events.push(event);
+    }
+
+    const requestURL = String(fetchMock.mock.calls[0]?.[0]);
+    expect(requestURL).toContain("/interactions/int-background?");
+    expect(requestURL).toContain("stream=true");
+    expect(requestURL).toContain("last_event_id=event-41");
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe("GET");
+    expect(events).toContainEqual({ type: "text-delta", textDelta: "continued" });
+    expect(events).toContainEqual({
+      type: "provider-data",
+      provider: "gemini",
+      data: {
+        event_id: "event-42",
+        event_type: "step.delta",
+        index: 0,
+        delta: { type: "text", text: "continued" }
+      }
+    });
+    expect(events.at(-1)).toMatchObject({
+      type: "finish",
+      finishReason: "stop",
+      providerFinishReason: "completed"
+    });
+  });
+
+  it("keeps legacy interaction outputs when older responses are encountered", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ id: "int-legacy", model: "gemini-2.5-flash", outputs: [{ type: "text", text: "legacy" }] })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const interaction = await createInteraction({ provider, modelId: "gemini-2.5-flash", input: "hello" });
+
+    expect(interaction.steps).toBeUndefined();
+    expect(interaction.outputs).toEqual([{ type: "text", text: "legacy" }]);
   });
 
   it("streams Gemini computer use actions as provider data for browser loops", async () => {
@@ -776,8 +1087,16 @@ describe("gemini adapter", () => {
       start(controller) {
         controller.enqueue(
           new TextEncoder().encode(
-            'data: {"output":{"function_call":{"name":"computer_use","args":{"action":"click","x":120,"y":240,"intent":"press submit"}}}}\n\n' +
-              'data: {"status":"completed"}\n\n'
+            'event: step.start\n' +
+              'data: {"event_type":"step.start","index":1,"step":{"type":"function_call","id":"call-1","name":"click"}}\n\n' +
+              'event: step.delta\n' +
+              'data: {"event_type":"step.delta","index":1,"delta":{"type":"arguments","partial_arguments":"{\\"x\\":120,\\"y\\":240,"}}\n\n' +
+              'event: step.delta\n' +
+              'data: {"event_type":"step.delta","index":1,"delta":{"type":"arguments","partial_arguments":"\\"intent\\":\\"press submit\\"}"}}\n\n' +
+              'event: step.stop\n' +
+              'data: {"event_type":"step.stop","index":1,"status":"waiting"}\n\n' +
+              'event: interaction.status_update\n' +
+              'data: {"event_type":"interaction.status_update","interaction_id":"int-1","status":"requires_action"}\n\n'
           )
         );
         controller.close();
@@ -811,27 +1130,30 @@ describe("gemini adapter", () => {
       tools: Array<Record<string, unknown>>;
     };
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/interactions?key=test&alt=sse");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/interactions?key=test");
     expect(requestBody.previous_interaction_id).toBe("int-1");
     expect(requestBody.tools).toEqual([{ type: "computer_use", environment: "browser" }]);
     expect(events).toContainEqual({
-      type: "provider-data",
-      provider: "gemini",
-      data: {
-        output: {
-          function_call: {
-            name: "computer_use",
-            args: {
-              action: "click",
-              x: 120,
-              y: 240,
-              intent: "press submit"
-            }
-          }
+      type: "tool-call",
+      toolCall: {
+        id: "call-1",
+        name: "click",
+        input: {
+          x: 120,
+          y: 240,
+          intent: "press submit"
+        },
+        providerMetadata: {
+          interactionStepIndex: 1
         }
       }
     });
-    expect(events.at(-1)).toEqual({ type: "finish", finishReason: "stop" });
+    expect(events.at(-1)).toEqual({
+      type: "finish",
+      finishReason: "tool-calls",
+      providerFinishReason: "requires_action",
+      usage: undefined
+    });
   });
 
   it("runs Gemini raw prediction helpers and operation fetches", async () => {
@@ -1107,6 +1429,37 @@ describe("gemini adapter", () => {
     expect(result.mediaType).toBe("audio/wav");
   });
 
+  it("streams Gemini 3.1 speech through the shared contract", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        [
+          'data: {"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"audio/pcm","data":"AQI="}}]}}]}',
+          "",
+          'data: {"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"audio/pcm","data":"AwQ="}}]}}]}',
+          ""
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } }
+      )
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const chunks = [];
+    for await (const chunk of await streamSpeech({
+      model: provider.speechModel!("gemini-3.1-flash-tts-preview"),
+      input: "hello there"
+    })) {
+      chunks.push(Array.from(chunk.audio));
+    }
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/models/gemini-3.1-flash-tts-preview:streamGenerateContent?alt=sse&key=test"
+    );
+    expect(chunks).toEqual([
+      [1, 2],
+      [3, 4]
+    ]);
+  });
+
   it("generates images through Gemini generateContent", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -1142,6 +1495,7 @@ describe("gemini adapter", () => {
     expect(body.generationConfig.imageConfig).toEqual({ aspectRatio: "1:1", imageSize: "1K" });
     expect(Array.from(result.images[0]?.data ?? [])).toEqual([1, 2, 3]);
     expect(result.text).toBe("generated image");
+    expect(JSON.stringify(result.rawResponse)).not.toContain("AQID");
   });
 
   it("generates Lyria 3 music through Gemini generateContent", async () => {
@@ -1190,7 +1544,8 @@ describe("gemini adapter", () => {
               {
                 video: {
                   uri: "https://example.test/video.mp4",
-                  mimeType: "video/mp4"
+                  mimeType: "video/mp4",
+                  videoBytes: "AQID"
                 }
               }
             ]
@@ -1209,6 +1564,9 @@ describe("gemini adapter", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(":predictLongRunning");
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/operations/veo-1?key=test");
     expect(result.videos[0]?.uri).toBe("https://example.test/video.mp4");
+    expect(Array.from(result.videos[0]?.data ?? [])).toEqual([1, 2, 3]);
+    expect(JSON.stringify(result.videos[0]?.providerMetadata)).not.toContain("AQID");
+    expect(JSON.stringify(result.rawResponse)).not.toContain("AQID");
   });
 
   it("generates grounded text with sources", async () => {

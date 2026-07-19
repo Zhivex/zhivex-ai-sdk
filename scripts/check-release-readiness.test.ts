@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   auditRelease,
   compareVersions,
+  releaseOidcErrors,
+  releaseWorktreeErrors,
   type PackageManifest,
   type RegistryDocument
 } from "./check-release-readiness";
@@ -84,5 +86,45 @@ describe("release readiness", () => {
 
     expect(audit.errors).toContain("@zhivex-ai/core@0.16.1 is still missing from npm after publish.");
     expect(audit.errors).toContain("@zhivex-ai/sdk@0.15.1 is still missing from npm after publish.");
+  });
+
+  it("rejects prerelease versions on latest and stable versions on next", () => {
+    const prereleasePackages = packages.map((manifest) => ({ ...manifest, version: `${manifest.version}-next.0` }));
+
+    expect(auditRelease("main", prereleasePackages, registry).errors).toContain(
+      "@zhivex-ai/core@0.16.1-next.0: prerelease versions must use an explicit non-latest dist-tag."
+    );
+    expect(auditRelease("main", packages, registry, "prepublish", "next").errors).toContain(
+      "@zhivex-ai/core@0.16.1: stable versions must publish to the latest dist-tag."
+    );
+  });
+
+  it("requires committed source and an OIDC publishing environment", () => {
+    expect(releaseWorktreeErrors(" M packages/core/src/index.ts\n")).toEqual([
+      "Release source must be committed: the worktree contains tracked or untracked changes."
+    ]);
+    expect(releaseWorktreeErrors("")).toEqual([]);
+    expect(releaseOidcErrors({ GITHUB_ACTIONS: "true" })).toHaveLength(1);
+    expect(releaseOidcErrors({
+      GITHUB_ACTIONS: "true",
+      ACTIONS_ID_TOKEN_REQUEST_URL: "https://example.invalid/token",
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: "ephemeral"
+    })).toEqual([]);
+  });
+
+  it("verifies the explicit prerelease dist-tag after publishing", () => {
+    const prereleasePackage: PackageManifest[] = [
+      { name: "@zhivex-ai/core", version: "0.17.0-next.0" }
+    ];
+    const prereleaseRegistry: Record<string, RegistryDocument> = {
+      "@zhivex-ai/core": {
+        versions: { "0.17.0-next.0": {} },
+        "dist-tags": { latest: "0.16.1", next: "0.16.2-next.0" }
+      }
+    };
+
+    expect(auditRelease("main", prereleasePackage, prereleaseRegistry, "postpublish", "next").errors).toContain(
+      "@zhivex-ai/core@0.17.0-next.0: npm dist-tag next points to 0.16.2-next.0."
+    );
   });
 });

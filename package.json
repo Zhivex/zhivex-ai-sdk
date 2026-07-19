@@ -19,13 +19,17 @@
     "test:integration:openai": "vitest run --config vitest.integration.config.ts packages/openai/tests/openai.integration.test.ts",
     "test:integration:anthropic": "vitest run --config vitest.integration.config.ts packages/anthropic/tests/anthropic.integration.test.ts",
     "test:integration:gemini": "vitest run --config vitest.integration.config.ts packages/gemini/tests/gemini.integration.test.ts",
+    "test:integration:deepseek": "ZHIVEX_INTEGRATION_PROVIDER=deepseek vitest run --config vitest.integration.config.ts packages/deepseek/tests/deepseek.integration.test.ts packages/core/tests/*.integration.test.ts",
+    "test:integration:qwen": "ZHIVEX_INTEGRATION_PROVIDER=qwen vitest run --config vitest.integration.config.ts packages/qwen/tests/qwen.integration.test.ts packages/core/tests/*.integration.test.ts",
     "test:integration:vertex": "vitest run --config vitest.integration.config.ts packages/vertex/tests/vertex.integration.test.ts",
     "smoke:providers": "bun run scripts/provider-smoke-report.ts && bun run test:integration",
     "typecheck": "tsc --noEmit",
     "version-packages": "changeset version",
     "release:check": "bun run scripts/check-release-readiness.ts",
+    "release:check:next": "bun run scripts/check-release-readiness.ts --tag=next",
     "release:verify": "bun run scripts/check-release-readiness.ts --postpublish",
-    "release": "bun run release:check && bun run build && changeset publish && bun run release:verify"
+    "release": "bun run scripts/check-release-readiness.ts --require-oidc && bun run build && changeset publish && bun run release:verify",
+    "release:next": "bun run scripts/check-release-readiness.ts --tag=next --require-oidc && bun run build && changeset publish --tag next && bun run scripts/check-release-readiness.ts --postpublish --tag=next"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",

@@ -15,7 +15,7 @@ describeTextIntegration("generateText capability integration", () => {
       const result = await generateText({
         model: provider.createModel(),
         prompt: `Reply with exactly: integration-${provider.name}-text-ok`,
-        temperature: 0,
+        ...(provider.omitTemperature ? {} : { temperature: provider.temperature ?? 0 }),
         maxTokens: 32
       });
 
@@ -33,7 +33,7 @@ describeStreamingIntegration("streamText capability integration", () => {
       const result = streamText({
         model: provider.createModel(),
         prompt: `Reply with exactly: integration-${provider.name}-stream-ok`,
-        temperature: 0,
+        ...(provider.omitTemperature ? {} : { temperature: provider.temperature ?? 0 }),
         maxTokens: 32
       });
 

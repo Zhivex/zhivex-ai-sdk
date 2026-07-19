@@ -208,7 +208,7 @@ const getBase64DecodedByteLength = (data: string) => {
     normalized.length % 4 === 1 ||
     (paddingLength > 0 && normalized.length % 4 !== 0)
   ) {
-    throw new ParseError("Provider response contained invalid base64 audio data.");
+    throw new ParseError("Provider response contained invalid base64 data.");
   }
   const withoutPadding = normalized.replace(/=+$/, "");
   return Math.floor((withoutPadding.length * 3) / 4);

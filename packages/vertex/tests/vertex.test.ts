@@ -25,6 +25,7 @@ vi.mock("google-auth-library", () => ({
 }));
 
 import {
+  audioPart,
   createBatch,
   createContextCache,
   embedMany,
@@ -37,10 +38,13 @@ import {
   generateText,
   generateVideo,
   googleComputerUseTool,
+  googleMapsTool,
   googleUrlContextTool,
   hostedTool,
   predictLongRunning,
   predictRaw,
+  streamSpeech,
+  streamText,
   tool,
   transcribeAudio
 } from "@zhivex-ai/core";
@@ -117,7 +121,7 @@ describe("vertex adapter", () => {
       parallelToolCalls: false,
       vision: true,
       files: true,
-      audioInput: false,
+      audioInput: true,
       audioOutput: false,
       embeddings: true,
       fileSearch: false,
@@ -214,6 +218,40 @@ describe("vertex adapter", () => {
     googleAuthMockState.nextToken = "adc-token";
   });
 
+  it("rejects oversized Vertex JSON responses before buffering them", async () => {
+    const contentLength = 129 * 1024 * 1024;
+    fetchMock.mockResolvedValueOnce(
+      new Response("{}", { status: 200, headers: { "content-length": String(contentLength) } })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      fetch: fetchMock as typeof fetch
+    });
+    await expect(generateText({ model: provider("gemini-3.5-flash"), prompt: "hello" })).rejects.toMatchObject({
+      name: "ProviderResponseTooLargeError",
+      maxBytes: 128 * 1024 * 1024,
+      contentLength
+    });
+  });
+
+  it("truncates Vertex error response bodies", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("x".repeat(100_000), { status: 500 }));
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      fetch: fetchMock as typeof fetch
+    });
+    const request = generateText({ model: provider("gemini-3.5-flash"), prompt: "hello" });
+    await expect(request).rejects.toMatchObject({
+      name: "ProviderHTTPError",
+      status: 500,
+      responseBody: expect.stringContaining("truncated")
+    });
+  });
+
   it("keeps rawFetch unauthenticated for arbitrary destinations", async () => {
     fetchMock.mockResolvedValueOnce(new Response("ok"));
     const provider = createVertex({
@@ -248,7 +286,7 @@ describe("vertex adapter", () => {
     const requestURL = String(fetchMock.mock.calls[0]?.[0]);
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const headers = new Headers(requestInit.headers);
-    expect(requestURL).toBe("https://aiplatform.googleapis.com/v1beta1/publishers/google/models/gemini-2.0-flash:generateContent?key=vertex-api-key");
+    expect(requestURL).toBe("https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.0-flash:generateContent?key=vertex-api-key");
     expect(headers.get("authorization")).toBeNull();
   });
 
@@ -309,9 +347,86 @@ describe("vertex adapter", () => {
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const headers = new Headers(requestInit.headers);
     expect(requestURL).toBe(
-      "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/demo-project/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
+      "https://us-central1-aiplatform.googleapis.com/v1/projects/demo-project/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
     );
     expect(headers.get("authorization")).toBe("Bearer token");
+  });
+
+  it("defaults bearer requests to the current global v1 endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "global ok" }] } }]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "token",
+      projectId: "demo-project",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await generateText({
+      model: provider("gemini-3.5-flash"),
+      prompt: "hello"
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://aiplatform.googleapis.com/v1/projects/demo-project/locations/global/publishers/google/models/gemini-3.5-flash:generateContent"
+    );
+  });
+
+  it("routes Veo models from the global Vertex endpoint to us-central1", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        name: "operations/veo-global-1",
+        done: true,
+        response: {
+          generateVideoResponse: {
+            generatedSamples: [{ video: { uri: "gs://demo/video.mp4", mimeType: "video/mp4" } }]
+          }
+        }
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "token",
+      projectId: "demo-project",
+      location: "global",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateVideo({
+      model: provider.videoGenerationModel!("veo-3.1-lite-generate-001"),
+      prompt: "hello"
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://us-central1-aiplatform.googleapis.com/v1/projects/demo-project/locations/us-central1/publishers/google/models/veo-3.1-lite-generate-001:predictLongRunning"
+    );
+  });
+
+  it("keeps regional v1beta1 endpoints available through explicit options", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "legacy endpoint ok" }] } }]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "token",
+      projectId: "demo-project",
+      location: "us-central1",
+      apiVersion: "v1beta1",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await generateText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello"
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/demo-project/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
+    );
   });
 
   it("resolves getAccessToken lazily and supports async tokens", async () => {
@@ -386,7 +501,7 @@ describe("vertex adapter", () => {
       const requestURL = String(fetchMock.mock.calls[0]?.[0]);
       const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
       expect(requestURL).toBe(
-        "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/adc-project/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
+        "https://us-central1-aiplatform.googleapis.com/v1/projects/adc-project/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
       );
       expect(new Headers(requestInit.headers).get("authorization")).toBe("Bearer adc-token");
       expect(googleAuthMockState.instances[0]?.getAccessToken).toHaveBeenCalledOnce();
@@ -472,6 +587,52 @@ describe("vertex adapter", () => {
 
     expect(result.text).toBe("hello from vertex");
     expect(result.finishReason).toBe("stop");
+  });
+
+  it("maps audio input to Vertex inlineData", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "the audio says hello" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await generateText({
+      model: provider("gemini-3.5-flash"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "Transcribe the short clip." },
+            audioPart({ mediaType: "audio/wav", data: new Uint8Array([1, 2, 3, 4]) })
+          ]
+        }
+      ]
+    });
+
+    expect(result.text).toBe("the audio says hello");
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      contents: Array<{ parts: Array<Record<string, unknown>> }>;
+    };
+    expect(body.contents[0]?.parts).toEqual([
+      { text: "Transcribe the short clip." },
+      {
+        inlineData: {
+          mimeType: "audio/wav",
+          data: "AQIDBA=="
+        }
+      }
+    ]);
   });
 
   it("creates equivalent language models from the callable provider", () => {
@@ -644,6 +805,150 @@ describe("vertex adapter", () => {
     });
   });
 
+  it("preserves Gemini thought signatures and ids across local tool loops", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: {
+              parts: [
+                {
+                  functionCall: {
+                    id: "call-1",
+                    name: "sum",
+                    args: { a: 2, b: 3 }
+                  },
+                  thoughtSignature: "signature-1"
+                }
+              ]
+            }
+          }
+        ]
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "5" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await generateText({
+      model: provider("gemini-3.5-flash"),
+      prompt: "add numbers",
+      maxSteps: 2,
+      tools: {
+        sum: tool({
+          name: "sum",
+          schema: z.object({ a: z.number(), b: z.number() }),
+          execute: ({ a, b }) => ({ total: a + b })
+        })
+      }
+    });
+
+    const secondRequestInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    const body = JSON.parse(String(secondRequestInit.body)) as {
+      contents: Array<{ role: string; parts: Array<Record<string, unknown>> }>;
+    };
+
+    expect(result.text).toBe("5");
+    expect(body.contents[1]?.parts[0]).toMatchObject({
+      functionCall: {
+        id: "call-1",
+        name: "sum",
+        args: { a: 2, b: 3 }
+      },
+      thoughtSignature: "signature-1"
+    });
+    expect(body.contents[2]?.parts[0]).toMatchObject({
+      functionResponse: {
+        id: "call-1",
+        name: "sum",
+        response: {
+          name: "sum",
+          content: { total: 5 }
+        }
+      }
+    });
+  });
+
+  it("preserves Gemini thought signatures across streamed tool loops", async () => {
+    const firstBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"call-stream-1","name":"sum","args":{"a":4,"b":6}},"thoughtSignature":"signature-stream-1"}]},"finishReason":"STOP"}]}\n\n'
+          )
+        );
+        controller.close();
+      }
+    });
+    const secondBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"candidates":[{"content":{"parts":[{"text":"10"}]},"finishReason":"STOP"}]}\n\n'
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(firstBody, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      new Response(secondBody, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await streamText({
+      model: provider("gemini-3.5-flash"),
+      prompt: "add numbers",
+      maxSteps: 2,
+      tools: {
+        sum: tool({
+          name: "sum",
+          schema: z.object({ a: z.number(), b: z.number() }),
+          execute: ({ a, b }) => ({ total: a + b })
+        })
+      }
+    }).collect();
+
+    const secondRequestInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    const body = JSON.parse(String(secondRequestInit.body)) as {
+      contents: Array<{ role: string; parts: Array<Record<string, unknown>> }>;
+    };
+    expect(result.text).toBe("10");
+    expect(body.contents[1]?.parts[0]).toMatchObject({
+      functionCall: {
+        id: "call-stream-1",
+        name: "sum",
+        args: { a: 4, b: 6 }
+      },
+      thoughtSignature: "signature-stream-1"
+    });
+  });
+
   it("maps hosted Vertex tools into native tool declarations", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -713,6 +1018,46 @@ describe("vertex adapter", () => {
     expect(body.tools).toEqual([{ urlContext: {} }, { computerUse: { environment: "browser" } }]);
   });
 
+  it("maps Google Maps grounding and coordinates to the Vertex request schema", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Nearby places" }] } }]
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("gemini-3.5-flash"),
+      prompt: "Where can I get espresso nearby?",
+      tools: {
+        maps: googleMapsTool({
+          latitude: 40.7128,
+          longitude: -74.006,
+          enableWidget: true
+        })
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as {
+      tools: Array<Record<string, unknown>>;
+      toolConfig: Record<string, unknown>;
+    };
+    expect(body.tools).toEqual([{ googleMaps: { enableWidget: true } }]);
+    expect(body.toolConfig).toEqual({
+      retrievalConfig: {
+        latLng: {
+          latitude: 40.7128,
+          longitude: -74.006
+        }
+      }
+    });
+  });
+
   it("creates Vertex context caches with full model resource paths", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -737,7 +1082,7 @@ describe("vertex adapter", () => {
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(String(requestInit.body));
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/demo-project/locations/us-central1/cachedContents"
+      "https://us-central1-aiplatform.googleapis.com/v1/projects/demo-project/locations/us-central1/cachedContents"
     );
     expect(body.model).toBe("projects/demo-project/locations/us-central1/publishers/google/models/gemini-2.0-flash");
     expect(cache.name).toContain("cachedContents/cache-1");
@@ -1019,6 +1364,41 @@ describe("vertex adapter", () => {
     expect(result.mediaType).toBe("audio/wav");
   });
 
+  it("streams Gemini 3.1 speech through Vertex", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        [
+          'data: {"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"audio/pcm","data":"AQI="}}]}}]}',
+          "",
+          'data: {"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"audio/pcm","data":"AwQ="}}]}}]}',
+          ""
+        ].join("\n"),
+        { headers: { "content-type": "text/event-stream" } }
+      )
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      fetch: fetchMock as typeof fetch
+    });
+    const chunks = [];
+    for await (const chunk of await streamSpeech({
+      model: provider.speechModel!("gemini-3.1-flash-tts-preview"),
+      input: "hello there"
+    })) {
+      chunks.push(Array.from(chunk.audio));
+    }
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/models/gemini-3.1-flash-tts-preview:streamGenerateContent?alt=sse"
+    );
+    expect(chunks).toEqual([
+      [1, 2],
+      [3, 4]
+    ]);
+  });
+
   it("generates Gemini images through Vertex generateContent", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -1059,6 +1439,7 @@ describe("vertex adapter", () => {
     expect(body.generationConfig.responseModalities).toEqual(["TEXT", "IMAGE"]);
     expect(Array.from(result.images[0]?.data ?? [])).toEqual([1, 2, 3]);
     expect(result.text).toBe("generated image");
+    expect(JSON.stringify(result.rawResponse)).not.toContain("AQID");
   });
 
   it("generates Imagen images through Vertex predict", async () => {
@@ -1092,6 +1473,8 @@ describe("vertex adapter", () => {
     expect(body.instances[0].prompt).toBe("draw a banana");
     expect(body.parameters.number_of_images).toBe(2);
     expect(Array.from(result.images[0]?.data ?? [])).toEqual([4, 5, 6]);
+    expect(JSON.stringify(result.images[0]?.providerMetadata)).not.toContain("BAUG");
+    expect(JSON.stringify(result.rawResponse)).not.toContain("BAUG");
   });
 
   it("generates Vertex Lyria audio through predict", async () => {
@@ -1119,6 +1502,8 @@ describe("vertex adapter", () => {
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(":predict");
     expect(Array.from(result.audio[0]?.data ?? [])).toEqual([7, 8, 9]);
+    expect(JSON.stringify(result.audio[0]?.providerMetadata)).not.toContain("BwgJ");
+    expect(JSON.stringify(result.rawResponse)).not.toContain("BwgJ");
   });
 
   it("generates Veo videos through Vertex long-running operations", async () => {
@@ -1197,11 +1582,62 @@ describe("vertex adapter", () => {
     expect(result.sources[0]?.url).toBe("https://example.com/vertex");
   });
 
+  it("defaults Vertex Live sessions to the global v1 LlmBidiService endpoint", async () => {
+    const connectionFactory = vi.fn(async (url: string) => {
+      expect(url).toBe(
+        "wss://aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent"
+      );
+      return {
+        async sendJson() {},
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect();
+    await session.close();
+
+    expect(connectionFactory).toHaveBeenCalledOnce();
+  });
+
+  it("preserves the explicit Vertex Live endpoint override", async () => {
+    const connectionFactory = vi.fn(async (url: string) => {
+      expect(url).toBe("wss://vertex-proxy.example.test/live");
+      return {
+        async sendJson() {},
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      realtimeURL: "wss://vertex-proxy.example.test/live",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect();
+    await session.close();
+
+    expect(connectionFactory).toHaveBeenCalledOnce();
+  });
+
   it("connects Vertex Live sessions using the documented BidiGenerateContent websocket", async () => {
     const sent: Record<string, unknown>[] = [];
     const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
       expect(url).toBe(
-        "wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1alpha.PredictionService.BidiGenerateContent"
+        "wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1alpha.LlmBidiService/BidiGenerateContent"
       );
       expect(headers).toMatchObject({
         authorization: "Bearer test"
@@ -1273,7 +1709,7 @@ describe("vertex adapter", () => {
     const sent: Record<string, unknown>[] = [];
     const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
       expect(url).toBe(
-        "wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1alpha.PredictionService.BidiGenerateContent"
+        "wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1alpha.LlmBidiService/BidiGenerateContent"
       );
       expect(headers).toMatchObject({
         authorization: "Bearer test"

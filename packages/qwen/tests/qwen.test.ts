@@ -47,7 +47,7 @@ describe("qwen adapter", () => {
       structuredOutput: true,
       jsonMode: true,
       toolChoice: true,
-      parallelToolCalls: true,
+      parallelToolCalls: false,
       files: false,
       audioInput: false,
       audioOutput: false,
@@ -136,7 +136,138 @@ describe("qwen adapter", () => {
       vision: false,
       tools: true
     });
-    expect(provider("qwen3.5-omni-plus").capabilities.vision).toBe(true);
+    expect(provider("qwen3.5-omni-plus").capabilities).toMatchObject({
+      streaming: true,
+      vision: true,
+      audioInput: true,
+      tools: true,
+      structuredOutput: false,
+      reasoning: false,
+      webSearch: false,
+      agentCapabilities: {
+        supportTier: "tier-c",
+        hostedWebSearch: false,
+        hostedFileSearch: false,
+        remoteMcp: false,
+        codeExecution: false
+      }
+    });
+    expect(provider("qwen3.6-flash").capabilities.vision).toBe(true);
+    expect(provider("qwen3.5-ocr").capabilities).toMatchObject({
+      files: true,
+      vision: true,
+      tools: false,
+      reasoning: false,
+      webSearch: false
+    });
+    expect(provider("qwen3-asr-flash").capabilities).toMatchObject({
+      tools: false,
+      reasoning: false,
+      webSearch: false
+    });
+  });
+
+  it("routes Qwen Omni through streaming Chat Completions and preserves multimodal order", async () => {
+    const responseBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(responseBody, { status: 200, headers: { "content-type": "text/event-stream" } })
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("qwen3.5-omni-plus"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "image", image: "https://example.com/first.png", mediaType: "image/png" },
+            { type: "text", text: "Compare this image" },
+            { type: "audio", data: new Uint8Array([1]), mediaType: "audio/wav" },
+            { type: "text", text: "with this audio." }
+          ]
+        }
+      ]
+    });
+
+    expect((await result.collect()).text).toBe("ok");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/completions");
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({ model: "qwen3.5-omni-plus", modalities: ["text"], stream: true });
+    expect(body.messages[0].content).toEqual([
+      { type: "image_url", image_url: { url: "https://example.com/first.png" } },
+      { type: "text", text: "Compare this image" },
+      { type: "input_audio", input_audio: { data: "data:audio/wav;base64,AQ==" } },
+      { type: "text", text: "with this audio." }
+    ]);
+
+    await expect(generateText({ model: provider("qwen3.5-omni-plus"), prompt: "hello" })).rejects.toThrow(
+      "is streaming-only"
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const responsesResult = streamText({
+      model: provider("qwen3.5-omni-plus"),
+      prompt: "hello",
+      providerOptions: { apiMode: "responses" }
+    });
+    await expect(responsesResult.collect()).rejects.toThrow("Qwen Omni uses streaming Chat Completions");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps documented OCR file URLs and rejects Files API IDs in Responses input", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "invoice" }] }]
+      })
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("qwen3.5-ocr"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "Read this document." },
+            {
+              type: "file",
+              data: "https://example.com/invoice.pdf",
+              mediaType: "application/pdf",
+              filename: "invoice.pdf"
+            }
+          ]
+        }
+      ]
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.input[0]?.content[1]).toEqual({
+      type: "input_file",
+      file_url: "https://example.com/invoice.pdf",
+      filename: "invoice.pdf"
+    });
+
+    await expect(
+      generateText({
+        model: provider("qwen3.5-ocr"),
+        messages: [
+          {
+            role: "user",
+            parts: [{ type: "file", data: "file_batch_only", mediaType: "application/pdf" }]
+          }
+        ]
+      })
+    ).rejects.toThrow("DashScope Files IDs are reserved for batch jobs");
   });
 
   it("maps Responses API results to the common contract by default", async () => {
@@ -174,8 +305,8 @@ describe("qwen adapter", () => {
     await generateText({
       model: provider("qwen-plus"),
       prompt: "hello",
-      maxTokens: 32,
       providerOptions: {
+        apiMode: "responses",
         model: "override-model",
         input: "override-input",
         stream: true,
@@ -189,13 +320,13 @@ describe("qwen adapter", () => {
       model: string;
       input: unknown;
       stream: boolean;
-      max_output_tokens: number;
+      max_output_tokens?: number;
       custom_flag?: string;
     };
     expect(body.model).toBe("qwen-plus");
     expect(body.input).not.toBe("override-input");
     expect(body.stream).toBe(false);
-    expect(body.max_output_tokens).toBe(32);
+    expect(body.max_output_tokens).toBeUndefined();
     expect(body.custom_flag).toBe("kept");
   });
 
@@ -251,7 +382,7 @@ describe("qwen adapter", () => {
           new TextEncoder().encode(
             "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n" +
               "data: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\n" +
-              "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n" +
+              "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_stream\",\"status\":\"completed\"}}\n\n" +
               "data: [DONE]\n\n"
           )
         );
@@ -272,32 +403,40 @@ describe("qwen adapter", () => {
       prompt: "hello"
     });
 
-    expect((await result.collect()).text).toBe("hello world");
+    const collected = await result.collect();
+    expect(collected.text).toBe("hello world");
+    expect(collected.messages.at(-1)?.parts).toContainEqual({
+      type: "provider-data",
+      provider: "qwen",
+      data: { responseId: "resp_stream" }
+    });
   });
 
   it("supports tool calls and native structured output", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
-        id: "resp_1",
-        status: "completed",
-        output: [
+        choices: [
           {
-            type: "function_call",
-            call_id: "tool-1",
-            name: "weather",
-            arguments: JSON.stringify({ city: "Madrid" })
+            finish_reason: "tool_calls",
+            message: {
+              content: "",
+              tool_calls: [
+                {
+                  id: "tool-1",
+                  function: { name: "weather", arguments: JSON.stringify({ city: "Madrid" }) }
+                }
+              ]
+            }
           }
         ]
       })
     );
     fetchMock.mockResolvedValueOnce(
       Response.json({
-        id: "resp_2",
-        status: "completed",
-        output: [
+        choices: [
           {
-            type: "message",
-            content: [{ type: "output_text", text: JSON.stringify({ city: "Madrid", forecast: "sunny" }) }]
+            finish_reason: "stop",
+            message: { content: JSON.stringify({ city: "Madrid", forecast: "sunny" }) }
           }
         ]
       })
@@ -327,15 +466,13 @@ describe("qwen adapter", () => {
     expect(result.toolResults[0]?.toolName).toBe("weather");
   });
 
-  it("maps native structured output into the Qwen Responses API", async () => {
+  it("maps native structured output into Qwen Chat JSON mode with a schema prompt", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
-        id: "resp_1",
-        status: "completed",
-        output: [
+        choices: [
           {
-            type: "message",
-            content: [{ type: "output_text", text: JSON.stringify({ city: "Madrid", forecast: "sunny" }) }]
+            finish_reason: "stop",
+            message: { content: JSON.stringify({ city: "Madrid", forecast: "sunny" }) }
           }
         ]
       })
@@ -353,14 +490,13 @@ describe("qwen adapter", () => {
     });
 
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    const body = JSON.parse(String(requestInit.body)) as { response_format?: { type: string; json_schema: { strict: boolean } } };
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/responses");
-    expect(body.response_format).toMatchObject({
-      type: "json_schema",
-      json_schema: {
-        strict: true
-      }
-    });
+    const body = JSON.parse(String(requestInit.body)) as {
+      response_format?: { type: string };
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/completions");
+    expect(body.response_format).toEqual({ type: "json_object" });
+    expect(body.messages[0]?.content).toContain("JSON Schema");
     expect(result.object.forecast).toBe("sunny");
   });
 
@@ -378,6 +514,42 @@ describe("qwen adapter", () => {
     });
 
     expect(result.embeddings[0]).toEqual([0.1, 0.2, 0.3]);
+  });
+
+  it("uses the native multimodal embedding endpoint for text, image, and video", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        output: {
+          embeddings: [
+            { index: 0, type: "text", embedding: [0.1] },
+            { index: 1, type: "image", embedding: [0.2] },
+            { index: 2, type: "video", embedding: [0.3] }
+          ]
+        },
+        usage: { input_tokens: 2, image_tokens: 3, total_tokens: 5 }
+      })
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await provider.multimodalEmbeddingModel("qwen3-vl-embedding").embed({
+      values: [
+        "product",
+        { data: new Uint8Array([1, 2]), mediaType: "image/png" },
+        { uri: "https://example.com/video.mp4", mediaType: "video/mp4" }
+      ],
+      providerOptions: { enable_fusion: false, dimension: 1024 }
+    });
+
+    expect(result.embeddings).toEqual([[0.1], [0.2], [0.3]]);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/services/embeddings/multimodal-embedding/multimodal-embedding"
+    );
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.input.contents).toEqual([
+      { text: "product" },
+      { image: "data:image/png;base64,AQI=" },
+      { video: "https://example.com/video.mp4" }
+    ]);
+    expect(body.parameters).toEqual({ enable_fusion: false, dimension: 1024 });
   });
 
   it("passes provider-specific options through to the Qwen API", async () => {
@@ -434,13 +606,137 @@ describe("qwen adapter", () => {
 
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(String(requestInit.body)) as {
-      tool_choice: { type: string; function: { name: string } };
+      tool_choice: { type: string; mode: string; tools: Array<{ type: string; name: string }> };
     };
     expect(body.tool_choice).toEqual({
-      type: "function",
-      function: {
-        name: "weather"
+      type: "allowed_tools",
+      mode: "required",
+      tools: [{ type: "function", name: "weather" }]
+    });
+  });
+
+  it("maps Responses reasoning effort and rejects Responses-only ignored common fields", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "reasoned" }] }],
+        usage: {
+          input_tokens: 12,
+          input_tokens_details: { cached_tokens: 7 },
+          output_tokens: 8,
+          output_tokens_details: { reasoning_tokens: 5 },
+          total_tokens: 20
+        }
+      })
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("qwen-plus"),
+      prompt: "hello",
+      reasoning: { effort: "low" },
+      providerOptions: { apiMode: "responses" }
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.reasoning).toEqual({ effort: "minimal" });
+    expect(body.enable_thinking).toBeUndefined();
+    expect(body.thinking_budget).toBeUndefined();
+    expect(result.usage).toMatchObject({
+      inputTokens: 12,
+      cachedInputTokens: 7,
+      outputTokens: 8,
+      reasoningTokens: 5,
+      totalTokens: 20
+    });
+
+    await expect(
+      generateText({
+        model: provider("qwen-plus"),
+        prompt: "hello",
+        maxTokens: 32,
+        providerOptions: { apiMode: "responses" }
+      })
+    ).rejects.toThrow("Qwen Responses does not process maxTokens");
+  });
+
+  it("continues streaming Responses conversations with previous_response_id", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"continued\"}\n\n" +
+              'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":9,"input_tokens_details":{"cached_tokens":4},"output_tokens":6,"output_tokens_details":{"reasoning_tokens":2},"total_tokens":15}}}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
       }
+    });
+    fetchMock.mockResolvedValueOnce(new Response(body, { headers: { "content-type": "text/event-stream" } }));
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("qwen-plus"),
+      messages: [
+        createTextMessage("user", "first"),
+        {
+          role: "assistant",
+          parts: [
+            { type: "text", text: "first response" },
+            { type: "provider-data", provider: "qwen", data: { responseId: "resp_previous" } }
+          ]
+        },
+        createTextMessage("user", "continue")
+      ]
+    });
+    const final = await result.collect();
+    expect(final.text).toBe("continued");
+    expect(final.usage).toMatchObject({
+      inputTokens: 9,
+      cachedInputTokens: 4,
+      outputTokens: 6,
+      reasoningTokens: 2,
+      totalTokens: 15
+    });
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody.previous_response_id).toBe("resp_previous");
+    expect(requestBody.input).toEqual([
+      { role: "user", content: [{ type: "input_text", text: "continue" }] }
+    ]);
+  });
+
+  it("flushes Chat tool calls when the finish chunk has an empty delta", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"weather","arguments":"{\\"city\\":\\"Madrid\\"}"}}]},"finish_reason":null}]}\n\n' +
+              'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(new Response(body, { headers: { "content-type": "text/event-stream" } }));
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("qwen-plus"),
+      prompt: "weather",
+      providerOptions: { apiMode: "chat" },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      }
+    });
+    const events = [];
+    for await (const event of result.eventStream) events.push(event);
+    expect(events).toContainEqual({
+      type: "tool-call",
+      toolCall: { id: "call_1", name: "weather", input: { city: "Madrid" } }
     });
   });
 
@@ -695,7 +991,7 @@ describe("qwen adapter", () => {
           search: qwenWebSearchTool()
         }
       })
-    ).rejects.toThrow('Provider "qwen" does not support hosted tools.');
+    ).rejects.toThrow("Qwen Chat Completions does not support Responses hosted tools");
   });
 
   it("exposes Qwen Cloud files and batch clients", async () => {
@@ -709,7 +1005,8 @@ describe("qwen adapter", () => {
       provider,
       data: new Uint8Array([1, 2, 3, 4]),
       mediaType: "text/plain",
-      filename: "demo.txt"
+      filename: "demo.txt",
+      providerOptions: { purpose: "batch" }
     });
     const deleted = await deleteFile({ provider, name: file.name });
     const batch = await createBatch({
@@ -723,30 +1020,71 @@ describe("qwen adapter", () => {
     expect(batch).toMatchObject({ name: "batch_1", model: "qwen-plus", state: "validating" });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/files");
     expect(String(fetchMock.mock.calls[2]?.[0])).toContain("/batches");
+    expect((fetchMock.mock.calls[0]?.[1]?.body as FormData).get("purpose")).toBe("batch");
+    const batchBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    expect(batchBody).toMatchObject({
+      input_file_id: "file_1",
+      endpoint: "/v1/chat/completions",
+      completion_window: "24h"
+    });
+    expect(batchBody.model).toBeUndefined();
+    expect(batchBody.requests).toBeUndefined();
+    expect(provider.fileSearchStores).toBeUndefined();
+  });
+
+  it("rejects path-like Qwen file, batch, and task IDs before sending credentials", async () => {
+    const provider = createQwen({ apiKey: "qwen-secret", fetch: fetchMock as typeof fetch });
+
+    await expect(provider.files!.get({ name: "../batches/batch_1" })).rejects.toThrow(
+      "Qwen file ID must be a non-empty opaque identifier"
+    );
+    await expect(provider.batches!.cancel({ name: ".." })).rejects.toThrow(
+      "Qwen batch ID must be a non-empty opaque identifier"
+    );
+    await expect(provider.tasks.get({ name: "task_1/../secret" })).rejects.toThrow(
+      "Qwen task ID must be a non-empty opaque identifier"
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("exposes Qwen speech and media models", async () => {
     fetchMock
-      .mockResolvedValueOnce(Response.json({ text: "hola mundo" }))
+      .mockResolvedValueOnce(
+        Response.json({ choices: [{ finish_reason: "stop", message: { content: "hola mundo" } }] })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          output: {
+            audio: { url: "http://dashscope-result-sg.oss-ap-southeast-1.aliyuncs.com/speech.wav" }
+          }
+        })
+      )
       .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "audio/mpeg" } }))
-      .mockResolvedValueOnce(Response.json({ data: [{ url: "https://example.com/image.png" }] }))
-      .mockResolvedValueOnce(Response.json({ output: { task_id: "task_1", videos: [{ url: "https://example.com/video.mp4" }] } }));
+      .mockResolvedValueOnce(
+        Response.json({
+          output: {
+            choices: [{ message: { content: [{ image: "https://example.com/image.png" }] } }]
+          }
+        })
+      )
+      .mockResolvedValueOnce(Response.json({ output: { task_id: "task_1", task_status: "PENDING" } }));
 
     const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const transcript = await transcribeAudio({
-      model: provider.transcriptionModel!("qwen-audio-asr"),
+      model: provider.transcriptionModel!("qwen3-asr-flash"),
       audio: { data: new Uint8Array([1]), mediaType: "audio/wav", filename: "audio.wav" }
     });
     const speech = await generateSpeech({
-      model: provider.speechModel!("qwen-tts"),
+      model: provider.speechModel!("qwen3-tts-flash"),
       input: "hello"
     });
     const image = await generateImage({
-      model: provider.imageGenerationModel!("wanx2.1-t2i-turbo"),
+      model: provider.imageGenerationModel!("qwen-image-2.0-pro"),
       prompt: "a product icon"
     });
     const video = await generateVideo({
-      model: provider.videoGenerationModel!("wanx2.1-t2v-turbo"),
+      model: provider.videoGenerationModel!("wan2.7-t2v"),
       prompt: "a product video"
     });
 
@@ -754,7 +1092,29 @@ describe("qwen adapter", () => {
     expect(speech.mediaType).toBe("audio/mpeg");
     expect(image.images[0]?.uri).toBe("https://example.com/image.png");
     expect(video.operationName).toBe("task_1");
-    expect(video.videos[0]?.uri).toBe("https://example.com/video.mp4");
+    expect(video.videos).toHaveLength(0);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/completions");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      model: "qwen3-asr-flash",
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "input_audio", input_audio: { data: "data:audio/wav;base64,AQ==" } }]
+        }
+      ]
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/services/aigc/multimodal-generation/generation");
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      model: "qwen3-tts-flash",
+      input: { text: "hello", voice: "Cherry" }
+    });
+    expect(String(fetchMock.mock.calls[3]?.[0])).toContain("/services/aigc/multimodal-generation/generation");
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toMatchObject({
+      model: "qwen-image-2.0-pro",
+      input: { messages: [{ role: "user", content: [{ text: "a product icon" }] }] }
+    });
+    expect(String(fetchMock.mock.calls[4]?.[0])).toContain("/services/aigc/video-generation/video-synthesis");
+    expect(fetchMock.mock.calls[4]?.[1]?.headers).toMatchObject({ "X-DashScope-Async": "enable" });
   });
 
   it("limits decoded Qwen base64 audio and omits the encoded payload from rawResponse", async () => {
@@ -768,7 +1128,7 @@ describe("qwen adapter", () => {
       responseLimits: { speechBytes: 3 }
     });
     await expect(
-      generateSpeech({ model: limited.speechModel!("qwen-tts"), input: "hello" })
+      generateSpeech({ model: limited.speechModel!("qwen3-tts-flash"), input: "hello" })
     ).rejects.toBeInstanceOf(ProviderResponseTooLargeError);
 
     fetchMock.mockResolvedValueOnce(
@@ -779,12 +1139,63 @@ describe("qwen adapter", () => {
       fetch: fetchMock as typeof fetch,
       responseLimits: { speechBytes: 4 }
     });
-    const result = await generateSpeech({ model: provider.speechModel!("qwen-tts"), input: "hello" });
+    const result = await generateSpeech({ model: provider.speechModel!("qwen3-tts-flash"), input: "hello" });
     expect(Array.from(result.audio)).toEqual([1, 2, 3, 4]);
     expect((result.rawResponse as any).output.audio).toMatchObject({
       data: undefined,
       data_omitted: true
     });
+  });
+
+  it("blocks unsafe Qwen speech audio URLs and validates every redirect", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ output: { audio: { url: "http://127.0.0.1/internal.wav" } } })
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateSpeech({ model: provider.speechModel!("qwen3-tts-flash"), input: "hello" })
+    ).rejects.toThrow("rejected by the configured safety policy");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fetchMock.mockClear();
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json({
+          output: {
+            audio: { url: "http://dashscope-result-sg.oss-ap-southeast-1.aliyuncs.com/speech.wav" }
+          }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(null, { status: 302, headers: { location: "http://169.254.169.254/latest/meta-data" } })
+      );
+
+    await expect(
+      generateSpeech({ model: provider.speechModel!("qwen3-tts-flash"), input: "hello" })
+    ).rejects.toThrow("rejected by the configured safety policy");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "GET", redirect: "manual" });
+  });
+
+  it("allows an explicit Qwen speech audio URL policy for private gateways", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json({ output: { audio: { url: "https://media.example.com/speech.wav" } } })
+      )
+      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2]), { headers: { "content-type": "audio/wav" } }));
+    const validator = vi.fn((url: URL) => url.protocol === "https:" && url.hostname === "media.example.com");
+    const provider = createQwen({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      speechAudioURLValidator: validator
+    });
+
+    const result = await generateSpeech({ model: provider.speechModel!("qwen3-tts-flash"), input: "hello" });
+
+    expect(Array.from(result.audio)).toEqual([1, 2]);
+    expect(validator).toHaveBeenCalledWith(expect.objectContaining({ hostname: "media.example.com" }));
+    expect(fetchMock.mock.calls[1]?.[1]?.headers).toBeUndefined();
   });
 
   it("does not allow per-request Qwen image endpoints to receive the API key", async () => {
@@ -801,11 +1212,140 @@ describe("qwen adapter", () => {
     });
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/images/generations"
+      "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
     );
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-    expect(body.endpoint).toBeUndefined();
-    expect(body.response_format).toBe("url");
+    expect(body.parameters.endpoint).toBeUndefined();
+    expect(body.parameters.response_format).toBe("url");
+  });
+
+  it("routes text and multimodal rerank models to their documented endpoints", async () => {
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ results: [{ index: 1, relevance_score: 0.9 }] }))
+      .mockResolvedValueOnce(
+        Response.json({ output: { results: [{ index: 0, relevance_score: 0.8 }] } })
+      );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await provider.rerankModel("qwen3-rerank").rerank({
+      query: "sdk",
+      documents: ["irrelevant", "Zhivex SDK"],
+      topN: 1,
+      providerOptions: { instruct: "Rank SDK documentation" }
+    });
+    await provider.rerankModel("qwen3-vl-rerank").rerank({
+      query: { data: new Uint8Array([1]), mediaType: "image/png" },
+      documents: [{ uri: "https://example.com/product.mp4", mediaType: "video/mp4" }],
+      topN: 1,
+      providerOptions: { fps: 1 }
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/compatible-mode/v1/reranks");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      model: "qwen3-rerank",
+      query: "sdk",
+      documents: ["irrelevant", "Zhivex SDK"],
+      top_n: 1,
+      instruct: "Rank SDK documentation"
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/services/rerank/text-rerank/text-rerank");
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      input: {
+        query: { image: "data:image/png;base64,AQ==" },
+        documents: [{ video: "https://example.com/product.mp4" }]
+      },
+      parameters: { return_documents: true, top_n: 1, fps: 1 }
+    });
+  });
+
+  it("derives workspace-specific HTTP, task, and realtime endpoints", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "resp_1",
+          status: "completed",
+          output: [{ type: "message", content: [{ type: "output_text", text: "ok" }] }]
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({ output: { embeddings: [{ index: 0, embedding: [0.1] }] } })
+      );
+    const connection: RealtimeConnection = {
+      async sendJson() {},
+      async recvJson() { return undefined; },
+      async close() {}
+    };
+    const connectionFactory = vi.fn(async () => connection);
+    const provider = createQwen({
+      apiKey: "test",
+      workspaceId: "ws_123",
+      region: "singapore",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    await generateText({ model: provider("qwen3.7-plus"), prompt: "hello" });
+    await provider.multimodalEmbeddingModel("qwen3-vl-embedding").embed({ values: ["hello"] });
+    await provider.realtimeModel!("qwen3.5-omni-plus-realtime").connect();
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://ws_123.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/responses"
+    );
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      "https://ws_123.ap-southeast-1.maas.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
+    );
+    expect(String(connectionFactory.mock.calls[0]?.[0])).toBe(
+      "wss://ws_123.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen3.5-omni-plus-realtime"
+    );
+  });
+
+  it("maps current Qwen realtime server events into the shared event contract", async () => {
+    const incoming: Array<Record<string, unknown>> = [
+      { type: "response.text.delta", delta: "Hello", item_id: "item_1", response_id: "resp_1" },
+      { type: "response.audio.delta", delta: "AQI=", item_id: "item_1", response_id: "resp_1" },
+      { type: "response.audio_transcript.delta", delta: "Hel", item_id: "item_1" },
+      { type: "response.audio_transcript.done", transcript: "Hello", item_id: "item_1" },
+      {
+        type: "conversation.item.input_audio_transcription.completed",
+        transcript: "Hi",
+        item_id: "item_user"
+      },
+      {
+        type: "response.function_call_arguments.done",
+        call_id: "call_1",
+        name: "weather",
+        arguments: "{\"city\":\"Madrid\"}"
+      },
+      { type: "response.done", response: { status: "completed" } },
+      { type: "session.finished" }
+    ];
+    const connection: RealtimeConnection = {
+      async sendJson() {},
+      async recvJson() { return incoming.shift(); },
+      async close() {}
+    };
+    const provider = createQwen({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: async () => connection
+    });
+    const session = await provider.realtimeModel!("qwen3.5-omni-plus-realtime").connect();
+    const events = [];
+    for await (const event of session.eventStream()) events.push(event);
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "realtime-text-delta", textDelta: "Hello", itemId: "item_1" }),
+        expect.objectContaining({ type: "realtime-audio-output", audio: new Uint8Array([1, 2]) }),
+        expect.objectContaining({ type: "realtime-transcript", text: "Hello", role: "assistant", isFinal: true }),
+        expect.objectContaining({ type: "realtime-transcript", text: "Hi", role: "user", isFinal: true }),
+        expect.objectContaining({
+          type: "realtime-tool-call",
+          toolCall: { id: "call_1", name: "weather", input: { city: "Madrid" } }
+        }),
+        expect.objectContaining({ type: "realtime-response-complete", reason: "completed" }),
+        expect.objectContaining({ type: "realtime-end", reason: "finished" })
+      ])
+    );
   });
 
   it("exposes Qwen realtime and package-specific rerank helpers", async () => {
@@ -827,8 +1367,12 @@ describe("qwen adapter", () => {
       fetch: fetchMock as typeof fetch,
       realtimeConnectionFactory: connectionFactory
     });
-    const session = await provider.realtimeModel!("qwen-omni-turbo-realtime").connect({ instructions: "be concise" });
+    const session = await provider.realtimeModel!("qwen-omni-turbo-realtime").connect({
+      instructions: "be concise",
+      turnDetection: { type: "server_vad", silence_duration_ms: 500 }
+    });
     await session.sendText("hi");
+    await session.sendMedia({ data: new Uint8Array([1, 2]), mediaType: "image/jpeg" });
     await session.close();
     const rerank = await provider.rerankModel("gte-rerank-v2").rerank({
       query: "sdk",
@@ -836,7 +1380,19 @@ describe("qwen adapter", () => {
     });
 
     expect(connectionFactory).toHaveBeenCalled();
+    expect(sent[0]).toMatchObject({
+      type: "session.update",
+      session: {
+        instructions: "be concise",
+        input_audio_format: "pcm",
+        output_audio_format: "pcm",
+        turn_detection: { type: "server_vad", silence_duration_ms: 500 }
+      }
+    });
     expect(sent.some((payload) => payload.type === "conversation.item.create")).toBe(true);
+    expect(sent).toContainEqual({ type: "input_image_buffer.append", image: "AQI=" });
+    expect(sent.some((payload) => payload.type === "session.close")).toBe(false);
     expect(rerank.results[0]).toMatchObject({ index: 0, document: "Zhivex SDK", relevanceScore: 0.9 });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/services/rerank/text-rerank/text-rerank");
   });
 });

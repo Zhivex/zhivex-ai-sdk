@@ -214,6 +214,16 @@ export interface StreamProviderDataEvent {
   data: JsonValue;
 }
 
+export interface StreamImageGenerationEvent {
+  type: "image-generation";
+  provider: string;
+  image: GeneratedMedia;
+  partial: boolean;
+  id?: string;
+  index?: number;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
 export interface StreamFinishEvent {
   type: "finish";
   finishReason?: FinishReason;
@@ -231,6 +241,7 @@ export type StreamEvent =
   | StreamToolCallEvent
   | StreamToolResultEvent
   | StreamProviderDataEvent
+  | StreamImageGenerationEvent
   | StreamFinishEvent
   | StreamErrorEvent;
 
@@ -302,6 +313,7 @@ export interface GenerateResult {
   messages?: ModelMessage[];
   text?: string;
   audio?: GeneratedMedia[];
+  images?: GeneratedMedia[];
   finishReason?: FinishReason;
   providerFinishReason?: string;
   usage?: TokenUsage;
@@ -410,12 +422,69 @@ export interface BatchJob {
   providerMetadata?: Record<string, unknown>;
 }
 
+export type InteractionStatus =
+  | "in_progress"
+  | "requires_action"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "incomplete"
+  | "budget_exceeded"
+  | (string & {});
+
+/**
+ * A raw content block returned by an interaction step.
+ *
+ * Provider field names are intentionally preserved so steps can be sent back
+ * unchanged when callers manage stateless interaction history.
+ */
+export interface InteractionContent {
+  type: string;
+  text?: string;
+  data?: string;
+  uri?: string;
+  mime_type?: string;
+  [key: string]: unknown;
+}
+
+/** A chronological step returned by the Interactions API. */
+export interface InteractionStep {
+  type: string;
+  id?: string;
+  name?: string;
+  arguments?: JsonValue;
+  call_id?: string;
+  content?: InteractionContent[];
+  result?: InteractionContent[] | JsonValue;
+  signature?: string;
+  summary?: InteractionContent[];
+  status?: string;
+  [key: string]: unknown;
+}
+
 export interface Interaction {
   id: string;
   name?: string;
   model?: string;
-  status?: string;
+  agent?: string;
+  status?: InteractionStatus;
+  object?: string;
+  createTime?: string;
+  updateTime?: string;
+  previousInteractionId?: string;
+  environmentId?: string;
+  steps?: InteractionStep[];
+  /**
+   * Backward-compatible output blocks. Current responses are normalized from
+   * the latest model output step when the provider no longer returns outputs.
+   */
   outputs?: unknown[];
+  outputText?: string;
+  outputImage?: InteractionContent;
+  outputAudio?: InteractionContent;
+  outputVideo?: InteractionContent;
+  usage?: TokenUsage;
+  error?: unknown;
   rawResponse?: unknown;
   providerMetadata?: Record<string, unknown>;
 }
@@ -523,6 +592,7 @@ export interface SpeechModel<TProviderOptions extends ProviderOptions = Provider
   readonly modelId: string;
   readonly capabilities: ModelCapabilities;
   generateSpeech(input: SpeechModelInput<TProviderOptions>): Promise<SpeechResult>;
+  streamSpeech?(input: SpeechModelInput<TProviderOptions>): Promise<AsyncIterable<SpeechResult>>;
 }
 
 export interface ImageGenerationModel<TProviderOptions extends ProviderOptions = ProviderOptions> {
@@ -702,6 +772,12 @@ export interface InteractionCreateInput<TProviderOptions extends ProviderOptions
   input: unknown;
   previousInteractionId?: string;
   tools?: ToolCollection;
+  systemInstruction?: string;
+  responseFormat?: JsonValue | JsonValue[];
+  generationConfig?: JsonValue;
+  agentConfig?: JsonValue;
+  environment?: string | JsonValue;
+  labels?: Record<string, string>;
   background?: boolean;
   store?: boolean;
   providerOptions?: TProviderOptions;
@@ -712,9 +788,28 @@ export interface InteractionGetInput<TProviderOptions extends ProviderOptions = 
   providerOptions?: TProviderOptions;
 }
 
+export interface InteractionCancelInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  id: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface InteractionDeleteInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  id: string;
+  providerOptions?: TProviderOptions;
+}
+
+export interface InteractionResumeInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
+  id: string;
+  lastEventId?: string;
+  providerOptions?: TProviderOptions;
+}
+
 export interface InteractionsClient<TProviderOptions extends ProviderOptions = ProviderOptions> {
   create(input: InteractionCreateInput<TProviderOptions>): Promise<Interaction>;
   get(input: InteractionGetInput<TProviderOptions>): Promise<Interaction>;
+  cancel(input: InteractionCancelInput<TProviderOptions>): Promise<Interaction>;
+  delete(input: InteractionDeleteInput<TProviderOptions>): Promise<{ id: string; rawResponse?: unknown }>;
+  resume(input: InteractionResumeInput<TProviderOptions>): Promise<AsyncIterable<StreamEvent>>;
   stream(input: InteractionCreateInput<TProviderOptions>): Promise<AsyncIterable<StreamEvent>>;
 }
 
@@ -836,6 +931,12 @@ export interface RealtimeToolResultEvent {
   toolResult: ToolExecutionResult;
 }
 
+export interface RealtimeProviderDataEvent {
+  type: "realtime-provider-data";
+  provider: string;
+  data: JsonValue;
+}
+
 export interface RealtimeResponseCompleteEvent {
   type: "realtime-response-complete";
   reason?: string;
@@ -875,6 +976,7 @@ export type RealtimeEvent =
   | RealtimeTranscriptEvent
   | RealtimeToolCallEvent
   | RealtimeToolResultEvent
+  | RealtimeProviderDataEvent
   | RealtimeResponseCompleteEvent
   | RealtimeSessionResumptionEvent
   | RealtimeGoAwayEvent
@@ -1612,6 +1714,8 @@ export type GenerateSpeechOptions<TModel extends SpeechModel = SpeechModel> = Re
   providerOptions?: TModel extends SpeechModel<infer TProviderOptions> ? TProviderOptions : ProviderOptions;
 };
 
+export type StreamSpeechOptions<TModel extends SpeechModel = SpeechModel> = GenerateSpeechOptions<TModel>;
+
 export interface SpeechOutput extends SpeechResult {
   input: string;
 }
@@ -1779,6 +1883,21 @@ export type CreateInteractionOptions<TProvider extends ProviderAdapter = Provide
 
 export type GetInteractionOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
   InteractionGetInput & {
+    provider: TProvider;
+  };
+
+export type CancelInteractionOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  InteractionCancelInput & {
+    provider: TProvider;
+  };
+
+export type DeleteInteractionOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  InteractionDeleteInput & {
+    provider: TProvider;
+  };
+
+export type ResumeInteractionOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  InteractionResumeInput & {
     provider: TProvider;
   };
 
