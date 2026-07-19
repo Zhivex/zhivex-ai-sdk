@@ -35,9 +35,16 @@ export interface KimiLanguageModelOptions {
   top_p?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
+  n?: number;
   stop?: string | string[];
   seed?: number;
   user?: string;
+  max_completion_tokens?: number;
+  reasoning_effort?: "max";
+  thinking?: {
+    type: "enabled" | "disabled";
+    keep?: "all" | null;
+  };
   tool_choice?: "none" | "auto" | "required" | { type: "function"; function: { name: string } };
   [key: string]: unknown;
 }
@@ -88,18 +95,54 @@ const capabilities: ModelCapabilities = {
   }
 };
 
+const isKimiK3Model = (modelId: string) => /^kimi-k3(?:$|-)/i.test(modelId);
 const isKimiK27CodeModel = (modelId: string) => /^kimi-k2\.7-code(?:$|-)/i.test(modelId);
-const supportsKimiReasoning = (modelId: string) => /kimi-k2\.7-code|kimi-k2\.6|kimi-k2\.5|kimi-k2-thinking/i.test(modelId);
+const isKimiK26Model = (modelId: string) => /^kimi-k2\.6(?:$|-)/i.test(modelId);
+const supportsKimiReasoning = (modelId: string) =>
+  isKimiK3Model(modelId) || /kimi-k2\.7-code|kimi-k2\.6|kimi-k2\.5|kimi-k2-thinking/i.test(modelId);
 
-const toKimiMediaUrl = (data: string, mediaType: string) =>
-  /^(?:data:|https?:\/\/)/i.test(data) ? data : `data:${mediaType};base64,${data}`;
+type KimiMessageContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "video_url"; video_url: { url: string } };
 
-const isKimiMultimodalContentBlock = (value: unknown): value is JsonValue => {
+type KimiMediaReference = string | ({ url: string } & Record<string, JsonValue>);
+type KimiMultimodalContentBlock =
+  | ({ type: "text"; text: string } & Record<string, JsonValue>)
+  | ({ type: "image_url"; image_url: KimiMediaReference } & Record<string, JsonValue>)
+  | ({ type: "video_url"; video_url: KimiMediaReference } & Record<string, JsonValue>);
+
+const toKimiMediaUrl = (data: string, mediaType: string) => {
+  if (/^https?:\/\//i.test(data)) {
+    throw new UnsupportedFeatureError(
+      'Provider "kimi" does not support public image or video URLs. Use base64 data or an "ms://" file reference.'
+    );
+  }
+
+  return /^(?:data:|ms:\/\/)/i.test(data) ? data : `data:${mediaType};base64,${data}`;
+};
+
+const isKimiMultimodalContentBlock = (value: unknown): value is KimiMultimodalContentBlock => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
-  const type = (value as Record<string, unknown>).type;
-  return type === "text" || type === "image_url" || type === "video_url";
+  const block = value as Record<string, unknown>;
+  if (block.type === "text") {
+    return typeof block.text === "string";
+  }
+  if (block.type !== "image_url" && block.type !== "video_url") {
+    return false;
+  }
+  const media = block[block.type];
+  return (
+    typeof media === "string" ||
+    Boolean(
+      media &&
+      typeof media === "object" &&
+      !Array.isArray(media) &&
+      typeof (media as Record<string, unknown>).url === "string"
+    )
+  );
 };
 
 const kimiToolMetadata = (definition: { formulaUri: string; parameters?: JsonValue }) => ({
@@ -174,50 +217,71 @@ const parseJson = async (response: Response) => {
 };
 
 const mapContentParts = (message: ModelMessage) => {
-  const textParts = message.parts.filter((part) => part.type === "text");
-  const imageParts = message.parts.filter((part) => part.type === "image");
-  const mediaFileParts = message.parts.filter(
-    (part): part is Extract<ModelMessage["parts"][number], { type: "file" }> =>
-      part.type === "file" && /^(?:image|video)\//i.test(part.mediaType)
+  const hasMedia = message.parts.some(
+    (part) => part.type === "image" || (part.type === "file" && /^(?:image|video)\//i.test(part.mediaType))
   );
 
-  if (!imageParts.length && !mediaFileParts.length) {
-    return textParts.map((part) => part.text).join("");
+  if (!hasMedia) {
+    return message.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("");
   }
 
-  return [
-    ...textParts.map((part) => ({
-      type: "text",
-      text: part.text
-    })),
-    ...imageParts.map((part) => ({
-      type: "image_url",
-      image_url: {
-        url: part.image
-      }
-    })),
-    ...mediaFileParts.map((part) => {
+  return message.parts.flatMap<KimiMessageContentPart>((part) => {
+    if (part.type === "text") {
+      return [{ type: "text", text: part.text }];
+    }
+    if (part.type === "image") {
+      return [
+        {
+          type: "image_url",
+          image_url: {
+            url: toKimiMediaUrl(part.image, part.mediaType ?? "image/png")
+          }
+        }
+      ];
+    }
+    if (part.type === "file" && /^(?:image|video)\//i.test(part.mediaType)) {
       const url = toKimiMediaUrl(part.data, part.mediaType);
-      return part.mediaType.toLowerCase().startsWith("video/")
-        ? {
+      return [
+        part.mediaType.toLowerCase().startsWith("video/")
+          ? {
             type: "video_url",
             video_url: {
               url
             }
           }
-        : {
+          : {
             type: "image_url",
             image_url: {
               url
             }
-          };
-    })
-  ];
+          }
+      ];
+    }
+    return [];
+  });
 };
 
 const mapToolResultContent = (toolResult: Extract<ModelMessage["parts"][number], { type: "tool-result" }>["toolResult"]) => {
   const output = toolResult.isError ? toolResult.error : toolResult.output;
-  return Array.isArray(output) && output.every(isKimiMultimodalContentBlock) ? output : JSON.stringify(output);
+  if (!Array.isArray(output) || !output.every(isKimiMultimodalContentBlock)) {
+    return JSON.stringify(output);
+  }
+
+  return output.map((block) => {
+    if (block.type === "text") {
+      return block;
+    }
+    const media = block.type === "image_url" ? block.image_url : block.video_url;
+    const url = typeof media === "string" ? media : media.url;
+    const mappedUrl = toKimiMediaUrl(url, block.type === "image_url" ? "image/png" : "video/mp4");
+    const mappedMedia = typeof media === "string" ? mappedUrl : { ...media, url: mappedUrl };
+    return block.type === "image_url"
+      ? { ...block, image_url: mappedMedia }
+      : { ...block, video_url: mappedMedia };
+  });
 };
 
 const mapMessages = (messages: ModelMessage[]) =>
@@ -317,12 +381,29 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
     return undefined;
   }
 
+  if (input.reasoning.budgetTokens !== undefined) {
+    throw new UnsupportedFeatureError('Provider "kimi" does not support "reasoning.budgetTokens".');
+  }
+
+  if (isKimiK3Model(modelId)) {
+    if (input.reasoning.effort !== undefined && input.reasoning.effort !== "max") {
+      throw new UnsupportedFeatureError('Provider "kimi" only supports "reasoning.effort=max" for Kimi K3 models.');
+    }
+
+    return input.reasoning.effort === "max" ? { reasoning_effort: "max" } : undefined;
+  }
+
   if (input.reasoning.effort === "none" && isKimiK27CodeModel(modelId)) {
     throw new UnsupportedFeatureError('Provider "kimi" does not support disabling thinking for Kimi K2.7 Code models.');
   }
 
-  if (input.reasoning.budgetTokens !== undefined) {
-    throw new UnsupportedFeatureError('Provider "kimi" does not support "reasoning.budgetTokens".');
+  if (isKimiK27CodeModel(modelId)) {
+    return {
+      thinking: {
+        type: "enabled",
+        keep: "all"
+      }
+    };
   }
 
   return {
@@ -332,33 +413,98 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
   };
 };
 
+const validateFixedNumber = (
+  modelName: string,
+  parameter: string,
+  value: unknown,
+  expected: number
+) => {
+  if (value !== undefined && value !== expected) {
+    const expectedLabel = parameter === "temperature" && expected === 1 ? "1.0" : String(expected);
+    throw new UnsupportedFeatureError(
+      `Provider "kimi" requires "${parameter}" to remain ${expectedLabel} for ${modelName} models.`
+    );
+  }
+};
+
 const assertKimiRequestCompatibility = (modelId: string, input: ModelGenerateInput<KimiLanguageModelOptions>) => {
+  const providerOptions = input.providerOptions ?? {};
+  const rawThinking = providerOptions.thinking;
+  if (isKimiK3Model(modelId)) {
+    if (rawThinking !== undefined) {
+      throw new UnsupportedFeatureError(
+        'Provider "kimi" does not support the K2.x "thinking" parameter for Kimi K3 models. Use "reasoning_effort=max".'
+      );
+    }
+    if (providerOptions.reasoning_effort !== undefined && providerOptions.reasoning_effort !== "max") {
+      throw new UnsupportedFeatureError('Provider "kimi" only supports "reasoning_effort=max" for Kimi K3 models.');
+    }
+
+    validateFixedNumber("Kimi K3", "temperature", input.temperature ?? providerOptions.temperature, 1);
+    validateFixedNumber("Kimi K3", "top_p", providerOptions.top_p, 0.95);
+    validateFixedNumber("Kimi K3", "n", providerOptions.n, 1);
+    validateFixedNumber("Kimi K3", "presence_penalty", providerOptions.presence_penalty, 0);
+    validateFixedNumber("Kimi K3", "frequency_penalty", providerOptions.frequency_penalty, 0);
+
+    const requestedMaxTokens = input.maxTokens ?? providerOptions.max_completion_tokens;
+    if (
+      requestedMaxTokens !== undefined &&
+      (!Number.isInteger(requestedMaxTokens) || requestedMaxTokens <= 0 || requestedMaxTokens > 1_048_576)
+    ) {
+      throw new UnsupportedFeatureError(
+        'Provider "kimi" requires Kimi K3 max completion tokens to be an integer between 1 and 1048576.'
+      );
+    }
+    return;
+  }
+
+  if (providerOptions.reasoning_effort !== undefined) {
+    throw new UnsupportedFeatureError('Provider "kimi" only supports "reasoning_effort" for Kimi K3 models.');
+  }
+
   if (!isKimiK27CodeModel(modelId)) {
     return;
   }
 
-  const providerOptions = input.providerOptions ?? {};
-  const rawThinking = providerOptions.thinking;
-  if (
-    rawThinking &&
-    typeof rawThinking === "object" &&
-    !Array.isArray(rawThinking) &&
-    (rawThinking as Record<string, unknown>).type === "disabled"
-  ) {
-    throw new UnsupportedFeatureError('Provider "kimi" does not support "thinking.type=disabled" for Kimi K2.7 Code models.');
+  if (rawThinking !== undefined) {
+    const thinking =
+      rawThinking && typeof rawThinking === "object" && !Array.isArray(rawThinking)
+        ? (rawThinking as Record<string, unknown>)
+        : undefined;
+    if (thinking?.type !== "enabled" || thinking.keep !== "all") {
+      throw new UnsupportedFeatureError(
+        'Provider "kimi" only accepts "thinking={ type: enabled, keep: all }" for Kimi K2.7 Code models.'
+      );
+    }
   }
 
-  if (input.temperature !== undefined && input.temperature !== 1) {
-    throw new UnsupportedFeatureError('Provider "kimi" requires "temperature" to remain 1.0 for Kimi K2.7 Code models.');
-  }
+  validateFixedNumber("Kimi K2.7 Code", "temperature", input.temperature ?? providerOptions.temperature, 1);
+  validateFixedNumber("Kimi K2.7 Code", "top_p", providerOptions.top_p, 0.95);
+  validateFixedNumber("Kimi K2.7 Code", "n", providerOptions.n, 1);
+  validateFixedNumber("Kimi K2.7 Code", "presence_penalty", providerOptions.presence_penalty, 0);
+  validateFixedNumber("Kimi K2.7 Code", "frequency_penalty", providerOptions.frequency_penalty, 0);
+};
 
-  if (providerOptions.top_p !== undefined && providerOptions.top_p !== 0.95) {
-    throw new UnsupportedFeatureError('Provider "kimi" requires "top_p" to remain 0.95 for Kimi K2.7 Code models.');
-  }
+const mapProviderOptions = (modelId: string, providerOptions: KimiLanguageModelOptions | undefined) => {
+  const mapped = { ...(providerOptions ?? {}) };
 
-  if (providerOptions.n !== undefined && providerOptions.n !== 1) {
-    throw new UnsupportedFeatureError('Provider "kimi" requires "n" to remain 1 for Kimi K2.7 Code models.');
+  if (isKimiK3Model(modelId) || isKimiK27CodeModel(modelId)) {
+    delete mapped.temperature;
+    delete mapped.top_p;
+    delete mapped.n;
+    delete mapped.presence_penalty;
+    delete mapped.frequency_penalty;
   }
+  delete mapped.tool_choice;
+
+  return mapped;
+};
+
+const mapMaxTokens = (modelId: string, maxTokens: number | undefined) => {
+  if (maxTokens === undefined) {
+    return {};
+  }
+  return isKimiK3Model(modelId) ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
 };
 
 const parseAssistantMessage = (message: any): ModelMessage => ({
@@ -393,22 +539,46 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
   ) {
     this.capabilities = {
       ...capabilities,
-      reasoning: supportsKimiReasoning(modelId)
+      reasoning: supportsKimiReasoning(modelId),
+      ...(isKimiK3Model(modelId)
+        ? {
+            reasoningEfforts: ["max" as const],
+            contextCaching: true
+          }
+        : {})
     };
   }
 
-  private mapToolChoice(toolChoice: ModelGenerateInput["toolChoice"], reasoningEnabled: boolean) {
+  private mapToolChoice(
+    input: ModelGenerateInput<KimiLanguageModelOptions>,
+    reasoning: ReturnType<typeof mapReasoning>
+  ) {
+    const rawToolChoice = input.providerOptions?.tool_choice;
+    const toolChoice = input.toolChoice ?? rawToolChoice;
     if (!toolChoice) {
       return undefined;
     }
 
-    if (reasoningEnabled && toolChoice !== "auto" && toolChoice !== "none") {
+    if (toolChoice === "required" && (isKimiK27CodeModel(this.modelId) || isKimiK26Model(this.modelId))) {
       throw new UnsupportedFeatureError(
-        'Provider "kimi" only supports "toolChoice=auto" or "toolChoice=none" when reasoning is enabled.'
+        `Provider "kimi" does not support "toolChoice=required" for ${isKimiK27CodeModel(this.modelId) ? "Kimi K2.7 Code" : "Kimi K2.6"} models.`
       );
     }
 
-    return mapToolChoice(toolChoice);
+    const rawThinking = input.providerOptions?.thinking;
+    const mappedThinking = reasoning && "thinking" in reasoning ? reasoning.thinking : undefined;
+    const reasoningEnabled =
+      isKimiK3Model(this.modelId) ||
+      isKimiK27CodeModel(this.modelId) ||
+      mappedThinking?.type === "enabled" ||
+      Boolean(rawThinking && typeof rawThinking === "object" && rawThinking.type === "enabled");
+    if (reasoningEnabled && typeof toolChoice === "object") {
+      throw new UnsupportedFeatureError(
+        'Provider "kimi" does not support selecting a specific tool while reasoning is enabled. Use "toolChoice=required" on Kimi K3 or "auto"/"none".'
+      );
+    }
+
+    return input.toolChoice === undefined ? rawToolChoice : mapToolChoice(input.toolChoice);
   }
 
   async generate(input: ModelGenerateInput<KimiLanguageModelOptions>): Promise<GenerateResult> {
@@ -417,6 +587,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
     try {
       assertKimiRequestCompatibility(this.modelId, input);
       const reasoning = mapReasoning(this.modelId, input);
+      const providerOptions = mapProviderOptions(this.modelId, input.providerOptions);
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
@@ -424,14 +595,14 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
-              ...input.providerOptions,
+              ...providerOptions,
               model: this.modelId,
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
-              tool_choice: this.mapToolChoice(input.toolChoice, Boolean(reasoning && reasoning.thinking.type === "enabled")),
+              tool_choice: this.mapToolChoice(input, reasoning),
               response_format: mapStructuredOutput(input),
-              temperature: input.temperature,
-              max_tokens: input.maxTokens,
+              temperature: isKimiK3Model(this.modelId) || isKimiK27CodeModel(this.modelId) ? undefined : input.temperature,
+              ...mapMaxTokens(this.modelId, input.maxTokens),
               stream: false,
               ...reasoning
             })
@@ -454,6 +625,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
         providerFinishReason: choice?.finish_reason,
         usage: {
           inputTokens: json.usage?.prompt_tokens,
+          cachedInputTokens: json.usage?.cached_tokens,
           outputTokens: json.usage?.completion_tokens,
           totalTokens: json.usage?.total_tokens
         },
@@ -468,6 +640,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
     assertKimiRequestCompatibility(this.modelId, input);
     const reasoning = mapReasoning(this.modelId, input);
+    const providerOptions = mapProviderOptions(this.modelId, input.providerOptions);
 
     const response = await withRetry(
       () =>
@@ -476,14 +649,14 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
           headers: jsonHeaders(this.apiKey),
           signal,
           body: JSON.stringify({
-            ...input.providerOptions,
+            ...providerOptions,
             model: this.modelId,
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
-            tool_choice: this.mapToolChoice(input.toolChoice, Boolean(reasoning && reasoning.thinking.type === "enabled")),
+            tool_choice: this.mapToolChoice(input, reasoning),
             response_format: mapStructuredOutput(input),
-            temperature: input.temperature,
-            max_tokens: input.maxTokens,
+            temperature: isKimiK3Model(this.modelId) || isKimiK27CodeModel(this.modelId) ? undefined : input.temperature,
+            ...mapMaxTokens(this.modelId, input.maxTokens),
             stream: true,
             stream_options: { include_usage: true },
             ...reasoning
@@ -494,7 +667,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
 
     return (async function* () {
       try {
-        const toolBuffers = new Map<string, { name: string; args: string }>();
+        const toolBuffers = new Map<number, { id: string; name: string; args: string }>();
 
         for await (const event of streamSSE(response)) {
           if (event.data === "[DONE]") {
@@ -521,25 +694,30 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
           }
 
           for (const toolCall of delta?.tool_calls ?? []) {
-            const id = toolCall.id ?? `${toolCall.index}`;
-            const existing = toolBuffers.get(id) ?? {
+            const index = typeof toolCall.index === "number" ? toolCall.index : 0;
+            const existing = toolBuffers.get(index) ?? {
+              id: "",
               name: toolCall.function?.name ?? "",
               args: ""
             };
+            existing.id ||= toolCall.id ?? `${index}`;
             existing.name ||= toolCall.function?.name ?? "";
             existing.args += toolCall.function?.arguments ?? "";
-            toolBuffers.set(id, existing);
+            toolBuffers.set(index, existing);
+          }
 
-            if (choice?.finish_reason === "tool_calls") {
+          if (choice?.finish_reason === "tool_calls") {
+            for (const [index, toolCall] of toolBuffers) {
               yield {
                 type: "tool-call",
                 toolCall: {
-                  id,
-                  name: existing.name,
-                  input: JSON.parse(existing.args || "{}")
+                  id: toolCall.id || `${index}`,
+                  name: toolCall.name,
+                  input: JSON.parse(toolCall.args || "{}")
                 }
               } satisfies StreamEvent;
             }
+            toolBuffers.clear();
           }
 
           if (choice?.finish_reason) {
@@ -550,6 +728,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
               usage: json.usage
                 ? {
                     inputTokens: json.usage.prompt_tokens,
+                    cachedInputTokens: json.usage.cached_tokens,
                     outputTokens: json.usage.completion_tokens,
                     totalTokens: json.usage.total_tokens
                   }

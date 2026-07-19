@@ -165,33 +165,52 @@ const listJsonFiles = async (directory: string): Promise<string[]> => {
 const providerTemplates = {
   openai: {
     packageName: "@zhivex-ai/openai",
+    packageVersion: "0.9.0",
     factoryName: "createOpenAI",
     envName: "OPENAI_API_KEY",
     defaultModel: "gpt-5"
   },
   xai: {
     packageName: "@zhivex-ai/xai",
+    packageVersion: "0.1.0",
     factoryName: "createXAI",
     envName: "XAI_API_KEY",
     defaultModel: "grok-4.5"
   },
   meta: {
     packageName: "@zhivex-ai/meta",
+    packageVersion: "0.1.2",
     factoryName: "createMeta",
     envName: "MODEL_API_KEY",
     defaultModel: "muse-spark-1.1"
   },
   anthropic: {
     packageName: "@zhivex-ai/anthropic",
+    packageVersion: "0.6.5",
     factoryName: "createAnthropic",
     envName: "ANTHROPIC_API_KEY",
     defaultModel: "claude-sonnet-5"
   },
   gemini: {
     packageName: "@zhivex-ai/gemini",
+    packageVersion: "0.9.0",
     factoryName: "createGemini",
     envName: "GEMINI_API_KEY",
     defaultModel: "gemini-3.5-flash"
+  },
+  kimi: {
+    packageName: "@zhivex-ai/kimi",
+    packageVersion: "0.7.0",
+    factoryName: "createKimi",
+    envName: "KIMI_API_KEY",
+    defaultModel: "kimi-k3"
+  },
+  deepseek: {
+    packageName: "@zhivex-ai/deepseek",
+    packageVersion: "0.3.0",
+    factoryName: "createDeepSeek",
+    envName: "DEEPSEEK_API_KEY",
+    defaultModel: "deepseek-v4-flash"
   }
 } as const;
 
@@ -298,8 +317,8 @@ const packageTemplate = (options: {
     ledger: "zhivex-ai agents ledger --state .zhivex/runs/latest-agent-state.json --out .zhivex/runs/latest-ledger.json"
   },
   dependencies: {
-    "@zhivex-ai/sdk": "latest",
-    [providerTemplates[options.provider].packageName]: "latest",
+    "@zhivex-ai/sdk": "^0.17.0",
+    [providerTemplates[options.provider].packageName]: `^${providerTemplates[options.provider].packageVersion}`,
     zod: "^4.4.3"
   },
   devDependencies: {

@@ -3,6 +3,7 @@ import { hostedTool } from "./messages.js";
 import type {
   BatchJob,
   CancelBatchOptions,
+  CancelInteractionOptions,
   CachedContent,
   CreateBatchOptions,
   CreateContextCacheOptions,
@@ -12,6 +13,7 @@ import type {
   DeleteContextCacheOptions,
   DeleteFileOptions,
   DeleteFileSearchStoreOptions,
+  DeleteInteractionOptions,
   FetchPredictionOperationOptions,
   FileSearchStore,
   GetBatchOptions,
@@ -30,6 +32,7 @@ import type {
   PredictionOperation,
   PredictionResult,
   ProviderAdapter,
+  ResumeInteractionOptions,
   StreamEvent,
   UploadFileOptions,
   UploadToFileSearchStoreOptions,
@@ -212,6 +215,34 @@ export const getInteraction = async (options: GetInteractionOptions): Promise<In
   return provider.interactions.get(input);
 };
 
+export const cancelInteraction = async (options: CancelInteractionOptions): Promise<Interaction> => {
+  const { provider, ...input } = options;
+  if (!provider.interactions) {
+    throw missingClient(provider, "interactions");
+  }
+  return provider.interactions.cancel(input);
+};
+
+export const deleteInteraction = async (
+  options: DeleteInteractionOptions
+): Promise<{ id: string; rawResponse?: unknown }> => {
+  const { provider, ...input } = options;
+  if (!provider.interactions) {
+    throw missingClient(provider, "interactions");
+  }
+  return provider.interactions.delete(input);
+};
+
+export const resumeInteraction = async (
+  options: ResumeInteractionOptions
+): Promise<AsyncIterable<StreamEvent>> => {
+  const { provider, ...input } = options;
+  if (!provider.interactions) {
+    throw missingClient(provider, "interactions");
+  }
+  return provider.interactions.resume(input);
+};
+
 export const streamInteraction = async (options: CreateInteractionOptions): Promise<AsyncIterable<StreamEvent>> => {
   const { provider, ...input } = options;
   if (!provider.interactions) {
@@ -249,6 +280,18 @@ export const googleSearchTool = () =>
     name: "google_search",
     type: "googleSearch",
     config: {},
+    toolClass: "web-search"
+  });
+
+export const googleMapsTool = (config: {
+  latitude?: number;
+  longitude?: number;
+  enableWidget?: boolean;
+} = {}) =>
+  hostedTool({
+    name: "google_maps",
+    type: "googleMaps",
+    config: JSON.parse(JSON.stringify(config)) as JsonValue,
     toolClass: "web-search"
   });
 

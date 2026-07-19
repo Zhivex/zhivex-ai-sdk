@@ -21,6 +21,7 @@ describe("realtime helpers", () => {
     const sent: Record<string, unknown>[] = [];
     const received = [
       { type: "message", text: "hello" },
+      { type: "provider-event", status: "in_progress" },
       { type: "done" }
     ];
     const connection: RealtimeConnection = {
@@ -58,6 +59,15 @@ describe("realtime helpers", () => {
           if (payload.type === "message") {
             return [{ type: "realtime-text-delta", textDelta: String(payload.text ?? "") }];
           }
+          if (payload.type === "provider-event") {
+            return [
+              {
+                type: "realtime-provider-data",
+                provider: "test",
+                data: { type: "provider-event", status: String(payload.status ?? "") }
+              }
+            ];
+          }
           if (payload.type === "done") {
             return [{ type: "realtime-end", reason: "stop" }];
           }
@@ -84,6 +94,7 @@ describe("realtime helpers", () => {
     expect(sent).toEqual([{ type: "init" }, { type: "media", mediaType: "image/jpeg" }, { type: "text", text: "hello" }]);
     expect(events).toContain("realtime-start");
     expect(events).toContain("realtime-text-delta");
+    expect(events).toContain("realtime-provider-data");
     expect(events.at(-1)).toBe("realtime-end");
   });
 

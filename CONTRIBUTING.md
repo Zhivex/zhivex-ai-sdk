@@ -32,8 +32,10 @@ bun run build
 - `bun run test:integration:openai` requires `OPENAI_API_KEY` and optionally accepts `OPENAI_BASE_URL`, `OPENAI_INTEGRATION_MODEL`, and `OPENAI_INTEGRATION_EMBEDDING_MODEL`.
 - `bun run test:integration:anthropic` requires `ANTHROPIC_API_KEY` and optionally accepts `ANTHROPIC_BASE_URL`, `ANTHROPIC_VERSION`, and `ANTHROPIC_INTEGRATION_MODEL`.
 - `bun run test:integration:gemini` requires `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`, and optionally accepts `GEMINI_BASE_URL`, `GEMINI_INTEGRATION_MODEL`, and `GEMINI_INTEGRATION_EMBEDDING_MODEL`.
+- Capability-first integration suites pick up `KIMI_API_KEY` or `MOONSHOT_API_KEY`; they optionally accept `KIMI_BASE_URL` or `MOONSHOT_BASE_URL` and `KIMI_INTEGRATION_MODEL`, which defaults to `kimi-k3`.
 - Capability-first integration suites also pick up `OPENROUTER_API_KEY` and optionally `OPENROUTER_BASE_URL` plus `OPENROUTER_INTEGRATION_MODEL` when OpenRouter credentials are present.
 - `bun run test:integration:vertex` requires `VERTEX_ACCESS_TOKEN` or `GOOGLE_ACCESS_TOKEN`, plus `GOOGLE_CLOUD_PROJECT` or `GCLOUD_PROJECT` unless `VERTEX_BASE_URL` is set. It optionally accepts `VERTEX_LOCATION`, `VERTEX_INTEGRATION_MODEL`, and `VERTEX_INTEGRATION_EMBEDDING_MODEL`.
+- `bun run test:integration:deepseek` and `bun run test:integration:qwen` filter the shared capability suites to the named provider, even when other provider credentials are present.
 - If a documented behavior changes, update `README.md`, especially the provider compatibility matrix.
 
 ## Pull Requests
@@ -51,6 +53,8 @@ Published packages are managed with Changesets. Add a changeset for user-facing 
 ```bash
 bunx changeset
 ```
+
+Publishing is performed from the protected `release.yml` GitHub Actions workflow with npm trusted publishing. Local `bun run release` is deliberately blocked without the GitHub OIDC environment.
 
 ## Reporting Issues
 

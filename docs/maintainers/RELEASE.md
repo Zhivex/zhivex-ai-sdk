@@ -9,11 +9,10 @@ Start from the repository root.
 ```bash
 git status --short
 git branch --show-current
-bun pm whoami
 bun run release:check
 ```
 
-Stable publishing must run from `main`. The release check compares every workspace version and internal dependency range with the live npm registry. It blocks divergent-branch publishes, versions behind npm, unresolved internal dependencies, immutable-version metadata drift, and stale `latest` tags that the pending release cannot repair.
+Stable publishing must run from `main`. The release check requires a clean worktree, compares every workspace version and internal dependency range with the live npm registry, and blocks divergent-branch publishes, versions behind npm, unresolved internal dependencies, immutable-version metadata drift, prereleases targeting `latest`, and stale tags that the pending release cannot repair.
 
 The working tree should contain only intended release changes. Review pending changesets:
 
@@ -50,7 +49,7 @@ Repeat for any provider package included in the changesets.
 
 ## Stable Release To `latest`
 
-Use this flow only for stable releases.
+Use this flow only for stable releases. Apply versioning and commit the resulting package manifests and lockfile before publishing:
 
 ```bash
 bun run typecheck
@@ -61,12 +60,22 @@ bun run version-packages
 bun run typecheck
 bun run test
 bun run build
-bun run release
+git status --short
 ```
 
-`bun run release` publishes with the default npm dist-tag. Use it only when the versions are stable and should become `latest`.
+Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The workflow checks out immutable committed source, installs dependencies without lifecycle scripts, repeats audit/typecheck/test/build, publishes through npm trusted publishing, and only then pushes the package version tags created by Changesets to the same source commit.
 
-The command runs the registry consistency check before publishing and verifies the published versions and dist-tags again afterward. If npm authentication fails, fix authentication and rerun the command; do not publish individual dependent packages around the failed batch.
+`bun run release` is intentionally restricted to GitHub Actions with an available OIDC token. Do not add `NPM_TOKEN` to the workflow. If authentication fails, fix the npm trusted-publisher configuration and rerun the workflow; do not publish individual dependent packages around the failed batch.
+
+Before the first OIDC release, configure every `@zhivex-ai/*` package on npm with this trusted publisher:
+
+- organization: `Zhivex`
+- repository: `zhivex-ai-sdk`
+- workflow: `release.yml`
+- allowed action: `npm publish`
+- environment: `npm`
+
+The workflow uses Node 24 and verifies npm is at least 11.5.1. GitHub Actions receives `id-token: write`; npm then generates provenance automatically for public packages.
 
 Before publishing, verify that no package version contains a prerelease suffix such as `-next.0`, `-alpha.0`, `-beta.0`, or `-rc.0`.
 
@@ -90,10 +99,9 @@ bun run typecheck
 bun run test
 bun run build
 bun run smoke:providers
-bunx changeset publish --tag next
 ```
 
-Keep publishing follow-up prereleases with the same `next` tag while pre mode is active.
+Commit and push the prerelease manifests, then dispatch `release.yml` with channel `next`. The workflow validates that pending versions use the `next` suffix and publishes with the explicit `next` dist-tag. Keep using that channel for follow-up prereleases while pre mode is active.
 
 When the prerelease cycle is done:
 
@@ -146,12 +154,13 @@ Do not publish if any of these are true:
 
 - validation fails
 - the current branch is not `main`
+- the worktree contains uncommitted or untracked release input
 - changesets do not match the packages changed
 - `smoke:providers` reports an unexpected configured-provider failure
 - a prerelease version would publish to `latest`
 - package dry-run includes unexpected files
 - package manifests have unexpected `exports`, `types`, `files`, or dependency ranges
 - `bun run release:check` reports registry, dist-tag, or internal dependency drift
-- npm authentication or scope access is unclear
+- npm trusted publishing, the protected `npm` environment, or scope access is unclear
 
 Publishing is irreversible enough to deserve a pause. Fix the issue, rerun the relevant checks, and only then continue.

@@ -93,12 +93,90 @@ describe("zhivex-ai CLI", () => {
         inspect: "zhivex-ai agents inspect --state .zhivex/runs/latest-agent-state.json"
       },
       dependencies: {
-        "@zhivex-ai/sdk": "latest",
-        "@zhivex-ai/openai": "latest"
+        "@zhivex-ai/sdk": "^0.17.0",
+        "@zhivex-ai/openai": "^0.9.0"
       }
     });
     await expect(fs.readFile(path.join(directory, "src", "agent.ts"), "utf8")).resolves.toContain("createProductionSafetyPolicy");
     await expect(fs.readFile(path.join(directory, ".env.example"), "utf8")).resolves.toContain("OPENAI_API_KEY=");
+  });
+
+  it("scaffolds a Kimi K3 agent project", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-kimi-init-"), "kimi-agent");
+    const capture = createCapture();
+
+    const code = await runCli([
+      "init",
+      "agent",
+      "--dir",
+      directory,
+      "--provider",
+      "kimi"
+    ], capture.io);
+
+    expect(code).toBe(0);
+    expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+      ok: true,
+      provider: "kimi",
+      model: "kimi-k3"
+    });
+    await expect(readJson(path.join(directory, "package.json"))).resolves.toMatchObject({
+      dependencies: {
+        "@zhivex-ai/sdk": "^0.17.0",
+        "@zhivex-ai/kimi": "^0.7.0"
+      }
+    });
+    const agentSource = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
+    expect(agentSource).toContain('import { createKimi } from "@zhivex-ai/kimi"');
+    expect(agentSource).toContain('model: provider("kimi-k3")');
+    await expect(fs.readFile(path.join(directory, ".env.example"), "utf8")).resolves.toContain("KIMI_API_KEY=");
+  });
+
+  it("scaffolds and diagnoses a DeepSeek V4 agent project", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-deepseek-init-"), "deepseek-agent");
+    const capture = createCapture();
+
+    const code = await runCli([
+      "init",
+      "agent",
+      "--dir",
+      directory,
+      "--provider",
+      "deepseek"
+    ], capture.io);
+
+    expect(code).toBe(0);
+    expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+      ok: true,
+      provider: "deepseek",
+      model: "deepseek-v4-flash"
+    });
+    await expect(readJson(path.join(directory, "package.json"))).resolves.toMatchObject({
+      dependencies: {
+        "@zhivex-ai/sdk": "^0.17.0",
+        "@zhivex-ai/deepseek": "^0.3.0"
+      }
+    });
+    const agentSource = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
+    expect(agentSource).toContain('import { createDeepSeek } from "@zhivex-ai/deepseek"');
+    expect(agentSource).toContain('model: provider("deepseek-v4-flash")');
+    await expect(fs.readFile(path.join(directory, ".env.example"), "utf8")).resolves.toContain("DEEPSEEK_API_KEY=");
+
+    const doctorCapture = createCapture();
+    await expect(runCli([
+      "doctor",
+      "--dir",
+      directory,
+      "--provider",
+      "deepseek"
+    ], doctorCapture.io)).resolves.toBe(0);
+    expect(JSON.parse(doctorCapture.stdout[0]!)).toMatchObject({
+      ok: true,
+      checks: expect.arrayContaining([
+        expect.objectContaining({ name: "deepseek-dependency", status: "pass" }),
+        expect.objectContaining({ name: "deepseek-env", detail: expect.stringContaining("DEEPSEEK_API_KEY") })
+      ])
+    });
   });
 
   it("runs doctor checks for generated projects", async () => {

@@ -337,7 +337,7 @@ export {
   createSqliteAgentMemoryStore,
   createSqliteAgentRunStore
 } from "./agent-store.js";
-export { generateSpeech, transcribeAudio } from "./audio.js";
+export { generateSpeech, streamSpeech, transcribeAudio } from "./audio.js";
 export { embed, embedMany } from "./embed.js";
 export * from "./catalog.js";
 export * from "./errors.js";
@@ -345,6 +345,7 @@ export * from "./fetch.js";
 export { generateObject, streamObject } from "./generate-object.js";
 export {
   cancelBatch,
+  cancelInteraction,
   createBatch,
   createContextCache,
   createFileSearchStore,
@@ -353,6 +354,7 @@ export {
   deleteContextCache,
   deleteFile,
   deleteFileSearchStore,
+  deleteInteraction,
   fetchPredictionOperation,
   getBatch,
   getContextCache,
@@ -362,6 +364,7 @@ export {
   googleCodeExecutionTool,
   googleComputerUseTool,
   googleFileSearchTool,
+  googleMapsTool,
   googleSearchTool,
   googleUrlContextTool,
   importFileToFileSearchStore,
@@ -371,6 +374,7 @@ export {
   listFileSearchStores,
   predictLongRunning,
   predictRaw,
+  resumeInteraction,
   streamInteraction,
   uploadFile,
   uploadToFileSearchStore

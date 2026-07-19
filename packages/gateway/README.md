@@ -54,7 +54,7 @@ For agent workloads, use `runAgent()` or `streamAgent()` to route by both regula
 
 ```ts
 const agentResult = await gateway.runAgent({
-  primary: { provider: "kimi", modelId: "kimi-k2.5" },
+  primary: { provider: "kimi", modelId: "kimi-k3" },
   fallbacks: [{ provider: "qwen", modelId: "qwen-plus" }],
   prompt: "Use hosted retrieval and an MCP map server.",
   requiredAgentCapabilities: {

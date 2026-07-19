@@ -26,10 +26,13 @@ import {
   openAIComputerTool,
   openAIComputerUseTool,
   openAIHostedShellTool,
+  openAIImageGenerationTool,
+  openAIImageGenerationToolChoice,
   openAIMcpApprovalResponse,
   openAIProgrammaticTool,
   openAIProgrammaticToolCallingTool,
   openAIPromptCacheBreakpoint,
+  openAIRealtimeMcpApprovalResult,
   openAIRemoteMcpTool,
   openAIShellTool,
   openAIToolSearchTool,
@@ -301,6 +304,214 @@ describe("openai adapter", () => {
         output: JSON.stringify({ city: "Madrid", forecast: "sunny" })
       }
     ]);
+  });
+
+  it("streams decoded image-generation events without persisting partial base64", async () => {
+    const partialBytes = new Uint8Array(1_100_000).fill(7);
+    const partialBase64 = Buffer.from(partialBytes).toString("base64");
+    const finalBytes = new Uint8Array([8, 9, 10]);
+    const finalBase64 = Buffer.from(finalBytes).toString("base64");
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            `data: ${JSON.stringify({
+              type: "response.image_generation_call.partial_image",
+              item_id: "ig_1",
+              partial_image_index: 0,
+              partial_image_b64: partialBase64
+            })}\n\n` +
+              `data: ${JSON.stringify({
+                type: "response.output_item.done",
+                item: {
+                  type: "image_generation_call",
+                  id: "ig_1",
+                  status: "completed",
+                  result: finalBase64
+                }
+              })}\n\n` +
+              'data: {"type":"response.completed","response":{"id":"resp_image","status":"completed"}}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("gpt-5.6"),
+      prompt: "Draw a harbor",
+      tools: { image: openAIImageGenerationTool({ partial_images: 1, output_format: "webp" }) },
+      providerOptions: { tool_choice: openAIImageGenerationToolChoice() }
+    });
+    const events = [];
+    for await (const event of result.eventStream) {
+      events.push(event);
+    }
+    const collected = await result.collect();
+
+    const imageEvents = events.filter((event) => event.type === "image-generation");
+    expect(imageEvents).toHaveLength(2);
+    expect(imageEvents[0]).toMatchObject({
+      type: "image-generation",
+      provider: "openai",
+      partial: true,
+      id: "ig_1",
+      index: 0,
+      image: { mediaType: "image/webp" }
+    });
+    const partialImageData = imageEvents[0]?.image.data;
+    expect(partialImageData).toBeInstanceOf(Uint8Array);
+    expect(partialImageData).toHaveLength(partialBytes.byteLength);
+    expect(Buffer.compare(Buffer.from(partialImageData!), Buffer.from(partialBytes))).toBe(0);
+    expect(imageEvents[1]).toMatchObject({
+      type: "image-generation",
+      provider: "openai",
+      partial: false,
+      id: "ig_1",
+      image: { mediaType: "image/webp", data: finalBytes }
+    });
+    expect(JSON.stringify(collected.messages)).not.toContain(partialBase64);
+    const providerDataParts = collected.messages
+      .flatMap((message) => message.parts)
+      .filter((part) => part.type === "provider-data");
+    expect(providerDataParts).toHaveLength(2);
+    expect(providerDataParts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ data: expect.objectContaining({ type: "responses_output" }) }),
+      expect.objectContaining({ data: { responseId: "resp_image" } })
+    ]));
+    expect(collected.steps[0]?.response.images?.[0]?.data).toEqual(finalBytes);
+
+    const requestBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(requestBody.tools).toEqual([{ type: "image_generation", partial_images: 1, output_format: "webp" }]);
+    expect(requestBody.tool_choice).toEqual({ type: "image_generation" });
+  });
+
+  it("rejects a hosted image SSE event above the configured decoded-byte limit", async () => {
+    const imageBase64 = Buffer.from([1, 2, 3, 4]).toString("base64");
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        `data: ${JSON.stringify({
+          type: "response.image_generation_call.partial_image",
+          item_id: "ig_limit",
+          partial_image_index: 0,
+          partial_image_b64: imageBase64
+        })}\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )
+    );
+
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      responseLimits: { hostedImageEventBytes: 3, hostedImageTotalBytes: 16 }
+    });
+
+    await expect(streamText({
+      model: provider("gpt-5.6"),
+      prompt: "Draw",
+      tools: { image: openAIImageGenerationTool({ partial_images: 1 }) }
+    }).collect()).rejects.toMatchObject<Partial<ProviderResponseTooLargeError>>({
+      maxBytes: 3,
+      receivedBytes: 4,
+      provider: "openai",
+      endpoint: "hosted image generation event"
+    });
+  });
+
+  it("rejects hosted image SSE data above the configured accumulated limit", async () => {
+    const partialBase64 = Buffer.from([1, 2, 3]).toString("base64");
+    const finalBase64 = Buffer.from([4, 5, 6]).toString("base64");
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        `data: ${JSON.stringify({
+          type: "response.image_generation_call.partial_image",
+          item_id: "ig_total",
+          partial_image_index: 0,
+          partial_image_b64: partialBase64
+        })}\n\n` +
+          `data: ${JSON.stringify({
+            type: "response.output_item.done",
+            item: {
+              type: "image_generation_call",
+              id: "ig_total",
+              status: "completed",
+              result: finalBase64
+            }
+          })}\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )
+    );
+
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      responseLimits: { hostedImageEventBytes: 4, hostedImageTotalBytes: 5 }
+    });
+
+    await expect(streamText({
+      model: provider("gpt-5.6"),
+      prompt: "Draw",
+      tools: { image: openAIImageGenerationTool({ partial_images: 1 }) }
+    }).collect()).rejects.toMatchObject<Partial<ProviderResponseTooLargeError>>({
+      maxBytes: 5,
+      receivedBytes: 6,
+      provider: "openai",
+      endpoint: "hosted image generation stream"
+    });
+  });
+
+  it("validates hosted image response limits before creating a provider", () => {
+    expect(() => createOpenAI({
+      apiKey: "test",
+      responseLimits: { hostedImageEventBytes: 0 }
+    })).toThrow('The "hostedImageEventBytes" response limit must be a positive safe integer.');
+  });
+
+  it("returns typed hosted image outputs from non-streaming Responses", async () => {
+    const imageBytes = new Uint8Array([12, 13, 14]);
+    const imageBase64 = Buffer.from(imageBytes).toString("base64");
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_image_nonstream",
+        status: "completed",
+        output: [
+          {
+            type: "image_generation_call",
+            id: "ig_nonstream",
+            status: "completed",
+            revised_prompt: "A quiet harbor at dawn",
+            result: imageBase64
+          }
+        ]
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-5.6"),
+      prompt: "Draw a harbor",
+      tools: { image: openAIImageGenerationTool({ output_format: "jpeg" }) },
+      providerOptions: { tool_choice: openAIImageGenerationToolChoice() }
+    });
+
+    expect(result.steps[0]?.response.images).toEqual([
+      expect.objectContaining({
+        data: imageBytes,
+        mediaType: "image/jpeg",
+        text: "A quiet harbor at dawn"
+      })
+    ]);
+    const providerDataParts = result.messages
+      .flatMap((message) => message.parts)
+      .filter((part) => part.type === "provider-data");
+    expect(providerDataParts.filter((part) =>
+      typeof part.data === "object" && part.data !== null && "type" in part.data && part.data.type === "responses_output"
+    )).toHaveLength(1);
   });
 
   it("parses remote MCP approval requests from the Responses API", async () => {
@@ -1922,7 +2133,8 @@ describe("openai adapter", () => {
           schema: z.object({ city: z.string() }),
           execute: () => ({ ok: true })
         })
-      }
+      },
+      toolChoice: { type: "tool", toolName: "weather" }
     });
 
     await session.sendMedia({ data: "image-bytes", mediaType: "image/jpeg" });
@@ -1930,14 +2142,24 @@ describe("openai adapter", () => {
     await session.close();
 
     expect(connectionFactory).toHaveBeenCalledOnce();
+    const initialSession = sent[0]?.session as { tools: Array<Record<string, unknown>> };
     expect(sent[0]).toMatchObject({
       type: "session.update",
       session: expect.objectContaining({
         model: "gpt-realtime",
         instructions: "Be brief.",
-        tools: [expect.objectContaining({ type: "function" })]
+        tool_choice: { type: "function", name: "weather" }
       })
     });
+    expect(initialSession.tools[0]).toMatchObject({
+      type: "function",
+      name: "weather",
+      parameters: expect.objectContaining({
+        type: "object",
+        properties: expect.objectContaining({ city: expect.objectContaining({ type: "string" }) })
+      })
+    });
+    expect(initialSession.tools[0]).not.toHaveProperty("function");
     expect(sent[1]).toMatchObject({
       type: "conversation.item.create",
       item: {
@@ -1951,6 +2173,71 @@ describe("openai adapter", () => {
       item: expect.objectContaining({ role: "user" })
     });
     expect(sent[3]).toEqual({ type: "response.create" });
+  });
+
+  it("sends realtime safety identifiers and custom headers without leaking them into the session body", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async (_url: string, headers: Record<string, string>) => {
+      expect(headers).toEqual({
+        authorization: "Bearer test",
+        "x-request-id": "request_123",
+        "OpenAI-Safety-Identifier": "hashed-user-123"
+      });
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gpt-realtime-2.1").connect({
+      providerOptions: {
+        safety_identifier: "hashed-user-123",
+        headers: {
+          "x-request-id": "request_123",
+          Authorization: "Bearer wrong-key",
+          "Content-Type": "text/plain",
+          "openai-safety-identifier": "stale-value"
+        }
+      }
+    });
+    await session.close();
+
+    const sessionBody = sent[0]?.session as Record<string, unknown>;
+    expect(sessionBody).not.toHaveProperty("safety_identifier");
+    expect(sessionBody).not.toHaveProperty("headers");
+  });
+
+  it("rejects Responses-only hosted tools in Realtime sessions", async () => {
+    const connectionFactory = vi.fn(async () => ({
+      async sendJson() {},
+      async recvJson() {
+        return undefined;
+      },
+      async close() {}
+    }));
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+
+    await expect(
+      provider.realtimeModel!("gpt-realtime-2.1").connect({
+        tools: { web: openAIWebSearchTool() }
+      })
+    ).rejects.toThrow(
+      'Provider "openai" Realtime does not support the hosted tool type "web_search". Use function or MCP tools.'
+    );
   });
 
   it("maps OpenAI chat audio input and output for audio-capable models", async () => {
@@ -2054,6 +2341,233 @@ describe("openai adapter", () => {
     expect(sent).toContainEqual({ type: "response.create" });
   });
 
+  it.each(["gpt-realtime-2.1", "gpt-realtime-2.1-mini"])(
+    "recognizes %s as a reasoning and image-input Realtime model",
+    async (modelId) => {
+      const sent: Record<string, unknown>[] = [];
+      const connectionFactory = vi.fn(async () => ({
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          return undefined;
+        },
+        async close() {}
+      }));
+      const provider = createOpenAI({
+        apiKey: "test",
+        fetch: fetchMock as typeof fetch,
+        realtimeConnectionFactory: connectionFactory
+      });
+      const model = provider.realtimeModel!(modelId);
+      const session = await model.connect({ reasoning: { effort: "high" } });
+
+      await session.sendMedia({ data: "image", mediaType: "image/png" });
+      await session.close();
+
+      expect(model.capabilities).toMatchObject({
+        reasoning: true,
+        vision: true,
+        webSearch: false,
+        structuredOutput: false,
+        jsonMode: false,
+        embeddings: false,
+        agentCapabilities: {
+          supportTier: "tier-a",
+          hostedWebSearch: false,
+          hostedFileSearch: false,
+          remoteMcp: true,
+          computerUse: false,
+          codeExecution: false,
+          shell: false,
+          applyPatch: false,
+          toolSearch: false,
+          skills: false
+        }
+      });
+      expect(model.capabilities.realtime).toMatchObject({ imageInput: true });
+      expect(sent[0]).toMatchObject({
+        type: "session.update",
+        session: expect.objectContaining({ model: modelId, reasoning: { effort: "high" } })
+      });
+      expect(sent[1]).toMatchObject({
+        type: "conversation.item.create",
+        item: expect.objectContaining({
+          content: [{ type: "input_image", image_url: "data:image/png;base64,image" }]
+        })
+      });
+    }
+  );
+
+  it("normalizes provider-executed Realtime MCP lifecycle events and sends explicit approval responses", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const incoming: Array<Record<string, unknown> | undefined> = [
+      { type: "mcp_list_tools.in_progress", item_id: "list_1" },
+      { type: "mcp_list_tools.completed", item_id: "list_1" },
+      {
+        type: "mcp_list_tools.failed",
+        item_id: "list_2",
+        error: { message: "Unable to import MCP tools" }
+      },
+      {
+        type: "conversation.item.done",
+        item: {
+          type: "mcp_list_tools",
+          id: "list_1",
+          server_label: "docs",
+          tools: [{ name: "fetch_docs", description: "Fetch documentation" }]
+        }
+      },
+      {
+        type: "conversation.item.done",
+        item: {
+          type: "mcp_approval_request",
+          id: "approval_1",
+          server_label: "docs",
+          name: "fetch_docs",
+          arguments: '{"url":"https://developers.openai.com"}'
+        }
+      },
+      { type: "response.mcp_call_arguments.delta", item_id: "call_1", delta: "{\"url\":" },
+      {
+        type: "response.mcp_call_arguments.done",
+        item_id: "call_1",
+        arguments: '{"url":"https://developers.openai.com"}'
+      },
+      { type: "response.mcp_call.in_progress", item_id: "call_1" },
+      {
+        type: "response.output_item.done",
+        item: {
+          type: "mcp_call",
+          id: "call_1",
+          server_label: "docs",
+          name: "fetch_docs",
+          arguments: '{"url":"https://developers.openai.com"}',
+          output: '{"title":"Realtime"}',
+          status: "completed"
+        }
+      },
+      {
+        type: "response.mcp_call.failed",
+        item_id: "call_2",
+        error: { message: "MCP server unavailable" }
+      },
+      undefined
+    ];
+    let incomingIndex = 0;
+    const connectionFactory = vi.fn(async () => ({
+      async sendJson(payload: Record<string, unknown>) {
+        sent.push(payload);
+      },
+      async recvJson() {
+        const event = incoming[incomingIndex];
+        incomingIndex += 1;
+        return event;
+      },
+      async close() {}
+    }));
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gpt-realtime-2.1").connect({
+      tools: {
+        docs: openAIRemoteMcpTool({
+          server_label: "docs",
+          server_url: "https://developers.openai.com/mcp",
+          require_approval: "always"
+        })
+      }
+    });
+
+    const events = [];
+    for await (const event of session.eventStream()) {
+      events.push(event);
+    }
+
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "realtime-tool-call" }));
+    expect(events).toContainEqual({
+      type: "realtime-provider-data",
+      provider: "openai",
+      data: expect.objectContaining({
+        type: "mcp_list_tools",
+        status: "completed",
+        item_id: "list_1",
+        server_label: "docs",
+        tools: [{ name: "fetch_docs", description: "Fetch documentation" }],
+        raw_event: expect.any(Object)
+      })
+    });
+    expect(events).toContainEqual({
+      type: "realtime-provider-data",
+      provider: "openai",
+      data: expect.objectContaining({
+        type: "mcp_list_tools",
+        status: "failed",
+        item_id: "list_2",
+        error: { message: "Unable to import MCP tools" },
+        raw_event: expect.any(Object)
+      })
+    });
+    expect(events).toContainEqual({
+      type: "realtime-provider-data",
+      provider: "openai",
+      data: expect.objectContaining({
+        type: "mcp_approval_request",
+        status: "approval_required",
+        approval_request_id: "approval_1",
+        name: "fetch_docs",
+        arguments: { url: "https://developers.openai.com" },
+        raw_event: expect.any(Object)
+      })
+    });
+    expect(events).toContainEqual({
+      type: "realtime-provider-data",
+      provider: "openai",
+      data: expect.objectContaining({
+        type: "mcp_call",
+        status: "completed",
+        item_id: "call_1",
+        name: "fetch_docs",
+        output: { title: "Realtime" },
+        raw_event: expect.any(Object)
+      })
+    });
+    expect(events).toContainEqual({
+      type: "realtime-provider-data",
+      provider: "openai",
+      data: expect.objectContaining({
+        type: "mcp_call",
+        status: "failed",
+        item_id: "call_2",
+        error: { message: "MCP server unavailable" },
+        raw_event: expect.any(Object)
+      })
+    });
+
+    await session.sendToolResult(
+      openAIRealtimeMcpApprovalResult({
+        approvalRequestId: "approval_1",
+        itemId: "approval_response_1",
+        name: "fetch_docs",
+        approve: true
+      })
+    );
+    await session.close();
+
+    expect(sent).toContainEqual({
+      type: "conversation.item.create",
+      item: {
+        id: "approval_response_1",
+        type: "mcp_approval_response",
+        approval_request_id: "approval_1",
+        approve: true
+      }
+    });
+    expect(sent).not.toContainEqual({ type: "response.create" });
+  });
+
   it("uses the dedicated realtime translation endpoint and disables tools", async () => {
     const sent: Record<string, unknown>[] = [];
     const connectionFactory = vi.fn(async (url: string) => {
@@ -2087,7 +2601,13 @@ describe("openai adapter", () => {
     );
     await session.close();
 
-    expect(model.capabilities).toMatchObject({ tools: false, audioInput: true, audioOutput: true, vision: false });
+    expect(model.capabilities).toMatchObject({
+      tools: false,
+      audioInput: true,
+      audioOutput: true,
+      vision: false,
+      agentCapabilities: { supportTier: "tier-c", remoteMcp: false }
+    });
     expect(model.capabilities.realtime).toMatchObject({ imageInput: false });
     expect(sent[0]).toMatchObject({
       type: "session.update",
@@ -2213,7 +2733,15 @@ describe("openai adapter", () => {
 
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const token = await provider.realtimeModel!("gpt-realtime").createBrowserToken?.({
-      instructions: "Be helpful."
+      instructions: "Be helpful.",
+      providerOptions: {
+        safety_identifier: "hashed-browser-user",
+        headers: {
+          "x-request-id": "browser_request_1",
+          Authorization: "Bearer wrong-key",
+          "Content-Type": "text/plain"
+        }
+      }
     });
 
     expect(token).toEqual({
@@ -2225,8 +2753,21 @@ describe("openai adapter", () => {
       "https://api.openai.com/v1/realtime/client_secrets",
       expect.objectContaining({
         method: "POST",
-        headers: expect.objectContaining({ authorization: "Bearer test" })
+        headers: expect.objectContaining({
+          authorization: "Bearer test",
+          "content-type": "application/json",
+          "x-request-id": "browser_request_1",
+          "OpenAI-Safety-Identifier": "hashed-browser-user"
+        })
       })
     );
+    const requestHeaders = (fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    expect(requestHeaders).not.toHaveProperty("Authorization");
+    expect(requestHeaders).not.toHaveProperty("Content-Type");
+    const requestBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      session: Record<string, unknown>;
+    };
+    expect(requestBody.session).not.toHaveProperty("safety_identifier");
+    expect(requestBody.session).not.toHaveProperty("headers");
   });
 });

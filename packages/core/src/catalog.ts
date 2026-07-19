@@ -83,6 +83,9 @@ export const defaultModelCatalog = createModelCatalog([
   { provider: "openai", modelId: "gpt-5.4", costPer1kTokens: 0.0025, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
   { provider: "openai", modelId: "gpt-5.4-mini", costPer1kTokens: 0.00075, recommendedFor: ["chat", "tools", "speed", "vision"] },
   { provider: "openai", modelId: "gpt-4o-mini", costPer1kTokens: 0.0006, recommendedFor: ["chat", "tools", "speed"] },
+  { provider: "openai", modelId: "gpt-image-2", recommendedFor: ["vision"] },
+  { provider: "openai", modelId: "gpt-realtime-2.1", recommendedFor: ["chat", "tools", "speed", "vision"] },
+  { provider: "openai", modelId: "gpt-realtime-2.1-mini", recommendedFor: ["chat", "tools", "speed", "vision"] },
   {
     provider: "xai",
     modelId: "grok-4.5",
@@ -129,7 +132,9 @@ export const defaultModelCatalog = createModelCatalog([
     provider: "gemini",
     modelId: "gemini-3.5-flash",
     aliases: ["gemini-flash-latest"],
-    costPer1kTokens: 0.0015,
+    inputCostPer1kTokens: 0.0015,
+    cachedInputCostPer1kTokens: 0.00015,
+    outputCostPer1kTokens: 0.009,
     recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
   },
   {
@@ -150,7 +155,12 @@ export const defaultModelCatalog = createModelCatalog([
   {
     provider: "gemini",
     modelId: "gemini-3.1-flash-lite",
-    recommendedFor: ["chat", "speed", "vision"]
+    recommendedFor: ["chat", "speed", "vision", "tools"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-3.1-flash-lite-image",
+    recommendedFor: ["vision", "speed"]
   },
   {
     provider: "gemini",
@@ -204,18 +214,13 @@ export const defaultModelCatalog = createModelCatalog([
   },
   {
     provider: "gemini",
-    modelId: "imagen-4.0-generate-001",
-    recommendedFor: ["vision"]
-  },
-  {
-    provider: "gemini",
-    modelId: "imagen-4.0-fast-generate-001",
+    modelId: "veo-3.1-lite-generate-preview",
     recommendedFor: ["vision", "speed"]
   },
   {
     provider: "gemini",
-    modelId: "imagen-4.0-ultra-generate-001",
-    recommendedFor: ["vision"]
+    modelId: "gemini-omni-flash-preview",
+    recommendedFor: ["vision", "speed"]
   },
   {
     provider: "gemini",
@@ -234,7 +239,9 @@ export const defaultModelCatalog = createModelCatalog([
     provider: "vertex",
     modelId: "gemini-3.5-flash",
     aliases: ["gemini-flash-latest"],
-    costPer1kTokens: 0.0015,
+    inputCostPer1kTokens: 0.0015,
+    cachedInputCostPer1kTokens: 0.00015,
+    outputCostPer1kTokens: 0.009,
     recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
   },
   {
@@ -242,12 +249,92 @@ export const defaultModelCatalog = createModelCatalog([
     modelId: "gemini-3.5-live-translate-preview",
     recommendedFor: ["speed"]
   },
+  {
+    provider: "vertex",
+    modelId: "gemini-3.1-pro-preview",
+    recommendedFor: ["chat", "reasoning", "vision", "tools"]
+  },
+  {
+    provider: "vertex",
+    modelId: "gemini-3.1-flash-lite",
+    recommendedFor: ["chat", "speed", "vision", "tools"]
+  },
+  {
+    provider: "vertex",
+    modelId: "gemini-3.1-flash-lite-image",
+    recommendedFor: ["vision", "speed"]
+  },
+  {
+    provider: "vertex",
+    modelId: "gemini-3.1-flash-image",
+    recommendedFor: ["vision", "speed"]
+  },
+  {
+    provider: "vertex",
+    modelId: "gemini-3-pro-image",
+    recommendedFor: ["vision", "reasoning"]
+  },
+  {
+    provider: "vertex",
+    modelId: "gemini-2.5-flash-image",
+    recommendedFor: ["vision", "speed"]
+  },
+  {
+    provider: "vertex",
+    modelId: "gemini-live-2.5-flash-native-audio",
+    recommendedFor: ["speed", "vision", "tools"]
+  },
+  {
+    provider: "vertex",
+    modelId: "gemini-3.1-flash-tts-preview",
+    recommendedFor: ["speed"]
+  },
+  {
+    provider: "vertex",
+    modelId: "gemini-embedding-2",
+    recommendedFor: ["vision"]
+  },
+  {
+    provider: "vertex",
+    modelId: "veo-3.1-generate-001",
+    recommendedFor: ["vision"]
+  },
+  {
+    provider: "vertex",
+    modelId: "veo-3.1-fast-generate-001",
+    recommendedFor: ["vision", "speed"]
+  },
+  {
+    provider: "vertex",
+    modelId: "veo-3.1-lite-generate-001",
+    recommendedFor: ["vision", "speed"]
+  },
+  {
+    provider: "vertex",
+    modelId: "lyria-002"
+  },
   { provider: "qwen", modelId: "qwen3.7-max", costPer1kTokens: 0.0016, recommendedFor: ["chat", "tools", "reasoning"] },
   { provider: "qwen", modelId: "qwen3.7-plus", costPer1kTokens: 0.0008, recommendedFor: ["chat", "tools", "reasoning", "vision"] },
-  { provider: "qwen", modelId: "qwen3.6-flash", costPer1kTokens: 0.0002, recommendedFor: ["chat", "speed", "tools"] },
-  { provider: "qwen", modelId: "qwen3.5-omni-plus", recommendedFor: ["chat", "vision", "speed"] },
+  { provider: "qwen", modelId: "qwen3.6-flash", costPer1kTokens: 0.0002, recommendedFor: ["chat", "speed", "tools", "vision"] },
+  { provider: "qwen", modelId: "qwen3.5-omni-plus", recommendedFor: ["chat", "vision", "speed", "tools"] },
+  { provider: "qwen", modelId: "qwen3.5-omni-plus-realtime", recommendedFor: ["vision", "speed"] },
+  { provider: "qwen", modelId: "qwen3.5-ocr", recommendedFor: ["vision", "speed"] },
+  { provider: "qwen", modelId: "qwen3-vl-embedding", recommendedFor: ["vision"] },
+  { provider: "qwen", modelId: "qwen3-rerank" },
+  { provider: "qwen", modelId: "qwen3-asr-flash", recommendedFor: ["speed"] },
+  { provider: "qwen", modelId: "qwen3-tts-flash", recommendedFor: ["speed"] },
   { provider: "qwen", modelId: "qwen-image-2.0-pro", recommendedFor: ["vision"] },
+  { provider: "qwen", modelId: "wan2.7-t2v", recommendedFor: ["vision"] },
   { provider: "qwen", modelId: "qwen-plus", costPer1kTokens: 0.0008, recommendedFor: ["chat", "tools", "reasoning"] },
+  {
+    provider: "kimi",
+    modelId: "kimi-k3",
+    inputCostPer1kTokens: 0.003,
+    cachedInputCostPer1kTokens: 0.0003,
+    outputCostPer1kTokens: 0.015,
+    costPer1kTokens: 0.003,
+    recommendedFor: ["chat", "reasoning", "tools", "vision"]
+  },
   {
     provider: "kimi",
     modelId: "kimi-k2.7-code",
@@ -258,7 +345,24 @@ export const defaultModelCatalog = createModelCatalog([
   { provider: "kimi", modelId: "kimi-k2.6", costPer1kTokens: 0.002, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
   { provider: "kimi", modelId: "kimi-k2.5", costPer1kTokens: 0.002, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
   { provider: "kimi", modelId: "kimi-k2-0905-preview", costPer1kTokens: 0.002, recommendedFor: ["tools"] },
-  { provider: "deepseek", modelId: "deepseek-v4-flash", costPer1kTokens: 0.0004, recommendedFor: ["chat", "tools", "reasoning", "speed"] },
+  {
+    provider: "deepseek",
+    modelId: "deepseek-v4-flash",
+    inputCostPer1kTokens: 0.00014,
+    cachedInputCostPer1kTokens: 0.0000028,
+    outputCostPer1kTokens: 0.00028,
+    costPer1kTokens: 0.00014,
+    recommendedFor: ["chat", "tools", "reasoning", "speed"]
+  },
+  {
+    provider: "deepseek",
+    modelId: "deepseek-v4-pro",
+    inputCostPer1kTokens: 0.000435,
+    cachedInputCostPer1kTokens: 0.000003625,
+    outputCostPer1kTokens: 0.00087,
+    costPer1kTokens: 0.000435,
+    recommendedFor: ["chat", "tools", "reasoning"]
+  },
   { provider: "openrouter", modelId: "openai/gpt-4o-mini", costPer1kTokens: 0.0007, recommendedFor: ["chat", "tools"] },
   { provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet", costPer1kTokens: 0.003, recommendedFor: ["reasoning"] },
   { provider: "ollama", modelId: "llama3.2", costPer1kTokens: 0, recommendedFor: ["chat", "speed"] }

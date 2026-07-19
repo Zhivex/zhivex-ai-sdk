@@ -27,6 +27,8 @@ export interface ReleaseAudit {
   warnings: string[];
 }
 
+export type ReleaseDistTag = "latest" | "next";
+
 const internalPrefix = "@zhivex-ai/";
 
 interface ParsedVersion {
@@ -123,7 +125,8 @@ export const auditRelease = (
   branch: string,
   packages: PackageManifest[],
   registryByName: Record<string, RegistryDocument>,
-  mode: "prepublish" | "postpublish" = "prepublish"
+  mode: "prepublish" | "postpublish" = "prepublish",
+  distTag: ReleaseDistTag = "latest"
 ): ReleaseAudit => {
   const errors: string[] = [];
   const pending: string[] = [];
@@ -143,6 +146,18 @@ export const auditRelease = (
 
     if (!localIsPublished) {
       pending.push(`${manifest.name}@${manifest.version}`);
+      const prereleaseChannel = parseVersion(manifest.version).prerelease?.split(".")[0];
+      if (prereleaseChannel && distTag === "latest") {
+        errors.push(
+          `${manifest.name}@${manifest.version}: prerelease versions must use an explicit non-latest dist-tag.`
+        );
+      } else if (prereleaseChannel && prereleaseChannel !== distTag) {
+        errors.push(
+          `${manifest.name}@${manifest.version}: prerelease channel ${prereleaseChannel} does not match dist-tag ${distTag}.`
+        );
+      } else if (!prereleaseChannel && distTag !== "latest") {
+        errors.push(`${manifest.name}@${manifest.version}: stable versions must publish to the latest dist-tag.`);
+      }
     }
 
     if (highestStable && compareVersions(manifest.version, highestStable) < 0) {
@@ -167,6 +182,17 @@ export const auditRelease = (
 
     if (mode === "postpublish" && !localIsPublished) {
       errors.push(`${manifest.name}@${manifest.version} is still missing from npm after publish.`);
+    }
+
+    if (
+      mode === "postpublish" &&
+      distTag !== "latest" &&
+      parseVersion(manifest.version).prerelease &&
+      registry["dist-tags"]?.[distTag] !== manifest.version
+    ) {
+      errors.push(
+        `${manifest.name}@${manifest.version}: npm dist-tag ${distTag} points to ${registry["dist-tags"]?.[distTag] ?? "nothing"}.`
+      );
     }
 
     const publishedManifest = registry.versions?.[manifest.version];
@@ -211,6 +237,18 @@ export const auditRelease = (
   return { errors, pending: pending.sort(), warnings };
 };
 
+export const releaseWorktreeErrors = (status: string): string[] =>
+  status.trim()
+    ? ["Release source must be committed: the worktree contains tracked or untracked changes."]
+    : [];
+
+export const releaseOidcErrors = (environment: Record<string, string | undefined>): string[] =>
+  environment.GITHUB_ACTIONS === "true" &&
+  Boolean(environment.ACTIONS_ID_TOKEN_REQUEST_URL) &&
+  Boolean(environment.ACTIONS_ID_TOKEN_REQUEST_TOKEN)
+    ? []
+    : ["Publishing requires GitHub Actions trusted publishing with an available OIDC identity token."];
+
 const loadWorkspacePackages = async (): Promise<PackageManifest[]> => {
   const packages: PackageManifest[] = [];
   for await (const packageJson of new Bun.Glob("packages/*/package.json").scan(".")) {
@@ -236,12 +274,26 @@ const loadRegistryDocument = async (name: string): Promise<RegistryDocument> => 
 
 const run = async () => {
   const mode = process.argv.includes("--postpublish") ? "postpublish" : "prepublish";
+  const distTagArgument = process.argv.find((argument) => argument.startsWith("--tag="));
+  const distTag = (distTagArgument?.slice("--tag=".length) ?? "latest") as ReleaseDistTag;
+  if (distTag !== "latest" && distTag !== "next") {
+    throw new Error(`Unsupported release dist-tag: ${distTag}.`);
+  }
   const branch = execFileSync("git", ["branch", "--show-current"], { encoding: "utf8" }).trim();
+  const worktreeStatus = execFileSync(
+    "git",
+    ["status", "--porcelain=v1", "--untracked-files=all"],
+    { encoding: "utf8" }
+  );
   const packages = await loadWorkspacePackages();
   const registryEntries = await Promise.all(
     packages.map(async (manifest) => [manifest.name, await loadRegistryDocument(manifest.name)] as const)
   );
-  const audit = auditRelease(branch, packages, Object.fromEntries(registryEntries), mode);
+  const audit = auditRelease(branch, packages, Object.fromEntries(registryEntries), mode, distTag);
+  audit.errors.unshift(...releaseWorktreeErrors(worktreeStatus));
+  if (process.argv.includes("--require-oidc")) {
+    audit.errors.unshift(...releaseOidcErrors(process.env));
+  }
 
   for (const warning of audit.warnings) {
     console.warn(`warning: ${warning}`);

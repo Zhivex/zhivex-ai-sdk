@@ -3,6 +3,7 @@ import type {
   GenerateSpeechOptions,
   SpeechModel,
   SpeechOutput,
+  StreamSpeechOptions,
   TranscribeAudioOptions,
   TranscriptionModel,
   TranscriptionOutput
@@ -64,4 +65,38 @@ export const generateSpeech = async <TModel extends SpeechModel>(
     ...result,
     input: options.input
   };
+};
+
+export const streamSpeech = async <TModel extends SpeechModel>(
+  options: StreamSpeechOptions<TModel>
+): Promise<AsyncIterable<SpeechOutput>> => {
+  if (!options.model.capabilities.audioOutput) {
+    throw new UnsupportedFeatureError(
+      `Model "${options.model.provider}/${options.model.modelId}" does not support audio output.`
+    );
+  }
+  if (!options.model.streamSpeech) {
+    throw new UnsupportedFeatureError(
+      `Model "${options.model.provider}/${options.model.modelId}" does not support streaming speech.`
+    );
+  }
+
+  const stream = await options.model.streamSpeech({
+    input: options.input,
+    voice: options.voice,
+    providerOptions: options.providerOptions,
+    abortSignal: options.abortSignal,
+    timeoutMs: options.timeoutMs,
+    maxRetries: options.maxRetries,
+    retryBackoffMs: options.retryBackoffMs
+  });
+
+  return (async function* () {
+    for await (const result of stream) {
+      yield {
+        ...result,
+        input: options.input
+      };
+    }
+  })();
 };

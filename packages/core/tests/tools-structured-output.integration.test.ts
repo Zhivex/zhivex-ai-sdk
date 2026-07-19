@@ -16,7 +16,7 @@ describeToolIntegration("tool calling capability integration", () => {
       const result = await generateText({
         model: provider.createModel(),
         prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
-        temperature: 0,
+        ...(provider.omitTemperature ? {} : { temperature: provider.temperature ?? 0 }),
         maxTokens: 32,
         maxSteps: 2,
         tools: {
@@ -46,7 +46,7 @@ describeStructuredOutputIntegration("structured output capability integration", 
       const result = await generateObject({
         model: provider.createModel(),
         prompt: "Return a city-country pair for Buenos Aires, Argentina.",
-        temperature: 0,
+        ...(provider.omitTemperature ? {} : { temperature: provider.temperature ?? 0 }),
         schema: z.object({
           city: z.string(),
           country: z.string()

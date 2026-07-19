@@ -8,8 +8,10 @@ const kimi = createKimi({
 });
 
 const result = await generateText({
-  model: kimi("kimi-k2-0905-preview"),
-  prompt: "Say hello from the Kimi adapter."
+  model: kimi("kimi-k3"),
+  prompt: "Say hello from Kimi K3 and explain your strongest use case in one sentence.",
+  reasoning: { effort: "max" },
+  maxTokens: 512
 });
 
 console.log(result.text);

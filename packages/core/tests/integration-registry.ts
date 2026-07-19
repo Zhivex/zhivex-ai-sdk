@@ -7,7 +7,7 @@ import { createGemini } from "../../gemini/src/index.js";
 import { createKimi } from "../../kimi/src/index.js";
 import { createOpenAI } from "../../openai/src/index.js";
 import { createOpenRouter } from "../../openrouter/src/index.js";
-import { createQwen } from "../../qwen/src/index.js";
+import { createQwen, type QwenRegion } from "../../qwen/src/index.js";
 import { createVertex } from "../../vertex/src/index.js";
 import { createXAI } from "../../xai/src/index.js";
 
@@ -15,6 +15,8 @@ export interface IntegrationLanguageProvider {
   name: string;
   createModel: () => LanguageModel;
   createEmbeddingModel?: () => EmbeddingModel;
+  temperature?: number;
+  omitTemperature?: boolean;
   supports: {
     streaming: boolean;
     tools: boolean;
@@ -106,12 +108,15 @@ const deepSeekTextModelId = process.env.DEEPSEEK_INTEGRATION_MODEL ?? "deepseek-
 
 const qwenApiKey = process.env.QWEN_API_KEY ?? process.env.DASHSCOPE_API_KEY;
 const qwenBaseURL = process.env.QWEN_BASE_URL;
-const qwenTextModelId = process.env.QWEN_INTEGRATION_MODEL ?? "qwen-plus";
+const qwenWorkspaceId = process.env.QWEN_WORKSPACE_ID;
+const qwenRegion = process.env.QWEN_REGION as QwenRegion | undefined;
+const qwenTextModelId = process.env.QWEN_INTEGRATION_MODEL ?? "qwen3.7-plus";
 const qwenEmbeddingModelId = process.env.QWEN_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-v4";
 
 const kimiApiKey = process.env.KIMI_API_KEY ?? process.env.MOONSHOT_API_KEY;
 const kimiBaseURL = process.env.KIMI_BASE_URL ?? process.env.MOONSHOT_BASE_URL;
-const kimiTextModelId = process.env.KIMI_INTEGRATION_MODEL ?? "kimi-k2.5";
+const kimiTextModelId = process.env.KIMI_INTEGRATION_MODEL ?? "kimi-k3";
+const isKimiK3Model = /^kimi-k3(?:$|-)/i.test(kimiTextModelId);
 
 const bedrockRegion = process.env.AWS_REGION;
 const bedrockTextModelId = process.env.BEDROCK_INTEGRATION_MODEL ?? "anthropic.claude-3-5-sonnet";
@@ -211,7 +216,7 @@ const kimiSupports: IntegrationLanguageProvider["supports"] = {
   structuredOutputMode: "native",
   embeddings: false,
   reasoning: {
-    effort: "low"
+    effort: isKimiK3Model ? "max" : "low"
   }
 };
 const bedrockConverseSupports: IntegrationLanguageProvider["supports"] = {
@@ -341,7 +346,7 @@ export const integrationProviderStatuses: IntegrationProviderStatus[] = [
   })
 ];
 
-export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
+const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
   ...(openAIApiKey
     ? [
         {
@@ -468,11 +473,8 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: deepSeekApiKey,
               baseURL: deepSeekBaseURL
             })(deepSeekTextModelId),
-          supports: deepSeekSupports,
-          toolChoiceForTool: (toolName) => ({
-            type: "tool",
-            toolName
-          })
+          omitTemperature: true,
+          supports: deepSeekSupports
         } satisfies IntegrationLanguageProvider
       ]
     : []),
@@ -483,12 +485,16 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
           createModel: () =>
             createQwen({
               apiKey: qwenApiKey,
-              baseURL: qwenBaseURL
+              baseURL: qwenBaseURL,
+              workspaceId: qwenWorkspaceId,
+              region: qwenRegion
             })(qwenTextModelId),
           createEmbeddingModel: () =>
             createQwen({
               apiKey: qwenApiKey,
-              baseURL: qwenBaseURL
+              baseURL: qwenBaseURL,
+              workspaceId: qwenWorkspaceId,
+              region: qwenRegion
             }).embeddingModel(qwenEmbeddingModelId),
           supports: qwenSupports,
           toolChoiceForTool: (toolName) => ({
@@ -507,11 +513,14 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: kimiApiKey,
               baseURL: kimiBaseURL
             })(kimiTextModelId),
+          temperature: 1,
           supports: kimiSupports,
-          toolChoiceForTool: (toolName) => ({
-            type: "tool",
-            toolName
-          })
+          toolChoiceForTool: isKimiK3Model
+            ? () => "required"
+            : (toolName) => ({
+                type: "tool",
+                toolName
+              })
         } satisfies IntegrationLanguageProvider
       ]
     : []),
@@ -578,3 +587,9 @@ export const integrationLanguageProviders: IntegrationLanguageProvider[] = [
       ]
     : [])
 ];
+
+const integrationProviderFilter = process.env.ZHIVEX_INTEGRATION_PROVIDER?.trim();
+
+export const integrationLanguageProviders: IntegrationLanguageProvider[] = integrationProviderFilter
+  ? allIntegrationLanguageProviders.filter((provider) => provider.name === integrationProviderFilter)
+  : allIntegrationLanguageProviders;

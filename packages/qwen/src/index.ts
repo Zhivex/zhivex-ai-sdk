@@ -17,6 +17,7 @@ import {
   normalizeFinishReason,
   providerDataPart,
   streamSSE,
+  toToolSet,
   withRetry,
   withTimeoutSignal,
   type AudioFrame,
@@ -36,14 +37,6 @@ import {
   type FileDeleteInput,
   type FileGetInput,
   type FileListInput,
-  type FileSearchStore,
-  type FileSearchStoreCreateInput,
-  type FileSearchStoreDeleteInput,
-  type FileSearchStoreGetInput,
-  type FileSearchStoreImportInput,
-  type FileSearchStoreListInput,
-  type FileSearchStoreUploadInput,
-  type FileSearchStoresClient,
   type FileUploadInput,
   type FilesClient,
   type GenerateResult,
@@ -77,16 +70,22 @@ import {
 
 export interface QwenProviderOptions {
   apiKey?: string;
+  workspaceId?: string;
+  region?: QwenRegion;
   baseURL?: string;
   taskBaseURL?: string;
   realtimeURL?: string;
   realtimeConnectionFactory?: RealtimeConnectionFactory;
   fetch?: typeof globalThis.fetch;
   responseLimits?: AudioResponseLimits;
+  speechAudioURLValidator?: QwenSpeechAudioURLValidator;
+  speechAudioMaxRedirects?: number;
 }
 
+export type QwenSpeechAudioURLValidator = (url: URL) => boolean | Promise<boolean>;
+
 export interface QwenLanguageModelOptions {
-  apiMode?: "responses" | "chat";
+  apiMode?: "auto" | "responses" | "chat";
   conversation?: string;
   instructions?: string;
   "x-dashscope-session-cache"?: "enable" | "disable";
@@ -102,9 +101,13 @@ export interface QwenLanguageModelOptions {
   [key: string]: unknown;
 }
 
+export type QwenRegion = "singapore" | "beijing" | "hong-kong" | "tokyo" | "frankfurt" | "virginia";
+
+export type QwenRerankValue = string | MediaInput;
+
 export interface QwenRerankInput {
-  query: string;
-  documents: string[];
+  query: QwenRerankValue;
+  documents: QwenRerankValue[];
   topN?: number;
   providerOptions?: Record<string, unknown>;
   abortSignal?: AbortSignal;
@@ -114,7 +117,7 @@ export interface QwenRerankInput {
 }
 
 export interface QwenRerankResult {
-  results: Array<{ index: number; document: string; relevanceScore: number; providerMetadata?: Record<string, unknown> }>;
+  results: Array<{ index: number; document: QwenRerankValue; relevanceScore: number; providerMetadata?: Record<string, unknown> }>;
   rawResponse?: unknown;
 }
 
@@ -122,6 +125,18 @@ export interface QwenRerankModel {
   readonly provider: "qwen";
   readonly modelId: string;
   rerank(input: QwenRerankInput): Promise<QwenRerankResult>;
+}
+
+export interface QwenMultimodalEmbeddingModel extends EmbeddingModel {
+  embed(
+    input: EmbedInput & {
+      providerOptions?: Record<string, unknown>;
+      abortSignal?: AbortSignal;
+      timeoutMs?: number;
+      maxRetries?: number;
+      retryBackoffMs?: number;
+    }
+  ): Promise<EmbedResult>;
 }
 
 export interface QwenTasksClient {
@@ -133,7 +148,7 @@ export type QwenProvider = CallableProviderAdapter &
   ProviderAdapter & {
     rawFetch: typeof globalThis.fetch;
     rerankModel(modelId: string): QwenRerankModel;
-    multimodalEmbeddingModel(modelId: string): EmbeddingModel;
+    multimodalEmbeddingModel(modelId: string): QwenMultimodalEmbeddingModel;
     tasks: QwenTasksClient;
   };
 
@@ -143,7 +158,7 @@ const capabilities: ModelCapabilities = {
   structuredOutput: true,
   jsonMode: true,
   toolChoice: true,
-  parallelToolCalls: true,
+  parallelToolCalls: false,
   vision: true,
   files: false,
   audioInput: false,
@@ -197,6 +212,27 @@ const qwenTaskBaseURLFrom = (baseURL: string) => {
   return `${url.protocol}//${url.host}/api/v1`;
 };
 
+const QWEN_REGION_HOSTS: Record<QwenRegion, string> = {
+  singapore: "ap-southeast-1.maas.aliyuncs.com",
+  beijing: "cn-beijing.maas.aliyuncs.com",
+  "hong-kong": "cn-hongkong.maas.aliyuncs.com",
+  tokyo: "ap-northeast-1.maas.aliyuncs.com",
+  frankfurt: "eu-central-1.maas.aliyuncs.com",
+  virginia: "dashscope-us.aliyuncs.com"
+};
+
+const qwenWorkspaceURLs = (workspaceId: string, region: QwenRegion) => {
+  const origin =
+    region === "virginia"
+      ? `https://${QWEN_REGION_HOSTS[region]}`
+      : `https://${workspaceId}.${QWEN_REGION_HOSTS[region]}`;
+  return {
+    baseURL: `${origin}/compatible-mode/v1`,
+    taskBaseURL: `${origin}/api/v1`,
+    realtimeURL: `${origin.replace(/^https:/, "wss:")}/api-ws/v1/realtime`
+  };
+};
+
 const toUint8Array = async (data: string | Uint8Array | ArrayBuffer | Blob): Promise<Uint8Array> => {
   if (data instanceof Uint8Array) {
     return data;
@@ -213,6 +249,28 @@ const toUint8Array = async (data: string | Uint8Array | ArrayBuffer | Blob): Pro
 const toBase64 = async (data: string | Uint8Array | ArrayBuffer | Blob) =>
   typeof data === "string" ? data : Buffer.from(await toUint8Array(data)).toString("base64");
 
+const toDataURL = (data: string | Uint8Array | ArrayBuffer, mediaType: string) => {
+  if (typeof data === "string" && (/^data:/i.test(data) || /^https?:\/\//i.test(data))) {
+    return data;
+  }
+
+  const encoded =
+    typeof data === "string"
+      ? data
+      : Buffer.from(data instanceof Uint8Array ? data : new Uint8Array(data)).toString("base64");
+  return `data:${mediaType};base64,${encoded}`;
+};
+
+const mediaValue = (input: MediaInput) => {
+  if (input.uri) {
+    return input.uri;
+  }
+  if (input.data === undefined) {
+    throw new ConfigurationError("Qwen media input requires either uri or data.");
+  }
+  return toDataURL(input.data, input.mediaType);
+};
+
 const createFile = async (data: string | Uint8Array | ArrayBuffer | Blob, mediaType: string, filename: string) => {
   const bytes = await toUint8Array(data);
   return new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], filename, { type: mediaType });
@@ -226,6 +284,71 @@ const appendQuery = (url: string, query: Record<string, string | number | undefi
     }
   }
   return parsed.toString();
+};
+
+const encodeQwenResourceId = (value: string, resource: string) => {
+  if (!value || value === "." || value === ".." || /[\\/?#\s]/.test(value)) {
+    throw new ConfigurationError(`Qwen ${resource} ID must be a non-empty opaque identifier without path separators.`);
+  }
+
+  return encodeURIComponent(value);
+};
+
+const isQwenOmniLanguageModel = (modelId: string) =>
+  /^qwen3(?:\.5)?-omni-(?:plus|flash)(?:$|-)/i.test(modelId);
+
+const isOfficialQwenSpeechAudioURL = (url: URL) =>
+  !url.username &&
+  !url.password &&
+  /(?:^|\.)oss(?:-[a-z0-9-]+)?\.aliyuncs\.com$/i.test(url.hostname);
+
+const parseQwenSpeechAudioURL = async (
+  value: string,
+  validator: QwenSpeechAudioURLValidator | undefined
+) => {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ProviderHTTPError("Qwen speech response contained an invalid audio download URL.", 502);
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new ProviderHTTPError("Qwen speech audio downloads require an HTTP(S) URL.", 502);
+  }
+
+  const allowed = validator ? await validator(url) : isOfficialQwenSpeechAudioURL(url);
+  if (!allowed) {
+    throw new ProviderHTTPError("Qwen speech response contained an audio download URL rejected by the configured safety policy.", 502);
+  }
+
+  return url;
+};
+
+const downloadQwenSpeechAudio = async (
+  initialURL: string,
+  fetcher: typeof globalThis.fetch,
+  signal: AbortSignal,
+  validator: QwenSpeechAudioURLValidator | undefined,
+  maxRedirects: number
+) => {
+  let url = await parseQwenSpeechAudioURL(initialURL, validator);
+
+  for (let redirects = 0; ; redirects += 1) {
+    const response = await fetcher(url, { method: "GET", redirect: "manual", signal });
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      return response;
+    }
+    if (redirects >= maxRedirects) {
+      throw new ProviderHTTPError(`Qwen speech audio download exceeded ${maxRedirects} redirects.`, 502);
+    }
+
+    const location = response.headers.get("location");
+    if (!location) {
+      throw new ProviderHTTPError("Qwen speech audio redirect did not include a Location header.", 502);
+    }
+    url = await parseQwenSpeechAudioURL(new URL(location, url).toString(), validator);
+  }
 };
 
 const providerHeaders = (apiKey: string, providerOptions?: Record<string, unknown>) => {
@@ -243,28 +366,75 @@ const stripHeaderOptions = (providerOptions: Record<string, unknown> | undefined
   return next;
 };
 
+const stripResponsesRequestOptions = (providerOptions: Record<string, unknown> | undefined) => {
+  const next = stripHeaderOptions(providerOptions);
+  for (const key of [
+    "model",
+    "input",
+    "stream",
+    "tools",
+    "tool_choice",
+    "temperature",
+    "reasoning",
+    "previous_response_id",
+    "max_output_tokens",
+    "response_format"
+  ]) {
+    delete next[key];
+  }
+  return next;
+};
+
 const modelFamily = (modelId: string) => modelId.toLowerCase();
-const supportsQwenReasoning = (modelId: string) => /^(qwen-(plus|turbo|max|flash)|qwq|qwen3|qwen3\.)/i.test(modelId);
+const supportsQwenReasoning = (modelId: string) =>
+  !isQwenOmniLanguageModel(modelId) &&
+  supportsQwenTools(modelId) &&
+  /^(qwen-(plus|turbo|max|flash)|qwq|qwen3|qwen3\.)/i.test(modelId);
 const supportsQwenVision = (modelId: string) => {
   const model = modelFamily(modelId);
   return (
     model.includes("vl") ||
     model.includes("omni") ||
+    model.includes("ocr") ||
     model.includes("vision") ||
-    /^qwen3\.7-plus(?:$|-)/.test(model)
+    /^qwen3\.7-plus(?:$|-)/.test(model) ||
+    /^qwen3\.6-flash(?:$|-)/.test(model)
   );
 };
-const supportsQwenTools = (modelId: string) => !modelFamily(modelId).includes("embedding");
-const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => ({
-  ...capabilities,
-  vision: supportsQwenVision(modelId),
-  tools: supportsQwenTools(modelId),
-  structuredOutput: supportsQwenTools(modelId),
-  jsonMode: supportsQwenTools(modelId),
-  toolChoice: supportsQwenTools(modelId),
-  parallelToolCalls: supportsQwenTools(modelId),
-  reasoning: supportsQwenReasoning(modelId)
-});
+const supportsQwenTools = (modelId: string) =>
+  !/(embedding|rerank|asr|tts|image|realtime|ocr|translation|character|long-context)/.test(modelFamily(modelId));
+const supportsQwenFiles = (modelId: string) => /^qwen3\.5-ocr(?:$|-)/.test(modelFamily(modelId));
+const supportsQwenAudioInput = (modelId: string) => /(omni|audio|asr)/.test(modelFamily(modelId));
+const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
+  const tools = supportsQwenTools(modelId);
+  const omni = isQwenOmniLanguageModel(modelId);
+  const reasoning = supportsQwenReasoning(modelId);
+
+  return {
+    ...capabilities,
+    vision: supportsQwenVision(modelId),
+    tools,
+    structuredOutput: tools && !omni,
+    jsonMode: tools && !omni,
+    toolChoice: tools,
+    parallelToolCalls: false,
+    webSearch: tools && !omni,
+    files: supportsQwenFiles(modelId),
+    audioInput: supportsQwenAudioInput(modelId),
+    reasoning,
+    reasoningEfforts: reasoning ? ["none", "minimal", "low", "medium", "high"] : undefined,
+    agentCapabilities: {
+      ...capabilities.agentCapabilities!,
+      supportTier: tools && !omni ? "tier-b" : "tier-c",
+      toolChoiceNone: tools,
+      hostedWebSearch: tools && !omni,
+      hostedFileSearch: tools && !omni,
+      remoteMcp: tools && !omni,
+      codeExecution: tools && !omni,
+      webExtraction: tools && !omni
+    }
+  };
+};
 
 const transcriptionCapabilities: ModelCapabilities = {
   ...embeddingCapabilities,
@@ -344,26 +514,33 @@ const parseJson = async (
     : response.json();
 };
 
-const mapContentParts = (message: ModelMessage) => {
-  const textParts = message.parts.filter((part) => part.type === "text");
-  const imageParts = message.parts.filter((part) => part.type === "image");
+type QwenMessageContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "input_audio"; input_audio: { data: string } };
 
-  if (!imageParts.length) {
-    return textParts.map((part) => part.text).join("");
+const mapContentParts = (message: ModelMessage) => {
+  const hasMedia = message.parts.some((part) => part.type === "image" || part.type === "audio");
+
+  if (!hasMedia) {
+    return message.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("");
   }
 
-  return [
-    ...textParts.map((part) => ({
-      type: "text",
-      text: part.text
-    })),
-    ...imageParts.map((part) => ({
-      type: "image_url",
-      image_url: {
-        url: part.image
-      }
-    }))
-  ];
+  return message.parts.flatMap<QwenMessageContentPart>((part) => {
+    if (part.type === "text") {
+      return [{ type: "text", text: part.text }];
+    }
+    if (part.type === "image") {
+      return [{ type: "image_url", image_url: { url: part.image } }];
+    }
+    if (part.type === "audio") {
+      return [{ type: "input_audio", input_audio: { data: toDataURL(part.data, part.mediaType) } }];
+    }
+    return [];
+  });
 };
 
 const mapMessages = (messages: ModelMessage[]) =>
@@ -454,7 +631,7 @@ const mapResponsesTools = (tools: ModelGenerateInput["tools"]) =>
       })
     : undefined;
 
-const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
+const mapChatToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
   if (!toolChoice) {
     return undefined;
   }
@@ -471,25 +648,62 @@ const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
   };
 };
 
+const mapResponsesToolChoice = (
+  toolChoice: ModelGenerateInput["toolChoice"],
+  tools: ModelGenerateInput["tools"]
+) => {
+  if (!toolChoice) {
+    return undefined;
+  }
+
+  if (typeof toolChoice === "string") {
+    if (toolChoice === "required" && Object.keys(tools ?? {}).length !== 1) {
+      throw new UnsupportedFeatureError(
+        'Qwen Responses supports toolChoice "required" only when exactly one tool is provided.'
+      );
+    }
+    return toolChoice;
+  }
+
+  return {
+    type: "allowed_tools",
+    mode: "required",
+    tools: [{ type: "function", name: toolChoice.toolName }]
+  };
+};
+
 const mapStructuredOutput = (input: ModelGenerateInput) => {
   if (!input.structuredOutput || input.structuredOutput.mode !== "native") {
     return undefined;
   }
 
-  return {
-    type: "json_schema",
-    json_schema: {
-      name: input.structuredOutput.name ?? "response",
-      strict: true,
-      schema: toJSONSchema(input.structuredOutput.schema)
-    }
-  };
+  return { type: "json_object" };
+};
+
+const withStructuredOutputMessages = (input: ModelGenerateInput) => {
+  if (!input.structuredOutput || input.structuredOutput.mode !== "native") {
+    return input.messages;
+  }
+
+  const schema = JSON.stringify(toJSONSchema(input.structuredOutput.schema));
+  return [
+    {
+      role: "system" as const,
+      parts: [
+        {
+          type: "text" as const,
+          text: `Return only valid JSON matching this JSON Schema: ${schema}`
+        }
+      ]
+    },
+    ...input.messages
+  ];
 };
 
 const hasPreservedReasoning = (messages: ModelMessage[]) =>
   messages.some((message) => message.role === "assistant" && reasoningContentFromMessage(message));
 
-const mapReasoning = (input: ModelGenerateInput) => {
+const mapChatReasoning = (input: ModelGenerateInput) => {
   if (!input.reasoning) {
     return undefined;
   }
@@ -501,6 +715,89 @@ const mapReasoning = (input: ModelGenerateInput) => {
       : {}),
     ...(hasPreservedReasoning(input.messages) ? { preserve_thinking: true } : {})
   };
+};
+
+const mapResponsesReasoning = (input: ModelGenerateInput) => {
+  const effort = input.reasoning?.effort;
+  if (!effort) {
+    return undefined;
+  }
+
+  return {
+    reasoning: {
+      effort: effort === "low" ? "minimal" : effort
+    }
+  };
+};
+
+const mapResponsesUsage = (usage: any) =>
+  usage
+    ? {
+        inputTokens: usage.input_tokens,
+        cachedInputTokens: usage.input_tokens_details?.cached_tokens,
+        outputTokens: usage.output_tokens,
+        reasoningTokens: usage.output_tokens_details?.reasoning_tokens,
+        totalTokens: usage.total_tokens
+      }
+    : undefined;
+
+const mapChatUsage = (usage: any) =>
+  usage
+    ? {
+        inputTokens: usage.prompt_tokens,
+        cachedInputTokens: usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens,
+        outputTokens: usage.completion_tokens,
+        reasoningTokens: usage.completion_tokens_details?.reasoning_tokens ?? usage.output_tokens_details?.reasoning_tokens,
+        totalTokens: usage.total_tokens
+      }
+    : undefined;
+
+const hasHostedTools = (tools: ModelGenerateInput["tools"]) =>
+  Object.values(tools ?? {}).some((tool) => !isCallableToolDefinition(tool));
+
+const hasMessagePart = (messages: ModelMessage[], type: "audio" | "file") =>
+  messages.some((message) => message.parts.some((part) => part.type === type));
+
+const resolveApiMode = (
+  modelId: string,
+  requestedMode: QwenLanguageModelOptions["apiMode"],
+  input: ModelGenerateInput
+): "responses" | "chat" => {
+  const needsChat =
+    input.maxTokens !== undefined ||
+    input.reasoning?.budgetTokens !== undefined ||
+    input.structuredOutput?.mode === "native" ||
+    hasMessagePart(input.messages, "audio");
+  const needsResponses = hasHostedTools(input.tools) || hasMessagePart(input.messages, "file");
+
+  if (needsChat && needsResponses) {
+    throw new UnsupportedFeatureError(
+      "Qwen cannot combine Responses-only hosted/file inputs with Chat-only maxTokens, audio, reasoning budgets, or structured output."
+    );
+  }
+
+  if (isQwenOmniLanguageModel(modelId)) {
+    if (requestedMode === "responses" || needsResponses) {
+      throw new UnsupportedFeatureError(
+        "Qwen Omni uses streaming Chat Completions and does not support Responses hosted tools or file inputs."
+      );
+    }
+    return "chat";
+  }
+
+  if (requestedMode === "responses" && needsChat) {
+    throw new UnsupportedFeatureError(
+      'Qwen Responses does not process maxTokens, audio input, reasoning budgets, or native structured output; use apiMode "chat" or "auto".'
+    );
+  }
+  if (requestedMode === "chat" && needsResponses) {
+    throw new UnsupportedFeatureError('Qwen Chat Completions does not support Responses hosted tools or OCR file inputs.');
+  }
+
+  if (requestedMode === "responses" || requestedMode === "chat") {
+    return requestedMode;
+  }
+  return needsChat ? "chat" : "responses";
 };
 
 const parseAssistantMessage = (message: any): ModelMessage => ({
@@ -577,6 +874,18 @@ const toResponsesInput = (messages: ModelMessage[]) => {
         case "image":
           content.push({ type: "input_image", image_url: part.image });
           break;
+        case "file":
+          if (!/^https?:\/\//i.test(part.data)) {
+            throw new UnsupportedFeatureError(
+              "Qwen Responses file input requires a public HTTP(S) file URL; DashScope Files IDs are reserved for batch jobs."
+            );
+          }
+          content.push({
+            type: "input_file",
+            file_url: part.data,
+            ...(part.filename ? { filename: part.filename } : {})
+          });
+          break;
         case "tool-call":
           if (message.role === "assistant") {
             input.push({
@@ -585,6 +894,17 @@ const toResponsesInput = (messages: ModelMessage[]) => {
               name: part.toolCall.name,
               arguments: JSON.stringify(part.toolCall.input)
             });
+          }
+          break;
+        case "provider-data":
+          if (
+            message.role === "assistant" &&
+            part.provider === "qwen" &&
+            part.data &&
+            typeof part.data === "object" &&
+            typeof (part.data as Record<string, unknown>).type === "string"
+          ) {
+            input.push(part.data as Record<string, unknown>);
           }
           break;
       }
@@ -797,17 +1117,18 @@ const streamResponses = async function* (
 
     if (type === "response.completed" || type === "response.failed" || type === "response.incomplete") {
       const responseData = json.response ?? {};
+      if (typeof responseData.id === "string") {
+        yield {
+          type: "provider-data",
+          provider: "qwen",
+          data: { responseId: responseData.id }
+        } satisfies StreamEvent;
+      }
       yield {
         type: "finish",
         finishReason: normalizeResponsesFinishReason(responseData.status, sawToolCalls),
         providerFinishReason: responseData.status,
-        usage: responseData.usage
-          ? {
-              inputTokens: responseData.usage.input_tokens,
-              outputTokens: responseData.usage.output_tokens,
-              totalTokens: responseData.usage.total_tokens
-            }
-          : undefined
+        usage: mapResponsesUsage(responseData.usage)
       } satisfies StreamEvent;
     }
   }
@@ -827,15 +1148,20 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
   }
 
   async generate(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<GenerateResult> {
+    if (isQwenOmniLanguageModel(this.modelId)) {
+      throw new UnsupportedFeatureError(
+        `Qwen Omni model "${this.modelId}" is streaming-only. Use streamText() instead of generateText().`
+      );
+    }
     const { signal, cleanup } = withTimeoutSignal(input);
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
-    const apiMode = providerOptions.apiMode ?? "responses";
+    const apiMode = resolveApiMode(this.modelId, providerOptions.apiMode ?? "auto", input);
     delete providerOptions.apiMode;
 
     try {
       if (apiMode === "responses") {
         const previousResponse = getProviderResponseId(input.messages);
-        const responseProviderOptions = stripHeaderOptions(providerOptions);
+        const responseProviderOptions = stripResponsesRequestOptions(providerOptions);
         const messages =
           previousResponse && previousResponse.index < input.messages.length - 1
             ? input.messages.slice(previousResponse.index + 1)
@@ -851,12 +1177,10 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
                 model: this.modelId,
                 ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
                 ...(messages.length ? { input: toResponsesInput(messages) } : {}),
-                ...(input.structuredOutput?.mode === "native" ? { response_format: mapStructuredOutput(input) } : {}),
                 tools: mapResponsesTools(input.tools),
-                tool_choice: mapToolChoice(input.toolChoice),
+                tool_choice: mapResponsesToolChoice(input.toolChoice, input.tools),
                 temperature: input.temperature,
-                max_output_tokens: input.maxTokens,
-                ...mapReasoning(input),
+                ...mapResponsesReasoning(input),
                 stream: false
               })
             }),
@@ -875,11 +1199,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             .join(""),
           finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls),
           providerFinishReason: json.status,
-          usage: {
-            inputTokens: json.usage?.input_tokens,
-            outputTokens: json.usage?.output_tokens,
-            totalTokens: json.usage?.total_tokens
-          },
+          usage: mapResponsesUsage(json.usage),
           rawResponse: json
         };
       }
@@ -888,19 +1208,19 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
             method: "POST",
-            headers: jsonHeaders(this.apiKey),
+            headers: providerHeaders(this.apiKey, providerOptions),
             signal,
             body: JSON.stringify({
-              ...providerOptions,
+              ...stripHeaderOptions(providerOptions),
               model: this.modelId,
-              messages: mapMessages(input.messages),
+              messages: mapMessages(withStructuredOutputMessages(input)),
               tools: mapChatTools(input.tools),
-              tool_choice: mapToolChoice(input.toolChoice),
+              tool_choice: mapChatToolChoice(input.toolChoice),
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
               max_tokens: input.maxTokens,
               stream: false,
-              ...mapReasoning(input)
+              ...mapChatReasoning(input)
             })
           }),
         input
@@ -919,11 +1239,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           .join(""),
         finishReason: normalizeFinishReason(choice?.finish_reason),
         providerFinishReason: choice?.finish_reason,
-        usage: {
-          inputTokens: json.usage?.prompt_tokens,
-          outputTokens: json.usage?.completion_tokens,
-          totalTokens: json.usage?.total_tokens
-        },
+        usage: mapChatUsage(json.usage),
         rawResponse: json
       };
     } finally {
@@ -934,11 +1250,16 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
   async stream(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
-    const apiMode = providerOptions.apiMode ?? "responses";
+    const apiMode = resolveApiMode(this.modelId, providerOptions.apiMode ?? "auto", input);
     delete providerOptions.apiMode;
 
     if (apiMode === "responses") {
-      const responseProviderOptions = stripHeaderOptions(providerOptions);
+      const previousResponse = getProviderResponseId(input.messages);
+      const responseProviderOptions = stripResponsesRequestOptions(providerOptions);
+      const messages =
+        previousResponse && previousResponse.index < input.messages.length - 1
+          ? input.messages.slice(previousResponse.index + 1)
+          : input.messages;
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/responses`, {
@@ -948,13 +1269,12 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             body: JSON.stringify({
               ...responseProviderOptions,
               model: this.modelId,
-              input: toResponsesInput(input.messages),
-              ...(input.structuredOutput?.mode === "native" ? { response_format: mapStructuredOutput(input) } : {}),
+              ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
+              ...(messages.length ? { input: toResponsesInput(messages) } : {}),
               tools: mapResponsesTools(input.tools),
-              tool_choice: mapToolChoice(input.toolChoice),
+              tool_choice: mapResponsesToolChoice(input.toolChoice, input.tools),
               temperature: input.temperature,
-              max_output_tokens: input.maxTokens,
-              ...mapReasoning(input),
+              ...mapResponsesReasoning(input),
               stream: true
             })
           }),
@@ -974,20 +1294,21 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {
           method: "POST",
-          headers: jsonHeaders(this.apiKey),
+          headers: providerHeaders(this.apiKey, providerOptions),
           signal,
           body: JSON.stringify({
-            ...providerOptions,
+            ...stripHeaderOptions(providerOptions),
             model: this.modelId,
-            messages: mapMessages(input.messages),
+            modalities: isQwenOmniLanguageModel(this.modelId) ? providerOptions.modalities ?? ["text"] : undefined,
+            messages: mapMessages(withStructuredOutputMessages(input)),
             tools: mapChatTools(input.tools),
-            tool_choice: mapToolChoice(input.toolChoice),
+            tool_choice: mapChatToolChoice(input.toolChoice),
             response_format: mapStructuredOutput(input),
             temperature: input.temperature,
             max_tokens: input.maxTokens,
             stream: true,
             stream_options: { include_usage: true },
-            ...mapReasoning(input)
+            ...mapChatReasoning(input)
           })
         }),
       input
@@ -995,7 +1316,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
 
     return (async function* () {
       try {
-        const toolBuffers = new Map<string, { name: string; args: string }>();
+        const toolBuffers = new Map<number, { id: string; name: string; args: string; emitted: boolean }>();
 
         for await (const event of streamSSE(response)) {
           if (event.data === "[DONE]") {
@@ -1022,39 +1343,41 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           }
 
           for (const toolCall of delta?.tool_calls ?? []) {
-            const id = toolCall.id ?? `${toolCall.index}`;
-            const existing = toolBuffers.get(id) ?? {
+            const index = Number(toolCall.index ?? 0);
+            const existing = toolBuffers.get(index) ?? {
+              id: toolCall.id ?? `${index}`,
               name: toolCall.function?.name ?? "",
-              args: ""
+              args: "",
+              emitted: false
             };
+            existing.id = toolCall.id ?? existing.id;
             existing.name ||= toolCall.function?.name ?? "";
             existing.args += toolCall.function?.arguments ?? "";
-            toolBuffers.set(id, existing);
-
-            if (choice?.finish_reason === "tool_calls") {
-              yield {
-                type: "tool-call",
-                toolCall: {
-                  id,
-                  name: existing.name,
-                  input: JSON.parse(existing.args || "{}")
-                }
-              } satisfies StreamEvent;
-            }
+            toolBuffers.set(index, existing);
           }
 
           if (choice?.finish_reason) {
+            if (choice.finish_reason === "tool_calls") {
+              for (const toolCall of toolBuffers.values()) {
+                if (toolCall.emitted) {
+                  continue;
+                }
+                toolCall.emitted = true;
+                yield {
+                  type: "tool-call",
+                  toolCall: {
+                    id: toolCall.id,
+                    name: toolCall.name,
+                    input: JSON.parse(toolCall.args || "{}")
+                  }
+                } satisfies StreamEvent;
+              }
+            }
             yield {
               type: "finish",
               finishReason: normalizeFinishReason(choice.finish_reason),
               providerFinishReason: choice.finish_reason,
-              usage: json.usage
-                ? {
-                    inputTokens: json.usage.prompt_tokens,
-                    outputTokens: json.usage.completion_tokens,
-                    totalTokens: json.usage.total_tokens
-                  }
-                : undefined
+              usage: mapChatUsage(json.usage)
             } satisfies StreamEvent;
           }
         }
@@ -1115,6 +1438,85 @@ class QwenEmbeddingModel implements EmbeddingModel {
   }
 }
 
+const toMultimodalEmbeddingContent = (value: QwenRerankValue) => {
+  if (typeof value === "string") {
+    return { text: value };
+  }
+
+  if (value.mediaType.startsWith("image/")) {
+    return { image: mediaValue(value) };
+  }
+  if (value.mediaType.startsWith("video/")) {
+    if (!value.uri) {
+      throw new UnsupportedFeatureError("Qwen multimodal embedding requires a public URL for video input.");
+    }
+    return { video: value.uri };
+  }
+
+  throw new UnsupportedFeatureError(
+    `Qwen multimodal embedding supports text, image, and video inputs, not "${value.mediaType}".`
+  );
+};
+
+class QwenMultimodalEmbeddingModelImpl implements QwenMultimodalEmbeddingModel {
+  readonly provider = "qwen";
+  readonly capabilities: ModelCapabilities = {
+    ...embeddingCapabilities,
+    vision: true
+  };
+
+  constructor(
+    readonly modelId: string,
+    private readonly apiKey: string,
+    private readonly taskBaseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async embed(
+    input: EmbedInput & {
+      providerOptions?: Record<string, unknown>;
+      abortSignal?: AbortSignal;
+      timeoutMs?: number;
+      maxRetries?: number;
+      retryBackoffMs?: number;
+    }
+  ): Promise<EmbedResult> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(
+            `${this.taskBaseURL}/services/embeddings/multimodal-embedding/multimodal-embedding`,
+            {
+              method: "POST",
+              headers: jsonHeaders(this.apiKey),
+              signal,
+              body: JSON.stringify({
+                model: this.modelId,
+                input: { contents: input.values.map(toMultimodalEmbeddingContent) },
+                ...(input.providerOptions && Object.keys(input.providerOptions).length
+                  ? { parameters: input.providerOptions }
+                  : {})
+              })
+            }
+          ),
+        input
+      );
+      const json = await parseJson(response);
+      return {
+        embeddings: (json.output?.embeddings ?? []).map((entry: any) => entry.embedding),
+        usage: {
+          inputTokens: json.usage?.input_tokens,
+          totalTokens: json.usage?.total_tokens
+        },
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+}
+
 const normalizeUploadedFile = (json: any): UploadedFile => ({
   name: json.id ?? json.name ?? json.file_id ?? "",
   uri: json.url ?? json.uri,
@@ -1122,15 +1524,6 @@ const normalizeUploadedFile = (json: any): UploadedFile => ({
   sizeBytes: json.bytes ?? json.size_bytes ?? json.sizeBytes,
   state: json.status ?? json.state,
   displayName: json.filename ?? json.display_name ?? json.displayName,
-  rawResponse: json,
-  providerMetadata: json
-});
-
-const normalizeFileSearchStore = (json: any): FileSearchStore => ({
-  name: json.id ?? json.name ?? "",
-  displayName: json.name ?? json.display_name ?? json.displayName,
-  createTime: json.created_at ? String(json.created_at) : json.createTime,
-  updateTime: json.updated_at ? String(json.updated_at) : json.updateTime,
   rawResponse: json,
   providerMetadata: json
 });
@@ -1147,10 +1540,14 @@ const normalizeBatchJob = (json: any): BatchJob => ({
 });
 
 const normalizeOperation = (json: any): PredictionOperation => ({
-  name: json.task_id ?? json.id ?? json.name ?? "",
+  name: json.output?.task_id ?? json.task_id ?? json.id ?? json.name ?? "",
   done: json.output?.task_status ? ["SUCCEEDED", "FAILED", "CANCELED"].includes(json.output.task_status) : json.done,
   response: json.output ?? json.response,
-  error: json.error,
+  error:
+    json.error ??
+    (json.output?.task_status === "FAILED"
+      ? { message: json.output?.message ?? "Qwen task failed.", code: json.output?.code }
+      : undefined),
   metadata: json.usage ?? json.metadata,
   rawResponse: json
 });
@@ -1186,7 +1583,8 @@ class QwenFilesClient implements FilesClient {
   async get(input: FileGetInput): Promise<UploadedFile> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/files/${input.name}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
+      const fileId = encodeQwenResourceId(input.name, "file");
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/files/${fileId}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
       return normalizeUploadedFile(await parseJson(response));
     } finally {
       cleanup();
@@ -1214,98 +1612,8 @@ class QwenFilesClient implements FilesClient {
   async delete(input: FileDeleteInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/files/${input.name}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }), input);
-      const json = await parseJson(response);
-      return { name: input.name, rawResponse: json };
-    } finally {
-      cleanup();
-    }
-  }
-}
-
-class QwenFileSearchStoresClient implements FileSearchStoresClient {
-  constructor(
-    private readonly apiKey: string,
-    private readonly baseURL: string,
-    private readonly fetcher: typeof globalThis.fetch
-  ) {}
-
-  async create(input: FileSearchStoreCreateInput = {}): Promise<FileSearchStore> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/file_search_stores`, {
-            method: "POST",
-            headers: jsonHeaders(this.apiKey),
-            signal,
-            body: JSON.stringify({ ...input.providerOptions, name: input.displayName })
-          }),
-        input
-      );
-      return normalizeFileSearchStore(await parseJson(response));
-    } finally {
-      cleanup();
-    }
-  }
-
-  async upload(input: FileSearchStoreUploadInput): Promise<PredictionOperation> {
-    const files = new QwenFilesClient(this.apiKey, this.baseURL, this.fetcher);
-    const file = await files.upload(input);
-    return this.importFile({ ...input, fileName: file.name });
-  }
-
-  async importFile(input: FileSearchStoreImportInput): Promise<PredictionOperation> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/file_search_stores/${input.storeName}/files`, {
-            method: "POST",
-            headers: jsonHeaders(this.apiKey),
-            signal,
-            body: JSON.stringify({ ...input.providerOptions, file_id: input.fileName })
-          }),
-        input
-      );
-      return normalizeOperation(await parseJson(response));
-    } finally {
-      cleanup();
-    }
-  }
-
-  async get(input: FileSearchStoreGetInput): Promise<FileSearchStore> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/file_search_stores/${input.name}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
-      return normalizeFileSearchStore(await parseJson(response));
-    } finally {
-      cleanup();
-    }
-  }
-
-  async list(input: FileSearchStoreListInput = {}) {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    try {
-      const response = await withRetry(
-        () => this.fetcher(appendQuery(`${this.baseURL}/file_search_stores`, { limit: input.pageSize, after: input.pageToken }), { method: "GET", headers: jsonHeaders(this.apiKey), signal }),
-        input
-      );
-      const json = await parseJson(response);
-      return {
-        stores: (json.data ?? json.file_search_stores ?? json.fileSearchStores ?? []).map(normalizeFileSearchStore),
-        nextPageToken: json.next ?? json.nextPageToken,
-        rawResponse: json
-      };
-    } finally {
-      cleanup();
-    }
-  }
-
-  async delete(input: FileSearchStoreDeleteInput) {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/file_search_stores/${input.name}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }), input);
+      const fileId = encodeQwenResourceId(input.name, "file");
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/files/${fileId}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }), input);
       const json = await parseJson(response);
       return { name: input.name, rawResponse: json };
     } finally {
@@ -1322,6 +1630,9 @@ class QwenBatchesClient implements BatchesClient {
   ) {}
 
   async create(input: BatchCreateInput): Promise<BatchJob> {
+    if (!input.fileName) {
+      throw new ConfigurationError("Qwen batch creation requires a JSONL fileName uploaded with purpose \"batch\".");
+    }
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const response = await withRetry(
@@ -1335,9 +1646,7 @@ class QwenBatchesClient implements BatchesClient {
               input_file_id: input.fileName,
               endpoint: input.providerOptions?.endpoint ?? "/v1/chat/completions",
               completion_window: input.providerOptions?.completion_window ?? "24h",
-              metadata: input.displayName ? { displayName: input.displayName } : undefined,
-              model: input.modelId,
-              requests: input.requests
+              metadata: input.displayName ? { displayName: input.displayName } : undefined
             })
           }),
         input
@@ -1351,7 +1660,8 @@ class QwenBatchesClient implements BatchesClient {
   async get(input: BatchGetInput): Promise<BatchJob> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${input.name}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
+      const batchId = encodeQwenResourceId(input.name, "batch");
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${batchId}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
       return normalizeBatchJob(await parseJson(response));
     } finally {
       cleanup();
@@ -1375,7 +1685,8 @@ class QwenBatchesClient implements BatchesClient {
   async cancel(input: BatchCancelInput): Promise<BatchJob> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${input.name}/cancel`, { method: "POST", headers: jsonHeaders(this.apiKey), signal }), input);
+      const batchId = encodeQwenResourceId(input.name, "batch");
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${batchId}/cancel`, { method: "POST", headers: jsonHeaders(this.apiKey), signal }), input);
       return normalizeBatchJob(await parseJson(response));
     } finally {
       cleanup();
@@ -1385,7 +1696,8 @@ class QwenBatchesClient implements BatchesClient {
   async delete(input: BatchDeleteInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${input.name}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }), input);
+      const batchId = encodeQwenResourceId(input.name, "batch");
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${batchId}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }), input);
       const json = await parseJson(response);
       return { name: input.name, rawResponse: json };
     } finally {
@@ -1407,27 +1719,66 @@ class QwenTranscriptionModel implements TranscriptionModel {
   ) {}
 
   async transcribe(input: { audio: AudioInput; prompt?: string; language?: string; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<TranscriptionResult> {
-    const { signal, cleanup, abort } = withTimeoutSignal(input);
-    const form = new FormData();
-    for (const [key, value] of Object.entries(input.providerOptions ?? {})) {
-      if (["model", "file", "prompt", "language"].includes(key)) {
-        continue;
-      }
-      form.set(key, typeof value === "string" ? value : JSON.stringify(value));
+    if (input.prompt) {
+      throw new UnsupportedFeatureError(
+        "Qwen3-ASR-Flash does not expose the common transcription prompt field; use providerOptions for documented asr_options."
+      );
     }
-    form.set("model", this.modelId);
-    form.set("file", await createFile(input.audio.data, input.audio.mediaType, input.audio.filename ?? "audio"));
-    if (input.prompt) form.set("prompt", input.prompt);
-    if (input.language) form.set("language", input.language);
+    const { signal, cleanup, abort } = withTimeoutSignal(input);
+    const providerOptions = { ...(input.providerOptions ?? {}) };
+    const nestedOptions =
+      providerOptions.asr_options && typeof providerOptions.asr_options === "object"
+        ? (providerOptions.asr_options as Record<string, unknown>)
+        : {};
+    delete providerOptions.asr_options;
+    delete providerOptions.model;
+    delete providerOptions.messages;
+    delete providerOptions.stream;
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${this.apiKey}` }, signal, body: form }), input);
+      const response = await withRetry(
+        () =>
+          this.fetcher(`${this.baseURL}/chat/completions`, {
+            method: "POST",
+            headers: jsonHeaders(this.apiKey),
+            signal,
+            body: JSON.stringify({
+              model: this.modelId,
+              messages: [
+                {
+                  role: "user",
+                  content: [
+                    {
+                      type: "input_audio",
+                      input_audio: {
+                        data: toDataURL(input.audio.data, input.audio.mediaType)
+                      }
+                    }
+                  ]
+                }
+              ],
+              stream: false,
+              asr_options: {
+                ...providerOptions,
+                ...nestedOptions,
+                ...(input.language ? { language: input.language } : {})
+              }
+            })
+          }),
+        input
+      );
       const json = await parseJson(response, {
         maxBytes: this.responseLimits.transcriptionBytes,
         errorBodyBytes: this.responseLimits.errorBodyBytes,
-        endpoint: "audio/transcriptions",
+        endpoint: "chat/completions",
         abort
       });
-      return { text: json.text ?? json.output?.text ?? "", rawResponse: json };
+      const content = json.choices?.[0]?.message?.content;
+      const text = Array.isArray(content)
+        ? content.map((part: any) => part?.text ?? "").join("")
+        : typeof content === "string"
+          ? content
+          : "";
+      return { text, rawResponse: json };
     } finally {
       cleanup();
     }
@@ -1441,70 +1792,115 @@ class QwenSpeechModel implements SpeechModel {
   constructor(
     readonly modelId: string,
     private readonly apiKey: string,
-    private readonly baseURL: string,
+    private readonly taskBaseURL: string,
     private readonly fetcher: typeof globalThis.fetch,
-    private readonly responseLimits = resolveAudioResponseLimits()
+    private readonly responseLimits = resolveAudioResponseLimits(),
+    private readonly speechAudioURLValidator?: QwenSpeechAudioURLValidator,
+    private readonly speechAudioMaxRedirects = 3
   ) {}
 
   async generateSpeech(input: { input: string; voice?: string; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<SpeechResult> {
     const { signal, cleanup, abort } = withTimeoutSignal(input);
+    const providerOptions = { ...(input.providerOptions ?? {}) };
+    const nestedInput =
+      providerOptions.input && typeof providerOptions.input === "object"
+        ? (providerOptions.input as Record<string, unknown>)
+        : {};
+    const parameters =
+      providerOptions.parameters && typeof providerOptions.parameters === "object"
+        ? (providerOptions.parameters as Record<string, unknown>)
+        : undefined;
+    delete providerOptions.input;
+    delete providerOptions.parameters;
+    delete providerOptions.model;
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/audio/speech`, {
+          this.fetcher(`${this.taskBaseURL}/services/aigc/multimodal-generation/generation`, {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
-            body: JSON.stringify({ ...input.providerOptions, model: this.modelId, input: input.input, voice: input.voice ?? "Chelsie" })
+            body: JSON.stringify({
+              model: this.modelId,
+              input: {
+                ...providerOptions,
+                ...nestedInput,
+                text: input.input,
+                voice: input.voice ?? "Cherry"
+              },
+              ...(parameters ? { parameters } : {})
+            })
           }),
         input
       );
-      if (response.headers.get("content-type")?.includes("application/json")) {
-        const json = await parseJson(response, {
-          maxBytes: this.responseLimits.speechJsonBytes,
-          errorBodyBytes: this.responseLimits.errorBodyBytes,
-          endpoint: "audio/speech",
-          abort
-        });
-        const audio = json.audio?.data ?? json.output?.audio?.data ?? "";
+      const json = await parseJson(response, {
+        maxBytes: this.responseLimits.speechJsonBytes,
+        errorBodyBytes: this.responseLimits.errorBodyBytes,
+        endpoint: "multimodal-generation/generation",
+        abort
+      });
+      const audio = json.audio?.data ?? json.output?.audio?.data;
+      const audioURL = json.audio?.url ?? json.output?.audio?.url;
+      const rawResponse = {
+        ...json,
+        ...(json.audio && typeof json.audio === "object"
+          ? { audio: { ...json.audio, data: undefined, data_omitted: audio ? true : undefined } }
+          : {}),
+        ...(json.output && typeof json.output === "object"
+          ? {
+              output: {
+                ...json.output,
+                ...(json.output.audio && typeof json.output.audio === "object"
+                  ? { audio: { ...json.output.audio, data: undefined, data_omitted: audio ? true : undefined } }
+                  : {})
+              }
+            }
+          : {})
+      };
+
+      if (audio) {
         const decodedAudio = decodeBase64WithLimit(String(audio), {
           maxBytes: this.responseLimits.speechBytes,
           provider: "qwen",
-          endpoint: "audio/speech",
+          endpoint: "multimodal-generation/generation",
           abort
         });
-        const rawResponse = {
-          ...json,
-          ...(json.audio && typeof json.audio === "object"
-            ? { audio: { ...json.audio, data: undefined, data_omitted: true } }
-            : {}),
-          ...(json.output && typeof json.output === "object"
-            ? {
-                output: {
-                  ...json.output,
-                  ...(json.output.audio && typeof json.output.audio === "object"
-                    ? { audio: { ...json.output.audio, data: undefined, data_omitted: true } }
-                    : {})
-                }
-              }
-            : {})
+        return {
+          audio: decodedAudio,
+          mediaType: json.audio?.media_type ?? json.output?.audio?.media_type ?? "audio/pcm",
+          rawResponse
         };
-        return { audio: decodedAudio, mediaType: json.audio?.media_type ?? json.output?.audio?.media_type ?? "audio/mpeg", rawResponse };
       }
-      if (!response.ok) {
-        const body = await readErrorBodyWithLimit(response, this.responseLimits.errorBodyBytes);
-        throw new ProviderHTTPError(`Qwen request failed with status ${response.status}.`, response.status, {
+
+      if (typeof audioURL !== "string" || !/^https?:\/\//i.test(audioURL)) {
+        throw new ProviderHTTPError("Qwen speech response did not contain audio data or a downloadable audio URL.", 502);
+      }
+      const audioResponse = await withRetry(
+        () =>
+          downloadQwenSpeechAudio(
+            audioURL,
+            this.fetcher,
+            signal,
+            this.speechAudioURLValidator,
+            this.speechAudioMaxRedirects
+          ),
+        input
+      );
+      if (!audioResponse.ok) {
+        const body = await readErrorBodyWithLimit(audioResponse, this.responseLimits.errorBodyBytes);
+        throw new ProviderHTTPError(`Qwen audio download failed with status ${audioResponse.status}.`, audioResponse.status, {
           responseBody: body
         });
       }
       return {
-        audio: await readBodyWithLimit(response, {
+        audio: await readBodyWithLimit(audioResponse, {
           maxBytes: this.responseLimits.speechBytes,
           provider: "qwen",
-          endpoint: "audio/speech",
+          endpoint: "speech-audio-download",
           abort
         }),
-        mediaType: response.headers.get("content-type") ?? "audio/mpeg"
+        mediaType: audioResponse.headers.get("content-type") ?? json.output?.audio?.media_type ?? "audio/wav",
+        rawResponse
       };
     } finally {
       cleanup();
@@ -1513,7 +1909,7 @@ class QwenSpeechModel implements SpeechModel {
 }
 
 const normalizeGeneratedMedia = (item: any, fallbackMimeType: string): GeneratedMedia => ({
-  uri: item.url ?? item.uri,
+  uri: item.url ?? item.uri ?? item.image ?? item.video_url,
   data: item.b64_json || item.base64 ? Uint8Array.from(Buffer.from(item.b64_json ?? item.base64, "base64")) : undefined,
   mediaType: item.mime_type ?? item.mediaType ?? fallbackMimeType,
   text: item.revised_prompt ?? item.text,
@@ -1527,7 +1923,6 @@ class QwenImageGenerationModel implements ImageGenerationModel {
   constructor(
     readonly modelId: string,
     private readonly apiKey: string,
-    private readonly baseURL: string,
     private readonly taskBaseURL: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {}
@@ -1536,7 +1931,21 @@ class QwenImageGenerationModel implements ImageGenerationModel {
     const { signal, cleanup } = withTimeoutSignal(input);
     const providerOptions = { ...(input.providerOptions ?? {}) };
     delete providerOptions.endpoint;
-    const endpoint = `${this.baseURL}/images/generations`;
+    const nestedParameters =
+      providerOptions.parameters && typeof providerOptions.parameters === "object"
+        ? (providerOptions.parameters as Record<string, unknown>)
+        : {};
+    delete providerOptions.parameters;
+    delete providerOptions.model;
+    delete providerOptions.input;
+    const endpoint = `${this.taskBaseURL}/services/aigc/multimodal-generation/generation`;
+    const sizeFromAspectRatio: Record<string, string> = {
+      "1:1": "2048*2048",
+      "16:9": "1664*928",
+      "9:16": "928*1664",
+      "4:3": "1472*1104",
+      "3:4": "1104*1472"
+    };
     try {
       const response = await withRetry(
         () =>
@@ -1545,20 +1954,36 @@ class QwenImageGenerationModel implements ImageGenerationModel {
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
-              ...providerOptions,
               model: this.modelId,
-              prompt: input.prompt,
-              n: input.count,
-              size: input.size,
-              negative_prompt: input.negativePrompt,
-              response_format: providerOptions.response_format,
-              input_image: input.images?.[0]?.uri
+              input: {
+                messages: [
+                  {
+                    role: "user",
+                    content: [
+                      ...(input.images ?? []).map((image) => ({ image: mediaValue(image) })),
+                      { text: input.prompt }
+                    ]
+                  }
+                ]
+              },
+              parameters: {
+                ...providerOptions,
+                ...nestedParameters,
+                n: input.count,
+                size: input.size ?? (input.aspectRatio ? sizeFromAspectRatio[input.aspectRatio] : undefined),
+                negative_prompt: input.negativePrompt
+              }
             })
           }),
         input
       );
       const json = await parseJson(response);
-      const data = json.data ?? json.output?.results ?? json.output?.images ?? [];
+      const data =
+        json.output?.choices?.flatMap((choice: any) => choice.message?.content ?? []) ??
+        json.output?.results ??
+        json.output?.images ??
+        json.data ??
+        [];
       return {
         images: data.map((item: any) => normalizeGeneratedMedia(item, input.outputMimeType ?? "image/png")),
         text: json.output?.text,
@@ -1583,24 +2008,56 @@ class QwenVideoGenerationModel implements VideoGenerationModel {
 
   async generateVideo(input: { prompt: string; image?: MediaInput; count?: number; aspectRatio?: string; negativePrompt?: string; durationSeconds?: number; outputStorageUri?: string; pollIntervalMs?: number; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<VideoGenerationResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
+    const providerOptions = { ...(input.providerOptions ?? {}) };
+    delete providerOptions.endpoint;
+    const nestedInput =
+      providerOptions.input && typeof providerOptions.input === "object"
+        ? (providerOptions.input as Record<string, unknown>)
+        : {};
+    const nestedParameters =
+      providerOptions.parameters && typeof providerOptions.parameters === "object"
+        ? (providerOptions.parameters as Record<string, unknown>)
+        : {};
+    delete providerOptions.input;
+    delete providerOptions.parameters;
+    delete providerOptions.model;
+    const isWan27 = /^wan2\.7(?:$|-)/i.test(this.modelId);
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.taskBaseURL}/services/aigc/video-generation/generation`, {
+          this.fetcher(`${this.taskBaseURL}/services/aigc/video-generation/video-synthesis`, {
             method: "POST",
             headers: { ...jsonHeaders(this.apiKey), "X-DashScope-Async": "enable" },
             signal,
             body: JSON.stringify({
-              ...input.providerOptions,
               model: this.modelId,
-              input: { prompt: input.prompt, img_url: input.image?.uri, negative_prompt: input.negativePrompt },
-              parameters: { size: input.aspectRatio, duration: input.durationSeconds, n: input.count, output_storage_uri: input.outputStorageUri }
+              input: {
+                ...nestedInput,
+                prompt: input.prompt,
+                negative_prompt: input.negativePrompt,
+                ...(input.image
+                  ? isWan27
+                    ? { media: [{ type: "first_frame", url: mediaValue(input.image) }] }
+                    : { img_url: mediaValue(input.image) }
+                  : {})
+              },
+              parameters: {
+                ...providerOptions,
+                ...nestedParameters,
+                ratio: input.aspectRatio,
+                duration: input.durationSeconds,
+                n: input.count,
+                output_storage_uri: input.outputStorageUri
+              }
             })
           }),
         input
       );
       const json = await parseJson(response);
-      const items = json.output?.results ?? json.output?.videos ?? [];
+      const items =
+        json.output?.results ??
+        json.output?.videos ??
+        (json.output?.video_url ? [{ url: json.output.video_url }] : []);
       return {
         videos: items.map((item: any) => normalizeGeneratedMedia(item, "video/mp4")),
         operationName: json.output?.task_id ?? json.task_id,
@@ -1619,20 +2076,61 @@ class QwenRerankModelImpl implements QwenRerankModel {
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
+    private readonly taskBaseURL: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {}
 
   async rerank(input: QwenRerankInput): Promise<QwenRerankResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
+    const isCompatibleRerank = /^qwen3-rerank(?:$|-)/i.test(this.modelId);
+    if (
+      isCompatibleRerank &&
+      (typeof input.query !== "string" || input.documents.some((document) => typeof document !== "string"))
+    ) {
+      throw new UnsupportedFeatureError("qwen3-rerank accepts text queries and text documents only.");
+    }
+
+    const toRerankContent = (value: QwenRerankValue) => {
+      if (typeof value === "string") {
+        return /^qwen3-vl-rerank(?:$|-)/i.test(this.modelId) ? { text: value } : value;
+      }
+      return toMultimodalEmbeddingContent(value);
+    };
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/rerank`, {
+          this.fetcher(
+            isCompatibleRerank
+              ? `${this.baseURL}/reranks`
+              : `${this.taskBaseURL}/services/rerank/text-rerank/text-rerank`,
+            {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
-            body: JSON.stringify({ ...input.providerOptions, model: this.modelId, query: input.query, documents: input.documents, top_n: input.topN })
-          }),
+              body: JSON.stringify(
+                isCompatibleRerank
+                  ? {
+                      ...input.providerOptions,
+                      model: this.modelId,
+                      query: input.query,
+                      documents: input.documents,
+                      top_n: input.topN
+                    }
+                  : {
+                      model: this.modelId,
+                      input: {
+                        query: toRerankContent(input.query),
+                        documents: input.documents.map(toRerankContent)
+                      },
+                      parameters: {
+                        return_documents: true,
+                        ...input.providerOptions,
+                        top_n: input.topN
+                      }
+                    }
+              )
+            }
+          ),
         input
       );
       const json = await parseJson(response);
@@ -1661,7 +2159,8 @@ class QwenTasksClientImpl implements QwenTasksClient {
   async get(input: { name: string; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.taskBaseURL}/tasks/${input.name}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
+      const taskId = encodeQwenResourceId(input.name, "task");
+      const response = await withRetry(() => this.fetcher(`${this.taskBaseURL}/tasks/${taskId}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
       return normalizeOperation(await parseJson(response));
     } finally {
       cleanup();
@@ -1671,7 +2170,8 @@ class QwenTasksClientImpl implements QwenTasksClient {
   async cancel(input: { name: string; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.taskBaseURL}/tasks/${input.name}/cancel`, { method: "POST", headers: jsonHeaders(this.apiKey), signal }), input);
+      const taskId = encodeQwenResourceId(input.name, "task");
+      const response = await withRetry(() => this.fetcher(`${this.taskBaseURL}/tasks/${taskId}/cancel`, { method: "POST", headers: jsonHeaders(this.apiKey), signal }), input);
       return normalizeOperation(await parseJson(response));
     } finally {
       cleanup();
@@ -1681,22 +2181,107 @@ class QwenTasksClientImpl implements QwenTasksClient {
 
 const parseRealtimeEvent = (payload: Record<string, unknown>): RealtimeEvent[] => {
   const type = String(payload.type ?? "");
-  if (type.includes("text.delta") && typeof payload.delta === "string") {
-    return [{ type: "realtime-text-delta", textDelta: payload.delta, providerMetadata: payload as Record<string, JsonValue> }];
+  const metadata = payload as Record<string, JsonValue>;
+  const itemId = typeof payload.item_id === "string" ? payload.item_id : undefined;
+  const responseId = typeof payload.response_id === "string" ? payload.response_id : undefined;
+
+  if (type === "response.text.delta" && typeof payload.delta === "string") {
+    return [{ type: "realtime-text-delta", textDelta: payload.delta, itemId, responseId, providerMetadata: metadata }];
   }
-  if (type.includes("audio.delta") && typeof payload.delta === "string") {
-    return [{ type: "realtime-audio-output", audio: Uint8Array.from(Buffer.from(payload.delta, "base64")), mediaType: "audio/pcm", providerMetadata: payload as Record<string, JsonValue> }];
+  if (type === "response.audio.delta" && typeof payload.delta === "string") {
+    return [{
+      type: "realtime-audio-output",
+      audio: Uint8Array.from(Buffer.from(payload.delta, "base64")),
+      mediaType: "audio/pcm",
+      sampleRateHz: 24_000,
+      channels: 1,
+      itemId,
+      responseId,
+      providerMetadata: metadata
+    }];
   }
-  if (type.includes("transcript") && typeof payload.text === "string") {
-    return [{ type: "realtime-transcript", text: payload.text, role: type.includes("input") ? "user" : "assistant", isFinal: type.includes("done"), providerMetadata: payload as Record<string, JsonValue> }];
+  if (type === "response.audio_transcript.delta" && typeof payload.delta === "string") {
+    return [{ type: "realtime-transcript", text: payload.delta, role: "assistant", isFinal: false, itemId, responseId, providerMetadata: metadata }];
   }
-  if (type.includes("completed") || type.includes("done")) {
-    return [{ type: "realtime-response-complete", providerMetadata: payload as Record<string, JsonValue> }];
+  if (type === "response.audio_transcript.done" && typeof payload.transcript === "string") {
+    return [{ type: "realtime-transcript", text: payload.transcript, role: "assistant", isFinal: true, itemId, responseId, providerMetadata: metadata }];
   }
-  if (type.includes("error")) {
-    return [{ type: "realtime-error", message: String(payload.error ?? payload.message ?? "Qwen realtime error"), providerMetadata: payload as Record<string, JsonValue> }];
+  if (type === "conversation.item.input_audio_transcription.delta") {
+    const text = `${typeof payload.text === "string" ? payload.text : ""}${typeof payload.stash === "string" ? payload.stash : ""}`;
+    return [{ type: "realtime-transcript", text, role: "user", isFinal: false, itemId, providerMetadata: metadata }];
+  }
+  if (type === "conversation.item.input_audio_transcription.completed" && typeof payload.transcript === "string") {
+    return [{ type: "realtime-transcript", text: payload.transcript, role: "user", isFinal: true, itemId, providerMetadata: metadata }];
+  }
+  if (type === "response.function_call_arguments.done") {
+    return [{
+      type: "realtime-tool-call",
+      toolCall: {
+        id: String(payload.call_id ?? payload.item_id ?? "qwen-tool-call"),
+        name: String(payload.name ?? ""),
+        input: JSON.parse(typeof payload.arguments === "string" ? payload.arguments : "{}")
+      }
+    }];
+  }
+  if (type === "response.done") {
+    const response = payload.response as Record<string, unknown> | undefined;
+    return [{ type: "realtime-response-complete", reason: typeof response?.status === "string" ? response.status : undefined, providerMetadata: metadata }];
+  }
+  if (type === "session.finished") {
+    return [{ type: "realtime-end", reason: "finished", providerMetadata: metadata }];
+  }
+  if (type === "error" || type.endsWith(".failed")) {
+    const error = payload.error as Record<string, unknown> | undefined;
+    return [{
+      type: "realtime-error",
+      message: String(error?.message ?? payload.message ?? "Qwen realtime error"),
+      providerMetadata: metadata
+    }];
   }
   return [];
+};
+
+const mapRealtimeTools = (config: RealtimeSessionConfig) => {
+  const tools = toToolSet(config.tools);
+  if (!tools) {
+    return undefined;
+  }
+  return Object.values(tools).map((tool) => {
+    if (!isCallableToolDefinition(tool)) {
+      throw new UnsupportedFeatureError("Qwen realtime supports callable function tools only.");
+    }
+    return {
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: toJSONSchema(tool.schema)
+      }
+    };
+  });
+};
+
+const mapRealtimeSession = (config: RealtimeSessionConfig) => ({
+  ...(config.providerOptions ?? {}),
+  instructions: config.instructions,
+  voice: config.voice,
+  input_audio_format: "pcm",
+  output_audio_format: "pcm",
+  turn_detection: config.turnDetection,
+  input_audio_transcription:
+    typeof config.inputAudioTranscription === "object"
+      ? config.inputAudioTranscription
+      : config.inputAudioTranscription
+        ? {}
+        : undefined,
+  tools: mapRealtimeTools(config)
+});
+
+const encodeRealtimeData = (data: string | Uint8Array | ArrayBuffer) => {
+  if (typeof data === "string") {
+    return data.startsWith("data:") ? data.slice(data.indexOf(",") + 1) : data;
+  }
+  return Buffer.from(data instanceof Uint8Array ? data : new Uint8Array(data)).toString("base64");
 };
 
 class QwenRealtimeModel implements RealtimeModel {
@@ -1721,13 +2306,21 @@ class QwenRealtimeModel implements RealtimeModel {
       connection,
       callbacks: {
         parseEvent: parseRealtimeEvent,
-        buildInitialPayloads: (value) => [{ type: "session.update", session: { instructions: value.instructions, voice: value.voice, ...value.providerOptions } }],
-        buildAudioPayloads: (frame: AudioFrame) => [{ type: "input_audio_buffer.append", audio: typeof frame.data === "string" ? frame.data : Buffer.from(frame.data as Uint8Array).toString("base64") }],
-        buildMediaPayloads: (frame: MediaFrame) => [{ type: "input_media.append", media_type: frame.mediaType, data: typeof frame.data === "string" ? frame.data : Buffer.from(frame.data as Uint8Array).toString("base64") }],
+        buildInitialPayloads: (value) => [{ type: "session.update", session: mapRealtimeSession(value) }],
+        buildAudioPayloads: (frame: AudioFrame) => [{ type: "input_audio_buffer.append", audio: encodeRealtimeData(frame.data) }],
+        buildMediaPayloads: (frame: MediaFrame) => {
+          if (!/^image\/(jpeg|jpg)$/i.test(frame.mediaType)) {
+            throw new UnsupportedFeatureError("Qwen realtime media frames must be JPEG images.");
+          }
+          return [{ type: "input_image_buffer.append", image: encodeRealtimeData(frame.data) }];
+        },
         buildTextPayloads: (text) => [{ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text }] } }, { type: "response.create" }],
-        buildToolResultPayloads: (result: ToolExecutionResult) => [{ type: "conversation.item.create", item: { type: "function_call_output", call_id: result.toolCallId, output: JSON.stringify(result.isError ? result.error : result.output ?? null) } }],
-        buildUpdatePayloads: (value) => [{ type: "session.update", session: { instructions: value.instructions, voice: value.voice, ...value.providerOptions } }],
-        buildClosePayloads: () => [{ type: "session.close" }]
+        buildToolResultPayloads: (result: ToolExecutionResult) => [
+          { type: "conversation.item.create", item: { type: "function_call_output", call_id: result.toolCallId, output: JSON.stringify(result.isError ? result.error : result.output ?? null) } },
+          { type: "response.create" }
+        ],
+        buildUpdatePayloads: (value) => [{ type: "session.update", session: mapRealtimeSession(value) }],
+        buildClosePayloads: () => []
       }
     });
     await session.initialize();
@@ -1743,26 +2336,45 @@ export const createQwen = (
     throw new ConfigurationError("Missing Qwen API key.");
   }
 
-  const baseURL = options.baseURL ?? "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
-  const taskBaseURL = options.taskBaseURL ?? qwenTaskBaseURLFrom(baseURL);
-  const realtimeURL = options.realtimeURL ?? "wss://dashscope-intl.aliyuncs.com/compatible-mode/v1/realtime";
+  const workspaceURLs = options.workspaceId
+    ? qwenWorkspaceURLs(options.workspaceId, options.region ?? "singapore")
+    : undefined;
+  const baseURL = options.baseURL ?? workspaceURLs?.baseURL ?? "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+  const taskBaseURL = options.taskBaseURL ?? workspaceURLs?.taskBaseURL ?? qwenTaskBaseURLFrom(baseURL);
+  const realtimeURL =
+    options.realtimeURL ??
+    workspaceURLs?.realtimeURL ??
+    "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime";
   const fetcher = options.fetch ?? globalThis.fetch;
   const responseLimits = resolveAudioResponseLimits(options.responseLimits);
+  const speechAudioMaxRedirects = options.speechAudioMaxRedirects ?? 3;
+  if (!Number.isInteger(speechAudioMaxRedirects) || speechAudioMaxRedirects < 0 || speechAudioMaxRedirects > 10) {
+    throw new ConfigurationError("Qwen speechAudioMaxRedirects must be an integer between 0 and 10.");
+  }
 
   return createProviderAdapter({
     name: "qwen",
     languageModel: (modelId) => new QwenLanguageModel(modelId, apiKey, baseURL, fetcher),
     embeddingModel: (modelId) => new QwenEmbeddingModel(modelId, apiKey, baseURL, fetcher),
     transcriptionModel: (modelId) => new QwenTranscriptionModel(modelId, apiKey, baseURL, fetcher, responseLimits),
-    speechModel: (modelId) => new QwenSpeechModel(modelId, apiKey, baseURL, fetcher, responseLimits),
-    imageGenerationModel: (modelId) => new QwenImageGenerationModel(modelId, apiKey, baseURL, taskBaseURL, fetcher),
+    speechModel: (modelId) =>
+      new QwenSpeechModel(
+        modelId,
+        apiKey,
+        taskBaseURL,
+        fetcher,
+        responseLimits,
+        options.speechAudioURLValidator,
+        speechAudioMaxRedirects
+      ),
+    imageGenerationModel: (modelId) => new QwenImageGenerationModel(modelId, apiKey, taskBaseURL, fetcher),
     videoGenerationModel: (modelId) => new QwenVideoGenerationModel(modelId, apiKey, taskBaseURL, fetcher),
     realtimeModel: (modelId) => new QwenRealtimeModel(modelId, apiKey, realtimeURL, options.realtimeConnectionFactory),
     files: new QwenFilesClient(apiKey, baseURL, fetcher),
-    fileSearchStores: new QwenFileSearchStoresClient(apiKey, baseURL, fetcher),
     batches: new QwenBatchesClient(apiKey, baseURL, fetcher),
-    rerankModel: (modelId: string) => new QwenRerankModelImpl(modelId, apiKey, baseURL, fetcher),
-    multimodalEmbeddingModel: (modelId: string) => new QwenEmbeddingModel(modelId, apiKey, baseURL, fetcher),
+    rerankModel: (modelId: string) => new QwenRerankModelImpl(modelId, apiKey, baseURL, taskBaseURL, fetcher),
+    multimodalEmbeddingModel: (modelId: string) =>
+      new QwenMultimodalEmbeddingModelImpl(modelId, apiKey, taskBaseURL, fetcher),
     tasks: new QwenTasksClientImpl(apiKey, taskBaseURL, fetcher),
     rawFetch: fetcher
   }) as QwenProvider;
