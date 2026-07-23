@@ -1,9 +1,15 @@
+import { createHash } from "node:crypto";
+
 import { createAgentApprovalMessage, getAgentApprovalRequests } from "./agent-approval.js";
 import { createAgentHandoffMessage } from "./agent-handoff.js";
-import { GuardrailTriggeredError, ValidationError } from "./errors.js";
-import { generateText, normalizeMessages, streamText } from "./generate-text.js";
-import { serializeJsonValue } from "./messages.js";
+import { AGENT_RUN_STATE_SCHEMA_VERSION, normalizeAgentRunState } from "./agent-state.js";
+import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
+import { ConflictError, GuardrailTriggeredError, ValidationError } from "./errors.js";
+import { aggregateTokenUsage, generateText, getGenerateTextStepTiming, normalizeMessages, streamText } from "./generate-text.js";
+import { isCallableToolDefinition, serializeJsonValue } from "./messages.js";
 import { mergeAbortSignals } from "./runtime.js";
+import { evaluateAgentBudgetPreflight, getAgentBudgetStatus } from "./safety-policy.js";
+import { createSecureId } from "./secure-id.js";
 import { toToolSet } from "./tool-registry.js";
 import { z } from "zod";
 import type {
@@ -31,6 +37,7 @@ import type {
   AgentStreamEvent,
   AgentStreamResult,
   AgentTelemetryEvent,
+  AgentToolCallJournalEntry,
   CreateSubAgentToolOptions,
   GenerateTextOptions,
   GenerateTextOutput,
@@ -49,9 +56,11 @@ import type {
   ToolExecutionResult
 } from "./types.js";
 
-const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
-const AGENT_RUN_STATE_SCHEMA_VERSION = 1;
+const randomId = createSecureId;
 const AGENT_GROUP_FAIL_FAST_ABORT_MESSAGE = "Agent group member aborted after fail-fast.";
+const DEFAULT_AGENT_LEASE_TTL_MS = 30_000;
+const DEFAULT_AGENT_CANCELLATION_POLL_MS = 1_000;
+const DEFAULT_AGENT_MAX_STATE_BYTES = 4 * 1024 * 1024;
 
 class AgentPolicyTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -68,8 +77,13 @@ const joinInstructions = (...parts: Array<string | undefined>): string | undefin
 const hasToolCalls = (messages: ModelMessage[]): boolean =>
   messages.some((message) => message.parts.some((part) => part.type === "tool-call"));
 
-const snapshotRequest = (request: ModelGenerateInput): AgentStepRequest => ({
-  messages: request.messages,
+const snapshotRequest = (
+  request: ModelGenerateInput,
+  messageOffset = 0,
+  messages: ModelMessage[] = request.messages
+): AgentStepRequest => ({
+  messageOffset,
+  messages,
   toolChoice: request.toolChoice,
   toolExecution: request.toolExecution,
   temperature: request.temperature,
@@ -97,20 +111,25 @@ const countToolCalls = (messages: ModelMessage[]): number =>
 
 const mapSteps = (steps: GenerateTextStep[], offset: number, toolResults: ToolExecutionResult[]): AgentStep[] => {
   let toolResultCursor = 0;
+  let previousMessageCount = 0;
 
   return steps.map((step, index) => {
     const response = snapshotResponse(step.response);
     const toolCallCount = countToolCalls(response.messages);
     const stepToolResults = toolResults.slice(toolResultCursor, toolResultCursor + toolCallCount);
     toolResultCursor += toolCallCount;
-    const finishedAt = Date.now();
+    const timing = getGenerateTextStepTiming(step.request);
+    const finishedAt = timing?.finishedAt ?? Date.now();
+    const messageOffset = index === 0 ? 0 : previousMessageCount;
+    const incrementalMessages = step.request.messages.slice(messageOffset);
+    previousMessageCount = step.request.messages.length;
 
     return {
       index: offset + index + 1,
       status: "completed",
-      startedAt: finishedAt,
+      startedAt: timing?.startedAt ?? finishedAt,
       finishedAt,
-      request: snapshotRequest(step.request),
+      request: snapshotRequest(step.request, messageOffset, incrementalMessages),
       response,
       toolResults: stepToolResults
     };
@@ -135,16 +154,11 @@ const toOutput = (state: AgentRunState): AgentRunOutput => ({
   error: state.error
 });
 
-const normalizeRunState = (state: AgentRunState): AgentRunState => ({
-  ...state,
-  schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION
-});
-
 const normalizeApprovalStatus = (status: AgentStatus): AgentStatus =>
   status === "suspended" ? "waiting_approval" : status;
 
 const cloneState = (state: AgentRunState): AgentRunState =>
-  JSON.parse(JSON.stringify(normalizeRunState(state))) as AgentRunState;
+  JSON.parse(JSON.stringify(normalizeAgentRunState(state))) as AgentRunState;
 
 const createBaseState = (
   provider: string,
@@ -156,13 +170,16 @@ const createBaseState = (
   runId: string,
   handoff: AgentRunInput["handoff"],
   parentRunId: string | undefined,
-  idempotencyKey: string | undefined
+  idempotencyKey: string | undefined,
+  scope: AgentRunInput["scope"]
 ): AgentRunState => {
   const startedAt = Date.now();
 
   return {
     schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
+    revision: 0,
     runId,
+    scope,
     idempotencyKey,
     agentId,
     parentRunId: parentRunId ?? handoff?.fromRunId,
@@ -195,6 +212,18 @@ const ensureValidStateInput = (input: AgentRunInput) => {
   if (input.prompt !== undefined || input.messages !== undefined || input.system !== undefined || input.handoff !== undefined) {
     throw new ValidationError('Pass either "state" or a fresh "prompt"/"messages" input, but not both.');
   }
+
+  const stateScope = input.state?.scope;
+  const inputScope = input.scope;
+  if (
+    stateScope &&
+    inputScope &&
+    (stateScope.tenantId !== inputScope.tenantId ||
+      stateScope.userId !== inputScope.userId ||
+      stateScope.namespace !== inputScope.namespace)
+  ) {
+    throw new ValidationError('The provided agent state belongs to a different tenant/user scope.');
+  }
 };
 
 const ensureValidIdempotencyInput = (input: AgentRunInput, store: AgentRunStore | undefined) => {
@@ -206,8 +235,53 @@ const ensureValidIdempotencyInput = (input: AgentRunInput, store: AgentRunStore 
     throw new ValidationError('The "idempotencyKey" option requires an agent run "store".');
   }
 
-  if (!store.findByIdempotencyKey) {
-    throw new ValidationError('The agent run "store" must implement "findByIdempotencyKey()" to use "idempotencyKey".');
+  if (!store.claimIdempotencyKey) {
+    throw new ValidationError('The agent run "store" must implement "claimIdempotencyKey()" to use "idempotencyKey" safely.');
+  }
+};
+
+const ensureValidScope = (scope: AgentRunInput["scope"]) => {
+  if (!scope) return;
+  if (typeof scope.tenantId !== "string" || scope.tenantId.length === 0) {
+    throw new ValidationError('Agent scope "tenantId" must be a non-empty string.');
+  }
+  for (const field of ["userId", "namespace"] as const) {
+    if (scope[field] !== undefined && (typeof scope[field] !== "string" || scope[field]!.length === 0)) {
+      throw new ValidationError(`Agent scope "${field}" must be a non-empty string when provided.`);
+    }
+  }
+};
+
+const invokeOperationalHook = async <TModel extends LanguageModel, TResult>(
+  agent: AgentDefinition<TModel>,
+  source: "telemetry" | "memory",
+  operation: string,
+  runId: string | undefined,
+  callback: (() => TResult | Promise<TResult>) | undefined,
+  fallback: TResult
+): Promise<TResult> => {
+  if (!callback) {
+    return fallback;
+  }
+
+  try {
+    return await callback();
+  } catch (error) {
+    const normalizedError = error instanceof Error ? error : new Error(String(error));
+    try {
+      await agent.hookFailurePolicy?.onError?.({
+        source,
+        operation,
+        runId,
+        error: normalizedError
+      });
+    } catch {
+      // Reporting an observer failure must never recursively fail the run.
+    }
+    if (agent.hookFailurePolicy?.[source] === "fail") {
+      throw normalizedError;
+    }
+    return fallback;
   }
 };
 
@@ -239,13 +313,21 @@ const prepareFreshMessages = async <TModel extends AgentDefinition["model"]>(
     : [];
   messages = injectContextMessages(messages, handoffMessages);
 
-  const memoryMessages = agent.memory
-    ? await agent.memory.load({
+  const memoryMessages = await invokeOperationalHook(
+    agent,
+    "memory",
+    "load",
+    runId,
+    agent.memory
+      ? () => agent.memory!.load({
         runId,
         agentId: agent.id,
+        scope: input.scope ?? input.handoff?.scope,
         metadata: cloneMetadata(agent.metadata, input.metadata)
       })
-    : [];
+      : undefined,
+    [] as ModelMessage[]
+  );
 
   messages = injectContextMessages(messages, memoryMessages);
 
@@ -328,7 +410,7 @@ const finalizeState = (
   state.outputText = result.text;
   state.finishReason = result.finishReason;
   state.providerFinishReason = result.providerFinishReason;
-  state.usage = result.usage;
+  state.usage = aggregateTokenUsage([state.usage, result.usage]);
   state.pendingApprovals = pendingApprovals;
   state.updatedAt = Date.now();
 
@@ -339,7 +421,14 @@ const emitTelemetryEvent = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   event: AgentTelemetryEvent
 ) => {
-  await agent.onTelemetryEvent?.(event);
+  await invokeOperationalHook(
+    agent,
+    "telemetry",
+    event.type,
+    event.runId,
+    agent.onTelemetryEvent ? () => agent.onTelemetryEvent!(event) : undefined,
+    undefined
+  );
 };
 
 const subAgentToolInputSchema = z.object({
@@ -402,6 +491,7 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
         prompt: input.prompt,
         system: joinInstructions(options.system, input.system),
         parentRunId: options.parentRunId,
+        scope: options.scope,
         maxSteps: options.maxSteps,
         metadata: cloneMetadata(options.metadata, childMetadata)
       });
@@ -441,21 +531,75 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
   };
 };
 
-const persistState = async <TModel extends LanguageModel>(agent: AgentDefinition<TModel>, state: AgentRunState) => {
+const saveStateWithRevision = async (store: AgentRunStore, state: AgentRunState) => {
+  const expectedRevision = state.revision ?? 0;
+  const nextRevision = expectedRevision + 1;
+  const nextState = { ...state, revision: nextRevision } satisfies AgentRunState;
+  await store.save(cloneState(nextState), { expectedRevision });
+  state.revision = nextRevision;
+};
+
+const claimAgentExecution = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  state: AgentRunState
+) => {
+  state.status = "running";
   state.updatedAt = Date.now();
-  await agent.store?.save(cloneState(state));
+  assertStateSize(agent, state);
+  if (agent.store) {
+    await saveStateWithRevision(agent.store, state);
+  }
+};
+
+const assertStateSize = <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  state: AgentRunState,
+  policy?: AgentRunPolicy
+) => {
+  const limit = policy?.maxStateBytes ?? agent.policy?.maxStateBytes ?? DEFAULT_AGENT_MAX_STATE_BYTES;
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new ValidationError('Agent policy "maxStateBytes" must be a positive integer.');
+  }
+  const bytes = new TextEncoder().encode(JSON.stringify(state)).byteLength;
+  if (bytes > limit) {
+    throw new ValidationError(
+      `Agent run state is ${bytes} bytes and exceeds maxStateBytes=${limit}. Offload large tool outputs to artifacts or raise the explicit limit.`
+    );
+  }
+};
+
+const persistState = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  state: AgentRunState,
+  policy?: AgentRunPolicy
+) => {
+  state.updatedAt = Date.now();
+  assertStateSize(agent, state, policy);
+  if (agent.store) {
+    await saveStateWithRevision(agent.store, state);
+  }
   await emitTelemetryEvent(agent, {
     type: "state-saved",
     runId: state.runId,
     agentId: state.agentId,
     status: state.status
   });
-  await agent.memory?.save?.({
-    runId: state.runId,
-    agentId: state.agentId,
-    state: cloneState(state),
-    metadata: state.metadata
-  });
+  await invokeOperationalHook(
+    agent,
+    "memory",
+    "save",
+    state.runId,
+    agent.memory?.save
+      ? () => agent.memory!.save!({
+          runId: state.runId,
+          agentId: state.agentId,
+          scope: state.scope,
+          state: cloneState(state),
+          metadata: state.metadata
+        })
+      : undefined,
+    undefined
+  );
 };
 
 const approvalsFromEvents = (messages: ModelMessage[]): AgentApprovalRequest[] => getAgentApprovalRequests(messages);
@@ -554,21 +698,48 @@ const resolveContext = async <TModel extends LanguageModel>(
   input: AgentRunInput<TModel>
 ) => {
   ensureValidIdempotencyInput(input, agent.store);
+  const inputScope = input.scope ?? input.handoff?.scope;
+  ensureValidScope(inputScope);
 
-  let loadedState = input.state ? normalizeRunState(input.state) : undefined;
+  let loadedState = input.state ? normalizeAgentRunState(input.state) : undefined;
   let loadedByIdempotencyKey = false;
-  if (!loadedState && input.idempotencyKey) {
-    loadedState = await agent.store?.findByIdempotencyKey?.(input.idempotencyKey);
+  if (!loadedState && input.runId && agent.store) {
+    loadedState = await agent.store.load(input.runId, inputScope);
     if (loadedState) {
-      loadedState = normalizeRunState(loadedState);
-      loadedByIdempotencyKey = true;
+      loadedState = normalizeAgentRunState(loadedState);
     }
   }
-  if (!loadedState && input.runId && agent.store) {
-    loadedState = await agent.store.load(input.runId);
-    if (loadedState) {
-      loadedState = normalizeRunState(loadedState);
+
+  if (!loadedState && input.idempotencyKey) {
+    const runId = input.runId ?? randomId("run");
+    const maxSteps = Math.max(1, input.maxSteps ?? agent.maxSteps ?? 1);
+    const metadata = cloneMetadata(agent.metadata, input.metadata, input.handoff?.metadata);
+    const prepared = await prepareFreshMessages(agent, input, runId);
+    const candidate = createBaseState(
+      agent.model.provider,
+      agent.model.modelId,
+      prepared.messages,
+      maxSteps,
+      metadata,
+      agent.id,
+      runId,
+      input.handoff,
+      input.parentRunId,
+      input.idempotencyKey,
+      inputScope
+    ) as AgentRunState & { idempotencyKey: string };
+    const claim = await agent.store!.claimIdempotencyKey!(candidate);
+    if (claim.claimed) {
+      return {
+        state: normalizeAgentRunState(claim.state),
+        messages: prepared.messages,
+        remainingSteps: maxSteps,
+        memoryMessages: prepared.memoryMessages,
+        fresh: true
+      };
     }
+    loadedState = normalizeAgentRunState(claim.state);
+    loadedByIdempotencyKey = true;
   }
 
   const normalizedInput =
@@ -589,6 +760,7 @@ const resolveContext = async <TModel extends LanguageModel>(
         ...loadedState,
         schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
         idempotencyKey: loadedState.idempotencyKey ?? input.idempotencyKey,
+        scope: loadedState.scope ?? inputScope,
         agentId: loadedState.agentId ?? agent.id,
         parentRunId: loadedState.parentRunId ?? input.parentRunId,
         provider: agent.model.provider,
@@ -601,7 +773,8 @@ const resolveContext = async <TModel extends LanguageModel>(
       } satisfies AgentRunState,
       messages: resumed.messages,
       remainingSteps: Math.max(0, maxSteps - loadedState.currentStep),
-      memoryMessages: [] as ModelMessage[]
+      memoryMessages: [] as ModelMessage[],
+      fresh: false
     };
   }
 
@@ -620,11 +793,124 @@ const resolveContext = async <TModel extends LanguageModel>(
       runId,
       input.handoff,
       input.parentRunId,
-      input.idempotencyKey
+      input.idempotencyKey,
+      inputScope
     ),
     messages: prepared.messages,
     remainingSteps: maxSteps,
-    memoryMessages: prepared.memoryMessages
+    memoryMessages: prepared.memoryMessages,
+    fresh: true
+  };
+};
+
+const canonicalJson = (value: JsonValue): string => {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key]!)}`)
+    .join(",")}}`;
+};
+
+const durableToolCallId = (
+  runId: string,
+  step: number,
+  providerToolCallId: string,
+  toolName: string,
+  input: JsonValue
+): string =>
+  `tool_${createHash("sha256")
+    .update(`${runId}\0${step}\0${providerToolCallId}\0${toolName}\0${canonicalJson(input)}`)
+    .digest("hex")}`;
+
+const wrapToolWithJournal = <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  state: AgentRunState,
+  tool: ToolDefinition
+): ToolDefinition => {
+  const store = agent.store;
+  if (!store?.claimToolExecution || !store.loadToolExecution || !store.completeToolExecution) {
+    return tool;
+  }
+
+  return {
+    ...tool,
+    execute: async (input, context) => {
+      if (!context) {
+        throw new ValidationError(`Durable tool "${tool.name}" requires an execution context.`);
+      }
+      const serializedInput = serializeJsonValue(input);
+      const step = context.step;
+      const toolCallId = durableToolCallId(state.runId, step, context.toolCall.id, tool.name, serializedInput);
+      const idempotencyKey = `${state.runId}:${toolCallId}`;
+      const now = Date.now();
+      const candidate = {
+        runId: state.runId,
+        scope: state.scope,
+        toolCallId,
+        toolName: tool.name,
+        status: "pending",
+        idempotencyKey,
+        revision: 0,
+        input: serializedInput,
+        updatedAt: now
+      } satisfies AgentToolCallJournalEntry;
+      const claim = await store.claimToolExecution!(candidate);
+
+      if (!claim.claimed) {
+        if (claim.entry.status === "completed") {
+          return claim.entry.output ?? null;
+        }
+        if (claim.entry.status === "failed") {
+          throw new Error(claim.entry.error?.message ?? `Tool "${tool.name}" previously failed.`);
+        }
+        throw new ConflictError(
+          `Tool "${tool.name}" has an indeterminate durable execution. Reconcile idempotency key "${claim.entry.idempotencyKey}" before retrying.`
+        );
+      }
+
+      try {
+        const output = serializeJsonValue(
+          await tool.execute(input, {
+            ...context,
+            runId: state.runId,
+            idempotencyKey
+          })
+        );
+        await store.completeToolExecution!(
+          {
+            ...claim.entry,
+            status: "completed",
+            output,
+            completedAt: Date.now(),
+            updatedAt: Date.now()
+          },
+          { expectedRevision: claim.entry.revision }
+        );
+        return output;
+      } catch (error) {
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        try {
+          await store.completeToolExecution!(
+            {
+              ...claim.entry,
+              status: "failed",
+              error: { message: normalizedError.message },
+              completedAt: Date.now(),
+              updatedAt: Date.now()
+            },
+            { expectedRevision: claim.entry.revision }
+          );
+        } catch {
+          // The original error is more useful; a running journal row blocks unsafe replay.
+        }
+        throw normalizedError;
+      }
+    }
   };
 };
 
@@ -642,6 +928,7 @@ const createGenerateOptions = <TModel extends LanguageModel>(
       ...subagent,
       parentRunId: state.runId,
       parentAgentId: state.agentId,
+      scope: state.scope,
       onStart: async ({ toolName, childAgentId }) => {
         await emitTelemetryEvent(agent, {
           type: "subagent-start",
@@ -666,7 +953,24 @@ const createGenerateOptions = <TModel extends LanguageModel>(
     }
     tools[subagentTool.name] = subagentTool;
   }
+  for (const [name, tool] of Object.entries(tools)) {
+    if (isCallableToolDefinition(tool)) {
+      tools[name] = wrapToolWithJournal(agent, state, tool);
+    }
+  }
   const finalTools = Object.keys(tools).length ? tools : undefined;
+  const budget = input.policy?.budget ?? agent.policy?.budget;
+  const runPolicy = resolveRunPolicy(agent, input);
+  let checkpointState = cloneState(state);
+  let reservedToolCalls = 0;
+  const requestedMaxTokens = input.maxTokens ?? agent.maxTokens;
+  const budgetStatus = budget ? getAgentBudgetStatus(state, budget) : undefined;
+  const tokenCeilings = [
+    requestedMaxTokens,
+    budgetStatus?.remaining.outputTokens,
+    budgetStatus?.remaining.totalTokens
+  ].filter((value): value is number => value !== undefined);
+  const maxTokens = tokenCeilings.length ? Math.min(...tokenCeilings) : undefined;
 
   return {
     model: agent.model,
@@ -678,9 +982,91 @@ const createGenerateOptions = <TModel extends LanguageModel>(
     onToolApprovalDecision: async (event) => {
       await emitToolApprovalTelemetry(agent, state, event);
     },
+    onBeforeModelStep: ({ step }) => {
+      if (!budget) return;
+      const trigger = evaluateAgentBudgetPreflight(state, budget, {
+        operation: "model",
+        requiredSteps: Math.max(1, step - state.currentStep),
+        requestedOutputTokens: maxTokens
+      });
+      if (trigger) {
+        throw new GuardrailTriggeredError("input", trigger.reason ?? "Agent model budget preflight failed.", {
+          metadata: trigger.metadata
+        });
+      }
+    },
+    onModelStep: async ({ request, response, step, toolCalls }) => {
+      if (!agent.store) return;
+      const responseSnapshot = snapshotResponse(response);
+      const approvals = getAgentApprovalRequests(responseSnapshot.messages);
+      const requestOffset = Math.min(checkpointState.messages.length, request.messages.length);
+      const timing = getGenerateTextStepTiming(request);
+      const finishedAt = timing?.finishedAt ?? Date.now();
+      const checkpointStep = {
+        index: step,
+        status: approvals.length ? "waiting_approval" : "completed",
+        startedAt: timing?.startedAt ?? finishedAt,
+        finishedAt,
+        request: snapshotRequest(request, requestOffset, request.messages.slice(requestOffset)),
+        response: responseSnapshot,
+        toolResults: []
+      } satisfies AgentStep;
+      checkpointState = {
+        ...checkpointState,
+        status: approvals.length ? "waiting_approval" : toolCalls.length ? "running" : "completed",
+        messages: [...request.messages, ...responseSnapshot.messages],
+        steps: [...checkpointState.steps.filter((existing) => existing.index !== step), checkpointStep],
+        currentStep: step,
+        outputText: response.text ?? checkpointState.outputText,
+        finishReason: response.finishReason,
+        providerFinishReason: response.providerFinishReason,
+        usage: aggregateTokenUsage([checkpointState.usage, response.usage]),
+        pendingApprovals: approvals,
+        error: undefined,
+        updatedAt: Date.now()
+      };
+      await persistState(agent, checkpointState, runPolicy);
+      state.revision = checkpointState.revision;
+    },
+    onToolExecutionComplete: async ({ toolResults }) => {
+      if (!agent.store) return;
+      const lastStep = checkpointState.steps.at(-1);
+      if (lastStep) {
+        lastStep.toolResults = [...lastStep.toolResults, ...toolResults];
+      }
+      checkpointState = {
+        ...checkpointState,
+        status: "running",
+        messages: [
+          ...checkpointState.messages,
+          ...toolResults.map((toolResult) => ({
+            role: "tool" as const,
+            parts: [{ type: "tool-result" as const, toolResult }]
+          }))
+        ],
+        toolResults: [...checkpointState.toolResults, ...toolResults],
+        updatedAt: Date.now()
+      };
+      await persistState(agent, checkpointState, runPolicy);
+      state.revision = checkpointState.revision;
+    },
+    stepOffset: state.currentStep,
+    onBeforeToolExecution: ({ toolCalls }) => {
+      if (!budget) return;
+      reservedToolCalls += toolCalls.length;
+      const trigger = evaluateAgentBudgetPreflight(state, budget, {
+        operation: "tool",
+        requiredToolCalls: reservedToolCalls
+      });
+      if (trigger) {
+        throw new GuardrailTriggeredError("input", trigger.reason ?? "Agent tool budget preflight failed.", {
+          metadata: trigger.metadata
+        });
+      }
+    },
     maxSteps,
     temperature: input.temperature ?? agent.temperature,
-    maxTokens: input.maxTokens ?? agent.maxTokens,
+    maxTokens,
     reasoning: input.reasoning ?? agent.reasoning,
     providerOptions: input.providerOptions ?? agent.providerOptions,
     abortSignal,
@@ -785,6 +1171,103 @@ const createAgentAbortContext = (
   };
 };
 
+interface AgentExecutionLeaseContext {
+  supported: boolean;
+  signal?: AbortSignal;
+  cancelledState: () => AgentRunState | undefined;
+  leaseLost: () => boolean;
+  release: () => Promise<void>;
+}
+
+const acquireAgentExecutionLease = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  state: AgentRunState,
+  policy: AgentRunPolicy | undefined
+): Promise<AgentExecutionLeaseContext | undefined> => {
+  const store = agent.store;
+  if (policy?.leaseMode === "disabled" || !store?.acquireLease || !store.renewLease || !store.releaseLease) {
+    return {
+      supported: false,
+      cancelledState: () => undefined,
+      leaseLost: () => false,
+      release: async () => undefined
+    };
+  }
+
+  const ttlMs = policy?.leaseTtlMs ?? DEFAULT_AGENT_LEASE_TTL_MS;
+  const heartbeatMs = policy?.heartbeatMs ?? Math.max(250, Math.floor(ttlMs / 3));
+  const cancellationPollMs = policy?.cancellationPollMs ?? DEFAULT_AGENT_CANCELLATION_POLL_MS;
+  for (const [name, value] of [
+    ["leaseTtlMs", ttlMs],
+    ["heartbeatMs", heartbeatMs],
+    ["cancellationPollMs", cancellationPollMs]
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value < 1) {
+      throw new ValidationError(`Agent policy "${name}" must be a positive integer.`);
+    }
+  }
+  if (heartbeatMs >= ttlMs) {
+    throw new ValidationError('Agent policy "heartbeatMs" must be less than "leaseTtlMs".');
+  }
+
+  const ownerId = randomId("worker");
+  const lease = await store.acquireLease(state.runId, { ownerId, ttlMs }, state.scope);
+  if (!lease) {
+    return undefined;
+  }
+
+  const controller = new AbortController();
+  let cancelled: AgentRunState | undefined;
+  let lost = false;
+  let stopped = false;
+  let monitoring = false;
+  let lastHeartbeat = Date.now();
+  let lastCancellationPoll = 0;
+  const intervalMs = Math.max(25, Math.min(heartbeatMs, cancellationPollMs));
+  const timer = setInterval(async () => {
+    if (stopped || monitoring) return;
+    monitoring = true;
+    const now = Date.now();
+    try {
+      if (now - lastHeartbeat >= heartbeatMs) {
+        const renewed = await store.renewLease?.(state.runId, { ownerId, ttlMs }, state.scope);
+        if (!renewed) {
+          lost = true;
+          controller.abort(new ConflictError(`Agent run "${state.runId}" lost its worker lease.`));
+          return;
+        }
+        lastHeartbeat = now;
+      }
+      if (now - lastCancellationPoll >= cancellationPollMs) {
+        const latest = await store.load(state.runId, state.scope);
+        lastCancellationPoll = now;
+        if (latest?.status === "cancel_requested" || latest?.status === "cancelled") {
+          cancelled = normalizeAgentRunState(latest);
+          controller.abort(new Error(latest.cancellationReason ?? "Agent run was cancelled."));
+        }
+      }
+    } catch (error) {
+      lost = true;
+      controller.abort(error);
+    } finally {
+      monitoring = false;
+    }
+  }, intervalMs);
+  timer.unref?.();
+
+  return {
+    supported: true,
+    signal: controller.signal,
+    cancelledState: () => cancelled,
+    leaseLost: () => lost,
+    release: async () => {
+      stopped = true;
+      clearInterval(timer);
+      await store.releaseLease?.(state.runId, ownerId, state.scope);
+    }
+  };
+};
+
 const emitRunStartTelemetry = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   state: AgentRunState,
@@ -868,6 +1351,7 @@ export class Agent<TModel extends LanguageModel = LanguageModel> implements Agen
   store?: AgentRunStore;
   memory?: AgentDefinition<TModel>["memory"];
   onTelemetryEvent?: AgentDefinition<TModel>["onTelemetryEvent"];
+  hookFailurePolicy?: AgentDefinition<TModel>["hookFailurePolicy"];
 
   constructor(definition: AgentDefinition<TModel>) {
     Object.assign(this, createAgent(definition));
@@ -894,7 +1378,8 @@ export class Agent<TModel extends LanguageModel = LanguageModel> implements Agen
       metadata: this.metadata,
       store: this.store,
       memory: this.memory,
-      onTelemetryEvent: this.onTelemetryEvent
+      onTelemetryEvent: this.onTelemetryEvent,
+      hookFailurePolicy: this.hookFailurePolicy
     });
   }
 
@@ -1025,14 +1510,14 @@ export const cancelAgentRun = async (
   runId: string,
   options: AgentRunCancellationOptions = {}
 ): Promise<AgentRunState | undefined> => {
-  const loadedState = await store.load(runId);
+  const loadedState = await store.load(runId, options.scope);
   if (!loadedState) {
     return undefined;
   }
 
   const cancelledAt = Date.now();
   const status = options.mode === "final" ? "cancelled" : "cancel_requested";
-  const state = normalizeRunState({
+  const state = normalizeAgentRunState({
     ...loadedState,
     status,
     cancelledAt,
@@ -1040,7 +1525,7 @@ export const cancelAgentRun = async (
     updatedAt: cancelledAt,
     error: undefined
   });
-  await store.save(cloneState(state));
+  await saveStateWithRevision(store, state);
   return cloneState(state);
 };
 
@@ -1056,7 +1541,7 @@ export const cancelAgentRunTree = async (
   const cancelledAt = Date.now();
   const status = options.mode === "final" ? "cancelled" : "cancel_requested";
   const cancelState = (state: AgentRunState): AgentRunState =>
-    normalizeRunState({
+    normalizeAgentRunState({
       ...state,
       status,
       cancelledAt,
@@ -1065,7 +1550,7 @@ export const cancelAgentRunTree = async (
       error: undefined
     });
 
-  const parent = await store.load(runId);
+  const parent = await store.load(runId, options.scope);
   if (!parent) {
     return {
       parent: undefined,
@@ -1076,7 +1561,7 @@ export const cancelAgentRunTree = async (
   const visited = new Set<string>([runId]);
   const children: AgentRunState[] = [];
   const collectChildren = async (parentRunId: string): Promise<void> => {
-    const directChildren = await store.findByParentRunId?.(parentRunId);
+    const directChildren = await store.findByParentRunId?.(parentRunId, options.scope);
     for (const child of directChildren ?? []) {
       if (visited.has(child.runId)) {
         continue;
@@ -1091,9 +1576,9 @@ export const cancelAgentRunTree = async (
 
   const cancelledParent = cancelState(parent);
   const cancelledChildren = children.map(cancelState);
-  await store.save(cloneState(cancelledParent));
+  await saveStateWithRevision(store, cancelledParent);
   for (const child of cancelledChildren) {
-    await store.save(cloneState(child));
+    await saveStateWithRevision(store, child);
   }
 
   return {
@@ -1107,8 +1592,8 @@ export const runAgent = async <TModel extends LanguageModel>(
   input: AgentRunInput<TModel> = {}
 ): Promise<AgentRunOutput> => {
   const context = await resolveContext(agent, input);
-  await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
   const currentStatus = normalizeApprovalStatus(context.state.status);
+  const policy = resolveRunPolicy(agent, input);
 
   if (
     currentStatus === "completed" ||
@@ -1125,41 +1610,94 @@ export const runAgent = async <TModel extends LanguageModel>(
     return toOutput(context.state);
   }
 
+  const supportsLeases = Boolean(
+    agent.store?.acquireLease && agent.store.renewLease && agent.store.releaseLease
+  );
+  if (!context.fresh && currentStatus === "running" && !supportsLeases) {
+    return toOutput(context.state);
+  }
+
+  const freshRequiresExistingClaim = context.fresh && Boolean(context.state.idempotencyKey);
+  if (context.fresh && !freshRequiresExistingClaim) {
+    await claimAgentExecution(agent, context.state);
+  }
+  const executionLease = await acquireAgentExecutionLease(agent, context.state, policy);
+  if (!executionLease) {
+    if (input.state) {
+      throw new ConflictError(`Agent run "${context.state.runId}" is already owned by another worker.`);
+    }
+    const activeState = await agent.store?.load(context.state.runId, context.state.scope);
+    return toOutput(activeState ? normalizeAgentRunState(activeState) : context.state);
+  }
+  try {
+    if (!context.fresh || freshRequiresExistingClaim) {
+      await claimAgentExecution(agent, context.state);
+    }
+    await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
+  } catch (error) {
+    await executionLease.release();
+    throw error;
+  }
+
   if (context.remainingSteps === 0) {
     const state = createFailedState(context.state, "Agent exhausted maxSteps before reaching a terminal response.");
-    await persistState(agent, state);
+    await persistState(agent, state, policy);
     await emitRunFinishTelemetry(agent, state);
+    await executionLease.release();
     return toOutput(state);
   }
 
-  const inputGuardrail = await runGuardrails(agent, context.state, "input", agent.inputGuardrails, () => ({
-    runId: context.state.runId,
-    agentId: context.state.agentId,
-    messages: context.messages,
-    metadata: context.state.metadata
-  }));
+  let inputGuardrail: AgentGuardrailTrigger | undefined;
+  try {
+    inputGuardrail = await runGuardrails(agent, context.state, "input", agent.inputGuardrails, () => ({
+      runId: context.state.runId,
+      agentId: context.state.agentId,
+      state: cloneState(context.state),
+      messages: context.messages,
+      metadata: context.state.metadata
+    }));
+  } catch (error) {
+    await executionLease.release();
+    throw error;
+  }
   if (inputGuardrail) {
     const failedState = applyGuardrailFailure(context.state, "input", inputGuardrail);
-    await persistState(agent, failedState);
+    await persistState(agent, failedState, policy);
     await emitRunFinishTelemetry(agent, failedState);
+    await executionLease.release();
     return toOutput(failedState);
   }
 
-  await emitTelemetryEvent(agent, {
-    type: "step-start",
-    runId: context.state.runId,
-    agentId: context.state.agentId,
-    stepIndex: context.state.currentStep + 1
-  });
+  try {
+    await emitTelemetryEvent(agent, {
+      type: "step-start",
+      runId: context.state.runId,
+      agentId: context.state.agentId,
+      stepIndex: context.state.currentStep + 1
+    });
+  } catch (error) {
+    await executionLease.release();
+    throw error;
+  }
 
-  const policy = resolveRunPolicy(agent, input);
-  const abortContext = createAgentAbortContext(input.abortSignal, policy);
+  const abortContext = createAgentAbortContext(
+    mergeAbortSignals(input.abortSignal, executionLease.signal),
+    policy
+  );
 
   try {
     const result = await withAgentPolicyTimeout(
       generateText(createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps, abortContext.signal)),
       abortContext
     );
+    const cancelled = executionLease.cancelledState();
+    if (cancelled) {
+      await emitRunFinishTelemetry(agent, cancelled);
+      return toOutput(cancelled);
+    }
+    if (executionLease.leaseLost()) {
+      throw new ConflictError(`Agent run "${context.state.runId}" lost its worker lease.`);
+    }
     const newSteps = mapSteps(result.steps, context.state.currentStep, result.toolResults);
     let output = finalizeState(context.state, result, newSteps, result.toolResults);
 
@@ -1176,27 +1714,43 @@ export const runAgent = async <TModel extends LanguageModel>(
 
     await emitFinalizedStepTelemetry(agent, output.state, newSteps);
     await emitApprovalTelemetry(agent, output.state, approvalsFromEvents(newSteps.flatMap((step) => step.response?.messages ?? [])));
-    await persistState(agent, output.state);
+    await persistState(agent, output.state, policy);
     await emitRunFinishTelemetry(agent, output.state);
 
     return output;
   } catch (error) {
+    const cancelled = executionLease.cancelledState();
+    if (cancelled) {
+      await emitRunFinishTelemetry(agent, cancelled);
+      return toOutput(cancelled);
+    }
+    if (executionLease.leaseLost()) {
+      throw new ConflictError(`Agent run "${context.state.runId}" lost its worker lease.`);
+    }
     if (error instanceof AgentPolicyTimeoutError || abortContext.isTimedOut()) {
       const status = policy?.onTimeout === "cancel-requested" ? "cancel_requested" : "timed_out";
       const message = error instanceof Error ? error.message : `Agent run timed out after ${policy?.timeoutMs}ms.`;
-      const timedOutState = createTerminalState(context.state, status, message);
-      await persistState(agent, timedOutState);
+      const durableState = agent.store
+        ? normalizeAgentRunState((await agent.store.load(context.state.runId, context.state.scope)) ?? context.state)
+        : context.state;
+      const timedOutState = createTerminalState(durableState, status, message);
+      await persistState(agent, timedOutState, policy);
       await emitRunFinishTelemetry(agent, timedOutState);
       return toOutput(timedOutState);
     }
 
+    const durableState = agent.store
+      ? normalizeAgentRunState((await agent.store.load(context.state.runId, context.state.scope)) ?? context.state)
+      : context.state;
     const failedState = createFailedState(
-      context.state,
+      durableState,
       error instanceof Error ? error.message : String(error)
     );
-    await persistState(agent, failedState);
+    await persistState(agent, failedState, policy);
     await emitRunFinishTelemetry(agent, failedState);
     throw error;
+  } finally {
+    await executionLease.release();
   }
 };
 
@@ -1204,51 +1758,28 @@ export const streamAgent = <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   input: AgentRunInput<TModel> = {}
 ): AgentStreamResult => {
-  const subscribers = new Set<(value: IteratorResult<AgentStreamEvent>) => void>();
-  const history: IteratorResult<AgentStreamEvent>[] = [];
-  let done = false;
-
-  const publish = (value: IteratorResult<AgentStreamEvent>) => {
-    history.push(value);
-    for (const subscriber of subscribers) {
-      subscriber(value);
-    }
-    if (value.done) {
-      done = true;
-    }
-  };
-
-  const createEventStream = async function* () {
-    let cursor = 0;
-
-    while (true) {
-      while (cursor < history.length) {
-        const item = history[cursor];
-        cursor += 1;
-        if (item.done) {
-          return;
-        }
-        yield item.value;
-      }
-
-      if (done) {
-        return;
-      }
-
-      await new Promise<IteratorResult<AgentStreamEvent>>((resolve) => {
-        const subscriber = (value: IteratorResult<AgentStreamEvent>) => {
-          subscribers.delete(subscriber);
-          resolve(value);
-        };
-        subscribers.add(subscriber);
-      });
-    }
-  };
+  const policy = resolveRunPolicy(agent, input);
+  const broadcast = new BoundedReplayBroadcast<AgentStreamEvent>({
+    maxHistory: policy?.maxStreamEvents ?? 4096
+  });
+  const publish = (event: AgentStreamEvent, terminal = false) =>
+    broadcast.publish(event, { terminal });
+  let activeLease: AgentExecutionLeaseContext | undefined;
 
   const runner = (async () => {
     const context = await resolveContext(agent, input);
-    await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
     const currentStatus = normalizeApprovalStatus(context.state.status);
+
+    const supportsLeases = Boolean(
+      agent.store?.acquireLease && agent.store.renewLease && agent.store.releaseLease
+    );
+    if (!context.fresh && currentStatus === "running" && !supportsLeases) {
+      broadcast.close();
+      return {
+        output: toOutput(context.state),
+        textStream: emptyAsyncIterable()
+      };
+    }
 
     if (
       currentStatus === "completed" ||
@@ -1257,7 +1788,7 @@ export const streamAgent = <TModel extends LanguageModel>(
       currentStatus === "timed_out"
     ) {
       context.state.status = currentStatus;
-      publish({ done: true, value: undefined });
+      broadcast.close();
       return {
         output: toOutput(context.state),
         textStream: emptyAsyncIterable()
@@ -1266,83 +1797,104 @@ export const streamAgent = <TModel extends LanguageModel>(
 
     if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
       context.state.status = currentStatus;
-      publish({ done: true, value: undefined });
+      broadcast.close();
       return {
         output: toOutput(context.state),
         textStream: emptyAsyncIterable()
       };
     }
 
+    const freshRequiresExistingClaim = context.fresh && Boolean(context.state.idempotencyKey);
+    if (context.fresh && !freshRequiresExistingClaim) {
+      await claimAgentExecution(agent, context.state);
+    }
+    const executionLease = await acquireAgentExecutionLease(agent, context.state, policy);
+    if (!executionLease) {
+      if (input.state) {
+        throw new ConflictError(`Agent run "${context.state.runId}" is already owned by another worker.`);
+      }
+      const activeState = await agent.store?.load(context.state.runId, context.state.scope);
+      broadcast.close();
+      return {
+        output: toOutput(activeState ? normalizeAgentRunState(activeState) : context.state),
+        textStream: emptyAsyncIterable()
+      };
+    }
+    activeLease = executionLease;
+    try {
+      if (!context.fresh || freshRequiresExistingClaim) {
+        await claimAgentExecution(agent, context.state);
+      }
+      await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
+    } catch (error) {
+      await executionLease.release();
+      throw error;
+    }
+
     if (context.remainingSteps === 0) {
       const state = createFailedState(context.state, "Agent exhausted maxSteps before reaching a terminal response.");
-      await persistState(agent, state);
+      await persistState(agent, state, policy);
       await emitRunFinishTelemetry(agent, state);
-      publish({ done: true, value: undefined });
+      await executionLease.release();
+      broadcast.close();
       return {
         output: toOutput(state),
         textStream: emptyAsyncIterable()
       };
     }
 
-    const inputGuardrail = await runGuardrails(agent, context.state, "input", agent.inputGuardrails, () => ({
-      runId: context.state.runId,
-      agentId: context.state.agentId,
-      messages: context.messages,
-      metadata: context.state.metadata
-    }));
+    let inputGuardrail: AgentGuardrailTrigger | undefined;
+    try {
+      inputGuardrail = await runGuardrails(agent, context.state, "input", agent.inputGuardrails, () => ({
+        runId: context.state.runId,
+        agentId: context.state.agentId,
+        state: cloneState(context.state),
+        messages: context.messages,
+        metadata: context.state.metadata
+      }));
+    } catch (error) {
+      await executionLease.release();
+      throw error;
+    }
     if (inputGuardrail) {
       const failedState = applyGuardrailFailure(context.state, "input", inputGuardrail);
-      await persistState(agent, failedState);
+      await persistState(agent, failedState, policy);
       await emitRunFinishTelemetry(agent, failedState);
-      publish({
-        done: false,
-        value: {
-          type: "error",
-          error: new GuardrailTriggeredError("input", failedState.error?.message ?? "Agent input guardrail triggered.", {
-            metadata: inputGuardrail.metadata
-          })
-        }
-      });
-      publish({
-        done: false,
-        value: {
-          type: "agent-run-finish",
-          status: failedState.status,
-          state: failedState
-        }
-      });
-      publish({ done: true, value: undefined });
+      await publish({
+        type: "error",
+        error: new GuardrailTriggeredError("input", failedState.error?.message ?? "Agent input guardrail triggered.", {
+          metadata: inputGuardrail.metadata
+        })
+      }, true);
+      await publish({
+        type: "agent-run-finish",
+        status: failedState.status,
+        state: failedState
+      }, true);
+      broadcast.close();
+      await executionLease.release();
       return {
         output: toOutput(failedState),
         textStream: emptyAsyncIterable()
       };
     }
 
-    publish({
-      done: false,
-      value: {
-        type: "agent-run-start",
-        currentStep: context.state.currentStep + 1,
-        maxSteps: context.state.maxSteps
-      }
+    await publish({
+      type: "agent-run-start",
+      currentStep: context.state.currentStep + 1,
+      maxSteps: context.state.maxSteps
     });
 
     for (const approval of input.approvals ?? []) {
-      publish({
-        done: false,
-        value: {
-          type: "agent-approval-resolved",
-          approval
-        }
+      await publish({
+        type: "agent-approval-resolved",
+        approval
       });
     }
 
-    publish({
-      done: false,
-      value: {
-        type: "agent-step-start",
-        stepIndex: context.state.currentStep + 1
-      }
+    await publish({
+      type: "agent-step-start",
+      stepIndex: context.state.currentStep + 1
     });
 
     await emitTelemetryEvent(agent, {
@@ -1352,8 +1904,10 @@ export const streamAgent = <TModel extends LanguageModel>(
       stepIndex: context.state.currentStep + 1
     });
 
-    const policy = resolveRunPolicy(agent, input);
-    const abortContext = createAgentAbortContext(input.abortSignal, policy);
+    const abortContext = createAgentAbortContext(
+      mergeAbortSignals(input.abortSignal, executionLease.signal),
+      policy
+    );
     const streamResult = streamText(
       createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps, abortContext.signal)
     );
@@ -1361,7 +1915,7 @@ export const streamAgent = <TModel extends LanguageModel>(
 
     const eventRelay = (async () => {
       for await (const event of streamResult.eventStream) {
-        publish({ done: false, value: event });
+        await publish(event);
 
         if (
           event.type === "provider-data" &&
@@ -1382,12 +1936,9 @@ export const streamAgent = <TModel extends LanguageModel>(
             rawData: event.data
           } satisfies AgentApprovalRequest;
           approvalRequests.push(approval);
-          publish({
-            done: false,
-            value: {
-              type: "agent-approval-request",
-              approval
-            }
+          await publish({
+            type: "agent-approval-request",
+            approval
           });
           await emitTelemetryEvent(agent, {
             type: "approval-request",
@@ -1405,6 +1956,22 @@ export const streamAgent = <TModel extends LanguageModel>(
           eventRelay.then(() => streamResult.collect()),
           abortContext
         );
+        const cancelled = executionLease.cancelledState();
+        if (cancelled) {
+          await emitRunFinishTelemetry(agent, cancelled);
+          await publish({
+            type: "agent-run-finish",
+            status: cancelled.status,
+            state: cancelled
+          }, true);
+          broadcast.close();
+          return toOutput(cancelled);
+        }
+        if (executionLease.leaseLost()) {
+          const conflict = new ConflictError(`Agent run "${context.state.runId}" lost its worker lease.`);
+          broadcast.fail(conflict);
+          throw conflict;
+        }
         const newSteps = mapSteps(final.steps, context.state.currentStep, final.toolResults);
         let result = finalizeState(context.state, final, newSteps, final.toolResults);
 
@@ -1417,26 +1984,20 @@ export const streamAgent = <TModel extends LanguageModel>(
         }));
         if (outputGuardrail) {
           result = toOutput(applyGuardrailFailure(result.state, "output", outputGuardrail));
-          publish({
-            done: false,
-            value: {
-              type: "error",
-              error: new GuardrailTriggeredError(
-                "output",
-                result.state.error?.message ?? "Agent output guardrail triggered.",
-                { metadata: outputGuardrail.metadata }
-              )
-            }
-          });
+          await publish({
+            type: "error",
+            error: new GuardrailTriggeredError(
+              "output",
+              result.state.error?.message ?? "Agent output guardrail triggered.",
+              { metadata: outputGuardrail.metadata }
+            )
+          }, true);
         }
 
         for (const step of newSteps) {
-          publish({
-            done: false,
-            value: {
-              type: "agent-step-finish",
-              step
-            }
+          await publish({
+            type: "agent-step-finish",
+            step
           });
         }
 
@@ -1444,65 +2005,74 @@ export const streamAgent = <TModel extends LanguageModel>(
         if (!approvalRequests.length) {
           await emitApprovalTelemetry(agent, result.state, approvalsFromEvents(newSteps.flatMap((step) => step.response?.messages ?? [])));
         }
-        await persistState(agent, result.state);
+        await persistState(agent, result.state, policy);
         await emitRunFinishTelemetry(agent, result.state);
 
-        publish({
-          done: false,
-          value: {
-            type: "agent-run-finish",
-            status: result.status,
-            state: result.state
-          }
-        });
-        publish({ done: true, value: undefined });
+        await publish({
+          type: "agent-run-finish",
+          status: result.status,
+          state: result.state
+        }, true);
+        broadcast.close();
         return result;
       } catch (error) {
+        const cancelled = executionLease.cancelledState();
+        if (cancelled) {
+          await emitRunFinishTelemetry(agent, cancelled);
+          await publish({
+            type: "agent-run-finish",
+            status: cancelled.status,
+            state: cancelled
+          }, true);
+          broadcast.close();
+          return toOutput(cancelled);
+        }
+        if (executionLease.leaseLost()) {
+          const conflict = new ConflictError(`Agent run "${context.state.runId}" lost its worker lease.`);
+          broadcast.fail(conflict);
+          throw conflict;
+        }
         if (error instanceof AgentPolicyTimeoutError || abortContext.isTimedOut()) {
           const status = policy?.onTimeout === "cancel-requested" ? "cancel_requested" : "timed_out";
           const message = error instanceof Error ? error.message : `Agent run timed out after ${policy?.timeoutMs}ms.`;
-          const timedOutState = createTerminalState(context.state, status, message);
-          await persistState(agent, timedOutState);
+          const durableState = agent.store
+            ? normalizeAgentRunState((await agent.store.load(context.state.runId, context.state.scope)) ?? context.state)
+            : context.state;
+          const timedOutState = createTerminalState(durableState, status, message);
+          await persistState(agent, timedOutState, policy);
           await emitRunFinishTelemetry(agent, timedOutState);
-          publish({
-            done: false,
-            value: {
-              type: "error",
-              error: new AgentPolicyTimeoutError(policy?.timeoutMs ?? 0)
-            }
-          });
-          publish({
-            done: false,
-            value: {
-              type: "agent-run-finish",
-              status: timedOutState.status,
-              state: timedOutState
-            }
-          });
-          publish({ done: true, value: undefined });
+          await publish({
+            type: "error",
+            error: new AgentPolicyTimeoutError(policy?.timeoutMs ?? 0)
+          }, true);
+          await publish({
+            type: "agent-run-finish",
+            status: timedOutState.status,
+            state: timedOutState
+          }, true);
+          broadcast.close();
           return toOutput(timedOutState);
         }
 
-        const failedState = createFailedState(context.state, error instanceof Error ? error.message : String(error));
-        await persistState(agent, failedState);
+        const durableState = agent.store
+          ? normalizeAgentRunState((await agent.store.load(context.state.runId, context.state.scope)) ?? context.state)
+          : context.state;
+        const failedState = createFailedState(durableState, error instanceof Error ? error.message : String(error));
+        await persistState(agent, failedState, policy);
         await emitRunFinishTelemetry(agent, failedState);
-        publish({
-          done: false,
-          value: {
-            type: "error",
-            error: error instanceof Error ? error : new Error(String(error))
-          }
-        });
-        publish({
-          done: false,
-          value: {
-            type: "agent-run-finish",
-            status: failedState.status,
-            state: failedState
-          }
-        });
-        publish({ done: true, value: undefined });
+        await publish({
+          type: "error",
+          error: error instanceof Error ? error : new Error(String(error))
+        }, true);
+        await publish({
+          type: "agent-run-finish",
+          status: failedState.status,
+          state: failedState
+        }, true);
+        broadcast.close();
         throw error;
+      } finally {
+        await executionLease.release();
       }
     })();
 
@@ -1510,10 +2080,14 @@ export const streamAgent = <TModel extends LanguageModel>(
       output,
       textStream: streamResult.textStream
     };
-  })();
+  })().catch(async (error) => {
+    await activeLease?.release();
+    broadcast.fail(error);
+    throw error;
+  });
 
   return {
-    eventStream: createEventStream(),
+    eventStream: broadcast.stream(),
     textStream: (async function* () {
       const started = await runner;
       for await (const chunk of started.textStream) {

@@ -1,4 +1,5 @@
 import { UnsupportedFeatureError } from "./errors.js";
+import type { ZodTypeAny } from "zod";
 import type {
   AgentCapabilities,
   AgentSupportTier,
@@ -80,7 +81,9 @@ export const getTextFromMessages = (messages: ModelMessage[]): string =>
 
 export const serializeJsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 
-export const tool = <TTool extends ToolDefinition>(definition: TTool): TTool => definition;
+export const tool = <TSchema extends ZodTypeAny, TResult extends JsonValue = JsonValue>(
+  definition: ToolDefinition<NoInfer<TSchema>, TResult> & { schema: TSchema }
+): ToolDefinition<TSchema, TResult> => definition;
 
 const inferHostedToolClass = (definition: Omit<HostedToolDefinition, "kind">): HostedToolClass => {
   const normalizedType = definition.type.toLowerCase();

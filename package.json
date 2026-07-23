@@ -12,7 +12,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b --force",
+    "build": "bun run scripts/clean-dist.ts && tsc -b --force",
     "changeset": "changeset",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",

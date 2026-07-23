@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import {
   Agent,
+  ConflictError,
   agentApprovalResponsePart,
   cancelAgentRun,
   cancelAgentRunTree,
@@ -26,6 +27,7 @@ import {
   createSqliteAgentRunStore,
   createTextMessage,
   getAgentApprovalRequests,
+  normalizeAgentRunState,
   replayAgentRun,
   prepareSubagentsForAgent,
   resumeAgent,
@@ -39,6 +41,7 @@ import {
   tool,
   ValidationError,
   type AgentRunState,
+  type AgentRunStore,
   type PostgresClientLike,
   type LanguageModel,
   type ModelMessage,
@@ -243,11 +246,34 @@ class FakePostgresClient implements PostgresClientLike {
     if (insertMatch) {
       const tableName = insertMatch[1]!;
       if (sql.includes("idempotency_key")) {
-        this.idempotencyTables.get(tableName)?.set(String(params[0]), String(params[1]));
+        const table = this.idempotencyTables.get(tableName);
+        const key = String(params[0]);
+        const alreadyClaimed = table?.has(key) ?? false;
+        if (!alreadyClaimed || !sql.includes("DO NOTHING")) {
+          table?.set(key, String(params[1]));
+        }
+        return {
+          rows: sql.includes("RETURNING") && !alreadyClaimed
+            ? ([{ run_id: String(params[1]) }] as TResult[])
+            : [] as TResult[]
+        };
       } else if (sql.includes("parent_run_id")) {
         this.parentTables.get(tableName)?.set(String(params[0]), String(params[1]));
       } else if (sql.includes("run_id")) {
-        this.runTables.get(tableName)?.set(String(params[0]), JSON.parse(String(params[1])) as AgentRunState);
+        const table = this.runTables.get(tableName);
+        const runId = String(params[0]);
+        const existing = table?.get(runId);
+        const expectedRevision = typeof params[3] === "number" ? params[3] : undefined;
+        const revisionMatches = expectedRevision === undefined || (existing?.revision ?? 0) === expectedRevision;
+        const shouldWrite = revisionMatches && (!sql.includes("DO NOTHING") || !existing);
+        if (shouldWrite) {
+          table?.set(runId, JSON.parse(String(params[1])) as AgentRunState);
+        }
+        return {
+          rows: sql.includes("RETURNING") && shouldWrite
+            ? ([{ run_id: runId }] as TResult[])
+            : [] as TResult[]
+        };
       } else {
         this.memoryTables.get(tableName)?.set(String(params[0]), JSON.parse(String(params[1])) as ModelMessage[]);
       }
@@ -258,6 +284,10 @@ class FakePostgresClient implements PostgresClientLike {
     if (selectMatch) {
       const tableName = selectMatch[1]!;
       if (sql.includes("idempotency_key")) {
+        if (!sql.includes("JOIN") && this.idempotencyTables.has(tableName)) {
+          const runId = this.idempotencyTables.get(tableName)?.get(String(params[0]));
+          return { rows: runId ? ([{ run_id: runId }] as TResult[]) : [] };
+        }
         const joinMatch = sql.match(/JOIN\s+([A-Za-z_][A-Za-z0-9_]*)/i);
         const idempotencyTableName = joinMatch?.[1];
         const runId = idempotencyTableName ? this.idempotencyTables.get(idempotencyTableName)?.get(String(params[0])) : undefined;
@@ -459,6 +489,7 @@ describe("agent runtime", () => {
     const model = createLanguageModel({
       async generate() {
         callCount += 1;
+        await new Promise((resolve) => setTimeout(resolve, 5));
 
         if (callCount === 1) {
           return {
@@ -518,6 +549,16 @@ describe("agent runtime", () => {
     expect(result.steps).toHaveLength(2);
     expect(result.steps[0]?.request.messages[0]).toEqual(createTextMessage("user", "Weather in Madrid?"));
     expect(result.steps[1]?.response?.text).toBe("Sunny in Madrid");
+    for (const step of result.steps) {
+      expect(step.startedAt).toBeTypeOf("number");
+      expect(step.finishedAt).toBeGreaterThan(step.startedAt!);
+    }
+    const trace = createAgentTraceArtifact(result.state);
+    expect(trace.steps.map((step) => step.durationMs)).toEqual([
+      expect.any(Number),
+      expect.any(Number)
+    ]);
+    expect(trace.steps.every((step) => (step.durationMs ?? 0) > 0)).toBe(true);
   });
 
   it("can resume from previous state when maxSteps is extended", async () => {
@@ -761,7 +802,8 @@ describe("agent runtime", () => {
                   ]
                 }
               ],
-              finishReason: "stop"
+              finishReason: "stop",
+              usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 }
             };
           }
 
@@ -779,7 +821,8 @@ describe("agent runtime", () => {
           return {
             messages: [createTextMessage("assistant", "Approved and completed")],
             text: "Approved and completed",
-            finishReason: "stop"
+            finishReason: "stop",
+            usage: { inputTokens: 4, outputTokens: 3, totalTokens: 7 }
           };
         }
       }),
@@ -807,6 +850,7 @@ describe("agent runtime", () => {
     expect(resumed.outputText).toBe("Approved and completed");
     expect(resumed.state.pendingApprovals).toEqual([]);
     expect(resumed.state.currentStep).toBe(2);
+    expect(resumed.usage).toEqual({ inputTokens: 7, outputTokens: 5, totalTokens: 12 });
   });
 
   it("accepts legacy suspended states while resuming approvals", async () => {
@@ -1078,7 +1122,37 @@ describe("agent runtime", () => {
     expect(calls).toBe(1);
   });
 
-  it("requires a store with idempotency lookup when idempotency keys are used", async () => {
+  it("atomically claims concurrent runs with the same idempotency key", async () => {
+    let calls = 0;
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({
+      model: createLanguageModel({
+        async generate() {
+          calls += 1;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return {
+            messages: [createTextMessage("assistant", "once")],
+            text: "once",
+            finishReason: "stop"
+          };
+        }
+      }),
+      store
+    });
+
+    const results = await Promise.allSettled([
+      runAgent(agent, { prompt: "Do this once", idempotencyKey: "concurrent-key" }),
+      runAgent(agent, { prompt: "Do this once", idempotencyKey: "concurrent-key" })
+    ]);
+
+    expect(calls).toBe(1);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(2);
+    const outputs = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    expect(new Set(outputs.map((output) => output.state.runId))).toHaveProperty("size", 1);
+    expect(outputs.some((output) => output.status === "completed")).toBe(true);
+  });
+
+  it("requires a store with atomic idempotency claims when idempotency keys are used", async () => {
     const agentWithoutStore = createAgent({
       id: "no-store-agent",
       model: createLanguageModel()
@@ -1131,6 +1205,212 @@ describe("agent runtime", () => {
     expect(result.status).toBe("completed");
     expect(result.state.schemaVersion).toBe(1);
     await expect(Promise.resolve(store.load("legacy-run"))).resolves.toMatchObject({ schemaVersion: 1 });
+  });
+
+  it("rejects future agent run state schema versions", () => {
+    expect(() => normalizeAgentRunState({
+      schemaVersion: 2,
+      runId: "future-run",
+      provider: "test",
+      modelId: "agent-model",
+      status: "completed",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "",
+      pendingApprovals: []
+    })).toThrow("Unsupported AgentRunState schemaVersion 2");
+  });
+
+  it("claims approval resumes before executing provider or tool side effects", async () => {
+    let calls = 0;
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({
+      store,
+      maxSteps: 2,
+      model: createLanguageModel({
+        async generate() {
+          calls += 1;
+          if (calls === 1) {
+            return {
+              finishReason: "stop",
+              messages: [{
+                role: "assistant",
+                parts: [{
+                  type: "provider-data",
+                  provider: "openai",
+                  data: {
+                    type: "mcp_approval_request",
+                    id: "mcpr_atomic",
+                    arguments: "{}",
+                    name: "write_once"
+                  }
+                }]
+              }]
+            };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return {
+            finishReason: "stop",
+            text: "resumed once",
+            messages: [createTextMessage("assistant", "resumed once")]
+          };
+        }
+      })
+    });
+    const waiting = await runAgent(agent, { prompt: "approve" });
+    const approval = {
+      provider: "openai",
+      approvalRequestId: "mcpr_atomic",
+      approve: true
+    };
+    const firstState = JSON.parse(JSON.stringify(waiting.state)) as AgentRunState;
+    const secondState = JSON.parse(JSON.stringify(waiting.state)) as AgentRunState;
+
+    const results = await Promise.allSettled([
+      resumeAgent(agent, { state: firstState, approvals: [approval] }),
+      resumeAgent(agent, { state: secondState, approvals: [approval] })
+    ]);
+
+    expect(calls).toBe(2);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected?.status === "rejected" ? rejected.reason : undefined).toBeInstanceOf(ConflictError);
+    const persisted = await store.load(waiting.state.runId);
+    expect(persisted?.revision).toBeGreaterThan(waiting.state.revision ?? 0);
+  });
+
+  it("enforces idempotency ownership and stale-write rejection in every built-in run store", async () => {
+    const stores: Array<[string, AgentRunStore]> = [
+      ["memory", createInMemoryAgentRunStore()],
+      ["file", createFileAgentRunStore({ directory: await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-cas-")) })],
+      ["sqlite", createSqliteAgentRunStore({ db: new FakeSqliteDatabase(), tableName: "agent_cas_runs" })],
+      ["postgres", createPostgresAgentRunStore({ client: new FakePostgresClient(), tableName: "agent_cas_runs" })]
+    ];
+
+    for (const [name, store] of stores) {
+      const first = normalizeAgentRunState({
+        schemaVersion: 1,
+        revision: 0,
+        runId: `${name}-winner`,
+        idempotencyKey: `${name}-key`,
+        provider: "test",
+        modelId: "agent-model",
+        status: "running",
+        messages: [],
+        steps: [],
+        toolResults: [],
+        currentStep: 0,
+        maxSteps: 1,
+        outputText: "",
+        pendingApprovals: []
+      });
+      const duplicate = { ...first, runId: `${name}-duplicate` };
+
+      const claimed = await Promise.resolve(store.claimIdempotencyKey?.(first));
+      const reused = await Promise.resolve(store.claimIdempotencyKey?.(duplicate));
+      expect(claimed).toMatchObject({ claimed: true, state: { runId: first.runId } });
+      expect(reused).toMatchObject({ claimed: false, state: { runId: first.runId } });
+
+      await Promise.resolve(store.save({ ...first, status: "completed" }, { expectedRevision: 0 }));
+      await expect((async () => {
+        await store.save({ ...first, status: "failed" }, { expectedRevision: 0 });
+      })()).rejects.toBeInstanceOf(ConflictError);
+      await expect(Promise.resolve(store.load(first.runId))).resolves.toMatchObject({
+        runId: first.runId,
+        revision: 1,
+        status: "completed"
+      });
+    }
+  });
+
+  it("isolates run ids and idempotency keys by tenant scope", async () => {
+    const store = createInMemoryAgentRunStore();
+    const createState = (tenantId: string): AgentRunState & { idempotencyKey: string } => ({
+      schemaVersion: 1,
+      revision: 0,
+      scope: { tenantId },
+      runId: "shared-run-id",
+      idempotencyKey: "shared-request-key",
+      provider: "test",
+      modelId: "agent-model",
+      status: "running",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: tenantId,
+      pendingApprovals: []
+    });
+
+    await expect(Promise.resolve(store.claimIdempotencyKey?.(createState("tenant-a")))).resolves.toMatchObject({ claimed: true });
+    await expect(Promise.resolve(store.claimIdempotencyKey?.(createState("tenant-b")))).resolves.toMatchObject({ claimed: true });
+    await expect(Promise.resolve(store.load("shared-run-id", { tenantId: "tenant-a" }))).resolves.toMatchObject({ outputText: "tenant-a" });
+    await expect(Promise.resolve(store.load("shared-run-id", { tenantId: "tenant-b" }))).resolves.toMatchObject({ outputText: "tenant-b" });
+  });
+
+  it("recovers expired leases and journals tool executions durably", async () => {
+    const stores: AgentRunStore[] = [
+      createInMemoryAgentRunStore(),
+      createFileAgentRunStore({ directory: await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-durable-")) })
+    ];
+
+    for (const store of stores) {
+      const state: AgentRunState = {
+        schemaVersion: 1,
+        revision: 0,
+        scope: { tenantId: "tenant-a", userId: "user-a" },
+        runId: "durable-run",
+        provider: "test",
+        modelId: "agent-model",
+        status: "running",
+        messages: [],
+        steps: [],
+        toolResults: [],
+        currentStep: 0,
+        maxSteps: 1,
+        outputText: "",
+        pendingApprovals: []
+      };
+      await Promise.resolve(store.save(state));
+      const scope = state.scope;
+
+      await expect(Promise.resolve(store.acquireLease?.(state.runId, { ownerId: "worker-a", ttlMs: 10, now: 100 }, scope))).resolves.toMatchObject({ ownerId: "worker-a", expiresAt: 110 });
+      await expect(Promise.resolve(store.acquireLease?.(state.runId, { ownerId: "worker-b", ttlMs: 10, now: 105 }, scope))).resolves.toBeUndefined();
+      await expect(Promise.resolve(store.renewLease?.(state.runId, { ownerId: "worker-a", ttlMs: 10, now: 105 }, scope))).resolves.toMatchObject({ expiresAt: 115 });
+      await expect(Promise.resolve(store.acquireLease?.(state.runId, { ownerId: "worker-b", ttlMs: 10, now: 116 }, scope))).resolves.toMatchObject({ ownerId: "worker-b" });
+
+      const entry = {
+        runId: state.runId,
+        scope,
+        toolCallId: "call-1",
+        toolName: "send-email",
+        idempotencyKey: "durable-run:call-1",
+        status: "pending" as const,
+        revision: 0,
+        input: { recipient: "user@example.com" },
+        updatedAt: 100
+      };
+      const [first, second] = await Promise.all([
+        Promise.resolve(store.claimToolExecution?.(entry)),
+        Promise.resolve(store.claimToolExecution?.(entry))
+      ]);
+      expect([first?.claimed, second?.claimed].sort()).toEqual([false, true]);
+      const completed = await Promise.resolve(store.completeToolExecution?.(
+        { ...entry, status: "completed", output: { messageId: "message-1" }, updatedAt: 120 },
+        { expectedRevision: 0 }
+      ));
+      expect(completed).toMatchObject({ status: "completed", revision: 1 });
+      await expect(Promise.resolve(store.loadToolExecution?.(state.runId, entry.toolCallId, scope))).resolves.toMatchObject({
+        status: "completed",
+        revision: 1,
+        output: { messageId: "message-1" }
+      });
+      await expect((async () => store.completeToolExecution?.(entry, { expectedRevision: 0 }))()).rejects.toBeInstanceOf(ConflictError);
+    }
   });
 
   it("marks persisted runs cancel_requested by default and skips model execution", async () => {
@@ -1406,7 +1686,7 @@ describe("agent runtime", () => {
     await expect(Promise.resolve(defaultStore.load({ runId: "ignored", agentId: "../memory" }))).resolves.toEqual([
       { role: "assistant", content: "memory:../memory" }
     ]);
-    await expect(readFile(path.join(directory, `${encodeURIComponent("../memory")}.json`), "utf8")).resolves.toContain("memory:../memory");
+    await expect(readFile(path.join(directory, `${encodeURIComponent("ignored")}.json`), "utf8")).resolves.toContain("memory:../memory");
 
     await Promise.resolve(defaultStore.save({ runId: "../memory-run", state: createState("../memory-run") }));
     await expect(Promise.resolve(defaultStore.load({ runId: "../memory-run" }))).resolves.toEqual([
@@ -1573,7 +1853,9 @@ describe("agent runtime", () => {
     const agent = createAgent({
       id: "postgres-agent",
       model: createLanguageModel(),
-      store
+      store,
+      // This lightweight SQL fake does not emulate the production lease table.
+      policy: { leaseMode: "disabled" }
     });
 
     const first = await runAgent(agent, {
@@ -1668,6 +1950,7 @@ describe("agent runtime", () => {
 
   it("loads memory into fresh runs and saves the latest assistant context", async () => {
     const memory = createInMemoryAgentMemoryStore({
+      scope: { tenantId: "memory-tests" },
       initialMessages: {
         "memory-agent": [createTextMessage("assistant", "Remember that the user likes Madrid.")]
       }
@@ -1775,7 +2058,8 @@ describe("agent runtime", () => {
     const db = new FakeSqliteDatabase();
     const memory = createSqliteAgentMemoryStore({
       db,
-      tableName: "agent_memory"
+      tableName: "agent_memory",
+      scope: { tenantId: "memory-tests" }
     });
 
     const agent = createAgent({
@@ -1798,7 +2082,8 @@ describe("agent runtime", () => {
 
     const reloaded = createSqliteAgentMemoryStore({
       db,
-      tableName: "agent_memory"
+      tableName: "agent_memory",
+      scope: { tenantId: "memory-tests" }
     });
     const stored = await Promise.resolve(reloaded.load({
       runId: "ignored",
@@ -1815,7 +2100,8 @@ describe("agent runtime", () => {
     const client = new FakePostgresClient();
     const memory = createPostgresAgentMemoryStore({
       client,
-      tableName: "agent_memory"
+      tableName: "agent_memory",
+      scope: { tenantId: "memory-tests" }
     });
 
     const agent = createAgent({
@@ -1838,7 +2124,8 @@ describe("agent runtime", () => {
 
     const reloaded = createPostgresAgentMemoryStore({
       client,
-      tableName: "agent_memory"
+      tableName: "agent_memory",
+      scope: { tenantId: "memory-tests" }
     });
     const stored = await reloaded.load({
       runId: "ignored",

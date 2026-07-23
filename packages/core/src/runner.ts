@@ -6,6 +6,7 @@ import { ConflictError, ValidationError } from "./errors.js";
 import { normalizeMessages } from "./generate-text.js";
 import { createTextMessage, serializeJsonValue } from "./messages.js";
 import { assertPostgresClient } from "./postgres-client.js";
+import { createSecureId } from "./secure-id.js";
 import type {
   AgentApprovalRequest,
   AgentDefinition,
@@ -22,7 +23,7 @@ import type {
   SqliteStatementLike
 } from "./types.js";
 
-const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+const randomId = createSecureId;
 
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 

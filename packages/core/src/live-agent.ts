@@ -1,7 +1,10 @@
+import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
 import { GuardrailTriggeredError, ValidationError } from "./errors.js";
+import { AGENT_RUN_STATE_SCHEMA_VERSION, normalizeAgentRunState } from "./agent-state.js";
 import { normalizeMessages } from "./generate-text.js";
 import { createTextMessage, getTextFromParts, isCallableToolDefinition, serializeJsonValue, toolResultPart } from "./messages.js";
 import { mergeAbortSignals } from "./runtime.js";
+import { createSecureId } from "./secure-id.js";
 import { toToolSet } from "./tool-registry.js";
 import type {
   AgentGuardrailTrigger,
@@ -30,9 +33,6 @@ import type {
   ToolExecutionResult
 } from "./types.js";
 
-const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
-const AGENT_RUN_STATE_SCHEMA_VERSION = 1;
-
 const joinInstructions = (...parts: Array<string | undefined>): string | undefined => {
   const content = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
   return content.length ? content.join("\n\n") : undefined;
@@ -43,13 +43,8 @@ const cloneMetadata = (...values: Array<Record<string, JsonValue> | undefined>) 
   return Object.keys(merged).length ? merged : undefined;
 };
 
-const normalizeRunState = (state: AgentRunState): AgentRunState => ({
-  ...state,
-  schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION
-});
-
 const cloneState = (state: AgentRunState): AgentRunState =>
-  JSON.parse(JSON.stringify(normalizeRunState(state))) as AgentRunState;
+  JSON.parse(JSON.stringify(normalizeAgentRunState(state))) as AgentRunState;
 
 const createBaseState = (
   provider: string,
@@ -62,6 +57,7 @@ const createBaseState = (
   const startedAt = Date.now();
   return {
     schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
+    revision: 0,
     runId,
     agentId,
     provider,
@@ -237,49 +233,24 @@ const createResult = (state: AgentRunState): LiveAgentRunOutput => ({
 });
 
 const createBroadcast = <TEvent>() => {
-  const subscribers = new Set<(value: IteratorResult<TEvent>) => void>();
-  const history: IteratorResult<TEvent>[] = [];
-  let done = false;
+  const broadcast = new BoundedReplayBroadcast<TEvent>();
 
-  const publish = (value: IteratorResult<TEvent>) => {
-    history.push(value);
-    for (const subscriber of subscribers) {
-      subscriber(value);
-    }
+  const publish = async (value: IteratorResult<TEvent>) => {
     if (value.done) {
-      done = true;
+      broadcast.close();
+      return;
     }
-  };
-
-  const stream = async function* () {
-    let cursor = 0;
-    while (true) {
-      while (cursor < history.length) {
-        const item = history[cursor];
-        cursor += 1;
-        if (item.done) {
-          return;
-        }
-        yield item.value;
-      }
-
-      if (done) {
-        return;
-      }
-
-      await new Promise<IteratorResult<TEvent>>((resolve) => {
-        const subscriber = (value: IteratorResult<TEvent>) => {
-          subscribers.delete(subscriber);
-          resolve(value);
-        };
-        subscribers.add(subscriber);
-      });
-    }
+    const type = typeof value.value === "object" && value.value !== null && "type" in value.value
+      ? String(value.value.type)
+      : undefined;
+    await broadcast.publish(value.value, {
+      terminal: type === "agent-run-finish" || type === "error" || type === "realtime-end"
+    });
   };
 
   return {
     publish,
-    stream
+    stream: () => broadcast.stream()
   };
 };
 
@@ -346,7 +317,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
   });
 
   const runner = (async () => {
-    const runId = input.runId ?? randomId("run");
+    const runId = input.runId ?? createSecureId("run");
     const metadata = cloneMetadata(agent.metadata, input.metadata);
     const memoryMessages = agent.memory
       ? await agent.memory.load({
@@ -365,7 +336,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
 
     const state = createBaseState(agent.model.provider, agent.model.modelId, messages, metadata, agent.id, runId);
     await emitRunStartTelemetry(agent, state, memoryMessages);
-    broadcast.publish({
+    await broadcast.publish({
       done: false,
       value: {
         type: "agent-run-start",
@@ -382,6 +353,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
       () => ({
         runId: state.runId,
         agentId: state.agentId,
+        state: cloneState(state),
         messages,
         metadata: state.metadata
       })
@@ -393,8 +365,8 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
       const error = new GuardrailTriggeredError("input", failedState.error?.message ?? "Agent input guardrail triggered.", {
         metadata: inputGuardrail.metadata
       });
-      broadcast.publish({ done: false, value: { type: "error", error } });
-      broadcast.publish({
+      await broadcast.publish({ done: false, value: { type: "error", error } });
+      await broadcast.publish({
         done: false,
         value: {
           type: "agent-run-finish",
@@ -402,7 +374,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
           state: failedState
         }
       });
-      broadcast.publish({ done: true, value: undefined });
+      await broadcast.publish({ done: true, value: undefined });
       rejectSession(error);
       return createResult(failedState);
     }
@@ -450,11 +422,11 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
       }
 
       for await (const event of session.eventStream()) {
-        broadcast.publish({ done: false, value: event });
+        await broadcast.publish({ done: false, value: event });
 
         if (event.type === "realtime-text-delta") {
           assistantBuffer.push(event.textDelta);
-          broadcast.publish({
+          await broadcast.publish({
             done: false,
             value: {
               type: "text-delta",
@@ -480,7 +452,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
         }
 
         if (event.type === "realtime-tool-call") {
-          broadcast.publish({
+          await broadcast.publish({
             done: false,
             value: {
               type: "tool-call",
@@ -658,7 +630,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
       );
       const finalState = outputGuardrail ? applyGuardrailFailure(state, "output", outputGuardrail) : state;
       if (outputGuardrail) {
-        broadcast.publish({
+        await broadcast.publish({
           done: false,
           value: {
             type: "error",
@@ -671,7 +643,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
 
       await persistState(agent, finalState);
       await emitRunFinishTelemetry(agent, finalState);
-      broadcast.publish({
+      await broadcast.publish({
         done: false,
         value: {
           type: "agent-run-finish",
@@ -679,7 +651,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
           state: finalState
         }
       });
-      broadcast.publish({ done: true, value: undefined });
+      await broadcast.publish({ done: true, value: undefined });
       return createResult(finalState);
     } catch (error) {
       if (!session) {
@@ -688,14 +660,14 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
       const failedState = createFailedState(state, error instanceof Error ? error.message : String(error));
       await persistState(agent, failedState);
       await emitRunFinishTelemetry(agent, failedState);
-      broadcast.publish({
+      await broadcast.publish({
         done: false,
         value: {
           type: "error",
           error: error instanceof Error ? error : new Error(String(error))
         }
       });
-      broadcast.publish({
+      await broadcast.publish({
         done: false,
         value: {
           type: "agent-run-finish",
@@ -703,7 +675,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
           state: failedState
         }
       });
-      broadcast.publish({ done: true, value: undefined });
+      await broadcast.publish({ done: true, value: undefined });
       throw error;
     } finally {
       if (session) {

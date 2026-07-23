@@ -1054,6 +1054,10 @@ export interface ToolExecutionContext {
   toolCall: ToolCall;
   step: number;
   model: LanguageModel | RealtimeModel;
+  /** Durable run that owns this execution, when invoked by the agent runtime. */
+  runId?: string;
+  /** Forward this key to side-effecting APIs to make retries externally idempotent. */
+  idempotencyKey?: string;
   request?: ModelGenerateInput;
   realtimeConfig?: RealtimeSessionConfig;
 }
@@ -1138,6 +1142,29 @@ export type GenerateTextOptions<TModel extends LanguageModel = LanguageModel> = 
     toolExecution?: ToolExecutionOptions;
     toolApprovalPolicy?: ToolApprovalPolicy;
     onToolApprovalDecision?: ToolApprovalObserver;
+    /** Called immediately before each model request. Throw to stop the loop. */
+    onBeforeModelStep?: (context: { request: ModelGenerateInput; step: number }) => void | Promise<void>;
+    /** Called before a batch of approved local tool calls is executed. */
+    onBeforeToolExecution?: (context: {
+      request: ModelGenerateInput;
+      step: number;
+      toolCalls: ToolCall[];
+    }) => void | Promise<void>;
+    /** Durable runtimes use this hook to checkpoint a model response before tools run. */
+    onModelStep?: (context: {
+      request: ModelGenerateInput;
+      response: GenerateResult;
+      step: number;
+      toolCalls: ToolCall[];
+    }) => void | Promise<void>;
+    /** Durable runtimes use this hook to checkpoint tool results before the next model request. */
+    onToolExecutionComplete?: (context: {
+      request: ModelGenerateInput;
+      step: number;
+      toolResults: ToolExecutionResult[];
+    }) => void | Promise<void>;
+    /** Existing completed steps preceding this invocation. */
+    stepOffset?: number;
     maxSteps?: number;
     temperature?: number;
     maxTokens?: number;
@@ -1180,9 +1207,33 @@ export type AgentStepStatus = "running" | "completed" | "suspended" | "waiting_a
 export interface AgentRunPolicy {
   timeoutMs?: number;
   onTimeout?: "fail" | "cancel-requested";
+  /** Disable only for stores that intentionally provide CAS without worker leases. */
+  leaseMode?: "required" | "disabled";
+  /** Duration of the exclusive worker lease. Defaults to 30 seconds. */
+  leaseTtlMs?: number;
+  /** Lease renewal interval. Defaults to one third of leaseTtlMs. */
+  heartbeatMs?: number;
+  /** How often an active worker checks durable cancellation. Defaults to 1 second. */
+  cancellationPollMs?: number;
+  /** Maximum retained events for agent stream replay. Defaults to 4096. */
+  maxStreamEvents?: number;
+  /** Maximum serialized durable state size. Defaults to 4 MiB. */
+  maxStateBytes?: number;
+  /** Optional preflight limits enforced before model and tool operations. */
+  budget?: {
+    maxSteps?: number;
+    maxToolCalls?: number;
+    maxToolErrors?: number;
+    maxInputTokens?: number;
+    maxOutputTokens?: number;
+    maxTotalTokens?: number;
+    includeChildRuns?: boolean;
+  };
 }
 
 export interface AgentStepRequest {
+  /** Index in the full conversation where this incremental snapshot begins. */
+  messageOffset?: number;
   messages: ModelMessage[];
   toolChoice?: ToolChoice;
   toolExecution?: ToolExecutionOptions;
@@ -1237,6 +1288,13 @@ export interface AgentChildRun {
 
 export interface AgentRunState {
   schemaVersion: 1;
+  /**
+   * Monotonic durable-store revision. Legacy states without a revision are
+   * normalized to revision 0 before their next write.
+   */
+  revision?: number;
+  /** Tenant/user isolation boundary propagated by the runtime. */
+  scope?: AgentStoreScope;
   runId: string;
   idempotencyKey?: string;
   agentId?: string;
@@ -1266,18 +1324,133 @@ export interface AgentRunState {
   };
 }
 
+/**
+ * Logical isolation boundary for durable agent data. Applications should use
+ * one scope per tenant and, when memory must be private, per end user.
+ */
+export interface AgentStoreScope {
+  tenantId: string;
+  userId?: string;
+  namespace?: string;
+}
+
+export interface AgentRunStoreScopeOptions {
+  /** Fixed scope applied to every key handled by this store instance. */
+  scope?: AgentStoreScope;
+}
+
+export interface AgentRunLease {
+  runId: string;
+  ownerId: string;
+  expiresAt: number;
+}
+
+export interface AgentRunLeaseOptions {
+  ownerId: string;
+  ttlMs: number;
+  /** Injectable clock used by deterministic workers and tests. */
+  now?: number;
+}
+
+export type AgentToolCallJournalStatus = "pending" | "running" | "completed" | "failed";
+
+export interface AgentToolCallJournalEntry {
+  runId: string;
+  scope?: AgentStoreScope;
+  toolCallId: string;
+  toolName: string;
+  status: AgentToolCallJournalStatus;
+  /** Stable key that must also be forwarded to side-effecting integrations. */
+  idempotencyKey: string;
+  revision: number;
+  input?: JsonValue;
+  output?: JsonValue;
+  error?: { message: string };
+  startedAt?: number;
+  completedAt?: number;
+  updatedAt: number;
+}
+
+export interface AgentToolCallJournalSaveOptions {
+  expectedRevision?: number;
+}
+
+export interface AgentToolExecutionClaimResult {
+  claimed: boolean;
+  entry: AgentToolCallJournalEntry;
+}
+
+export interface AgentRunListOptions {
+  agentId?: string;
+  parentRunId?: string;
+  statuses?: AgentStatus[];
+  updatedAfter?: number;
+  updatedBefore?: number;
+  limit?: number;
+  /** Opaque cursor returned by the previous page. */
+  cursor?: string;
+}
+
+export interface AgentRunPage {
+  items: AgentRunState[];
+  nextCursor?: string;
+}
+
+export interface AgentRunRetentionOptions {
+  before: number;
+  statuses?: AgentStatus[];
+  limit?: number;
+}
+
+export interface AgentRunSaveOptions {
+  expectedRevision?: number;
+}
+
+export interface AgentRunClaimResult {
+  claimed: boolean;
+  state: AgentRunState;
+}
+
 export interface AgentRunStore {
-  load(runId: string): Promise<AgentRunState | undefined> | AgentRunState | undefined;
-  findByIdempotencyKey?(idempotencyKey: string): Promise<AgentRunState | undefined> | AgentRunState | undefined;
-  findByParentRunId?(parentRunId: string): Promise<AgentRunState[]> | AgentRunState[];
-  save(state: AgentRunState): Promise<void> | void;
-  delete?(runId: string): Promise<void> | void;
+  load(runId: string, scope?: AgentStoreScope): Promise<AgentRunState | undefined> | AgentRunState | undefined;
+  findByIdempotencyKey?(idempotencyKey: string, scope?: AgentStoreScope): Promise<AgentRunState | undefined> | AgentRunState | undefined;
+  findByParentRunId?(parentRunId: string, scope?: AgentStoreScope): Promise<AgentRunState[]> | AgentRunState[];
+  /**
+   * Atomically reserves an idempotency key for a fresh run. Returns the
+   * caller's state when the reservation succeeds, or the already-reserved
+   * state when another caller owns the key.
+   */
+  claimIdempotencyKey?(
+    state: AgentRunState & { idempotencyKey: string }
+  ): Promise<AgentRunClaimResult> | AgentRunClaimResult;
+  save(state: AgentRunState, options?: AgentRunSaveOptions): Promise<void> | void;
+  delete?(runId: string, scope?: AgentStoreScope): Promise<void> | void;
+  list?(options?: AgentRunListOptions, scope?: AgentStoreScope): Promise<AgentRunPage> | AgentRunPage;
+  deleteExpired?(options: AgentRunRetentionOptions, scope?: AgentStoreScope): Promise<number> | number;
+  acquireLease?(runId: string, options: AgentRunLeaseOptions, scope?: AgentStoreScope): Promise<AgentRunLease | undefined> | AgentRunLease | undefined;
+  renewLease?(runId: string, options: AgentRunLeaseOptions, scope?: AgentStoreScope): Promise<AgentRunLease | undefined> | AgentRunLease | undefined;
+  releaseLease?(runId: string, ownerId: string, scope?: AgentStoreScope): Promise<boolean> | boolean;
+  loadToolCall?(runId: string, toolCallId: string, scope?: AgentStoreScope): Promise<AgentToolCallJournalEntry | undefined> | AgentToolCallJournalEntry | undefined;
+  loadToolExecution?(runId: string, toolCallId: string, scope?: AgentStoreScope): Promise<AgentToolCallJournalEntry | undefined> | AgentToolCallJournalEntry | undefined;
+  listToolCalls?(runId: string, scope?: AgentStoreScope): Promise<AgentToolCallJournalEntry[]> | AgentToolCallJournalEntry[];
+  saveToolCall?(
+    entry: AgentToolCallJournalEntry,
+    options?: AgentToolCallJournalSaveOptions
+  ): Promise<AgentToolCallJournalEntry> | AgentToolCallJournalEntry;
+  claimToolExecution?(
+    entry: AgentToolCallJournalEntry
+  ): Promise<AgentToolExecutionClaimResult> | AgentToolExecutionClaimResult;
+  completeToolExecution?(
+    entry: AgentToolCallJournalEntry,
+    options: AgentToolCallJournalSaveOptions & { expectedRevision: number }
+  ): Promise<AgentToolCallJournalEntry> | AgentToolCallJournalEntry;
 }
 
 export interface AgentRunCancellationOptions {
   reason?: string;
   cascade?: boolean;
   mode?: "request" | "final";
+  scope?: AgentStoreScope;
 }
 
 export interface AgentRunTreeCancellationResult {
@@ -1288,6 +1461,7 @@ export interface AgentRunTreeCancellationResult {
 export interface AgentMemoryContext {
   runId: string;
   agentId?: string;
+  scope?: AgentStoreScope;
   state?: AgentRunState;
   metadata?: Record<string, JsonValue>;
 }
@@ -1312,6 +1486,7 @@ export interface SqliteDatabaseLike {
 export interface SqliteAgentRunStoreOptions {
   db: SqliteDatabaseLike;
   tableName?: string;
+  scope?: AgentStoreScope;
 }
 
 export interface SqliteAgentMemoryStoreOptions {
@@ -1319,6 +1494,7 @@ export interface SqliteAgentMemoryStoreOptions {
   tableName?: string;
   key?: (context: AgentMemoryContext) => string;
   selectMessages?: (state: AgentRunState) => ModelMessage[];
+  scope?: AgentStoreScope;
 }
 
 export interface PostgresQueryResultLike<TResult extends Record<string, unknown> = Record<string, unknown>> {
@@ -1335,6 +1511,7 @@ export interface PostgresClientLike {
 export interface PostgresAgentRunStoreOptions {
   client: PostgresClientLike;
   tableName?: string;
+  scope?: AgentStoreScope;
 }
 
 export interface PostgresAgentMemoryStoreOptions {
@@ -1342,11 +1519,13 @@ export interface PostgresAgentMemoryStoreOptions {
   tableName?: string;
   key?: (context: AgentMemoryContext) => string;
   selectMessages?: (state: AgentRunState) => ModelMessage[];
+  scope?: AgentStoreScope;
 }
 
 export interface AgentHandoff {
   id: string;
   fromRunId: string;
+  scope?: AgentStoreScope;
   fromAgentId?: string;
   toAgentId?: string;
   summary: string;
@@ -1417,6 +1596,7 @@ export interface AgentGuardrailTrigger {
 export interface AgentInputGuardrailRequest {
   runId: string;
   agentId?: string;
+  state: AgentRunState;
   messages: ModelMessage[];
   metadata?: Record<string, JsonValue>;
 }
@@ -1502,6 +1682,23 @@ export type AgentTelemetryObserver = (
   event: AgentTelemetryEvent
 ) => void | Promise<void>;
 
+export type AgentHookFailureMode = "ignore" | "fail";
+
+export interface AgentOperationalError {
+  source: "telemetry" | "memory";
+  operation: string;
+  runId?: string;
+  error: Error;
+}
+
+export interface AgentHookFailurePolicy {
+  /** Telemetry is best-effort by default and cannot fail a run. */
+  telemetry?: AgentHookFailureMode;
+  /** Memory hooks are best-effort by default and cannot fail durable execution. */
+  memory?: AgentHookFailureMode;
+  onError?: (event: AgentOperationalError) => void | Promise<void>;
+}
+
 export interface AgentDefinition<TModel extends LanguageModel = LanguageModel> {
   id?: string;
   model: TModel;
@@ -1522,6 +1719,7 @@ export interface AgentDefinition<TModel extends LanguageModel = LanguageModel> {
   store?: AgentRunStore;
   memory?: AgentMemoryStore;
   onTelemetryEvent?: AgentTelemetryObserver;
+  hookFailurePolicy?: AgentHookFailurePolicy;
 }
 
 export interface LiveAgentDefinition<TModel extends RealtimeModel = RealtimeModel> {
@@ -1561,6 +1759,8 @@ export interface AgentApprovalResponse {
 export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryOptions &
   GenerateInputSource & {
     runId?: string;
+    /** Required isolation boundary for shared durable stores and memory. */
+    scope?: AgentStoreScope;
     idempotencyKey?: string;
     state?: AgentRunState;
     approvals?: AgentApprovalResponse[];
@@ -1615,6 +1815,7 @@ export type SubAgentToolOutput = Record<string, JsonValue>;
 export interface CreateSubAgentToolOptions<TModel extends LanguageModel = LanguageModel> extends AgentSubAgentDefinition<TModel> {
   parentRunId?: string;
   parentAgentId?: string;
+  scope?: AgentStoreScope;
   toolName?: string;
   onStart?: (request: { toolName: string; childAgentId?: string; parentRunId?: string }) => void | Promise<void>;
   onFinish?: (childRun: AgentChildRun) => void | Promise<void>;

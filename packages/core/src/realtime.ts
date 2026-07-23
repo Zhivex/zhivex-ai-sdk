@@ -1,3 +1,4 @@
+import { BoundedReplayBroadcast, StreamBufferOverflowError } from "./bounded-broadcast.js";
 import { ConfigurationError, UnsupportedFeatureError } from "./errors.js";
 import type {
   AudioFrame,
@@ -41,56 +42,6 @@ export interface RealtimeSessionCallbacks {
   buildClosePayloads?: RealtimePayloadBuilder<RealtimeSessionConfig>;
 }
 
-class Broadcast {
-  private history: RealtimeEvent[] = [];
-  private done = false;
-  private subscribers = new Set<(event: RealtimeEvent | undefined) => void>();
-
-  async publish(event: RealtimeEvent) {
-    this.history.push(event);
-    for (const subscriber of this.subscribers) {
-      subscriber(event);
-    }
-  }
-
-  async close() {
-    this.done = true;
-    for (const subscriber of this.subscribers) {
-      subscriber(undefined);
-    }
-    this.subscribers.clear();
-  }
-
-  stream(): AsyncIterable<RealtimeEvent> {
-    const self = this;
-    return (async function* () {
-      let cursor = 0;
-      while (true) {
-        while (cursor < self.history.length) {
-          yield self.history[cursor]!;
-          cursor += 1;
-        }
-
-        if (self.done) {
-          return;
-        }
-
-        const next = await new Promise<RealtimeEvent | undefined>((resolve) => {
-          const subscriber = (event: RealtimeEvent | undefined) => {
-            self.subscribers.delete(subscriber);
-            resolve(event);
-          };
-          self.subscribers.add(subscriber);
-        });
-
-        if (!next) {
-          return;
-        }
-      }
-    })();
-  }
-}
-
 export class CallbackRealtimeSession implements RealtimeSession {
   readonly provider: string;
   readonly modelId: string;
@@ -99,7 +50,7 @@ export class CallbackRealtimeSession implements RealtimeSession {
 
   private readonly connection: RealtimeConnection;
   private readonly callbacks: RealtimeSessionCallbacks;
-  private readonly broadcast = new Broadcast();
+  private readonly broadcast = new BoundedReplayBroadcast<RealtimeEvent>();
   private receiverPromise?: Promise<void>;
   private closed = false;
   private ended = false;
@@ -121,9 +72,6 @@ export class CallbackRealtimeSession implements RealtimeSession {
   }
 
   async initialize() {
-    if (!this.receiverPromise) {
-      this.receiverPromise = this.receiveLoop();
-    }
     if (this.callbacks.buildInitialPayloads) {
       await this.sendPayloads(this.callbacks.buildInitialPayloads(this.config, this.config));
     }
@@ -131,6 +79,9 @@ export class CallbackRealtimeSession implements RealtimeSession {
       type: "realtime-start"
     };
     await this.broadcast.publish(event);
+    if (!this.receiverPromise) {
+      this.receiverPromise = this.receiveLoop();
+    }
   }
 
   async sendAudio(frame: AudioFrame) {
@@ -158,10 +109,12 @@ export class CallbackRealtimeSession implements RealtimeSession {
 
   async sendToolResult(result: ToolExecutionResult) {
     await this.sendPayloads(this.callbacks.buildToolResultPayloads(result, this.config));
-    await this.broadcast.publish({
-      type: "realtime-tool-result",
-      toolResult: result
-    });
+    if (!this.broadcast.isClosed) {
+      await this.broadcast.publish({
+        type: "realtime-tool-result",
+        toolResult: result
+      });
+    }
   }
 
   async update(config: Partial<RealtimeSessionConfig>) {
@@ -197,7 +150,7 @@ export class CallbackRealtimeSession implements RealtimeSession {
         await this.broadcast.publish({
           type: "realtime-end",
           reason: "client-close"
-        });
+        }, { terminal: true });
       }
       await this.broadcast.close();
     }
@@ -220,20 +173,34 @@ export class CallbackRealtimeSession implements RealtimeSession {
           if (event.type === "realtime-end") {
             this.ended = true;
           }
-          await this.broadcast.publish(event);
+          await this.broadcast.publish(event, { terminal: event.type === "realtime-end" });
           if (event.type === "realtime-end") {
             await this.broadcast.close();
             return;
           }
         }
       }
+      if (!this.ended) {
+        this.ended = true;
+        await this.broadcast.publish({
+          type: "realtime-end",
+          reason: "connection-closed"
+        }, { terminal: true });
+      }
     } catch (error) {
+      if (error instanceof StreamBufferOverflowError) {
+        this.closed = true;
+        this.ended = true;
+        this.broadcast.fail(error);
+        await this.connection.close();
+        return;
+      }
       const event: RealtimeErrorEvent = {
         type: "realtime-error",
         error: error instanceof Error ? error : new Error(String(error)),
         message: error instanceof Error ? error.message : String(error)
       };
-      await this.broadcast.publish(event);
+      await this.broadcast.publish(event, { terminal: true });
       if (!this.ended) {
         this.ended = true;
         const ended: RealtimeSessionEndedEvent = {
@@ -243,7 +210,7 @@ export class CallbackRealtimeSession implements RealtimeSession {
             message: event.message ?? ""
           }
         };
-        await this.broadcast.publish(ended);
+        await this.broadcast.publish(ended, { terminal: true });
       }
     } finally {
       await this.broadcast.close();
@@ -267,6 +234,7 @@ class BrowserRealtimeConnection implements RealtimeConnection {
   private readonly queue: unknown[] = [];
   private readonly resolvers: Array<(value: unknown) => void> = [];
   private closed = false;
+  private queueFailure?: Error;
 
   constructor(socket: WebSocketLike) {
     this.socket = socket;
@@ -275,6 +243,12 @@ class BrowserRealtimeConnection implements RealtimeConnection {
       if (this.resolvers.length > 0) {
         this.resolvers.shift()!(value);
       } else {
+        if (this.queue.length >= 256) {
+          this.queueFailure = new StreamBufferOverflowError(256);
+          this.closed = true;
+          this.socket.close();
+          return;
+        }
         this.queue.push(value);
       }
     };
@@ -297,6 +271,9 @@ class BrowserRealtimeConnection implements RealtimeConnection {
   }
 
   async recvJson() {
+    if (this.queueFailure) {
+      throw this.queueFailure;
+    }
     if (this.queue.length > 0) {
       return parseIncoming(this.queue.shift());
     }

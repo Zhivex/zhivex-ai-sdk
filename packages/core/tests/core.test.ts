@@ -1429,6 +1429,74 @@ describe("core helpers", () => {
     expect(result.messages.at(-1)?.role).toBe("assistant");
   });
 
+  it("aggregates buffered multi-step usage and preserves request snapshots", async () => {
+    let call = 0;
+    const result = await generateText({
+      model: createLanguageModel({
+        async generate() {
+          call += 1;
+          if (call === 1) {
+            return {
+              messages: [
+                {
+                  role: "assistant",
+                  parts: [
+                    {
+                      type: "tool-call",
+                      toolCall: { id: "usage-1", name: "weather", input: { city: "Madrid" } }
+                    }
+                  ]
+                }
+              ],
+              finishReason: "tool-calls",
+              usage: {
+                inputTokens: 10,
+                cachedInputTokens: 2,
+                outputTokens: 3,
+                reasoningTokens: 1,
+                totalTokens: 13,
+                speed: "fast"
+              }
+            };
+          }
+
+          return {
+            messages: [createTextMessage("assistant", "Madrid is sunny.")],
+            text: "Madrid is sunny.",
+            finishReason: "stop",
+            usage: {
+              inputTokens: 12,
+              cacheWriteTokens: 4,
+              outputTokens: 5,
+              totalTokens: 17
+            }
+          };
+        }
+      }),
+      prompt: "Weather?",
+      maxSteps: 2,
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, forecast: "sunny" })
+        })
+      }
+    });
+
+    expect(result.usage).toEqual({
+      inputTokens: 22,
+      cachedInputTokens: 2,
+      cacheWriteTokens: 4,
+      outputTokens: 8,
+      reasoningTokens: 1,
+      totalTokens: 30,
+      speed: "fast"
+    });
+    expect(result.steps.map((step) => step.request.messages.length)).toEqual([1, 3]);
+    expect(result.steps[0]?.request.messages).not.toBe(result.steps[1]?.request.messages);
+  });
+
   it("executes tool calls in parallel while preserving result order", async () => {
     let call = 0;
     let active = 0;
@@ -2095,13 +2163,21 @@ describe("core helpers", () => {
           if (call === 1) {
             return (async function* (): AsyncGenerator<StreamEvent> {
               yield { type: "tool-call", toolCall: { id: "1", name: "weather", input: { city: "Madrid" } } };
-              yield { type: "finish", finishReason: "tool-calls" };
+              yield {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 }
+              };
             })();
           }
 
           return (async function* (): AsyncGenerator<StreamEvent> {
             yield { type: "text-delta", textDelta: "Madrid is sunny." };
-            yield { type: "finish", finishReason: "stop" };
+            yield {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 7, cachedInputTokens: 3, outputTokens: 4, totalTokens: 11 }
+            };
           })();
         }
       }),
@@ -2123,7 +2199,15 @@ describe("core helpers", () => {
 
     expect(events.some((event) => event.type === "tool-call")).toBe(true);
     expect(events.some((event) => event.type === "tool-result")).toBe(true);
-    expect((await result.collect()).text).toBe("Madrid is sunny.");
+    const collected = await result.collect();
+    expect(collected.text).toBe("Madrid is sunny.");
+    expect(collected.usage).toEqual({
+      inputTokens: 11,
+      cachedInputTokens: 3,
+      outputTokens: 6,
+      totalTokens: 17
+    });
+    expect(collected.steps.map((step) => step.request.messages.length)).toEqual([1, 3]);
   });
 
   it("embeds values", async () => {

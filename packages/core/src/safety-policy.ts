@@ -55,6 +55,42 @@ export interface BudgetGuard {
   outputGuardrail: AgentOutputGuardrail;
 }
 
+export type AgentBudgetOperation = "model" | "tool";
+
+export interface AgentBudgetConsumption {
+  steps: number;
+  toolCalls: number;
+  toolErrors: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface AgentBudgetRemaining {
+  steps?: number;
+  toolCalls?: number;
+  toolErrors?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
+export interface AgentBudgetStatus {
+  consumption: AgentBudgetConsumption;
+  remaining: AgentBudgetRemaining;
+  includeChildRuns: boolean;
+}
+
+export interface AgentBudgetPreflightOptions {
+  operation: AgentBudgetOperation;
+  /** Number of model steps that the caller is about to reserve. Defaults to 1 for a model call. */
+  requiredSteps?: number;
+  /** Number of tool calls that the caller is about to reserve. Defaults to 1 for a tool call. */
+  requiredToolCalls?: number;
+  /** Requested output-token ceiling, checked against output and total-token budgets. */
+  requestedOutputTokens?: number;
+}
+
 export interface ApprovalPolicyOptions {
   preset?: ApprovalPolicyPreset;
   sensitiveToolNames?: string[];
@@ -348,20 +384,56 @@ const addUsage = (usage: TokenUsage | undefined, next: TokenUsage | undefined): 
   };
 };
 
-const evaluateBudget = (state: AgentRunState, output: { usage?: AgentRunOutput["usage"] } | undefined, limits: BudgetGuardOptions) => {
+const remaining = (limit: number | undefined, actual: number): number | undefined =>
+  limit === undefined ? undefined : Math.max(0, limit - actual);
+
+/** Returns current budget consumption and the allowance left before another operation. */
+export const getAgentBudgetStatus = (
+  state: AgentRunState,
+  limits: BudgetGuardOptions,
+  output?: { usage?: AgentRunOutput["usage"] }
+): AgentBudgetStatus => {
   const includeChildRuns = limits.includeChildRuns ?? true;
   const childRuns = includeChildRuns ? state.childRuns ?? [] : [];
   const usage = childRuns.reduce((total, childRun) => addUsage(total, childRun.usage), output?.usage ?? state.usage);
   const toolErrors = state.toolResults.filter((result) => result.isError).length + childRuns.reduce((total, childRun) => total + childRun.toolErrors, 0);
   const toolCalls = countToolCalls(state) + childRuns.reduce((total, childRun) => total + childRun.toolCalls, 0);
   const steps = state.currentStep + childRuns.reduce((total, childRun) => total + childRun.steps, 0);
+  const inputTokens = usage?.inputTokens ?? 0;
+  const outputTokens = usage?.outputTokens ?? 0;
+  const totalTokens = usage?.totalTokens ?? inputTokens + outputTokens;
+
+  return {
+    consumption: {
+      steps,
+      toolCalls,
+      toolErrors,
+      inputTokens,
+      outputTokens,
+      totalTokens
+    },
+    remaining: {
+      steps: remaining(limits.maxSteps, steps),
+      toolCalls: remaining(limits.maxToolCalls, toolCalls),
+      toolErrors: remaining(limits.maxToolErrors, toolErrors),
+      inputTokens: remaining(limits.maxInputTokens, inputTokens),
+      outputTokens: remaining(limits.maxOutputTokens, outputTokens),
+      totalTokens: remaining(limits.maxTotalTokens, totalTokens)
+    },
+    includeChildRuns
+  };
+};
+
+const evaluateBudget = (state: AgentRunState, output: { usage?: AgentRunOutput["usage"] } | undefined, limits: BudgetGuardOptions) => {
+  const status = getAgentBudgetStatus(state, limits, output);
+  const { consumption, includeChildRuns } = status;
   const checks = [
-    ["maxSteps", steps, limits.maxSteps],
-    ["maxToolCalls", toolCalls, limits.maxToolCalls],
-    ["maxToolErrors", toolErrors, limits.maxToolErrors],
-    ["maxInputTokens", usage?.inputTokens, limits.maxInputTokens],
-    ["maxOutputTokens", usage?.outputTokens, limits.maxOutputTokens],
-    ["maxTotalTokens", usage?.totalTokens, limits.maxTotalTokens]
+    ["maxSteps", consumption.steps, limits.maxSteps],
+    ["maxToolCalls", consumption.toolCalls, limits.maxToolCalls],
+    ["maxToolErrors", consumption.toolErrors, limits.maxToolErrors],
+    ["maxInputTokens", consumption.inputTokens, limits.maxInputTokens],
+    ["maxOutputTokens", consumption.outputTokens, limits.maxOutputTokens],
+    ["maxTotalTokens", consumption.totalTokens, limits.maxTotalTokens]
   ] as const;
 
   for (const [name, actual, limit] of checks) {
@@ -379,9 +451,99 @@ const evaluateBudget = (state: AgentRunState, output: { usage?: AgentRunOutput["
   return undefined;
 };
 
+const assertNonNegativeInteger = (name: string, value: number) => {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new TypeError(`${name} must be a non-negative integer.`);
+  }
+};
+
+/**
+ * Evaluates a durable run before starting a model or tool operation.
+ * The returned trigger can be handled exactly like an input/output guardrail result.
+ */
+export const evaluateAgentBudgetPreflight = (
+  state: AgentRunState,
+  limits: BudgetGuardOptions,
+  options: AgentBudgetPreflightOptions
+): AgentGuardrailTrigger | undefined => {
+  const existingFailure = evaluateBudget(state, undefined, limits);
+  if (existingFailure) {
+    return existingFailure;
+  }
+
+  const requiredSteps = options.requiredSteps ?? (options.operation === "model" ? 1 : 0);
+  const requiredToolCalls = options.requiredToolCalls ?? (options.operation === "tool" ? 1 : 0);
+  const requestedOutputTokens = options.requestedOutputTokens ?? 0;
+  assertNonNegativeInteger("requiredSteps", requiredSteps);
+  assertNonNegativeInteger("requiredToolCalls", requiredToolCalls);
+  assertNonNegativeInteger("requestedOutputTokens", requestedOutputTokens);
+
+  const status = getAgentBudgetStatus(state, limits);
+  const checks = [
+    ["maxSteps", requiredSteps, status.remaining.steps, limits.maxSteps, status.consumption.steps],
+    ["maxToolCalls", requiredToolCalls, status.remaining.toolCalls, limits.maxToolCalls, status.consumption.toolCalls],
+    ["maxOutputTokens", requestedOutputTokens, status.remaining.outputTokens, limits.maxOutputTokens, status.consumption.outputTokens],
+    ["maxTotalTokens", requestedOutputTokens, status.remaining.totalTokens, limits.maxTotalTokens, status.consumption.totalTokens]
+  ] as const;
+
+  for (const [name, required, allowance, limit, actual] of checks) {
+    if (limit !== undefined && allowance !== undefined && required > allowance) {
+      const scope = status.includeChildRuns ? " including child runs" : "";
+      return budgetFailure(
+        `Agent budget would be exceeded${scope}: ${name} limit ${limit}, actual ${actual}, required ${required}.`,
+        {
+          budgetLimit: name,
+          limit,
+          actual,
+          required,
+          remaining: allowance,
+          operation: options.operation,
+          includeChildRuns: status.includeChildRuns
+        }
+      );
+    }
+  }
+
+  // A new model call necessarily consumes input and normally produces output.
+  // Block at a hard token boundary even when the caller does not provide an estimate.
+  if (options.operation === "model") {
+    const exhaustedChecks = [
+      ["maxInputTokens", status.remaining.inputTokens, limits.maxInputTokens, status.consumption.inputTokens],
+      ["maxOutputTokens", status.remaining.outputTokens, limits.maxOutputTokens, status.consumption.outputTokens],
+      ["maxTotalTokens", status.remaining.totalTokens, limits.maxTotalTokens, status.consumption.totalTokens]
+    ] as const;
+
+    for (const [name, allowance, limit, actual] of exhaustedChecks) {
+      if (limit !== undefined && allowance === 0) {
+        return budgetFailure(`Agent budget exhausted: ${name} limit ${limit}, actual ${actual}.`, {
+          budgetLimit: name,
+          limit,
+          actual,
+          remaining: 0,
+          operation: options.operation,
+          includeChildRuns: status.includeChildRuns
+        });
+      }
+    }
+  }
+
+  return undefined;
+};
+
+const getInputGuardrailState = (request: Parameters<AgentInputGuardrail>[0]): AgentRunState | undefined => {
+  if (!("state" in request)) {
+    return undefined;
+  }
+  const state = request.state;
+  return state && typeof state === "object" ? state as AgentRunState : undefined;
+};
+
 export const createBudgetGuard = (limits: BudgetGuardOptions): BudgetGuard => ({
   limits: { ...limits },
-  inputGuardrail: () => undefined,
+  inputGuardrail: (request) => {
+    const state = getInputGuardrailState(request);
+    return state ? evaluateAgentBudgetPreflight(state, limits, { operation: "model" }) : undefined;
+  },
   outputGuardrail: (request) => evaluateBudget(request.state, "usage" in request.output ? request.output : undefined, limits)
 });
 
@@ -458,6 +620,10 @@ export const applySafetyPolicyToAgent = <TModel extends AgentDefinition["model"]
   toolExecution: {
     ...(agent.toolExecution ?? {}),
     ...(policy.toolExecution ?? {})
+  },
+  policy: {
+    ...(agent.policy ?? {}),
+    ...(policy.budget ? { budget: { ...policy.budget.limits } } : {})
   },
   maxSteps:
     policy.budget?.limits.maxSteps === undefined

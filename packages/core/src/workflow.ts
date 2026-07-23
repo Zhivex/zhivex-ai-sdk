@@ -8,8 +8,9 @@ import type {
 import type { AgentApprovalRequest, AgentApprovalResponse, AgentStatus, JsonValue, LanguageModel } from "./types.js";
 import type { WorkflowStateService } from "./workflow-state-service.js";
 import { ValidationError } from "./errors.js";
+import { createSecureId } from "./secure-id.js";
 
-const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+const randomId = createSecureId;
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 export const WORKFLOW_RUN_STATE_SCHEMA_VERSION = 1 as const;

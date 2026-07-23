@@ -79,6 +79,31 @@ describe("package metadata", () => {
       types: "./dist/index.d.ts",
       import: "./dist/index.js"
     });
+    expect(pkg.exports).toMatchObject({
+      "./ops": {
+        types: "./dist/ops.d.ts",
+        import: "./dist/ops.js"
+      },
+      "./beta": {
+        types: "./dist/beta.d.ts",
+        import: "./dist/beta.js"
+      },
+      "./realtime": {
+        types: "./dist/realtime.d.ts",
+        import: "./dist/realtime.js"
+      },
+      "./testing": {
+        types: "./dist/testing.d.ts",
+        import: "./dist/testing.js"
+      }
+    });
+    expect(Object.keys(pkg.exports ?? {}).sort()).toEqual([
+      ".",
+      "./beta",
+      "./ops",
+      "./realtime",
+      "./testing"
+    ]);
     expect(pkg.files).toContain("dist");
   });
 

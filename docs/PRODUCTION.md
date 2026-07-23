@@ -131,6 +131,18 @@ if (session) {
 
 If the stored revision changed, the SDK raises `ConflictError`.
 
+Agent run stores use the same rule for every state transition. When an input includes `idempotencyKey`, the store must claim it atomically before any model or tool side effect. Concurrent duplicates share one `runId`; stale concurrent resumes and cancellations fail with `ConflictError` before another step begins.
+
+The built-in in-memory, SQLite, and Postgres stores implement atomic claims and revision checks. Use SQLite or Postgres for durable concurrent workers. The file store is intended for local development because cross-process revisions, leases, and expired-worker recovery are best effort. A custom store must implement `claimIdempotencyKey()` to accept idempotent agent inputs.
+
+Persisted agent states are normalized to `AGENT_RUN_STATE_SCHEMA_VERSION`. Legacy states without a version or revision remain readable, while unknown future versions are rejected instead of silently downgraded.
+
+Treat `scope: { tenantId, userId?, namespace? }` as mandatory when a store serves more than one tenant or user. The same scope must be supplied to run, resume, query, retention, and cancellation operations. It partitions state, memory, idempotency markers, parents, leases, and tool journals.
+
+Production workers acquire and renew a run lease, poll durable cancellation, and recover only after the previous lease expires. Model responses are checkpointed before local tools execute, and tool results are checkpointed before the next model call. The tool journal returns completed results without re-executing the effect and blocks indeterminate executions for reconciliation. External exactly-once behavior still depends on the target API honoring `context.idempotencyKey`; tools should also forward `context.abortSignal`.
+
+Bounded replay and subscriber queues prevent unbounded stream growth. Persisted state defaults to a 4 MiB ceiling and uses incremental request snapshots; large tool payloads should be stored as artifacts and referenced from state. Telemetry and memory hooks are isolated from the durable path by default, with failures available through `hookFailurePolicy.onError`.
+
 ## Safety Path
 
 For agents with tools, apply a safety policy before creating the runner. This composes existing guardrails, approval policy, redaction, and budget limits without changing the agent runtime contract.
