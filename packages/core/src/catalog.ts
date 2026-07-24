@@ -319,6 +319,7 @@ export const defaultModelCatalog = createModelCatalog([
   { provider: "qwen", modelId: "qwen3.5-omni-plus", recommendedFor: ["chat", "vision", "speed", "tools"] },
   { provider: "qwen", modelId: "qwen3.5-omni-plus-realtime", recommendedFor: ["vision", "speed"] },
   { provider: "qwen", modelId: "qwen3.5-ocr", recommendedFor: ["vision", "speed"] },
+  { provider: "qwen", modelId: "tongyi-embedding-vision-plus", recommendedFor: ["vision"] },
   { provider: "qwen", modelId: "qwen3-vl-embedding", recommendedFor: ["vision"] },
   { provider: "qwen", modelId: "qwen3-rerank" },
   { provider: "qwen", modelId: "qwen3-asr-flash", recommendedFor: ["speed"] },

@@ -2982,6 +2982,9 @@ describe("core helpers", () => {
       modelId: "qwen3.6-flash",
       recommendedFor: expect.arrayContaining(["speed", "tools", "vision"])
     });
+    expect(defaultModelCatalog.find("qwen", "tongyi-embedding-vision-plus")?.modelId).toBe(
+      "tongyi-embedding-vision-plus"
+    );
     expect(defaultModelCatalog.find("qwen", "qwen3-vl-embedding")?.modelId).toBe("qwen3-vl-embedding");
     expect(defaultModelCatalog.find("qwen", "qwen3-rerank")?.modelId).toBe("qwen3-rerank");
     expect(defaultModelCatalog.find("qwen", "qwen3-asr-flash")?.modelId).toBe("qwen3-asr-flash");

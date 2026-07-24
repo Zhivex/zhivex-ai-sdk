@@ -1,4 +1,5 @@
 import { toJSONSchema } from "zod";
+import type { RawData } from "ws";
 
 import {
   CallbackRealtimeSession,
@@ -53,6 +54,7 @@ import {
   type PredictionOperation,
   type ProviderAdapter,
   type RealtimeConnectOptions,
+  type RealtimeConnection,
   type RealtimeConnectionFactory,
   type RealtimeEvent,
   type RealtimeModel,
@@ -231,6 +233,172 @@ const qwenWorkspaceURLs = (workspaceId: string, region: QwenRegion) => {
     taskBaseURL: `${origin}/api/v1`,
     realtimeURL: `${origin.replace(/^https:/, "wss:")}/api-ws/v1/realtime`
   };
+};
+
+const QWEN_REALTIME_QUEUE_LIMIT = 256;
+
+const nodeWebSocketDataToText = (data: RawData) => {
+  if (Array.isArray(data)) {
+    return Buffer.concat(data).toString("utf8");
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString("utf8");
+  }
+  return Buffer.from(data).toString("utf8");
+};
+
+const openQwenRealtimeConnection: RealtimeConnectionFactory = async (url, headers, options) => {
+  if (typeof process === "undefined" || !process.versions?.node) {
+    return openWebSocketConnection(url, headers, options);
+  }
+  if (options?.signal?.aborted) {
+    throw new Error("Qwen realtime connection aborted.");
+  }
+
+  const { default: WebSocket } = await import("ws");
+  const socket = options?.subprotocols?.length
+    ? new WebSocket(url, options.subprotocols, { headers })
+    : new WebSocket(url, { headers });
+
+  await new Promise<void>((resolve, reject) => {
+    let finished = false;
+    const finish = (callback: () => void) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      options?.signal?.removeEventListener("abort", onAbort);
+      socket.off("open", onOpen);
+      socket.off("error", onError);
+      callback();
+    };
+    const onOpen = () => finish(resolve);
+    const onError = (error: Error) => finish(() => reject(error));
+    const onAbort = () => {
+      socket.close();
+      finish(() => reject(new Error("Qwen realtime connection aborted.")));
+    };
+    const timer = options?.timeoutMs
+      ? setTimeout(
+          () => {
+            socket.close();
+            finish(() => reject(new Error(`Qwen realtime connection timed out after ${options.timeoutMs}ms.`)));
+          },
+          options.timeoutMs
+        )
+      : undefined;
+
+    socket.once("open", onOpen);
+    socket.once("error", onError);
+    options?.signal?.addEventListener("abort", onAbort, { once: true });
+  });
+
+  const queue: string[] = [];
+  const readers: Array<{
+    resolve: (value: unknown) => void;
+    reject: (reason?: unknown) => void;
+  }> = [];
+  let closed = false;
+  let connectionError: Error | undefined;
+
+  const rejectReaders = (error: Error) => {
+    for (const reader of readers.splice(0)) {
+      reader.reject(error);
+    }
+  };
+  const closeReaders = () => {
+    for (const reader of readers.splice(0)) {
+      reader.resolve(undefined);
+    }
+  };
+
+  socket.on("message", (data) => {
+    const text = nodeWebSocketDataToText(data);
+    const reader = readers.shift();
+    if (reader) {
+      try {
+        reader.resolve(JSON.parse(text));
+      } catch (error) {
+        reader.reject(error);
+      }
+      return;
+    }
+
+    if (queue.length >= QWEN_REALTIME_QUEUE_LIMIT) {
+      connectionError = new Error(
+        `Qwen realtime receive buffer exceeded ${QWEN_REALTIME_QUEUE_LIMIT} messages.`
+      );
+      connectionError.name = "StreamBufferOverflowError";
+      socket.close();
+      return;
+    }
+    queue.push(text);
+  });
+  socket.on("error", (error) => {
+    connectionError = error;
+    rejectReaders(error);
+  });
+  socket.on("close", () => {
+    closed = true;
+    if (connectionError) {
+      rejectReaders(connectionError);
+    } else {
+      closeReaders();
+    }
+  });
+
+  const connection: RealtimeConnection = {
+    async sendJson(payload) {
+      if (connectionError) {
+        throw connectionError;
+      }
+      if (closed) {
+        throw new Error("Qwen realtime connection is closed.");
+      }
+      await new Promise<void>((resolve, reject) => {
+        socket.send(JSON.stringify(payload), (error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
+    },
+    async recvJson() {
+      if (connectionError) {
+        throw connectionError;
+      }
+      if (queue.length > 0) {
+        return JSON.parse(queue.shift()!);
+      }
+      if (closed) {
+        return undefined;
+      }
+      return new Promise((resolve, reject) => readers.push({ resolve, reject }));
+    },
+    async close() {
+      if (closed) {
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          socket.terminate();
+          resolve();
+        }, 1_000);
+        socket.once("close", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        socket.close();
+      });
+    }
+  };
+
+  return connection;
 };
 
 const toUint8Array = async (data: string | Uint8Array | ArrayBuffer | Blob): Promise<Uint8Array> => {
@@ -2075,16 +2243,15 @@ class QwenRerankModelImpl implements QwenRerankModel {
   constructor(
     readonly modelId: string,
     private readonly apiKey: string,
-    private readonly baseURL: string,
     private readonly taskBaseURL: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {}
 
   async rerank(input: QwenRerankInput): Promise<QwenRerankResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
-    const isCompatibleRerank = /^qwen3-rerank(?:$|-)/i.test(this.modelId);
+    const isTextRerank = /^qwen3-rerank(?:$|-)/i.test(this.modelId);
     if (
-      isCompatibleRerank &&
+      isTextRerank &&
       (typeof input.query !== "string" || input.documents.some((document) => typeof document !== "string"))
     ) {
       throw new UnsupportedFeatureError("qwen3-rerank accepts text queries and text documents only.");
@@ -2100,34 +2267,26 @@ class QwenRerankModelImpl implements QwenRerankModel {
       const response = await withRetry(
         () =>
           this.fetcher(
-            isCompatibleRerank
-              ? `${this.baseURL}/reranks`
-              : `${this.taskBaseURL}/services/rerank/text-rerank/text-rerank`,
+            `${this.taskBaseURL}/services/rerank/text-rerank/text-rerank`,
             {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
               body: JSON.stringify(
-                isCompatibleRerank
-                  ? {
-                      ...input.providerOptions,
-                      model: this.modelId,
-                      query: input.query,
-                      documents: input.documents,
-                      top_n: input.topN
-                    }
-                  : {
-                      model: this.modelId,
-                      input: {
-                        query: toRerankContent(input.query),
-                        documents: input.documents.map(toRerankContent)
-                      },
-                      parameters: {
-                        return_documents: true,
-                        ...input.providerOptions,
-                        top_n: input.topN
-                      }
-                    }
+                {
+                  model: this.modelId,
+                  input: {
+                    query: isTextRerank ? input.query : toRerankContent(input.query),
+                    documents: isTextRerank
+                      ? input.documents
+                      : input.documents.map(toRerankContent)
+                  },
+                  parameters: {
+                    return_documents: true,
+                    ...input.providerOptions,
+                    top_n: input.topN
+                  }
+                }
               )
             }
           ),
@@ -2297,7 +2456,11 @@ class QwenRealtimeModel implements RealtimeModel {
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
     const url = appendQuery(this.realtimeURL, { model: this.modelId });
-    const connection = await (this.connectionFactory ?? openWebSocketConnection)(url, { authorization: `Bearer ${this.apiKey}` }, options);
+    const connection = await (this.connectionFactory ?? openQwenRealtimeConnection)(
+      url,
+      { authorization: `Bearer ${this.apiKey}` },
+      options
+    );
     const session = new CallbackRealtimeSession({
       provider: this.provider,
       modelId: this.modelId,
@@ -2372,7 +2535,7 @@ export const createQwen = (
     realtimeModel: (modelId) => new QwenRealtimeModel(modelId, apiKey, realtimeURL, options.realtimeConnectionFactory),
     files: new QwenFilesClient(apiKey, baseURL, fetcher),
     batches: new QwenBatchesClient(apiKey, baseURL, fetcher),
-    rerankModel: (modelId: string) => new QwenRerankModelImpl(modelId, apiKey, baseURL, taskBaseURL, fetcher),
+    rerankModel: (modelId: string) => new QwenRerankModelImpl(modelId, apiKey, taskBaseURL, fetcher),
     multimodalEmbeddingModel: (modelId: string) =>
       new QwenMultimodalEmbeddingModelImpl(modelId, apiKey, taskBaseURL, fetcher),
     tasks: new QwenTasksClientImpl(apiKey, taskBaseURL, fetcher),

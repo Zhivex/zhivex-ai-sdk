@@ -156,7 +156,7 @@ Downloaded speech URLs are also protected against server-side request forgery. B
 
 ```ts
 const embeddings = await qwen
-  .multimodalEmbeddingModel("qwen3-vl-embedding")
+  .multimodalEmbeddingModel("tongyi-embedding-vision-plus")
   .embed({
     values: [
       "product description",
@@ -170,6 +170,8 @@ const ranked = await qwen.rerankModel("qwen3-rerank").rerank({
   topN: 1
 });
 ```
+
+`tongyi-embedding-vision-plus` is the multimodal embedding model for the international/Singapore endpoint used by the provider defaults. `qwen3-vl-embedding` is available in Beijing; configure a Beijing workspace and `region: "beijing"` before selecting it.
 
 `qwen3-vl-rerank` and other native multimodal rerank models also accept `MediaInput` query and document values.
 
@@ -189,17 +191,19 @@ await session.sendMedia({ data: jpegBytes, mediaType: "image/jpeg" });
 
 The realtime adapter maps text, audio, transcripts, function calls, response completion, and session completion into the shared `RealtimeEvent` contract. JPEG image frames are supported by Qwen Omni realtime; browser-token minting is not exposed.
 
+Authenticated realtime connections use the package's Node/Bun `ws` transport by default. `realtimeConnectionFactory` remains available for custom runtimes. Do not expose a Model Studio API key in browser code.
+
 ## Current catalog coverage
 
-The default catalog includes current text and multimodal Qwen families plus the specialized IDs wired above: `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, `qwen3.5-omni-plus-realtime`, `qwen3.5-ocr`, `qwen3-vl-embedding`, `qwen3-rerank`, `qwen3-asr-flash`, `qwen3-tts-flash`, `qwen-image-2.0-pro`, and `wan2.7-t2v`.
+The default catalog includes current text and multimodal Qwen families plus the specialized IDs wired above: `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, `qwen3.5-omni-plus-realtime`, `qwen3.5-ocr`, `tongyi-embedding-vision-plus` for international/Singapore, `qwen3-vl-embedding` for Beijing, `qwen3-rerank`, `qwen3-asr-flash`, `qwen3-tts-flash`, `qwen-image-2.0-pro`, and `wan2.7-t2v`.
 
 Run opt-in live coverage with:
 
 ```bash
-QWEN_EXTENDED_INTEGRATION=1 bun run test:integration:qwen
+QWEN_EXTENDED_INTEGRATION=1 bun --env-file=.env run test:integration:qwen
 ```
 
-Set only the surfaces you want to exercise: `QWEN_MULTIMODAL_EMBEDDING_MODEL`, `QWEN_MULTIMODAL_IMAGE_URL`, `QWEN_RERANK_MODEL`, `QWEN_ASR_MODEL`, `QWEN_ASR_AUDIO_URL`, `QWEN_TTS_MODEL`, `QWEN_IMAGE_MODEL`, `QWEN_VIDEO_MODEL`, and `QWEN_REALTIME_MODEL`. Workspace and endpoint overrides use `QWEN_WORKSPACE_ID`, `QWEN_REGION`, `QWEN_BASE_URL`, `QWEN_TASK_BASE_URL`, and `QWEN_REALTIME_URL`.
+Set only the surfaces you want to exercise: `QWEN_MULTIMODAL_EMBEDDING_MODEL`, `QWEN_MULTIMODAL_IMAGE_URL`, `QWEN_RERANK_MODEL`, `QWEN_ASR_MODEL`, `QWEN_ASR_AUDIO_URL`, `QWEN_TTS_MODEL`, `QWEN_IMAGE_MODEL`, `QWEN_VIDEO_MODEL`, and `QWEN_REALTIME_MODEL`. For the default international endpoint, use `tongyi-embedding-vision-plus`; use `qwen3-vl-embedding` only with a Beijing workspace. Workspace and endpoint overrides use `QWEN_WORKSPACE_ID`, `QWEN_REGION`, `QWEN_BASE_URL`, `QWEN_TASK_BASE_URL`, and `QWEN_REALTIME_URL`.
 
 Repository and full documentation:
 

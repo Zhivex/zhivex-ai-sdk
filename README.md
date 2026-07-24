@@ -1971,7 +1971,7 @@ const result = await generateText({
 });
 ```
 
-Qwen automatically selects between DashScope-compatible Responses and Chat Completions. Responses is used for hosted web search, web extraction, code interpreter, file search, remote MCP, image search, OCR file input, and response continuation; Chat is selected for structured output, audio input, `maxTokens`, or `reasoning.budgetTokens`. You can force a compatible path with `providerOptions.apiMode`. Current catalog examples prefer `qwen3.7-plus` for multimodal reasoning, `qwen3.7-max` for text reasoning, and `qwen-image-2.0-pro` for image generation.
+Qwen automatically selects between DashScope-compatible Responses and Chat Completions. Responses is used for hosted web search, web extraction, code interpreter, file search, remote MCP, image search, OCR file input, and response continuation; Chat is selected for structured output, audio input, `maxTokens`, or `reasoning.budgetTokens`. You can force a compatible path with `providerOptions.apiMode`. Current catalog examples prefer `qwen3.7-plus` for multimodal reasoning, `qwen3.7-max` for text reasoning, and `qwen-image-2.0-pro` for image generation. The default international endpoint uses `tongyi-embedding-vision-plus` for multimodal embeddings; `qwen3-vl-embedding` requires a Beijing workspace. Text reranking uses the DashScope-native endpoint so both the global international host and workspace-specific hosts work. Authenticated realtime sessions use a Node/Bun WebSocket transport by default.
 
 ```ts
 import { generateText } from "@zhivex-ai/sdk";
