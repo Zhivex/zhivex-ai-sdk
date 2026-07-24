@@ -246,6 +246,9 @@ describe("realtime helpers", () => {
       }
     ]);
     expect(result.outputText).toBe("Madrid is sunny");
+    expect(result.state.runId).toMatch(
+      /^run_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    );
     expect(result.toolResults).toHaveLength(1);
     expect(result.messages.at(-1)?.role).toBe("assistant");
     expect(closed).toBe(true);

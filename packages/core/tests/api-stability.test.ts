@@ -13,6 +13,10 @@ describe("api stability manifest", () => {
       stability: "stable"
     });
     expect(api.listApiStability("stable")).toContainEqual({
+      symbol: "normalizeAgentRunState",
+      stability: "stable"
+    });
+    expect(api.listApiStability("stable")).toContainEqual({
       symbol: "generateText",
       stability: "stable"
     });
@@ -47,6 +51,9 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("generateText")?.stability).toBe("stable");
     expect(api.getApiStability("runAgent")?.stability).toBe("stable");
     expect(api.getApiStability("createAgent")?.stability).toBe("stable");
+    expect(api.getApiStability("AGENT_RUN_STATE_SCHEMA_VERSION")?.stability).toBe("stable");
+    expect(api.getApiStability("migrateAgentRunState")?.stability).toBe("stable");
+    expect(api.getApiStability("normalizeAgentRunState")?.stability).toBe("stable");
 
     expect(api.getApiStability("createRunner")?.stability).toBe("stable");
     expect(api.getApiStability("createProductionSafetyPolicy")?.stability).toBe("stable");

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { WebSocketServer } from "ws";
 import { z } from "zod";
 
 import {
@@ -1240,13 +1241,20 @@ describe("qwen adapter", () => {
       providerOptions: { fps: 1 }
     });
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/compatible-mode/v1/reranks");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/api/v1/services/rerank/text-rerank/text-rerank"
+    );
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
       model: "qwen3-rerank",
-      query: "sdk",
-      documents: ["irrelevant", "Zhivex SDK"],
-      top_n: 1,
-      instruct: "Rank SDK documentation"
+      input: {
+        query: "sdk",
+        documents: ["irrelevant", "Zhivex SDK"]
+      },
+      parameters: {
+        return_documents: true,
+        top_n: 1,
+        instruct: "Rank SDK documentation"
+      }
     });
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/services/rerank/text-rerank/text-rerank");
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
@@ -1296,6 +1304,62 @@ describe("qwen adapter", () => {
     expect(String(connectionFactory.mock.calls[0]?.[0])).toBe(
       "wss://ws_123.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen3.5-omni-plus-realtime"
     );
+  });
+
+  it("opens authenticated Qwen realtime sessions by default in Node", async () => {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      server.close();
+      throw new Error("Expected a TCP address for the Qwen realtime test server.");
+    }
+
+    const handshake = new Promise<{ authorization?: string; payload: Record<string, unknown> }>(
+      (resolve, reject) => {
+        server.once("connection", (socket, request) => {
+          socket.once("message", (data) => {
+            try {
+              resolve({
+                authorization: request.headers.authorization,
+                payload: JSON.parse(data.toString())
+              });
+            } catch (error) {
+              reject(error);
+            }
+          });
+        });
+        server.once("error", reject);
+      }
+    );
+    const provider = createQwen({
+      apiKey: "qwen-secret",
+      realtimeURL: `ws://127.0.0.1:${address.port}/realtime`
+    });
+    const session = await provider.realtimeModel!("qwen3.5-omni-plus-realtime").connect(
+      { instructions: "be concise" },
+      { timeoutMs: 5_000 }
+    );
+
+    try {
+      await expect(handshake).resolves.toMatchObject({
+        authorization: "Bearer qwen-secret",
+        payload: {
+          type: "session.update",
+          session: {
+            instructions: "be concise",
+            input_audio_format: "pcm",
+            output_audio_format: "pcm"
+          }
+        }
+      });
+    } finally {
+      await session.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("maps current Qwen realtime server events into the shared event contract", async () => {

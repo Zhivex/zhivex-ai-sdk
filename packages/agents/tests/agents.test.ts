@@ -1,70 +1,90 @@
 import { describe, expect, it } from "vitest";
 
+import * as beta from "../src/beta.js";
 import * as agents from "../src/index.js";
+import * as ops from "../src/ops.js";
+import * as realtime from "../src/realtime.js";
+import * as testing from "../src/testing.js";
+import { getApiStability, type ApiStabilityLevel } from "../../core/src/api-stability.js";
+
+const sortedKeys = (value: object) => Object.keys(value).sort();
+const expectStability = (value: object, stability: ApiStabilityLevel) => {
+  for (const symbol of Object.keys(value)) {
+    expect(getApiStability(symbol), symbol).toMatchObject({ stability, symbol });
+  }
+};
 
 describe("agents package public surface", () => {
-  it("exports the agent runtime facade from core", () => {
-    expect(agents.Agent).toBeTypeOf("function");
-    expect(agents.createAgent).toBeTypeOf("function");
-    expect(agents.runAgent).toBeTypeOf("function");
-    expect(agents.resumeAgent).toBeTypeOf("function");
-    expect(agents.streamAgent).toBeTypeOf("function");
-    expect(agents.tool).toBeTypeOf("function");
-    expect(agents.runAgentGroup).toBeTypeOf("function");
-    expect(agents.createAgentHandoff).toBeTypeOf("function");
-    expect(agents.runAgentHandoff).toBeTypeOf("function");
-    expect(agents.createSubAgentTool).toBeTypeOf("function");
-    expect(agents.prepareSubagentsForAgent).toBeTypeOf("function");
+  it("keeps the root focused on the stable application runtime", () => {
+    expect(sortedKeys(agents)).toEqual([
+      "AGENT_RUN_STATE_SCHEMA_VERSION",
+      "Agent",
+      "agentApprovalResponsePart",
+      "applySafetyPolicyToAgent",
+      "cancelAgentRun",
+      "cancelAgentRunTree",
+      "createAgent",
+      "createAgentApprovalMessage",
+      "createAgentHandoff",
+      "createAgentHandoffMessage",
+      "createApprovalPolicy",
+      "createBudgetGuard",
+      "createProductionSafetyPolicy",
+      "createRedactionPolicy",
+      "createSafetyPolicy",
+      "createSubAgentTool",
+      "evaluateAgentBudgetPreflight",
+      "getAgentApprovalRequestFromPart",
+      "getAgentApprovalRequests",
+      "getAgentBudgetStatus",
+      "migrateAgentRunState",
+      "normalizeAgentRunState",
+      "prepareSubagentsForAgent",
+      "resumeAgent",
+      "runAgent",
+      "runAgentGroup",
+      "runAgentHandoff",
+      "streamAgent",
+      "toUIAgentStreamResponse",
+      "tool"
+    ].sort());
+    expectStability(agents, "stable");
   });
 
-  it("exports production agent stores, policy, tracing, and evaluation helpers", () => {
-    expect(agents.createInMemoryAgentRunStore).toBeTypeOf("function");
-    expect(agents.createFileAgentRunStore).toBeTypeOf("function");
-    expect(agents.createSqliteAgentRunStore).toBeTypeOf("function");
-    expect(agents.createPostgresAgentRunStore).toBeTypeOf("function");
-    expect(agents.createInMemoryAgentMemoryStore).toBeTypeOf("function");
-    expect(agents.createFileAgentMemoryStore).toBeTypeOf("function");
-    expect(agents.createSqliteAgentMemoryStore).toBeTypeOf("function");
-    expect(agents.createPostgresAgentMemoryStore).toBeTypeOf("function");
-    expect(agents.createProductionSafetyPolicy).toBeTypeOf("function");
-    expect(agents.createAgentTraceCollector).toBeTypeOf("function");
-    expect(agents.createAgentEvaluationFixture).toBeTypeOf("function");
+  it("exposes stable persistence, tracing, evaluation, and support helpers from ops", () => {
+    expect(ops.createInMemoryAgentRunStore).toBeTypeOf("function");
+    expect(ops.createPostgresAgentMemoryStore).toBeTypeOf("function");
+    expect(ops.createProductionTraceCollector).toBeTypeOf("function");
+    expect(ops.createAgentEvaluationFixture).toBeTypeOf("function");
+    expect(ops.createProviderSupportMatrix).toBeTypeOf("function");
+    expect(ops.estimateAgentRunCost).toBeTypeOf("function");
+    expectStability(ops, "stable");
   });
 
-  it("exports provider support helpers for agent routing decisions", () => {
-    expect(agents.getAgentCapabilities).toBeTypeOf("function");
-    expect(agents.getAgentSupportTier).toBeTypeOf("function");
-    expect(agents.inspectProviderAgentSupport).toBeTypeOf("function");
-    expect(agents.createProviderSupportMatrix).toBeTypeOf("function");
-    expect(agents.renderProviderSupportMatrix).toBeTypeOf("function");
+  it("isolates beta control-plane and governance APIs", () => {
+    expect(beta.createAgentCapsule).toBeTypeOf("function");
+    expect(beta.createAgentControlPlane).toBeTypeOf("function");
+    expect(beta.createAgentApprovalQueue).toBeTypeOf("function");
+    expect(beta.createAgentRunLedger).toBeTypeOf("function");
+    expect(beta.createAgentCapabilityRouter).toBeTypeOf("function");
+    expect(beta.createAgentAuditRecord).toBeTypeOf("function");
+    expect("createAgentControlPlane" in agents).toBe(false);
+    expectStability(beta, "beta");
   });
 
-  it("exports the beta agent control-plane surface", () => {
-    expect(agents.createAgentCapsule).toBeTypeOf("function");
-    expect(agents.inspectAgentCapsule).toBeTypeOf("function");
-    expect(agents.createAgentToolPolicy).toBeTypeOf("function");
-    expect(agents.createAgentApprovalQueue).toBeTypeOf("function");
-    expect(agents.createAgentRunLedger).toBeTypeOf("function");
-    expect(agents.diffAgentRunLedgers).toBeTypeOf("function");
-    expect(agents.promoteAgentGoldenTrace).toBeTypeOf("function");
-    expect(agents.selectAgentModel).toBeTypeOf("function");
-    expect(agents.createAgentCapabilityRouter).toBeTypeOf("function");
-    expect(agents.createAgentControlPlane).toBeTypeOf("function");
+  it("isolates experimental realtime and deterministic testing helpers", () => {
+    expect(sortedKeys(realtime)).toEqual(["streamLiveAgent"]);
+    expect(sortedKeys(testing)).toEqual(["createMockLanguageModel", "createMockTool"]);
+    expect("streamLiveAgent" in agents).toBe(false);
+    expect("createMockLanguageModel" in agents).toBe(false);
+    expectStability(realtime, "experimental");
+    expectStability(testing, "stable");
   });
 
-  it("does not expose obsolete standalone agent package contracts", () => {
-    expect("createAgentRegistry" in agents).toBe(false);
-    expect("createInMemoryCheckpointStore" in agents).toBe(false);
-    expect("delegateToAgent" in agents).toBe(false);
-    expect("handoffToAgent" in agents).toBe(false);
-  });
-
-  it("does not expose broad non-agent runtime helpers", () => {
+  it("does not expose broad non-agent or obsolete standalone helpers", () => {
     expect("generateText" in agents).toBe(false);
-    expect("generateObject" in agents).toBe(false);
     expect("createWorkflow" in agents).toBe(false);
-    expect("createFileArtifactService" in agents).toBe(false);
-    expect("uploadFile" in agents).toBe(false);
-    expect("generateImage" in agents).toBe(false);
+    expect("createAgentRegistry" in agents).toBe(false);
+    expect("delegateToAgent" in agents).toBe(false);
   });
 });

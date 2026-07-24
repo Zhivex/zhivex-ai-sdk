@@ -43,18 +43,27 @@ const agent = createAgent({ model, instructions: "Keep answers short." });
 const result = await runAgent(agent, { prompt: "Summarize this case." });
 ```
 
-Use `@zhivex-ai/agents` instead of `@zhivex-ai/sdk` when you want the smaller agent-only facade. Use `@zhivex-ai/sdk` when the app also needs `Runner`, workflows, artifacts, embeddings, media generation, or the CLI.
+Use `@zhivex-ai/agents` instead of `@zhivex-ai/sdk` when you want the smaller agent-only facade. Its root contains only the stable application runtime. Import stable persistence, tracing, and evaluation helpers from `@zhivex-ai/agents/ops`; beta control-plane APIs from `@zhivex-ai/agents/beta`; experimental live agents from `@zhivex-ai/agents/realtime`; and deterministic doubles from `@zhivex-ai/agents/testing`.
+
+```ts
+import { Agent } from "@zhivex-ai/agents";
+import { createPostgresAgentRunStore } from "@zhivex-ai/agents/ops";
+import { createAgentApprovalQueue } from "@zhivex-ai/agents/beta";
+```
+
+Use `@zhivex-ai/sdk` when the app also needs `Runner`, workflows, artifacts, embeddings, media generation, or the CLI.
 
 ## Runtime Contract
 
 Every agent run returns a serializable `state`:
 
 - `messages`: normalized messages and tool results.
-- `steps`: model calls with request/response snapshots.
+- `steps`: model calls with immutable request/response snapshots and actual call timings.
 - `toolResults`: executed local tool results.
 - `pendingApprovals`: provider approval requests that need a human decision.
-- `usage`: normalized token usage when providers return it.
+- `usage`: normalized token usage aggregated across every model call in the run.
 - `status`: `completed`, `waiting_approval`, `failed`, `timed_out`, `cancel_requested`, or another production state.
+- `schemaVersion` and `revision`: the persistence format version and monotonic compare-and-swap revision.
 
 Persist the state in your app, or attach an SDK run store:
 
@@ -66,6 +75,14 @@ const agent = new Agent({
   store: createPostgresAgentRunStore({ client: postgresClient })
 });
 ```
+
+Built-in stores atomically claim idempotency keys before model or tool side effects. They also compare revisions before each transition, so duplicate requests share one run and stale concurrent resumes or cancellations raise `ConflictError`. Custom run stores must implement `claimIdempotencyKey()` to accept idempotent inputs. Use SQLite or Postgres for concurrent production workers; the file store is a local-development option.
+
+For shared stores, always pass `scope: { tenantId, userId?, namespace? }`. It partitions runs, memory, idempotency, leases, parent indexes, and tool journals. SQL workers use renewable leases and durable checkpoints to recover expired runs. A completed tool result is reused from its journal; an indeterminate tool execution is not repeated automatically. Side-effecting tools must forward `context.idempotencyKey` and `context.abortSignal` to the external service.
+
+Streams have bounded replay/backpressure and state has a 4 MiB default serialized limit. Request snapshots are incremental, so multi-step histories grow linearly. Telemetry and memory adapters are best effort unless `hookFailurePolicy` explicitly selects strict failure semantics.
+
+Legacy states without a schema version or revision are normalized. Unknown future schema versions are rejected; use `normalizeAgentRunState()` or `migrateAgentRunState()` at application persistence boundaries.
 
 ## Tools And Safety
 
@@ -116,7 +133,7 @@ if (waiting.status === "waiting_approval") {
 }
 ```
 
-For app-facing queues, use `createAgentApprovalQueue()` to turn pending requests into items with cryptographically random approval tokens, reasons, expiration, and resume URLs. Persist the opaque token server-side, compare it before accepting an approval, enforce `expiresAt` in the application, and consume it once; the SDK does not provide an HTTP authorization boundary.
+For app-facing queues, import `createAgentApprovalQueue()` from `@zhivex-ai/agents/beta` to turn pending requests into items with cryptographically random approval tokens, reasons, expiration, and resume URLs. Persist the opaque token server-side, compare it before accepting an approval, enforce `expiresAt` in the application, and consume it once; the SDK does not provide an HTTP authorization boundary.
 
 Tool execution timeouts abort the `AbortSignal` passed as the second argument to `tool.execute(input, context)`. Tools that perform I/O should forward `context.abortSignal` to their client so cancellation stops the underlying work; timeout cancellation is cooperative for tools that ignore the signal.
 
@@ -176,6 +193,8 @@ Production agent work should produce inspectable artifacts:
 - `createAgentEvaluationFixture()` and `runAgentEvaluationFixture()` for regression suites.
 - `promoteAgentGoldenTrace()` for turning a successful run into a regression baseline.
 
+With the focused package, stable trace, replay, cost, provider-support, and evaluation helpers come from `@zhivex-ai/agents/ops`. Ledgers, golden traces, and audit/governance helpers remain beta and come from `@zhivex-ai/agents/beta`.
+
 The CLI in `@zhivex-ai/sdk` can inspect saved states and ledgers locally:
 
 ```bash
@@ -204,7 +223,8 @@ Use Zhivex when provider portability, capability routing, Gateway alignment, exp
 Before cutting an agent-focused release:
 
 1. Run focused agent tests: `bun test packages/core/tests/agent.test.ts packages/core/tests/runner.test.ts packages/core/tests/workflow.test.ts packages/core/tests/agent-control-plane.test.ts packages/agents/tests/agents.test.ts`.
-2. Run API stability and type snapshot tests.
+2. Run API stability, package metadata, and type snapshot tests.
 3. Run `bun run typecheck`, `bun run test`, and `bun run build`.
-4. Verify the provider matrix still describes current adapter behavior.
-5. Confirm the changeset includes every published package with changed exports or docs.
+4. After the build, run `bun run packages/agents/tests/dist-entrypoints.smoke.ts` to verify every published subpath loads from `dist`.
+5. Verify the provider matrix still describes current adapter behavior.
+6. Confirm the changeset includes every published package with changed exports or docs.

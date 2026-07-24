@@ -112,7 +112,7 @@ describeIntegration("qwen extended integration", () => {
     expect(result.operationName).toBeTruthy();
   });
 
-  enabled(process.env.QWEN_REALTIME_MODEL && (workspaceId || realtimeURL))(
+  enabled(process.env.QWEN_REALTIME_MODEL)(
     "connects to a real Qwen realtime session",
     async () => {
       const session = await provider().realtimeModel!(process.env.QWEN_REALTIME_MODEL!).connect({

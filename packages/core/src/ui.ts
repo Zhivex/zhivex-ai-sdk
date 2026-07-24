@@ -6,8 +6,9 @@ import type {
   UIMessage,
   UIMessageChunk
 } from "./types.js";
+import { createSecureId } from "./secure-id.js";
 
-const randomId = () => `msg_${Math.random().toString(36).slice(2, 10)}`;
+const randomId = () => createSecureId("msg");
 
 export const toUIMessage = (message: ModelMessage, id: string = randomId()): UIMessage => ({
   id,

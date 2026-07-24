@@ -4,9 +4,10 @@ import path from "node:path";
 
 import { ConflictError, ValidationError } from "./errors.js";
 import { assertPostgresClient } from "./postgres-client.js";
+import { createSecureId } from "./secure-id.js";
 import type { JsonValue, PostgresClientLike, SqliteDatabaseLike, SqliteStatementLike } from "./types.js";
 
-const randomId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+const randomId = createSecureId;
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 export const ARTIFACT_SCHEMA_VERSION = 1 as const;

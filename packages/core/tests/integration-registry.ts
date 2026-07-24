@@ -24,6 +24,7 @@ export interface IntegrationLanguageProvider {
     embeddings: boolean;
     reasoning?: ReasoningConfig;
   };
+  toolMaxTokens?: number;
   toolChoiceForTool?: (toolName: string) => ToolChoice;
 }
 
@@ -496,11 +497,10 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               workspaceId: qwenWorkspaceId,
               region: qwenRegion
             }).embeddingModel(qwenEmbeddingModelId),
-          supports: qwenSupports,
-          toolChoiceForTool: (toolName) => ({
-            type: "tool",
-            toolName
-          })
+          // Qwen thinking models need automatic tool selection and enough output
+          // budget to emit complete JSON arguments before the follow-up answer.
+          toolMaxTokens: 128,
+          supports: qwenSupports
         } satisfies IntegrationLanguageProvider
       ]
     : []),

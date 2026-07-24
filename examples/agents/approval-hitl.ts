@@ -1,8 +1,8 @@
 import {
   Agent,
-  createAgentApprovalQueue,
   type LanguageModel
 } from "../../packages/agents/src/index";
+import { createAgentApprovalQueue } from "../../packages/agents/src/beta";
 
 import { section } from "../_shared";
 

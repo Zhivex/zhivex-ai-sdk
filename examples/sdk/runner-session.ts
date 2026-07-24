@@ -1,4 +1,14 @@
-import { createAgent, createFileSessionService, createRunner, getApiStability, type LanguageModel } from "@zhivex-ai/sdk";
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import {
+  createAgent,
+  createFileSessionService,
+  createRunner,
+  getApiStability,
+  type LanguageModel
+} from "../../packages/sdk/src/index";
 
 import { section } from "../_shared";
 
@@ -52,7 +62,7 @@ const runner = createRunner({
   appName: "runner-session-example",
   agent,
   sessionService: createFileSessionService({
-    directory: "./tmp/example-runner-sessions"
+    directory: await mkdtemp(path.join(os.tmpdir(), "zhivex-runner-session-"))
   })
 });
 

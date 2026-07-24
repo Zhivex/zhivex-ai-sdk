@@ -66,6 +66,12 @@ export {
   streamAgent
 } from "./agent.js";
 export {
+  AGENT_RUN_STATE_SCHEMA_VERSION,
+  migrateAgentRunState,
+  normalizeAgentRunState
+} from "./agent-state.js";
+export type { AgentRunStateMigrationTarget } from "./agent-state.js";
+export {
   AdvancedToolRegistry,
   createAdvancedToolRegistry,
   createHttpTool,
@@ -408,9 +414,16 @@ export {
   createBudgetGuard,
   createProductionSafetyPolicy,
   createRedactionPolicy,
-  createSafetyPolicy
+  createSafetyPolicy,
+  evaluateAgentBudgetPreflight,
+  getAgentBudgetStatus
 } from "./safety-policy.js";
 export type {
+  AgentBudgetConsumption,
+  AgentBudgetOperation,
+  AgentBudgetPreflightOptions,
+  AgentBudgetRemaining,
+  AgentBudgetStatus,
   ApprovalPolicyOptions,
   ApprovalPolicyPreset,
   BudgetGuard,

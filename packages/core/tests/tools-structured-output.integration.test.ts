@@ -17,7 +17,7 @@ describeToolIntegration("tool calling capability integration", () => {
         model: provider.createModel(),
         prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
         ...(provider.omitTemperature ? {} : { temperature: provider.temperature ?? 0 }),
-        maxTokens: 32,
+        maxTokens: provider.toolMaxTokens ?? 32,
         maxSteps: 2,
         tools: {
           sum: tool({

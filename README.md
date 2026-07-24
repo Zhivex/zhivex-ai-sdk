@@ -432,6 +432,7 @@ console.log(run.state);
 What the runtime guarantees:
 
 - `Agent.run()` and `runAgent()` always return the final `state`, including `steps`, `toolResults`, `messages`, `usage`, and `pendingApprovals`.
+- Multi-step `usage` is the aggregate across every model call, and each step keeps an immutable request snapshot with its actual model-call timing.
 - `state` is JSON-serializable and can be persisted by your app.
 - `Agent` and `createAgent()` keep reusable defaults such as `instructions`, `tools`, `maxSteps`, `reasoning`, and provider options in one place.
 - `Agent.resume()` and `resumeAgent()` continue from a previous `state` instead of rebuilding the run manually.
@@ -1111,7 +1112,7 @@ These helpers intentionally depend on small driver interfaces instead of bundlin
 
 ### Durable Agent Runs
 
-Built-in run stores support compatible durability primitives for production agent services: schema-versioned state, idempotent run creation, and cooperative cancellation.
+Built-in run stores support compatible durability primitives for production agent services: schema-versioned state, atomic idempotency claims, optimistic concurrency, and cooperative cancellation.
 
 ```ts
 import { cancelAgentRun, createAgent, createPostgresAgentRunStore, runAgent } from "@zhivex-ai/sdk";
@@ -1124,21 +1125,30 @@ const agent = createAgent({
 
 const first = await runAgent(agent, {
   prompt: "Draft the customer reply.",
+  scope: { tenantId: "acme", userId: "user-7" },
   idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined
 });
 
 await cancelAgentRun(store, first.state.runId, {
+  scope: first.state.scope,
   reason: "User cancelled the request."
 });
 ```
 
-- New runs are persisted with `state.schemaVersion === 1`.
-- Legacy states without `schemaVersion` are normalized when loaded or resumed.
-- `idempotencyKey` requires an agent run store that implements `findByIdempotencyKey()`. The built-in in-memory, file, SQLite, and Postgres stores support it.
-- Reusing an existing `idempotencyKey` returns the existing run state instead of creating a duplicate run.
+- New runs use `AGENT_RUN_STATE_SCHEMA_VERSION` and start with a monotonic `revision`.
+- Legacy states without `schemaVersion` or `revision` are normalized when loaded or resumed. Future schema versions are rejected instead of being silently coerced. Use `normalizeAgentRunState()` or `migrateAgentRunState()` at application storage boundaries.
+- `idempotencyKey` requires an agent run store that implements the atomic `claimIdempotencyKey()` contract. The built-in in-memory, file, SQLite, and Postgres stores support it.
+- Concurrent requests with the same `idempotencyKey` share one `runId`; only the winner starts model or tool side effects. A duplicate returns the current persisted state, including `running` while the winner is still executing.
+- Every persisted transition uses revision compare-and-swap. A stale concurrent resume, cancellation, or update throws `ConflictError` before starting another model/tool step.
+- `scope: { tenantId, userId?, namespace? }` isolates run IDs, idempotency keys, parent indexes, memory, leases, and tool journals. Pass the same scope to run, resume, lookup, and cancellation operations.
+- Active workers hold renewable leases. An expired lease can be recovered by another worker; a live lease prevents duplicate model/tool work. The runtime checkpoints every model response before tools and every tool batch before the next model call.
+- Completed local tools are recorded in a durable journal. `tool.execute(input, context)` receives `context.idempotencyKey`; forward it to side-effecting APIs. Completed entries replay without rerunning the tool, while indeterminate executions are blocked for operator reconciliation.
+- Use SQLite or Postgres for durable concurrent workers. The file store is intended for local development because its cross-process CAS, lease, and recovery guarantees are best effort.
 - `cancelAgentRun()` marks the saved state as `cancel_requested` by default. Pass `{ mode: "final" }` to write a terminal `cancelled` state.
-- Cancellation is durable and cooperative. It gives workers/providers a stable marker to observe, but it does not promise to stop external side effects that already started.
+- Active workers poll durable cancellation and abort the provider/tool `AbortSignal`. Cancellation cannot undo an external side effect that already completed, so tools must forward both `context.abortSignal` and `context.idempotencyKey`.
 - Add `policy: { timeoutMs, onTimeout }` to `createAgent()` or `runAgent()` to enforce an SDK-level runtime timeout. The default timeout result is `timed_out`; `onTimeout: "cancel-requested"` writes `cancel_requested` instead. The timeout is propagated to providers through `AbortSignal`.
+- Agent streams use bounded replay and subscriber queues with backpressure; overflow fails explicitly instead of silently dropping events. Durable state is bounded by `maxStateBytes` (4 MiB by default), and step request snapshots are incremental to avoid quadratic growth.
+- Telemetry and memory hooks are best effort by default. Use `hookFailurePolicy.onError` to observe failures, or opt into `"fail"` for strict hook semantics.
 
 ### Agent Handoffs
 
@@ -1961,7 +1971,7 @@ const result = await generateText({
 });
 ```
 
-Qwen automatically selects between DashScope-compatible Responses and Chat Completions. Responses is used for hosted web search, web extraction, code interpreter, file search, remote MCP, image search, OCR file input, and response continuation; Chat is selected for structured output, audio input, `maxTokens`, or `reasoning.budgetTokens`. You can force a compatible path with `providerOptions.apiMode`. Current catalog examples prefer `qwen3.7-plus` for multimodal reasoning, `qwen3.7-max` for text reasoning, and `qwen-image-2.0-pro` for image generation.
+Qwen automatically selects between DashScope-compatible Responses and Chat Completions. Responses is used for hosted web search, web extraction, code interpreter, file search, remote MCP, image search, OCR file input, and response continuation; Chat is selected for structured output, audio input, `maxTokens`, or `reasoning.budgetTokens`. You can force a compatible path with `providerOptions.apiMode`. Current catalog examples prefer `qwen3.7-plus` for multimodal reasoning, `qwen3.7-max` for text reasoning, and `qwen-image-2.0-pro` for image generation. The default international endpoint uses `tongyi-embedding-vision-plus` for multimodal embeddings; `qwen3-vl-embedding` requires a Beijing workspace. Text reranking uses the DashScope-native endpoint so both the global international host and workspace-specific hosts work. Authenticated realtime sessions use a Node/Bun WebSocket transport by default.
 
 ```ts
 import { generateText } from "@zhivex-ai/sdk";

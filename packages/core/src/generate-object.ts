@@ -1,5 +1,6 @@
 import type { ZodTypeAny } from "zod";
 
+import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
 import { ParseError, UnsupportedFeatureError, ValidationError } from "./errors.js";
 import { createTextMessage } from "./messages.js";
 import { generateText, streamText } from "./generate-text.js";
@@ -262,92 +263,16 @@ export const streamObject = <TSchema extends ZodTypeAny>(options: GenerateObject
   const { objectMode, request } = createObjectOptions(options);
   const streamResult = streamText(request);
 
-  const subscribers = new Set<(value: IteratorResult<ObjectStreamEvent<GenerateObjectOutput<TSchema>["object"], Partial<GenerateObjectOutput<TSchema>["object"]>>>) => void>();
-  const partialSubscribers = new Set<(value: IteratorResult<Partial<GenerateObjectOutput<TSchema>["object"]>>) => void>();
-  const history: IteratorResult<ObjectStreamEvent<GenerateObjectOutput<TSchema>["object"], Partial<GenerateObjectOutput<TSchema>["object"]>>>[] = [];
-  const partialHistory: IteratorResult<Partial<GenerateObjectOutput<TSchema>["object"]>>[] = [];
-  let done = false;
-  let partialDone = false;
+  type ObjectEvent = ObjectStreamEvent<
+    GenerateObjectOutput<TSchema>["object"],
+    Partial<GenerateObjectOutput<TSchema>["object"]>
+  >;
+  type PartialObject = Partial<GenerateObjectOutput<TSchema>["object"]>;
+  const broadcast = new BoundedReplayBroadcast<ObjectEvent>();
+  const partialBroadcast = new BoundedReplayBroadcast<PartialObject>();
 
-  const publish = (
-    value: IteratorResult<ObjectStreamEvent<GenerateObjectOutput<TSchema>["object"], Partial<GenerateObjectOutput<TSchema>["object"]>>>
-  ) => {
-    history.push(value);
-    for (const subscriber of subscribers) {
-      subscriber(value);
-    }
-    if (value.done) {
-      done = true;
-    }
-  };
-
-  const publishPartial = (value: IteratorResult<Partial<GenerateObjectOutput<TSchema>["object"]>>) => {
-    partialHistory.push(value);
-    for (const subscriber of partialSubscribers) {
-      subscriber(value);
-    }
-    if (value.done) {
-      partialDone = true;
-    }
-  };
-
-  const createEventStream = async function* () {
-    let cursor = 0;
-
-    while (true) {
-      while (cursor < history.length) {
-        const item = history[cursor];
-        cursor += 1;
-        if (item.done) {
-          return;
-        }
-        yield item.value;
-      }
-
-      if (done) {
-        return;
-      }
-
-      await new Promise<
-        IteratorResult<ObjectStreamEvent<GenerateObjectOutput<TSchema>["object"], Partial<GenerateObjectOutput<TSchema>["object"]>>>
-      >((resolve) => {
-        const subscriber = (
-          value: IteratorResult<ObjectStreamEvent<GenerateObjectOutput<TSchema>["object"], Partial<GenerateObjectOutput<TSchema>["object"]>>>
-        ) => {
-          subscribers.delete(subscriber);
-          resolve(value);
-        };
-        subscribers.add(subscriber);
-      });
-    }
-  };
-
-  const createPartialStream = async function* () {
-    let cursor = 0;
-
-    while (true) {
-      while (cursor < partialHistory.length) {
-        const item = partialHistory[cursor];
-        cursor += 1;
-        if (item.done) {
-          return;
-        }
-        yield item.value;
-      }
-
-      if (partialDone) {
-        return;
-      }
-
-      await new Promise<IteratorResult<Partial<GenerateObjectOutput<TSchema>["object"]>>>((resolve) => {
-        const subscriber = (value: IteratorResult<Partial<GenerateObjectOutput<TSchema>["object"]>>) => {
-          partialSubscribers.delete(subscriber);
-          resolve(value);
-        };
-        partialSubscribers.add(subscriber);
-      });
-    }
-  };
+  const createEventStream = () => broadcast.stream();
+  const createPartialStream = () => partialBroadcast.stream();
 
   const finalResultPromise = (async () => {
     let text = "";
@@ -355,33 +280,30 @@ export const streamObject = <TSchema extends ZodTypeAny>(options: GenerateObject
     let completed = false;
 
     for await (const event of streamResult.eventStream) {
-      publish({ done: false, value: event });
+      await broadcast.publish(event);
 
       if (event.type !== "text-delta") {
         continue;
       }
 
       text += event.textDelta;
-      publish({
-        done: false,
-        value: {
-          type: "object-delta",
-          textDelta: event.textDelta,
-          partialText: text
-        }
+      await broadcast.publish({
+        type: "object-delta",
+        textDelta: event.textDelta,
+        partialText: text
       });
 
       const partial = parsePartialObject(text) as Partial<GenerateObjectOutput<TSchema>["object"]> | undefined;
       if (partial !== undefined && !sameJson(partial, lastPartial)) {
         lastPartial = partial;
-        publish({ done: false, value: { type: "object-partial", partialObject: partial } });
-        publishPartial({ done: false, value: partial });
+        await broadcast.publish({ type: "object-partial", partialObject: partial });
+        await partialBroadcast.publish(partial);
 
         if (!completed) {
           const parsed = options.schema.safeParse(partial);
           if (parsed.success) {
             completed = true;
-            publish({ done: false, value: { type: "object-complete", object: parsed.data } });
+            await broadcast.publish({ type: "object-complete", object: parsed.data }, { terminal: true });
           }
         }
       }
@@ -391,22 +313,27 @@ export const streamObject = <TSchema extends ZodTypeAny>(options: GenerateObject
     const object = parseObject(textResult.text, options.schema);
 
     if (!completed) {
-      publish({ done: false, value: { type: "object-complete", object } });
+      await broadcast.publish({ type: "object-complete", object }, { terminal: true });
     }
 
-    publish({ done: true, value: undefined });
-    publishPartial({ done: true, value: undefined });
+    broadcast.close();
+    partialBroadcast.close();
 
     return {
       ...textResult,
       object,
       objectMode
     };
-  })().catch((error) => {
+  })().catch(async (error) => {
     const streamError = error instanceof Error ? error : new Error(String(error));
-    publish({ done: false, value: { type: "error", error: streamError } });
-    publish({ done: true, value: undefined });
-    publishPartial({ done: true, value: undefined });
+    if (streamError.name === "StreamBufferOverflowError") {
+      broadcast.fail(streamError);
+      partialBroadcast.fail(streamError);
+    } else {
+      await broadcast.publish({ type: "error", error: streamError }, { terminal: true });
+      broadcast.close();
+      partialBroadcast.close();
+    }
     throw error;
   });
 

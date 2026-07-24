@@ -12,7 +12,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b --force",
+    "build": "bun run scripts/clean-dist.ts && tsc -b --force",
     "changeset": "changeset",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
@@ -34,6 +34,7 @@
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
     "@types/node": "^25.7.0",
+    "@types/ws": "^8.18.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6",
     "zod": "^4.4.3"

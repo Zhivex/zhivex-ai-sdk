@@ -6,6 +6,7 @@ export interface ApiStabilityEntry {
 }
 
 const stableSymbols = [
+  "AGENT_RUN_STATE_SCHEMA_VERSION",
   "Agent",
   "ConfigurationError",
   "GuardrailTriggeredError",
@@ -72,6 +73,7 @@ const stableSymbols = [
   "createUIMessageJsonResponse",
   "createUIMessageLinesResponse",
   "decodeBase64WithLimit",
+  "evaluateAgentBudgetPreflight",
   "audioPart",
   "embed",
   "embedMany",
@@ -88,6 +90,7 @@ const stableSymbols = [
   "generateSpeech",
   "generateText",
   "generateVideo",
+  "getAgentBudgetStatus",
   "getAgentApprovalRequestFromPart",
   "getAgentApprovalRequests",
   "getTextFromMessages",
@@ -98,6 +101,7 @@ const stableSymbols = [
   "isToolRegistry",
   "judgeAgentEvaluation",
   "mergeAbortSignals",
+  "migrateAgentRunState",
   "migrateAgentSessionRecord",
   "normalizeAgentSession",
   "pruneFileSessionStore",
@@ -106,6 +110,7 @@ const stableSymbols = [
   "readErrorBodyWithLimit",
   "readJsonWithLimit",
   "normalizeFinishReason",
+  "normalizeAgentRunState",
   "normalizeMessages",
   "parseUIMessageRequest",
   "prepareSubagentsForAgent",

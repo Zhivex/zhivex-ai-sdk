@@ -1,3 +1,4 @@
+import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
 import { ParseError, UnsupportedFeatureError, ValidationError } from "./errors.js";
 import { emitLanguageModelTelemetryEvent } from "./middleware.js";
 import {
@@ -22,6 +23,7 @@ import type {
   ModelMessage,
   StreamTextResult,
   StreamEvent,
+  TokenUsage,
   ToolApprovalDecision,
   ToolApprovalRequest,
   ToolCall,
@@ -135,8 +137,49 @@ const buildMessages = (options: Pick<GenerateTextOptions, "prompt" | "messages" 
   return messages;
 };
 
+type GenerateTextStepTiming = {
+  startedAt: number;
+  finishedAt: number;
+};
+
+const stepTimings = new WeakMap<ModelGenerateInput, GenerateTextStepTiming>();
+
+/** @internal Used by the agent runtime to preserve the model-call interval. */
+export const getGenerateTextStepTiming = (request: ModelGenerateInput): GenerateTextStepTiming | undefined =>
+  stepTimings.get(request);
+
+export const aggregateTokenUsage = (usages: Array<TokenUsage | undefined>): TokenUsage | undefined => {
+  let aggregate: TokenUsage | undefined;
+
+  for (const usage of usages) {
+    if (!usage) {
+      continue;
+    }
+
+    aggregate ??= {};
+    for (const field of [
+      "inputTokens",
+      "cachedInputTokens",
+      "cacheWriteTokens",
+      "outputTokens",
+      "reasoningTokens",
+      "totalTokens"
+    ] as const) {
+      if (usage[field] !== undefined) {
+        aggregate[field] = (aggregate[field] ?? 0) + usage[field];
+      }
+    }
+
+    if (usage.speed !== undefined) {
+      aggregate.speed = usage.speed;
+    }
+  }
+
+  return aggregate;
+};
+
 const toRequest = (options: GenerateTextOptions, messages: ModelMessage[]): ModelGenerateInput => ({
-  messages,
+  messages: structuredClone(messages),
   tools: toToolSet(options.tools),
   toolChoice: options.toolChoice,
   toolExecution: options.toolExecution,
@@ -361,6 +404,17 @@ const extractToolCalls = (messages: ModelMessage[]): ToolCall[] =>
       .map((part) => part.toolCall)
   );
 
+const extractUnresolvedToolCalls = (messages: ModelMessage[]): ToolCall[] => {
+  const completed = new Set(
+    messages.flatMap((message) =>
+      message.parts
+        .filter((part) => part.type === "tool-result")
+        .map((part) => part.toolResult.toolCallId)
+    )
+  );
+  return extractToolCalls(messages).filter((call) => !completed.has(call.id));
+};
+
 const validateToolChoice = (options: {
   model: GenerateTextOptions["model"];
   tools?: ReturnType<typeof toToolSet>;
@@ -411,9 +465,30 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
   const generatedMessages: ModelMessage[] = [];
   let finalResult: GenerateResult | undefined;
 
+  const pendingToolCalls = extractUnresolvedToolCalls(allMessages);
+  if (pendingToolCalls.length) {
+    const request = toRequest(options, allMessages);
+    const step = options.stepOffset ?? 0;
+    await options.onBeforeToolExecution?.({ request, step, toolCalls: pendingToolCalls });
+    const recoveredToolResults = await executeTools(pendingToolCalls, options, {
+      request,
+      step,
+      tools: resolvedTools
+    });
+    toolResults.push(...recoveredToolResults);
+    for (const result of recoveredToolResults) {
+      allMessages.push({ role: "tool", parts: [toolResultPart(result)] });
+    }
+    await options.onToolExecutionComplete?.({ request, step, toolResults: recoveredToolResults });
+  }
+
   for (let step = 0; step < maxSteps; step += 1) {
     const request = toRequest(options, allMessages);
+    const absoluteStep = (options.stepOffset ?? 0) + step + 1;
+    await options.onBeforeModelStep?.({ request, step: absoluteStep });
+    const startedAt = Date.now();
     const response = await options.model.generate(request);
+    stepTimings.set(request, { startedAt, finishedAt: Date.now() });
     steps.push({ request, response });
     finalResult = response;
 
@@ -424,13 +499,15 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
     }
 
     const toolCalls = extractToolCalls(responseMessages);
+    await options.onModelStep?.({ request, response, step: absoluteStep, toolCalls });
     if (!toolCalls.length) {
       break;
     }
 
+    await options.onBeforeToolExecution?.({ request, step: absoluteStep, toolCalls });
     const currentToolResults = await executeTools(toolCalls, options, {
       request,
-      step: step + 1,
+      step: absoluteStep,
       tools: resolvedTools
     });
     toolResults.push(...currentToolResults);
@@ -441,6 +518,7 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
         parts: [toolResultPart(result)]
       });
     }
+    await options.onToolExecutionComplete?.({ request, step: absoluteStep, toolResults: currentToolResults });
   }
 
   if (!finalResult) {
@@ -451,7 +529,7 @@ export const generateText = async (options: GenerateTextOptions): Promise<Genera
     text: getTextFromMessages(generatedMessages),
     finishReason: finalResult.finishReason,
     providerFinishReason: finalResult.providerFinishReason,
-    usage: finalResult.usage,
+    usage: aggregateTokenUsage(steps.map((step) => step.response.usage)),
     steps,
     messages: allMessages,
     toolResults
@@ -480,90 +558,22 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
     throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
   }
 
-  type PublishedStreamItem = {
-    sequence: number;
-    result: IteratorResult<StreamEvent>;
-  };
-  type StreamSubscriber = {
-    accepts: (event: StreamEvent) => boolean;
-    queue: PublishedStreamItem[];
-    wake?: () => void;
-  };
-
-  const subscribers = new Set<StreamSubscriber>();
-  const history: PublishedStreamItem[] = [];
-  let sequence = 0;
-  let done = false;
+  const broadcast = new BoundedReplayBroadcast<StreamEvent>();
   let finalResultPromise: Promise<GenerateTextOutput> | undefined;
 
-  const publish = (result: IteratorResult<StreamEvent>) => {
-    const item = { sequence, result } satisfies PublishedStreamItem;
-    sequence += 1;
-
+  const publish = async (event: StreamEvent, terminal = false) => {
     // Progressive binary previews are useful only to live consumers. Retaining
     // them for collect(), textStream, or a late eventStream replay duplicates
     // potentially large buffers without changing the final generated result.
-    if (result.done || result.value.type !== "image-generation" || !result.value.partial) {
-      history.push(item);
-    }
-
-    for (const subscriber of subscribers) {
-      if (result.done || subscriber.accepts(result.value)) {
-        subscriber.queue.push(item);
-        subscriber.wake?.();
-        subscriber.wake = undefined;
-      }
-    }
-    if (result.done) {
-      done = true;
-    }
+    await broadcast.publish(event, {
+      replay: event.type !== "image-generation" || !event.partial,
+      terminal
+    });
   };
 
-  const createEventStream = async function* (
+  const createEventStream = (
     accepts: (event: StreamEvent) => boolean = () => true
-  ) {
-    const replayThrough = sequence;
-    const subscriber: StreamSubscriber = { accepts, queue: [] };
-    if (!done) {
-      subscribers.add(subscriber);
-    }
-
-    try {
-      for (const item of history) {
-        if (item.sequence >= replayThrough) {
-          break;
-        }
-        if (item.result.done) {
-          return;
-        }
-        if (accepts(item.result.value)) {
-          yield item.result.value;
-        }
-      }
-
-      while (true) {
-        while (subscriber.queue.length) {
-          const item = subscriber.queue.shift()!;
-          if (item.result.done) {
-            return;
-          }
-          yield item.result.value;
-        }
-
-        if (done) {
-          return;
-        }
-
-        await new Promise<void>((resolve) => {
-          subscriber.wake = resolve;
-        });
-      }
-    } finally {
-      subscribers.delete(subscriber);
-      subscriber.queue.length = 0;
-      subscriber.wake = undefined;
-    }
-  };
+  ) => broadcast.stream(accepts);
 
   const runner = async (): Promise<GenerateTextOutput> => {
     const allMessages = [...baseMessages];
@@ -572,8 +582,29 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
     const toolResults: ToolExecutionResult[] = [];
     let finalResult: GenerateResult | undefined;
 
+    const pendingToolCalls = extractUnresolvedToolCalls(allMessages);
+    if (pendingToolCalls.length) {
+      const request = toRequest(options, allMessages);
+      const step = options.stepOffset ?? 0;
+      await options.onBeforeToolExecution?.({ request, step, toolCalls: pendingToolCalls });
+      const recoveredToolResults = await executeTools(pendingToolCalls, options, {
+        request,
+        step,
+        tools: resolvedTools
+      });
+      toolResults.push(...recoveredToolResults);
+      for (const result of recoveredToolResults) {
+        await publish({ type: "tool-result", toolResult: result });
+        allMessages.push({ role: "tool", parts: [toolResultPart(result)] });
+      }
+      await options.onToolExecutionComplete?.({ request, step, toolResults: recoveredToolResults });
+    }
+
     for (let step = 0; step < maxSteps; step += 1) {
       const request = toRequest(options, allMessages);
+      const absoluteStep = (options.stepOffset ?? 0) + step + 1;
+      await options.onBeforeModelStep?.({ request, step: absoluteStep });
+      const startedAt = Date.now();
       const stream = await streamModel(request);
       const stepMessages: ModelMessage[] = [];
       let textBuffer = "";
@@ -583,7 +614,7 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
       let usage = undefined;
 
       for await (const event of stream) {
-        publish({ done: false, value: event });
+        await publish(event);
 
         if (event.type === "text-delta") {
           textBuffer += event.textDelta;
@@ -623,6 +654,7 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
           usage = event.usage;
         }
       }
+      stepTimings.set(request, { startedAt, finishedAt: Date.now() });
 
       if (textBuffer) {
         const assistant = stepMessages.find((message) => message.role === "assistant");
@@ -647,55 +679,59 @@ export const streamText = (options: GenerateTextOptions): StreamTextResult => {
       generatedMessages.push(...stepMessages);
 
       const toolCalls = extractToolCalls(stepMessages);
+      await options.onModelStep?.({ request, response: finalResult, step: absoluteStep, toolCalls });
       if (!toolCalls.length) {
         break;
       }
 
-        const currentToolResults = await executeTools(toolCalls, options, {
-          request,
-          step: step + 1,
-          tools: resolvedTools
-        });
+      await options.onBeforeToolExecution?.({ request, step: absoluteStep, toolCalls });
+      const currentToolResults = await executeTools(toolCalls, options, {
+        request,
+        step: absoluteStep,
+        tools: resolvedTools
+      });
       toolResults.push(...currentToolResults);
 
       for (const toolResult of currentToolResults) {
-        publish({ done: false, value: { type: "tool-result", toolResult } });
+        await publish({ type: "tool-result", toolResult });
         allMessages.push({
           role: "tool",
           parts: [toolResultPart(toolResult)]
         });
       }
+      await options.onToolExecutionComplete?.({ request, step: absoluteStep, toolResults: currentToolResults });
     }
 
     if (!finalResult) {
       throw new ParseError("Model did not return a result.");
     }
 
-    publish({
-      done: false,
-      value: {
-        type: "finish",
-        finishReason: finalResult.finishReason,
-        providerFinishReason: finalResult.providerFinishReason,
-        usage: finalResult.usage
-      }
-    });
-    publish({ done: true, value: undefined });
+    const usage = aggregateTokenUsage(steps.map((step) => step.response.usage));
+
+    await publish({
+      type: "finish",
+      finishReason: finalResult.finishReason,
+      providerFinishReason: finalResult.providerFinishReason,
+      usage
+    }, true);
+    broadcast.close();
 
     return {
       text: getTextFromMessages(generatedMessages),
       finishReason: finalResult.finishReason,
       providerFinishReason: finalResult.providerFinishReason,
-      usage: finalResult.usage,
+      usage,
       steps,
       messages: allMessages,
       toolResults
     };
   };
 
-  finalResultPromise = runner().catch((error) => {
-    publish({ done: false, value: { type: "error", error: error instanceof Error ? error : new Error(String(error)) } });
-    publish({ done: true, value: undefined });
+  finalResultPromise = runner().catch(async (error) => {
+    if (!(error instanceof Error && error.name === "StreamBufferOverflowError")) {
+      await publish({ type: "error", error: error instanceof Error ? error : new Error(String(error)) }, true);
+      broadcast.close();
+    }
     throw error;
   });
 
