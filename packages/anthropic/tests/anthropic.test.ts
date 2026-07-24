@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { generateObject, generateText, getAgentCapabilities, streamText, tool } from "@zhivex-ai/core";
+import { generateObject, generateText, getAgentCapabilities, providerDataPart, streamText, tool } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { anthropicCodeExecutionTool, anthropicMcpToolset, anthropicWebSearchTool, createAnthropic } from "../src/index.js";
@@ -297,7 +297,7 @@ describe("anthropic adapter", () => {
     expect(getAgentCapabilities(provider("claude-3-5-sonnet")).codeExecution).toBe(true);
   });
 
-  it("maps Anthropic code execution into native tools and beta headers", async () => {
+  it("maps Anthropic code execution into the current generally available tool", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
         content: [
@@ -326,8 +326,8 @@ describe("anthropic adapter", () => {
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const headers = requestInit.headers as Record<string, string>;
     const body = JSON.parse(String(requestInit.body)) as { tools: Array<{ type: string; name: string }> };
-    expect(headers["anthropic-beta"]).toBe("code-execution-2025-08-25");
-    expect(body.tools).toEqual([{ type: "code_execution_20250825", name: "code_execution" }]);
+    expect(headers["anthropic-beta"]).toBeUndefined();
+    expect(body.tools).toEqual([{ type: "code_execution_20260521", name: "code_execution" }]);
     expect(result.messages.at(-1)?.parts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -363,6 +363,7 @@ describe("anthropic adapter", () => {
     });
 
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
     const body = JSON.parse(String(requestInit.body)) as {
       thinking: { type: string; budget_tokens: number };
     };
@@ -555,6 +556,7 @@ describe("anthropic adapter", () => {
     });
 
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
     const body = JSON.parse(String(requestInit.body)) as {
       model: string;
       speed: string;
@@ -568,6 +570,7 @@ describe("anthropic adapter", () => {
       thinking: { type: "adaptive" },
       output_config: { effort: "xhigh" }
     });
+    expect(headers["anthropic-beta"]?.split(",")).toContain("fast-mode-2026-02-01");
     expect(result.usage).toMatchObject({
       inputTokens: 10,
       outputTokens: 4,
@@ -576,12 +579,352 @@ describe("anthropic adapter", () => {
     });
   });
 
+  it("supports Claude Opus 5 max effort, managed fallbacks, task budgets, and composed beta headers", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "hello from opus 5" }],
+        stop_reason: "end_turn",
+        usage: {
+          input_tokens: 10,
+          cache_read_input_tokens: 3,
+          cache_creation_input_tokens: 2,
+          output_tokens: 4,
+          output_tokens_details: { thinking_tokens: 2 },
+          speed: "fast"
+        }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("claude-opus-5");
+    expect(model.capabilities.reasoningEfforts).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+
+    const result = await generateText({
+      model,
+      prompt: "hello",
+      maxTokens: 64_000,
+      reasoning: {
+        effort: "max"
+      },
+      providerOptions: {
+        speed: "fast",
+        fallbacks: "default",
+        midConversationToolChanges: true,
+        betas: ["custom-feature-2026-07-24", "fast-mode-2026-02-01"],
+        output_config: {
+          task_budget: {
+            type: "tokens",
+            total: 64_000,
+            remaining: 48_000
+          }
+        }
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
+    const betas = headers["anthropic-beta"]?.split(",") ?? [];
+    const body = JSON.parse(String(requestInit.body)) as Record<string, unknown>;
+
+    expect(new Set(betas)).toEqual(
+      new Set([
+        "custom-feature-2026-07-24",
+        "fast-mode-2026-02-01",
+        "task-budgets-2026-03-13",
+        "server-side-fallback-2026-07-01",
+        "mid-conversation-tool-changes-2026-07-01"
+      ])
+    );
+    expect(betas.filter((beta) => beta === "fast-mode-2026-02-01")).toHaveLength(1);
+    expect(body).toMatchObject({
+      model: "claude-opus-5",
+      speed: "fast",
+      fallbacks: "default",
+      thinking: { type: "adaptive" },
+      output_config: {
+        effort: "max",
+        task_budget: {
+          type: "tokens",
+          total: 64_000,
+          remaining: 48_000
+        }
+      }
+    });
+    expect(body.betas).toBeUndefined();
+    expect(body.midConversationToolChanges).toBeUndefined();
+    expect(result.usage).toEqual({
+      inputTokens: 15,
+      cachedInputTokens: 3,
+      cacheWriteTokens: 2,
+      outputTokens: 4,
+      reasoningTokens: 2,
+      totalTokens: 19,
+      speed: "fast"
+    });
+  });
+
+  it("leaves Claude Opus 5 adaptive thinking at its API default and supports disabling it at high effort", async () => {
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ content: [], stop_reason: "end_turn", usage: {} }))
+      .mockResolvedValueOnce(Response.json({ content: [], stop_reason: "end_turn", usage: {} }));
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-opus-5"),
+      prompt: "default"
+    });
+    await generateText({
+      model: provider("claude-opus-5"),
+      prompt: "disabled",
+      reasoning: { effort: "high" },
+      providerOptions: {
+        thinking: { type: "disabled" }
+      }
+    });
+
+    const defaultBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    const disabledBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(defaultBody.thinking).toBeUndefined();
+    expect(defaultBody.output_config).toBeUndefined();
+    expect(disabledBody).toMatchObject({
+      thinking: { type: "disabled" },
+      output_config: { effort: "high" }
+    });
+  });
+
+  it("maps Claude Opus 5 common none and accepts only documented default sampling values", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "concise" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 2, output_tokens: 1 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-opus-5"),
+      prompt: "hello",
+      temperature: 1,
+      reasoning: { effort: "none" },
+      providerOptions: {
+        top_p: 0.99
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+    expect(body).toMatchObject({
+      temperature: 1,
+      top_p: 0.99,
+      thinking: { type: "disabled" }
+    });
+    expect(body.output_config).toBeUndefined();
+  });
+
+  it.each([
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+    "claude-opus-4-5-20251101",
+    "claude-sonnet-4-5-20250929",
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-1-20250805"
+  ])("maps %s native structured output through output_config.format", async (modelId) => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: JSON.stringify({ city: "Buenos Aires" }) }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider(modelId);
+    const result = await generateObject({
+      model,
+      prompt: "Return one city.",
+      schema: z.object({ city: z.string() })
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+    expect(model.capabilities.structuredOutput).toBe(true);
+    expect(result.objectMode).toBe("native");
+    expect(result.object).toEqual({ city: "Buenos Aires" });
+    expect(body).toMatchObject({
+      model: modelId,
+      output_config: {
+        format: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: {
+              city: { type: "string" }
+            },
+            required: ["city"]
+          }
+        }
+      }
+    });
+  });
+
+  it("rejects invalid Claude Opus 5 thinking, sampling, task budget, and fallback combinations", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("claude-opus-5");
+
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        reasoning: { effort: "max" },
+        providerOptions: { thinking: { type: "disabled" } }
+      })
+    ).rejects.toThrow(/cannot combine "thinking\.disabled".*"output_config\.effort=max"/);
+
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        providerOptions: {
+          thinking: { type: "disabled" },
+          output_config: { effort: "xhigh" }
+        }
+      })
+    ).rejects.toThrow(/cannot combine "thinking\.disabled".*"output_config\.effort=xhigh"/);
+
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        providerOptions: {
+          thinking: { type: "enabled", budget_tokens: 20_000 }
+        }
+      })
+    ).rejects.toThrow(/does not support manual "thinking\.enabled \+ budget_tokens"/);
+
+    await expect(generateText({ model, prompt: "hello", temperature: 0.5 })).rejects.toThrow(
+      /only supports the default "temperature=1"/
+    );
+
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        providerOptions: {
+          output_config: {
+            task_budget: { type: "tokens", total: 19_999 }
+          }
+        }
+      })
+    ).rejects.toThrow(/task_budget\.total.*at least 20000/);
+
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        providerOptions: {
+          fallbacks: [{ model: "claude-opus-5" }]
+        }
+      })
+    ).rejects.toThrow(/fallback models.*different from the primary model/);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-opus-4-6"
+  ])("rejects assistant prefill locally for %s", async (modelId) => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider(modelId),
+        messages: [
+          { role: "user", parts: [{ type: "text", text: "Complete this." }] },
+          { role: "assistant", parts: [{ type: "text", text: "Prefill" }] }
+        ]
+      })
+    ).rejects.toThrow(`Provider "anthropic" does not support assistant prefill for model "${modelId}".`);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("streams Claude Opus 5 max effort and merges message-start cache usage with final output usage", async () => {
+    const responseBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            "event: message_start\n" +
+              'data: {"message":{"usage":{"input_tokens":8,"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}}\n\n' +
+              "event: content_block_delta\n" +
+              'data: {"index":0,"delta":{"type":"text_delta","text":"done"}}\n\n' +
+              "event: message_delta\n" +
+              'data: {"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5,"output_tokens_details":{"thinking_tokens":2},"speed":"standard"}}\n\n' +
+              "event: message_stop\n" +
+              "data: {}\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(responseBody, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("claude-opus-5"),
+      prompt: "hello",
+      reasoning: { effort: "max" },
+      providerOptions: { speed: "fast" }
+    });
+    const final = await result.collect();
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
+    const body = JSON.parse(String(requestInit.body));
+    expect(headers["anthropic-beta"]?.split(",")).toContain("fast-mode-2026-02-01");
+    expect(body).toMatchObject({
+      stream: true,
+      thinking: { type: "adaptive" },
+      output_config: { effort: "max" }
+    });
+    expect(final).toMatchObject({
+      text: "done",
+      usage: {
+        inputTokens: 13,
+        cachedInputTokens: 3,
+        cacheWriteTokens: 2,
+        outputTokens: 5,
+        reasoningTokens: 2,
+        totalTokens: 18,
+        speed: "standard"
+      }
+    });
+  });
+
   it("maps Claude Sonnet 5 as a modern adaptive-thinking model", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
         content: [{ type: "text", text: "hello from sonnet 5" }],
         stop_reason: "end_turn",
-        usage: { input_tokens: 10, output_tokens: 4, speed: "fast" }
+        usage: { input_tokens: 10, output_tokens: 4 }
       })
     );
 
@@ -591,31 +934,25 @@ describe("anthropic adapter", () => {
       prompt: "hello",
       reasoning: {
         effort: "xhigh"
-      },
-      providerOptions: {
-        speed: "fast"
       }
     });
 
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(String(requestInit.body)) as {
       model: string;
-      speed: string;
       thinking: { type: string };
       output_config: { effort: string };
     };
 
     expect(body).toMatchObject({
       model: "claude-sonnet-5",
-      speed: "fast",
       thinking: { type: "adaptive" },
       output_config: { effort: "xhigh" }
     });
     expect(result.usage).toMatchObject({
       inputTokens: 10,
       outputTokens: 4,
-      totalTokens: 14,
-      speed: "fast"
+      totalTokens: 14
     });
   });
 
@@ -706,7 +1043,8 @@ describe("anthropic adapter", () => {
         { role: "system", parts: [{ type: "text", text: "Initial instruction." }] },
         { role: "user", parts: [{ type: "text", text: "Start." }] },
         { role: "system", parts: [{ type: "text", text: "Apply this local instruction." }] },
-        { role: "assistant", parts: [{ type: "text", text: "Ready." }] }
+        { role: "assistant", parts: [{ type: "text", text: "Ready." }] },
+        { role: "user", parts: [{ type: "text", text: "Continue." }] }
       ]
     });
 
@@ -720,8 +1058,95 @@ describe("anthropic adapter", () => {
     expect(body.messages).toEqual([
       { role: "user", content: [{ type: "text", text: "Start." }] },
       { role: "system", content: "Apply this local instruction." },
-      { role: "assistant", content: [{ type: "text", text: "Ready." }] }
+      { role: "assistant", content: [{ type: "text", text: "Ready." }] },
+      { role: "user", content: [{ type: "text", text: "Continue." }] }
     ]);
+  });
+
+  it("replays Claude Opus 5 thinking and fallback blocks without changing their order", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "continued" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const fallbackBlock = {
+      type: "fallback",
+      from: { model: "claude-opus-5" },
+      to: { model: "claude-opus-4-8" },
+      trigger: { category: "cyber" }
+    } as const;
+    const thinkingBlock = {
+      type: "thinking",
+      thinking: "summary",
+      signature: "signed-thinking"
+    } as const;
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await generateText({
+      model: provider("claude-opus-5"),
+      messages: [
+        { role: "user", parts: [{ type: "text", text: "Start." }] },
+        {
+          role: "assistant",
+          parts: [
+            providerDataPart("anthropic", fallbackBlock),
+            providerDataPart("anthropic", thinkingBlock),
+            { type: "text", text: "Partial answer." }
+          ]
+        },
+        { role: "user", parts: [{ type: "text", text: "Continue." }] }
+      ]
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+    expect(body.messages[1]).toEqual({
+      role: "assistant",
+      content: [fallbackBlock, thinkingBlock, { type: "text", text: "Partial answer." }]
+    });
+  });
+
+  it("preserves Opus 5 mid-conversation tool-change blocks and adds only the required header", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "continued" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 4 }
+      })
+    );
+
+    const toolAddition = {
+      type: "tool_addition",
+      tools: [{ name: "lookup" }]
+    } as const;
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("claude-opus-5"),
+      messages: [
+        { role: "user", parts: [{ type: "text", text: "Start." }] },
+        {
+          role: "system",
+          parts: [providerDataPart("anthropic", toolAddition)]
+        },
+        { role: "user", parts: [{ type: "text", text: "Continue." }] }
+      ],
+      providerOptions: {
+        midConversationToolChanges: true
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = requestInit.headers as Record<string, string>;
+    const body = JSON.parse(String(requestInit.body));
+    expect(headers["anthropic-beta"]).toBe("mid-conversation-tool-changes-2026-07-01");
+    expect(body.messages[1]).toEqual({
+      role: "system",
+      content: [toolAddition]
+    });
+    expect(body.midConversationToolChanges).toBeUndefined();
   });
 
   it("preserves valid mid-conversation system messages for Claude Sonnet 5", async () => {
@@ -740,7 +1165,8 @@ describe("anthropic adapter", () => {
         { role: "system", parts: [{ type: "text", text: "Initial instruction." }] },
         { role: "user", parts: [{ type: "text", text: "Start." }] },
         { role: "system", parts: [{ type: "text", text: "Apply this local instruction." }] },
-        { role: "assistant", parts: [{ type: "text", text: "Ready." }] }
+        { role: "assistant", parts: [{ type: "text", text: "Ready." }] },
+        { role: "user", parts: [{ type: "text", text: "Continue." }] }
       ]
     });
 
@@ -754,7 +1180,8 @@ describe("anthropic adapter", () => {
     expect(body.messages).toEqual([
       { role: "user", content: [{ type: "text", text: "Start." }] },
       { role: "system", content: "Apply this local instruction." },
-      { role: "assistant", content: [{ type: "text", text: "Ready." }] }
+      { role: "assistant", content: [{ type: "text", text: "Ready." }] },
+      { role: "user", content: [{ type: "text", text: "Continue." }] }
     ]);
   });
 
@@ -1164,7 +1591,7 @@ describe("anthropic adapter", () => {
           effort: "medium"
         }
       })
-    ).rejects.toThrow('Provider "anthropic" does not support "reasoning.effort" for this model.');
+    ).rejects.toThrow(/does not support "reasoning\.effort=medium"/);
   });
 
   it("rejects budgetTokens for Claude Opus 4.8", async () => {
@@ -1210,7 +1637,7 @@ describe("anthropic adapter", () => {
           effort: "none"
         }
       })
-    ).rejects.toThrow('Provider "anthropic" does not support disabling thinking for Claude Fable 5 or Claude Mythos 5.');
+    ).rejects.toThrow(/does not support reasoning effort "none"/);
 
     await expect(
       generateText({
@@ -1239,6 +1666,26 @@ describe("anthropic adapter", () => {
     );
   });
 
+  it.each(["claude-sonnet-4-6", "claude-opus-4-6"])(
+    "rejects non-default temperature with adaptive thinking for %s before fetching",
+    async (modelId) => {
+      const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+      await expect(
+        generateText({
+          model: provider(modelId),
+          prompt: "hello",
+          temperature: 0,
+          reasoning: {
+            effort: "low"
+          }
+        })
+      ).rejects.toThrow(/only supports the default "temperature=1" when thinking is enabled or adaptive/);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
   it("rejects explicit sampling controls for Claude Opus 4.8", async () => {
     const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
@@ -1248,9 +1695,7 @@ describe("anthropic adapter", () => {
         prompt: "hello",
         temperature: 0
       })
-    ).rejects.toThrow(
-      'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit it from the request.'
-    );
+    ).rejects.toThrow(/only supports the default "temperature=1"/);
 
     await expect(
       generateText({
@@ -1260,9 +1705,7 @@ describe("anthropic adapter", () => {
           top_p: 0.9
         }
       })
-    ).rejects.toThrow(
-      'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit them from the request.'
-    );
+    ).rejects.toThrow(/only supports default sampling controls/);
   });
 
   it("rejects explicit sampling controls for Claude Sonnet 5", async () => {
@@ -1274,9 +1717,7 @@ describe("anthropic adapter", () => {
         prompt: "hello",
         temperature: 0
       })
-    ).rejects.toThrow(
-      'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit it from the request.'
-    );
+    ).rejects.toThrow(/only supports the default "temperature=1"/);
 
     await expect(
       generateText({
@@ -1286,8 +1727,6 @@ describe("anthropic adapter", () => {
           top_p: 0.9
         }
       })
-    ).rejects.toThrow(
-      'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit them from the request.'
-    );
+    ).rejects.toThrow(/only supports default sampling controls/);
   });
 });

@@ -7,7 +7,7 @@ import { createAnthropic } from "../src/index.js";
 const apiKey = process.env.ANTHROPIC_API_KEY;
 const baseURL = process.env.ANTHROPIC_BASE_URL;
 const anthropicVersion = process.env.ANTHROPIC_VERSION;
-const textModelId = process.env.ANTHROPIC_INTEGRATION_MODEL ?? "claude-3-5-sonnet";
+const textModelId = process.env.ANTHROPIC_INTEGRATION_MODEL ?? "claude-opus-5";
 const usesModernAnthropicControls = (modelId: string) =>
   /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9]|claude-(?:sonnet|fable|mythos)-5)(?:[-@]|$)/.test(modelId);
 const anthropicTemperature = usesModernAnthropicControls(textModelId) ? undefined : 0;
@@ -27,7 +27,8 @@ describeIntegration("anthropic adapter integration", () => {
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-anthropic-ok",
       temperature: anthropicTemperature,
-      maxTokens: 32
+      maxTokens: 1024,
+      reasoning: usesModernAnthropicControls(textModelId) ? { effort: "low" } : undefined
     });
 
     expect(result.text.toLowerCase()).toContain("integration-anthropic-ok");
@@ -40,7 +41,8 @@ describeIntegration("anthropic adapter integration", () => {
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-anthropic-stream-ok",
       temperature: anthropicTemperature,
-      maxTokens: 32
+      maxTokens: 1024,
+      reasoning: usesModernAnthropicControls(textModelId) ? { effort: "low" } : undefined
     });
 
     const chunks: string[] = [];
@@ -59,7 +61,8 @@ describeIntegration("anthropic adapter integration", () => {
       model: provider()(textModelId),
       prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
       temperature: anthropicTemperature,
-      maxTokens: 32,
+      maxTokens: 1024,
+      reasoning: usesModernAnthropicControls(textModelId) ? { effort: "low" } : undefined,
       maxSteps: 2,
       tools: {
         sum: tool({
@@ -72,26 +75,30 @@ describeIntegration("anthropic adapter integration", () => {
           execute: ({ a, b }) => ({ total: a + b })
         })
       },
-      toolChoice: "required"
+      // The follow-up request must be allowed to answer after receiving the
+      // tool result. "required" would force another tool call on every step.
+      toolChoice: "auto"
     });
 
     expect(result.toolResults[0]?.toolName).toBe("sum");
     expect(result.text).toContain("5");
   });
 
-  it("produces prompted structured output against the real Anthropic API", async () => {
+  it("produces structured output against the real Anthropic API", async () => {
+    const model = provider()(textModelId);
     const result = await generateObject({
-      model: provider()(textModelId),
+      model,
       prompt: "Return a city-country pair for Buenos Aires, Argentina.",
       temperature: anthropicTemperature,
+      reasoning: usesModernAnthropicControls(textModelId) ? { effort: "low" } : undefined,
       schema: z.object({
         city: z.string(),
         country: z.string()
       }),
-      mode: "prompted"
+      mode: "auto"
     });
 
-    expect(result.objectMode).toBe("prompted");
+    expect(result.objectMode).toBe(model.capabilities.structuredOutput ? "native" : "prompted");
     expect(result.object.city.toLowerCase()).toContain("buenos");
     expect(result.object.country.toLowerCase()).toContain("argentina");
   });

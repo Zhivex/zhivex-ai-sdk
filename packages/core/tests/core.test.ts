@@ -36,6 +36,7 @@ import {
   defaultModelCatalog,
   embed,
   embedMany,
+  estimateTokenCost,
   getAgentCapabilities,
   getAgentSupportTier,
   getHostedToolClass,
@@ -2899,7 +2900,7 @@ describe("core helpers", () => {
     );
   });
 
-  it("defaults Anthropic catalog entries to Claude Sonnet 5 and keeps Opus aliases", () => {
+  it("includes Claude Opus 5 pricing while preserving the prior Opus aliases", () => {
     expect(defaultModelCatalog.find("anthropic", "claude-sonnet-5")).toMatchObject({
       modelId: "claude-sonnet-5",
       recommendedFor: expect.arrayContaining(["chat", "reasoning", "tools", "vision"])
@@ -2910,6 +2911,31 @@ describe("core helpers", () => {
     });
     expect(defaultModelCatalog.find("anthropic", "claude-mythos-class")?.modelId).toBe("claude-fable-5");
     expect(defaultModelCatalog.find("anthropic", "claude-mythos-5")?.modelId).toBe("claude-mythos-5");
+    const opus5 = defaultModelCatalog.find("anthropic", "claude-opus-5");
+    expect(opus5).toMatchObject({
+      modelId: "claude-opus-5",
+      inputCostPer1kTokens: 0.005,
+      cachedInputCostPer1kTokens: 0.0005,
+      cacheWriteCostPer1kTokens: 0.00625,
+      outputCostPer1kTokens: 0.025,
+      costPer1kTokens: 0.005,
+      recommendedFor: expect.arrayContaining(["chat", "reasoning", "speed", "tools", "vision"])
+    });
+    expect(
+      estimateTokenCost(
+        {
+          inputTokens: 1_000,
+          cachedInputTokens: 200,
+          cacheWriteTokens: 300,
+          outputTokens: 500
+        },
+        opus5
+      )
+    ).toMatchObject({
+      inputCost: 0.004475,
+      outputCost: 0.0125,
+      totalCost: 0.016975
+    });
     expect(defaultModelCatalog.find("anthropic", "claude-opus-4-7")?.modelId).toBe("claude-opus-4-8");
     expect(defaultModelCatalog.find("anthropic", "claude-haiku-4-5")?.modelId).toBe("claude-haiku-4-5-20251001");
   });

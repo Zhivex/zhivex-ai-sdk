@@ -12,8 +12,10 @@ describeReasoningIntegration("reasoning capability integration", () => {
       const result = await generateText({
         model: provider.createModel(),
         prompt: `Reply with exactly: integration-${provider.name}-reasoning-ok`,
-        ...(provider.omitTemperature ? {} : { temperature: provider.temperature ?? 0 }),
-        maxTokens: 64,
+        ...(provider.omitTemperature || provider.omitTemperatureForReasoning
+          ? {}
+          : { temperature: provider.temperature ?? 0 }),
+        maxTokens: provider.reasoningMaxTokens ?? 64,
         reasoning: provider.supports.reasoning
       });
 

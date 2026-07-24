@@ -40,7 +40,14 @@ export interface AnthropicLanguageModelOptions {
   tool_choice?: { type: "auto" | "none" | "any" | "tool"; name?: string };
   thinking?: AnthropicThinkingConfig;
   output_config?: AnthropicOutputConfig;
-  fallbacks?: AnthropicFallbackConfig[];
+  fallbacks?: AnthropicFallbackConfig[] | "default";
+  /** Additional Anthropic beta feature names to send through the anthropic-beta header. */
+  betas?: string[];
+  /**
+   * Preserves prompt-cache prefixes when an application changes its tool list between turns.
+   * Currently supported only by Claude Opus 5.
+   */
+  midConversationToolChanges?: boolean;
   [key: string]: unknown;
 }
 
@@ -52,9 +59,14 @@ export interface AnthropicThinkingConfig {
 
 export interface AnthropicOutputConfig {
   effort?: "high" | "low" | "max" | "medium" | "xhigh";
+  format?: {
+    type: "json_schema";
+    schema: Record<string, unknown>;
+  };
   task_budget?: {
     type: "tokens";
     total: number;
+    remaining?: number;
   };
   [key: string]: unknown;
 }
@@ -98,7 +110,11 @@ const capabilities: ModelCapabilities = {
 };
 
 const normalizeModelId = (modelId: string) => modelId.trim().toLowerCase();
-const SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-06-01";
+const FAST_MODE_BETA = "fast-mode-2026-02-01";
+const TASK_BUDGETS_BETA = "task-budgets-2026-03-13";
+const SERVER_SIDE_FALLBACK_LIST_BETA = "server-side-fallback-2026-06-01";
+const SERVER_SIDE_FALLBACK_DEFAULT_BETA = "server-side-fallback-2026-07-01";
+const MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01";
 
 const isClaudeOpus45Model = (modelId: string) => /^claude-opus-4-5(?:[-@]|$)/.test(normalizeModelId(modelId));
 
@@ -107,6 +123,8 @@ const isClaudeOpus46Model = (modelId: string) => /^claude-opus-4-6(?:[-@]|$)/.te
 const isClaudeSonnet46Model = (modelId: string) => /^claude-sonnet-4-6(?:[-@]|$)/.test(normalizeModelId(modelId));
 
 const isClaudeSonnet5Model = (modelId: string) => /^claude-sonnet-5(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const isClaudeOpus5Model = (modelId: string) => /^claude-opus-5(?:[-@]|$)/.test(normalizeModelId(modelId));
 
 const isClaudeOpus47OrLaterModel = (modelId: string) =>
   /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9])(?:[-@]|$)/.test(normalizeModelId(modelId));
@@ -125,16 +143,37 @@ const requiresAnthropicAdaptiveThinking = (modelId: string) => isClaudeMythosCla
 const supportsAnthropicModernControls = (modelId: string) =>
   isClaudeOpus47OrLaterModel(modelId) || isClaudeSonnet5Model(modelId) || isClaudeMythosClass5Model(modelId);
 
+const supportsAnthropicFastMode = (modelId: string) =>
+  /^(?:claude-opus-4-(?:7|8)|claude-opus-5)(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const supportsAnthropicTaskBudgets = (modelId: string) =>
+  /^(?:claude-opus-4-(?:7|8)|claude-opus-5)(?:[-@]|$)/.test(normalizeModelId(modelId)) ||
+  isClaudeMythosClass5Model(modelId);
+
 const supportsMidConversationSystemMessages = (modelId: string) =>
   isClaudeOpus48OrLaterModel(modelId) || isClaudeSonnet5Model(modelId) || isClaudeMythosClass5Model(modelId);
 
-const supportsAnthropicEffort = (modelId: string) =>
-  isClaudeOpus45Model(modelId) ||
-  isClaudeOpus46Model(modelId) ||
-  isClaudeSonnet46Model(modelId) ||
-  isClaudeOpus47OrLaterModel(modelId) ||
-  isClaudeSonnet5Model(modelId) ||
-  isClaudeMythosClass5Model(modelId);
+const anthropicReasoningEfforts = (
+  modelId: string
+): NonNullable<ModelCapabilities["reasoningEfforts"]> | undefined => {
+  if (isClaudeMythosClass5Model(modelId)) {
+    return ["low", "medium", "high", "xhigh", "max"];
+  }
+
+  if (isClaudeOpus47OrLaterModel(modelId) || isClaudeSonnet5Model(modelId)) {
+    return ["none", "low", "medium", "high", "xhigh", "max"];
+  }
+
+  if (isClaudeOpus46Model(modelId) || isClaudeSonnet46Model(modelId)) {
+    return ["none", "low", "medium", "high", "max"];
+  }
+
+  if (isClaudeOpus45Model(modelId)) {
+    return ["none", "low", "medium", "high"];
+  }
+
+  return undefined;
+};
 
 const supportsAdaptiveThinking = (modelId: string) =>
   isClaudeOpus46Model(modelId) ||
@@ -153,12 +192,101 @@ const supportsAnthropicFiles = (modelId: string) => {
   );
 };
 
+const supportsAnthropicStructuredOutput = (modelId: string) => {
+  const normalized = normalizeModelId(modelId);
+  return (
+    /^claude-opus-4-(?:1|[5-9])(?:[-@]|$)/.test(normalized) ||
+    /^claude-sonnet-4-(?:5|6)(?:[-@]|$)/.test(normalized) ||
+    /^claude-haiku-4-5(?:[-@]|$)/.test(normalized) ||
+    /^claude-(?:opus|sonnet)-5(?:[-@]|$)/.test(normalized) ||
+    isClaudeMythosClass5Model(normalized)
+  );
+};
+
+const rejectsAssistantPrefill = (modelId: string) => {
+  const normalized = normalizeModelId(modelId);
+  return (
+    /^(?:claude-opus-4-(?:[6-9])|claude-opus-[5-9])(?:[-@]|$)/.test(normalized) ||
+    isClaudeSonnet46Model(normalized) ||
+    isClaudeSonnet5Model(normalized) ||
+    isClaudeMythosClass5Model(normalized)
+  );
+};
+
+const modelCapabilities = (modelId: string): ModelCapabilities => ({
+  ...capabilities,
+  structuredOutput: supportsAnthropicStructuredOutput(modelId),
+  files: supportsAnthropicFiles(modelId),
+  reasoningEfforts: anthropicReasoningEfforts(modelId)
+});
+
 const isAnthropicFileId = (value: string) => /^file_[a-z0-9]+$/i.test(value);
 
 const isHttpUrl = (value: string) => /^https?:\/\//i.test(value);
 
 const mergeOptionalObjects = <T extends object>(base?: T, override?: T): T | undefined =>
   base || override ? ({ ...(base ?? {}), ...(override ?? {}) } as T) : undefined;
+
+const mergeThinkingConfig = (
+  base?: AnthropicThinkingConfig,
+  override?: AnthropicThinkingConfig
+): AnthropicThinkingConfig | undefined => {
+  const merged = mergeOptionalObjects(base, override);
+  if (merged && merged.type !== "enabled") {
+    delete merged.budget_tokens;
+  }
+  return merged;
+};
+
+const definedNumber = (value: unknown) => (typeof value === "number" ? value : undefined);
+
+const mapAnthropicUsage = (usage: any): GenerateResult["usage"] | undefined => {
+  if (!usage) {
+    return undefined;
+  }
+
+  const uncachedInputTokens = definedNumber(usage.input_tokens);
+  const cachedInputTokens = definedNumber(usage.cache_read_input_tokens);
+  const cacheWriteTokens = definedNumber(usage.cache_creation_input_tokens);
+  const outputTokens = definedNumber(usage.output_tokens);
+  const inputTokens =
+    uncachedInputTokens === undefined &&
+    cachedInputTokens === undefined &&
+    cacheWriteTokens === undefined
+      ? undefined
+      : (uncachedInputTokens ?? 0) + (cachedInputTokens ?? 0) + (cacheWriteTokens ?? 0);
+
+  return {
+    inputTokens,
+    cachedInputTokens,
+    cacheWriteTokens,
+    outputTokens,
+    reasoningTokens: definedNumber(usage.output_tokens_details?.thinking_tokens),
+    totalTokens:
+      inputTokens === undefined && outputTokens === undefined
+        ? undefined
+        : (inputTokens ?? 0) + (outputTokens ?? 0),
+    speed: usage.speed
+  };
+};
+
+const mergeAnthropicUsage = (
+  previous: GenerateResult["usage"],
+  next: GenerateResult["usage"]
+): GenerateResult["usage"] => {
+  const merged = {
+    ...(previous ?? {}),
+    ...Object.fromEntries(Object.entries(next ?? {}).filter(([, value]) => value !== undefined))
+  };
+
+  return {
+    ...merged,
+    totalTokens:
+      merged.inputTokens === undefined && merged.outputTokens === undefined
+        ? undefined
+        : (merged.inputTokens ?? 0) + (merged.outputTokens ?? 0)
+  };
+};
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
@@ -254,6 +382,19 @@ const mapBlockParts = (modelId: string, message: ModelMessage) =>
           content: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output),
           is_error: part.toolResult.isError
         };
+      case "provider-data":
+        if (
+          part.provider === "anthropic" &&
+          typeof part.data === "object" &&
+          part.data !== null &&
+          !Array.isArray(part.data)
+        ) {
+          return part.data;
+        }
+        return {
+          type: "text",
+          text: JSON.stringify(part)
+        };
       default:
         return {
           type: "text",
@@ -267,6 +408,11 @@ const textFromSystemMessage = (message: ModelMessage) =>
     .filter((part): part is Extract<ModelMessage["parts"][number], { type: "text" }> => part.type === "text")
     .map((part) => part.text)
     .join("\n");
+
+const contentFromSystemMessage = (modelId: string, message: ModelMessage) =>
+  message.parts.every((part) => part.type === "text")
+    ? textFromSystemMessage(message)
+    : mapBlockParts(modelId, message);
 
 const leadingSystemMessages = (messages: ModelMessage[]) => {
   const firstNonSystemIndex = messages.findIndex((message) => message.role !== "system");
@@ -314,7 +460,7 @@ const mapMessages = (modelId: string, messages: ModelMessage[]) =>
 
         return {
           role: "system",
-          content: textFromSystemMessage(message)
+          content: contentFromSystemMessage(modelId, message)
         };
       }
 
@@ -472,15 +618,10 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput): MappedAnthrop
       : undefined;
   }
 
-  if (effort === "xhigh" && !supportsAnthropicModernControls(modelId)) {
+  const supportedEfforts = anthropicReasoningEfforts(modelId);
+  if (effort !== undefined && !supportedEfforts?.includes(effort)) {
     throw new UnsupportedFeatureError(
-      'Provider "anthropic" does not support "reasoning.effort=xhigh" before Claude Opus 4.7 or outside Claude Sonnet/Fable/Mythos 5.'
-    );
-  }
-
-  if (effort !== undefined && !supportsAnthropicEffort(modelId)) {
-    throw new UnsupportedFeatureError(
-      'Provider "anthropic" does not support "reasoning.effort" for this model.'
+      `Provider "anthropic" does not support "reasoning.effort=${effort}" for model "${modelId}".`
     );
   }
 
@@ -544,38 +685,234 @@ const parseAssistantMessage = (json: any): ModelMessage => ({
 const assertAnthropicRequestCompatibility = (
   modelId: string,
   input: ModelGenerateInput,
-  rawThinking: AnthropicThinkingConfig | undefined,
-  providerOptions: AnthropicLanguageModelOptions
+  thinking: AnthropicThinkingConfig | undefined,
+  outputConfig: AnthropicOutputConfig | undefined,
+  providerOptions: AnthropicLanguageModelOptions,
+  betas: string[],
+  midConversationToolChanges: boolean
 ) => {
-  if (
-    supportsAnthropicModernControls(modelId) &&
-    rawThinking?.type === "enabled" &&
-    typeof rawThinking.budget_tokens === "number"
-  ) {
+  if (supportsAnthropicModernControls(modelId) && thinking?.type === "enabled") {
     throw new UnsupportedFeatureError(
       'Provider "anthropic" does not support manual "thinking.enabled + budget_tokens" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; use adaptive thinking and "output_config.effort" instead.'
     );
   }
 
-  if (requiresAnthropicAdaptiveThinking(modelId) && rawThinking?.type === "disabled") {
+  if (requiresAnthropicAdaptiveThinking(modelId) && thinking?.type === "disabled") {
     throw new UnsupportedFeatureError(
       'Provider "anthropic" does not support "thinking.disabled" for Claude Fable 5 or Claude Mythos 5; omit "thinking" or use "thinking.display" with adaptive thinking.'
     );
   }
 
+  if (thinking?.type === "disabled" && thinking.display !== undefined) {
+    throw new ValidationError(
+      'Provider "anthropic" cannot combine "thinking.disabled" with "thinking.display".'
+    );
+  }
+
+  const effort = outputConfig?.effort;
+  const supportedEfforts = anthropicReasoningEfforts(modelId);
+  if (effort !== undefined && !supportedEfforts?.includes(effort)) {
+    throw new UnsupportedFeatureError(
+      `Provider "anthropic" does not support "output_config.effort=${effort}" for model "${modelId}".`
+    );
+  }
+
+  if (isClaudeOpus5Model(modelId) && thinking?.type === "disabled" && (effort === "xhigh" || effort === "max")) {
+    throw new ValidationError(
+      `Provider "anthropic" cannot combine "thinking.disabled" with "output_config.effort=${effort}" for Claude Opus 5.`
+    );
+  }
+
+  if (
+    (thinking?.type === "enabled" || thinking?.type === "adaptive") &&
+    input.temperature !== undefined &&
+    input.temperature !== 1
+  ) {
+    throw new UnsupportedFeatureError(
+      'Provider "anthropic" only supports the default "temperature=1" when thinking is enabled or adaptive.'
+    );
+  }
+
   if (supportsAnthropicModernControls(modelId)) {
-    if (input.temperature !== undefined) {
+    if (input.temperature !== undefined && input.temperature !== 1) {
       throw new UnsupportedFeatureError(
-        'Provider "anthropic" does not support explicit "temperature" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit it from the request.'
+        'Provider "anthropic" only supports the default "temperature=1" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5.'
       );
     }
 
-    if (providerOptions.top_p !== undefined || providerOptions.top_k !== undefined) {
+    if (
+      (providerOptions.top_p !== undefined &&
+        (!Number.isFinite(providerOptions.top_p) ||
+          providerOptions.top_p < 0.99 ||
+          providerOptions.top_p > 1)) ||
+      providerOptions.top_k !== undefined
+    ) {
       throw new UnsupportedFeatureError(
-        'Provider "anthropic" does not support explicit "top_p" or "top_k" for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5; omit them from the request.'
+        'Provider "anthropic" only supports default sampling controls (top_p >= 0.99 and no top_k) for Claude Opus 4.7 or later, Claude Sonnet 5, Claude Fable 5, or Claude Mythos 5.'
       );
     }
   }
+
+  if (
+    rejectsAssistantPrefill(modelId) &&
+    input.messages.at(-1)?.role === "assistant"
+  ) {
+    throw new UnsupportedFeatureError(
+      `Provider "anthropic" does not support assistant prefill for model "${modelId}".`
+    );
+  }
+
+  if (providerOptions.speed === "fast" && !supportsAnthropicFastMode(modelId)) {
+    throw new UnsupportedFeatureError(
+      `Provider "anthropic" does not support fast mode for model "${modelId}".`
+    );
+  }
+
+  const taskBudget = outputConfig?.task_budget;
+  if (taskBudget) {
+    if (!supportsAnthropicTaskBudgets(modelId)) {
+      throw new UnsupportedFeatureError(
+        `Provider "anthropic" does not support task budgets for model "${modelId}".`
+      );
+    }
+    if (taskBudget.type !== "tokens" || !Number.isInteger(taskBudget.total) || taskBudget.total < 20_000) {
+      throw new ValidationError(
+        'Provider "anthropic" requires "output_config.task_budget.total" to be an integer of at least 20000 tokens.'
+      );
+    }
+    if (
+      taskBudget.remaining !== undefined &&
+      (!Number.isInteger(taskBudget.remaining) ||
+        taskBudget.remaining < 0 ||
+        taskBudget.remaining > taskBudget.total)
+    ) {
+      throw new ValidationError(
+        'Provider "anthropic" requires "output_config.task_budget.remaining" to be an integer between 0 and total.'
+      );
+    }
+  }
+
+  const fallbacks = providerOptions.fallbacks;
+  if (fallbacks === "default" && !isClaudeOpus5Model(modelId)) {
+    throw new UnsupportedFeatureError(
+      'Provider "anthropic" only supports managed "fallbacks=default" for Claude Opus 5.'
+    );
+  }
+
+  if (Array.isArray(fallbacks)) {
+    if (fallbacks.length === 0 || fallbacks.length > 3) {
+      throw new ValidationError(
+        'Provider "anthropic" requires between one and three server-side fallback models.'
+      );
+    }
+
+    const fallbackIds = fallbacks.map((fallback) =>
+      typeof fallback.model === "string" ? normalizeModelId(fallback.model) : ""
+    );
+    if (
+      fallbackIds.some((fallbackId) => !fallbackId || fallbackId === normalizeModelId(modelId)) ||
+      new Set(fallbackIds).size !== fallbackIds.length
+    ) {
+      throw new ValidationError(
+        'Provider "anthropic" requires fallback models to be non-empty, unique, and different from the primary model.'
+      );
+    }
+
+    if (fallbacks.some((fallback) => fallback.max_tokens !== undefined && (!Number.isInteger(fallback.max_tokens) || fallback.max_tokens <= 0))) {
+      throw new ValidationError(
+        'Provider "anthropic" requires fallback "max_tokens" values to be positive integers.'
+      );
+    }
+  }
+
+  if (midConversationToolChanges && !isClaudeOpus5Model(modelId)) {
+    throw new UnsupportedFeatureError(
+      'Provider "anthropic" only supports mid-conversation tool changes for Claude Opus 5.'
+    );
+  }
+
+  if (
+    betas.some(
+      (beta) =>
+        typeof beta !== "string" ||
+        !/^[a-z0-9][a-z0-9-]*$/.test(beta)
+    )
+  ) {
+    throw new ValidationError(
+      'Provider "anthropic" beta feature names must contain only lowercase letters, numbers, and hyphens.'
+    );
+  }
+};
+
+interface PreparedAnthropicRequest {
+  providerOptions: AnthropicLanguageModelOptions;
+  thinking?: AnthropicThinkingConfig;
+  outputConfig?: AnthropicOutputConfig;
+  extraBetas: string[];
+}
+
+const prepareAnthropicRequest = (
+  modelId: string,
+  input: ModelGenerateInput
+): PreparedAnthropicRequest => {
+  const providerOptions = { ...(input.providerOptions ?? {}) } as AnthropicLanguageModelOptions;
+  const rawThinking = providerOptions.thinking;
+  const rawOutputConfig = providerOptions.output_config;
+  if (providerOptions.betas !== undefined && !Array.isArray(providerOptions.betas)) {
+    throw new ValidationError('Provider "anthropic" requires "betas" to be an array of beta feature names.');
+  }
+  const betas = providerOptions.betas ?? [];
+  const midConversationToolChanges = providerOptions.midConversationToolChanges === true;
+  delete providerOptions.thinking;
+  delete providerOptions.output_config;
+  delete providerOptions.betas;
+  delete providerOptions.midConversationToolChanges;
+
+  const reasoning = mapReasoning(modelId, input);
+  const thinking =
+    input.reasoning?.effort === "none"
+      ? mergeThinkingConfig(rawThinking, reasoning?.thinking)
+      : mergeThinkingConfig(reasoning?.thinking, rawThinking);
+  const outputConfig = mergeOptionalObjects(
+    mergeOptionalObjects(rawOutputConfig, reasoning?.output_config),
+    input.structuredOutput?.mode === "native"
+      ? {
+          format: {
+            type: "json_schema",
+            schema: toJSONSchema(input.structuredOutput.schema)
+          }
+        }
+      : undefined
+  );
+
+  assertAnthropicRequestCompatibility(
+    modelId,
+    input,
+    thinking,
+    outputConfig,
+    providerOptions,
+    betas,
+    midConversationToolChanges
+  );
+
+  const extraBetas = [
+    ...betas,
+    ...(providerOptions.speed === "fast" ? [FAST_MODE_BETA] : []),
+    ...(outputConfig?.task_budget ? [TASK_BUDGETS_BETA] : []),
+    ...(providerOptions.fallbacks === "default"
+      ? [SERVER_SIDE_FALLBACK_DEFAULT_BETA]
+      : Array.isArray(providerOptions.fallbacks)
+        ? [SERVER_SIDE_FALLBACK_LIST_BETA]
+        : []),
+    ...(midConversationToolChanges ? [MID_CONVERSATION_TOOL_CHANGES_BETA] : [])
+  ];
+
+  return {
+    providerOptions,
+    thinking,
+    outputConfig,
+    extraBetas
+  };
 };
 
 class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOptions> {
@@ -589,56 +926,38 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     private readonly anthropicVersion: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {
-    this.capabilities = {
-      ...capabilities,
-      files: supportsAnthropicFiles(modelId)
-    };
+    this.capabilities = modelCapabilities(modelId);
   }
 
-  private headers(withMcpToolset: boolean, withFilesApi: boolean, withCodeExecution: boolean, extraBetas: string[] = []) {
-    const betas = [
+  private headers(withMcpToolset: boolean, withFilesApi: boolean, extraBetas: string[] = []) {
+    const betas = new Set([
       ...(withMcpToolset ? ["mcp-client-2025-11-20"] : []),
       ...(withFilesApi ? ["files-api-2025-04-14"] : []),
-      ...(withCodeExecution ? ["code-execution-2025-08-25"] : []),
       ...extraBetas
-    ];
+    ]);
 
     return {
       "content-type": "application/json",
       "x-api-key": this.apiKey,
       "anthropic-version": this.anthropicVersion,
-      ...(betas.length ? { "anthropic-beta": betas.join(",") } : {})
+      ...(betas.size ? { "anthropic-beta": Array.from(betas).join(",") } : {})
     };
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const mcpServers = mapMcpServers(input.tools);
-    const providerOptions = { ...(input.providerOptions ?? {}) } as AnthropicLanguageModelOptions;
-    const rawThinking = providerOptions.thinking;
-    const rawOutputConfig = providerOptions.output_config;
-    delete providerOptions.thinking;
-    delete providerOptions.output_config;
-
-    assertAnthropicRequestCompatibility(this.modelId, input, rawThinking, providerOptions);
-
-    const reasoning = mapReasoning(this.modelId, input);
-    const thinking = mergeOptionalObjects(rawThinking, reasoning?.thinking);
-    const outputConfig = mergeOptionalObjects(rawOutputConfig, reasoning?.output_config);
-    const usesServerSideFallback = Boolean(providerOptions.fallbacks?.length);
+    const { providerOptions, thinking, outputConfig, extraBetas } = prepareAnthropicRequest(this.modelId, input);
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
-    const usesCodeExecution = Object.values(input.tools ?? {}).some((tool) => !isCallableToolDefinition(tool) && tool.type === "code_execution_20250825");
 
     try {
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/messages`, {
             method: "POST",
-            headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, usesCodeExecution, [
-              ...(usesServerSideFallback ? [SERVER_SIDE_FALLBACK_BETA] : [])
-            ]),
+            headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, extraBetas),
             signal,
             body: JSON.stringify({
               ...providerOptions,
@@ -668,12 +987,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
           .join(""),
         finishReason: normalizeFinishReason(json.stop_reason),
         providerFinishReason: json.stop_reason,
-        usage: {
-          inputTokens: json.usage?.input_tokens,
-          outputTokens: json.usage?.output_tokens,
-          totalTokens: (json.usage?.input_tokens ?? 0) + (json.usage?.output_tokens ?? 0),
-          speed: json.usage?.speed
-        },
+        usage: mapAnthropicUsage(json.usage),
         rawResponse: json
       };
     } finally {
@@ -684,29 +998,15 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const mcpServers = mapMcpServers(input.tools);
-    const providerOptions = { ...(input.providerOptions ?? {}) } as AnthropicLanguageModelOptions;
-    const rawThinking = providerOptions.thinking;
-    const rawOutputConfig = providerOptions.output_config;
-    delete providerOptions.thinking;
-    delete providerOptions.output_config;
-
-    assertAnthropicRequestCompatibility(this.modelId, input, rawThinking, providerOptions);
-
-    const reasoning = mapReasoning(this.modelId, input);
-    const thinking = mergeOptionalObjects(rawThinking, reasoning?.thinking);
-    const outputConfig = mergeOptionalObjects(rawOutputConfig, reasoning?.output_config);
-    const usesServerSideFallback = Boolean(providerOptions.fallbacks?.length);
+    const { providerOptions, thinking, outputConfig, extraBetas } = prepareAnthropicRequest(this.modelId, input);
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
-    const usesCodeExecution = Object.values(input.tools ?? {}).some((tool) => !isCallableToolDefinition(tool) && tool.type === "code_execution_20250825");
     const response = await withRetry(
       () =>
         this.fetcher(`${this.baseURL}/messages`, {
           method: "POST",
-          headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, usesCodeExecution, [
-            ...(usesServerSideFallback ? [SERVER_SIDE_FALLBACK_BETA] : [])
-          ]),
+          headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, extraBetas),
           signal,
           body: JSON.stringify({
             ...providerOptions,
@@ -735,6 +1035,12 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
         for await (const event of streamSSE(response)) {
           const json = JSON.parse(event.data);
 
+          if (event.event === "message_start") {
+            const nextUsage = mapAnthropicUsage(json.message?.usage ?? json.usage);
+            if (nextUsage) {
+              usage = mergeAnthropicUsage(usage, nextUsage);
+            }
+          }
           if (event.event === "content_block_delta" && json.delta?.type === "text_delta") {
             yield { type: "text-delta", textDelta: json.delta.text } satisfies StreamEvent;
           }
@@ -782,13 +1088,9 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
 
           if (event.event === "message_delta") {
             stopReason = json.delta?.stop_reason ?? stopReason;
-            if (json.usage) {
-              usage = {
-                inputTokens: json.usage.input_tokens,
-                outputTokens: json.usage.output_tokens,
-                totalTokens: (json.usage.input_tokens ?? 0) + (json.usage.output_tokens ?? 0),
-                speed: json.usage.speed
-              };
+            const nextUsage = mapAnthropicUsage(json.usage);
+            if (nextUsage) {
+              usage = mergeAnthropicUsage(usage, nextUsage);
             }
 
             if (json.delta?.stop_details) {
@@ -869,6 +1171,7 @@ export interface AnthropicWebSearchToolConfig {
 
 export interface AnthropicCodeExecutionToolConfig {
   name?: string;
+  type?: "code_execution_20250825" | "code_execution_20260120" | "code_execution_20260521";
 }
 
 export interface AnthropicMcpServerConfig {
@@ -919,7 +1222,7 @@ export const anthropicCodeExecutionTool = (config: AnthropicCodeExecutionToolCon
   hostedTool({
     name: config.name ?? "code_execution",
     provider: "anthropic",
-    type: "code_execution_20250825",
+    type: config.type ?? "code_execution_20260521",
     toolClass: "code-execution",
     config: {} as JsonValue
   });

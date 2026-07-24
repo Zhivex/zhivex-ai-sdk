@@ -16,7 +16,7 @@ describeTextIntegration("generateText capability integration", () => {
         model: provider.createModel(),
         prompt: `Reply with exactly: integration-${provider.name}-text-ok`,
         ...(provider.omitTemperature ? {} : { temperature: provider.temperature ?? 0 }),
-        maxTokens: 32
+        maxTokens: provider.textMaxTokens ?? 32
       });
 
       expect(result.text.toLowerCase()).toContain(`integration-${provider.name}-text-ok`);
@@ -34,7 +34,7 @@ describeStreamingIntegration("streamText capability integration", () => {
         model: provider.createModel(),
         prompt: `Reply with exactly: integration-${provider.name}-stream-ok`,
         ...(provider.omitTemperature ? {} : { temperature: provider.temperature ?? 0 }),
-        maxTokens: 32
+        maxTokens: provider.textMaxTokens ?? 32
       });
 
       const chunks: string[] = [];

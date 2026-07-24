@@ -332,7 +332,7 @@ Status shorthand:
 | xAI | yes | yes | yes | native | no | no | no | no | no | Grok 4.5 `low` / `medium` / `high` | yes | Responses Web Search, X Search, code execution, Collections search, Files API, prompt caching | Tier B |
 | Meta | yes | yes | yes | native | no | no | no | no | no | `effort` | yes | Responses web search, tool search, Files API, prompt caching | Tier B |
 | Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |
-| Anthropic | yes | yes | yes | prompted | no | no | no | no | no | model-dependent | yes | native MCP, web search, code execution | Tier B |
+| Anthropic | yes | yes | yes | native | no | no | no | no | no | Opus 5 `low` / `medium` / `high` / `xhigh` / `max` | yes | native MCP, web search, code execution | Tier B |
 | Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B |
 | Vertex | yes | yes | yes | native | yes | yes | yes | yes | no | model-dependent | yes | native | Tier B |
 | OpenRouter | yes | yes | yes | native | no | no | no | no | no | `effort` + `budgetTokens` | yes | server tools | Tier C |
@@ -351,7 +351,7 @@ Compatibility notes:
 - Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime`, `gpt-realtime-2`, `gpt-realtime-2.1`, `gpt-realtime-mini`, and `gpt-realtime-2.1-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
 - Gemini and Vertex expose current Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana and Veo 3.1. Gemini supports Lyria 3 through `generateMusic()`; Vertex's high-level music helper supports the GA `lyria-002`, while Lyria 3 on Agent Platform requires an Interactions API surface that the Vertex adapter does not expose. Gemini Omni Flash is exposed separately through Gemini's Interactions API because it uses a conversational video contract rather than the Veo long-running operation contract.
 - Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, the GA Interactions API, managed-agent calls, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
-- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI exposes GPT-5.6 Sol, Terra, Luna, and the `gpt-5.6` alias through Responses by default, with Programmatic Tool Calling, Multi-agent, explicit prompt cache breakpoints, and model-gated agent tools. Tool Search and Computer Use are also accepted on GPT-5.5 base and GPT-5.4 base/mini; shell, apply patch, and skills have their own documented gates. Unsupported combinations are rejected before a request is sent. Azure OpenAI retains its deployment- and API-version-dependent capability mapping. Anthropic reasoning currently maps `effort` on Claude Sonnet 5, Claude Fable 5, Claude Mythos 5, Claude Opus 4.5, Opus 4.6, Sonnet 4.6, and Opus 4.7+ including Opus 4.8, while `budgetTokens` remains available only on Anthropic models that still accept manual thinking such as Claude Haiku 4.5. Claude Fable 5 and Claude Mythos 5 always use adaptive thinking, so the adapter does not send redundant `thinking: { type: "adaptive" }` for common `reasoning.effort` and rejects `thinking.disabled` or manual thinking budgets before a request is sent. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen maps reasoning differently by protocol: Responses sends `reasoning.effort`, while Chat Completions sends `enable_thinking` and optional `thinking_budget`. Kimi K3 maps shared `reasoning.effort: "max"` to top-level `reasoning_effort: "max"`, while K2.6, K2.5, and legacy thinking models use `thinking.enabled/disabled`; `kimi-k2.7-code` and `kimi-k2.7-code-highspeed` keep preserved thinking enabled. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
+- `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI exposes GPT-5.6 Sol, Terra, Luna, and the `gpt-5.6` alias through Responses by default, with Programmatic Tool Calling, Multi-agent, explicit prompt cache breakpoints, and model-gated agent tools. Tool Search and Computer Use are also accepted on GPT-5.5 base and GPT-5.4 base/mini; shell, apply patch, and skills have their own documented gates. Unsupported combinations are rejected before a request is sent. Azure OpenAI retains its deployment- and API-version-dependent capability mapping. Current Anthropic families expose native structured output through `output_config.format`; model-specific effort, thinking, sampling, and prefill constraints are validated before network requests. Claude Opus 5 exposes the complete `low` / `medium` / `high` / `xhigh` / `max` effort ladder and adaptive thinking by default. `budgetTokens` remains available only on models that still accept manual thinking such as Claude Haiku 4.5. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen maps reasoning differently by protocol: Responses sends `reasoning.effort`, while Chat Completions sends `enable_thinking` and optional `thinking_budget`. Kimi K3 maps shared `reasoning.effort: "max"` to top-level `reasoning_effort: "max"`, while K2.6, K2.5, and legacy thinking models use `thinking.enabled/disabled`; `kimi-k2.7-code` and `kimi-k2.7-code-highspeed` keep preserved thinking enabled. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`.
 - xAI uses Responses by default. Grok 4.5 supports `low`, `medium`, and `high` reasoning effort, with `high` as the provider default. Use `providerOptions.conversationId` to route Responses requests through `prompt_cache_key`; Chat compatibility mode sends the same value through `x-grok-conv-id`.
 - Bedrock native Converse supports common `toolChoice` values by mapping specific tools and required tools to AWS-native `toolConfig`, and by omitting tool configuration for `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming. In the SDK's agent matrix, Bedrock Tier A applies to `createBedrock({ runtime: "openai" })`, which exposes Responses hosted tools, remote MCP, and approval requests. AWS-native AgentCore MCP is exposed separately as SDK-managed MCP tools for Converse or any shared agent loop; it does not promote Converse itself to a provider-emitted approval runtime.
 - Kimi K3 always reasons and accepts `toolChoice: "auto"`, `"none"`, or `"required"`; selecting a specific function is incompatible with thinking. K2.6 and K2.7 Code do not accept `"required"`, and specific tools remain unavailable while thinking is enabled.
@@ -380,7 +380,7 @@ const anthropic = createAnthropic({
 });
 
 const result = await generateText({
-  model: anthropic("claude-sonnet-5"),
+  model: anthropic("claude-opus-5"),
   system: "Be concise and technical.",
   prompt: "Explain what a provider adapter does."
 });
@@ -1669,15 +1669,24 @@ Provider compatibility for the common `reasoning` option:
 - Azure OpenAI: supports `effort`
 - OpenRouter: supports `effort` and `budgetTokens`
 - Anthropic:
-  - Claude Sonnet 5 supports `effort`, adaptive thinking, files, fast mode, and mid-conversation system messages; omit explicit `temperature`, `top_p`, and `top_k`
+  - Claude Opus 5 supports `low`, `medium`, `high`, `xhigh`, and `max` effort, adaptive thinking by default, native structured output, files, a 1M-token context window, and up to 128K output tokens
+  - omit `thinking` to use Opus 5's default adaptive thinking; `thinking.disabled` is valid only with `low`, `medium`, or `high`, and manual `thinking.enabled + budget_tokens` is rejected
+  - Opus 5 accepts only default sampling (`temperature: 1`, `top_p >= 0.99`, and no `top_k`) and does not support assistant prefill
+  - for `xhigh` and `max`, Anthropic recommends starting with `maxTokens: 64_000` and tuning with evals
+  - `providerOptions.speed = "fast"` adds the required fast-mode beta header automatically; fast mode is a separately provisioned, premium-priced research preview
+  - `providerOptions.fallbacks = "default"` enables Anthropic-managed refusal fallback; explicit fallback arrays remain available with up to three unique models
+  - `providerOptions.output_config.task_budget` and `providerOptions.midConversationToolChanges` add their required beta headers automatically
+  - Claude Sonnet 5 supports `effort`, adaptive thinking, files, and mid-conversation system messages
   - Claude Fable 5 and Claude Mythos 5 support `effort`; adaptive thinking is always on, so the adapter sends only `output_config.effort` for common reasoning requests
+  - current Claude families expose native structured output through `output_config.format`; this includes Opus 5, Sonnet 5, Fable/Mythos 5, Opus 4.6–4.8, Sonnet 4.5–4.6, and Haiku 4.5
+  - Claude Opus 4.6 and later, Claude Sonnet 4.6 and later, and Claude Fable/Mythos 5 reject assistant prefill locally
   - Claude Mythos 5 remains limited-availability upstream; use it only for approved Anthropic accounts
   - Claude Fable 5 server-side refusal fallback is available with `providerOptions.fallbacks`; the adapter adds the required `server-side-fallback-2026-06-01` beta header automatically
   - Claude Opus 4.7 and later, including Claude Opus 4.8, support `effort`; `budgetTokens` is rejected
-  - Claude Opus 4.5, Claude Opus 4.6, and Claude Sonnet 4.6 support `effort`
+  - Claude Opus 4.5, Claude Opus 4.6, and Claude Sonnet 4.6 support `effort`; integration checks use `effort` instead of deprecated undersized manual thinking budgets
   - Claude Haiku 4.5 supports extended thinking through `budgetTokens`; it does not use the modern `effort` mapping
   - `budgetTokens` remains available only on Anthropic models that still accept manual thinking
-  - Claude Sonnet 5, Claude Fable 5, Claude Mythos 5, and Claude Opus 4.8 accept provider-specific `providerOptions.speed = "fast"` for fast mode
+  - Claude Opus 5, Claude Opus 4.8, and Claude Opus 4.7 accept provider-specific `providerOptions.speed = "fast"` for fast mode
 - Gemini and Vertex:
   - Gemini 3 models support `effort`
   - Gemini 2.5 and earlier models support `budgetTokens`
@@ -1702,7 +1711,30 @@ Provider compatibility for the common `reasoning` option:
   - `budgetTokens` is not supported in the common mapping
 - Ollama and Bedrock: not supported
 
-Claude Fable 5 refusal fallback:
+Claude Opus 5 production controls:
+
+```ts
+const result = await generateText({
+  model: anthropic("claude-opus-5"),
+  prompt: "Plan and review this migration.",
+  maxTokens: 64_000,
+  reasoning: { effort: "xhigh" },
+  providerOptions: {
+    fallbacks: "default",
+    output_config: {
+      task_budget: {
+        type: "tokens",
+        total: 64_000
+      }
+    },
+    midConversationToolChanges: true
+  }
+});
+```
+
+Fast mode is opt-in: add `speed: "fast"` under `providerOptions` only after Anthropic enables the research preview for the account. The adapter composes and deduplicates the fast, task-budget, fallback, MCP, Files API, and mid-conversation beta headers. It also preserves fallback and other provider-native response blocks as `provider-data`.
+
+Claude Fable 5 explicit refusal fallback:
 
 ```ts
 const result = await generateText({
@@ -1829,7 +1861,7 @@ const anthropic = createAnthropic({
 });
 
 const result = await generateText({
-  model: anthropic("claude-sonnet-5"),
+  model: anthropic("claude-opus-5"),
   messages: [user("What is the weather in Madrid?")],
   maxSteps: 2,
   tools: {
@@ -1923,7 +1955,8 @@ console.log(result.text);
 console.log(result.toolResults);
 ```
 
-Anthropic exposes Claude web search by default with `web_search_20260209` and now has a native code execution helper:
+Anthropic exposes Claude web search by default with `web_search_20260209` and the current generally
+available `code_execution_20260521` tool through a native helper:
 
 ```ts
 import { generateText } from "@zhivex-ai/sdk";
@@ -1934,7 +1967,7 @@ const anthropic = createAnthropic({
 });
 
 const result = await generateText({
-  model: anthropic("claude-sonnet-5"),
+  model: anthropic("claude-opus-5"),
   prompt: "Research this API change and verify the migration with code.",
   tools: {
     web: anthropicWebSearchTool(),

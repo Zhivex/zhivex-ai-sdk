@@ -5,6 +5,7 @@ import {
   compareVersions,
   releaseOidcErrors,
   releaseWorktreeErrors,
+  verifyReleaseWithRetry,
   type PackageManifest,
   type RegistryDocument
 } from "./check-release-readiness";
@@ -86,6 +87,66 @@ describe("release readiness", () => {
 
     expect(audit.errors).toContain("@zhivex-ai/core@0.16.1 is still missing from npm after publish.");
     expect(audit.errors).toContain("@zhivex-ai/sdk@0.15.1 is still missing from npm after publish.");
+  });
+
+  it("requires latest to point to each stable version after publishing", () => {
+    const publishedRegistry: Record<string, RegistryDocument> = {
+      "@zhivex-ai/core": {
+        versions: { "0.16.1": {} },
+        "dist-tags": { latest: "0.16.0" }
+      },
+      "@zhivex-ai/sdk": {
+        versions: {
+          "0.15.1": { dependencies: { "@zhivex-ai/core": "^0.16.1" } }
+        },
+        "dist-tags": { latest: "0.15.0" }
+      }
+    };
+
+    const audit = auditRelease("main", packages, publishedRegistry, "postpublish");
+
+    expect(audit.errors).toContain(
+      "@zhivex-ai/core@0.16.1: npm dist-tag latest points to 0.16.0."
+    );
+    expect(audit.errors).toContain(
+      "@zhivex-ai/sdk@0.15.1: npm dist-tag latest points to 0.15.0."
+    );
+  });
+
+  it("retries postpublish verification while npm registry propagation is incomplete", async () => {
+    const publishedRegistry: Record<string, RegistryDocument> = {
+      "@zhivex-ai/core": {
+        versions: { "0.16.1": {} },
+        "dist-tags": { latest: "0.16.1" }
+      },
+      "@zhivex-ai/sdk": {
+        versions: {
+          "0.15.1": { dependencies: { "@zhivex-ai/core": "^0.16.1" } }
+        },
+        "dist-tags": { latest: "0.15.1" }
+      }
+    };
+    let registryReads = 0;
+    const retryMessages: string[] = [];
+
+    const audit = await verifyReleaseWithRetry({
+      branch: "main",
+      packages,
+      mode: "postpublish",
+      distTag: "latest",
+      loadRegistry: async () => {
+        registryReads += 1;
+        return registryReads === 1 ? registry : publishedRegistry;
+      },
+      maxAttempts: 3,
+      retryDelayMs: 0,
+      sleep: async () => {},
+      onRetry: (message) => retryMessages.push(message)
+    });
+
+    expect(registryReads).toBe(2);
+    expect(retryMessages).toHaveLength(1);
+    expect(audit).toEqual({ errors: [], pending: [], warnings: [] });
   });
 
   it("rejects prerelease versions on latest and stable versions on next", () => {

@@ -28,8 +28,23 @@ export interface ReleaseAudit {
 }
 
 export type ReleaseDistTag = "latest" | "next";
+export type ReleaseMode = "prepublish" | "postpublish";
+
+export interface VerifyReleaseOptions {
+  branch: string;
+  packages: PackageManifest[];
+  mode: ReleaseMode;
+  distTag: ReleaseDistTag;
+  loadRegistry: () => Promise<Record<string, RegistryDocument>>;
+  maxAttempts?: number;
+  retryDelayMs?: number;
+  sleep?: (delayMs: number) => Promise<void>;
+  onRetry?: (message: string) => void;
+}
 
 const internalPrefix = "@zhivex-ai/";
+const postpublishRegistryAttempts = 12;
+const postpublishRegistryRetryDelayMs = 5_000;
 
 interface ParsedVersion {
   major: number;
@@ -125,7 +140,7 @@ export const auditRelease = (
   branch: string,
   packages: PackageManifest[],
   registryByName: Record<string, RegistryDocument>,
-  mode: "prepublish" | "postpublish" = "prepublish",
+  mode: ReleaseMode = "prepublish",
   distTag: ReleaseDistTag = "latest"
 ): ReleaseAudit => {
   const errors: string[] = [];
@@ -166,10 +181,10 @@ export const auditRelease = (
       );
     }
 
-    if (latest && highestStable && latest !== highestStable) {
+    if (mode === "prepublish" && latest && highestStable && latest !== highestStable) {
       const pendingHigherVersion =
         !localIsPublished && compareVersions(manifest.version, highestStable) > 0;
-      if (mode === "prepublish" && pendingHigherVersion) {
+      if (pendingHigherVersion) {
         warnings.push(
           `${manifest.name}: latest is ${latest}, highest published is ${highestStable}; publishing ${manifest.version} will repair the tag.`
         );
@@ -186,8 +201,7 @@ export const auditRelease = (
 
     if (
       mode === "postpublish" &&
-      distTag !== "latest" &&
-      parseVersion(manifest.version).prerelease &&
+      localIsPublished &&
       registry["dist-tags"]?.[distTag] !== manifest.version
     ) {
       errors.push(
@@ -235,6 +249,53 @@ export const auditRelease = (
   }
 
   return { errors, pending: pending.sort(), warnings };
+};
+
+const retryablePostpublishAudit = (audit: ReleaseAudit) =>
+  audit.pending.length > 0 ||
+  audit.errors.some((error) => error.includes("npm dist-tag"));
+
+const wait = (delayMs: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+
+export const verifyReleaseWithRetry = async ({
+  branch,
+  packages,
+  mode,
+  distTag,
+  loadRegistry,
+  maxAttempts = postpublishRegistryAttempts,
+  retryDelayMs = postpublishRegistryRetryDelayMs,
+  sleep = wait,
+  onRetry
+}: VerifyReleaseOptions): Promise<ReleaseAudit> => {
+  const attempts = mode === "postpublish" ? Math.max(1, maxAttempts) : 1;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const audit = auditRelease(branch, packages, await loadRegistry(), mode, distTag);
+      if (mode !== "postpublish" || !retryablePostpublishAudit(audit) || attempt === attempts) {
+        return audit;
+      }
+      onRetry?.(
+        `npm registry propagation is incomplete; retrying postpublish verification ${attempt + 1}/${attempts} in ${retryDelayMs}ms.`
+      );
+    } catch (error) {
+      if (mode !== "postpublish" || attempt === attempts) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      onRetry?.(
+        `npm registry request failed (${message}); retrying postpublish verification ${attempt + 1}/${attempts} in ${retryDelayMs}ms.`
+      );
+    }
+
+    await sleep(retryDelayMs);
+  }
+
+  throw new Error("Postpublish verification exhausted all retry attempts.");
 };
 
 export const releaseWorktreeErrors = (status: string): string[] =>
@@ -286,10 +347,19 @@ const run = async () => {
     { encoding: "utf8" }
   );
   const packages = await loadWorkspacePackages();
-  const registryEntries = await Promise.all(
-    packages.map(async (manifest) => [manifest.name, await loadRegistryDocument(manifest.name)] as const)
-  );
-  const audit = auditRelease(branch, packages, Object.fromEntries(registryEntries), mode, distTag);
+  const audit = await verifyReleaseWithRetry({
+    branch,
+    packages,
+    mode,
+    distTag,
+    loadRegistry: async () => {
+      const registryEntries = await Promise.all(
+        packages.map(async (manifest) => [manifest.name, await loadRegistryDocument(manifest.name)] as const)
+      );
+      return Object.fromEntries(registryEntries);
+    },
+    onRetry: (message) => console.warn(`warning: ${message}`)
+  });
   audit.errors.unshift(...releaseWorktreeErrors(worktreeStatus));
   if (process.argv.includes("--require-oidc")) {
     audit.errors.unshift(...releaseOidcErrors(process.env));
