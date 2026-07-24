@@ -8,8 +8,12 @@ const anthropic = createAnthropic({
 });
 
 const result = await generateText({
-  model: anthropic("claude-sonnet-5"),
-  prompt: "Say hello from the Anthropic adapter."
+  model: anthropic("claude-opus-5"),
+  prompt: "Say hello from the Anthropic adapter.",
+  maxTokens: 4096,
+  reasoning: {
+    effort: "high"
+  }
 });
 
 console.log(result.text);

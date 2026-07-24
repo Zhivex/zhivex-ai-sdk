@@ -107,10 +107,10 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
   },
   {
     provider: "Anthropic",
-    model: anthropic("claude-3-5-sonnet"),
+    model: anthropic("claude-opus-5"),
     summary: {
-      structuredOutputSummary: "prompted",
-      reasoningSummary: "model-dependent",
+      structuredOutputSummary: "native",
+      reasoningSummary: "Opus 5 `low` / `medium` / `high` / `xhigh` / `max`",
       hostedToolSummary: "native MCP, web search, code execution"
     }
   },
@@ -255,7 +255,7 @@ describe("provider parity documentation", () => {
       xai("grok-4.5"),
       meta("muse-spark-1.1"),
       azure("gpt-4o-mini"),
-      anthropic("claude-3-5-sonnet"),
+      anthropic("claude-opus-5"),
       gemini("gemini-3.5-flash"),
       vertex("gemini-3.5-flash"),
       qwen("qwen-plus"),

@@ -116,6 +116,16 @@ export const defaultModelCatalog = createModelCatalog([
   },
   {
     provider: "anthropic",
+    modelId: "claude-opus-5",
+    inputCostPer1kTokens: 0.005,
+    cachedInputCostPer1kTokens: 0.0005,
+    cacheWriteCostPer1kTokens: 0.00625,
+    outputCostPer1kTokens: 0.025,
+    costPer1kTokens: 0.005,
+    recommendedFor: ["chat", "reasoning", "speed", "tools", "vision"]
+  },
+  {
+    provider: "anthropic",
     modelId: "claude-opus-4-8",
     aliases: ["claude-opus-4-7"],
     costPer1kTokens: 0.005,

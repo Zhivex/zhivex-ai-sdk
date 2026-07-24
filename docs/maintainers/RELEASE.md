@@ -87,6 +87,14 @@ npm view @zhivex-ai/sdk version dist-tags --json
 ```
 
 For packages included in the release, repeat `npm view <package> version dist-tags --json`.
+The automated postpublish gate retries registry reads for up to roughly one minute because newly
+published versions and dist-tags can become visible at slightly different times.
+
+If Changesets reports `packages published successfully` but the postpublish gate still expires,
+do not run `version-packages` again and do not try to republish immutable versions. Check every
+reported package and dist-tag with `npm view`, then rerun the release verification after registry
+propagation. A failed `publish` job also skips the tag-push job, so recover package tags only after
+all versions and dist-tags are confirmed, and point them to the exact release source SHA.
 
 ## Prerelease To `next`
 

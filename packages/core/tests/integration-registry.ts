@@ -24,7 +24,10 @@ export interface IntegrationLanguageProvider {
     embeddings: boolean;
     reasoning?: ReasoningConfig;
   };
+  textMaxTokens?: number;
+  omitTemperatureForReasoning?: boolean;
   toolMaxTokens?: number;
+  reasoningMaxTokens?: number;
   toolChoiceForTool?: (toolName: string) => ToolChoice;
 }
 
@@ -90,9 +93,17 @@ const azureOpenAIEmbeddingModelId = process.env.AZURE_OPENAI_INTEGRATION_EMBEDDI
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
 const anthropicBaseURL = process.env.ANTHROPIC_BASE_URL;
 const anthropicVersion = process.env.ANTHROPIC_VERSION;
-const anthropicTextModelId = process.env.ANTHROPIC_INTEGRATION_MODEL ?? "claude-3-5-sonnet";
+const anthropicTextModelId = process.env.ANTHROPIC_INTEGRATION_MODEL ?? "claude-opus-5";
 const usesModernAnthropicControls = (modelId: string) =>
   /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9]|claude-(?:sonnet|fable|mythos)-5)(?:[-@]|$)/.test(modelId);
+const anthropicModelCapabilities = createAnthropic({
+  apiKey: anthropicApiKey ?? "integration-status",
+  baseURL: anthropicBaseURL,
+  anthropicVersion
+})(anthropicTextModelId).capabilities;
+const anthropicReasoning = anthropicModelCapabilities.reasoningEfforts?.includes("low")
+  ? ({ effort: "low" } satisfies ReasoningConfig)
+  : ({ budgetTokens: 1024 } satisfies ReasoningConfig);
 
 const geminiApiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const geminiBaseURL = process.env.GEMINI_BASE_URL;
@@ -157,15 +168,9 @@ const xaiSupports: IntegrationLanguageProvider["supports"] = {
 const anthropicSupports: IntegrationLanguageProvider["supports"] = {
   streaming: true,
   tools: true,
-  structuredOutputMode: "prompted",
+  structuredOutputMode: anthropicModelCapabilities.structuredOutput ? "native" : "prompted",
   embeddings: false,
-  reasoning: usesModernAnthropicControls(anthropicTextModelId)
-    ? {
-        effort: "low"
-      }
-    : {
-        budgetTokens: 256
-      }
+  reasoning: anthropicReasoning
 };
 const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
 
@@ -421,8 +426,15 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               baseURL: anthropicBaseURL,
               anthropicVersion
             })(anthropicTextModelId),
+          omitTemperature: usesModernAnthropicControls(anthropicTextModelId),
           supports: anthropicSupports,
-          toolChoiceForTool: () => "required"
+          // Automatic selection lets the first step call the tool and the
+          // follow-up step produce the final answer from its result.
+          toolChoiceForTool: () => "auto",
+          textMaxTokens: 128,
+          omitTemperatureForReasoning: true,
+          toolMaxTokens: 1024,
+          reasoningMaxTokens: 2048
         } satisfies IntegrationLanguageProvider
       ]
     : []),
