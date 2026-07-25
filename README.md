@@ -2743,6 +2743,12 @@ console.log(fromAnthropic.text);
 
 `generateObject()` and `streamObject()` now route through the same gateway metadata path as text generation. Native object mode requires `structuredOutput`; prompted object mode requires `jsonMode`; auto mode accepts either capability and skips targets that cannot satisfy object output before making a provider call.
 
+`runAgent()` and `streamAgent()` use the same retry and ordered-fallback behavior as text and object operations, but keep one Core agent execution so fallback does not restart the run or replay completed tools. Text and object streaming resolve fallback before the first event; agent streaming resolves it before the first provider event, after any initial agent lifecycle events. Once a provider stream emits, later failure is propagated without mixing provider transcripts. Attempt timeouts abort non-streaming calls and streaming startup before the first event; a request `abortSignal` remains active for the full operation and stops active streams, backoff, retry, and fallback work.
+
+Gateway retries use typed `ProviderHTTPError` status codes: `408`, `429`, and `5xx` are retryable on the same target, while other `4xx` responses can move directly to an eligible fallback. If a request sets `maxCostPer1kTokens`, targets with unknown pricing are rejected by default; `unknownCostPolicy: "allow"` explicitly opts into those targets. Applications can replace the default name-based ordering heuristic with a finite `scoreTarget(context)` score.
+
+Image requests are routed only to models declaring `capabilities.vision: true`. Images are never removed silently to accommodate an incompatible target. The unused `GatewayConfig.groundedAdapters` option has been removed; register adapters through `adapters`, and do not rely on this package for a grounded-generation route.
+
 ## Public API Surface
 
 The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives from `core`, including:

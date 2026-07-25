@@ -3,35 +3,8 @@ import type { ModelMessage } from "@zhivex-ai/core";
 import type {
   GatewayMessage,
   GatewayModelTarget,
-  GatewayProviderId,
   GatewayResponse
 } from "./types.js";
-
-export const supportsVisionInput = (provider: GatewayProviderId, modelId: string): boolean => {
-  const model = modelId.toLowerCase();
-
-  if (provider === "gemini") {
-    return !model.includes("embedding");
-  }
-
-  if (provider === "bedrock") {
-    return model.includes("nova") || model.includes("claude-3") || model.includes("claude-4");
-  }
-
-  return true;
-};
-
-export const stripImagesForUnsupportedModel = (
-  messages: GatewayMessage[],
-  provider: GatewayProviderId,
-  modelId: string
-): GatewayMessage[] => {
-  if (supportsVisionInput(provider, modelId)) {
-    return messages;
-  }
-
-  return messages.map((message) => (message.images?.length ? { ...message, images: [] } : message));
-};
 
 export const gatewayMessagesToModelMessages = (
   messages: GatewayMessage[],

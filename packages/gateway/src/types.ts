@@ -1,27 +1,27 @@
 import type {
   AgentApprovalResponse,
   AgentCapabilities,
-  AgentDefinition,
+  AgentHookFailurePolicy,
   AgentHandoff,
   AgentMemoryStore,
+  AgentRunPolicy,
   AgentRunOutput,
   AgentRunState,
   AgentRunStore,
+  AgentStoreScope,
   AgentStreamResult,
   AgentSupportTier,
   AgentTelemetryObserver,
-  GenerateGroundedTextOptions,
   GenerateObjectOutput,
   GenerateTextOutput,
-  GroundedLanguageModel,
   JsonValue,
   ModelCatalog,
-  ModelMessage,
   ProviderAdapter,
   ReasoningConfig,
   StreamObjectResult,
   StreamTextResult,
   TokenUsage,
+  ToolApprovalPolicy,
   ToolChoice,
   ToolExecutionOptions,
   ToolSet
@@ -44,11 +44,13 @@ export type GatewayProviderId =
   | "openrouter";
 export type GatewayRoutingMode = "speed" | "balanced" | "quality";
 export type GatewayTaskIntent = "chat" | "reasoning" | "tool-heavy";
+export type GatewayUnknownCostPolicy = "reject" | "allow";
 export type GatewayAttemptReasonCode =
   | "model-capabilities"
   | "agent-capabilities"
   | "cost-budget"
   | "operation-skip"
+  | "request-aborted"
   | "provider-error"
   | "provider-success";
 export type GatewayRouteDecisionReasonCode =
@@ -98,6 +100,10 @@ export interface GatewayAgentRequest extends Omit<GatewayRequest, "messages" | "
   system?: string;
   instructions?: string;
   agentId?: string;
+  runId?: string;
+  scope?: AgentStoreScope;
+  idempotencyKey?: string;
+  parentRunId?: string;
   state?: AgentRunState;
   approvals?: AgentApprovalResponse[];
   handoff?: AgentHandoff;
@@ -105,6 +111,9 @@ export interface GatewayAgentRequest extends Omit<GatewayRequest, "messages" | "
   store?: AgentRunStore;
   memory?: AgentMemoryStore;
   onTelemetryEvent?: AgentTelemetryObserver;
+  hookFailurePolicy?: AgentHookFailurePolicy;
+  toolApprovalPolicy?: ToolApprovalPolicy;
+  policy?: AgentRunPolicy;
   requiredAgentCapabilities?: Partial<Omit<AgentCapabilities, "supportTier">> & {
     supportTier?: AgentSupportTier;
   };
@@ -179,12 +188,23 @@ export interface GatewayStreamObjectResult<TSchema extends ZodTypeAny> extends O
   collect: () => Promise<GatewayObjectResponse<TSchema>>;
 }
 
+export interface GatewayRoutingScoreContext {
+  mode: GatewayRoutingMode;
+  intent: GatewayTaskIntent;
+  target: GatewayModelTarget;
+  isPrimary: boolean;
+  configuredCostPer1kTokens?: number;
+  catalogCostPer1kTokens?: number;
+  latencyBiasMs?: number;
+}
+
 export interface GatewayConfig {
   adapters: Partial<Record<GatewayProviderId, ProviderAdapter>>;
-  groundedAdapters?: Partial<Record<GatewayProviderId, Pick<ProviderAdapter, "groundedLanguageModel">>>;
   modelCatalog?: ModelCatalog;
   providerCostsPer1kTokens?: Partial<Record<GatewayProviderId, number>>;
   latencyBiasMs?: Partial<Record<GatewayProviderId, number>>;
+  unknownCostPolicy?: GatewayUnknownCostPolicy;
+  scoreTarget?: (context: GatewayRoutingScoreContext) => number;
   maxRetries?: number;
   attemptTimeoutMs?: number;
   attemptTimeoutsMs?: Partial<Record<GatewayProviderId, number>>;

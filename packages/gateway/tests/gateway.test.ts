@@ -172,7 +172,7 @@ describe("gateway", () => {
     expect(result.providerUsed).toBe("bedrock");
   });
 
-  it("strips images for unsupported models", async () => {
+  it("preserves images when the adapter declares vision support", async () => {
     const inspect = vi.fn().mockImplementation(async () => ({ text: "ok" }));
 
     const gateway = createGateway({
@@ -223,7 +223,14 @@ describe("gateway", () => {
     });
 
     const firstCall = inspect.mock.calls[0]?.[0] as Array<{ parts: Array<{ type: string }> }>;
-    expect(firstCall[0]?.parts).toEqual([{ type: "text", text: "describe" }]);
+    expect(firstCall[0]?.parts).toEqual([
+      { type: "text", text: "describe" },
+      {
+        type: "image",
+        image: "data:image/png;base64,aGVsbG8=",
+        mediaType: "image/png"
+      }
+    ]);
   });
 
   it("estimates usage when a provider omits token counts", async () => {
@@ -651,7 +658,10 @@ describe("gateway", () => {
       {
         provider: "openai",
         targetRank: 1,
-        attempts: [{ reasonCode: "agent-capabilities" }]
+        attempts: [
+          { reasonCode: "agent-capabilities" },
+          { reasonCode: "provider-success" }
+        ]
       }
     ]);
     expect(await store.load(result.state.runId)).toBeDefined();

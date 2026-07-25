@@ -1,8 +1,12 @@
 import {
+  ConflictError,
+  GuardrailTriggeredError,
+  ProviderHTTPError,
+  ValidationError,
   createAgent,
   generateObject,
-  runAgent,
   generateText,
+  runAgent,
   streamAgent,
   streamObject,
   streamText,
@@ -10,23 +14,26 @@ import {
   type AgentStreamResult,
   type GenerateObjectOptions,
   type GenerateObjectOutput,
+  type GenerateResult,
   type GenerateTextOptions,
   type GenerateTextOutput,
   type LanguageModel,
+  type ModelGenerateInput,
+  type ProviderAdapter,
   type StreamEvent,
   type StreamObjectResult,
-  type StreamTextResult,
-  type ProviderAdapter
+  type StreamTextResult
 } from "@zhivex-ai/core";
 import type { ZodTypeAny } from "zod";
 
-import { createRouteDecision, gatewayMessagesToModelMessages, stripImagesForUnsupportedModel } from "./compat.js";
+import { createRouteDecision, gatewayMessagesToModelMessages } from "./compat.js";
 import {
   GatewayError,
-  type GatewayAttempt,
   type GatewayAgentRequest,
   type GatewayAgentResponse,
   type GatewayAgentStreamResult,
+  type GatewayAttempt,
+  type GatewayAttemptReasonCode,
   type GatewayConfig,
   type GatewayGenerateObjectRequest,
   type GatewayModelTarget,
@@ -58,12 +65,64 @@ export type {
   GatewayResponse,
   GatewayRouteDecisionReasonCode,
   GatewayRoutingMode,
+  GatewayRoutingScoreContext,
   GatewayStreamObjectResult,
   GatewayStreamTextResult,
-  GatewayTaskIntent
+  GatewayTaskIntent,
+  GatewayUnknownCostPolicy
 } from "./types.js";
 
-const scoreTarget = (
+type RouteSkip = {
+  reasonCode: Extract<
+    GatewayAttemptReasonCode,
+    "model-capabilities" | "agent-capabilities" | "cost-budget" | "operation-skip"
+  >;
+  message: string;
+};
+
+type RouteCandidate = {
+  target: GatewayModelTarget;
+  targetRank: number;
+  model: LanguageModel;
+};
+
+type RouteRequest = Pick<
+  GatewayRequest,
+  | "primary"
+  | "fallbacks"
+  | "routingMode"
+  | "taskIntent"
+  | "requiredCapabilities"
+  | "maxCostPer1kTokens"
+  | "tools"
+  | "toolChoice"
+  | "reasoning"
+> & {
+  messages?: GatewayRequest["messages"];
+};
+
+type RouteRequiredCapabilities = NonNullable<GatewayRequest["requiredCapabilities"]> & {
+  toolChoice?: boolean;
+};
+
+type ErrorDisposition = {
+  error: GatewayError;
+  retrySameTarget: boolean;
+  fallbackNextTarget: boolean;
+};
+
+type RouteContext = {
+  attempts: GatewayAttempt[];
+  candidates: RouteCandidate[];
+  routeDecision: GatewayResponse["routeDecision"];
+  startedAt: number;
+  winner?: RouteCandidate;
+  flushAttempts: () => Promise<void>;
+  recordAttempt: (attempt: GatewayAttempt) => Promise<void>;
+  lock: (candidate: RouteCandidate) => Promise<void>;
+};
+
+const defaultScoreTarget = (
   mode: GatewayRoutingMode,
   intent: GatewayTaskIntent,
   target: GatewayModelTarget,
@@ -87,6 +146,33 @@ const scoreTarget = (
   return speedBoost + qualityBoost + localBoost + (intent === "reasoning" ? 1 : 0) - costPenalty - latencyPenalty;
 };
 
+const scoreTarget = (
+  mode: GatewayRoutingMode,
+  intent: GatewayTaskIntent,
+  target: GatewayModelTarget,
+  primary: GatewayModelTarget,
+  config: GatewayConfig
+) => {
+  if (!config.scoreTarget) {
+    return defaultScoreTarget(mode, intent, target, config);
+  }
+
+  const score = config.scoreTarget({
+    mode,
+    intent,
+    target,
+    isPrimary: target.provider === primary.provider && target.modelId === primary.modelId,
+    configuredCostPer1kTokens: config.providerCostsPer1kTokens?.[target.provider],
+    catalogCostPer1kTokens: config.modelCatalog?.find(target.provider, target.modelId)?.costPer1kTokens,
+    latencyBiasMs: config.latencyBiasMs?.[target.provider]
+  });
+
+  if (!Number.isFinite(score)) {
+    throw new GatewayError("Gateway scoreTarget() must return a finite number.", false);
+  }
+  return score;
+};
+
 const orderTargets = (
   mode: GatewayRoutingMode,
   intent: GatewayTaskIntent,
@@ -99,20 +185,24 @@ const orderTargets = (
       (target, index, list) =>
         list.findIndex((candidate) => candidate.provider === target.provider && candidate.modelId === target.modelId) === index
     )
-    .sort((left, right) => scoreTarget(mode, intent, right, config) - scoreTarget(mode, intent, left, config));
+    .map((target, index) => ({
+      target,
+      index,
+      score: scoreTarget(mode, intent, target, primary, config)
+    }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map(({ target }) => target);
 
 const supportsRequiredCapabilities = (
-  adapter: ProviderAdapter,
-  target: GatewayModelTarget,
-  requiredCapabilities: GatewayRequest["requiredCapabilities"]
+  model: LanguageModel,
+  requiredCapabilities: RouteRequiredCapabilities | undefined
 ) => {
   if (!requiredCapabilities) {
     return true;
   }
 
-  const capabilities = adapter.languageModel(target.modelId).capabilities;
   return Object.entries(requiredCapabilities).every(
-    ([key, required]) => required !== true || capabilities[key as keyof typeof capabilities] === true
+    ([key, required]) => required !== true || model.capabilities[key as keyof typeof model.capabilities] === true
   );
 };
 
@@ -120,15 +210,14 @@ const agentTierRank = (tier: "tier-a" | "tier-b" | "tier-c" | undefined) =>
   tier === "tier-a" ? 3 : tier === "tier-b" ? 2 : tier === "tier-c" ? 1 : 0;
 
 const supportsRequiredAgentCapabilities = (
-  adapter: ProviderAdapter,
-  target: GatewayModelTarget,
+  model: LanguageModel,
   requiredAgentCapabilities: GatewayAgentRequest["requiredAgentCapabilities"]
 ) => {
   if (!requiredAgentCapabilities) {
     return true;
   }
 
-  const capabilities = adapter.languageModel(target.modelId).capabilities.agentCapabilities;
+  const capabilities = model.capabilities.agentCapabilities;
   if (!capabilities) {
     return false;
   }
@@ -146,66 +235,235 @@ const supportsRequiredAgentCapabilities = (
   });
 };
 
-const withinCostBudget = (
+const costBudgetSkipReason = (
   config: GatewayConfig,
   request: Pick<GatewayRequest, "maxCostPer1kTokens">,
   target: GatewayModelTarget
-) => {
+): string | undefined => {
   if (request.maxCostPer1kTokens == null) {
-    return true;
+    return undefined;
   }
 
   const configuredCost = config.providerCostsPer1kTokens?.[target.provider];
   const catalogCost = config.modelCatalog?.find(target.provider, target.modelId)?.costPer1kTokens;
   const effectiveCost = configuredCost ?? catalogCost;
+
   if (effectiveCost == null) {
-    return true;
+    return config.unknownCostPolicy === "allow"
+      ? undefined
+      : "Skipped because model cost is unknown under the configured budget.";
   }
 
-  return effectiveCost <= request.maxCostPer1kTokens;
+  return effectiveCost <= request.maxCostPer1kTokens
+    ? undefined
+    : "Skipped because provider cost exceeds the configured budget.";
 };
 
 const estimateTokens = (text: string) => Math.max(1, Math.ceil(text.trim().length / 4));
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number) =>
-  new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new GatewayError(`Provider timed out after ${timeoutMs}ms.`, true)), timeoutMs);
+const abortReason = (signal: AbortSignal): Error => {
+  if (signal.reason instanceof Error) {
+    return signal.reason;
+  }
+  return new DOMException("The gateway request was aborted.", "AbortError");
+};
 
-    promise
-      .then((value) => {
-        clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
+const abortableSleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortReason(signal));
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, Math.max(0, ms));
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal ? abortReason(signal) : new DOMException("The gateway request was aborted.", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 
-const normalizeError = (error: unknown) => {
+const createAttemptControl = (
+  parentSignal: AbortSignal | undefined,
+  timeoutMs: number
+) => {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutError = new GatewayError(`Provider timed out after ${timeoutMs}ms.`, true);
+  const onParentAbort = () => controller.abort(parentSignal ? abortReason(parentSignal) : undefined);
+
+  if (parentSignal?.aborted) {
+    onParentAbort();
+  } else {
+    parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+    timedOut = true;
+    controller.abort(timeoutError);
+  }, timeoutMs);
+
+  const stopTimeout = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+
+  const waitFor = <T>(promise: Promise<T>) =>
+    new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const onAbort = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        controller.signal.removeEventListener("abort", onAbort);
+        reject(controller.signal.reason instanceof Error ? controller.signal.reason : timeoutError);
+      };
+
+      if (controller.signal.aborted) {
+        onAbort();
+        return;
+      }
+
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      promise.then(
+        (value) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          controller.signal.removeEventListener("abort", onAbort);
+          resolve(value);
+        },
+        (error) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          controller.signal.removeEventListener("abort", onAbort);
+          reject(error);
+        }
+      );
+    });
+
+  return {
+    signal: controller.signal,
+    waitFor,
+    timedOut: () => timedOut,
+    timeoutError,
+    stopTimeout,
+    abort: (reason?: unknown) => controller.abort(reason),
+    dispose: () => {
+      stopTimeout();
+      parentSignal?.removeEventListener("abort", onParentAbort);
+    }
+  };
+};
+
+const providerHTTPStatus = (error: unknown): number | undefined => {
+  if (error instanceof ProviderHTTPError) {
+    return error.status;
+  }
+  if (
+    error instanceof Error &&
+    error.name === "ProviderHTTPError" &&
+    "status" in error &&
+    typeof error.status === "number"
+  ) {
+    return error.status;
+  }
+  return undefined;
+};
+
+const normalizeError = (error: unknown): ErrorDisposition => {
+  if (error instanceof ValidationError || error instanceof ConflictError || error instanceof GuardrailTriggeredError) {
+    return {
+      error: new GatewayError(error.message, false),
+      retrySameTarget: false,
+      fallbackNextTarget: false
+    };
+  }
+
   if (error instanceof GatewayError) {
-    return error;
+    return {
+      error,
+      retrySameTarget: error.retryable,
+      fallbackNextTarget: true
+    };
+  }
+
+  const status = providerHTTPStatus(error);
+  if (status != null) {
+    const retryable = status === 408 || status === 429 || status >= 500;
+    return {
+      error: new GatewayError(error instanceof Error ? error.message : `Provider HTTP ${status}.`, retryable),
+      retrySameTarget: retryable,
+      fallbackNextTarget: true
+    };
   }
 
   if (error instanceof Error) {
+    if (error.name === "AbortError") {
+      return {
+        error: new GatewayError(error.message, false),
+        retrySameTarget: false,
+        fallbackNextTarget: false
+      };
+    }
+
     const message = error.message.toLowerCase();
-    if (message.includes("timed out") || message.includes("429") || message.includes("rate")) {
-      return new GatewayError(error.message, true);
-    }
-    if (message.includes("connect") || message.includes("econnrefused") || message.includes("503")) {
-      return new GatewayError(error.message, true);
-    }
-    return new GatewayError(error.message, false);
+    const retryable =
+      message.includes("timed out") ||
+      message.includes("timeout") ||
+      message.includes("429") ||
+      message.includes("rate limit") ||
+      message.includes("connect") ||
+      message.includes("econnrefused") ||
+      message.includes("enotfound") ||
+      message.includes("network") ||
+      /\b50[0234]\b/.test(message);
+    return {
+      error: new GatewayError(error.message, retryable),
+      retrySameTarget: retryable,
+      fallbackNextTarget: true
+    };
   }
 
-  return new GatewayError("Unknown gateway error.", false);
+  return {
+    error: new GatewayError("Unknown gateway error.", false),
+    retrySameTarget: false,
+    fallbackNextTarget: true
+  };
 };
 
-const getAttemptTimeoutMs = (config: GatewayConfig, provider: GatewayProviderId) =>
-  config.attemptTimeoutsMs?.[provider] ?? config.attemptTimeoutMs ?? 20_000;
+const getAttemptTimeoutMs = (config: GatewayConfig, provider: GatewayProviderId) => {
+  const timeoutMs = config.attemptTimeoutsMs?.[provider] ?? config.attemptTimeoutMs ?? 20_000;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new GatewayError("Gateway attempt timeouts must be finite positive numbers.", false);
+  }
+  return timeoutMs;
+};
 
-const retryBackoffMs = (config: GatewayConfig, retry: number) => (config.retryBackoffMs ?? 200) * (retry + 1);
+const getMaxRetries = (config: GatewayConfig) => {
+  const maxRetries = config.maxRetries ?? 2;
+  if (!Number.isFinite(maxRetries) || maxRetries < 0) {
+    throw new GatewayError("Gateway maxRetries must be a finite non-negative number.", false);
+  }
+  return Math.floor(maxRetries);
+};
+
+const retryBackoffMs = (config: GatewayConfig, retry: number) => {
+  const base = config.retryBackoffMs ?? 200;
+  if (!Number.isFinite(base) || base < 0) {
+    throw new GatewayError("Gateway retryBackoffMs must be a finite non-negative number.", false);
+  }
+  return base * (retry + 1);
+};
 
 const createAttempt = (
   target: GatewayModelTarget,
@@ -222,17 +480,16 @@ const createAttempt = (
   ...options
 });
 
-const recordAttempt = async (
-  config: GatewayConfig,
-  attempts: GatewayAttempt[],
-  attempt: GatewayAttempt
-) => {
-  attempts.push(attempt);
-  await config.onAttempt?.({
-    ...attempt,
-    retry: attempt.retry ?? 0,
-    targetRank: attempt.targetRank ?? 0
-  });
+const notifyAttempt = async (config: GatewayConfig, attempt: GatewayAttempt) => {
+  try {
+    await config.onAttempt?.({
+      ...attempt,
+      retry: attempt.retry ?? 0,
+      targetRank: attempt.targetRank ?? 0
+    });
+  } catch {
+    // Observability is best-effort and must never retry or fail provider work.
+  }
 };
 
 const normalizeUsage = (
@@ -251,58 +508,66 @@ const normalizeUsage = (
   };
 };
 
-const requestMessages = (request: GatewayRequest) =>
-  gatewayMessagesToModelMessages(
-    stripImagesForUnsupportedModel(request.messages, request.primary.provider, request.primary.modelId),
-    request.systemPrompt
-  );
-
 const getInputText = (request: GatewayRequest) =>
   `${request.systemPrompt ?? ""}\n${request.messages.map((message) => message.content).join("\n")}`.trim();
 
+const requestHasImages = (request: { messages?: GatewayRequest["messages"] }) =>
+  request.messages?.some((message) => (message.images?.length ?? 0) > 0) ?? false;
+
 const buildRequiredCapabilities = (
-  request: Pick<GatewayRequest, "requiredCapabilities" | "tools" | "reasoning">,
+  request: Pick<GatewayRequest, "requiredCapabilities" | "tools" | "toolChoice" | "reasoning"> & {
+    messages?: GatewayRequest["messages"];
+  },
   extra: NonNullable<GatewayRequest["requiredCapabilities"]> = {}
-): GatewayRequest["requiredCapabilities"] => ({
+): RouteRequiredCapabilities => ({
   ...(request.requiredCapabilities ?? {}),
   ...(request.tools ? { tools: true } : {}),
+  ...(request.toolChoice ? { toolChoice: true } : {}),
   ...(request.reasoning ? { reasoning: true } : {}),
+  ...(requestHasImages(request) ? { vision: true } : {}),
   ...extra
 });
 
 const objectCapabilitySkipReason = <TSchema extends ZodTypeAny>(
-  adapter: ProviderAdapter,
-  target: GatewayModelTarget,
+  model: LanguageModel,
   request: GatewayGenerateObjectRequest<TSchema>
 ): string | undefined => {
-  const capabilities = adapter.languageModel(target.modelId).capabilities;
   const mode = request.mode ?? "auto";
 
-  if (mode === "native" && !capabilities.structuredOutput) {
+  if (mode === "native" && !model.capabilities.structuredOutput) {
     return "Skipped because model capabilities do not satisfy native structured output.";
   }
-
-  if (mode === "prompted" && !capabilities.jsonMode) {
+  if (mode === "prompted" && !model.capabilities.jsonMode) {
     return "Skipped because model capabilities do not satisfy prompted JSON output.";
   }
-
-  if (mode === "auto" && !capabilities.structuredOutput && !capabilities.jsonMode) {
+  if (mode === "auto" && !model.capabilities.structuredOutput && !model.capabilities.jsonMode) {
     return "Skipped because model capabilities do not satisfy object output.";
   }
-
   return undefined;
 };
 
-const createTextOptions = (
-  adapter: ProviderAdapter,
-  target: GatewayModelTarget,
-  request: GatewayRequest
-): GenerateTextOptions => ({
-  model: adapter.languageModel(target.modelId),
-  messages: gatewayMessagesToModelMessages(
-    stripImagesForUnsupportedModel(request.messages, target.provider, target.modelId),
-    request.systemPrompt
-  ),
+const modelInputSkipReason = (model: LanguageModel, input: ModelGenerateInput): string | undefined => {
+  if (input.tools && !model.capabilities.tools) {
+    return "Skipped because model does not support tools.";
+  }
+  if (input.reasoning && !model.capabilities.reasoning) {
+    return "Skipped because model does not support reasoning.";
+  }
+  if (
+    input.messages.some((message) => message.parts.some((part) => part.type === "image")) &&
+    !model.capabilities.vision
+  ) {
+    return "Skipped because model does not support image input.";
+  }
+  if (input.structuredOutput?.mode === "native" && !model.capabilities.structuredOutput) {
+    return "Skipped because model does not support native structured output.";
+  }
+  return undefined;
+};
+
+const createTextOptions = (model: LanguageModel, request: GatewayRequest): GenerateTextOptions => ({
+  model,
+  messages: gatewayMessagesToModelMessages(request.messages, request.systemPrompt),
   tools: request.tools,
   toolChoice: request.toolChoice,
   toolExecution: request.toolExecution,
@@ -326,7 +591,7 @@ const enrichTextResult = (
   providerUsed: target.provider,
   modelUsed: target.modelId,
   latencyMs: Date.now() - startedAt,
-  attempts,
+  attempts: [...attempts],
   usage: normalizeUsage(result.usage, getInputText(request), result.text),
   routeDecision
 });
@@ -343,29 +608,28 @@ const enrichObjectResult = <TSchema extends ZodTypeAny>(
   providerUsed: target.provider,
   modelUsed: target.modelId,
   latencyMs: Date.now() - startedAt,
-  attempts,
+  attempts: [...attempts],
   usage: normalizeUsage(result.usage, getInputText(request), result.text),
   routeDecision
 });
 
-const createAgentMessages = (request: GatewayAgentRequest, target: GatewayModelTarget) =>
-  request.messages
-    ? gatewayMessagesToModelMessages(
-        stripImagesForUnsupportedModel(request.messages, target.provider, target.modelId),
-        undefined
-      )
-    : undefined;
+const createAgentMessages = (request: GatewayAgentRequest) =>
+  request.messages ? gatewayMessagesToModelMessages(request.messages, undefined) : undefined;
 
-const createAgentRunInput = (request: GatewayAgentRequest, target: GatewayModelTarget) => {
+const createAgentRunInput = (request: GatewayAgentRequest) => {
   const source =
     request.prompt !== undefined
       ? { prompt: request.prompt }
       : request.messages
-        ? { messages: createAgentMessages(request, target) }
+        ? { messages: createAgentMessages(request) }
         : {};
 
   return {
     ...source,
+    runId: request.runId,
+    scope: request.scope,
+    idempotencyKey: request.idempotencyKey,
+    parentRunId: request.parentRunId,
     system: request.system,
     state: request.state,
     approvals: request.approvals,
@@ -373,11 +637,14 @@ const createAgentRunInput = (request: GatewayAgentRequest, target: GatewayModelT
     tools: request.tools,
     toolChoice: request.toolChoice,
     toolExecution: request.toolExecution,
+    toolApprovalPolicy: request.toolApprovalPolicy,
     maxSteps: request.maxSteps,
     temperature: request.temperature,
     maxTokens: request.maxTokens,
     reasoning: request.reasoning,
     providerOptions: request.providerOptions,
+    policy: request.policy,
+    metadata: request.metadata,
     abortSignal: request.abortSignal
   };
 };
@@ -393,7 +660,7 @@ const enrichAgentResult = (
   providerUsed: target.provider,
   modelUsed: target.modelId,
   latencyMs: Date.now() - startedAt,
-  attempts,
+  attempts: [...attempts],
   routeDecision,
   state: {
     ...result.state,
@@ -402,41 +669,61 @@ const enrichAgentResult = (
 });
 
 export const createGateway = (config: GatewayConfig) => {
-  const getAdapter = (provider: GatewayProviderId): ProviderAdapter => {
-    const adapter = config.adapters[provider];
-    if (!adapter) {
-      throw new GatewayError(`No adapter registered for provider "${provider}".`, false);
-    }
-    return adapter;
-  };
-
-  const routeDecisionFor = (request: GatewayRequest) => {
+  const createRouteContext = (
+    request: RouteRequest,
+    options: {
+      defaultIntent?: GatewayTaskIntent;
+      extraRequiredCapabilities?: NonNullable<GatewayRequest["requiredCapabilities"]>;
+      getSkipReason?: (model: LanguageModel, target: GatewayModelTarget) => RouteSkip | undefined;
+      onWinner?: (candidate: RouteCandidate, attempts: GatewayAttempt[]) => void | Promise<void>;
+    } = {}
+  ): RouteContext => {
     const mode = request.routingMode ?? "balanced";
-    const intent = request.taskIntent ?? "chat";
-    const orderedTargets = orderTargets(mode, intent, request.primary, request.fallbacks ?? [], config);
-    return {
-      mode,
-      intent,
-      orderedTargets,
-      routeDecision: createRouteDecision(mode, intent, orderedTargets)
-    };
-  };
-
-  const selectAgentTarget = async (request: GatewayAgentRequest) => {
-    const mode = request.routingMode ?? "balanced";
-    const intent = request.taskIntent ?? "tool-heavy";
+    const intent = request.taskIntent ?? options.defaultIntent ?? "chat";
     const orderedTargets = orderTargets(mode, intent, request.primary, request.fallbacks ?? [], config);
     const routeDecision = createRouteDecision(mode, intent, orderedTargets);
     const attempts: GatewayAttempt[] = [];
+    const candidates: RouteCandidate[] = [];
+    let notificationChain = Promise.resolve();
 
-    for (const [targetIndex, target] of orderedTargets.entries()) {
-      const adapter = getAdapter(target.provider);
+    const queueAttempt = (attempt: GatewayAttempt) => {
+      attempts.push(attempt);
+      notificationChain = notificationChain.then(() => notifyAttempt(config, attempt));
+    };
 
-      if (!supportsRequiredCapabilities(adapter, target, buildRequiredCapabilities(request))) {
-        await recordAttempt(
-          config,
-          attempts,
-          createAttempt(target, false, 0, targetIndex, {
+    const requiredCapabilities = buildRequiredCapabilities(
+      request,
+      options.extraRequiredCapabilities ?? {}
+    );
+
+    for (const [targetRank, target] of orderedTargets.entries()) {
+      const adapter = config.adapters[target.provider];
+      if (!adapter) {
+        queueAttempt(
+          createAttempt(target, false, 0, targetRank, {
+            reasonCode: "operation-skip",
+            errorMessage: `Skipped because no adapter is registered for provider "${target.provider}".`
+          })
+        );
+        continue;
+      }
+
+      let model: LanguageModel;
+      try {
+        model = adapter.languageModel(target.modelId);
+      } catch (error) {
+        queueAttempt(
+          createAttempt(target, false, 0, targetRank, {
+            reasonCode: "operation-skip",
+            errorMessage: error instanceof Error ? error.message : "Provider model construction failed."
+          })
+        );
+        continue;
+      }
+
+      if (!supportsRequiredCapabilities(model, requiredCapabilities)) {
+        queueAttempt(
+          createAttempt(target, false, 0, targetRank, {
             reasonCode: "model-capabilities",
             errorMessage: "Skipped because model capabilities do not satisfy the request."
           })
@@ -444,414 +731,440 @@ export const createGateway = (config: GatewayConfig) => {
         continue;
       }
 
-      if (!supportsRequiredAgentCapabilities(adapter, target, request.requiredAgentCapabilities)) {
-        await recordAttempt(
-          config,
-          attempts,
-          createAttempt(target, false, 0, targetIndex, {
-            reasonCode: "agent-capabilities",
-            errorMessage: "Skipped because agent capabilities do not satisfy the request."
-          })
-        );
-        continue;
-      }
-
-      if (!withinCostBudget(config, request, target)) {
-        await recordAttempt(
-          config,
-          attempts,
-          createAttempt(target, false, 0, targetIndex, {
+      const budgetReason = costBudgetSkipReason(config, request, target);
+      if (budgetReason) {
+        queueAttempt(
+          createAttempt(target, false, 0, targetRank, {
             reasonCode: "cost-budget",
-            errorMessage: "Skipped because provider cost exceeds the configured budget."
+            errorMessage: budgetReason
           })
         );
         continue;
       }
 
-      await config.onAgentRoute?.({
-        provider: target.provider,
-        modelId: target.modelId,
-        routeDecision,
-        attempts,
-        targetRank: targetIndex
-      });
+      const skip = options.getSkipReason?.(model, target);
+      if (skip) {
+        queueAttempt(
+          createAttempt(target, false, 0, targetRank, {
+            reasonCode: skip.reasonCode,
+            errorMessage: skip.message
+          })
+        );
+        continue;
+      }
 
-      return {
-        target,
-        attempts,
-        routeDecision,
-        startedAt: Date.now(),
-        targetRank: targetIndex
-      };
+      candidates.push({ target, targetRank, model });
     }
 
-    throw new GatewayError(attempts.at(-1)?.errorMessage ?? "No gateway agent target satisfied the request.", false);
-  };
+    if (!candidates.length) {
+      throw new GatewayError(
+        attempts.at(-1)?.errorMessage ?? "No gateway target satisfied the request.",
+        false
+      );
+    }
 
-  const runGenerate = async <TResult extends GenerateTextOutput>(
-    request: GatewayRequest,
-    operation: (adapter: ProviderAdapter, target: GatewayModelTarget) => Promise<TResult>,
-    extraRequiredCapabilities: NonNullable<GatewayRequest["requiredCapabilities"]> = {},
-    getSkipReason?: (adapter: ProviderAdapter, target: GatewayModelTarget) => string | undefined
-  ) => {
-    const attempts: GatewayAttempt[] = [];
-    const startedAt = Date.now();
-    const { orderedTargets, routeDecision } = routeDecisionFor(request);
-    const maxRetries = Math.max(0, config.maxRetries ?? 2);
-    const requiredCapabilities = buildRequiredCapabilities(request, extraRequiredCapabilities);
-
-    for (const [targetIndex, target] of orderedTargets.entries()) {
-      const adapter = getAdapter(target.provider);
-
-      if (!supportsRequiredCapabilities(adapter, target, requiredCapabilities)) {
-        await recordAttempt(
-          config,
-          attempts,
-          createAttempt(target, false, 0, targetIndex, {
-            reasonCode: "model-capabilities",
-            errorMessage: "Skipped because model capabilities do not satisfy the request."
-          })
-        );
-        continue;
-      }
-
-      if (!withinCostBudget(config, request, target)) {
-        await recordAttempt(
-          config,
-          attempts,
-          createAttempt(target, false, 0, targetIndex, {
-            reasonCode: "cost-budget",
-            errorMessage: "Skipped because provider cost exceeds the configured budget."
-          })
-        );
-        continue;
-      }
-
-      const skipReason = getSkipReason?.(adapter, target);
-      if (skipReason) {
-        await recordAttempt(
-          config,
-          attempts,
-          createAttempt(target, false, 0, targetIndex, {
-            reasonCode: "operation-skip",
-            errorMessage: skipReason
-          })
-        );
-        continue;
-      }
-
-      for (let retry = 0; retry <= maxRetries; retry += 1) {
-        const attemptStartedAt = Date.now();
-
+    const context: RouteContext = {
+      attempts,
+      candidates,
+      routeDecision,
+      startedAt: Date.now(),
+      flushAttempts: () => notificationChain,
+      recordAttempt: async (attempt) => {
+        queueAttempt(attempt);
+        await notificationChain;
+      },
+      lock: async (candidate) => {
+        if (
+          context.winner?.target.provider === candidate.target.provider &&
+          context.winner.target.modelId === candidate.target.modelId
+        ) {
+          return;
+        }
+        context.winner = candidate;
         try {
-          const result = await withTimeout(operation(adapter, target), getAttemptTimeoutMs(config, target.provider));
-          await recordAttempt(
-            config,
-            attempts,
-            createAttempt(target, true, Date.now() - attemptStartedAt, targetIndex, {
-              retry,
-              reasonCode: "provider-success"
-            })
-          );
-
-          return {
-            attempts,
-            target,
-            startedAt,
-            routeDecision,
-            result
-          };
-        } catch (error) {
-          const normalized = normalizeError(error);
-
-          await recordAttempt(
-            config,
-            attempts,
-            createAttempt(target, false, Date.now() - attemptStartedAt, targetIndex, {
-              reasonCode: "provider-error",
-              errorMessage: normalized.message,
-              retry
-            })
-          );
-
-          if (retry < maxRetries && normalized.retryable) {
-            await sleep(retryBackoffMs(config, retry));
-            continue;
-          }
-
-          break;
+          await options.onWinner?.(candidate, [...attempts]);
+        } catch {
+          // Routing observers are best-effort and cannot fail provider work.
         }
       }
-    }
+    };
 
-    const finalError = attempts.at(-1)?.errorMessage ?? "All gateway attempts failed.";
-    throw new GatewayError(finalError, false);
+    return context;
   };
 
-  const runStream = async <TStreamResult extends StreamTextResult | StreamObjectResult<any>>(
-    request: GatewayRequest,
-    operation: (adapter: ProviderAdapter, target: GatewayModelTarget) => TStreamResult,
-    extraRequiredCapabilities: NonNullable<GatewayRequest["requiredCapabilities"]> = {},
-    getSkipReason?: (adapter: ProviderAdapter, target: GatewayModelTarget) => string | undefined
-  ) => {
-    const attempts: GatewayAttempt[] = [];
-    const startedAt = Date.now();
-    const { orderedTargets, routeDecision } = routeDecisionFor(request);
-    const maxRetries = Math.max(0, config.maxRetries ?? 2);
-    const requiredCapabilities = buildRequiredCapabilities(request, { streaming: true, ...extraRequiredCapabilities });
+  const createRoutedLanguageModel = (context: RouteContext): LanguageModel => {
+    const first = context.candidates[0]!;
 
-    for (const [targetIndex, target] of orderedTargets.entries()) {
-      const adapter = getAdapter(target.provider);
+    const recordInputSkip = async (candidate: RouteCandidate, message: string) => {
+      await context.recordAttempt(
+        createAttempt(candidate.target, false, 0, candidate.targetRank, {
+          reasonCode: "operation-skip",
+          errorMessage: message
+        })
+      );
+    };
 
-      if (!supportsRequiredCapabilities(adapter, target, requiredCapabilities)) {
-        await recordAttempt(
-          config,
-          attempts,
-          createAttempt(target, false, 0, targetIndex, {
-            reasonCode: "model-capabilities",
-            errorMessage: "Skipped because model capabilities do not satisfy the request."
-          })
-        );
-        continue;
-      }
+    const throwFinalError = (): never => {
+      throw new GatewayError(
+        context.attempts.at(-1)?.errorMessage ?? "All gateway attempts failed.",
+        false
+      );
+    };
 
-      if (!withinCostBudget(config, request, target)) {
-        await recordAttempt(
-          config,
-          attempts,
-          createAttempt(target, false, 0, targetIndex, {
-            reasonCode: "cost-budget",
-            errorMessage: "Skipped because provider cost exceeds the configured budget."
-          })
-        );
-        continue;
-      }
+    const generate = async (input: ModelGenerateInput): Promise<GenerateResult> => {
+      await context.flushAttempts();
+      const candidates = context.winner
+        ? [context.winner, ...context.candidates.filter((candidate) => candidate !== context.winner)]
+        : context.candidates;
+      const maxRetries = getMaxRetries(config);
 
-      const skipReason = getSkipReason?.(adapter, target);
-      if (skipReason) {
-        await recordAttempt(
-          config,
-          attempts,
-          createAttempt(target, false, 0, targetIndex, {
-            reasonCode: "operation-skip",
-            errorMessage: skipReason
-          })
-        );
-        continue;
-      }
+      for (const candidate of candidates) {
+        const inputSkipReason = modelInputSkipReason(candidate.model, input);
+        if (inputSkipReason) {
+          await recordInputSkip(candidate, inputSkipReason);
+          continue;
+        }
 
-      for (let retry = 0; retry <= maxRetries; retry += 1) {
-        const attemptStartedAt = Date.now();
+        for (let retry = 0; retry <= maxRetries; retry += 1) {
+          const attemptStartedAt = Date.now();
+          const control = createAttemptControl(
+            input.abortSignal,
+            getAttemptTimeoutMs(config, candidate.target.provider)
+          );
 
-        try {
-          const streamResult = operation(adapter, target);
-          const iterator = streamResult.eventStream[Symbol.asyncIterator]();
-          const first = await withTimeout(iterator.next(), getAttemptTimeoutMs(config, target.provider));
+          try {
+            const result = await control.waitFor(
+              candidate.model.generate({
+                ...input,
+                abortSignal: control.signal
+              })
+            );
+            control.stopTimeout();
+            await context.recordAttempt(
+              createAttempt(candidate.target, true, Date.now() - attemptStartedAt, candidate.targetRank, {
+                retry,
+                reasonCode: "provider-success"
+              })
+            );
+            await context.lock(candidate);
+            control.dispose();
+            return result;
+          } catch (rawError) {
+            const callerAborted = input.abortSignal?.aborted === true;
+            const error = control.timedOut() ? control.timeoutError : rawError;
+            control.abort(error);
+            control.dispose();
 
-          if (!first.done && first.value.type === "error") {
-            throw first.value.error;
-          }
-
-          const eventStream = (async function* () {
-            if (!first.done) {
-              yield first.value;
+            if (callerAborted) {
+              await context.recordAttempt(
+                createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
+                  retry,
+                  reasonCode: "request-aborted",
+                  errorMessage: abortReason(input.abortSignal!).message
+                })
+              );
+              throw abortReason(input.abortSignal!);
             }
-            for (;;) {
-              const next = await iterator.next();
-              if (next.done) {
-                return;
+
+            const disposition = normalizeError(error);
+            await context.recordAttempt(
+              createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
+                retry,
+                reasonCode: "provider-error",
+                errorMessage: disposition.error.message
+              })
+            );
+
+            if (retry < maxRetries && disposition.retrySameTarget) {
+              await abortableSleep(retryBackoffMs(config, retry), input.abortSignal);
+              continue;
+            }
+            if (!disposition.fallbackNextTarget) {
+              throw disposition.error;
+            }
+            break;
+          }
+        }
+      }
+
+      return throwFinalError();
+    };
+
+    const stream = async (input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> => {
+      await context.flushAttempts();
+      const candidates = context.winner
+        ? [context.winner, ...context.candidates.filter((candidate) => candidate !== context.winner)]
+        : context.candidates;
+      const maxRetries = getMaxRetries(config);
+
+      for (const candidate of candidates) {
+        const inputSkipReason = modelInputSkipReason(candidate.model, input);
+        if (inputSkipReason) {
+          await recordInputSkip(candidate, inputSkipReason);
+          continue;
+        }
+        if (!candidate.model.stream) {
+          await recordInputSkip(candidate, "Skipped because model does not support streaming.");
+          continue;
+        }
+
+        for (let retry = 0; retry <= maxRetries; retry += 1) {
+          const attemptStartedAt = Date.now();
+          const control = createAttemptControl(
+            input.abortSignal,
+            getAttemptTimeoutMs(config, candidate.target.provider)
+          );
+          let iterator: AsyncIterator<StreamEvent> | undefined;
+
+          try {
+            const providerStream = await control.waitFor(
+              candidate.model.stream({
+                ...input,
+                abortSignal: control.signal
+              })
+            );
+            iterator = providerStream[Symbol.asyncIterator]();
+            const firstEvent = await control.waitFor(iterator.next());
+
+            if (firstEvent.done) {
+              throw new GatewayError("Provider stream ended before emitting an event.", false);
+            }
+            if (firstEvent.value.type === "error") {
+              throw firstEvent.value.error;
+            }
+
+            control.stopTimeout();
+            await context.recordAttempt(
+              createAttempt(candidate.target, true, Date.now() - attemptStartedAt, candidate.targetRank, {
+                retry,
+                reasonCode: "provider-success"
+              })
+            );
+            await context.lock(candidate);
+
+            return (async function* () {
+              let completed = false;
+              try {
+                yield firstEvent.value;
+                for (;;) {
+                  const next = await control.waitFor(iterator!.next());
+                  if (next.done) {
+                    completed = true;
+                    return;
+                  }
+                  yield next.value;
+                }
+              } finally {
+                if (!completed) {
+                  control.abort(new DOMException("Gateway stream consumer closed.", "AbortError"));
+                }
+                control.dispose();
+                if (iterator?.return) {
+                  await iterator.return();
+                }
               }
-              yield next.value;
+            })();
+          } catch (rawError) {
+            const callerAborted = input.abortSignal?.aborted === true;
+            const error = control.timedOut() ? control.timeoutError : rawError;
+            control.abort(error);
+            control.dispose();
+            if (iterator?.return) {
+              void iterator.return().catch(() => undefined);
             }
-          })();
 
-          await recordAttempt(
-            config,
-            attempts,
-            createAttempt(target, true, Date.now() - attemptStartedAt, targetIndex, {
-              retry,
-              reasonCode: "provider-success"
-            })
-          );
+            if (callerAborted) {
+              await context.recordAttempt(
+                createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
+                  retry,
+                  reasonCode: "request-aborted",
+                  errorMessage: abortReason(input.abortSignal!).message
+                })
+              );
+              throw abortReason(input.abortSignal!);
+            }
 
-          return {
-            attempts,
-            target,
-            startedAt,
-            routeDecision,
-            streamResult: {
-              ...streamResult,
-              eventStream
-            } as TStreamResult
-          };
-        } catch (error) {
-          const normalized = normalizeError(error);
-          await recordAttempt(
-            config,
-            attempts,
-            createAttempt(target, false, Date.now() - attemptStartedAt, targetIndex, {
-              reasonCode: "provider-error",
-              errorMessage: normalized.message,
-              retry
-            })
-          );
+            const disposition = normalizeError(error);
+            await context.recordAttempt(
+              createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
+                retry,
+                reasonCode: "provider-error",
+                errorMessage: disposition.error.message
+              })
+            );
 
-          if (retry < maxRetries && normalized.retryable) {
-            await sleep(retryBackoffMs(config, retry));
-            continue;
+            if (retry < maxRetries && disposition.retrySameTarget) {
+              await abortableSleep(retryBackoffMs(config, retry), input.abortSignal);
+              continue;
+            }
+            if (!disposition.fallbackNextTarget) {
+              throw disposition.error;
+            }
+            break;
           }
-
-          break;
         }
       }
-    }
 
-    const finalError = attempts.at(-1)?.errorMessage ?? "All gateway attempts failed.";
-    throw new GatewayError(finalError, false);
+      return throwFinalError();
+    };
+
+    return {
+      get provider() {
+        return context.winner?.model.provider ?? first.model.provider;
+      },
+      get modelId() {
+        return context.winner?.model.modelId ?? first.model.modelId;
+      },
+      get capabilities() {
+        return context.winner?.model.capabilities ?? first.model.capabilities;
+      },
+      generate,
+      stream
+    };
+  };
+
+  const targetForResult = (context: RouteContext) =>
+    (context.winner ?? context.candidates[0]!).target;
+
+  const createStandardRoute = (
+    request: RouteRequest,
+    options: {
+      defaultIntent?: GatewayTaskIntent;
+      extraRequiredCapabilities?: NonNullable<GatewayRequest["requiredCapabilities"]>;
+      getSkipReason?: (model: LanguageModel, target: GatewayModelTarget) => RouteSkip | undefined;
+      onWinner?: (candidate: RouteCandidate, attempts: GatewayAttempt[]) => void | Promise<void>;
+    } = {}
+  ) => {
+    const context = createRouteContext(request, options);
+    return {
+      context,
+      model: createRoutedLanguageModel(context)
+    };
   };
 
   return {
     async generate(request: GatewayRequest): Promise<GatewayResponse> {
-      const routed = await runGenerate(request, (adapter, target) => generateText(createTextOptions(adapter, target, request)));
-      return enrichTextResult(request, routed.target, routed.attempts, routed.routeDecision, routed.startedAt, routed.result);
+      const route = createStandardRoute(request);
+      const result = await generateText(createTextOptions(route.model, request));
+      return enrichTextResult(
+        request,
+        targetForResult(route.context),
+        route.context.attempts,
+        route.context.routeDecision,
+        route.context.startedAt,
+        result
+      );
     },
 
     streamText(request: GatewayRequest): GatewayStreamTextResult {
-      const selected = runStream(request, (adapter, target) => streamText(createTextOptions(adapter, target, request)));
-      let relayPromise: Promise<{
-        collect: () => Promise<GatewayResponse>;
-      }> | undefined;
-
-      const ensureRelay = async () => {
-        if (!relayPromise) {
-          relayPromise = selected.then((routed) => ({
-            collect: async () =>
-              enrichTextResult(
-                request,
-                routed.target,
-                routed.attempts,
-                routed.routeDecision,
-                routed.startedAt,
-                await routed.streamResult.collect()
-              )
-          }));
-        }
-
-        return relayPromise;
-      };
+      const route = createStandardRoute(request, {
+        extraRequiredCapabilities: { streaming: true }
+      });
+      const streamResult = streamText(createTextOptions(route.model, request));
 
       return {
-        eventStream: (async function* () {
-          const { streamResult } = await selected;
-          for await (const event of streamResult.eventStream) {
-            yield event;
-          }
-        })(),
-        textStream: (async function* () {
-          const { streamResult } = await selected;
-          for await (const chunk of streamResult.textStream) {
-            yield chunk;
-          }
-        })(),
-        collect: async () => (await ensureRelay()).collect()
+        eventStream: streamResult.eventStream,
+        textStream: streamResult.textStream,
+        collect: async () => {
+          const result = await streamResult.collect();
+          return enrichTextResult(
+            request,
+            targetForResult(route.context),
+            route.context.attempts,
+            route.context.routeDecision,
+            route.context.startedAt,
+            result
+          );
+        }
       };
     },
 
     async generateObject<TSchema extends ZodTypeAny>(
       request: GatewayGenerateObjectRequest<TSchema>
     ): Promise<GatewayObjectResponse<TSchema>> {
-      const routed = await runGenerate(
-        request,
-        (adapter, target) =>
-          generateObject({
-            ...createTextOptions(adapter, target, request),
-            schema: request.schema,
-            mode: request.mode,
-            schemaName: request.schemaName,
-            schemaDescription: request.schemaDescription
-          } as GenerateObjectOptions<TSchema>),
-        {},
-        (adapter, target) => objectCapabilitySkipReason(adapter, target, request)
-      );
+      const route = createStandardRoute(request, {
+        getSkipReason: (model) => {
+          const message = objectCapabilitySkipReason(model, request);
+          return message ? { reasonCode: "operation-skip", message } : undefined;
+        }
+      });
+      const result = await generateObject({
+        ...createTextOptions(route.model, request),
+        schema: request.schema,
+        mode: request.mode,
+        schemaName: request.schemaName,
+        schemaDescription: request.schemaDescription
+      } as GenerateObjectOptions<TSchema>);
 
       return enrichObjectResult(
         request,
-        routed.target,
-        routed.attempts,
-        routed.routeDecision,
-        routed.startedAt,
-        routed.result as GenerateObjectOutput<TSchema>
+        targetForResult(route.context),
+        route.context.attempts,
+        route.context.routeDecision,
+        route.context.startedAt,
+        result as GenerateObjectOutput<TSchema>
       );
     },
 
-    streamObject<TSchema extends ZodTypeAny>(request: GatewayGenerateObjectRequest<TSchema>): GatewayStreamObjectResult<TSchema> {
-      const selected = runStream(
-        request,
-        (adapter, target) =>
-          streamObject({
-            ...createTextOptions(adapter, target, request),
-            schema: request.schema,
-            mode: request.mode,
-            schemaName: request.schemaName,
-            schemaDescription: request.schemaDescription
-          } as GenerateObjectOptions<TSchema>),
-        {},
-        (adapter, target) => objectCapabilitySkipReason(adapter, target, request)
-      );
-      let relayPromise: Promise<{
-        streamResult: StreamObjectResult<TSchema>;
-        collect: () => Promise<GatewayObjectResponse<TSchema>>;
-      }> | undefined;
-
-      const ensureRelay = async () => {
-        if (!relayPromise) {
-          relayPromise = selected.then((routed) => ({
-            streamResult: routed.streamResult as StreamObjectResult<TSchema>,
-            collect: async () =>
-              enrichObjectResult(
-                request,
-                routed.target,
-                routed.attempts,
-                routed.routeDecision,
-                routed.startedAt,
-                await (routed.streamResult as StreamObjectResult<TSchema>).collect()
-              )
-          }));
+    streamObject<TSchema extends ZodTypeAny>(
+      request: GatewayGenerateObjectRequest<TSchema>
+    ): GatewayStreamObjectResult<TSchema> {
+      const route = createStandardRoute(request, {
+        extraRequiredCapabilities: { streaming: true },
+        getSkipReason: (model) => {
+          const message = objectCapabilitySkipReason(model, request);
+          return message ? { reasonCode: "operation-skip", message } : undefined;
         }
-
-        return relayPromise;
-      };
+      });
+      const streamResult = streamObject({
+        ...createTextOptions(route.model, request),
+        schema: request.schema,
+        mode: request.mode,
+        schemaName: request.schemaName,
+        schemaDescription: request.schemaDescription
+      } as GenerateObjectOptions<TSchema>) as StreamObjectResult<TSchema>;
 
       return {
-        eventStream: (async function* () {
-          const { streamResult } = await selected;
-          for await (const event of streamResult.eventStream) {
-            yield event;
-          }
-        })(),
-        partialObjectStream: (async function* () {
-          const relay = await ensureRelay();
-          for await (const partial of relay.streamResult.partialObjectStream) {
-            yield partial;
-          }
-        })(),
-        textStream: (async function* () {
-          const relay = await ensureRelay();
-          for await (const chunk of relay.streamResult.textStream) {
-            yield chunk;
-          }
-        })(),
-        collect: async () => (await ensureRelay()).collect()
+        eventStream: streamResult.eventStream,
+        partialObjectStream: streamResult.partialObjectStream,
+        textStream: streamResult.textStream,
+        collect: async () => {
+          const result = await streamResult.collect();
+          return enrichObjectResult(
+            request,
+            targetForResult(route.context),
+            route.context.attempts,
+            route.context.routeDecision,
+            route.context.startedAt,
+            result
+          );
+        }
       };
     },
 
     async runAgent(request: GatewayAgentRequest): Promise<GatewayAgentResponse> {
-      const selection = await selectAgentTarget(request);
-      const adapter = getAdapter(selection.target.provider);
-      const model = adapter.languageModel(selection.target.modelId) as LanguageModel;
+      const route = createStandardRoute(request, {
+        defaultIntent: "tool-heavy",
+        getSkipReason: (model) =>
+          supportsRequiredAgentCapabilities(model, request.requiredAgentCapabilities)
+            ? undefined
+            : {
+                reasonCode: "agent-capabilities",
+                message: "Skipped because agent capabilities do not satisfy the request."
+              },
+        onWinner: async (candidate, attempts) => {
+          await config.onAgentRoute?.({
+            provider: candidate.target.provider,
+            modelId: candidate.target.modelId,
+            routeDecision: route.context.routeDecision,
+            attempts,
+            targetRank: candidate.targetRank
+          });
+        }
+      });
       const agent = createAgent({
         id: request.agentId,
-        model,
+        model: route.model,
         instructions: request.instructions,
         tools: request.tools,
         maxSteps: request.maxSteps,
@@ -859,104 +1172,81 @@ export const createGateway = (config: GatewayConfig) => {
         maxTokens: request.maxTokens,
         reasoning: request.reasoning,
         toolExecution: request.toolExecution,
+        toolApprovalPolicy: request.toolApprovalPolicy,
         providerOptions: request.providerOptions,
+        policy: request.policy,
         metadata: request.metadata,
         store: request.store,
         memory: request.memory,
-        onTelemetryEvent: request.onTelemetryEvent
+        onTelemetryEvent: request.onTelemetryEvent,
+        hookFailurePolicy: request.hookFailurePolicy
       });
-
-      const result = await runAgent(agent, {
-        ...createAgentRunInput(request, selection.target)
-      });
+      const result = await runAgent(agent, createAgentRunInput(request));
 
       return enrichAgentResult(
-        selection.target,
-        [
-          ...selection.attempts,
-          createAttempt(selection.target, true, Date.now() - selection.startedAt, selection.targetRank, {
-            retry: 0,
-            reasonCode: "provider-success"
-          })
-        ],
-        selection.routeDecision,
-        selection.startedAt,
+        targetForResult(route.context),
+        route.context.attempts,
+        route.context.routeDecision,
+        route.context.startedAt,
         result
       );
     },
 
     streamAgent(request: GatewayAgentRequest): GatewayAgentStreamResult {
-      const selection = selectAgentTarget(request);
-      let relayPromise:
-        | Promise<{
-            streamResult: AgentStreamResult;
-            collect: () => Promise<GatewayAgentResponse>;
-          }>
-        | undefined;
-
-      const ensureRelay = async () => {
-        if (!relayPromise) {
-          relayPromise = selection.then(async (selected) => {
-            const adapter = getAdapter(selected.target.provider);
-            const model = adapter.languageModel(selected.target.modelId) as LanguageModel;
-            const agent = createAgent({
-              id: request.agentId,
-              model,
-              instructions: request.instructions,
-              tools: request.tools,
-              maxSteps: request.maxSteps,
-              temperature: request.temperature,
-              maxTokens: request.maxTokens,
-              reasoning: request.reasoning,
-              toolExecution: request.toolExecution,
-              providerOptions: request.providerOptions,
-              metadata: request.metadata,
-              store: request.store,
-              memory: request.memory,
-              onTelemetryEvent: request.onTelemetryEvent
-            });
-
-            const streamResult = streamAgent(agent, {
-              ...createAgentRunInput(request, selected.target)
-            });
-
-            return {
-              streamResult,
-              collect: async () =>
-                enrichAgentResult(
-                  selected.target,
-                  [
-                    ...selected.attempts,
-                    createAttempt(selected.target, true, Date.now() - selected.startedAt, selected.targetRank, {
-                      retry: 0,
-                      reasonCode: "provider-success"
-                    })
-                  ],
-                  selected.routeDecision,
-                  selected.startedAt,
-                  await streamResult.collect()
-                )
-            };
+      const route = createStandardRoute(request, {
+        defaultIntent: "tool-heavy",
+        extraRequiredCapabilities: { streaming: true },
+        getSkipReason: (model) =>
+          supportsRequiredAgentCapabilities(model, request.requiredAgentCapabilities)
+            ? undefined
+            : {
+                reasonCode: "agent-capabilities",
+                message: "Skipped because agent capabilities do not satisfy the request."
+              },
+        onWinner: async (candidate, attempts) => {
+          await config.onAgentRoute?.({
+            provider: candidate.target.provider,
+            modelId: candidate.target.modelId,
+            routeDecision: route.context.routeDecision,
+            attempts,
+            targetRank: candidate.targetRank
           });
         }
-
-        return relayPromise;
-      };
+      });
+      const agent = createAgent({
+        id: request.agentId,
+        model: route.model,
+        instructions: request.instructions,
+        tools: request.tools,
+        maxSteps: request.maxSteps,
+        temperature: request.temperature,
+        maxTokens: request.maxTokens,
+        reasoning: request.reasoning,
+        toolExecution: request.toolExecution,
+        toolApprovalPolicy: request.toolApprovalPolicy,
+        providerOptions: request.providerOptions,
+        policy: request.policy,
+        metadata: request.metadata,
+        store: request.store,
+        memory: request.memory,
+        onTelemetryEvent: request.onTelemetryEvent,
+        hookFailurePolicy: request.hookFailurePolicy
+      });
+      const streamResult: AgentStreamResult = streamAgent(agent, createAgentRunInput(request));
 
       return {
-        eventStream: (async function* () {
-          const relay = await ensureRelay();
-          for await (const event of relay.streamResult.eventStream) {
-            yield event;
-          }
-        })(),
-        textStream: (async function* () {
-          const relay = await ensureRelay();
-          for await (const chunk of relay.streamResult.textStream) {
-            yield chunk;
-          }
-        })(),
-        collect: async () => (await ensureRelay()).collect()
+        eventStream: streamResult.eventStream,
+        textStream: streamResult.textStream,
+        collect: async () => {
+          const result = await streamResult.collect();
+          return enrichAgentResult(
+            targetForResult(route.context),
+            route.context.attempts,
+            route.context.routeDecision,
+            route.context.startedAt,
+            result
+          );
+        }
       };
     }
   };

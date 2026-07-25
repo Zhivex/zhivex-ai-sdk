@@ -33,14 +33,20 @@ const gateway = createGateway({
     openai: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }),
     ollama: createOllama()
   },
-  maxRetries: 1
+  maxRetries: 1,
+  attemptTimeoutMs: 15_000,
+  unknownCostPolicy: "reject"
 });
+
+const abortController = new AbortController();
 
 const result = await gateway.generate({
   primary: { provider: "openai", modelId: "gpt-4o-mini" },
   fallbacks: [{ provider: "ollama", modelId: "llama3.2" }],
   messages: [{ role: "user", content: "Summarize the benefits of fallback routing." }],
-  routingMode: "balanced"
+  routingMode: "balanced",
+  maxCostPer1kTokens: 0.01,
+  abortSignal: abortController.signal
 });
 
 console.log(result.text);
@@ -48,7 +54,17 @@ console.log(result.providerUsed);
 console.log(result.attempts);
 ```
 
-The gateway also supports `streamText()`, `generateObject()`, and `streamObject()` while preserving the selected target for the full request lifecycle, including tool loops. Object routes skip incompatible targets before making a provider call: native mode requires `structuredOutput`, prompted mode requires `jsonMode`, and auto mode accepts either capability.
+The gateway also supports `streamText()`, `generateObject()`, and `streamObject()` through one Core generation loop. A provider is fixed once its stream emits, while a later model step in the same tool loop can still fail over before emitting provider output. Object routes skip incompatible targets before making a provider call: native mode requires `structuredOutput`, prompted mode requires `jsonMode`, and auto mode accepts either capability.
+
+## Routing guarantees
+
+- Text, object, and agent operations retry eligible failures on the current target and then continue through the ordered fallback targets. Agent routing happens inside one `runAgent()` or `streamAgent()` execution, so a fallback does not restart the agent, duplicate its run, or replay completed tools.
+- Text and object streaming fallback is resolved before the first event is exposed. Agent streams may expose lifecycle events such as `agent-run-start` first, but provider fallback is resolved before the first provider event. Once a provider stream emits an event, an error from that stream is propagated without mixing in another provider's transcript.
+- `attemptTimeoutMs` and the per-provider `attemptTimeoutsMs` do more than reject the gateway promise: they abort a non-streaming provider call or a streaming call that has not produced its first event. A request-level `abortSignal` remains active for the full operation and stops pending retries, backoff, fallback routing, and active streams.
+- `ProviderHTTPError` is classified by its typed HTTP status. Status `408`, `429`, and `5xx` errors are retryable on the same target. Other `4xx` errors are not retried on that target, but an eligible fallback can still handle a provider- or model-specific rejection.
+- When `maxCostPer1kTokens` is set, a target without configured or catalog pricing is rejected by default. Set `unknownCostPolicy: "allow"` on `createGateway()` only when routing to models with unknown cost is acceptable.
+- Requests containing image attachments only route to models that declare `capabilities.vision: true`. The gateway never removes images to make a target appear compatible; if one target cannot accept the original request, it is skipped in favor of a compatible fallback.
+- `scoreTarget(context)` can replace the built-in name-based heuristic with application metrics. It must return a finite number; higher scores route first.
 
 For agent workloads, use `runAgent()` or `streamAgent()` to route by both regular model capabilities and agent-specific capabilities such as `supportTier`, `approvalRequests`, or `remoteMcp`.
 
@@ -68,6 +84,12 @@ console.log(agentResult.providerUsed);
 console.log(agentResult.attempts);
 console.log(agentResult.routeDecision);
 ```
+
+Agent requests also forward the durable Core controls `runId`, `scope`, `idempotencyKey`, `parentRunId`, `policy`, and `toolApprovalPolicy`. Use a durable store plus `idempotencyKey` for effectful production runs.
+
+## Migration note
+
+`GatewayConfig.groundedAdapters` has been removed because it was not used by any gateway operation. Register provider adapters through `adapters`; `@zhivex-ai/gateway` does not currently expose a grounded-generation route.
 
 This package is the SDK-local routing layer. It is not the Zhivex-hosted Gateway API and it is not re-exported from `@zhivex-ai/sdk`.
 
