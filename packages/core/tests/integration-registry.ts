@@ -487,6 +487,7 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               baseURL: deepSeekBaseURL
             })(deepSeekTextModelId),
           omitTemperature: true,
+          toolMaxTokens: 256,
           supports: deepSeekSupports
         } satisfies IntegrationLanguageProvider
       ]
