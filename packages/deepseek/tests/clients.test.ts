@@ -127,10 +127,9 @@ describe("DeepSeek provider-specific clients", () => {
   });
 
   it.each([
-    ["model", { prompt: "x", model: "deepseek-v4-flash" }, "only model"],
-    ["maxTokens low", { prompt: "x", maxTokens: 0 }, "between 1 and 4096"],
-    ["maxTokens high", { prompt: "x", maxTokens: 4097 }, "between 1 and 4096"],
-    ["maxTokens fractional", { prompt: "x", maxTokens: 1.5 }, "between 1 and 4096"],
+    ["model", { prompt: "x", model: "deepseek-v3" }, "deepseek-v4-flash"],
+    ["maxTokens low", { prompt: "x", maxTokens: 0 }, "positive integer"],
+    ["maxTokens fractional", { prompt: "x", maxTokens: 1.5 }, "positive integer"],
     ["logprobs low", { prompt: "x", logprobs: -1 }, "between 0 and 20"],
     ["logprobs high", { prompt: "x", logprobs: 21 }, "between 0 and 20"],
     ["temperature", { prompt: "x", temperature: 2.1 }, "between 0 and 2"],
@@ -142,6 +141,27 @@ describe("DeepSeek provider-specific clients", () => {
 
     await expect(clients.fim.generate(input as any)).rejects.toThrow(String(message));
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("supports DeepSeek V4 Flash and current FIM token budgets above the former beta limit", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ choices: [{ index: 0, text: "value", finish_reason: "stop" }] })
+    );
+    const clients = createDeepSeekClients({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      clients.fim.generate({
+        model: "deepseek-v4-flash",
+        prompt: "const answer = ",
+        maxTokens: 4097
+      })
+    ).resolves.toMatchObject({ text: "value" });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      model: "deepseek-v4-flash",
+      max_tokens: 4097
+    });
   });
 
   it("retries retryable FIM HTTP responses", async () => {
@@ -171,7 +191,22 @@ describe("DeepSeek provider-specific clients", () => {
   it("streams every FIM choice and emits one usage-bearing finish", async () => {
     fetchMock.mockResolvedValueOnce(
       sseResponse(
-        { choices: [{ index: 0, text: "const ", finish_reason: null }], usage: null },
+        {
+          choices: [
+            {
+              index: 0,
+              text: "const ",
+              finish_reason: null,
+              logprobs: {
+                text_offset: [0],
+                token_logprobs: [-0.1],
+                tokens: ["const"],
+                top_logprobs: [{ const: -0.1 }]
+              }
+            }
+          ],
+          usage: null
+        },
         { choices: [{ index: 0, text: "answer = 42;", finish_reason: "stop" }], usage: null },
         {
           choices: [],
@@ -194,12 +229,22 @@ describe("DeepSeek provider-specific clients", () => {
     });
 
     const events = [];
-    for await (const event of await clients.fim.stream({ prompt: "const " })) {
+    for await (const event of await clients.fim.stream({ prompt: "const ", logprobs: 2 })) {
       events.push(event);
     }
 
     expect(events).toEqual([
-      { type: "text-delta", textDelta: "const ", index: 0 },
+      {
+        type: "text-delta",
+        textDelta: "const ",
+        index: 0,
+        logprobs: {
+          textOffset: [0],
+          tokenLogprobs: [-0.1],
+          tokens: ["const"],
+          topLogprobs: [{ const: -0.1 }]
+        }
+      },
       { type: "text-delta", textDelta: "answer = 42;", index: 0 },
       {
         type: "finish",
@@ -219,6 +264,7 @@ describe("DeepSeek provider-specific clients", () => {
     expect(JSON.parse(String(init.body))).toMatchObject({
       model: "deepseek-v4-pro",
       prompt: "const ",
+      logprobs: 2,
       stream: true,
       stream_options: { include_usage: true }
     });

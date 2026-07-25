@@ -14,6 +14,7 @@ import {
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
+  type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
@@ -128,6 +129,40 @@ const mapContentParts = (message: ModelMessage) => {
   return textParts.map((part) => part.text).join("");
 };
 
+const ensureJsonOutputInstruction = (
+  messages: ModelMessage[],
+  responseFormat: DeepSeekLanguageModelOptions["response_format"] | undefined,
+  structuredOutput: ModelGenerateInput["structuredOutput"]
+) => {
+  if (responseFormat?.type !== "json_object") {
+    return messages;
+  }
+
+  const schema =
+    structuredOutput?.mode === "native"
+      ? JSON.stringify(toJSONSchema(structuredOutput.schema))
+      : undefined;
+
+  if (!schema && messages.some((message) => /\bjson\b/i.test(mapContentParts(message)))) {
+    return messages;
+  }
+
+  return [
+    {
+      role: "system",
+      parts: [
+        {
+          type: "text",
+          text: schema
+            ? `Return only valid JSON matching this JSON Schema: ${schema}`
+            : "Return only valid JSON."
+        }
+      ]
+    } satisfies ModelMessage,
+    ...messages
+  ];
+};
+
 const mapMessages = (messages: ModelMessage[], prefix?: DeepSeekPrefixOptions) => {
   const mapped = messages.map((message) => {
     if (message.role === "tool") {
@@ -183,24 +218,153 @@ const mapMessages = (messages: ModelMessage[], prefix?: DeepSeekPrefixOptions) =
   return mapped;
 };
 
+const DEEPSEEK_STRICT_SCHEMA_TYPES = new Set([
+  "object",
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "array"
+]);
+const DEEPSEEK_STRICT_STRING_FORMATS = new Set(["email", "hostname", "ipv4", "ipv6", "uuid"]);
+const DEEPSEEK_STRICT_UNSUPPORTED_KEYWORDS = new Set([
+  "allOf",
+  "oneOf",
+  "not",
+  "minLength",
+  "maxLength",
+  "minItems",
+  "maxItems",
+  "uniqueItems",
+  "contains",
+  "minContains",
+  "maxContains",
+  "prefixItems",
+  "patternProperties",
+  "propertyNames",
+  "unevaluatedProperties"
+]);
+
+const isSchemaRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+const assertDeepSeekStrictSchema = (schema: unknown, toolName: string) => {
+  const fail = (path: string, message: string): never => {
+    throw new ValidationError(`DeepSeek strict tool "${toolName}" schema at ${path} ${message}.`);
+  };
+
+  const visit = (node: unknown, path: string): void => {
+    if (!isSchemaRecord(node)) {
+      fail(path, "must be a JSON Schema object");
+    }
+    const schemaNode = node as Record<string, unknown>;
+
+    for (const keyword of DEEPSEEK_STRICT_UNSUPPORTED_KEYWORDS) {
+      if (keyword in schemaNode) {
+        fail(path, `does not support "${keyword}"`);
+      }
+    }
+
+    if (
+      schemaNode.type !== undefined &&
+      (typeof schemaNode.type !== "string" || !DEEPSEEK_STRICT_SCHEMA_TYPES.has(schemaNode.type))
+    ) {
+      fail(path, `uses unsupported type ${JSON.stringify(schemaNode.type)}`);
+    }
+
+    if (
+      schemaNode.format !== undefined &&
+      (typeof schemaNode.format !== "string" || !DEEPSEEK_STRICT_STRING_FORMATS.has(schemaNode.format))
+    ) {
+      fail(path, `uses unsupported string format ${JSON.stringify(schemaNode.format)}`);
+    }
+
+    if (schemaNode.type === "object" || schemaNode.properties !== undefined) {
+      if (!isSchemaRecord(schemaNode.properties)) {
+        fail(path, 'requires an object-valued "properties" field');
+      }
+      const properties = schemaNode.properties as Record<string, unknown>;
+      if (schemaNode.additionalProperties !== false) {
+        fail(path, 'requires "additionalProperties: false"');
+      }
+
+      const required = Array.isArray(schemaNode.required)
+        ? schemaNode.required.filter((value: unknown): value is string => typeof value === "string")
+        : [];
+      const missingRequired = Object.keys(properties).filter((property) => !required.includes(property));
+      if (missingRequired.length) {
+        fail(path, `requires every property; missing ${missingRequired.map((value) => JSON.stringify(value)).join(", ")}`);
+      }
+
+      for (const [property, propertySchema] of Object.entries(properties)) {
+        visit(propertySchema, `${path}.properties[${JSON.stringify(property)}]`);
+      }
+    }
+
+    if (schemaNode.items !== undefined) {
+      visit(schemaNode.items, `${path}.items`);
+    }
+
+    if (schemaNode.anyOf !== undefined) {
+      if (!Array.isArray(schemaNode.anyOf) || schemaNode.anyOf.length === 0) {
+        fail(path, '"anyOf" must be a non-empty array');
+      }
+      (schemaNode.anyOf as unknown[]).forEach((variant, index) => visit(variant, `${path}.anyOf[${index}]`));
+    }
+
+    for (const definitionsKey of ["$defs", "$def", "definitions"]) {
+      const definitions = schemaNode[definitionsKey];
+      if (definitions === undefined) {
+        continue;
+      }
+      if (!isSchemaRecord(definitions)) {
+        fail(path, `"${definitionsKey}" must be an object`);
+      }
+      const definitionRecord = definitions as Record<string, unknown>;
+      for (const [definition, definitionSchema] of Object.entries(definitionRecord)) {
+        visit(definitionSchema, `${path}.${definitionsKey}[${JSON.stringify(definition)}]`);
+      }
+    }
+  };
+
+  visit(schema, "$");
+};
+
 const mapTools = (tools: ModelGenerateInput["tools"], strict: boolean) =>
   tools
     ? (() => {
         const toolDefinitions = Object.values(tools);
+        if (toolDefinitions.length > 128) {
+          throw new ValidationError('DeepSeek accepts at most 128 function tools per request.');
+        }
+
         const callableTools = toolDefinitions.filter(isCallableToolDefinition);
         if (callableTools.length !== toolDefinitions.length) {
           throw new UnsupportedFeatureError('Provider "deepseek" does not support hosted tools.');
         }
 
-        return callableTools.map((tool) => ({
-          type: "function",
-          function: {
-            name: tool.name,
-            description: tool.description,
-            parameters: toJSONSchema(tool.schema),
-            ...(strict ? { strict: true } : {})
+        return callableTools.map((tool) => {
+          if (!/^[A-Za-z0-9_-]{1,64}$/.test(tool.name)) {
+            throw new ValidationError(
+              `DeepSeek tool name "${tool.name}" must contain 1-64 letters, numbers, underscores, or hyphens.`
+            );
           }
-        }));
+
+          const parameters = toJSONSchema(tool.schema);
+          if (strict) {
+            assertDeepSeekStrictSchema(parameters, tool.name);
+          }
+
+          return {
+            type: "function",
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters,
+              ...(strict ? { strict: true } : {})
+            }
+          };
+        });
       })()
     : undefined;
 
@@ -221,7 +385,9 @@ const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
   };
 };
 
-const mapStructuredOutput = (input: ModelGenerateInput) => {
+const mapStructuredOutput = (
+  input: ModelGenerateInput
+): DeepSeekLanguageModelOptions["response_format"] | undefined => {
   if (!input.structuredOutput || input.structuredOutput.mode !== "native") {
     return undefined;
   }
@@ -328,6 +494,35 @@ const validateProviderOptions = (input: ModelGenerateInput<DeepSeekLanguageModel
   }
   if (providerOptions?.top_logprobs !== undefined && providerOptions.logprobs !== true) {
     throw new ValidationError('DeepSeek "top_logprobs" requires "logprobs: true".');
+  }
+  const effectiveTemperature = input.temperature ?? providerOptions?.temperature;
+  if (
+    effectiveTemperature !== undefined &&
+    (typeof effectiveTemperature !== "number" ||
+      !Number.isFinite(effectiveTemperature) ||
+      effectiveTemperature < 0 ||
+      effectiveTemperature > 2)
+  ) {
+    throw new ValidationError('DeepSeek "temperature" must be between 0 and 2.');
+  }
+  if (
+    providerOptions?.top_p !== undefined &&
+    (typeof providerOptions.top_p !== "number" ||
+      !Number.isFinite(providerOptions.top_p) ||
+      providerOptions.top_p < 0 ||
+      providerOptions.top_p > 1)
+  ) {
+    throw new ValidationError('DeepSeek "top_p" must be between 0 and 1.');
+  }
+  if (
+    providerOptions?.stop !== undefined &&
+    typeof providerOptions.stop !== "string" &&
+    (!Array.isArray(providerOptions.stop) || providerOptions.stop.some((value) => typeof value !== "string"))
+  ) {
+    throw new ValidationError('DeepSeek "stop" must be a string or an array of strings.');
+  }
+  if (Array.isArray(providerOptions?.stop) && providerOptions.stop.length > 16) {
+    throw new ValidationError('DeepSeek "stop" accepts at most 16 sequences.');
   }
   if (
     providerOptions?.prefix !== undefined &&
@@ -486,7 +681,10 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
             body: JSON.stringify({
               ...options.bodyOptions,
               model: this.modelId,
-              messages: mapMessages(input.messages, options.prefix),
+              messages: mapMessages(
+                ensureJsonOutputInstruction(input.messages, options.responseFormat, input.structuredOutput),
+                options.prefix
+              ),
               tools: mapTools(input.tools, options.strictTools),
               tool_choice: options.toolChoice,
               response_format: options.responseFormat,
@@ -537,7 +735,10 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
             body: JSON.stringify({
               ...options.bodyOptions,
               model: this.modelId,
-              messages: mapMessages(input.messages, options.prefix),
+              messages: mapMessages(
+                ensureJsonOutputInstruction(input.messages, options.responseFormat, input.structuredOutput),
+                options.prefix
+              ),
               tools: mapTools(input.tools, options.strictTools),
               tool_choice: options.toolChoice,
               response_format: options.responseFormat,
@@ -559,7 +760,7 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
       throw error;
     }
 
-    return (async function* () {
+    return (async function* (): AsyncGenerator<StreamEvent> {
       try {
         const toolBuffers = new Map<number, { id: string; name: string; args: string }>();
         let lastFinishReason: string | undefined;
@@ -588,6 +789,17 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
               } satisfies StreamEvent;
             }
             continue;
+          }
+
+          if (choice?.logprobs) {
+            yield {
+              type: "provider-data",
+              provider: "deepseek",
+              data: {
+                type: "logprobs",
+                logprobs: choice.logprobs
+              } as JsonValue
+            } satisfies StreamEvent;
           }
 
           if (delta?.reasoning_content) {

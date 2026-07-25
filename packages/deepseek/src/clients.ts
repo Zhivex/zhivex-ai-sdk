@@ -18,7 +18,7 @@ export interface DeepSeekClientsOptions {
   fetch?: typeof globalThis.fetch;
 }
 
-export type DeepSeekFIMModel = "deepseek-v4-pro";
+export type DeepSeekFIMModel = "deepseek-v4-flash" | "deepseek-v4-pro";
 
 export interface DeepSeekFIMInput extends RetryOptions {
   prompt: string;
@@ -60,6 +60,7 @@ export type DeepSeekFIMStreamEvent =
       type: "text-delta";
       textDelta: string;
       index: number;
+      logprobs?: DeepSeekFIMLogprobs;
     }
   | {
       type: "finish";
@@ -177,14 +178,20 @@ const validateFIMInput = (input: DeepSeekFIMInput) => {
   if (!input || typeof input.prompt !== "string") {
     throw new ValidationError('DeepSeek FIM requires a string "prompt".');
   }
-  if (input.model !== undefined && input.model !== "deepseek-v4-pro") {
-    throw new ValidationError('DeepSeek FIM currently supports only model "deepseek-v4-pro".');
+  if (
+    input.model !== undefined &&
+    input.model !== "deepseek-v4-flash" &&
+    input.model !== "deepseek-v4-pro"
+  ) {
+    throw new ValidationError(
+      'DeepSeek FIM "model" must be "deepseek-v4-flash" or "deepseek-v4-pro".'
+    );
   }
   if (
     input.maxTokens !== undefined &&
-    (!Number.isInteger(input.maxTokens) || input.maxTokens < 1 || input.maxTokens > 4096)
+    (!Number.isInteger(input.maxTokens) || input.maxTokens < 1)
   ) {
-    throw new ValidationError('DeepSeek FIM "maxTokens" must be an integer between 1 and 4096.');
+    throw new ValidationError('DeepSeek FIM "maxTokens" must be a positive integer.');
   }
   if (
     input.logprobs !== undefined &&
@@ -328,10 +335,12 @@ class DeepSeekFIMClientImpl implements DeepSeekFIMClient {
 
           for (const choice of choices) {
             if (typeof choice.text === "string" && choice.text) {
+              const logprobs = normalizeLogprobs(choice.logprobs);
               yield {
                 type: "text-delta",
                 textDelta: choice.text,
-                index: Number(choice.index ?? 0)
+                index: Number(choice.index ?? 0),
+                ...(logprobs ? { logprobs } : {})
               } satisfies DeepSeekFIMStreamEvent;
             }
             if (choice.finish_reason) {

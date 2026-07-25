@@ -38,7 +38,9 @@ console.log(result.text);
 
 Flash is the fast, economical default. Pro is intended for the strongest reasoning and agentic workloads. Pricing is in USD and should be checked against the [official models and pricing page](https://api-docs.deepseek.com/quick_start/pricing) before making cost-sensitive decisions.
 
-Use these V4 model IDs directly. DeepSeek scheduled the legacy `deepseek-chat` and `deepseek-reasoner` aliases for retirement on July 24, 2026 at 15:59 UTC.
+Use these V4 model IDs directly. DeepSeek retired the legacy `deepseek-chat` and `deepseek-reasoner` aliases on July 24, 2026 at 15:59 UTC.
+
+DeepSeek documents account-level concurrency limits of 2,500 requests for Flash and 500 for Pro. Limits apply to the account rather than to each API key. `providerOptions.user_id` can be used for workload isolation, but it must not contain personal or private user information.
 
 ## Capabilities
 
@@ -53,9 +55,11 @@ DeepSeek thinking defaults to enabled upstream. In the shared `reasoning` option
 
 Thinking mode supports tool loops, but DeepSeek V4 does not accept an explicit `tool_choice` field in that mode. Leave `toolChoice` unset while thinking is enabled. To use `toolChoice: "none"`, `"required"`, or a specific function choice, first select non-thinking mode with `reasoning: { effort: "none" }`.
 
-Official Chat Completions fields such as `user_id`, `logprobs`, and `top_logprobs` are available through `providerOptions`. The adapter rejects deprecated `user`, `frequency_penalty`, and `presence_penalty` fields instead of silently sending ineffective values. DeepSeek does not support sampling controls such as `temperature` or `top_p` while thinking is enabled; use `reasoning: { effort: "none" }` for non-thinking sampling.
+Official Chat Completions fields such as `user_id`, `logprobs`, and `top_logprobs` are available through `providerOptions`. Streaming chat logprobs are preserved as `provider-data` events, and FIM text-delta events expose optional normalized `logprobs`. The adapter validates the documented sampling, stop-sequence, function-count, and function-name limits locally. It rejects deprecated `user`, `frequency_penalty`, and `presence_penalty` fields instead of silently sending ineffective values. DeepSeek does not support sampling controls such as `temperature` or `top_p` while thinking is enabled; use `reasoning: { effort: "none" }` for non-thinking sampling.
 
-DeepSeek's stable JSON mode guarantees a JSON object but does not enforce an arbitrary JSON Schema. Ask explicitly for JSON in the prompt and set a sufficient token limit; DeepSeek notes that JSON mode can occasionally return empty content. Strict tool schemas are available as an opt-in Beta feature: pass `providerOptions: { strictTools: true }`. The adapter routes that request through DeepSeek's Beta endpoint automatically and marks every function as strict. DeepSeek applies a restricted JSON Schema subset in this mode.
+DeepSeek's stable JSON mode guarantees a JSON object but does not enforce an arbitrary JSON Schema. For native `generateObject()` / `streamObject()` calls, the adapter automatically adds the required JSON instruction and the requested schema to the system prompt, then the SDK validates the returned object with Zod. Direct `providerOptions.response_format = { type: "json_object" }` requests also receive a generic JSON instruction when the conversation does not already contain one. Set a sufficient token limit; DeepSeek notes that JSON mode can occasionally return empty content.
+
+Strict tool schemas are available as an opt-in Beta feature: pass `providerOptions: { strictTools: true }`. The adapter routes that request through DeepSeek's Beta endpoint automatically, marks every function as strict, and validates the documented subset locally before network I/O. Every object property must be required, every object must set `additionalProperties: false`, and string/array length constraints plus unsupported string formats are rejected with a typed validation error instead of an opaque upstream 400.
 
 ## Chat prefix completion
 
@@ -105,7 +109,7 @@ const balance = await deepseek.balance.get();
 console.log(fim.text, models, balance.isAvailable);
 ```
 
-FIM uses the Beta `/completions` endpoint automatically. The typed client currently permits only `deepseek-v4-pro`, non-thinking completion, and `maxTokens` from 1 through 4,096. This conservative model restriction follows the current FIM API schema; DeepSeek's broader pricing table lists both V4 models, so Flash should not be assumed without a live upstream confirmation. `models.list()` and `balance.get()` use the stable API.
+FIM uses the Beta `/completions` endpoint automatically and supports both `deepseek-v4-flash` and `deepseek-v4-pro` in non-thinking completion mode. The official sources currently disagree: the FIM reference enumerates Pro and the guide still mentions 4K, while the current pricing table lists FIM for both V4 models. Live validation confirmed both model IDs and a `max_tokens` value above 4,096, so `maxTokens` accepts any positive integer and the API enforces its current model ceiling. `models.list()` and `balance.get()` use the stable API.
 
 This OpenAI Chat Completions adapter does not expose provider-hosted tools, remote MCP, hosted web search, embeddings, audio, vision, files, or realtime sessions. DeepSeek separately exposes web search through its Anthropic-compatible endpoint for supported agent integrations.
 
@@ -119,7 +123,7 @@ DEEPSEEK_API_KEY=... \
 bun run test:integration:deepseek
 ```
 
-It validates the shared text, streaming, tools, structured-output, and reasoning paths plus live model listing, balance lookup, FIM generate/stream, and chat prefix completion. `DEEPSEEK_BASE_URL` and `DEEPSEEK_BETA_BASE_URL` are optional endpoint overrides. A run without the opt-in flag or API key is skipped and does not count as live validation.
+It validates the shared text, streaming, thinking-mode tools, structured-output, reasoning, and chat-logprobs paths plus live model listing, balance lookup, FIM and FIM logprobs on both V4 models, chat prefix completion, and Beta strict tools in both thinking and non-thinking modes. `DEEPSEEK_BASE_URL` and `DEEPSEEK_BETA_BASE_URL` are optional endpoint overrides. A run without the opt-in flag or API key is skipped and does not count as live validation.
 
 Repository and full documentation:
 

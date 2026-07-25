@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { generateObject, generateText, hostedTool, streamText, tool } from "@zhivex-ai/core";
+import { generateObject, generateText, hostedTool, streamObject, streamText, tool } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createDeepSeek } from "../src/index.js";
@@ -227,8 +227,72 @@ describe("deepseek adapter", () => {
     const firstRequest = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const firstBody = JSON.parse(String(firstRequest.body)) as {
       response_format: { type: string; json_schema?: unknown };
+      messages: Array<{ role: string; content: string }>;
     };
     expect(firstBody.response_format).toEqual({ type: "json_object" });
+    expect(firstBody.messages[0]?.role).toBe("system");
+    expect(firstBody.messages[0]?.content).toContain("Return only valid JSON matching this JSON Schema:");
+    expect(firstBody.messages[0]?.content).toContain('"city"');
+    expect(firstBody.messages[0]?.content).toContain('"forecast"');
+  });
+
+  it("adds the DeepSeek JSON instruction and schema to streamed native structured output", async () => {
+    fetchMock.mockResolvedValueOnce(
+      sseResponse(
+        {
+          choices: [
+            {
+              delta: { content: '{"city":"Buenos Aires",' },
+              finish_reason: null
+            }
+          ]
+        },
+        {
+          choices: [
+            {
+              delta: { content: '"country":"Argentina"}' },
+              finish_reason: "stop"
+            }
+          ],
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 8,
+            total_tokens: 18
+          }
+        },
+        "[DONE]"
+      )
+    );
+
+    const provider = createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamObject({
+      model: provider("deepseek-v4-flash"),
+      prompt: "Return the city-country pair for Buenos Aires, Argentina.",
+      schema: z.object({
+        city: z.string(),
+        country: z.string()
+      }),
+      mode: "native"
+    });
+
+    await expect(result.collect()).resolves.toMatchObject({
+      object: {
+        city: "Buenos Aires",
+        country: "Argentina"
+      },
+      objectMode: "native"
+    });
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body)) as {
+      response_format: { type: string };
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(body.response_format).toEqual({ type: "json_object" });
+    expect(body.messages[0]).toMatchObject({
+      role: "system",
+      content: expect.stringContaining('"country"')
+    });
   });
 
   it("maps common reasoning config to DeepSeek thinking mode", async () => {
@@ -340,13 +404,13 @@ describe("deepseek adapter", () => {
     expect(followupBody.messages.find((message) => message.role === "assistant")?.content).toBe("");
   });
 
-  it("streams reasoning content as provider data", async () => {
+  it("streams reasoning content and logprobs as provider data", async () => {
     const body = new ReadableStream({
       start(controller) {
         controller.enqueue(
           new TextEncoder().encode(
-            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Think\"}}]}\n\n" +
-              "data: {\"choices\":[{\"delta\":{\"content\":\" answer\"},\"finish_reason\":\"stop\"}]}\n\n" +
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Think\"},\"logprobs\":{\"reasoning_content\":[{\"token\":\"Think\",\"logprob\":-0.1}]}}]}\n\n" +
+              "data: {\"choices\":[{\"delta\":{\"content\":\" answer\"},\"logprobs\":{\"content\":[{\"token\":\" answer\",\"logprob\":-0.2}]},\"finish_reason\":\"stop\"}]}\n\n" +
               "data: [DONE]\n\n"
           )
         );
@@ -367,6 +431,10 @@ describe("deepseek adapter", () => {
       prompt: "hello",
       reasoning: {
         effort: "high"
+      },
+      providerOptions: {
+        logprobs: true,
+        top_logprobs: 2
       }
     });
 
@@ -379,6 +447,21 @@ describe("deepseek adapter", () => {
         type: "reasoning_content",
         reasoningContent: "Think"
       }
+    });
+    expect(final.messages.at(-1)?.parts).toContainEqual({
+      type: "provider-data",
+      provider: "deepseek",
+      data: {
+        type: "logprobs",
+        logprobs: {
+          content: [{ token: " answer", logprob: -0.2 }]
+        }
+      }
+    });
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      logprobs: true,
+      top_logprobs: 2
     });
   });
 
@@ -648,7 +731,12 @@ describe("deepseek adapter", () => {
       user_id: "tenant_123",
       stop: ["END"]
     });
-    expect(JSON.parse(String(request.body)).reasoning_effort).toBeUndefined();
+    const body = JSON.parse(String(request.body));
+    expect(body.reasoning_effort).toBeUndefined();
+    expect(body.messages[0]).toEqual({
+      role: "system",
+      content: "Return only valid JSON."
+    });
   });
 
   it("routes DeepSeek strict tools through the beta endpoint automatically", async () => {
@@ -678,6 +766,30 @@ describe("deepseek adapter", () => {
     expect(body.tools[0]?.function.strict).toBe(true);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.deepseek.com/beta/chat/completions");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["optional properties", z.object({ city: z.string().optional() }), "requires every property"],
+    ["string length constraints", z.object({ city: z.string().min(1) }), 'does not support "minLength"'],
+    ["array length constraints", z.object({ cities: z.array(z.string()).min(1) }), 'does not support "minItems"'],
+    ["unsupported string formats", z.object({ website: z.url() }), "unsupported string format"]
+  ])("rejects unsupported DeepSeek strict schema features: %s", async (_name, schema, message) => {
+    const provider = createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("deepseek-v4-pro"),
+        prompt: "Call the tool.",
+        tools: {
+          inspect: tool({
+            name: "inspect",
+            schema
+          })
+        },
+        providerOptions: { strictTools: true }
+      })
+    ).rejects.toThrow(String(message));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("supports beta chat prefix completion without leaking SDK-only options", async () => {
@@ -775,6 +887,53 @@ describe("deepseek adapter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [{ temperature: 2.1 }, '"temperature" must be between 0 and 2'],
+    [{ top_p: 1.1 }, '"top_p" must be between 0 and 1'],
+    [{ stop: Array.from({ length: 17 }, (_, index) => `${index}`) }, '"stop" accepts at most 16 sequences'],
+    [{ stop: ["ok", 1] }, '"stop" must be a string or an array of strings']
+  ])("validates DeepSeek non-thinking request limits before network I/O: %j", async (providerOptions, message) => {
+    const provider = createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(
+      generateText({
+        model: provider("deepseek-v4-pro"),
+        prompt: "hello",
+        reasoning: { effort: "none" },
+        providerOptions: providerOptions as any
+      })
+    ).rejects.toThrow(message);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("validates DeepSeek function count and names before network I/O", async () => {
+    const provider = createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const tooManyTools = Object.fromEntries(
+      Array.from({ length: 129 }, (_, index) => [
+        `tool_${index}`,
+        tool({ name: `tool_${index}`, schema: z.object({ value: z.string() }) })
+      ])
+    );
+
+    await expect(
+      generateText({
+        model: provider("deepseek-v4-pro"),
+        prompt: "hello",
+        tools: tooManyTools
+      })
+    ).rejects.toThrow("at most 128 function tools");
+
+    await expect(
+      generateText({
+        model: provider("deepseek-v4-pro"),
+        prompt: "hello",
+        tools: {
+          invalid: tool({ name: "invalid tool", schema: z.object({ value: z.string() }) })
+        }
+      })
+    ).rejects.toThrow("must contain 1-64 letters, numbers, underscores, or hyphens");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects unsupported common reasoning controls before sending a request", async () => {
     const provider = createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
@@ -822,7 +981,17 @@ describe("deepseek adapter", () => {
   });
 
   it("requires an API key", () => {
-    expect(() => createDeepSeek()).toThrow("Missing DeepSeek API key.");
+    const previous = process.env.DEEPSEEK_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    try {
+      expect(() => createDeepSeek()).toThrow("Missing DeepSeek API key.");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.DEEPSEEK_API_KEY;
+      } else {
+        process.env.DEEPSEEK_API_KEY = previous;
+      }
+    }
   });
 
   it("surfaces provider HTTP errors", async () => {
