@@ -5,7 +5,7 @@ AWS Bedrock adapter for Zhivex AI SDK.
 ## Install
 
 ```bash
-bun add @zhivex-ai/bedrock
+bun add @zhivex-ai/core @zhivex-ai/bedrock
 ```
 
 ## Runtime modes

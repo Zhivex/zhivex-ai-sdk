@@ -6,7 +6,10 @@ Supported public imports should come from published package entrypoints such as:
 
 - `@zhivex-ai/sdk`
 - `@zhivex-ai/core`
+- `@zhivex-ai/agents`
 - `@zhivex-ai/openai`
+- `@zhivex-ai/xai`
+- `@zhivex-ai/meta`
 - `@zhivex-ai/azure-openai`
 - `@zhivex-ai/anthropic`
 - `@zhivex-ai/gemini`
@@ -16,6 +19,7 @@ Supported public imports should come from published package entrypoints such as:
 - `@zhivex-ai/openrouter`
 - `@zhivex-ai/qwen`
 - `@zhivex-ai/kimi`
+- `@zhivex-ai/deepseek`
 - `@zhivex-ai/gateway`
 
 Deep imports from internal files are not part of the stable contract unless this document names an explicit exception.
@@ -41,7 +45,7 @@ listApiStability("beta");
 
 The manifest classifies runtime exports as `stable`, `beta`, or `experimental`. Contract tests fail if `packages/core/src/index.ts` adds a runtime export that is not classified. Type-only exports are guarded separately by declaration snapshots for `@zhivex-ai/core` and `@zhivex-ai/sdk`; intentional public type changes should update those snapshots and the relevant docs together.
 
-This stable boundary promotes only the Runner/session family to Stable. Workflows, artifacts, workflow state services, durable artifact helpers, CLI inspection/execution UX, and their schema/versioning helpers remain Beta. Advanced tool registry helpers remain Experimental.
+The stable boundary includes shared generation, media, agent runtime, safety, evaluation, replay, trace, and Runner/session APIs listed by the manifest. Workflows, artifacts, workflow state services, control-plane and CLI UX, and their schema/versioning helpers remain Beta. Advanced tool registry helpers remain Experimental.
 
 The current stable npm package is published under the `latest` dist-tag. Install it with `@zhivex-ai/sdk`. Use `@next` only for prerelease validation.
 
@@ -53,7 +57,8 @@ These APIs are the supported public contract for application code and production
 - Structured output: `generateObject`, `streamObject`
 - Grounded text: `generateGroundedText`
 - Embeddings: `embed`, `embedMany`
-- Audio: `transcribeAudio`, `generateSpeech`
+- Audio: `transcribeAudio`, `generateSpeech`, `streamSpeech`
+- Generative media: `generateImage`, `generateVideo`, `generateMusic`
 - Agent runtime: `createAgent`, `runAgent`, `resumeAgent`, `streamAgent`
 - Runner/session APIs: `createRunner`, in-memory/file/SQLite/Postgres `SessionService` implementations, `AgentSession`, `SessionEvent`, session schema v1 normalization/migration helpers, and file-backed session pruning helpers
 - Agent persistence contracts: `AgentRunStore`, `AgentMemoryStore`

@@ -8,6 +8,7 @@ This repository is a Bun-based TypeScript monorepo with project references and V
 
 ```bash
 bun install
+bun run docs:check
 bun run typecheck
 bun run test
 bun run test:integration
@@ -37,24 +38,27 @@ bun run build
 - `bun run test:integration:vertex` requires `VERTEX_ACCESS_TOKEN` or `GOOGLE_ACCESS_TOKEN`, plus `GOOGLE_CLOUD_PROJECT` or `GCLOUD_PROJECT` unless `VERTEX_BASE_URL` is set. It optionally accepts `VERTEX_LOCATION`, `VERTEX_INTEGRATION_MODEL`, and `VERTEX_INTEGRATION_EMBEDDING_MODEL`.
 - `bun run test:integration:deepseek` and `bun run test:integration:qwen` filter the shared capability suites to the named provider, even when other provider credentials are present.
 - If a documented behavior changes, update `README.md`, especially the provider compatibility matrix.
+- Run `bun run docs:check` when package inventories, package README installation commands, local documentation links, or repository layout change.
 
 ## Pull Requests
 
 - Keep changes focused and incremental.
 - Add or update tests for behavioral changes.
-- Make sure `bun run typecheck`, `bun run test`, and `bun run build` pass before opening a PR.
+- Make sure `bun run docs:check`, `bun run typecheck`, `bun run test`, and `bun run build` pass before opening a PR.
 - If you change public capability behavior, run `bun run test:integration` with any provider credentials you have available and keep the capability-first suites in sync.
 - Include a changeset when the change affects published packages.
 
 ## Release Notes
 
-Published packages are managed with Changesets. Add a changeset for user-facing changes:
+Published packages are managed with Changesets. Add a changeset for user-facing runtime, type, capability, or npm-metadata changes:
 
 ```bash
 bunx changeset
 ```
 
 Publishing is performed from the protected `release.yml` GitHub Actions workflow with npm trusted publishing. Local `bun run release` is deliberately blocked without the GitHub OIDC environment.
+
+Changesets generates per-package changelogs during `bun run version-packages`. Documentation-only changes do not require a package bump unless they also change published behavior or npm-facing metadata.
 
 ## Reporting Issues
 

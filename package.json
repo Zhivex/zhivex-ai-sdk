@@ -14,6 +14,7 @@
   "scripts": {
     "build": "bun run scripts/clean-dist.ts && tsc -b --force",
     "changeset": "changeset",
+    "docs:check": "bun run scripts/check-docs.ts",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:openai": "vitest run --config vitest.integration.config.ts packages/openai/tests/openai.integration.test.ts",

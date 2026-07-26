@@ -5,14 +5,34 @@ Recommended entry point for Zhivex AI SDK. Re-exports the high-level public API 
 ## Install
 
 ```bash
-bun add @zhivex-ai/sdk
+bun add @zhivex-ai/sdk @zhivex-ai/openai
 ```
 
-For prerelease validation:
+Install only the provider packages your application uses. For prerelease validation, install the SDK from `next` and use the matching provider prerelease whenever that provider is part of the same release:
 
 ```bash
 bun add @zhivex-ai/sdk@next
 ```
+
+## Quick Start
+
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+const result = await generateText({
+  model: openai("gpt-4o-mini"),
+  prompt: "Explain the unified SDK in one sentence."
+});
+
+console.log(result.text);
+```
+
+Use provider-backed models from Bun, Node.js, route handlers, workers, or other server runtimes. Keep provider credentials and effectful tools out of browser bundles.
 
 ## Start Here
 

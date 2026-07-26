@@ -55,20 +55,23 @@ Changesets is configured to update internal dependencies when needed, but packag
 
 Before publishing, follow the full [Release Guide](./docs/maintainers/RELEASE.md). The short checklist is:
 
-1. Run `bun run typecheck`
-2. Run `bun run test`
-3. Run `bun run build`
-4. Run `bun run smoke:providers` before meaningful stable or prerelease publishes
-5. Create or review pending changesets
-6. Review package manifests, package dry-run output, and re-exports
+1. Run `bun run docs:check`
+2. Run `bun run typecheck`
+3. Run `bun run test`
+4. Run `bun run build`
+5. Run `bun run smoke:providers` before meaningful stable or prerelease publishes
+6. Create or review pending changesets
+7. Review package manifests, generated changelogs, package dry-run output, and re-exports
 
-For local versioning and release:
+For release preparation:
 
 1. Run `bun run version-packages`
-2. Re-run validation after versioning
-3. Publish stable releases with `bun run release`
+2. Review and commit the generated manifests, dependency ranges, changelogs, and lockfile
+3. Re-run validation after versioning
+4. Push the immutable release source to `main`
+5. Dispatch `.github/workflows/release.yml` with channel `latest` or `next`
 
-Use `bunx changeset publish --tag next` for prereleases. Do not publish prerelease versions to `latest`.
+Publishing is performed by the protected GitHub Actions workflow with npm Trusted Publishing and OIDC. `bun run release` and `bun run release:next` are workflow implementation commands, not local publishing instructions. For prereleases, enter Changesets pre mode with `next`, commit the generated `-next.N` versions, and dispatch the workflow with channel `next`. Do not publish prerelease versions to `latest`.
 
 ## Compatibility Expectations
 

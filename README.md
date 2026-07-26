@@ -24,7 +24,7 @@ console.log(getApiStability("createWorkflow")?.stability); // "beta"
 
 Runtime export drift is guarded by that manifest, and public declaration drift is guarded by type snapshot tests for `@zhivex-ai/core` and `@zhivex-ai/sdk`.
 
-The first stable promotion is intentionally narrow: `Runner + SessionService` is Stable, while declarative workflows, artifacts, workflow state services, and the CLI remain Beta.
+The stable boundary covers the shared generation primitives, the portable agent runtime, safety and evaluation helpers, and `Runner + SessionService`. Declarative workflows, artifacts, workflow state services, the control-plane/CLI surface, and other APIs named in the manifest remain Beta or Experimental.
 
 ### Installing The Stable Package
 
@@ -2755,9 +2755,12 @@ The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives 
 
 - `generateText`, `streamText`
 - `generateObject`, `streamObject`
-- `transcribeAudio`, `generateSpeech`
+- `transcribeAudio`, `generateSpeech`, `streamSpeech`
+- `generateImage`, `generateVideo`, `generateMusic`
 - `generateGroundedText`
 - `embed`, `embedMany`
+- portable agent, runner, session, safety, evaluation, replay, and trace helpers
+- Beta workflow, artifact, model-catalog, and control-plane helpers, classified by `API_STABILITY_MANIFEST`
 - message helpers such as `system`, `user`, `assistant`, `tool`, `textPart`
 - shared types such as `ReasoningConfig`, `GenerateTextOptions`, and `GenerateObjectOptions`
 - stream and HTTP helpers such as `toTextStreamResponse`, `toUIMessageStreamResponse`, `toSSEStream`, and related UI serialization utilities
@@ -2775,6 +2778,8 @@ packages/
   sdk/            Aggregated public API
   agents/         Agent-first facade over the core runtime
   openai/         OpenAI adapter
+  xai/            xAI Grok adapter
+  meta/           Meta Model API adapter
   azure-openai/   Azure OpenAI adapter
   anthropic/      Anthropic adapter
   gemini/         Gemini adapter
@@ -2794,6 +2799,7 @@ The repository uses Bun workspaces, TypeScript project references, and Vitest.
 
 ```bash
 bun install
+bun run docs:check
 bun run typecheck
 bun run test
 bun run build

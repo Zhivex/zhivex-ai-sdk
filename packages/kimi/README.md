@@ -5,7 +5,7 @@ Kimi adapter for Zhivex AI SDK.
 ## Install
 
 ```bash
-bun add @zhivex-ai/kimi
+bun add @zhivex-ai/core @zhivex-ai/kimi
 ```
 
 ## Kimi K3

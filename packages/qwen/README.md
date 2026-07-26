@@ -5,7 +5,7 @@ Qwen and Alibaba Cloud Model Studio adapter for Zhivex AI SDK.
 ## Install
 
 ```bash
-bun add @zhivex-ai/qwen
+bun add @zhivex-ai/sdk @zhivex-ai/qwen zod
 ```
 
 ## Configure

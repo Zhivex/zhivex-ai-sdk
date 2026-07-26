@@ -4,6 +4,12 @@ Gemini adapter for Zhivex AI SDK.
 
 Supports Gemini text, audio understanding, multimodal embeddings, speech, realtime sessions, grounded generation, Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, managed agents, raw prediction calls, and current Google generative media models such as Gemini Image / Nano Banana, Gemini Omni Flash, Veo 3.1, and Lyria 3.
 
+## Install
+
+```bash
+bun add @zhivex-ai/core @zhivex-ai/gemini
+```
+
 | Surface | Support |
 | --- | --- |
 | Text, tools, structured output, audio input | `generateText()` |
@@ -191,12 +197,6 @@ Google Maps grounding returns place-citation annotations in the interaction's mo
 See Google's current [Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview), [TTS guide](https://ai.google.dev/gemini-api/docs/speech-generation), [Maps grounding requirements](https://ai.google.dev/gemini-api/docs/maps-grounding), [model list](https://ai.google.dev/gemini-api/docs/models), [deprecation schedule](https://ai.google.dev/gemini-api/docs/deprecations), [pricing](https://ai.google.dev/gemini-api/docs/pricing), and [Gemini Omni Flash guide](https://ai.google.dev/gemini-api/docs/omni).
 
 Model Garden-style coverage is intentionally raw/prediction based. The adapter does not add a dedicated wrapper for every Google model family.
-
-## Install
-
-```bash
-bun add @zhivex-ai/gemini
-```
 
 Repository and full documentation:
 
