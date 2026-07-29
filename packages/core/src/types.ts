@@ -178,6 +178,28 @@ export interface ToolExecutionOptions {
   stopOnError?: boolean;
 }
 
+export type ToolApprovalMode = "policy" | "interrupt";
+
+export interface ToolApprovalSigner {
+  sign(payload: string): string | Promise<string>;
+  verify?(payload: string, signature: string): boolean | Promise<boolean>;
+}
+
+export interface ToolGuardrailTrigger {
+  triggered: true;
+  reason?: string;
+  metadata?: Record<string, JsonValue>;
+}
+
+export interface ToolRuntimeContext<TContext = any> {
+  context?: TContext;
+  /** Durable run that owns this execution, when invoked by the agent runtime. */
+  runId?: string;
+  agentId?: string;
+  scope?: AgentStoreScope;
+  metadata?: Record<string, JsonValue>;
+}
+
 export interface StructuredOutputConfig<TSchema extends ZodTypeAny = ZodTypeAny> {
   schema: TSchema;
   mode: StructuredOutputMode;
@@ -206,6 +228,11 @@ export interface StreamToolCallEvent {
 export interface StreamToolResultEvent {
   type: "tool-result";
   toolResult: ToolExecutionResult;
+}
+
+export interface StreamToolApprovalRequestEvent {
+  type: "tool-approval-request";
+  approval: AgentApprovalRequest;
 }
 
 export interface StreamProviderDataEvent {
@@ -240,6 +267,7 @@ export type StreamEvent =
   | StreamTextDeltaEvent
   | StreamToolCallEvent
   | StreamToolResultEvent
+  | StreamToolApprovalRequestEvent
   | StreamProviderDataEvent
   | StreamImageGenerationEvent
   | StreamFinishEvent
@@ -1040,27 +1068,87 @@ export interface ProviderAdapter {
 
 export type CallableProviderAdapter = ProviderAdapter & ((modelId: string) => LanguageModel);
 
-export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny, TResult = JsonValue> {
+export interface ToolDefinition<
+  TSchema extends ZodTypeAny = any,
+  TResult = JsonValue,
+  TContext = any
+> {
   name: string;
   description?: string;
   schema: TSchema;
   metadata?: Record<string, JsonValue>;
   requiresApproval?: boolean;
-  execute: (input: z.infer<TSchema>, context?: ToolExecutionContext) => Promise<TResult> | TResult;
+  /**
+   * "policy" preserves the immediate allow/deny policy behavior. "interrupt"
+   * creates a resumable local approval request before any tool side effect.
+   */
+  approvalMode?: ToolApprovalMode;
+  /** Bump when approval-relevant tool behavior changes so stale approvals cannot be replayed. */
+  approvalVersion?: string;
+  isEnabled?: (
+    input: z.infer<TSchema>,
+    context: ToolExecutionContext<TContext>
+  ) => boolean | Promise<boolean>;
+  inputGuardrails?: ToolInputGuardrail<TSchema, TContext>[];
+  outputGuardrails?: ToolOutputGuardrail<TSchema, TResult, TContext>[];
+  onError?: ToolErrorHandler<TSchema, TResult, TContext>;
+  execute: (
+    input: z.infer<TSchema>,
+    context?: ToolExecutionContext<TContext>
+  ) => Promise<TResult> | TResult;
 }
 
-export interface ToolExecutionContext {
+export interface ToolExecutionContext<TContext = any> extends ToolRuntimeContext<TContext> {
   abortSignal?: AbortSignal;
   toolCall: ToolCall;
   step: number;
   model: LanguageModel | RealtimeModel;
-  /** Durable run that owns this execution, when invoked by the agent runtime. */
-  runId?: string;
   /** Forward this key to side-effecting APIs to make retries externally idempotent. */
   idempotencyKey?: string;
   request?: ModelGenerateInput;
   realtimeConfig?: RealtimeSessionConfig;
 }
+
+export interface ToolInputGuardrailRequest<
+  TSchema extends ZodTypeAny = any,
+  TContext = any
+> {
+  tool: ToolDefinition;
+  input: z.infer<TSchema>;
+  context: ToolExecutionContext<TContext>;
+}
+
+export interface ToolOutputGuardrailRequest<
+  TSchema extends ZodTypeAny = any,
+  TResult = JsonValue,
+  TContext = any
+> extends ToolInputGuardrailRequest<TSchema, TContext> {
+  output: TResult;
+}
+
+export type ToolInputGuardrail<
+  TSchema extends ZodTypeAny = any,
+  TContext = any
+> = (
+  request: ToolInputGuardrailRequest<TSchema, TContext>
+) => ToolGuardrailTrigger | void | Promise<ToolGuardrailTrigger | void>;
+
+export type ToolOutputGuardrail<
+  TSchema extends ZodTypeAny = any,
+  TResult = JsonValue,
+  TContext = any
+> = (
+  request: ToolOutputGuardrailRequest<TSchema, TResult, TContext>
+) => ToolGuardrailTrigger | void | Promise<ToolGuardrailTrigger | void>;
+
+export type ToolErrorHandler<
+  TSchema extends ZodTypeAny = any,
+  TResult = JsonValue,
+  TContext = any
+> = (
+  error: Error,
+  request: ToolInputGuardrailRequest<TSchema, TContext>
+) => TResult | void | Promise<TResult | void>;
 
 export type HostedToolClass =
   | "web-search"
@@ -1087,7 +1175,7 @@ export interface HostedToolDefinition<TConfig extends JsonValue = JsonValue> {
   metadata?: Record<string, JsonValue>;
 }
 
-export type AnyToolDefinition = ToolDefinition | HostedToolDefinition;
+export type AnyToolDefinition = ToolDefinition<any, any, any> | HostedToolDefinition;
 
 export type ToolSet = Record<string, AnyToolDefinition>;
 
@@ -1100,18 +1188,21 @@ export interface ToolRegistryLike {
 
 export type ToolCollection = ToolSet | ToolRegistryLike;
 
-export interface ToolApprovalRequest {
+export interface ToolApprovalRequest<TContext = any> {
   toolCall: ToolCall;
   tool: ToolDefinition;
   input: JsonValue;
   step: number;
   model: LanguageModel | RealtimeModel;
   request?: ModelGenerateInput;
+  executionContext?: ToolExecutionContext<TContext>;
   realtimeConfig?: RealtimeSessionConfig;
 }
 
 export interface ToolApprovalDecision {
   approved: boolean;
+  /** Requests resumable human approval instead of treating approved:false as a final denial. */
+  approvalRequired?: boolean;
   reason?: string;
   metadata?: Record<string, JsonValue>;
 }
@@ -1121,8 +1212,8 @@ export interface ToolApprovalEvent {
   decision: ToolApprovalDecision;
 }
 
-export type ToolApprovalPolicy = (
-  request: ToolApprovalRequest
+export type ToolApprovalPolicy<TContext = any> = (
+  request: ToolApprovalRequest<TContext>
 ) => ToolApprovalDecision | boolean | Promise<ToolApprovalDecision | boolean>;
 
 export type ToolApprovalObserver = (
@@ -1133,14 +1224,21 @@ export type ProviderOptionsOf<TModel extends LanguageModel> = TModel extends Lan
   ? TProviderOptions
   : ProviderOptions;
 
-export type GenerateTextOptions<TModel extends LanguageModel = LanguageModel> = RetryOptions &
+export type GenerateTextOptions<
+  TModel extends LanguageModel = LanguageModel,
+  TContext = unknown
+> = RetryOptions &
   GenerateInputSource & {
     model: TModel;
     system?: string;
     tools?: ToolCollection;
     toolChoice?: ToolChoice;
     toolExecution?: ToolExecutionOptions;
-    toolApprovalPolicy?: ToolApprovalPolicy;
+    toolApprovalPolicy?: ToolApprovalPolicy<TContext>;
+    toolApprovalSigner?: ToolApprovalSigner;
+    /** Resolved local approvals supplied by a durable agent runtime. */
+    toolApprovalResolutions?: AgentApprovalResolution[];
+    toolContext?: ToolRuntimeContext<TContext>;
     onToolApprovalDecision?: ToolApprovalObserver;
     /** Called immediately before each model request. Throw to stop the loop. */
     onBeforeModelStep?: (context: { request: ModelGenerateInput; step: number }) => void | Promise<void>;
@@ -1156,6 +1254,7 @@ export type GenerateTextOptions<TModel extends LanguageModel = LanguageModel> = 
       response: GenerateResult;
       step: number;
       toolCalls: ToolCall[];
+      approvalRequests: AgentApprovalRequest[];
     }) => void | Promise<void>;
     /** Durable runtimes use this hook to checkpoint tool results before the next model request. */
     onToolExecutionComplete?: (context: {
@@ -1186,6 +1285,8 @@ export interface GenerateTextOutput {
   steps: GenerateTextStep[];
   messages: ModelMessage[];
   toolResults: ToolExecutionResult[];
+  /** Local resumable approval requests produced before any tool in the batch executes. */
+  approvalRequests?: AgentApprovalRequest[];
 }
 
 export type AgentStatus =
@@ -1308,10 +1409,13 @@ export interface AgentRunState {
   currentStep: number;
   maxSteps: number;
   outputText: string;
+  finalOutput?: JsonValue;
+  outputMode?: Exclude<StructuredOutputMode, "auto">;
   finishReason?: FinishReason;
   providerFinishReason?: string;
   usage?: TokenUsage;
   pendingApprovals: AgentApprovalRequest[];
+  approvalHistory?: AgentApprovalResolution[];
   childRuns?: AgentChildRun[];
   metadata?: Record<string, JsonValue>;
   handoff?: AgentHandoff;
@@ -1593,28 +1697,30 @@ export interface AgentGuardrailTrigger {
   metadata?: Record<string, JsonValue>;
 }
 
-export interface AgentInputGuardrailRequest {
+export interface AgentInputGuardrailRequest<TContext = any> {
   runId: string;
   agentId?: string;
+  context?: TContext;
   state: AgentRunState;
   messages: ModelMessage[];
   metadata?: Record<string, JsonValue>;
 }
 
-export interface AgentOutputGuardrailRequest {
+export interface AgentOutputGuardrailRequest<TContext = any, TOutput = any> {
   runId: string;
   agentId?: string;
+  context?: TContext;
   state: AgentRunState;
-  output: AgentRunOutput | LiveAgentRunOutput;
+  output: AgentRunOutput<TOutput> | LiveAgentRunOutput;
   metadata?: Record<string, JsonValue>;
 }
 
-export type AgentInputGuardrail = (
-  request: AgentInputGuardrailRequest
+export type AgentInputGuardrail<TContext = any> = (
+  request: AgentInputGuardrailRequest<TContext>
 ) => AgentGuardrailTrigger | void | Promise<AgentGuardrailTrigger | void>;
 
-export type AgentOutputGuardrail = (
-  request: AgentOutputGuardrailRequest
+export type AgentOutputGuardrail<TContext = any, TOutput = any> = (
+  request: AgentOutputGuardrailRequest<TContext, TOutput>
 ) => AgentGuardrailTrigger | void | Promise<AgentGuardrailTrigger | void>;
 
 export interface AgentTelemetryGuardrailTriggeredEvent {
@@ -1699,19 +1805,29 @@ export interface AgentHookFailurePolicy {
   onError?: (event: AgentOperationalError) => void | Promise<void>;
 }
 
-export interface AgentDefinition<TModel extends LanguageModel = LanguageModel> {
+export interface AgentDefinition<
+  TModel extends LanguageModel = LanguageModel,
+  TContext = any,
+  TOutput = any
+> {
   id?: string;
   model: TModel;
   instructions?: string;
+  contextSchema?: z.ZodType<TContext>;
   tools?: ToolCollection;
   maxSteps?: number;
   temperature?: number;
   maxTokens?: number;
   reasoning?: ReasoningConfig;
+  outputSchema?: z.ZodType<TOutput>;
+  outputMode?: StructuredOutputMode;
+  outputName?: string;
+  outputDescription?: string;
   toolExecution?: ToolExecutionOptions;
-  toolApprovalPolicy?: ToolApprovalPolicy;
-  inputGuardrails?: AgentInputGuardrail[];
-  outputGuardrails?: AgentOutputGuardrail[];
+  toolApprovalPolicy?: ToolApprovalPolicy<TContext>;
+  toolApprovalSigner?: ToolApprovalSigner;
+  inputGuardrails?: AgentInputGuardrail<TContext>[];
+  outputGuardrails?: AgentOutputGuardrail<TContext, TOutput>[];
   providerOptions?: ProviderOptionsOf<TModel>;
   subagents?: AgentSubAgentDefinition[];
   policy?: AgentRunPolicy;
@@ -1740,11 +1856,18 @@ export interface LiveAgentDefinition<TModel extends RealtimeModel = RealtimeMode
 }
 
 export interface AgentApprovalRequest {
+  /** Absent on legacy persisted states and treated as "provider". */
+  kind?: "provider" | "local-tool";
   provider: string;
   id: string;
   name: string;
   arguments: string;
   serverLabel?: string;
+  toolCallId?: string;
+  step?: number;
+  inputDigest?: string;
+  toolVersion?: string;
+  signature?: string;
   rawData: JsonValue;
 }
 
@@ -1756,12 +1879,31 @@ export interface AgentApprovalResponse {
   reason?: string;
 }
 
-export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryOptions &
+export interface AgentApprovalResolution {
+  requestId: string;
+  kind: "provider" | "local-tool";
+  provider: string;
+  approve: boolean;
+  reason?: string;
+  toolCallId?: string;
+  step?: number;
+  inputDigest?: string;
+  toolVersion?: string;
+  signature?: string;
+  resolvedAt: number;
+}
+
+export type AgentRunInput<
+  TModel extends LanguageModel = LanguageModel,
+  TContext = any
+> = RetryOptions &
   GenerateInputSource & {
     runId?: string;
     /** Required isolation boundary for shared durable stores and memory. */
     scope?: AgentStoreScope;
     idempotencyKey?: string;
+    /** Ephemeral application context. Callers must provide it again when resuming a run. */
+    context?: TContext;
     state?: AgentRunState;
     approvals?: AgentApprovalResponse[];
     handoff?: AgentHandoff;
@@ -1770,7 +1912,7 @@ export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryO
     tools?: ToolCollection;
     toolChoice?: ToolChoice;
     toolExecution?: ToolExecutionOptions;
-    toolApprovalPolicy?: ToolApprovalPolicy;
+    toolApprovalPolicy?: ToolApprovalPolicy<TContext>;
     maxSteps?: number;
     temperature?: number;
     maxTokens?: number;
@@ -1780,9 +1922,10 @@ export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryO
     metadata?: Record<string, JsonValue>;
   };
 
-export interface AgentRunOutput {
+export interface AgentRunOutput<TOutput = unknown> {
   status: AgentStatus;
   outputText: string;
+  finalOutput?: TOutput;
   finishReason?: FinishReason;
   providerFinishReason?: string;
   usage?: TokenUsage;
@@ -1881,10 +2024,10 @@ export interface LiveAgentRunOutput {
   };
 }
 
-export interface AgentStreamResult {
+export interface AgentStreamResult<TOutput = unknown> {
   eventStream: AsyncIterable<AgentStreamEvent>;
   textStream: AsyncIterable<string>;
-  collect: () => Promise<AgentRunOutput>;
+  collect: () => Promise<AgentRunOutput<TOutput>>;
 }
 
 export type AgentLiveEvent = AgentStreamEvent | RealtimeEvent;

@@ -3,6 +3,7 @@ import type { ZodTypeAny } from "zod";
 import type {
   AgentCapabilities,
   AgentSupportTier,
+  AnyToolDefinition,
   AudioInput,
   ContentPart,
   FinishReason,
@@ -81,9 +82,13 @@ export const getTextFromMessages = (messages: ModelMessage[]): string =>
 
 export const serializeJsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 
-export const tool = <TSchema extends ZodTypeAny, TResult extends JsonValue = JsonValue>(
-  definition: ToolDefinition<NoInfer<TSchema>, TResult> & { schema: TSchema }
-): ToolDefinition<TSchema, TResult> => definition;
+export const tool = <
+  TSchema extends ZodTypeAny,
+  TResult extends JsonValue = JsonValue,
+  TContext = unknown
+>(
+  definition: ToolDefinition<NoInfer<TSchema>, TResult, TContext> & { schema: TSchema }
+): ToolDefinition<TSchema, TResult, TContext> => definition;
 
 const inferHostedToolClass = (definition: Omit<HostedToolDefinition, "kind">): HostedToolClass => {
   const normalizedType = definition.type.toLowerCase();
@@ -170,12 +175,12 @@ export const hostedTool = <TTool extends HostedToolDefinition>(definition: Omit<
   }) as TTool;
 
 export const isHostedToolDefinition = (
-  toolDefinition: ToolDefinition | HostedToolDefinition
+  toolDefinition: AnyToolDefinition
 ): toolDefinition is HostedToolDefinition => "kind" in toolDefinition && toolDefinition.kind === "hosted";
 
 export const isCallableToolDefinition = (
-  toolDefinition: ToolDefinition | HostedToolDefinition
-): toolDefinition is ToolDefinition => !isHostedToolDefinition(toolDefinition);
+  toolDefinition: AnyToolDefinition
+): toolDefinition is ToolDefinition<any, any, any> => !isHostedToolDefinition(toolDefinition);
 
 export const getHostedToolClass = (toolDefinition: HostedToolDefinition): HostedToolClass =>
   toolDefinition.toolClass ?? inferHostedToolClass(toolDefinition);

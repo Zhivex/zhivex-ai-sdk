@@ -1333,34 +1333,49 @@ const agent = createAgent({
 });
 ```
 
-If a provider emits an MCP approval request, the run moves to `waiting_approval` instead of failing. You can inspect pending approvals with `getAgentApprovalRequests()` and continue with `resumeAgent()`. Persisted legacy states with `status: "suspended"` are still accepted for compatibility.
+Provider MCP approvals and SDK-managed local-tool interrupts move a run to `waiting_approval` instead of failing. Local tools opt in with `requiresApproval: true` plus `approvalMode: "interrupt"`; a tool policy can also return `{ approved: false, approvalRequired: true }`. Inspect `state.pendingApprovals` and continue with `resumeAgent()`. Persisted legacy states with `status: "suspended"` are still accepted for compatibility.
 
 ```ts
-import { createAgent, getAgentApprovalRequests, resumeAgent, runAgent } from "@zhivex-ai/sdk";
+import { createAgent, resumeAgent, runAgent, tool } from "@zhivex-ai/sdk";
+import { z } from "zod";
 
-const waiting = await runAgent(weatherAgent, {
-  prompt: "Search the docs through MCP."
+const deploymentAgent = createAgent({
+  model,
+  tools: {
+    deploy: tool({
+      name: "deploy",
+      schema: z.object({ target: z.string() }),
+      requiresApproval: true,
+      approvalMode: "interrupt",
+      approvalVersion: "2026-07-29",
+      execute: async ({ target }, context) =>
+        deploy(target, {
+          signal: context?.abortSignal,
+          idempotencyKey: context?.idempotencyKey
+        })
+    })
+  }
+});
+
+const waiting = await runAgent(deploymentAgent, {
+  prompt: "Deploy staging."
 });
 
 if (waiting.status === "waiting_approval") {
-  const [approval] = getAgentApprovalRequests(waiting.messages);
-
-  const resumed = await resumeAgent(weatherAgent, {
+  const resumed = await resumeAgent(deploymentAgent, {
     state: waiting.state,
-    approvals: [
-      {
-        provider: approval.provider,
-        approvalRequestId: approval.id,
-        approve: true
-      }
-    ]
+    approvals: waiting.state.pendingApprovals.map((approval) => ({
+      provider: approval.provider,
+      approvalRequestId: approval.id,
+      approve: true
+    }))
   });
 
   console.log(resumed.outputText);
 }
 ```
 
-This approval flow currently matters most for `Tier A` providers such as OpenAI and Azure OpenAI, where remote MCP servers can request explicit user approval mid-run.
+The runtime preflights every tool call in a model-produced batch before any side effect. Local decisions are bound to the run, step, call id, tool name, canonical input digest, and `approvalVersion`, then revalidated on resume. Configure `toolApprovalSigner` when persisted approvals need application-authenticated signatures. Local approval records stay in durable agent state rather than being sent back to the model.
 
 For OpenTelemetry-oriented setups, the SDK now also exposes explicit OTEL helpers:
 
@@ -1422,7 +1437,7 @@ Trace payloads are fail-closed by default: full messages, tool inputs, tool outp
 
 See [Production Guide](./docs/PRODUCTION.md#observability-export-path) and `examples/sdk/observability-export.ts` for a JSONL export pattern with redacted trace artifacts, tool-call audit records, and reproducible cost/latency summaries.
 
-For SDK-defined local tools, you can now attach a `toolApprovalPolicy` at the agent or request level. The policy runs before local tool execution and can allow or deny the call with a reason:
+For SDK-defined local tools, attach a `toolApprovalPolicy` at the agent or request level. The policy can allow, finally deny, or request resumable human review:
 
 ```ts
 const agent = createAgent({
@@ -1431,7 +1446,8 @@ const agent = createAgent({
     if (toolCall.name === "shell") {
       return {
         approved: false,
-        reason: "Shell access is disabled in this environment."
+        approvalRequired: true,
+        reason: "Shell access requires review in this environment."
       };
     }
 
@@ -1439,6 +1455,8 @@ const agent = createAgent({
   }
 });
 ```
+
+Local tools also support `isEnabled`, input/output guardrails, and `onError`. `contextSchema` validates ephemeral application context before each run or resume, and the context is available to policies, guardrails, and tool execution. `outputSchema` validates the terminal result and exposes it as `result.finalOutput`; select `outputMode: "auto"`, `"native"`, or `"prompted"`.
 
 Agents also support first-class input and output guardrails. A triggered guardrail fails the run, persists the failed state, and emits telemetry:
 
@@ -2053,7 +2071,9 @@ The SDK now exposes MCP helpers across the providers that support it:
 - `@zhivex-ai/gemini` and `@zhivex-ai/vertex`: `geminiMcpTools()` and `vertexMcpTools()` re-export the shared MCP wrapper for SDK-managed MCP clients.
 - `@zhivex-ai/bedrock`: `createBedrockAgentCoreMcpClient()` and `createBedrockAgentCoreMcpToolSet()` expose AWS-native AgentCore Runtime or Gateway MCP endpoints as SDK-managed callable tools. This is separate from `runtime: "openai"` hosted MCP and approvals.
 
-SDK-managed MCP tools are supervised by default. A tool runs without approval only when the MCP server explicitly declares `readOnlyHint: true` and does not declare destructive or open-world behavior. Missing annotations, `destructiveHint: true`, or `openWorldHint: true` set `requiresApproval` and risk metadata automatically.
+SDK-managed MCP tools are supervised by default, and server annotations are untrusted by default. `readOnlyHint: true` can reduce supervision only when the application explicitly sets `trustServerToolAnnotations: true`; missing annotations, destructive/open-world hints, or untrusted annotations require approval. MCP tools that require approval use resumable local interrupts by default.
+
+`createMcpToolSet()` follows opaque `nextCursor` values with bounded `maxListPages` and `maxListedTools`, validates declared `outputSchema` against `structuredContent`, forwards tool-call idempotency and abort signals, and enforces separate list/call timeouts. A server `isError` response remains a tool error and is not treated as a successful schema-validated value.
 
 Use the shared helper when you already have an MCP client in-process:
 
@@ -2065,7 +2085,13 @@ const gemini = createGemini({
   apiKey: process.env.GEMINI_API_KEY
 });
 
-const tools = await createMcpToolSet(myMcpClient);
+const tools = await createMcpToolSet(myMcpClient, {
+  trustServerToolAnnotations: false,
+  maxListPages: 20,
+  maxListedTools: 2_000,
+  listToolsTimeoutMs: 10_000,
+  callToolTimeoutMs: 30_000
+});
 
 const result = await generateText({
   model: gemini("gemini-3.5-flash"),

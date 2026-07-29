@@ -52,7 +52,7 @@ The `examples/sdk/runner-session.ts` example is deterministic and does not requi
 
 `examples/sdk/full-agent.ts` is deterministic and does not require provider credentials. It is the fastest smoke for the stable `Agent` class, local tool loops, serializable run state, and streaming from the aggregator package.
 
-`examples/agents/full-agent.ts` and `examples/agents/approval-hitl.ts` are deterministic and do not require provider credentials. They show the smaller `@zhivex-ai/agents` facade, including a tool-using run and a human-in-the-loop approval/resume cycle.
+`examples/agents/full-agent.ts` and `examples/agents/approval-hitl.ts` are deterministic and do not require provider credentials. They show the smaller `@zhivex-ai/agents` facade, including a local-tool human-in-the-loop interrupt, approval queue, replay-bound resume, and approval history.
 
 `examples/next-runner` shows both JSON and streaming App Router handlers. The streaming route emits NDJSON text and finish events from `runner.stream()` so a React client can render incremental agent output while preserving the final session id.
 

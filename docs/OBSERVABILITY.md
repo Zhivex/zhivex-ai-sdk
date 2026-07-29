@@ -152,7 +152,7 @@ const agent = new Agent({
 });
 ```
 
-Agent telemetry events include run start/finish, step start/finish, approvals, memory loads, guardrails, state saves, handoffs, subagent starts, subagent finishes, and tool approval decisions.
+Agent telemetry events include run start/finish, step start/finish, provider and local-tool approval requests/resolutions, memory loads, agent/tool guardrails, state saves, handoffs, subagent starts, subagent finishes, and tool approval decisions. Local approval payloads are persisted in agent state rather than provider messages; keep full arguments and outputs redacted unless an approved sink explicitly needs them.
 
 ## Recommended Pipeline
 

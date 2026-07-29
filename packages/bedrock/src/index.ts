@@ -29,8 +29,10 @@ import {
   type LanguageModel,
   type McpCallToolRequest,
   type McpCallToolResponse,
+  type McpCallToolOptions,
   type McpClient,
   type McpListedTool,
+  type McpListToolsRequest,
   type McpListToolsResponse,
   type McpToolSetOptions,
   type ModelCapabilities,
@@ -962,10 +964,15 @@ class BedrockAgentCoreMcpClient implements McpClient {
     };
   }
 
-  private async request<T>(method: "tools/list" | "tools/call", params?: Record<string, JsonValue>): Promise<T> {
+  private async request<T>(
+    method: "tools/list" | "tools/call",
+    params?: Record<string, JsonValue>,
+    abortSignal?: AbortSignal
+  ): Promise<T> {
     const response = await this.fetcher(this.endpoint, {
       method: "POST",
       headers: this.headers(),
+      signal: abortSignal,
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: `bedrock-agentcore-${++this.requestId}`,
@@ -989,15 +996,25 @@ class BedrockAgentCoreMcpClient implements McpClient {
     return requireJsonRpcResult<T>(json, method);
   }
 
-  async listTools(): Promise<McpListToolsResponse | McpListedTool[]> {
-    return this.request<McpListToolsResponse>("tools/list");
+  async listTools(
+    input?: McpListToolsRequest,
+    options?: McpCallToolOptions
+  ): Promise<McpListToolsResponse | McpListedTool[]> {
+    return this.request<McpListToolsResponse>(
+      "tools/list",
+      input?.cursor === undefined ? undefined : { cursor: input.cursor },
+      options?.abortSignal
+    );
   }
 
-  async callTool(input: McpCallToolRequest): Promise<JsonValue | McpCallToolResponse> {
+  async callTool(
+    input: McpCallToolRequest,
+    options?: McpCallToolOptions
+  ): Promise<JsonValue | McpCallToolResponse> {
     return this.request<McpCallToolResponse>("tools/call", {
       name: input.name,
       arguments: input.arguments ?? {}
-    });
+    }, options?.abortSignal);
   }
 }
 

@@ -387,7 +387,17 @@ export {
 } from "./google.js";
 export { generateGroundedText } from "./grounded-text.js";
 export { createMcpToolRegistry, createMcpToolSet } from "./mcp.js";
-export type { McpCallToolRequest, McpCallToolResponse, McpClient, McpListedTool, McpListToolsResponse, McpToolAnnotations, McpToolSetOptions } from "./mcp.js";
+export type {
+  McpCallToolOptions,
+  McpCallToolRequest,
+  McpCallToolResponse,
+  McpClient,
+  McpListedTool,
+  McpListToolsRequest,
+  McpListToolsResponse,
+  McpToolAnnotations,
+  McpToolSetOptions
+} from "./mcp.js";
 export { generateImage, generateMusic, generateVideo } from "./media.js";
 export { generateText, normalizeMessages, streamText } from "./generate-text.js";
 export { createOtelAgentObserver, createOtelObserver, createOtelTelemetryMiddleware, OTelObserver, OTelSpanHandle } from "./observability.js";

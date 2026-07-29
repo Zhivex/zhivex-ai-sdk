@@ -853,6 +853,332 @@ describe("agent runtime", () => {
     expect(resumed.usage).toEqual({ inputTokens: 7, outputTokens: 5, totalTokens: 12 });
   });
 
+  it("interrupts and resumes local tools without exposing approval records to the provider", async () => {
+    let modelCalls = 0;
+    let toolCalls = 0;
+    let sawLocalApprovalProviderData = false;
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({
+      id: "local-hitl",
+      store,
+      model: createLanguageModel({
+        async generate(input) {
+          modelCalls += 1;
+          sawLocalApprovalProviderData ||= input.messages.some((message) =>
+            message.parts.some(
+              (part) =>
+                part.type === "provider-data" &&
+                part.provider === "zhivex"
+            )
+          );
+          if (modelCalls === 1) {
+            return {
+              messages: [{
+                role: "assistant",
+                parts: [{
+                  type: "tool-call",
+                  toolCall: {
+                    id: "local-call-1",
+                    name: "deploy",
+                    input: { target: "staging" }
+                  }
+                }]
+              }],
+              finishReason: "tool-calls"
+            };
+          }
+          return {
+            messages: [createTextMessage("assistant", "deployed")],
+            text: "deployed",
+            finishReason: "stop"
+          };
+        }
+      }),
+      tools: {
+        deploy: tool({
+          name: "deploy",
+          schema: z.object({ target: z.string() }),
+          requiresApproval: true,
+          approvalMode: "interrupt",
+          approvalVersion: "2026-07-29",
+          execute: ({ target }) => {
+            toolCalls += 1;
+            return { target, deployed: true };
+          }
+        })
+      },
+      maxSteps: 3
+    });
+
+    const waiting = await runAgent(agent, {
+      prompt: "Deploy staging"
+    });
+    expect(waiting.status).toBe("waiting_approval");
+    expect(toolCalls).toBe(0);
+    expect(waiting.state.pendingApprovals[0]).toMatchObject({
+      kind: "local-tool",
+      provider: "zhivex",
+      name: "deploy",
+      toolCallId: "local-call-1",
+      step: 1,
+      toolVersion: "2026-07-29"
+    });
+
+    const persisted = await store.load(waiting.state.runId);
+    const approval = waiting.state.pendingApprovals[0]!;
+    const resumed = await resumeAgent(agent, {
+      state: normalizeAgentRunState(persisted),
+      approvals: [{
+        provider: approval.provider,
+        approvalRequestId: approval.id,
+        approve: true
+      }]
+    });
+
+    expect(resumed.status).toBe("completed");
+    expect(resumed.outputText).toBe("deployed");
+    expect(toolCalls).toBe(1);
+    expect(sawLocalApprovalProviderData).toBe(false);
+    expect(resumed.state.approvalHistory).toEqual([
+      expect.objectContaining({
+        requestId: approval.id,
+        kind: "local-tool",
+        approve: true,
+        inputDigest: approval.inputDigest
+      })
+    ]);
+  });
+
+  it("preflights an entire tool batch before executing any side effect", async () => {
+    const executions: string[] = [];
+    const agent = createAgent({
+      model: createLanguageModel({
+        async generate() {
+          return {
+            messages: [{
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-call",
+                  toolCall: { id: "safe-1", name: "safe", input: {} }
+                },
+                {
+                  type: "tool-call",
+                  toolCall: { id: "review-1", name: "review", input: {} }
+                }
+              ]
+            }],
+            finishReason: "tool-calls"
+          };
+        }
+      }),
+      tools: {
+        safe: tool({
+          name: "safe",
+          schema: z.object({}),
+          execute: () => {
+            executions.push("safe");
+            return { ok: true };
+          }
+        }),
+        review: tool({
+          name: "review",
+          schema: z.object({}),
+          requiresApproval: true,
+          approvalMode: "interrupt",
+          execute: () => {
+            executions.push("review");
+            return { ok: true };
+          }
+        })
+      },
+      toolExecution: { parallel: true },
+      maxSteps: 2
+    });
+
+    const waiting = await runAgent(agent, { prompt: "Run both" });
+    expect(waiting.status).toBe("waiting_approval");
+    expect(executions).toEqual([]);
+  });
+
+  it("rejects a tampered signed local approval before tool execution", async () => {
+    let toolCalls = 0;
+    let modelCalls = 0;
+    const signer = {
+      sign: (payload: string) => `signed:${payload}`
+    };
+    const agent = createAgent({
+      model: createLanguageModel({
+        async generate() {
+          modelCalls += 1;
+          if (modelCalls > 1) {
+            return {
+              messages: [createTextMessage("assistant", "written")],
+              text: "written",
+              finishReason: "stop"
+            };
+          }
+          return {
+            messages: [{
+              role: "assistant",
+              parts: [{
+                type: "tool-call",
+                toolCall: { id: "signed-call", name: "write", input: { value: 1 } }
+              }]
+            }],
+            finishReason: "tool-calls"
+          };
+        }
+      }),
+      toolApprovalSigner: signer,
+      tools: {
+        write: tool({
+          name: "write",
+          schema: z.object({ value: z.number() }),
+          requiresApproval: true,
+          approvalMode: "interrupt",
+          execute: () => {
+            toolCalls += 1;
+            return { ok: true };
+          }
+        })
+      },
+      maxSteps: 2
+    });
+
+    const waiting = await runAgent(agent, { prompt: "Write" });
+    const tampered = structuredClone(waiting.state);
+    tampered.pendingApprovals[0]!.signature = "tampered";
+    const approval = tampered.pendingApprovals[0]!;
+    await expect(
+      resumeAgent(agent, {
+        state: tampered,
+        approvals: [{
+          provider: approval.provider,
+          approvalRequestId: approval.id,
+          approve: true
+        }]
+      })
+    ).rejects.toThrow("invalid signature");
+    expect(toolCalls).toBe(0);
+
+    const originalApproval = waiting.state.pendingApprovals[0]!;
+    const resumed = await resumeAgent(agent, {
+      state: waiting.state,
+      approvals: [{
+        provider: originalApproval.provider,
+        approvalRequestId: originalApproval.id,
+        approve: true,
+        reason: "reviewed"
+      }]
+    });
+    expect(resumed.status).toBe("completed");
+    expect(toolCalls).toBe(1);
+    expect(resumed.state.approvalHistory?.[0]?.signature).toContain('"approve":true');
+  });
+
+  it("propagates typed context through tool policy and guardrails", async () => {
+    const seen: string[] = [];
+    let calls = 0;
+    const agent = new Agent<LanguageModel, { tenant: string }>({
+      contextSchema: z.object({ tenant: z.string().min(1) }),
+      model: createLanguageModel({
+        async generate() {
+          calls += 1;
+          if (calls === 1) {
+            return {
+              messages: [{
+                role: "assistant",
+                parts: [{
+                  type: "tool-call",
+                  toolCall: { id: "context-call", name: "lookup", input: { id: "42" } }
+                }]
+              }],
+              finishReason: "tool-calls"
+            };
+          }
+          return {
+            messages: [createTextMessage("assistant", "done")],
+            text: "done",
+            finishReason: "stop"
+          };
+        }
+      }),
+      toolApprovalPolicy(request) {
+        seen.push(`policy:${request.executionContext?.context?.tenant}`);
+        return true;
+      },
+      tools: {
+        lookup: tool({
+          name: "lookup",
+          schema: z.object({ id: z.string() }),
+          inputGuardrails: [
+            ({ context }) => {
+              seen.push(`input:${context.context?.tenant}`);
+            }
+          ],
+          outputGuardrails: [
+            ({ context }) => {
+              seen.push(`output:${context.context?.tenant}`);
+            }
+          ],
+          execute: (_input, context) => {
+            seen.push(`execute:${context?.context?.tenant}`);
+            return { ok: true };
+          }
+        })
+      },
+      maxSteps: 2
+    });
+
+    const result = await agent.run({
+      prompt: "Lookup",
+      context: { tenant: "bank-a" }
+    });
+    expect(result.status).toBe("completed");
+    expect(seen).toEqual([
+      "input:bank-a",
+      "policy:bank-a",
+      "execute:bank-a",
+      "output:bank-a"
+    ]);
+    await expect(
+      agent.run({ prompt: "Invalid", context: { tenant: "" } })
+    ).rejects.toThrow("Invalid agent context");
+  });
+
+  it("validates and returns typed agent final output", async () => {
+    const outputSchema = z.object({
+      answer: z.number(),
+      source: z.string()
+    });
+    const agent = new Agent({
+      model: createLanguageModel({
+        async generate(input) {
+          expect(input.structuredOutput).toMatchObject({
+            mode: "native",
+            name: "answer"
+          });
+          return {
+            messages: [createTextMessage("assistant", "{\"answer\":42,\"source\":\"tool\"}")],
+            text: "{\"answer\":42,\"source\":\"tool\"}",
+            finishReason: "stop"
+          };
+        }
+      }),
+      outputSchema,
+      outputName: "answer"
+    });
+
+    const result = await agent.run({ prompt: "Answer" });
+    expect(result.finalOutput).toEqual({
+      answer: 42,
+      source: "tool"
+    });
+    expect(result.state.finalOutput).toEqual(result.finalOutput);
+    expect(result.state.outputMode).toBe("native");
+  });
+
   it("accepts legacy suspended states while resuming approvals", async () => {
     let sawApproval = false;
     const agent = createAgent({
@@ -1009,6 +1335,59 @@ describe("agent runtime", () => {
     expect(events.at(-1)).toMatchObject({
       type: "agent-run-finish",
       status: "waiting_approval"
+    });
+  });
+
+  it("streams resumable local tool approval events before execution", async () => {
+    let executions = 0;
+    const agent = createAgent({
+      model: createLanguageModel({
+        async generate() {
+          throw new Error("unused");
+        },
+        async stream() {
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield {
+              type: "tool-call",
+              toolCall: {
+                id: "stream-local-call",
+                name: "publish",
+                input: { channel: "next" }
+              }
+            };
+            yield { type: "finish", finishReason: "tool-calls" };
+          })();
+        }
+      }),
+      tools: {
+        publish: tool({
+          name: "publish",
+          schema: z.object({ channel: z.string() }),
+          requiresApproval: true,
+          approvalMode: "interrupt",
+          execute: () => {
+            executions += 1;
+            return { ok: true };
+          }
+        })
+      },
+      maxSteps: 2
+    });
+
+    const stream = streamAgent(agent, { prompt: "Publish" });
+    const events = [];
+    for await (const event of stream.eventStream) {
+      events.push(event);
+    }
+    const output = await stream.collect();
+
+    expect(executions).toBe(0);
+    expect(events.some((event) => event.type === "tool-approval-request")).toBe(true);
+    expect(events.some((event) => event.type === "agent-approval-request")).toBe(true);
+    expect(output.status).toBe("waiting_approval");
+    expect(output.state.pendingApprovals[0]).toMatchObject({
+      kind: "local-tool",
+      name: "publish"
     });
   });
 

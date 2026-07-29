@@ -252,12 +252,37 @@ const step = (value: unknown, path: string) => {
 
 const approval = (value: unknown, path: string) => {
   const current = record(value, path);
+  if (current.kind !== undefined && current.kind !== "provider" && current.kind !== "local-tool") {
+    invalid(`${path}.kind`, 'must be "provider" or "local-tool"');
+  }
   string(current.provider, `${path}.provider`);
   string(current.id, `${path}.id`);
   string(current.name, `${path}.name`);
   string(current.arguments, `${path}.arguments`, true);
   optionalString(current.serverLabel, `${path}.serverLabel`, true);
+  optionalString(current.toolCallId, `${path}.toolCallId`);
+  if (current.step !== undefined) integer(current.step, `${path}.step`);
+  optionalString(current.inputDigest, `${path}.inputDigest`);
+  optionalString(current.toolVersion, `${path}.toolVersion`);
+  optionalString(current.signature, `${path}.signature`);
   jsonValue(current.rawData, `${path}.rawData`);
+};
+
+const approvalResolution = (value: unknown, path: string) => {
+  const current = record(value, path);
+  string(current.requestId, `${path}.requestId`);
+  if (current.kind !== "provider" && current.kind !== "local-tool") {
+    invalid(`${path}.kind`, 'must be "provider" or "local-tool"');
+  }
+  string(current.provider, `${path}.provider`);
+  if (typeof current.approve !== "boolean") invalid(`${path}.approve`, "must be a boolean");
+  optionalString(current.reason, `${path}.reason`, true);
+  optionalString(current.toolCallId, `${path}.toolCallId`);
+  if (current.step !== undefined) integer(current.step, `${path}.step`);
+  optionalString(current.inputDigest, `${path}.inputDigest`);
+  optionalString(current.toolVersion, `${path}.toolVersion`);
+  optionalString(current.signature, `${path}.signature`);
+  finiteNumber(current.resolvedAt, `${path}.resolvedAt`, 0);
 };
 
 const handoff = (value: unknown, path: string) => {
@@ -332,10 +357,19 @@ export const normalizeAgentRunState = (value: unknown): AgentRunState => {
   if (state.currentStep !== stateSteps.length) invalid("currentStep", "must equal steps.length");
   if ((state.maxSteps as number) < (state.currentStep as number)) invalid("maxSteps", "must be greater than or equal to currentStep");
   string(state.outputText, "outputText", true);
+  if (state.finalOutput !== undefined) jsonValue(state.finalOutput, "finalOutput");
+  if (state.outputMode !== undefined && state.outputMode !== "native" && state.outputMode !== "prompted") {
+    invalid("outputMode", 'must be "native" or "prompted"');
+  }
   finishReason(state.finishReason, "finishReason");
   optionalString(state.providerFinishReason, "providerFinishReason", true);
   usage(state.usage, "usage");
   array(state.pendingApprovals, "pendingApprovals").forEach((entry, index) => approval(entry, `pendingApprovals[${index}]`));
+  if (state.approvalHistory !== undefined) {
+    array(state.approvalHistory, "approvalHistory").forEach((entry, index) =>
+      approvalResolution(entry, `approvalHistory[${index}]`)
+    );
+  }
   if (state.childRuns !== undefined) {
     array(state.childRuns, "childRuns").forEach((entry, index) => childRun(entry, `childRuns[${index}]`));
   }

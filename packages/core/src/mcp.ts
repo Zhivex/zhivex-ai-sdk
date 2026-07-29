@@ -1,8 +1,9 @@
 import { z } from "zod";
 
+import { ValidationError } from "./errors.js";
 import { serializeJsonValue, tool } from "./messages.js";
 import { createToolRegistry, type ToolRegistry } from "./tool-registry.js";
-import type { JsonValue, ToolSet } from "./types.js";
+import type { JsonValue, ToolApprovalMode, ToolSet } from "./types.js";
 
 export interface McpToolAnnotations {
   readOnlyHint?: boolean;
@@ -14,13 +15,20 @@ export interface McpToolAnnotations {
 
 export interface McpListedTool {
   name: string;
+  title?: string;
   description?: string;
   inputSchema?: JsonValue;
+  outputSchema?: JsonValue;
   annotations?: McpToolAnnotations;
+}
+
+export interface McpListToolsRequest {
+  cursor?: string;
 }
 
 export interface McpListToolsResponse {
   tools: McpListedTool[];
+  nextCursor?: string;
 }
 
 export interface McpCallToolRequest {
@@ -35,15 +43,29 @@ export interface McpCallToolResponse {
   [key: string]: JsonValue | undefined;
 }
 
+export interface McpCallToolOptions {
+  abortSignal?: AbortSignal;
+  timeoutMs?: number;
+  idempotencyKey?: string;
+}
+
 export interface McpClient {
-  listTools(): Promise<McpListToolsResponse | McpListedTool[]>;
-  callTool(input: McpCallToolRequest): Promise<JsonValue | McpCallToolResponse>;
+  listTools(input?: McpListToolsRequest, options?: McpCallToolOptions): Promise<McpListToolsResponse | McpListedTool[]>;
+  callTool(input: McpCallToolRequest, options?: McpCallToolOptions): Promise<JsonValue | McpCallToolResponse>;
 }
 
 export interface McpToolSetOptions {
   toolNamePrefix?: string;
   includeTools?: string[];
   excludeTools?: string[];
+  /** Server annotations are untrusted by default and cannot reduce supervision. */
+  trustServerToolAnnotations?: boolean;
+  maxListPages?: number;
+  maxListedTools?: number;
+  listToolsTimeoutMs?: number;
+  callToolTimeoutMs?: number;
+  abortSignal?: AbortSignal;
+  approvalMode?: ToolApprovalMode;
 }
 
 type JsonSchemaObject = {
@@ -66,8 +88,23 @@ type JsonSchemaObject = {
   default?: JsonValue;
 };
 
-const isRecord = (value: JsonValue | undefined): value is Record<string, JsonValue> =>
+const isRecord = (value: unknown): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const mcpErrorMessage = (toolName: string, response: Record<string, JsonValue>): string => {
+  const textPart = Array.isArray(response.content)
+    ? response.content.find(
+        (entry): entry is Record<string, JsonValue> =>
+          isRecord(entry) &&
+          entry.type === "text" &&
+          typeof entry.text === "string"
+      )
+    : undefined;
+  const detail = typeof textPart?.text === "string" ? textPart.text.slice(0, 1_000) : undefined;
+  return detail
+    ? `MCP tool "${toolName}" returned an error: ${detail}`
+    : `MCP tool "${toolName}" returned an error response.`;
+};
 
 const toZodLiteral = (value: JsonValue) => {
   if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
@@ -207,15 +244,133 @@ const jsonSchemaToZod = (schema: JsonValue | undefined): z.ZodTypeAny => {
   }
 };
 
-const normalizeListedTools = async (client: McpClient): Promise<McpListedTool[]> => {
-  const listed = await client.listTools();
-  return Array.isArray(listed) ? listed : listed.tools;
+const positiveSafeInteger = (value: number | undefined, fallback: number, fieldName: string): number => {
+  const normalized = value ?? fallback;
+  if (!Number.isSafeInteger(normalized) || normalized <= 0) {
+    throw new ValidationError(`The "${fieldName}" option must be a positive safe integer.`);
+  }
+  return normalized;
+};
+
+const optionalPositiveSafeInteger = (
+  value: number | undefined,
+  fieldName: string
+): number | undefined =>
+  value === undefined
+    ? undefined
+    : positiveSafeInteger(value, value, fieldName);
+
+const withMcpTimeout = async <T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  options: {
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    operation: string;
+  }
+): Promise<T> => {
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(
+    options.abortSignal?.reason ?? new Error(`MCP ${options.operation} was aborted.`)
+  );
+  if (options.abortSignal?.aborted) {
+    abortFromCaller();
+  } else {
+    options.abortSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
+  const timer = options.timeoutMs
+    ? setTimeout(
+        () => controller.abort(new Error(`MCP ${options.operation} timed out after ${options.timeoutMs}ms.`)),
+        options.timeoutMs
+      )
+    : undefined;
+  let abortListener: (() => void) | undefined;
+  try {
+    const aborted = new Promise<never>((_, reject) => {
+      abortListener = () => {
+        const reason = controller.signal.reason;
+        reject(
+          reason instanceof Error
+            ? reason
+            : new Error(`MCP ${options.operation} was aborted.`)
+        );
+      };
+      if (controller.signal.aborted) {
+        abortListener();
+      } else {
+        controller.signal.addEventListener("abort", abortListener, { once: true });
+      }
+    });
+    return await Promise.race([operation(controller.signal), aborted]);
+  } finally {
+    if (abortListener) {
+      controller.signal.removeEventListener("abort", abortListener);
+    }
+    options.abortSignal?.removeEventListener("abort", abortFromCaller);
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+};
+
+const normalizeListedTools = async (
+  client: McpClient,
+  options: McpToolSetOptions
+): Promise<McpListedTool[]> => {
+  const maxListPages = positiveSafeInteger(options.maxListPages, 100, "maxListPages");
+  const maxListedTools = positiveSafeInteger(options.maxListedTools, 10_000, "maxListedTools");
+  const tools: McpListedTool[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+
+  for (let page = 0; page < maxListPages; page += 1) {
+    const listed = await withMcpTimeout(
+      (abortSignal) =>
+        client.listTools(
+          cursor === undefined ? undefined : { cursor },
+          {
+            abortSignal,
+            timeoutMs: options.listToolsTimeoutMs
+          }
+        ),
+      {
+        abortSignal: options.abortSignal,
+        timeoutMs: options.listToolsTimeoutMs,
+        operation: "tools/list"
+      }
+    );
+    if (Array.isArray(listed)) {
+      tools.push(...listed);
+      if (tools.length > maxListedTools) {
+        throw new ValidationError(`MCP tools/list exceeded the ${maxListedTools}-tool limit.`);
+      }
+      return tools;
+    }
+
+    tools.push(...listed.tools);
+    if (tools.length > maxListedTools) {
+      throw new ValidationError(`MCP tools/list exceeded the ${maxListedTools}-tool limit.`);
+    }
+    if (listed.nextCursor === undefined) {
+      return tools;
+    }
+    if (seenCursors.has(listed.nextCursor)) {
+      throw new ValidationError(`MCP tools/list returned repeated cursor "${listed.nextCursor}".`);
+    }
+    seenCursors.add(listed.nextCursor);
+    cursor = listed.nextCursor;
+  }
+
+  throw new ValidationError(`MCP tools/list exceeded the ${maxListPages}-page limit.`);
 };
 
 const getToolName = (name: string, prefix?: string) => (prefix ? `${prefix}${name}` : name);
 
-const mcpToolSecurityMetadata = (annotations: McpToolAnnotations | undefined) => {
-  const explicitlyReadOnly = annotations?.readOnlyHint === true;
+const mcpToolSecurityMetadata = (
+  annotations: McpToolAnnotations | undefined,
+  trustServerToolAnnotations: boolean
+) => {
+  const declaredReadOnly = annotations?.readOnlyHint === true;
+  const explicitlyReadOnly = trustServerToolAnnotations && declaredReadOnly;
   const destructive = annotations?.destructiveHint === true;
   const openWorld = annotations?.openWorldHint === true;
   const requiresApproval = !explicitlyReadOnly || destructive || openWorld;
@@ -229,21 +384,29 @@ const mcpToolSecurityMetadata = (annotations: McpToolAnnotations | undefined) =>
     requiresApproval,
     advancedRegistry: {
       source: "mcp",
+      annotationsTrusted: trustServerToolAnnotations,
       permissions,
       audit: {
         riskLevel: destructive ? "high" : requiresApproval ? "medium" : "low",
         description: explicitlyReadOnly
-          ? "MCP server declares this tool read-only."
-          : "MCP tool requires approval because it is not explicitly read-only."
+          ? "Trusted MCP server annotations declare this tool read-only."
+          : declaredReadOnly
+            ? "MCP read-only annotation is untrusted; this tool requires approval."
+            : "MCP tool requires approval because it is not explicitly trusted as read-only."
       }
     }
   };
 };
 
 export const createMcpToolSet = async (client: McpClient, options: McpToolSetOptions = {}): Promise<ToolSet> => {
-  const include = options.includeTools ? new Set(options.includeTools) : undefined;
-  const exclude = options.excludeTools ? new Set(options.excludeTools) : undefined;
-  const listedTools = await normalizeListedTools(client);
+  const normalizedOptions = {
+    ...options,
+    listToolsTimeoutMs: optionalPositiveSafeInteger(options.listToolsTimeoutMs, "listToolsTimeoutMs"),
+    callToolTimeoutMs: optionalPositiveSafeInteger(options.callToolTimeoutMs, "callToolTimeoutMs")
+  };
+  const include = normalizedOptions.includeTools ? new Set(normalizedOptions.includeTools) : undefined;
+  const exclude = normalizedOptions.excludeTools ? new Set(normalizedOptions.excludeTools) : undefined;
+  const listedTools = await normalizeListedTools(client, normalizedOptions);
   const toolEntries = listedTools.filter((listedTool) => {
     if (include && !include.has(listedTool.name)) {
       return false;
@@ -260,10 +423,21 @@ export const createMcpToolSet = async (client: McpClient, options: McpToolSetOpt
 
   return Object.fromEntries(
     toolEntries.map((listedTool) => {
-      const toolName = getToolName(listedTool.name, options.toolNamePrefix);
-      const security = mcpToolSecurityMetadata(listedTool.annotations);
+      const toolName = getToolName(listedTool.name, normalizedOptions.toolNamePrefix);
+      const security = mcpToolSecurityMetadata(
+        listedTool.annotations,
+        normalizedOptions.trustServerToolAnnotations === true
+      );
+      let outputValidator: z.ZodTypeAny | undefined;
+      if (listedTool.outputSchema !== undefined) {
+        try {
+          outputValidator = z.fromJSONSchema(listedTool.outputSchema as never);
+        } catch (error) {
+          throw new ValidationError(`Invalid MCP output schema for tool "${listedTool.name}".`, { cause: error });
+        }
+      }
       if (seenNames.has(toolName)) {
-        throw new Error(`Duplicate MCP tool name "${toolName}".`);
+        throw new ValidationError(`Duplicate MCP tool name "${toolName}".`);
       }
 
       seenNames.add(toolName);
@@ -272,23 +446,65 @@ export const createMcpToolSet = async (client: McpClient, options: McpToolSetOpt
         toolName,
         tool({
           name: toolName,
-          description: listedTool.description,
+          description: listedTool.description ?? listedTool.title ?? listedTool.annotations?.title,
           schema: jsonSchemaToZod(listedTool.inputSchema),
           metadata: serializeJsonValue({
             source: "mcp",
             originalName: listedTool.name,
+            title: listedTool.title ?? listedTool.annotations?.title ?? null,
             inputSchema: listedTool.inputSchema ?? null,
+            outputSchema: listedTool.outputSchema ?? null,
             annotations: listedTool.annotations ?? null,
             advancedRegistry: security.advancedRegistry
           }) as Record<string, JsonValue>,
           requiresApproval: security.requiresApproval,
-          execute: async (input) =>
-            serializeJsonValue(
-              await client.callTool({
-                name: listedTool.name,
-                arguments: input as JsonValue
-              })
-            )
+          approvalMode: security.requiresApproval
+            ? normalizedOptions.approvalMode ?? "interrupt"
+            : "policy",
+          execute: async (input, context) => {
+            const response = await withMcpTimeout(
+              (abortSignal) =>
+                client.callTool(
+                  {
+                    name: listedTool.name,
+                    arguments: input as JsonValue
+                  },
+                  {
+                    abortSignal,
+                    timeoutMs: normalizedOptions.callToolTimeoutMs,
+                    idempotencyKey: context?.idempotencyKey
+                  }
+                ),
+              {
+                abortSignal: context?.abortSignal ?? normalizedOptions.abortSignal,
+                timeoutMs: normalizedOptions.callToolTimeoutMs,
+                operation: `tools/call "${listedTool.name}"`
+              }
+            );
+            if (isRecord(response) && response.isError === true) {
+              throw new Error(mcpErrorMessage(listedTool.name, response));
+            }
+            if (outputValidator && isRecord(response) && response.isError !== true) {
+              if (response.structuredContent === undefined) {
+                throw new ValidationError(
+                  `MCP tool "${listedTool.name}" declared outputSchema but returned no structuredContent.`
+                );
+              }
+              const parsed = outputValidator.safeParse(response.structuredContent);
+              if (!parsed.success) {
+                throw new ValidationError(
+                  `MCP structured output validation failed for tool "${listedTool.name}": ${parsed.error.issues
+                    .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.code}`)
+                    .join(", ")}`
+                );
+              }
+            } else if (outputValidator && !isRecord(response)) {
+              throw new ValidationError(
+                `MCP tool "${listedTool.name}" declared outputSchema but returned no structuredContent.`
+              );
+            }
+            return serializeJsonValue(response);
+          }
         })
       ];
     })

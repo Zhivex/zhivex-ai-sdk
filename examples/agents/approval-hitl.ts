@@ -1,12 +1,15 @@
 import {
   Agent,
-  type LanguageModel
+  type LanguageModel,
+  tool
 } from "../../packages/agents/src/index";
 import { createAgentApprovalQueue } from "../../packages/agents/src/beta";
+import { z } from "zod";
 
 import { section } from "../_shared";
 
-let calls = 0;
+let modelCalls = 0;
+let deployments = 0;
 
 const model: LanguageModel = {
   provider: "example",
@@ -17,82 +20,45 @@ const model: LanguageModel = {
     structuredOutput: false,
     jsonMode: false,
     toolChoice: true,
-    parallelToolCalls: false,
+    parallelToolCalls: true,
     vision: false,
     files: false,
     audioInput: false,
     audioOutput: false,
     embeddings: false,
     reasoning: false,
-    webSearch: false,
-    agentCapabilities: {
-      supportTier: "tier-a",
-      approvalRequests: true,
-      remoteMcp: true,
-      hostedWebSearch: false,
-      hostedFileSearch: false,
-      computerUse: false,
-      codeExecution: false,
-      shell: false,
-      applyPatch: false,
-      toolSearch: false,
-      webExtraction: false,
-      skills: false,
-      toolsets: false,
-      toolChoiceNone: true
-    }
+    webSearch: false
   },
-  async generate(input) {
-    calls += 1;
+  async generate() {
+    modelCalls += 1;
 
-    if (calls === 1) {
+    if (modelCalls === 1) {
       return {
-        text: "Need approval before using remote MCP.",
-        finishReason: "stop",
-        messages: [
-          {
-            role: "assistant",
-            parts: [
-              {
-                type: "provider-data",
-                provider: "openai",
-                data: {
-                  type: "mcp_approval_request",
-                  id: "mcpr_demo",
-                  name: "remote_docs",
-                  arguments: "{\"query\":\"release notes\"}",
-                  server_label: "docs"
-                }
-              }
-            ]
-          }
-        ]
+        finishReason: "tool-calls",
+        messages: [{
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCall: {
+              id: "deploy_demo",
+              name: "deploy",
+              input: { target: "staging" }
+            }
+          }]
+        }]
       };
     }
 
-    const approved = input.messages.some((message) =>
-      message.parts.some(
-        (part) =>
-          part.type === "provider-data" &&
-          part.provider === "openai" &&
-          (part.data as { type?: string }).type === "mcp_approval_response"
-      )
-    );
-
     return {
-      text: approved ? "Approval received; continuing with remote docs." : "Approval response missing.",
+      text: "Staging deployment completed after approval.",
       finishReason: "stop",
-      messages: [
-        {
-          role: "assistant",
-          parts: [
-            {
-              type: "text",
-              text: approved ? "Approval received; continuing with remote docs." : "Approval response missing."
-            }
-          ]
-        }
-      ]
+      messages: [{
+        role: "assistant",
+        parts: [{
+          type: "text",
+          text: "Staging deployment completed after approval."
+        }]
+      }]
     };
   }
 };
@@ -100,16 +66,31 @@ const model: LanguageModel = {
 const agent = new Agent({
   id: "approval-hitl-example",
   model,
-  instructions: "Pause when the provider requests approval.",
+  instructions: "Use the deployment tool when asked.",
+  tools: {
+    deploy: tool({
+      name: "deploy",
+      description: "Deploy an application to an environment.",
+      schema: z.object({ target: z.string() }),
+      requiresApproval: true,
+      approvalMode: "interrupt",
+      approvalVersion: "2026-07-29",
+      execute({ target }) {
+        deployments += 1;
+        return { target, deployed: true };
+      }
+    })
+  },
   maxSteps: 2
 });
 
 section("Initial run");
 const waiting = await agent.run({
-  prompt: "Fetch release docs from the remote MCP server."
+  prompt: "Deploy the application to staging."
 });
 console.log({
   status: waiting.status,
+  deployments,
   pendingApprovals: waiting.state.pendingApprovals
 });
 
@@ -134,5 +115,7 @@ const resumed = await agent.resume({
 
 console.log({
   status: resumed.status,
-  outputText: resumed.outputText
+  deployments,
+  outputText: resumed.outputText,
+  approvalHistory: resumed.state.approvalHistory
 });

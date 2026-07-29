@@ -71,6 +71,7 @@ import {
   wrapLanguageModel,
   recordToolTestFixture,
   renderProviderSupportMatrix,
+  resumeAgent,
   runAgent,
   runToolTestFixture,
   tool,
@@ -712,12 +713,30 @@ describe("core helpers", () => {
       createSafetyPolicy({ preset: "review-sensitive", redaction: false })
     );
 
-    const result = await runAgent(agent, { prompt: "deploy", maxSteps: 2 });
+    const waiting = await runAgent(agent, { prompt: "deploy", maxSteps: 2 });
 
+    expect(waiting.status).toBe("waiting_approval");
+    expect(waiting.toolResults).toHaveLength(0);
+    expect(waiting.state.pendingApprovals[0]).toMatchObject({
+      kind: "local-tool",
+      provider: "zhivex",
+      name: "deploy"
+    });
+
+    const result = await resumeAgent(agent, {
+      state: waiting.state,
+      approvals: waiting.state.pendingApprovals.map((approval) => ({
+        provider: approval.provider,
+        approvalRequestId: approval.id,
+        approve: true
+      }))
+    });
     expect(result.status).toBe("completed");
-    expect(result.toolResults).toHaveLength(1);
-    expect(result.toolResults[0]).toMatchObject({ isError: true, toolName: "deploy" });
-    expect(result.toolResults[0]?.error?.message).toContain("requires approval");
+    expect(result.toolResults[0]).toMatchObject({
+      isError: false,
+      toolName: "deploy",
+      output: { target: "prod", ok: true }
+    });
   });
 
   it("streams a failed agent finish event when a safety budget guard triggers", async () => {

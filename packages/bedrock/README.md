@@ -86,7 +86,11 @@ const tools = await createBedrockAgentCoreMcpToolSet(
     bearerToken: process.env.AGENTCORE_BEARER_TOKEN
   },
   {
-    toolNamePrefix: "agentcore_"
+    toolNamePrefix: "agentcore_",
+    maxListPages: 20,
+    maxListedTools: 2_000,
+    listToolsTimeoutMs: 10_000,
+    callToolTimeoutMs: 30_000
   }
 );
 
@@ -102,7 +106,9 @@ const result = await runAgent(
 );
 ```
 
-You can pass either `runtimeArn` plus `region` or an explicit AgentCore/Gateway MCP `endpoint`. The client sends JSON-RPC `tools/list` and `tools/call` over HTTP, forwards `Authorization`, custom headers, and `Mcp-Session-Id`, and preserves the session id returned by AgentCore. Token acquisition is intentionally left to the application; pass `bearerToken` or a full `authorization` header value.
+You can pass either `runtimeArn` plus `region` or an explicit AgentCore/Gateway MCP `endpoint`. The client sends JSON-RPC `tools/list` and `tools/call` over HTTP, follows opaque pagination cursors, forwards cancellation to `fetch`, and preserves the `Mcp-Session-Id` returned by AgentCore. Token acquisition is intentionally left to the application; pass `bearerToken` or a full `authorization` header value.
+
+AgentCore tool annotations are untrusted by default, so SDK-managed tools require local approval even when the server advertises `readOnlyHint`. Set `trustServerToolAnnotations: true` only for a server whose annotation integrity you control. Destructive or open-world tools still require approval. Declared MCP `outputSchema` values are checked against `structuredContent`, and listing/calls are bounded by the configured page, tool-count, and timeout limits.
 
 Repository and full documentation:
 

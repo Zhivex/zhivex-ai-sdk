@@ -71,6 +71,8 @@ For workspace agents, enforce:
 
 ## Approval Pattern
 
+Local workspace tools should set `requiresApproval: true` and `approvalMode: "interrupt"`, or use a policy that returns `{ approved: false, approvalRequired: true }`. The runtime preflights the full tool-call batch and records local decisions in agent state without exposing them to the provider.
+
 ```ts
 const first = await agent.run({
   prompt: "Run tests and propose the smallest patch."
@@ -90,6 +92,8 @@ if (first.status === "waiting_approval") {
 ```
 
 Use `createAgentApprovalQueue()` when approvals need durable queue items with tokens and resume URLs.
+
+Use `approvalVersion` and, for durable multi-worker systems, `toolApprovalSigner` so an approval cannot be replayed after the tool contract or bound input changes. Re-supply validated application `context` on resume; it is intentionally not persisted in the run state.
 
 ## App-Owned Local Tools
 

@@ -56,7 +56,8 @@ Beta APIs may change between minor releases. Experimental APIs may change more f
 
 - Stable agent runtime: `Agent`, `createAgent()`, `runAgent()`, `resumeAgent()`, and `streamAgent()`.
 - Tool loops: local callable tools, tool-choice support, tool execution options, and approval policies.
-- Human-in-the-loop: provider approval requests, approval response parts/messages, approval queues, and resumable states.
+- Human-in-the-loop: provider and local-tool approval requests, approval queues, replay-bound decisions, and resumable states.
+- Typed runs: validated ephemeral context, tool guardrails, and schema-validated final output.
 - Memory and stores from `/ops`: in-memory, file, SQLite, and Postgres run stores and memory stores.
 - Multi-agent patterns: handoffs, subagents as tools, parallel agent groups, and hierarchical traces.
 - Production safety: stable safety policies and budget guards in the root; beta governance policies and audit records under `/beta`.
@@ -112,10 +113,10 @@ For server responses, use `toUIAgentStreamResponse()` to expose lifecycle-aware 
 
 ## Human Approval
 
-When a provider emits an approval request, the run returns `waiting_approval` and keeps pending requests in `state.pendingApprovals`. Persist the state, collect a user decision, and resume:
+When a provider emits an approval request, or a local tool uses `requiresApproval: true` with `approvalMode: "interrupt"`, the run returns `waiting_approval` and keeps pending requests in `state.pendingApprovals`. Persist the state, collect a user decision, and resume:
 
 ```ts
-const waiting = await agent.run({ prompt: "Use the remote MCP server." });
+const waiting = await agent.run({ prompt: "Deploy the staging build." });
 
 if (waiting.status === "waiting_approval") {
   const resumed = await agent.resume({
@@ -130,6 +131,10 @@ if (waiting.status === "waiting_approval") {
   console.log(resumed.outputText);
 }
 ```
+
+Local-tool batches are preflighted before any side effect. On resume, the runtime revalidates the tool input and its approval binding; use `approvalVersion` and an optional `toolApprovalSigner` to invalidate or authenticate persisted decisions. Local approval records are kept in `state.approvalHistory`, not provider messages. A policy can allow, finally deny, or request review with `{ approved: false, approvalRequired: true }`.
+
+`Agent<TModel, TContext, TOutput>` supports `contextSchema`, typed tool execution context, tool input/output guardrails, and `outputSchema`. Supply ephemeral context again on resume; a completed validated result is available as `result.finalOutput`.
 
 Use `createAgentApprovalQueue()` when the application needs queue items with approval tokens and resume URLs.
 

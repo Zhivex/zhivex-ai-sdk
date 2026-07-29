@@ -4,7 +4,7 @@ import { createAgentApprovalMessage, getAgentApprovalRequests } from "./agent-ap
 import { createAgentHandoffMessage } from "./agent-handoff.js";
 import { AGENT_RUN_STATE_SCHEMA_VERSION, normalizeAgentRunState } from "./agent-state.js";
 import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
-import { ConflictError, GuardrailTriggeredError, ValidationError } from "./errors.js";
+import { ConflictError, GuardrailTriggeredError, UnsupportedFeatureError, ValidationError } from "./errors.js";
 import { aggregateTokenUsage, generateText, getGenerateTextStepTiming, normalizeMessages, streamText } from "./generate-text.js";
 import { isCallableToolDefinition, serializeJsonValue } from "./messages.js";
 import { mergeAbortSignals } from "./runtime.js";
@@ -15,6 +15,7 @@ import { z } from "zod";
 import type {
   AgentChildRun,
   AgentApprovalRequest,
+  AgentApprovalResolution,
   AgentApprovalResponse,
   AgentDefinition,
   AgentGroupMember,
@@ -73,6 +74,30 @@ const joinInstructions = (...parts: Array<string | undefined>): string | undefin
   const content = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
   return content.length ? content.join("\n\n") : undefined;
 };
+
+const resolveAgentOutputMode = (
+  agent: AgentDefinition
+): "native" | "prompted" | undefined => {
+  if (!agent.outputSchema) {
+    return undefined;
+  }
+  const requested = agent.outputMode ?? "auto";
+  if (requested === "native" && !agent.model.capabilities.structuredOutput) {
+    throw new UnsupportedFeatureError(
+      `Model "${agent.model.provider}/${agent.model.modelId}" does not support native structured output.`
+    );
+  }
+  return requested === "auto"
+    ? agent.model.capabilities.structuredOutput
+      ? "native"
+      : "prompted"
+    : requested;
+};
+
+const promptedOutputInstruction = (agent: AgentDefinition): string | undefined =>
+  resolveAgentOutputMode(agent) === "prompted"
+    ? "Return only valid JSON matching the requested output schema."
+    : undefined;
 
 const hasToolCalls = (messages: ModelMessage[]): boolean =>
   messages.some((message) => message.parts.some((part) => part.type === "tool-call"));
@@ -141,9 +166,13 @@ const cloneMetadata = (...values: Array<Record<string, JsonValue> | undefined>) 
   return Object.keys(merged).length ? merged : undefined;
 };
 
-const toOutput = (state: AgentRunState): AgentRunOutput => ({
+const toOutput = <TOutput = unknown>(state: AgentRunState): AgentRunOutput<TOutput> => ({
   status: state.status,
   outputText: state.outputText,
+  finalOutput:
+    state.status === "completed" && state.finalOutput !== undefined
+      ? state.finalOutput as TOutput
+      : undefined,
   finishReason: state.finishReason,
   providerFinishReason: state.providerFinishReason,
   usage: state.usage,
@@ -171,7 +200,8 @@ const createBaseState = (
   handoff: AgentRunInput["handoff"],
   parentRunId: string | undefined,
   idempotencyKey: string | undefined,
-  scope: AgentRunInput["scope"]
+  scope: AgentRunInput["scope"],
+  outputMode?: "native" | "prompted"
 ): AgentRunState => {
   const startedAt = Date.now();
 
@@ -192,7 +222,9 @@ const createBaseState = (
     currentStep: 0,
     maxSteps,
     outputText: "",
+    outputMode,
     pendingApprovals: [],
+    approvalHistory: [],
     metadata,
     handoff,
     startedAt,
@@ -305,7 +337,7 @@ const prepareFreshMessages = async <TModel extends AgentDefinition["model"]>(
   let messages = normalizeMessages({
     prompt: input.prompt,
     messages: input.messages,
-    system: joinInstructions(agent.instructions, input.system)
+    system: joinInstructions(agent.instructions, input.system, promptedOutputInstruction(agent))
   });
 
   const handoffMessages = input.handoff
@@ -337,15 +369,28 @@ const prepareFreshMessages = async <TModel extends AgentDefinition["model"]>(
   };
 };
 
-const applyApprovalResponses = (
+const localApprovalResolutionPayload = (
+  inputDigest: string,
+  approve: boolean,
+  reason?: string
+): string => JSON.stringify({
+  inputDigest,
+  approve,
+  reason: reason ?? null
+});
+
+const applyApprovalResponses = async (
   messages: ModelMessage[],
   approvals: AgentApprovalResponse[] | undefined,
-  pendingApprovals: AgentRunState["pendingApprovals"]
+  pendingApprovals: AgentRunState["pendingApprovals"],
+  approvalHistory: AgentRunState["approvalHistory"] = [],
+  signer?: AgentDefinition["toolApprovalSigner"]
 ) => {
   if (!approvals?.length) {
     return {
       messages,
-      pendingApprovals
+      pendingApprovals,
+      approvalHistory
     };
   }
 
@@ -363,25 +408,83 @@ const applyApprovalResponses = (
     }
   }
 
+  const providerApprovals = approvals.filter((approval) => {
+    const pending = pendingById.get(approval.approvalRequestId);
+    return pending?.kind !== "local-tool";
+  });
+  const localResolutions: AgentApprovalResolution[] = [];
+  for (const approval of approvals) {
+    const pending = pendingById.get(approval.approvalRequestId);
+    if (!pending || pending.kind !== "local-tool") {
+      continue;
+    }
+    if (signer) {
+      if (!pending.inputDigest || !pending.signature) {
+        throw new ValidationError(`Approval request "${pending.id}" is missing its required signature.`);
+      }
+      const requestSignatureValid = signer.verify
+        ? await signer.verify(pending.inputDigest, pending.signature)
+        : (await signer.sign(pending.inputDigest)) === pending.signature;
+      if (!requestSignatureValid) {
+        throw new ValidationError(`Approval request "${pending.id}" has an invalid signature.`);
+      }
+    }
+    const resolutionSignature =
+      signer && pending.inputDigest
+        ? await signer.sign(
+            localApprovalResolutionPayload(
+              pending.inputDigest,
+              approval.approve,
+              approval.reason
+            )
+          )
+        : undefined;
+    localResolutions.push({
+      requestId: pending.id,
+      kind: "local-tool",
+      provider: pending.provider,
+      approve: approval.approve,
+      reason: approval.reason,
+      toolCallId: pending.toolCallId,
+      step: pending.step,
+      inputDigest: pending.inputDigest,
+      toolVersion: pending.toolVersion,
+      signature: resolutionSignature,
+      resolvedAt: Date.now()
+    });
+  }
+
   return {
-    messages: [...messages, createAgentApprovalMessage(approvals)],
+    messages: providerApprovals.length
+      ? [...messages, createAgentApprovalMessage(providerApprovals)]
+      : messages,
     pendingApprovals: pendingApprovals.filter(
       (pending) => !approvals.some((approval) => approval.approvalRequestId === pending.id)
-    )
+    ),
+    approvalHistory: [
+      ...approvalHistory.filter(
+        (existing) => !localResolutions.some((resolution) => resolution.requestId === existing.requestId)
+      ),
+      ...localResolutions
+    ]
   };
 };
 
-const finalizeState = (
+const finalizeState = <TOutput>(
+  agent: AgentDefinition<LanguageModel, any, TOutput>,
   state: AgentRunState,
   result: GenerateTextOutput,
   newSteps: AgentStep[],
   newToolResults: ToolExecutionResult[]
-): AgentRunOutput => {
+): AgentRunOutput<TOutput> => {
   const nextCurrentStep = state.currentStep + newSteps.length;
   const exhausted = nextCurrentStep >= state.maxSteps;
   const lastStep = newSteps.at(-1);
   const unresolvedToolCalls = lastStep?.response ? hasToolCalls(lastStep.response.messages) : false;
-  const pendingApprovals = getAgentApprovalRequests(newSteps.flatMap((step) => step.response?.messages ?? []));
+  const pendingApprovals = [
+    ...(result.approvalRequests ?? []),
+    ...getAgentApprovalRequests(newSteps.flatMap((step) => step.response?.messages ?? []))
+  ];
 
   if (pendingApprovals.length) {
     state.status = "waiting_approval";
@@ -408,6 +511,22 @@ const finalizeState = (
   state.toolResults = [...state.toolResults, ...newToolResults];
   state.currentStep = nextCurrentStep;
   state.outputText = result.text;
+  if (state.status === "completed") {
+    const terminalText = result.steps.at(-1)?.response.text ?? result.text;
+    if (agent.outputSchema) {
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(terminalText);
+      } catch (error) {
+        throw new ValidationError("Agent final output is not valid JSON.", { cause: error });
+      }
+      const parsedOutput = agent.outputSchema.safeParse(parsedJson);
+      if (!parsedOutput.success) {
+        throw new ValidationError(`Agent final output validation failed: ${parsedOutput.error.message}`);
+      }
+      state.finalOutput = serializeJsonValue(parsedOutput.data);
+    }
+  }
   state.finishReason = result.finishReason;
   state.providerFinishReason = result.providerFinishReason;
   state.usage = aggregateTokenUsage([state.usage, result.usage]);
@@ -472,7 +591,7 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
     schema: subAgentToolInputSchema,
     requiresApproval: options.requiresApproval,
     metadata: cloneMetadata(metadata, options.metadata),
-    execute: async (input: SubAgentToolInput) => {
+    execute: async (input: SubAgentToolInput, executionContext) => {
       await options.onStart?.({
         toolName,
         childAgentId: options.agent.id,
@@ -492,6 +611,7 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
         system: joinInstructions(options.system, input.system),
         parentRunId: options.parentRunId,
         scope: options.scope,
+        context: executionContext?.context,
         maxSteps: options.maxSteps,
         metadata: cloneMetadata(options.metadata, childMetadata)
       });
@@ -693,10 +813,20 @@ const runGuardrails = async <TModel extends LanguageModel, TRequest>(
   return undefined;
 };
 
-const resolveContext = async <TModel extends LanguageModel>(
-  agent: AgentDefinition<TModel>,
-  input: AgentRunInput<TModel>
+const resolveContext = async <
+  TModel extends LanguageModel,
+  TContext,
+  TOutput
+>(
+  agent: AgentDefinition<TModel, TContext, TOutput>,
+  input: AgentRunInput<TModel, TContext>
 ) => {
+  if (agent.contextSchema) {
+    const parsedContext = agent.contextSchema.safeParse(input.context);
+    if (!parsedContext.success) {
+      throw new ValidationError(`Invalid agent context: ${parsedContext.error.message}`);
+    }
+  }
   ensureValidIdempotencyInput(input, agent.store);
   const inputScope = input.scope ?? input.handoff?.scope;
   ensureValidScope(inputScope);
@@ -726,7 +856,8 @@ const resolveContext = async <TModel extends LanguageModel>(
       input.handoff,
       input.parentRunId,
       input.idempotencyKey,
-      inputScope
+      inputScope,
+      resolveAgentOutputMode(agent)
     ) as AgentRunState & { idempotencyKey: string };
     const claim = await agent.store!.claimIdempotencyKey!(candidate);
     if (claim.claimed) {
@@ -753,7 +884,13 @@ const resolveContext = async <TModel extends LanguageModel>(
   const metadata = cloneMetadata(agent.metadata, loadedState?.metadata, input.metadata, input.handoff?.metadata);
   if (loadedState) {
     const maxSteps = input.maxSteps ?? loadedState.maxSteps;
-    const resumed = applyApprovalResponses(loadedState.messages, input.approvals, loadedState.pendingApprovals);
+    const resumed = await applyApprovalResponses(
+      loadedState.messages,
+      input.approvals,
+      loadedState.pendingApprovals,
+      loadedState.approvalHistory,
+      agent.toolApprovalSigner
+    );
 
     return {
       state: {
@@ -768,6 +905,7 @@ const resolveContext = async <TModel extends LanguageModel>(
         maxSteps,
         messages: resumed.messages,
         pendingApprovals: resumed.pendingApprovals,
+        approvalHistory: resumed.approvalHistory,
         metadata,
         updatedAt: Date.now()
       } satisfies AgentRunState,
@@ -794,7 +932,8 @@ const resolveContext = async <TModel extends LanguageModel>(
       input.handoff,
       input.parentRunId,
       input.idempotencyKey,
-      inputScope
+      inputScope,
+      resolveAgentOutputMode(agent)
     ),
     messages: prepared.messages,
     remainingSteps: maxSteps,
@@ -914,14 +1053,18 @@ const wrapToolWithJournal = <TModel extends LanguageModel>(
   };
 };
 
-const createGenerateOptions = <TModel extends LanguageModel>(
-  agent: AgentDefinition<TModel>,
+const createGenerateOptions = <
+  TModel extends LanguageModel,
+  TContext,
+  TOutput
+>(
+  agent: AgentDefinition<TModel, TContext, TOutput>,
   state: AgentRunState,
-  input: AgentRunInput<TModel>,
+  input: AgentRunInput<TModel, TContext>,
   messages: ModelMessage[],
   maxSteps: number,
   abortSignal: AbortSignal | undefined = input.abortSignal
-): GenerateTextOptions<TModel> => {
+): GenerateTextOptions<TModel, TContext> => {
   const tools = { ...(toToolSet(input.tools ?? agent.tools) ?? {}) };
   for (const subagent of agent.subagents ?? []) {
     const subagentTool = createSubAgentTool({
@@ -979,6 +1122,15 @@ const createGenerateOptions = <TModel extends LanguageModel>(
     toolChoice: input.toolChoice,
     toolExecution: input.toolExecution ?? agent.toolExecution,
     toolApprovalPolicy: input.toolApprovalPolicy ?? agent.toolApprovalPolicy,
+    toolApprovalSigner: agent.toolApprovalSigner,
+    toolApprovalResolutions: state.approvalHistory,
+    toolContext: {
+      context: input.context,
+      runId: state.runId,
+      agentId: state.agentId,
+      scope: state.scope,
+      metadata: state.metadata
+    },
     onToolApprovalDecision: async (event) => {
       await emitToolApprovalTelemetry(agent, state, event);
     },
@@ -995,10 +1147,13 @@ const createGenerateOptions = <TModel extends LanguageModel>(
         });
       }
     },
-    onModelStep: async ({ request, response, step, toolCalls }) => {
+    onModelStep: async ({ request, response, step, toolCalls, approvalRequests }) => {
       if (!agent.store) return;
       const responseSnapshot = snapshotResponse(response);
-      const approvals = getAgentApprovalRequests(responseSnapshot.messages);
+      const approvals = [
+        ...approvalRequests,
+        ...getAgentApprovalRequests(responseSnapshot.messages)
+      ];
       const requestOffset = Math.min(checkpointState.messages.length, request.messages.length);
       const timing = getGenerateTextStepTiming(request);
       const finishedAt = timing?.finishedAt ?? Date.now();
@@ -1068,6 +1223,15 @@ const createGenerateOptions = <TModel extends LanguageModel>(
     temperature: input.temperature ?? agent.temperature,
     maxTokens,
     reasoning: input.reasoning ?? agent.reasoning,
+    structuredOutput:
+      agent.outputSchema && resolveAgentOutputMode(agent) === "native"
+        ? {
+            schema: agent.outputSchema,
+            mode: "native",
+            name: agent.outputName,
+            description: agent.outputDescription
+          }
+        : undefined,
     providerOptions: input.providerOptions ?? agent.providerOptions,
     abortSignal,
     timeoutMs: input.timeoutMs,
@@ -1324,26 +1488,40 @@ const emitRunFinishTelemetry = async <TModel extends LanguageModel>(
   });
 };
 
-export const createAgent = <TModel extends AgentDefinition["model"]>(
-  definition: AgentDefinition<TModel>
-): AgentDefinition<TModel> => ({
+export const createAgent = <
+  TModel extends AgentDefinition["model"],
+  TContext = unknown,
+  TOutput = unknown
+>(
+  definition: AgentDefinition<TModel, TContext, TOutput>
+): AgentDefinition<TModel, TContext, TOutput> => ({
   ...definition,
   metadata: cloneMetadata(definition.metadata)
 });
 
-export class Agent<TModel extends LanguageModel = LanguageModel> implements AgentDefinition<TModel> {
+export class Agent<
+  TModel extends LanguageModel = LanguageModel,
+  TContext = unknown,
+  TOutput = unknown
+> implements AgentDefinition<TModel, TContext, TOutput> {
   id?: string;
   model: TModel;
   instructions?: string;
+  contextSchema?: z.ZodType<TContext>;
   tools?: AgentDefinition<TModel>["tools"];
   maxSteps?: number;
   temperature?: number;
   maxTokens?: number;
   reasoning?: AgentDefinition<TModel>["reasoning"];
+  outputSchema?: z.ZodType<TOutput>;
+  outputMode?: AgentDefinition<TModel, TContext, TOutput>["outputMode"];
+  outputName?: string;
+  outputDescription?: string;
   toolExecution?: AgentDefinition<TModel>["toolExecution"];
-  toolApprovalPolicy?: AgentDefinition<TModel>["toolApprovalPolicy"];
-  inputGuardrails?: AgentDefinition<TModel>["inputGuardrails"];
-  outputGuardrails?: AgentDefinition<TModel>["outputGuardrails"];
+  toolApprovalPolicy?: AgentDefinition<TModel, TContext, TOutput>["toolApprovalPolicy"];
+  toolApprovalSigner?: AgentDefinition<TModel>["toolApprovalSigner"];
+  inputGuardrails?: AgentDefinition<TModel, TContext, TOutput>["inputGuardrails"];
+  outputGuardrails?: AgentDefinition<TModel, TContext, TOutput>["outputGuardrails"];
   providerOptions?: AgentDefinition<TModel>["providerOptions"];
   subagents?: AgentDefinition<TModel>["subagents"];
   policy?: AgentRunPolicy;
@@ -1353,23 +1531,29 @@ export class Agent<TModel extends LanguageModel = LanguageModel> implements Agen
   onTelemetryEvent?: AgentDefinition<TModel>["onTelemetryEvent"];
   hookFailurePolicy?: AgentDefinition<TModel>["hookFailurePolicy"];
 
-  constructor(definition: AgentDefinition<TModel>) {
+  constructor(definition: AgentDefinition<TModel, TContext, TOutput>) {
     Object.assign(this, createAgent(definition));
     this.model = definition.model;
   }
 
-  toDefinition(): AgentDefinition<TModel> {
-    return createAgent({
+  toDefinition(): AgentDefinition<TModel, TContext, TOutput> {
+    return createAgent<TModel, TContext, TOutput>({
       id: this.id,
       model: this.model,
       instructions: this.instructions,
+      contextSchema: this.contextSchema,
       tools: this.tools,
       maxSteps: this.maxSteps,
       temperature: this.temperature,
       maxTokens: this.maxTokens,
       reasoning: this.reasoning,
+      outputSchema: this.outputSchema,
+      outputMode: this.outputMode,
+      outputName: this.outputName,
+      outputDescription: this.outputDescription,
       toolExecution: this.toolExecution,
       toolApprovalPolicy: this.toolApprovalPolicy,
+      toolApprovalSigner: this.toolApprovalSigner,
       inputGuardrails: this.inputGuardrails,
       outputGuardrails: this.outputGuardrails,
       providerOptions: this.providerOptions,
@@ -1383,16 +1567,18 @@ export class Agent<TModel extends LanguageModel = LanguageModel> implements Agen
     });
   }
 
-  run(input: AgentRunInput<TModel> = {}): Promise<AgentRunOutput> {
-    return runAgent(this.toDefinition(), input);
+  run(input: AgentRunInput<TModel, TContext> = {}): Promise<AgentRunOutput<TOutput>> {
+    return runAgent<TModel, TContext, TOutput>(this.toDefinition(), input);
   }
 
-  resume(input: AgentRunInput<TModel> & { state: AgentRunState }): Promise<AgentRunOutput> {
-    return resumeAgent(this.toDefinition(), input);
+  resume(
+    input: AgentRunInput<TModel, TContext> & { state: AgentRunState }
+  ): Promise<AgentRunOutput<TOutput>> {
+    return resumeAgent<TModel, TContext, TOutput>(this.toDefinition(), input);
   }
 
-  stream(input: AgentRunInput<TModel> = {}): AgentStreamResult {
-    return streamAgent(this.toDefinition(), input);
+  stream(input: AgentRunInput<TModel, TContext> = {}): AgentStreamResult<TOutput> {
+    return streamAgent<TModel, TContext, TOutput>(this.toDefinition(), input);
   }
 }
 
@@ -1587,10 +1773,14 @@ export const cancelAgentRunTree = async (
   };
 };
 
-export const runAgent = async <TModel extends LanguageModel>(
-  agent: AgentDefinition<TModel>,
-  input: AgentRunInput<TModel> = {}
-): Promise<AgentRunOutput> => {
+export const runAgent = async <
+  TModel extends LanguageModel,
+  TContext = unknown,
+  TOutput = unknown
+>(
+  agent: AgentDefinition<TModel, TContext, TOutput>,
+  input: AgentRunInput<TModel, TContext> = {}
+): Promise<AgentRunOutput<TOutput>> => {
   const context = await resolveContext(agent, input);
   const currentStatus = normalizeApprovalStatus(context.state.status);
   const policy = resolveRunPolicy(agent, input);
@@ -1652,6 +1842,7 @@ export const runAgent = async <TModel extends LanguageModel>(
     inputGuardrail = await runGuardrails(agent, context.state, "input", agent.inputGuardrails, () => ({
       runId: context.state.runId,
       agentId: context.state.agentId,
+      context: input.context,
       state: cloneState(context.state),
       messages: context.messages,
       metadata: context.state.metadata
@@ -1699,11 +1890,12 @@ export const runAgent = async <TModel extends LanguageModel>(
       throw new ConflictError(`Agent run "${context.state.runId}" lost its worker lease.`);
     }
     const newSteps = mapSteps(result.steps, context.state.currentStep, result.toolResults);
-    let output = finalizeState(context.state, result, newSteps, result.toolResults);
+    let output = finalizeState(agent, context.state, result, newSteps, result.toolResults);
 
     const outputGuardrail = await runGuardrails(agent, output.state, "output", agent.outputGuardrails, () => ({
       runId: output.state.runId,
       agentId: output.state.agentId,
+      context: input.context,
       state: cloneState(output.state),
       output,
       metadata: output.state.metadata
@@ -1713,7 +1905,10 @@ export const runAgent = async <TModel extends LanguageModel>(
     }
 
     await emitFinalizedStepTelemetry(agent, output.state, newSteps);
-    await emitApprovalTelemetry(agent, output.state, approvalsFromEvents(newSteps.flatMap((step) => step.response?.messages ?? [])));
+    await emitApprovalTelemetry(agent, output.state, [
+      ...(result.approvalRequests ?? []),
+      ...approvalsFromEvents(newSteps.flatMap((step) => step.response?.messages ?? []))
+    ]);
     await persistState(agent, output.state, policy);
     await emitRunFinishTelemetry(agent, output.state);
 
@@ -1754,10 +1949,14 @@ export const runAgent = async <TModel extends LanguageModel>(
   }
 };
 
-export const streamAgent = <TModel extends LanguageModel>(
-  agent: AgentDefinition<TModel>,
-  input: AgentRunInput<TModel> = {}
-): AgentStreamResult => {
+export const streamAgent = <
+  TModel extends LanguageModel,
+  TContext = unknown,
+  TOutput = unknown
+>(
+  agent: AgentDefinition<TModel, TContext, TOutput>,
+  input: AgentRunInput<TModel, TContext> = {}
+): AgentStreamResult<TOutput> => {
   const policy = resolveRunPolicy(agent, input);
   const broadcast = new BoundedReplayBroadcast<AgentStreamEvent>({
     maxHistory: policy?.maxStreamEvents ?? 4096
@@ -1848,6 +2047,7 @@ export const streamAgent = <TModel extends LanguageModel>(
       inputGuardrail = await runGuardrails(agent, context.state, "input", agent.inputGuardrails, () => ({
         runId: context.state.runId,
         agentId: context.state.agentId,
+        context: input.context,
         state: cloneState(context.state),
         messages: context.messages,
         metadata: context.state.metadata
@@ -1917,6 +2117,20 @@ export const streamAgent = <TModel extends LanguageModel>(
       for await (const event of streamResult.eventStream) {
         await publish(event);
 
+        if (event.type === "tool-approval-request") {
+          approvalRequests.push(event.approval);
+          await publish({
+            type: "agent-approval-request",
+            approval: event.approval
+          });
+          await emitTelemetryEvent(agent, {
+            type: "approval-request",
+            runId: context.state.runId,
+            agentId: context.state.agentId,
+            approval: event.approval
+          });
+        }
+
         if (
           event.type === "provider-data" &&
           typeof event.data === "object" &&
@@ -1973,11 +2187,12 @@ export const streamAgent = <TModel extends LanguageModel>(
           throw conflict;
         }
         const newSteps = mapSteps(final.steps, context.state.currentStep, final.toolResults);
-        let result = finalizeState(context.state, final, newSteps, final.toolResults);
+        let result = finalizeState(agent, context.state, final, newSteps, final.toolResults);
 
         const outputGuardrail = await runGuardrails(agent, result.state, "output", agent.outputGuardrails, () => ({
           runId: result.state.runId,
           agentId: result.state.agentId,
+          context: input.context,
           state: cloneState(result.state),
           output: result,
           metadata: result.state.metadata
@@ -2094,11 +2309,15 @@ export const streamAgent = <TModel extends LanguageModel>(
         yield chunk;
       }
     })(),
-    collect: async () => (await runner).output
+    collect: async () => (await runner).output as AgentRunOutput<TOutput>
   };
 };
 
-export const resumeAgent = async <TModel extends LanguageModel>(
-  agent: AgentDefinition<TModel>,
-  input: AgentRunInput<TModel> & { state: AgentRunState }
-): Promise<AgentRunOutput> => runAgent(agent, input);
+export const resumeAgent = async <
+  TModel extends LanguageModel,
+  TContext = unknown,
+  TOutput = unknown
+>(
+  agent: AgentDefinition<TModel, TContext, TOutput>,
+  input: AgentRunInput<TModel, TContext> & { state: AgentRunState }
+): Promise<AgentRunOutput<TOutput>> => runAgent<TModel, TContext, TOutput>(agent, input);
