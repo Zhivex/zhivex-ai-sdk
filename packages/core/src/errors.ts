@@ -78,7 +78,7 @@ export class UnsupportedFeatureError extends ZhivexAIError {}
 
 export class GuardrailTriggeredError extends ZhivexAIError {
   constructor(
-    readonly stage: "input" | "output",
+    readonly stage: "input" | "output" | "tool-input" | "tool-output",
     message: string,
     options?: { cause?: unknown; metadata?: unknown }
   ) {

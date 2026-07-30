@@ -279,9 +279,8 @@ export const createApprovalPolicy = (options: ApprovalPolicyOptions = {}): ToolA
     if (preset === "locked-down" || highRisk) {
       return {
         approved: false,
-        reason: highRisk
-          ? `Tool "${request.tool.name}" requires approval under the "${preset}" policy.`
-          : `Tool "${request.tool.name}" is blocked by the "${preset}" policy.`,
+        approvalRequired: true,
+        reason: `Tool "${request.tool.name}" requires approval under the "${preset}" policy.`,
         metadata: approvalMetadata(preset, highRisk)
       };
     }

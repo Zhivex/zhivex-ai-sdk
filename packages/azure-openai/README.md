@@ -5,7 +5,7 @@ Azure OpenAI adapter for Zhivex AI SDK.
 ## Install
 
 ```bash
-bun add @zhivex-ai/azure-openai
+bun add @zhivex-ai/core @zhivex-ai/azure-openai
 ```
 
 ## Audio response limits

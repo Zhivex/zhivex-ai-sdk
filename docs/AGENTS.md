@@ -60,7 +60,11 @@ Every agent run returns a serializable `state`:
 - `messages`: normalized messages and tool results.
 - `steps`: model calls with immutable request/response snapshots and actual call timings.
 - `toolResults`: executed local tool results.
-- `pendingApprovals`: provider approval requests that need a human decision.
+- `pendingApprovals`: provider and SDK-managed local-tool approval requests that need a human decision.
+- `approvalHistory`: resolved local-tool approvals, including the input digest and tool version used for replay protection.
+- `harness` and `executionEnvironment`: immutable fingerprints checked before a durable resume.
+- `compactions`: replay-visible records of context summaries persisted before the next provider request.
+- `finalOutput`: the validated typed result when the agent has an `outputSchema`.
 - `usage`: normalized token usage aggregated across every model call in the run.
 - `status`: `completed`, `waiting_approval`, `failed`, `timed_out`, `cancel_requested`, or another production state.
 - `schemaVersion` and `revision`: the persistence format version and monotonic compare-and-swap revision.
@@ -83,6 +87,12 @@ For shared stores, always pass `scope: { tenantId, userId?, namespace? }`. It pa
 Streams have bounded replay/backpressure and state has a 4 MiB default serialized limit. Request snapshots are incremental, so multi-step histories grow linearly. Telemetry and memory adapters are best effort unless `hookFailurePolicy` explicitly selects strict failure semantics.
 
 Legacy states without a schema version or revision are normalized. Unknown future schema versions are rejected; use `normalizeAgentRunState()` or `migrateAgentRunState()` at application persistence boundaries.
+
+Capsules created with `createAgentCapsule()` bind a canonical SHA-256 harness fingerprint to their agent definition. Resume with `capsule.agent`; a mismatched id, version, fingerprint, or execution-environment binding is rejected before model or tool work. The legacy migration flags in `AgentRunPolicy` are explicit one-time escape hatches, not compatibility defaults.
+
+Use `executionEnvironment` when the application has a container, microVM, remote worker, or policy boundary that must own tool execution. The runtime acquires it once per run, authorizes every call during atomic batch preflight, reauthorizes immediately before execution, and releases it with the final status. The adapter must provide the actual isolation; the SDK contract alone is not a sandbox.
+
+Use `compaction` to bound active model context without rewriting prior completed runs through `AgentMemoryStore`. The runtime preserves leading system messages and a recent atomic tool tail, persists the compacted messages and digests before the provider call, resets the step snapshot offset at that boundary, and exposes compactions in replay and streaming.
 
 ## Tools And Safety
 
@@ -114,10 +124,32 @@ Use approval policies for write, network, filesystem, code-execution, shell, pay
 
 ## Human-In-The-Loop
 
-Provider approval waits and local approval policies use the same resumable state pattern:
+Provider approval waits and local tools configured with `approvalMode: "interrupt"` use the same resumable state pattern:
 
 ```ts
-const waiting = await agent.run({ prompt: "Use the remote MCP server." });
+import { Agent, tool } from "@zhivex-ai/agents";
+import { z } from "zod";
+
+const agent = new Agent({
+  model,
+  tools: {
+    deploy: tool({
+      name: "deploy",
+      schema: z.object({ target: z.string() }),
+      requiresApproval: true,
+      approvalMode: "interrupt",
+      approvalVersion: "2026-07-29",
+      execute: async ({ target }, context) => {
+        return deploy(target, {
+          signal: context?.abortSignal,
+          idempotencyKey: context?.idempotencyKey
+        });
+      }
+    })
+  }
+});
+
+const waiting = await agent.run({ prompt: "Deploy staging." });
 
 if (waiting.status === "waiting_approval") {
   const approved = await agent.resume({
@@ -133,9 +165,15 @@ if (waiting.status === "waiting_approval") {
 }
 ```
 
+A tool policy has three outcomes: `{ approved: true }` allows execution, `{ approved: false }` denies it, and `{ approved: false, approvalRequired: true }` creates a resumable approval request. The runtime preflights the complete tool-call batch before executing any call, then revalidates the schema, enablement rule, guardrails, bound input digest, tool version, and optional `toolApprovalSigner` on resume. Local approval records stay in agent state and are not injected into provider messages.
+
+Context is ephemeral and must be supplied again on resume. Use `contextSchema` to validate it and access it from policies, tool guardrails, and `tool.execute` through `executionContext.context` or `context.context`. Use `outputSchema` with `outputMode: "auto" | "native" | "prompted"` for a validated `result.finalOutput`.
+
 For app-facing queues, import `createAgentApprovalQueue()` from `@zhivex-ai/agents/beta` to turn pending requests into items with cryptographically random approval tokens, reasons, expiration, and resume URLs. Persist the opaque token server-side, compare it before accepting an approval, enforce `expiresAt` in the application, and consume it once; the SDK does not provide an HTTP authorization boundary.
 
 Tool execution timeouts abort the `AbortSignal` passed as the second argument to `tool.execute(input, context)`. Tools that perform I/O should forward `context.abortSignal` to their client so cancellation stops the underlying work; timeout cancellation is cooperative for tools that ignore the signal.
+
+Child approvals are promoted to the parent as `kind: "subagent"` requests. The parent embeds the waiting child checkpoint in `state.childRuns`; after the parent decision is collected, `resumeAgent()` re-enters the same unresolved subagent tool and resumes the same child run. Child provider-approval messages remain isolated from the parent model transcript.
 
 ## Streaming And UI
 

@@ -47,14 +47,17 @@ describe("mcp helpers", () => {
     expect(echo.metadata).toEqual({
       source: "mcp",
       originalName: "echo",
+      title: null,
       inputSchema: null,
+      outputSchema: null,
       annotations: null,
       advancedRegistry: {
         source: "mcp",
+        annotationsTrusted: false,
         permissions: ["external-side-effect"],
         audit: {
           riskLevel: "medium",
-          description: "MCP tool requires approval because it is not explicitly read-only."
+          description: "MCP tool requires approval because it is not explicitly trusted as read-only."
         }
       }
     });
@@ -62,36 +65,39 @@ describe("mcp helpers", () => {
   });
 
   it("builds zod validation from MCP input schemas and preserves annotations", async () => {
-    const tools = await createMcpToolSet({
-      async listTools() {
-        return {
-          tools: [
-            {
-              name: "weather",
-              description: "Get weather",
-              inputSchema: {
-                type: "object",
-                properties: {
-                  city: { type: "string", minLength: 2 },
-                  days: { type: "integer", minimum: 1 }
+    const tools = await createMcpToolSet(
+      {
+        async listTools() {
+          return {
+            tools: [
+              {
+                name: "weather",
+                description: "Get weather",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    city: { type: "string", minLength: 2 },
+                    days: { type: "integer", minimum: 1 }
+                  },
+                  required: ["city"],
+                  additionalProperties: false
                 },
-                required: ["city"],
-                additionalProperties: false
-              },
-              annotations: {
-                readOnlyHint: true,
-                title: "Weather"
+                annotations: {
+                  readOnlyHint: true,
+                  title: "Weather"
+                }
               }
-            }
-          ]
-        };
+            ]
+          };
+        },
+        async callTool(input) {
+          return {
+            structuredContent: input.arguments ?? {}
+          };
+        }
       },
-      async callTool(input) {
-        return {
-          structuredContent: input.arguments ?? {}
-        };
-      }
-    });
+      { trustServerToolAnnotations: true }
+    );
 
     const weather = tools.weather;
     if (!weather || !("execute" in weather)) {
@@ -105,6 +111,7 @@ describe("mcp helpers", () => {
     expect(weather.metadata).toEqual({
       source: "mcp",
       originalName: "weather",
+      title: "Weather",
       inputSchema: {
         type: "object",
         properties: {
@@ -114,16 +121,18 @@ describe("mcp helpers", () => {
         required: ["city"],
         additionalProperties: false
       },
+      outputSchema: null,
       annotations: {
         readOnlyHint: true,
         title: "Weather"
       },
       advancedRegistry: {
         source: "mcp",
+        annotationsTrusted: true,
         permissions: ["read"],
         audit: {
           riskLevel: "low",
-          description: "MCP server declares this tool read-only."
+          description: "Trusted MCP server annotations declare this tool read-only."
         }
       }
     });
@@ -189,6 +198,215 @@ describe("mcp helpers", () => {
       request: { messages: [] }
     });
     expect(decision).toMatchObject({ approved: false });
+  });
+
+  it("does not trust read-only annotations unless explicitly configured", async () => {
+    const tools = await createMcpToolSet({
+      async listTools() {
+        return [{
+          name: "read_docs",
+          annotations: { readOnlyHint: true }
+        }];
+      },
+      async callTool() {
+        return { content: [] };
+      }
+    });
+
+    expect(tools.read_docs?.requiresApproval).toBe(true);
+    expect(tools.read_docs?.metadata?.advancedRegistry).toMatchObject({
+      annotationsTrusted: false,
+      permissions: ["external-side-effect"]
+    });
+  });
+
+  it("paginates tools/list with bounded opaque cursors", async () => {
+    const requests: unknown[] = [];
+    const tools = await createMcpToolSet({
+      async listTools(input) {
+        requests.push(input);
+        if (!input) {
+          return { tools: [{ name: "one" }], nextCursor: "cursor-a" };
+        }
+        if (input.cursor === "cursor-a") {
+          return { tools: [{ name: "two" }], nextCursor: "" };
+        }
+        return { tools: [{ name: "three" }] };
+      },
+      async callTool() {
+        return { content: [] };
+      }
+    });
+
+    expect(Object.keys(tools)).toEqual(["one", "two", "three"]);
+    expect(requests).toEqual([undefined, { cursor: "cursor-a" }, { cursor: "" }]);
+  });
+
+  it("rejects repeated cursors and listing limits", async () => {
+    await expect(
+      createMcpToolSet({
+        async listTools() {
+          return { tools: [{ name: "one" }], nextCursor: "same" };
+        },
+        async callTool() {
+          return null;
+        }
+      })
+    ).rejects.toThrow('repeated cursor "same"');
+
+    await expect(
+      createMcpToolSet(
+        {
+          async listTools() {
+            return [{ name: "one" }, { name: "two" }];
+          },
+          async callTool() {
+            return null;
+          }
+        },
+        { maxListedTools: 1 }
+      )
+    ).rejects.toThrow("1-tool limit");
+
+    await expect(
+      createMcpToolSet(
+        {
+          async listTools() {
+            return [];
+          },
+          async callTool() {
+            return null;
+          }
+        },
+        { maxListPages: 0 }
+      )
+    ).rejects.toThrow("positive safe integer");
+
+    await expect(
+      createMcpToolSet(
+        {
+          async listTools() {
+            return [];
+          },
+          async callTool() {
+            return null;
+          }
+        },
+        { callToolTimeoutMs: 0 }
+      )
+    ).rejects.toThrow('"callToolTimeoutMs" option must be a positive safe integer');
+  });
+
+  it("validates structuredContent against MCP outputSchema", async () => {
+    let mode: "valid" | "invalid" | "missing" | "error" = "valid";
+    const tools = await createMcpToolSet({
+      async listTools() {
+        return [{
+          name: "lookup",
+          outputSchema: {
+            type: "object",
+            properties: {
+              status: { type: "string" }
+            },
+            required: ["status"],
+            additionalProperties: false
+          }
+        }];
+      },
+      async callTool() {
+        if (mode === "valid") {
+          return { structuredContent: { status: "ok" } };
+        }
+        if (mode === "invalid") {
+          return { structuredContent: { status: 42 } };
+        }
+        if (mode === "missing") {
+          return { content: [{ type: "text", text: "no structured value" }] };
+        }
+        return {
+          isError: true,
+          content: [{ type: "text", text: "remote failure" }]
+        };
+      }
+    });
+    const lookup = tools.lookup;
+    if (!lookup || !("execute" in lookup)) {
+      throw new Error("Expected a callable MCP tool.");
+    }
+
+    await expect(lookup.execute({})).resolves.toMatchObject({
+      structuredContent: { status: "ok" }
+    });
+    mode = "invalid";
+    await expect(lookup.execute({})).rejects.toThrow("structured output validation failed");
+    mode = "missing";
+    await expect(lookup.execute({})).rejects.toThrow("returned no structuredContent");
+    mode = "error";
+    await expect(lookup.execute({})).rejects.toThrow(
+      'MCP tool "lookup" returned an error: remote failure'
+    );
+  });
+
+  it("propagates abort, timeout, and idempotency to callTool", async () => {
+    const callOptions: unknown[] = [];
+    let shouldHang = false;
+    const tools = await createMcpToolSet(
+      {
+        async listTools() {
+          return [{ name: "write" }];
+        },
+        async callTool(_input, options) {
+          callOptions.push(options);
+          if (shouldHang) {
+            return new Promise(() => {});
+          }
+          return { structuredContent: { ok: true } };
+        }
+      },
+      { callToolTimeoutMs: 5 }
+    );
+    const write = tools.write;
+    if (!write || !("execute" in write)) {
+      throw new Error("Expected a callable MCP tool.");
+    }
+
+    await write.execute({}, {
+      toolCall: { id: "call-1", name: "write", input: {} },
+      step: 1,
+      model: {} as never,
+      idempotencyKey: "run:tool"
+    });
+    expect(callOptions[0]).toMatchObject({
+      timeoutMs: 5,
+      idempotencyKey: "run:tool",
+      abortSignal: expect.any(AbortSignal)
+    });
+
+    shouldHang = true;
+    await expect(write.execute({})).rejects.toThrow("timed out after 5ms");
+  });
+
+  it("honors a caller abort signal while listing tools", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("caller cancelled"));
+
+    await expect(
+      createMcpToolSet(
+        {
+          async listTools(_input, options) {
+            expect(options?.abortSignal?.aborted).toBe(true);
+            return new Promise(() => {});
+          },
+          async callTool() {
+            return null;
+          }
+        },
+        {
+          abortSignal: controller.signal,
+          listToolsTimeoutMs: 100
+        }
+      )
+    ).rejects.toThrow("caller cancelled");
   });
 
   it("preserves provider-data events in streamed assistant messages", async () => {

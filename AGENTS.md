@@ -9,7 +9,10 @@
 - `packages/core`: shared contracts, runtime helpers, messages, streaming, embeddings, middleware, catalog utilities, UI helpers, errors, and generation utilities.
 - `packages/sdk`: aggregator package that re-exports the public API from `core`.
 - `packages/agents`: agent-first facade that re-exports the supported agent runtime surface from `core`.
+- `packages/react`: browser-safe React chat state, transport, components, and styles over the shared UI contract.
 - `packages/openai`: OpenAI provider.
+- `packages/xai`: xAI Grok provider.
+- `packages/meta`: Meta Model API provider.
 - `packages/azure-openai`: Azure OpenAI provider.
 - `packages/anthropic`: Anthropic provider.
 - `packages/gemini`: Gemini provider.
@@ -29,7 +32,10 @@ Packages currently publishable to npm:
 - `@zhivex-ai/core`
 - `@zhivex-ai/sdk`
 - `@zhivex-ai/agents`
+- `@zhivex-ai/react`
 - `@zhivex-ai/openai`
+- `@zhivex-ai/xai`
+- `@zhivex-ai/meta`
 - `@zhivex-ai/azure-openai`
 - `@zhivex-ai/anthropic`
 - `@zhivex-ai/gemini`
@@ -52,6 +58,7 @@ Packages currently publishable to npm:
 Base commands:
 
 ```bash
+bun run docs:check
 bun run typecheck
 bun run test
 bun run build
@@ -62,7 +69,8 @@ Release-related scripts already defined at the repo root:
 ```bash
 bun run changeset
 bun run version-packages
-bun run release
+bun run release:check
+bun run release:check:next
 ```
 
 ## Architecture Flow
@@ -90,6 +98,7 @@ bun run release
 - Provider changes should validate message mapping, tools, structured output, streaming, and error handling where applicable.
 - If a change affects shared public API behavior, add or adjust tests in `packages/sdk/tests`.
 - If documented behavior or the public API changes, update `README.md` and any other relevant documentation in the repo.
+- Run `bun run docs:check` after changing package inventories, package README examples, local documentation links, or repository layout.
 
 ## Special Focus: npm Publishing
 
@@ -97,7 +106,8 @@ This repo uses `changesets` with `access: public`, `baseBranch: main`, and `upda
 
 - Versioning should go through files in `.changeset/` whenever a published package changes.
 - During versioning, `changesets` will update internal package dependencies when needed.
-- The official release script is `bun run release`, which runs `bun run build && changeset publish`.
+- Stable and prerelease publishing runs only from the protected `.github/workflows/release.yml` workflow with npm Trusted Publishing and OIDC.
+- `bun run release` and `bun run release:next` are workflow implementation commands, not local publishing instructions.
 
 ### When to Create a Changeset
 
@@ -155,154 +165,53 @@ bun run test
 bun run build
 ```
 
-11. Publish with:
+11. Commit and push the reviewed release source to `main`.
+12. Dispatch `.github/workflows/release.yml` with channel `latest`.
 
-```bash
-bun run release
-```
+### Stable Release Workflow
 
-### Manual Stable Release Workflow
+Stable releases use the `latest` channel:
 
-When publishing manually to npm instead of relying on GitHub Actions, use this sequence:
+1. Create or review the pending changesets.
+2. Run `bun run release:check`, `bun run docs:check`, typecheck, tests, build, and provider smoke.
+3. Run `bun run version-packages`.
+4. Review the generated versions, internal dependency ranges, changelogs, and lockfile.
+5. Re-run the validation gates.
+6. Commit and push the immutable release source to `main`.
+7. Dispatch `release.yml` with channel `latest`.
+8. Verify exact npm versions, the `latest` dist-tag, provenance, and package tags after the workflow completes.
 
-1. Ensure npm authentication and scope access are correct:
+Do not publish stable packages manually. If Trusted Publishing fails, repair the npm/GitHub configuration and rerun the workflow without creating new versions.
 
-```bash
-npm whoami
-```
+### Prerelease Workflow
 
-2. Confirm the working tree and branch are correct for the release.
-3. Create or review the pending changesets in `.changeset/`.
-4. Validate before versioning:
-
-```bash
-bun run typecheck
-bun run test
-bun run build
-```
-
-5. Apply versioning locally:
-
-```bash
-bun run version-packages
-```
-
-6. Review the generated version bumps and internal dependency updates.
-7. Validate again after versioning:
-
-```bash
-bun run typecheck
-bun run test
-bun run build
-```
-
-8. Publish the stable release:
-
-```bash
-bun run release
-```
-
-Notes:
-
-- `bun run release` publishes with the default npm dist-tag, which is appropriate for stable releases.
-- Do not use this stable flow for prereleases such as `next`, `alpha`, `beta`, or `rc`.
-
-### Pre-release Workflow
-
-If you are preparing an `alpha`, `beta`, or `rc` release, use `changesets` pre-release mode instead of publishing directly to `latest`.
-
-Recommended flow:
-
-1. Make sure the branch and scope are correct for the pre-release line.
-2. Create normal changesets for the packages involved:
+The supported prerelease channel is `next`:
 
 ```bash
 bun run changeset
-```
-
-3. Enter pre-release mode with the intended tag:
-
-```bash
-bunx changeset pre enter beta
-```
-
-Common tags:
-
-- `alpha`
-- `beta`
-- `rc`
-
-4. Run versioning while pre mode is active:
-
-```bash
-bun run version-packages
-```
-
-This should produce pre-release versions such as `0.2.0-beta.0`.
-
-5. Validate again before publishing:
-
-```bash
-bun run typecheck
-bun run test
-bun run build
-```
-
-6. Publish using the matching npm dist-tag so the release does not become `latest` by accident:
-
-```bash
-bunx changeset publish --tag beta
-```
-
-7. Keep using the same tag for follow-up pre-releases in that cycle.
-8. Once the pre-release cycle is complete, exit pre mode:
-
-```bash
-bunx changeset pre exit
-```
-
-9. Generate the final stable versions with:
-
-```bash
-bun run version-packages
-```
-
-10. Re-run validation and then publish the stable release normally:
-
-```bash
-bun run release
-```
-
-### Manual Prerelease Workflow
-
-If you are publishing a prerelease manually, always publish with an explicit npm dist-tag.
-
-Recommended `next` flow:
-
-```bash
 bunx changeset pre enter next
 bun run version-packages
+bun run docs:check
 bun run typecheck
 bun run test
 bun run build
-bunx changeset publish --tag next
-bunx changeset pre exit
+bun run smoke:providers
 ```
 
-After exiting prerelease mode, regenerate stable versions before the final stable publish:
+Review, commit, and push the generated `-next.N` versions to `main`, then dispatch `release.yml` with channel `next`. The workflow publishes with the explicit `next` dist-tag and runs postpublish verification.
+
+When the prerelease cycle is complete:
 
 ```bash
+bunx changeset pre exit
 bun run version-packages
+bun run docs:check
 bun run typecheck
 bun run test
 bun run build
-bun run release
 ```
 
-Notes:
-
-- Do not run `bun run release` directly while in prerelease mode unless the publish step is explicitly configured to use the intended dist-tag.
-- Keep the dist-tag aligned with the prerelease channel, for example `next`, `alpha`, `beta`, or `rc`.
+Review and commit the stable versions before dispatching the `latest` channel.
 
 ### Pre-release Rules
 
@@ -314,8 +223,7 @@ Notes:
 
 ### Mental Checklist Before Publishing
 
-- Be authenticated with npm. If needed, validate with `npm whoami`.
-- Make sure you have permission to publish under the `@zhivex-ai` scope.
+- Confirm npm Trusted Publishing is configured for every package and the protected `npm` GitHub environment is available.
 - Verify that every package to be published has correct `name`, `version`, `exports`, `types`, `files`, and `publishConfig.access`.
 - Confirm that `dist/` is generated correctly with `bun run build`.
 - Make sure a `core` change does not leave provider internal versions out of sync.
@@ -337,11 +245,12 @@ correct exports in the package itself.
 
 ## Pre-Close Checklist
 
-1. `bun run typecheck`
-2. `bun run test`
-3. `bun run build` if exports, public types, release flow, or package references changed
-4. Review whether a `changeset` is required
-5. Review whether `README.md` and the rest of the repo documentation still match the final API
+1. `bun run docs:check`
+2. `bun run typecheck`
+3. `bun run test`
+4. `bun run build` if exports, public types, release flow, or package references changed
+5. Review whether a `changeset` is required
+6. Review whether `README.md` and the rest of the repo documentation still match the final API
 
 ## What to Avoid
 

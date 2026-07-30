@@ -28,6 +28,7 @@
       "@zhivex-ai/azure-openai": ["./packages/azure-openai/src/index.ts"],
       "@zhivex-ai/openrouter": ["./packages/openrouter/src/index.ts"],
       "@zhivex-ai/gateway": ["./packages/gateway/src/index.ts"],
+      "@zhivex-ai/react": ["./packages/react/src/index.ts"],
       "@zhivex-ai/sdk": ["./packages/sdk/src/index.ts"]
     }
   }

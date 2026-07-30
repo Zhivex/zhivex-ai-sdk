@@ -6,6 +6,12 @@ Supports Vertex Gemini text, multimodal embeddings, speech, realtime sessions, g
 
 Google is transitioning Vertex AI into Gemini Enterprise Agent Platform. The SDK keeps the package name `@zhivex-ai/vertex`, the factory `createVertex()`, and provider id `"vertex"` for backwards compatibility and because the public API endpoints still use `aiplatform.googleapis.com`. Treat "Vertex" in this package as the Google Cloud Agent Platform / Vertex API surface, not as a separate deprecated wire contract.
 
+## Install
+
+```bash
+bun add @zhivex-ai/core @zhivex-ai/vertex
+```
+
 | Surface | Support |
 | --- | --- |
 | Text, tools, structured output, audio input | `generateText()` |
@@ -134,12 +140,6 @@ See Google's current [Agent Platform model lifecycle](https://docs.cloud.google.
 Google's current product page labels this surface as [Gemini Enterprise Agent Platform, formerly Vertex AI](https://cloud.google.com/products/gemini-enterprise-agent-platform), and Google's migration docs say Vertex AI is transitioning to become part of Agent Platform. This package intentionally does not rename the provider id yet; doing so would be a breaking API change without a corresponding endpoint-level migration requirement.
 
 Model Garden coverage is intentionally raw/prediction based. The adapter does not add a dedicated wrapper for every publisher model.
-
-## Install
-
-```bash
-bun add @zhivex-ai/vertex
-```
 
 Repository and full documentation:
 

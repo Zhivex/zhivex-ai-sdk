@@ -4,6 +4,7 @@ import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
 import { ParseError, UnsupportedFeatureError, ValidationError } from "./errors.js";
 import { createTextMessage } from "./messages.js";
 import { generateText, streamText } from "./generate-text.js";
+import { createStructuredOutputPrompt } from "./structured-output-prompt.js";
 import type {
   GenerateObjectOptions,
   GenerateObjectOutput,
@@ -45,14 +46,18 @@ const withStructuredPrompt = <TSchema extends ZodTypeAny>(
     return {};
   }
 
+  const instruction = createStructuredOutputPrompt(options.schema, {
+    name: options.schemaName,
+    description: options.schemaDescription
+  });
   if (options.messages !== undefined) {
     return {
-      messages: [...options.messages, createTextMessage("system", "Return only valid JSON matching the requested schema.")]
+      messages: [...options.messages, createTextMessage("system", instruction)]
     };
   }
   if (options.prompt !== undefined) {
     return {
-      prompt: `${options.prompt}\n\nReturn only valid JSON matching the requested schema.`
+      prompt: `${options.prompt}\n\n${instruction}`
     };
   }
   return {};

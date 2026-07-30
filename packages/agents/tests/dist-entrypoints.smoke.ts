@@ -21,6 +21,8 @@ assert.equal(typeof ops.runAgentEvaluation, "function");
 
 assert.equal(typeof beta.createAgentControlPlane, "function");
 assert.equal(typeof beta.createAgentRunLedger, "function");
+assert.equal(typeof beta.createAgentExecutionEnvironmentBinding, "function");
+assert.equal(typeof beta.createAgentHarnessBinding, "function");
 
 assert.equal(typeof realtime.streamLiveAgent, "function");
 assert.equal(typeof testing.createMockLanguageModel, "function");

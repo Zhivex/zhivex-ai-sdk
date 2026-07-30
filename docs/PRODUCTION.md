@@ -156,7 +156,9 @@ const safeAgent = applySafetyPolicyToAgent(
 );
 ```
 
-`createProductionSafetyPolicy()` is a stable preset for first production deployments. It uses `review-sensitive`, email redaction, and conservative budget defaults. Pass the same options accepted by `createSafetyPolicy()` when a product needs to override or disable a layer. Use `locked-down` when every tool call should require approval. Use `permissive` only for trusted internal tools or local development.
+`createProductionSafetyPolicy()` is a stable preset for first production deployments. It uses `review-sensitive`, email redaction, and conservative budget defaults. Sensitive calls return `approvalRequired: true`, which persists a local approval interrupt before any side effect; explicit deny rules remain final denials. Pass the same options accepted by `createSafetyPolicy()` when a product needs to override or disable a layer. Use `locked-down` when every tool call should require approval. Use `permissive` only for trusted internal tools or local development.
+
+Approval is not authorization. Keep identity, role checks, queue-token validation, expiration, and one-time consumption in the application boundary. The SDK binds local decisions to the run, step, call id, tool name, canonical input, and tool version and can verify an application-provided `toolApprovalSigner` on resume.
 
 For audited domains, add the Beta production-agent kit on top of the stable policy:
 

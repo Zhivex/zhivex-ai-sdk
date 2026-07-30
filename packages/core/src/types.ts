@@ -178,6 +178,137 @@ export interface ToolExecutionOptions {
   stopOnError?: boolean;
 }
 
+export type ToolApprovalMode = "policy" | "interrupt";
+
+export interface ToolApprovalSigner {
+  sign(payload: string): string | Promise<string>;
+  verify?(payload: string, signature: string): boolean | Promise<boolean>;
+}
+
+export interface ToolGuardrailTrigger {
+  triggered: true;
+  reason?: string;
+  metadata?: Record<string, JsonValue>;
+}
+
+export interface ToolRuntimeContext<TContext = any> {
+  context?: TContext;
+  /** Durable run that owns this execution, when invoked by the agent runtime. */
+  runId?: string;
+  agentId?: string;
+  scope?: AgentStoreScope;
+  metadata?: Record<string, JsonValue>;
+  /** Acquired execution boundary for this run. Callbacks and secrets are never persisted. */
+  executionEnvironment?: AgentExecutionEnvironmentSession<TContext>;
+}
+
+export type AgentExecutionEnvironmentBackend =
+  | "host"
+  | "process"
+  | "container"
+  | "microvm"
+  | "remote"
+  | "custom";
+
+export interface AgentExecutionEnvironmentManifest {
+  schemaVersion: 1;
+  id: string;
+  version?: string;
+  backend: AgentExecutionEnvironmentBackend;
+  assurance: "best-effort" | "enforced";
+  isolation: "shared" | "per-run" | "per-tool-call";
+  workspace?: {
+    id?: string;
+    root: string;
+    cwd?: string;
+    access: "read-only" | "read-write";
+    followSymlinks?: boolean;
+    readablePaths?: string[];
+    writablePaths?: string[];
+  };
+  permissions?: {
+    undeclaredTools?: "allow" | "deny";
+    filesystem?: "deny" | "read-only" | "read-write";
+    network?: {
+      mode: "deny" | "allowlist";
+      allowedDomains?: string[];
+      allowedPorts?: number[];
+      allowPrivateNetworks?: boolean;
+    };
+    process?: {
+      shell: "deny" | "allowlist" | "allow";
+      allowedCommands?: string[];
+    };
+    environment?: {
+      inheritedVariables?: string[];
+    };
+  };
+  limits?: {
+    maxProcessRuntimeMs?: number;
+    maxProcessOutputBytes?: number;
+    maxConcurrentProcesses?: number;
+    maxMemoryMb?: number;
+    maxWorkspaceBytes?: number;
+    maxFileWriteBytes?: number;
+    maxNetworkRequests?: number;
+    maxNetworkBytes?: number;
+  };
+  metadata?: Record<string, JsonValue>;
+}
+
+export interface AgentExecutionEnvironmentBinding {
+  environmentId: string;
+  environmentVersion?: string;
+  fingerprint: string;
+  workspaceId?: string;
+}
+
+export interface AgentExecutionEnvironmentAcquireRequest<TContext = any> {
+  runId: string;
+  agentId?: string;
+  scope?: AgentStoreScope;
+  context?: TContext;
+  metadata?: Record<string, JsonValue>;
+  abortSignal?: AbortSignal;
+}
+
+export interface AgentExecutionAuthorizationRequest<TContext = any> {
+  manifest: AgentExecutionEnvironmentManifest;
+  binding: AgentExecutionEnvironmentBinding;
+  tool: ToolDefinition;
+  toolCall: ToolCall;
+  input: unknown;
+  context: ToolExecutionContext<TContext>;
+  phase: "preflight" | "execute";
+}
+
+export type AgentExecutionAuthorizationDecision =
+  | { decision: "allow"; metadata?: Record<string, JsonValue> }
+  | { decision: "deny"; reason: string; metadata?: Record<string, JsonValue> };
+
+export interface AgentExecutionEnvironmentSession<TContext = any> {
+  readonly manifest: AgentExecutionEnvironmentManifest;
+  readonly binding: AgentExecutionEnvironmentBinding;
+  authorize(
+    request: AgentExecutionAuthorizationRequest<TContext>
+  ): AgentExecutionAuthorizationDecision | Promise<AgentExecutionAuthorizationDecision>;
+  execute<TResult>(
+    request: AgentExecutionAuthorizationRequest<TContext>,
+    operation: () => TResult | Promise<TResult>
+  ): TResult | Promise<TResult>;
+  release?(result: {
+    status: AgentStatus;
+    error?: { message: string };
+  }): void | Promise<void>;
+}
+
+export interface AgentExecutionEnvironment<TContext = any> {
+  readonly manifest: AgentExecutionEnvironmentManifest;
+  acquire(
+    request: AgentExecutionEnvironmentAcquireRequest<TContext>
+  ): AgentExecutionEnvironmentSession<TContext> | Promise<AgentExecutionEnvironmentSession<TContext>>;
+}
+
 export interface StructuredOutputConfig<TSchema extends ZodTypeAny = ZodTypeAny> {
   schema: TSchema;
   mode: StructuredOutputMode;
@@ -206,6 +337,11 @@ export interface StreamToolCallEvent {
 export interface StreamToolResultEvent {
   type: "tool-result";
   toolResult: ToolExecutionResult;
+}
+
+export interface StreamToolApprovalRequestEvent {
+  type: "tool-approval-request";
+  approval: AgentApprovalRequest;
 }
 
 export interface StreamProviderDataEvent {
@@ -240,6 +376,7 @@ export type StreamEvent =
   | StreamTextDeltaEvent
   | StreamToolCallEvent
   | StreamToolResultEvent
+  | StreamToolApprovalRequestEvent
   | StreamProviderDataEvent
   | StreamImageGenerationEvent
   | StreamFinishEvent
@@ -271,6 +408,11 @@ export interface AgentApprovalResolvedEvent {
   approval: AgentApprovalResponse;
 }
 
+export interface AgentCompactionEvent {
+  type: "agent-compaction";
+  compaction: AgentCompactionRecord;
+}
+
 export interface AgentRunFinishEvent {
   type: "agent-run-finish";
   status: AgentStatus;
@@ -284,6 +426,7 @@ export type AgentStreamEvent =
   | AgentStepFinishEvent
   | AgentApprovalRequestEvent
   | AgentApprovalResolvedEvent
+  | AgentCompactionEvent
   | AgentRunFinishEvent;
 
 export interface StreamObjectDeltaEvent {
@@ -1040,27 +1183,87 @@ export interface ProviderAdapter {
 
 export type CallableProviderAdapter = ProviderAdapter & ((modelId: string) => LanguageModel);
 
-export interface ToolDefinition<TSchema extends ZodTypeAny = ZodTypeAny, TResult = JsonValue> {
+export interface ToolDefinition<
+  TSchema extends ZodTypeAny = any,
+  TResult = JsonValue,
+  TContext = any
+> {
   name: string;
   description?: string;
   schema: TSchema;
   metadata?: Record<string, JsonValue>;
   requiresApproval?: boolean;
-  execute: (input: z.infer<TSchema>, context?: ToolExecutionContext) => Promise<TResult> | TResult;
+  /**
+   * "policy" preserves the immediate allow/deny policy behavior. "interrupt"
+   * creates a resumable local approval request before any tool side effect.
+   */
+  approvalMode?: ToolApprovalMode;
+  /** Bump when approval-relevant tool behavior changes so stale approvals cannot be replayed. */
+  approvalVersion?: string;
+  isEnabled?: (
+    input: z.infer<TSchema>,
+    context: ToolExecutionContext<TContext>
+  ) => boolean | Promise<boolean>;
+  inputGuardrails?: ToolInputGuardrail<TSchema, TContext>[];
+  outputGuardrails?: ToolOutputGuardrail<TSchema, TResult, TContext>[];
+  onError?: ToolErrorHandler<TSchema, TResult, TContext>;
+  execute: (
+    input: z.infer<TSchema>,
+    context?: ToolExecutionContext<TContext>
+  ) => Promise<TResult> | TResult;
 }
 
-export interface ToolExecutionContext {
+export interface ToolExecutionContext<TContext = any> extends ToolRuntimeContext<TContext> {
   abortSignal?: AbortSignal;
   toolCall: ToolCall;
   step: number;
   model: LanguageModel | RealtimeModel;
-  /** Durable run that owns this execution, when invoked by the agent runtime. */
-  runId?: string;
   /** Forward this key to side-effecting APIs to make retries externally idempotent. */
   idempotencyKey?: string;
   request?: ModelGenerateInput;
   realtimeConfig?: RealtimeSessionConfig;
 }
+
+export interface ToolInputGuardrailRequest<
+  TSchema extends ZodTypeAny = any,
+  TContext = any
+> {
+  tool: ToolDefinition;
+  input: z.infer<TSchema>;
+  context: ToolExecutionContext<TContext>;
+}
+
+export interface ToolOutputGuardrailRequest<
+  TSchema extends ZodTypeAny = any,
+  TResult = JsonValue,
+  TContext = any
+> extends ToolInputGuardrailRequest<TSchema, TContext> {
+  output: TResult;
+}
+
+export type ToolInputGuardrail<
+  TSchema extends ZodTypeAny = any,
+  TContext = any
+> = (
+  request: ToolInputGuardrailRequest<TSchema, TContext>
+) => ToolGuardrailTrigger | void | Promise<ToolGuardrailTrigger | void>;
+
+export type ToolOutputGuardrail<
+  TSchema extends ZodTypeAny = any,
+  TResult = JsonValue,
+  TContext = any
+> = (
+  request: ToolOutputGuardrailRequest<TSchema, TResult, TContext>
+) => ToolGuardrailTrigger | void | Promise<ToolGuardrailTrigger | void>;
+
+export type ToolErrorHandler<
+  TSchema extends ZodTypeAny = any,
+  TResult = JsonValue,
+  TContext = any
+> = (
+  error: Error,
+  request: ToolInputGuardrailRequest<TSchema, TContext>
+) => TResult | void | Promise<TResult | void>;
 
 export type HostedToolClass =
   | "web-search"
@@ -1087,7 +1290,7 @@ export interface HostedToolDefinition<TConfig extends JsonValue = JsonValue> {
   metadata?: Record<string, JsonValue>;
 }
 
-export type AnyToolDefinition = ToolDefinition | HostedToolDefinition;
+export type AnyToolDefinition = ToolDefinition<any, any, any> | HostedToolDefinition;
 
 export type ToolSet = Record<string, AnyToolDefinition>;
 
@@ -1100,18 +1303,21 @@ export interface ToolRegistryLike {
 
 export type ToolCollection = ToolSet | ToolRegistryLike;
 
-export interface ToolApprovalRequest {
+export interface ToolApprovalRequest<TContext = any> {
   toolCall: ToolCall;
   tool: ToolDefinition;
   input: JsonValue;
   step: number;
   model: LanguageModel | RealtimeModel;
   request?: ModelGenerateInput;
+  executionContext?: ToolExecutionContext<TContext>;
   realtimeConfig?: RealtimeSessionConfig;
 }
 
 export interface ToolApprovalDecision {
   approved: boolean;
+  /** Requests resumable human approval instead of treating approved:false as a final denial. */
+  approvalRequired?: boolean;
   reason?: string;
   metadata?: Record<string, JsonValue>;
 }
@@ -1121,8 +1327,8 @@ export interface ToolApprovalEvent {
   decision: ToolApprovalDecision;
 }
 
-export type ToolApprovalPolicy = (
-  request: ToolApprovalRequest
+export type ToolApprovalPolicy<TContext = any> = (
+  request: ToolApprovalRequest<TContext>
 ) => ToolApprovalDecision | boolean | Promise<ToolApprovalDecision | boolean>;
 
 export type ToolApprovalObserver = (
@@ -1133,15 +1339,27 @@ export type ProviderOptionsOf<TModel extends LanguageModel> = TModel extends Lan
   ? TProviderOptions
   : ProviderOptions;
 
-export type GenerateTextOptions<TModel extends LanguageModel = LanguageModel> = RetryOptions &
+export type GenerateTextOptions<
+  TModel extends LanguageModel = LanguageModel,
+  TContext = unknown
+> = RetryOptions &
   GenerateInputSource & {
     model: TModel;
     system?: string;
     tools?: ToolCollection;
     toolChoice?: ToolChoice;
     toolExecution?: ToolExecutionOptions;
-    toolApprovalPolicy?: ToolApprovalPolicy;
+    toolApprovalPolicy?: ToolApprovalPolicy<TContext>;
+    toolApprovalSigner?: ToolApprovalSigner;
+    /** Resolved local approvals supplied by a durable agent runtime. */
+    toolApprovalResolutions?: AgentApprovalResolution[];
+    toolContext?: ToolRuntimeContext<TContext>;
     onToolApprovalDecision?: ToolApprovalObserver;
+    /** Durable runtimes may replace the active context before each provider request. */
+    prepareModelMessages?: (context: {
+      messages: readonly ModelMessage[];
+      step: number;
+    }) => ModelMessage[] | undefined | Promise<ModelMessage[] | undefined>;
     /** Called immediately before each model request. Throw to stop the loop. */
     onBeforeModelStep?: (context: { request: ModelGenerateInput; step: number }) => void | Promise<void>;
     /** Called before a batch of approved local tool calls is executed. */
@@ -1156,6 +1374,7 @@ export type GenerateTextOptions<TModel extends LanguageModel = LanguageModel> = 
       response: GenerateResult;
       step: number;
       toolCalls: ToolCall[];
+      approvalRequests: AgentApprovalRequest[];
     }) => void | Promise<void>;
     /** Durable runtimes use this hook to checkpoint tool results before the next model request. */
     onToolExecutionComplete?: (context: {
@@ -1186,6 +1405,8 @@ export interface GenerateTextOutput {
   steps: GenerateTextStep[];
   messages: ModelMessage[];
   toolResults: ToolExecutionResult[];
+  /** Local resumable approval requests produced before any tool in the batch executes. */
+  approvalRequests?: AgentApprovalRequest[];
 }
 
 export type AgentStatus =
@@ -1207,6 +1428,10 @@ export type AgentStepStatus = "running" | "completed" | "suspended" | "waiting_a
 export interface AgentRunPolicy {
   timeoutMs?: number;
   onTimeout?: "fail" | "cancel-requested";
+  /** Explicit migration escape hatch for pre-fingerprint durable states. */
+  allowLegacyHarnessResume?: boolean;
+  /** Explicit migration escape hatch for states created before environment binding. */
+  allowLegacyExecutionEnvironmentResume?: boolean;
   /** Disable only for stores that intentionally provide CAS without worker leases. */
   leaseMode?: "required" | "disabled";
   /** Duration of the exclusive worker lease. Defaults to 30 seconds. */
@@ -1229,6 +1454,67 @@ export interface AgentRunPolicy {
     maxTotalTokens?: number;
     includeChildRuns?: boolean;
   };
+}
+
+export type AgentCompactionReason =
+  | "message-count"
+  | "estimated-input-tokens";
+
+export interface AgentCompactionRequest<TContext = any> {
+  runId: string;
+  agentId?: string;
+  scope?: AgentStoreScope;
+  beforeStep: number;
+  context?: TContext;
+  /** Historical prefix being summarized. System messages are never included. */
+  messages: ModelMessage[];
+  /** Literal tail preserved after the summary. */
+  retainedMessages: ModelMessage[];
+  reasons: AgentCompactionReason[];
+  estimatedTokensBefore: number;
+  sourceDigest: string;
+  idempotencyKey: string;
+  metadata?: Record<string, JsonValue>;
+  abortSignal?: AbortSignal;
+}
+
+export interface AgentCompactionResult {
+  summary: string;
+  usage?: TokenUsage;
+  metadata?: Record<string, JsonValue>;
+}
+
+export type AgentCompactor<TContext = any> = (
+  request: AgentCompactionRequest<TContext>
+) => AgentCompactionResult | Promise<AgentCompactionResult>;
+
+export interface AgentCompactionOptions<TContext = any> {
+  /** Compaction runs when either configured threshold is exceeded. */
+  maxMessages?: number;
+  maxEstimatedInputTokens?: number;
+  /** Literal non-system tail retained after compaction. Defaults to 8 messages. */
+  keepRecentMessages?: number;
+  estimateTokens?: (messages: readonly ModelMessage[]) => number;
+  compactor: AgentCompactor<TContext>;
+}
+
+export interface AgentCompactionRecord {
+  id: string;
+  beforeStep: number;
+  createdAt: number;
+  reasons: AgentCompactionReason[];
+  sourceDigest: string;
+  resultDigest: string;
+  summaryDigest: string;
+  summary: string;
+  messageCountBefore: number;
+  messageCountAfter: number;
+  compactedMessageCount: number;
+  retainedMessageCount: number;
+  estimatedTokensBefore: number;
+  estimatedTokensAfter: number;
+  usage?: TokenUsage;
+  metadata?: Record<string, JsonValue>;
 }
 
 export interface AgentStepRequest {
@@ -1272,6 +1558,7 @@ export interface AgentChildRun {
   agentId?: string;
   parentRunId?: string;
   toolName?: string;
+  toolCallId?: string;
   status: AgentStatus;
   outputText: string;
   steps: number;
@@ -1284,6 +1571,16 @@ export interface AgentChildRun {
     message: string;
   };
   metadata?: Record<string, JsonValue>;
+  /** Durable child state retained only while the parent must resume a child approval. */
+  resumeState?: AgentRunState;
+}
+
+export interface AgentHarnessBinding {
+  schemaVersion: 1;
+  id: string;
+  version: string;
+  fingerprint: string;
+  algorithm: "sha256";
 }
 
 export interface AgentRunState {
@@ -1301,6 +1598,8 @@ export interface AgentRunState {
   parentRunId?: string;
   provider: string;
   modelId: string;
+  harness?: AgentHarnessBinding;
+  executionEnvironment?: AgentExecutionEnvironmentBinding;
   status: AgentStatus;
   messages: ModelMessage[];
   steps: AgentStep[];
@@ -1308,11 +1607,15 @@ export interface AgentRunState {
   currentStep: number;
   maxSteps: number;
   outputText: string;
+  finalOutput?: JsonValue;
+  outputMode?: Exclude<StructuredOutputMode, "auto">;
   finishReason?: FinishReason;
   providerFinishReason?: string;
   usage?: TokenUsage;
   pendingApprovals: AgentApprovalRequest[];
+  approvalHistory?: AgentApprovalResolution[];
   childRuns?: AgentChildRun[];
+  compactions?: AgentCompactionRecord[];
   metadata?: Record<string, JsonValue>;
   handoff?: AgentHandoff;
   startedAt?: number;
@@ -1593,28 +1896,30 @@ export interface AgentGuardrailTrigger {
   metadata?: Record<string, JsonValue>;
 }
 
-export interface AgentInputGuardrailRequest {
+export interface AgentInputGuardrailRequest<TContext = any> {
   runId: string;
   agentId?: string;
+  context?: TContext;
   state: AgentRunState;
   messages: ModelMessage[];
   metadata?: Record<string, JsonValue>;
 }
 
-export interface AgentOutputGuardrailRequest {
+export interface AgentOutputGuardrailRequest<TContext = any, TOutput = any> {
   runId: string;
   agentId?: string;
+  context?: TContext;
   state: AgentRunState;
-  output: AgentRunOutput | LiveAgentRunOutput;
+  output: AgentRunOutput<TOutput> | LiveAgentRunOutput;
   metadata?: Record<string, JsonValue>;
 }
 
-export type AgentInputGuardrail = (
-  request: AgentInputGuardrailRequest
+export type AgentInputGuardrail<TContext = any> = (
+  request: AgentInputGuardrailRequest<TContext>
 ) => AgentGuardrailTrigger | void | Promise<AgentGuardrailTrigger | void>;
 
-export type AgentOutputGuardrail = (
-  request: AgentOutputGuardrailRequest
+export type AgentOutputGuardrail<TContext = any, TOutput = any> = (
+  request: AgentOutputGuardrailRequest<TContext, TOutput>
 ) => AgentGuardrailTrigger | void | Promise<AgentGuardrailTrigger | void>;
 
 export interface AgentTelemetryGuardrailTriggeredEvent {
@@ -1699,21 +2004,35 @@ export interface AgentHookFailurePolicy {
   onError?: (event: AgentOperationalError) => void | Promise<void>;
 }
 
-export interface AgentDefinition<TModel extends LanguageModel = LanguageModel> {
+export interface AgentDefinition<
+  TModel extends LanguageModel = LanguageModel,
+  TContext = any,
+  TOutput = any
+> {
   id?: string;
   model: TModel;
   instructions?: string;
+  contextSchema?: z.ZodType<TContext>;
   tools?: ToolCollection;
   maxSteps?: number;
   temperature?: number;
   maxTokens?: number;
   reasoning?: ReasoningConfig;
+  outputSchema?: z.ZodType<TOutput>;
+  outputMode?: StructuredOutputMode;
+  outputName?: string;
+  outputDescription?: string;
   toolExecution?: ToolExecutionOptions;
-  toolApprovalPolicy?: ToolApprovalPolicy;
-  inputGuardrails?: AgentInputGuardrail[];
-  outputGuardrails?: AgentOutputGuardrail[];
+  toolApprovalPolicy?: ToolApprovalPolicy<TContext>;
+  toolApprovalSigner?: ToolApprovalSigner;
+  inputGuardrails?: AgentInputGuardrail<TContext>[];
+  outputGuardrails?: AgentOutputGuardrail<TContext, TOutput>[];
   providerOptions?: ProviderOptionsOf<TModel>;
   subagents?: AgentSubAgentDefinition[];
+  /** Immutable identity of the capsule/spec that owns durable resume semantics. */
+  harness?: AgentHarnessBinding;
+  executionEnvironment?: AgentExecutionEnvironment<TContext>;
+  compaction?: AgentCompactionOptions<TContext>;
   policy?: AgentRunPolicy;
   metadata?: Record<string, JsonValue>;
   store?: AgentRunStore;
@@ -1740,11 +2059,21 @@ export interface LiveAgentDefinition<TModel extends RealtimeModel = RealtimeMode
 }
 
 export interface AgentApprovalRequest {
+  /** Absent on legacy persisted states and treated as "provider". */
+  kind?: "provider" | "local-tool" | "subagent";
   provider: string;
   id: string;
   name: string;
   arguments: string;
   serverLabel?: string;
+  toolCallId?: string;
+  step?: number;
+  inputDigest?: string;
+  toolVersion?: string;
+  signature?: string;
+  childRunId?: string;
+  childAgentId?: string;
+  childApprovalRequestId?: string;
   rawData: JsonValue;
 }
 
@@ -1756,12 +2085,34 @@ export interface AgentApprovalResponse {
   reason?: string;
 }
 
-export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryOptions &
+export interface AgentApprovalResolution {
+  requestId: string;
+  kind: "provider" | "local-tool" | "subagent";
+  provider: string;
+  approve: boolean;
+  reason?: string;
+  toolCallId?: string;
+  step?: number;
+  inputDigest?: string;
+  toolVersion?: string;
+  signature?: string;
+  childRunId?: string;
+  childAgentId?: string;
+  childApprovalRequestId?: string;
+  resolvedAt: number;
+}
+
+export type AgentRunInput<
+  TModel extends LanguageModel = LanguageModel,
+  TContext = any
+> = RetryOptions &
   GenerateInputSource & {
     runId?: string;
     /** Required isolation boundary for shared durable stores and memory. */
     scope?: AgentStoreScope;
     idempotencyKey?: string;
+    /** Ephemeral application context. Callers must provide it again when resuming a run. */
+    context?: TContext;
     state?: AgentRunState;
     approvals?: AgentApprovalResponse[];
     handoff?: AgentHandoff;
@@ -1770,7 +2121,10 @@ export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryO
     tools?: ToolCollection;
     toolChoice?: ToolChoice;
     toolExecution?: ToolExecutionOptions;
-    toolApprovalPolicy?: ToolApprovalPolicy;
+    toolApprovalPolicy?: ToolApprovalPolicy<TContext>;
+    executionEnvironment?: AgentExecutionEnvironment<TContext>;
+    /** Pass false to disable the agent default for this invocation. */
+    compaction?: AgentCompactionOptions<TContext> | false;
     maxSteps?: number;
     temperature?: number;
     maxTokens?: number;
@@ -1780,9 +2134,10 @@ export type AgentRunInput<TModel extends LanguageModel = LanguageModel> = RetryO
     metadata?: Record<string, JsonValue>;
   };
 
-export interface AgentRunOutput {
+export interface AgentRunOutput<TOutput = unknown> {
   status: AgentStatus;
   outputText: string;
+  finalOutput?: TOutput;
   finishReason?: FinishReason;
   providerFinishReason?: string;
   usage?: TokenUsage;
@@ -1853,6 +2208,8 @@ export interface PrepareSubagentsForAgentOptions {
   onTelemetryEvent?: AgentTelemetryObserver;
   toolApprovalPolicy?: ToolApprovalPolicy;
   toolExecution?: ToolExecutionOptions;
+  executionEnvironment?: AgentExecutionEnvironment;
+  compaction?: AgentCompactionOptions;
   metadata?: Record<string, JsonValue>;
 }
 
@@ -1881,10 +2238,10 @@ export interface LiveAgentRunOutput {
   };
 }
 
-export interface AgentStreamResult {
+export interface AgentStreamResult<TOutput = unknown> {
   eventStream: AsyncIterable<AgentStreamEvent>;
   textStream: AsyncIterable<string>;
-  collect: () => Promise<AgentRunOutput>;
+  collect: () => Promise<AgentRunOutput<TOutput>>;
 }
 
 export type AgentLiveEvent = AgentStreamEvent | RealtimeEvent;
@@ -2338,12 +2695,40 @@ export interface UIMessageToolResultChunk {
   toolResult: ToolExecutionResult;
 }
 
+export interface UIMessageToolApprovalRequestChunk {
+  type: "tool-approval-request";
+  messageId: string;
+  role: "assistant";
+  approval: AgentApprovalRequest;
+}
+
 export interface UIMessageProviderDataChunk {
   type: "provider-data";
   messageId: string;
   role: "assistant";
   provider: string;
   data: JsonValue;
+}
+
+export interface UIMessageGeneratedMedia {
+  data?: string;
+  encoding?: "base64";
+  uri?: string;
+  mediaType: string;
+  text?: string;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export interface UIMessageImageGenerationChunk {
+  type: "image-generation";
+  messageId: string;
+  role: "assistant";
+  provider: string;
+  image: UIMessageGeneratedMedia;
+  partial: boolean;
+  id?: string;
+  index?: number;
+  providerMetadata?: Record<string, JsonValue>;
 }
 
 export interface UIMessageFinishChunk {
@@ -2388,17 +2773,30 @@ export interface UIAgentApprovalResolvedChunk {
   approval: AgentApprovalResponse;
 }
 
+export interface UIAgentCompactionChunk {
+  type: "agent-compaction";
+  compaction: AgentCompactionRecord;
+}
+
 export interface UIAgentRunFinishChunk {
   type: "agent-run-finish";
   status: AgentStatus;
   state: AgentRunState;
 }
 
+export interface UISessionFinishChunk {
+  type: "session-finish";
+  sessionId: string;
+  status: AgentStatus;
+}
+
 export type UIMessageChunk =
   | UIMessageTextChunk
   | UIMessageToolCallChunk
   | UIMessageToolResultChunk
+  | UIMessageToolApprovalRequestChunk
   | UIMessageProviderDataChunk
+  | UIMessageImageGenerationChunk
   | UIMessageFinishChunk
   | UIMessageErrorChunk
   | UIAgentRunStartChunk
@@ -2406,7 +2804,9 @@ export type UIMessageChunk =
   | UIAgentStepFinishChunk
   | UIAgentApprovalRequestChunk
   | UIAgentApprovalResolvedChunk
-  | UIAgentRunFinishChunk;
+  | UIAgentCompactionChunk
+  | UIAgentRunFinishChunk
+  | UISessionFinishChunk;
 
 export interface EmbedInput {
   values: EmbedValue[];

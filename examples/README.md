@@ -8,7 +8,7 @@ This folder contains runnable TypeScript examples for the main public surfaces o
 - `agents/`: agent-only facade examples for `@zhivex-ai/agents`
 - `providers/`: one quick-start per provider package
 - `gateway/`: routing and fallback examples
-- `next-runner/`: copy-paste Next.js App Router reference for server-side Runner usage
+- `next-runner/`: copy-paste Next.js App Router reference using `@zhivex-ai/react` with a server-side Runner
 - `_shared.ts`: tiny helpers used by the examples
 
 ## Run
@@ -52,9 +52,9 @@ The `examples/sdk/runner-session.ts` example is deterministic and does not requi
 
 `examples/sdk/full-agent.ts` is deterministic and does not require provider credentials. It is the fastest smoke for the stable `Agent` class, local tool loops, serializable run state, and streaming from the aggregator package.
 
-`examples/agents/full-agent.ts` and `examples/agents/approval-hitl.ts` are deterministic and do not require provider credentials. They show the smaller `@zhivex-ai/agents` facade, including a tool-using run and a human-in-the-loop approval/resume cycle.
+`examples/agents/full-agent.ts` and `examples/agents/approval-hitl.ts` are deterministic and do not require provider credentials. They show the smaller `@zhivex-ai/agents` facade, including a local-tool human-in-the-loop interrupt, approval queue, replay-bound resume, and approval history.
 
-`examples/next-runner` shows both JSON and streaming App Router handlers. The streaming route emits NDJSON text and finish events from `runner.stream()` so a React client can render incremental agent output while preserving the final session id.
+`examples/next-runner` shows a final JSON handler and a React/SSE App Router flow. The streaming route uses `toUIRunnerStreamResponse()` so the browser receives normalized text, tools, approvals, generated media, lifecycle events, and the persisted final session id.
 
 `examples/sdk/production-runner.ts` is a production template rather than a directly runnable script. It shows how to wire `Runner + createPostgresSessionService()` with an app-owned Postgres client without importing a database driver into the SDK.
 

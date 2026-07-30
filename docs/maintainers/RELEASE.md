@@ -25,6 +25,7 @@ Each consumer-facing package change should have the correct package names and bu
 Run the standard gates:
 
 ```bash
+bun run docs:check
 bun run typecheck
 bun run test
 bun run build
@@ -52,11 +53,13 @@ Repeat for any provider package included in the changesets.
 Use this flow only for stable releases. Apply versioning and commit the resulting package manifests and lockfile before publishing:
 
 ```bash
+bun run docs:check
 bun run typecheck
 bun run test
 bun run build
 bun run smoke:providers
 bun run version-packages
+bun run docs:check
 bun run typecheck
 bun run test
 bun run build
@@ -103,6 +106,7 @@ Use this flow for prerelease validation. Never use `bun run release` as the publ
 ```bash
 bunx changeset pre enter next
 bun run version-packages
+bun run docs:check
 bun run typecheck
 bun run test
 bun run build
@@ -116,12 +120,13 @@ When the prerelease cycle is done:
 ```bash
 bunx changeset pre exit
 bun run version-packages
+bun run docs:check
 bun run typecheck
 bun run test
 bun run build
 ```
 
-Review the final stable versions before publishing to `latest`.
+Review the final stable versions and generated package changelogs before publishing to `latest`.
 
 After publishing a prerelease, verify:
 

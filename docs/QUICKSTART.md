@@ -52,7 +52,7 @@ console.log(result.outputText);
 console.log(result.state);
 ```
 
-Use `agent.stream()` for lifecycle/text streaming and `agent.resume()` when a saved run state is waiting for approvals. The functional `createAgent()` / `runAgent()` API remains available for plain-object definitions and existing integrations.
+Use `agent.stream()` for lifecycle/text streaming and `agent.resume()` when a saved run state is waiting for provider or local-tool approvals. Local tools opt in with `requiresApproval: true` and `approvalMode: "interrupt"`; re-supply ephemeral typed `context` when resuming. The functional `createAgent()` / `runAgent()` API remains available for plain-object definitions and existing integrations.
 
 ## Create A Runner
 

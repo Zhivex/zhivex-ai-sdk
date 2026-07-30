@@ -5,7 +5,7 @@ DeepSeek V4 adapter for Zhivex AI SDK. It targets DeepSeek's OpenAI-compatible C
 ## Install
 
 ```bash
-bun add @zhivex-ai/deepseek
+bun add @zhivex-ai/core @zhivex-ai/deepseek
 ```
 
 ## Usage

@@ -68,9 +68,11 @@ import {
   toUIMessage,
   toUIMessageStream,
   toUIMessageStreamResponse,
+  toUIRunnerStreamResponse,
   wrapLanguageModel,
   recordToolTestFixture,
   renderProviderSupportMatrix,
+  resumeAgent,
   runAgent,
   runToolTestFixture,
   tool,
@@ -81,7 +83,7 @@ import {
   toToolSet,
   user
 } from "../src/index.js";
-import type { AgentRunState, EmbeddingModel, ImageGenerationModel, LanguageModel, MusicGenerationModel, PredictionModel, ProviderAdapter, StreamEvent, ToolSet, VideoGenerationModel } from "../src/index.js";
+import type { AgentRunState, EmbeddingModel, ImageGenerationModel, LanguageModel, MusicGenerationModel, PredictionModel, ProviderAdapter, RunnerStreamResult, StreamEvent, ToolSet, VideoGenerationModel } from "../src/index.js";
 import { ParseError, ProviderHTTPError, UnsupportedFeatureError, ValidationError } from "../src/index.js";
 
 const createLanguageModel = (overrides?: Partial<LanguageModel>): LanguageModel => ({
@@ -712,12 +714,30 @@ describe("core helpers", () => {
       createSafetyPolicy({ preset: "review-sensitive", redaction: false })
     );
 
-    const result = await runAgent(agent, { prompt: "deploy", maxSteps: 2 });
+    const waiting = await runAgent(agent, { prompt: "deploy", maxSteps: 2 });
 
+    expect(waiting.status).toBe("waiting_approval");
+    expect(waiting.toolResults).toHaveLength(0);
+    expect(waiting.state.pendingApprovals[0]).toMatchObject({
+      kind: "local-tool",
+      provider: "zhivex",
+      name: "deploy"
+    });
+
+    const result = await resumeAgent(agent, {
+      state: waiting.state,
+      approvals: waiting.state.pendingApprovals.map((approval) => ({
+        provider: approval.provider,
+        approvalRequestId: approval.id,
+        approve: true
+      }))
+    });
     expect(result.status).toBe("completed");
-    expect(result.toolResults).toHaveLength(1);
-    expect(result.toolResults[0]).toMatchObject({ isError: true, toolName: "deploy" });
-    expect(result.toolResults[0]?.error?.message).toContain("requires approval");
+    expect(result.toolResults[0]).toMatchObject({
+      isError: false,
+      toolName: "deploy",
+      output: { target: "prod", ok: true }
+    });
   });
 
   it("streams a failed agent finish event when a safety budget guard triggers", async () => {
@@ -1801,10 +1821,13 @@ describe("core helpers", () => {
         },
         async generate(input) {
           expect(input.structuredOutput).toBeUndefined();
-          expect(input.messages.at(-1)).toMatchObject({
-            role: "user",
-            parts: [{ type: "text", text: "Generate JSON\n\nReturn only valid JSON matching the requested schema." }]
-          });
+          const promptedText = input.messages
+            .flatMap((message) => message.parts)
+            .map((part) => part.type === "text" ? part.text : "")
+            .join("\n");
+          expect(promptedText).toContain("Generate JSON");
+          expect(promptedText).toContain("JSON Schema:");
+          expect(promptedText).toContain('"title"');
           return {
             messages: [createTextMessage("assistant", JSON.stringify({ title: "Soup" }))],
             text: JSON.stringify({ title: "Soup" })
@@ -1814,7 +1837,9 @@ describe("core helpers", () => {
       prompt: "Generate JSON",
       schema: z.object({
         title: z.string()
-      })
+      }),
+      schemaName: "recipe",
+      schemaDescription: "A generated recipe"
     });
 
     expect(result.objectMode).toBe("prompted");
@@ -1898,7 +1923,9 @@ describe("core helpers", () => {
 
     const final = await result.collect();
 
-    expect(firstMessageText).toBe("Generate recipe JSON\n\nReturn only valid JSON matching the requested schema.");
+    expect(firstMessageText).toContain("Generate recipe JSON");
+    expect(firstMessageText).toContain("JSON Schema:");
+    expect(firstMessageText).toContain('"title"');
     expect(final.objectMode).toBe("prompted");
     expect(final.object).toEqual({ title: "Soup" });
   });
@@ -2153,6 +2180,90 @@ describe("core helpers", () => {
 
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     expect(await response.text()).toContain("event: text-delta");
+  });
+
+  it("finalizes Runner persistence before emitting the session finish chunk", async () => {
+    let eventStreamFinished = false;
+    let collected = false;
+    const sensitiveState = {
+      secretContext: "must-not-cross-runner-sse"
+    } as unknown as AgentRunState;
+    const source = {
+      session: Promise.resolve({ sessionId: "session-1" } as never),
+      eventStream: (async function* () {
+        yield { type: "text-delta" as const, textDelta: "hello" };
+        yield {
+          type: "agent-run-finish" as const,
+          status: "completed" as const,
+          state: sensitiveState
+        };
+        eventStreamFinished = true;
+      })(),
+      textStream: (async function* () {
+        yield "hello";
+      })(),
+      async collect() {
+        expect(eventStreamFinished).toBe(true);
+        collected = true;
+        return {
+          session: { sessionId: "session-1" } as never,
+          output: { status: "completed" } as never
+        };
+      }
+    } satisfies RunnerStreamResult;
+
+    const response = toUIRunnerStreamResponse(source, { messageId: "assistant-1" });
+    const body = await response.text();
+
+    expect(collected).toBe(true);
+    expect(body).toContain("event: text-delta");
+    expect(body).toContain(
+      'event: session-finish\ndata: {"type":"session-finish","sessionId":"session-1","status":"completed"}'
+    );
+    expect(body.indexOf("event: text-delta")).toBeLessThan(body.indexOf("event: session-finish"));
+    expect(body).not.toContain("event: agent-run-finish");
+    expect(body).not.toContain("must-not-cross-runner-sse");
+
+    const legacyChunks = await Array.fromAsync(toUIMessageStream(
+      (async function* () {
+        yield {
+          type: "agent-run-finish" as const,
+          status: "completed" as const,
+          state: sensitiveState
+        };
+      })(),
+      "assistant-legacy"
+    ));
+    expect(legacyChunks).toEqual([
+      {
+        type: "agent-run-finish",
+        status: "completed",
+        state: sensitiveState
+      }
+    ]);
+  });
+
+  it("awaits Runner collection when the event stream fails", async () => {
+    let collected = false;
+    const source = {
+      session: Promise.resolve({ sessionId: "session-1" } as never),
+      eventStream: (async function* () {
+        yield { type: "text-delta" as const, textDelta: "partial" };
+        throw new Error("stream failed");
+      })(),
+      textStream: (async function* () {
+        yield "partial";
+      })(),
+      async collect() {
+        collected = true;
+        throw new Error("collection failed after persistence");
+      }
+    } satisfies RunnerStreamResult;
+
+    const response = toUIRunnerStreamResponse(source);
+
+    await expect(response.text()).rejects.toThrow("collection failed after persistence");
+    expect(collected).toBe(true);
   });
 
   it("streams tools across multiple steps", async () => {

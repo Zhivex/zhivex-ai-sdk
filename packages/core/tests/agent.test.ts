@@ -11,6 +11,9 @@ import {
   cancelAgentRun,
   cancelAgentRunTree,
   createAgent,
+  createAgentCapsule,
+  createAgentExecutionEnvironmentBinding,
+  createAgentHarnessBinding,
   createAgentHandoff,
   createAgentApprovalMessage,
   createAgentRunSnapshot,
@@ -40,8 +43,10 @@ import {
   toUIMessageStream,
   tool,
   ValidationError,
+  type AgentStreamEvent,
   type AgentRunState,
   type AgentRunStore,
+  type AgentExecutionEnvironment,
   type PostgresClientLike,
   type LanguageModel,
   type ModelMessage,
@@ -853,6 +858,976 @@ describe("agent runtime", () => {
     expect(resumed.usage).toEqual({ inputTokens: 7, outputTokens: 5, totalTokens: 12 });
   });
 
+  it("interrupts and resumes local tools without exposing approval records to the provider", async () => {
+    let modelCalls = 0;
+    let toolCalls = 0;
+    let resumedToolContext: string | undefined;
+    let sawLocalApprovalProviderData = false;
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({
+      id: "local-hitl",
+      store,
+      contextSchema: z
+        .object({ tenant: z.string() })
+        .transform(async ({ tenant }) => ({ tenant: tenant.toUpperCase() })),
+      model: createLanguageModel({
+        async generate(input) {
+          modelCalls += 1;
+          sawLocalApprovalProviderData ||= input.messages.some((message) =>
+            message.parts.some(
+              (part) =>
+                part.type === "provider-data" &&
+                part.provider === "zhivex"
+            )
+          );
+          if (modelCalls === 1) {
+            return {
+              messages: [{
+                role: "assistant",
+                parts: [{
+                  type: "tool-call",
+                  toolCall: {
+                    id: "local-call-1",
+                    name: "deploy",
+                    input: { target: "staging" }
+                  }
+                }]
+              }],
+              finishReason: "tool-calls"
+            };
+          }
+          return {
+            messages: [createTextMessage("assistant", "deployed")],
+            text: "deployed",
+            finishReason: "stop"
+          };
+        }
+      }),
+      tools: {
+        deploy: tool({
+          name: "deploy",
+          schema: z.object({ target: z.string() }),
+          requiresApproval: true,
+          approvalMode: "interrupt",
+          approvalVersion: "2026-07-29",
+          execute: ({ target }, context) => {
+            toolCalls += 1;
+            resumedToolContext = context?.context?.tenant;
+            return { target, deployed: true };
+          }
+        })
+      },
+      maxSteps: 3
+    });
+
+    const waiting = await runAgent(agent, {
+      prompt: "Deploy staging",
+      context: { tenant: "bank-a" }
+    });
+    expect(waiting.status).toBe("waiting_approval");
+    expect(toolCalls).toBe(0);
+    expect(waiting.state.pendingApprovals[0]).toMatchObject({
+      kind: "local-tool",
+      provider: "zhivex",
+      name: "deploy",
+      toolCallId: "local-call-1",
+      step: 1,
+      toolVersion: "2026-07-29"
+    });
+
+    const persisted = await store.load(waiting.state.runId);
+    const approval = waiting.state.pendingApprovals[0]!;
+    const resumed = await resumeAgent(agent, {
+      state: normalizeAgentRunState(persisted),
+      approvals: [{
+        provider: approval.provider,
+        approvalRequestId: approval.id,
+        approve: true
+      }],
+      context: { tenant: "bank-a" }
+    });
+
+    expect(resumed.status).toBe("completed");
+    expect(resumed.outputText).toBe("deployed");
+    expect(toolCalls).toBe(1);
+    expect(resumedToolContext).toBe("BANK-A");
+    expect(sawLocalApprovalProviderData).toBe(false);
+    expect(resumed.state.approvalHistory).toEqual([
+      expect.objectContaining({
+        requestId: approval.id,
+        kind: "local-tool",
+        approve: true,
+        inputDigest: approval.inputDigest
+      })
+    ]);
+  });
+
+  it("preflights an entire tool batch before executing any side effect", async () => {
+    const executions: string[] = [];
+    const agent = createAgent({
+      model: createLanguageModel({
+        async generate() {
+          return {
+            messages: [{
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-call",
+                  toolCall: { id: "safe-1", name: "safe", input: {} }
+                },
+                {
+                  type: "tool-call",
+                  toolCall: { id: "review-1", name: "review", input: {} }
+                }
+              ]
+            }],
+            finishReason: "tool-calls"
+          };
+        }
+      }),
+      tools: {
+        safe: tool({
+          name: "safe",
+          schema: z.object({}),
+          execute: () => {
+            executions.push("safe");
+            return { ok: true };
+          }
+        }),
+        review: tool({
+          name: "review",
+          schema: z.object({}),
+          requiresApproval: true,
+          approvalMode: "interrupt",
+          execute: () => {
+            executions.push("review");
+            return { ok: true };
+          }
+        })
+      },
+      toolExecution: { parallel: true },
+      maxSteps: 2
+    });
+
+    const waiting = await runAgent(agent, { prompt: "Run both" });
+    expect(waiting.status).toBe("waiting_approval");
+    expect(executions).toEqual([]);
+  });
+
+  it("rejects a tampered signed local approval before tool execution", async () => {
+    let toolCalls = 0;
+    let modelCalls = 0;
+    const signer = {
+      sign: (payload: string) => `signed:${payload}`
+    };
+    const agent = createAgent({
+      model: createLanguageModel({
+        async generate() {
+          modelCalls += 1;
+          if (modelCalls > 1) {
+            return {
+              messages: [createTextMessage("assistant", "written")],
+              text: "written",
+              finishReason: "stop"
+            };
+          }
+          return {
+            messages: [{
+              role: "assistant",
+              parts: [{
+                type: "tool-call",
+                toolCall: { id: "signed-call", name: "write", input: { value: 1 } }
+              }]
+            }],
+            finishReason: "tool-calls"
+          };
+        }
+      }),
+      toolApprovalSigner: signer,
+      tools: {
+        write: tool({
+          name: "write",
+          schema: z.object({ value: z.number() }),
+          requiresApproval: true,
+          approvalMode: "interrupt",
+          execute: () => {
+            toolCalls += 1;
+            return { ok: true };
+          }
+        })
+      },
+      maxSteps: 2
+    });
+
+    const waiting = await runAgent(agent, { prompt: "Write" });
+    const tampered = structuredClone(waiting.state);
+    tampered.pendingApprovals[0]!.signature = "tampered";
+    const approval = tampered.pendingApprovals[0]!;
+    await expect(
+      resumeAgent(agent, {
+        state: tampered,
+        approvals: [{
+          provider: approval.provider,
+          approvalRequestId: approval.id,
+          approve: true
+        }]
+      })
+    ).rejects.toThrow("invalid signature");
+    expect(toolCalls).toBe(0);
+
+    const originalApproval = waiting.state.pendingApprovals[0]!;
+    const resumed = await resumeAgent(agent, {
+      state: waiting.state,
+      approvals: [{
+        provider: originalApproval.provider,
+        approvalRequestId: originalApproval.id,
+        approve: true,
+        reason: "reviewed"
+      }]
+    });
+    expect(resumed.status).toBe("completed");
+    expect(toolCalls).toBe(1);
+    expect(resumed.state.approvalHistory?.[0]?.signature).toContain('"approve":true');
+  });
+
+  it("propagates typed context through tool policy and guardrails", async () => {
+    const seen: string[] = [];
+    let calls = 0;
+    const agent = new Agent<LanguageModel, { tenant: string }>({
+      contextSchema: z
+        .object({ tenant: z.string().min(1) })
+        .transform(async ({ tenant }) => ({ tenant: tenant.toUpperCase() })),
+      model: createLanguageModel({
+        async generate() {
+          calls += 1;
+          if (calls === 1) {
+            return {
+              messages: [{
+                role: "assistant",
+                parts: [{
+                  type: "tool-call",
+                  toolCall: { id: "context-call", name: "lookup", input: { id: "42" } }
+                }]
+              }],
+              finishReason: "tool-calls"
+            };
+          }
+          return {
+            messages: [createTextMessage("assistant", "done")],
+            text: "done",
+            finishReason: "stop"
+          };
+        }
+      }),
+      toolApprovalPolicy(request) {
+        seen.push(`policy:${request.executionContext?.context?.tenant}`);
+        return true;
+      },
+      tools: {
+        lookup: tool({
+          name: "lookup",
+          schema: z.object({ id: z.string() }),
+          inputGuardrails: [
+            ({ context }) => {
+              seen.push(`input:${context.context?.tenant}`);
+            }
+          ],
+          outputGuardrails: [
+            ({ context }) => {
+              seen.push(`output:${context.context?.tenant}`);
+            }
+          ],
+          execute: (_input, context) => {
+            seen.push(`execute:${context?.context?.tenant}`);
+            return { ok: true };
+          }
+        })
+      },
+      maxSteps: 2
+    });
+
+    const result = await agent.run({
+      prompt: "Lookup",
+      context: { tenant: "bank-a" }
+    });
+    expect(result.status).toBe("completed");
+    expect(seen).toEqual([
+      "input:BANK-A",
+      "policy:BANK-A",
+      "execute:BANK-A",
+      "output:BANK-A"
+    ]);
+    await expect(
+      agent.run({ prompt: "Invalid", context: { tenant: "" } })
+    ).rejects.toThrow("Invalid agent context");
+  });
+
+  it("validates and returns typed agent final output", async () => {
+    const outputSchema = z.object({
+      answer: z.number(),
+      source: z.string()
+    });
+    const agent = new Agent({
+      model: createLanguageModel({
+        async generate(input) {
+          expect(input.structuredOutput).toMatchObject({
+            mode: "native",
+            name: "answer"
+          });
+          return {
+            messages: [createTextMessage("assistant", "{\"answer\":42,\"source\":\"tool\"}")],
+            text: "{\"answer\":42,\"source\":\"tool\"}",
+            finishReason: "stop"
+          };
+        }
+      }),
+      outputSchema,
+      outputName: "answer"
+    });
+
+    const result = await agent.run({ prompt: "Answer" });
+    expect(result.finalOutput).toEqual({
+      answer: 42,
+      source: "tool"
+    });
+    expect(result.state.finalOutput).toEqual(result.finalOutput);
+    expect(result.state.outputMode).toBe("native");
+  });
+
+  it("includes the output JSON Schema when an agent falls back to prompted mode", async () => {
+    let promptedInstruction = "";
+    const agent = new Agent({
+      model: createLanguageModel({
+        capabilities: {
+          ...createLanguageModel().capabilities,
+          structuredOutput: false
+        },
+        async generate(input) {
+          expect(input.structuredOutput).toBeUndefined();
+          promptedInstruction = input.messages
+            .filter((message) => message.role === "system")
+            .flatMap((message) => message.parts)
+            .map((part) => part.type === "text" ? part.text : "")
+            .join("\n");
+          return {
+            messages: [createTextMessage("assistant", "{\"answer\":42,\"source\":\"tool\"}")],
+            text: "{\"answer\":42,\"source\":\"tool\"}",
+            finishReason: "stop"
+          };
+        }
+      }),
+      outputSchema: z.object({
+        answer: z.number(),
+        source: z.string()
+      }),
+      outputName: "answer",
+      outputDescription: "A grounded answer",
+      outputMode: "auto"
+    });
+
+    const result = await agent.run({ prompt: "Answer" });
+
+    expect(promptedInstruction).toContain("JSON Schema:");
+    expect(promptedInstruction).toContain('"answer"');
+    expect(promptedInstruction).toContain('"source"');
+    expect(promptedInstruction).toContain("Output name: answer");
+    expect(promptedInstruction).toContain("Output description: A grounded answer");
+    expect(result.finalOutput).toEqual({ answer: 42, source: "tool" });
+    expect(result.state.outputMode).toBe("prompted");
+  });
+
+  it("streams and validates prompted agent output against the same schema", async () => {
+    let promptedInstruction = "";
+    const agent = createAgent({
+      model: createLanguageModel({
+        capabilities: {
+          ...createLanguageModel().capabilities,
+          structuredOutput: false
+        },
+        async stream(input) {
+          expect(input.structuredOutput).toBeUndefined();
+          promptedInstruction = input.messages
+            .filter((message) => message.role === "system")
+            .flatMap((message) => message.parts)
+            .map((part) => part.type === "text" ? part.text : "")
+            .join("\n");
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "{\"answer\":" };
+            yield { type: "text-delta", textDelta: "42}" };
+            yield { type: "finish", finishReason: "stop" };
+          })();
+        }
+      }),
+      outputSchema: z.object({
+        answer: z.number()
+      }),
+      outputMode: "prompted"
+    });
+
+    const stream = streamAgent(agent, { prompt: "Answer" });
+    const result = await stream.collect();
+
+    expect(promptedInstruction).toContain("JSON Schema:");
+    expect(promptedInstruction).toContain('"answer"');
+    expect(result.finalOutput).toEqual({ answer: 42 });
+    expect(result.state.outputMode).toBe("prompted");
+  });
+
+  it("binds durable runs to the capsule fingerprint and rejects drift before execution", async () => {
+    let modelCalls = 0;
+    const definition = createAgent({
+      id: "fingerprinted-agent",
+      model: createLanguageModel({
+        async generate() {
+          modelCalls += 1;
+          return {
+            messages: [createTextMessage("assistant", "done")],
+            text: "done",
+            finishReason: "stop"
+          };
+        }
+      }),
+      tools: {
+        audit: tool({
+          name: "audit",
+          schema: z.object({}),
+          approvalVersion: "1",
+          execute: () => ({ ok: true })
+        })
+      }
+    });
+    const capsule = createAgentCapsule({
+      id: "fingerprinted-agent",
+      version: "1.2.3",
+      agent: definition,
+      skills: [{ id: "risk" }, { id: "audit" }]
+    });
+    const reordered = createAgentCapsule({
+      id: "fingerprinted-agent",
+      version: "1.2.3",
+      agent: definition,
+      skills: [{ id: "audit" }, { id: "risk" }]
+    });
+
+    expect(capsule.manifest.fingerprint).toBe(reordered.manifest.fingerprint);
+    expect(capsule.agent.harness?.fingerprint).toBe(capsule.manifest.fingerprint);
+    const changedToolContract = createAgentCapsule({
+      id: "fingerprinted-agent",
+      version: "1.2.3",
+      agent: {
+        ...definition,
+        tools: {
+          audit: tool({
+            name: "audit",
+            schema: z.object({}),
+            approvalVersion: "2",
+            execute: () => ({ ok: true })
+          })
+        }
+      },
+      skills: [{ id: "risk" }, { id: "audit" }]
+    });
+    expect(changedToolContract.manifest.fingerprint).not.toBe(capsule.manifest.fingerprint);
+
+    const completed = await runAgent(capsule.agent, { prompt: "Run" });
+    expect(completed.state.harness).toEqual(capsule.agent.harness);
+
+    await expect(
+      runAgent(
+        {
+          ...capsule.agent,
+          harness: {
+            ...capsule.agent.harness!,
+            fingerprint: `sha256:${"f".repeat(64)}`
+          }
+        },
+        { state: completed.state }
+      )
+    ).rejects.toThrow("different harness fingerprint");
+    expect(modelCalls).toBe(1);
+
+    const legacy = structuredClone(completed.state);
+    delete legacy.harness;
+    await expect(
+      runAgent(capsule.agent, { state: legacy })
+    ).rejects.toThrow("predates harness binding");
+    const migrated = await runAgent(capsule.agent, {
+      state: legacy,
+      policy: { allowLegacyHarnessResume: true }
+    });
+    expect(migrated.state.harness).toEqual(capsule.agent.harness);
+
+    expect(() => createAgentHarnessBinding({
+      id: "",
+      version: "1",
+      manifest: {}
+    })).toThrow("non-empty");
+    expect(() => createAgentHarnessBinding({
+      id: "agent",
+      version: "1",
+      manifest: { invalid: Number.NaN }
+    })).toThrow("finite JSON");
+  });
+
+  it("enforces and audits a first-class execution environment", async () => {
+    const phases: string[] = [];
+    const releases: string[] = [];
+    let toolExecutions = 0;
+    let modelCalls = 0;
+    const manifest = {
+      schemaVersion: 1,
+      id: "sandbox-a",
+      version: "1",
+      backend: "container",
+      assurance: "enforced",
+      isolation: "per-run",
+      workspace: {
+        id: "workspace-a",
+        root: "/workspace",
+        access: "read-write"
+      }
+    } as const;
+    const binding = createAgentExecutionEnvironmentBinding(manifest);
+    expect(() => createAgentExecutionEnvironmentBinding({
+      ...manifest,
+      workspace: {
+        ...manifest.workspace,
+        root: ""
+      }
+    })).toThrow("workspace root");
+    const environment: AgentExecutionEnvironment = {
+      manifest,
+      async acquire() {
+        return {
+          manifest,
+          binding,
+          async authorize({ phase }) {
+            phases.push(phase);
+            return { decision: "allow" };
+          },
+          async execute(_request, operation) {
+            toolExecutions += 1;
+            return operation();
+          },
+          async release({ status }) {
+            releases.push(status);
+          }
+        };
+      }
+    };
+    const agent = createAgent({
+      executionEnvironment: environment,
+      model: createLanguageModel({
+        async generate() {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              messages: [{
+                role: "assistant",
+                parts: [{
+                  type: "tool-call",
+                  toolCall: { id: "env-call", name: "write_file", input: { path: "a.txt" } }
+                }]
+              }],
+              finishReason: "tool-calls"
+            };
+          }
+          return {
+            messages: [createTextMessage("assistant", "done")],
+            text: "done",
+            finishReason: "stop"
+          };
+        }
+      }),
+      tools: {
+        write_file: tool({
+          name: "write_file",
+          schema: z.object({ path: z.string() }),
+          execute: (_input, context) => ({
+            environmentId: context?.executionEnvironment?.binding.environmentId
+          })
+        })
+      },
+      maxSteps: 2
+    });
+
+    const result = await runAgent(agent, { prompt: "Write" });
+
+    expect(result.status).toBe("completed");
+    expect(result.state.executionEnvironment).toEqual(binding);
+    expect(phases).toEqual(["preflight", "execute"]);
+    expect(toolExecutions).toBe(1);
+    expect(result.toolResults[0]?.output).toEqual({ environmentId: "sandbox-a" });
+    expect(releases).toEqual(["completed"]);
+
+    await expect(
+      runAgent(
+        {
+          ...agent,
+          executionEnvironment: {
+            ...environment,
+            manifest: {
+              ...manifest,
+              version: "2"
+            }
+          }
+        },
+        { state: result.state }
+      )
+    ).rejects.toThrow("different execution environment");
+    expect(modelCalls).toBe(2);
+  });
+
+  it("denies an execution-environment batch atomically during preflight", async () => {
+    const authorized: string[] = [];
+    let environmentExecutions = 0;
+    let toolExecutions = 0;
+    const manifest = {
+      schemaVersion: 1,
+      id: "policy-boundary",
+      backend: "custom",
+      assurance: "enforced",
+      isolation: "per-run"
+    } as const;
+    const environment: AgentExecutionEnvironment = {
+      manifest,
+      acquire: () => ({
+        manifest,
+        binding: createAgentExecutionEnvironmentBinding(manifest),
+        authorize({ phase, tool }) {
+          authorized.push(`${phase}:${tool.name}`);
+          return tool.name === "blocked"
+            ? { decision: "deny", reason: "blocked by environment policy" }
+            : { decision: "allow" };
+        },
+        execute(_request, operation) {
+          environmentExecutions += 1;
+          return operation();
+        }
+      })
+    };
+    const agent = createAgent({
+      executionEnvironment: environment,
+      model: createLanguageModel({
+        async generate() {
+          return {
+            messages: [{
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-call",
+                  toolCall: { id: "allowed-call", name: "allowed", input: {} }
+                },
+                {
+                  type: "tool-call",
+                  toolCall: { id: "blocked-call", name: "blocked", input: {} }
+                }
+              ]
+            }],
+            finishReason: "tool-calls"
+          };
+        }
+      }),
+      tools: {
+        allowed: tool({
+          name: "allowed",
+          schema: z.object({}),
+          execute: () => {
+            toolExecutions += 1;
+            return { ok: true };
+          }
+        }),
+        blocked: tool({
+          name: "blocked",
+          schema: z.object({}),
+          execute: () => {
+            toolExecutions += 1;
+            return { ok: true };
+          }
+        })
+      }
+    });
+
+    await expect(runAgent(agent, { prompt: "Run both" })).rejects.toThrow(
+      "blocked by environment policy"
+    );
+    expect(authorized).toEqual([
+      "preflight:allowed",
+      "preflight:blocked"
+    ]);
+    expect(environmentExecutions).toBe(0);
+    expect(toolExecutions).toBe(0);
+  });
+
+  it("compacts active context durably before the next model step", async () => {
+    const store = createInMemoryAgentRunStore();
+    let calls = 0;
+    let compactedWasDurable = false;
+    const agent = createAgent({
+      id: "compacting-agent",
+      store,
+      model: createLanguageModel({
+        async generate(input) {
+          calls += 1;
+          if (calls < 3) {
+            return {
+              messages: [{
+                role: "assistant",
+                parts: [{
+                  type: "tool-call",
+                  toolCall: {
+                    id: `compact-call-${calls}`,
+                    name: "lookup",
+                    input: { id: String(calls) }
+                  }
+                }]
+              }],
+              finishReason: "tool-calls"
+            };
+          }
+          const persisted = await store.load("compaction-run");
+          compactedWasDurable =
+            persisted?.compactions?.length === 1 &&
+            JSON.stringify(persisted.messages) === JSON.stringify(input.messages);
+          expect(input.messages[0]).toMatchObject({
+            role: "assistant",
+            parts: [{
+              type: "text",
+              text: expect.stringContaining("[Compacted prior conversation]")
+            }]
+          });
+          return {
+            messages: [createTextMessage("assistant", "compacted answer")],
+            text: "compacted answer",
+            finishReason: "stop"
+          };
+        }
+      }),
+      tools: {
+        lookup: tool({
+          name: "lookup",
+          schema: z.object({ id: z.string() }),
+          execute: ({ id }) => ({ id })
+        })
+      },
+      compaction: {
+        maxMessages: 4,
+        keepRecentMessages: 2,
+        async compactor({ messages, retainedMessages }) {
+          expect(messages).toHaveLength(3);
+          expect(retainedMessages).toHaveLength(2);
+          return { summary: "Earlier lookup completed." };
+        }
+      },
+      maxSteps: 3
+    });
+
+    const result = await runAgent(agent, {
+      runId: "compaction-run",
+      prompt: "Run two lookups"
+    });
+
+    expect(result.status).toBe("completed");
+    expect(compactedWasDurable).toBe(true);
+    expect(result.state.compactions).toHaveLength(1);
+    expect(result.state.compactions?.[0]).toMatchObject({
+      beforeStep: 3,
+      messageCountBefore: 5,
+      messageCountAfter: 3
+    });
+    expect(result.steps[2]?.request.messageOffset).toBe(0);
+    expect(replayAgentRun(result.state).timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "compaction" })
+      ])
+    );
+  });
+
+  it("emits compaction events while streaming", async () => {
+    let modelMessageCount = 0;
+    const agent = createAgent({
+      model: createLanguageModel({
+        async stream(input) {
+          modelMessageCount = input.messages.length;
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "done" };
+            yield { type: "finish", finishReason: "stop" };
+          })();
+        }
+      }),
+      compaction: {
+        maxMessages: 3,
+        keepRecentMessages: 1,
+        compactor: () => ({ summary: "Prior conversation summary." })
+      }
+    });
+    const stream = streamAgent(agent, {
+      messages: [
+        createTextMessage("user", "one"),
+        createTextMessage("assistant", "two"),
+        createTextMessage("user", "three"),
+        createTextMessage("assistant", "four"),
+        createTextMessage("user", "five")
+      ]
+    });
+    const eventPromise = Array.fromAsync(stream.eventStream);
+    const result = await stream.collect();
+    const events = await eventPromise;
+
+    expect(result.status).toBe("completed");
+    expect(modelMessageCount).toBe(2);
+    expect(events.filter((event) => event.type === "agent-compaction")).toHaveLength(1);
+  });
+
+  it("promotes child approvals and resumes the same subagent run", async () => {
+    let childModelCalls = 0;
+    let childSideEffects = 0;
+    let parentPreparations = 0;
+    const child = createAgent({
+      id: "approval-child",
+      model: createLanguageModel({
+        async generate() {
+          childModelCalls += 1;
+          if (childModelCalls === 1) {
+            return {
+              messages: [{
+                role: "assistant",
+                parts: [{
+                  type: "tool-call",
+                  toolCall: {
+                    id: "child-publish-call",
+                    name: "publish",
+                    input: { channel: "ops" }
+                  }
+                }]
+              }],
+              finishReason: "tool-calls"
+            };
+          }
+          return {
+            messages: [createTextMessage("assistant", "child complete")],
+            text: "child complete",
+            finishReason: "stop"
+          };
+        }
+      }),
+      tools: {
+        publish: tool({
+          name: "publish",
+          schema: z.object({ channel: z.string() }),
+          requiresApproval: true,
+          approvalMode: "interrupt",
+          execute: () => {
+            childSideEffects += 1;
+            return { published: true };
+          }
+        })
+      },
+      maxSteps: 3
+    });
+    let parentModelCalls = 0;
+    let parentSawProviderApproval = false;
+    const parent = createAgent({
+      id: "approval-parent",
+      model: createLanguageModel({
+        async generate(input) {
+          parentModelCalls += 1;
+          parentSawProviderApproval ||= input.messages.some((message) =>
+            message.parts.some((part) => part.type === "provider-data")
+          );
+          if (parentModelCalls === 1) {
+            return {
+              messages: [{
+                role: "assistant",
+                parts: [
+                  {
+                    type: "tool-call",
+                    toolCall: {
+                      id: "parent-prepare-call",
+                      name: "prepare",
+                      input: {}
+                    }
+                  },
+                  {
+                    type: "tool-call",
+                    toolCall: {
+                      id: "parent-subagent-call",
+                      name: "delegate",
+                      input: { prompt: "Publish the update" }
+                    }
+                  }
+                ]
+              }],
+              finishReason: "tool-calls"
+            };
+          }
+          return {
+            messages: [createTextMessage("assistant", "parent complete")],
+            text: "parent complete",
+            finishReason: "stop"
+          };
+        }
+      }),
+      tools: {
+        prepare: tool({
+          name: "prepare",
+          schema: z.object({}),
+          execute: () => {
+            parentPreparations += 1;
+            return { prepared: true };
+          }
+        })
+      },
+      subagents: [{ name: "delegate", agent: child }],
+      maxSteps: 3
+    });
+
+    const waiting = await runAgent(parent, { prompt: "Delegate" });
+
+    expect(waiting.status).toBe("waiting_approval");
+    expect(childSideEffects).toBe(0);
+    expect(parentPreparations).toBe(1);
+    expect(waiting.state.toolResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolCallId: "parent-prepare-call",
+          isError: false
+        })
+      ])
+    );
+    expect(waiting.state.pendingApprovals[0]).toMatchObject({
+      kind: "subagent",
+      toolCallId: "parent-subagent-call",
+      childAgentId: "approval-child"
+    });
+    expect(waiting.state.childRuns?.[0]?.resumeState?.status).toBe("waiting_approval");
+
+    const promoted = waiting.state.pendingApprovals[0]!;
+    const resumed = await resumeAgent(parent, {
+      state: waiting.state,
+      approvals: [{
+        provider: promoted.provider,
+        approvalRequestId: promoted.id,
+        approve: true
+      }]
+    });
+
+    expect(resumed.status).toBe("completed");
+    expect(resumed.outputText).toBe("parent complete");
+    expect(childSideEffects).toBe(1);
+    expect(parentPreparations).toBe(1);
+    expect(childModelCalls).toBe(2);
+    expect(parentModelCalls).toBe(2);
+    expect(parentSawProviderApproval).toBe(false);
+    expect(resumed.state.childRuns).toHaveLength(1);
+    expect(resumed.state.childRuns?.[0]).toMatchObject({
+      runId: waiting.state.childRuns?.[0]?.runId,
+      status: "completed",
+      toolCallId: "parent-subagent-call"
+    });
+    expect(resumed.state.childRuns?.[0]?.resumeState).toBeUndefined();
+  });
+
   it("accepts legacy suspended states while resuming approvals", async () => {
     let sawApproval = false;
     const agent = createAgent({
@@ -1012,6 +1987,59 @@ describe("agent runtime", () => {
     });
   });
 
+  it("streams resumable local tool approval events before execution", async () => {
+    let executions = 0;
+    const agent = createAgent({
+      model: createLanguageModel({
+        async generate() {
+          throw new Error("unused");
+        },
+        async stream() {
+          return (async function* (): AsyncGenerator<StreamEvent> {
+            yield {
+              type: "tool-call",
+              toolCall: {
+                id: "stream-local-call",
+                name: "publish",
+                input: { channel: "next" }
+              }
+            };
+            yield { type: "finish", finishReason: "tool-calls" };
+          })();
+        }
+      }),
+      tools: {
+        publish: tool({
+          name: "publish",
+          schema: z.object({ channel: z.string() }),
+          requiresApproval: true,
+          approvalMode: "interrupt",
+          execute: () => {
+            executions += 1;
+            return { ok: true };
+          }
+        })
+      },
+      maxSteps: 2
+    });
+
+    const stream = streamAgent(agent, { prompt: "Publish" });
+    const events = [];
+    for await (const event of stream.eventStream) {
+      events.push(event);
+    }
+    const output = await stream.collect();
+
+    expect(executions).toBe(0);
+    expect(events.some((event) => event.type === "tool-approval-request")).toBe(true);
+    expect(events.some((event) => event.type === "agent-approval-request")).toBe(true);
+    expect(output.status).toBe("waiting_approval");
+    expect(output.state.pendingApprovals[0]).toMatchObject({
+      kind: "local-tool",
+      name: "publish"
+    });
+  });
+
   it("maps agent stream events into UI chunks and SSE", async () => {
     const agent = createAgent({
       model: createLanguageModel({
@@ -1064,6 +2092,93 @@ describe("agent runtime", () => {
 
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     expect(await response.text()).toContain("event: agent-run-start");
+  });
+
+  it("maps approval, generated image, and compaction events into UI chunks", async () => {
+    const approval = {
+      provider: "test",
+      id: "approval-1",
+      name: "delete_file",
+      arguments: "{\"path\":\"draft.txt\"}",
+      rawData: { reason: "destructive" }
+    };
+    const image = {
+      data: new Uint8Array([1, 2, 3]),
+      uri: "https://cdn.example/image.png",
+      mediaType: "image/png",
+      text: "preview",
+      providerMetadata: {
+        seed: 42,
+        omitted: undefined
+      }
+    };
+    const compaction = {
+      id: "compact-1",
+      beforeStep: 2,
+      createdAt: 1_700_000_000_000,
+      reasons: ["message-count" as const],
+      sourceDigest: "source",
+      resultDigest: "result",
+      summaryDigest: "summary",
+      summary: "Earlier conversation summary.",
+      messageCountBefore: 8,
+      messageCountAfter: 3,
+      compactedMessageCount: 6,
+      retainedMessageCount: 2,
+      estimatedTokensBefore: 120,
+      estimatedTokensAfter: 40
+    };
+    const source = (async function* (): AsyncGenerator<AgentStreamEvent> {
+      yield { type: "tool-approval-request", approval };
+      yield {
+        type: "image-generation",
+        provider: "test",
+        image,
+        partial: true,
+        id: "image-1",
+        index: 0,
+        providerMetadata: { quality: "preview" }
+      };
+      yield { type: "agent-compaction", compaction };
+    })();
+
+    const chunks = [];
+    for await (const chunk of toUIMessageStream(source, "assistant-1")) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([
+      {
+        type: "tool-approval-request",
+        messageId: "assistant-1",
+        role: "assistant",
+        approval
+      },
+      {
+        type: "image-generation",
+        messageId: "assistant-1",
+        role: "assistant",
+        provider: "test",
+        image: {
+          data: "AQID",
+          encoding: "base64",
+          uri: "https://cdn.example/image.png",
+          mediaType: "image/png",
+          text: "preview",
+          providerMetadata: {
+            seed: 42
+          }
+        },
+        partial: true,
+        id: "image-1",
+        index: 0,
+        providerMetadata: { quality: "preview" }
+      },
+      {
+        type: "agent-compaction",
+        compaction
+      }
+    ]);
   });
 
   it("persists and reloads agent state through the run store", async () => {

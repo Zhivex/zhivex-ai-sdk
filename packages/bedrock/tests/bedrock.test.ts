@@ -993,10 +993,17 @@ describe("bedrock adapter", () => {
       fetch: fetchMock as typeof fetch
     });
 
-    const listed = await client.listTools();
+    const controller = new AbortController();
+    const listed = await client.listTools(
+      { cursor: "next-page" },
+      { abortSignal: controller.signal }
+    );
     const result = await client.callTool({
       name: "fetch_docs",
       arguments: { path: "README.md" }
+    }, {
+      abortSignal: controller.signal,
+      idempotencyKey: "local-only"
     });
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
@@ -1010,8 +1017,12 @@ describe("bedrock adapter", () => {
     });
     expect(JSON.parse(String(firstRequest.body))).toMatchObject({
       jsonrpc: "2.0",
-      method: "tools/list"
+      method: "tools/list",
+      params: {
+        cursor: "next-page"
+      }
     });
+    expect(firstRequest.signal).toBe(controller.signal);
 
     const secondRequest = fetchMock.mock.calls[1]?.[1] as RequestInit;
     expect(secondRequest.headers).toMatchObject({
@@ -1024,6 +1035,7 @@ describe("bedrock adapter", () => {
         arguments: { path: "README.md" }
       }
     });
+    expect(secondRequest.signal).toBe(controller.signal);
     expect(listed).toEqual({
       tools: [
         expect.objectContaining({
@@ -1068,7 +1080,8 @@ describe("bedrock adapter", () => {
         fetch: fetchMock as typeof fetch
       },
       {
-        toolNamePrefix: "agentcore_"
+        toolNamePrefix: "agentcore_",
+        trustServerToolAnnotations: true
       }
     );
 
@@ -1192,7 +1205,8 @@ describe("bedrock adapter", () => {
         fetch: fetchMock as typeof fetch
       },
       {
-        toolNamePrefix: "agentcore_"
+        toolNamePrefix: "agentcore_",
+        trustServerToolAnnotations: true
       }
     );
     const result = await runAgent(

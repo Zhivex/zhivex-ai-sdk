@@ -1,14 +1,62 @@
 import type {
   AgentStreamEvent,
+  GeneratedMedia,
   GenerateTextOutput,
+  JsonValue,
   ModelMessage,
   StreamTextResult,
   UIMessage,
-  UIMessageChunk
+  UIMessageChunk,
+  UIMessageGeneratedMedia
 } from "./types.js";
+import { serializeJsonValue } from "./messages.js";
 import { createSecureId } from "./secure-id.js";
 
 const randomId = () => createSecureId("msg");
+
+export interface UIMessageStreamOptions {
+  messageId?: string;
+  includeAgentRunFinish?: boolean;
+}
+
+const toJsonSafeMetadata = (
+  metadata: Record<string, unknown> | undefined
+): Record<string, JsonValue> | undefined => {
+  if (!metadata) {
+    return undefined;
+  }
+
+  try {
+    const serialized = serializeJsonValue(metadata);
+    return typeof serialized === "object" && serialized !== null && !Array.isArray(serialized)
+      ? serialized
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const toBase64 = (data: Uint8Array): string => {
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(data).toString("base64");
+  }
+
+  let binary = "";
+  const chunkSize = 32_768;
+  for (let offset = 0; offset < data.length; offset += chunkSize) {
+    binary += String.fromCharCode(...data.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+};
+
+const toUIMessageGeneratedMedia = (media: GeneratedMedia): UIMessageGeneratedMedia => ({
+  data: media.data ? toBase64(media.data) : undefined,
+  encoding: media.data ? "base64" : undefined,
+  uri: media.uri,
+  mediaType: media.mediaType,
+  text: media.text,
+  providerMetadata: toJsonSafeMetadata(media.providerMetadata)
+});
 
 export const toUIMessage = (message: ModelMessage, id: string = randomId()): UIMessage => ({
   id,
@@ -30,8 +78,13 @@ export const deserializeUIMessage = (value: string): UIMessage => JSON.parse(val
 
 export const toUIMessageStream = (
   source: StreamTextResult | { eventStream: AsyncIterable<AgentStreamEvent> } | AsyncIterable<AgentStreamEvent>,
-  messageId: string = randomId()
+  messageIdOrOptions: string | UIMessageStreamOptions = {}
 ): AsyncIterable<UIMessageChunk> => {
+  const options = typeof messageIdOrOptions === "string"
+    ? { messageId: messageIdOrOptions }
+    : messageIdOrOptions;
+  const messageId = options.messageId ?? randomId();
+  const includeAgentRunFinish = options.includeAgentRunFinish ?? true;
   const eventStream = "eventStream" in source ? source.eventStream : source;
 
   return (async function* () {
@@ -63,6 +116,15 @@ export const toUIMessageStream = (
         } satisfies UIMessageChunk;
       }
 
+      if (event.type === "tool-approval-request") {
+        yield {
+          type: "tool-approval-request",
+          messageId,
+          role: "assistant",
+          approval: event.approval
+        } satisfies UIMessageChunk;
+      }
+
       if (event.type === "provider-data") {
         yield {
           type: "provider-data",
@@ -70,6 +132,20 @@ export const toUIMessageStream = (
           role: "assistant",
           provider: event.provider,
           data: event.data
+        } satisfies UIMessageChunk;
+      }
+
+      if (event.type === "image-generation") {
+        yield {
+          type: "image-generation",
+          messageId,
+          role: "assistant",
+          provider: event.provider,
+          image: toUIMessageGeneratedMedia(event.image),
+          partial: event.partial,
+          id: event.id,
+          index: event.index,
+          providerMetadata: event.providerMetadata
         } satisfies UIMessageChunk;
       }
 
@@ -129,7 +205,14 @@ export const toUIMessageStream = (
         } satisfies UIMessageChunk;
       }
 
-      if (event.type === "agent-run-finish") {
+      if (event.type === "agent-compaction") {
+        yield {
+          type: "agent-compaction",
+          compaction: event.compaction
+        } satisfies UIMessageChunk;
+      }
+
+      if (event.type === "agent-run-finish" && includeAgentRunFinish) {
         yield {
           type: "agent-run-finish",
           status: event.status,

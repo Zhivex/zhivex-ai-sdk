@@ -30,7 +30,8 @@ export interface AgentRunSnapshot {
   modelId: string;
   steps: number;
   toolCalls: ToolCall[];
-  childRuns: AgentRunState["childRuns"];
+  childRuns: NonNullable<AgentRunState["childRuns"]>;
+  compactions: NonNullable<AgentRunState["compactions"]>;
   usage?: AgentRunState["usage"];
   outputText: string;
   error?: AgentRunState["error"];
@@ -69,6 +70,10 @@ export type AgentReplayTimelineEvent =
   | {
       type: "subagent-run";
       childRun: NonNullable<AgentRunState["childRuns"]>[number];
+    }
+  | {
+      type: "compaction";
+      compaction: NonNullable<AgentRunState["compactions"]>[number];
     }
   | {
       type: "step-finish";
@@ -228,6 +233,7 @@ export const createAgentRunSnapshot = (state: AgentRunState): AgentRunSnapshot =
   steps: state.steps.length,
   toolCalls: state.steps.flatMap(stepToolCalls),
   childRuns: state.childRuns ?? [],
+  compactions: state.compactions ?? [],
   usage: state.usage,
   outputText: state.outputText,
   error: state.error,
@@ -246,7 +252,17 @@ export const replayAgentRun = (state: AgentRunState): AgentReplayResult => {
     }
   ];
 
+  const replayedCompactions = new Set<string>();
   for (const step of state.steps) {
+    for (const compaction of (state.compactions ?? []).filter(
+      (entry) => entry.beforeStep === step.index
+    )) {
+      replayedCompactions.add(compaction.id);
+      timeline.push({
+        type: "compaction",
+        compaction
+      });
+    }
     timeline.push({
       type: "step-start",
       step: step.index,
@@ -277,6 +293,15 @@ export const replayAgentRun = (state: AgentRunState): AgentReplayResult => {
       finishedAt: step.finishedAt,
       error: step.error
     });
+  }
+
+  for (const compaction of state.compactions ?? []) {
+    if (!replayedCompactions.has(compaction.id)) {
+      timeline.push({
+        type: "compaction",
+        compaction
+      });
+    }
   }
 
   for (const approval of state.pendingApprovals) {

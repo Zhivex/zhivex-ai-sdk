@@ -5,7 +5,7 @@ xAI Grok adapter for Zhivex AI SDK. It uses the xAI Responses API by default and
 ## Install
 
 ```bash
-bun add @zhivex-ai/xai
+bun add @zhivex-ai/core @zhivex-ai/xai
 ```
 
 ## Usage

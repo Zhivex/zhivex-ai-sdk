@@ -5,7 +5,7 @@ Meta Model API adapter for Zhivex AI SDK.
 ## Install
 
 ```bash
-bun add @zhivex-ai/meta
+bun add @zhivex-ai/core @zhivex-ai/meta
 ```
 
 ## Usage

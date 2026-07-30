@@ -12,6 +12,8 @@ const readPackage = async (packageName: string) =>
     bin?: Record<string, string>;
     exports?: Record<string, unknown>;
     files?: string[];
+    peerDependencies?: Record<string, string>;
+    sideEffects?: boolean | string[];
     publishConfig?: { access?: string };
   };
 
@@ -105,6 +107,28 @@ describe("package metadata", () => {
       "./testing"
     ]);
     expect(pkg.files).toContain("dist");
+  });
+
+  it("keeps React chat UI metadata browser-consumer ready", async () => {
+    const pkg = await readPackage("react");
+    expect(pkg).toMatchObject({
+      name: "@zhivex-ai/react",
+      type: "module",
+      main: "./dist/index.js",
+      types: "./dist/index.d.ts",
+      publishConfig: { access: "public" },
+      peerDependencies: {
+        react: ">=18.2.0 <20",
+        "react-dom": ">=18.2.0 <20"
+      }
+    });
+    expect(pkg.exports?.["."]).toEqual({
+      types: "./dist/index.d.ts",
+      import: "./dist/index.js"
+    });
+    expect(pkg.exports?.["./styles.css"]).toBe("./styles.css");
+    expect(pkg.files).toEqual(expect.arrayContaining(["dist", "styles.css"]));
+    expect(pkg.sideEffects).toContain("./styles.css");
   });
 
   it("keeps every workspace package publish-ready", async () => {

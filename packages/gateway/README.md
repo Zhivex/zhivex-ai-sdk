@@ -18,8 +18,10 @@ For agent routing, the gateway can also filter by `agentCapabilities`, such as p
 ## Install
 
 ```bash
-bun add @zhivex-ai/gateway
+bun add @zhivex-ai/gateway @zhivex-ai/openai @zhivex-ai/ollama
 ```
+
+Install the provider packages used by your own adapter map; OpenAI and Ollama are included above because the example below uses both.
 
 ## Usage
 

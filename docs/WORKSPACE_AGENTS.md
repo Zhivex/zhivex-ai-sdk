@@ -15,6 +15,22 @@ The SDK can support workspace-oriented flows through:
 - run stores, audit records, ledgers, traces, and golden traces.
 - provider support helpers to route only to models that advertise needed agent capabilities.
 
+## First-Class Execution Environment
+
+`AgentDefinition.executionEnvironment` is the provider-neutral contract for app-owned execution. Its serializable manifest declares the backend, assurance level, isolation mode, workspace policy, permissions, and limits. A canonical fingerprint is stored in `AgentRunState`; resume fails before execution if the manifest or workspace identity changes.
+
+For each active run, the adapter:
+
+1. acquires an ephemeral session,
+2. authorizes the complete model-produced tool batch before any call executes,
+3. reauthorizes each call immediately before the side effect,
+4. executes through the acquired session, and
+5. releases the session with the final run status.
+
+Tool callbacks, credentials, clients, and acquired handles are not serialized. They must be supplied again by the application on resume. An adapter declaring `assurance: "enforced"` is responsible for making the declared filesystem, network, process, resource, and tenancy controls real. The SDK wrapper supplies durable binding and authorization sequencing; it does not turn an in-process callback into a container or microVM.
+
+Use `createAgentExecutionEnvironmentBinding()` from `@zhivex-ai/sdk` or `@zhivex-ai/agents/beta` when constructing the acquired session. The runtime independently recomputes the manifest fingerprint and rejects a session that differs from the durable run.
+
 ## Provider Harness Tools
 
 OpenAI and Azure OpenAI expose SDK-managed local harness tools for Responses shell and patch calls. These tools require approval by default.
@@ -66,10 +82,13 @@ For workspace agents, enforce:
 - `maxOutputLength`: bound shell output.
 - approval policy: require human approval for shell, patch, filesystem, network, code-execution, deployment, publish, transfer, or payment actions.
 - durable state: persist the run before and after tool calls.
+- durable identity: resume with the same capsule fingerprint and execution-environment binding.
 - audit export: record redacted run and tool audit records.
 - no implicit secrets: do not expose environment variables unless the tool explicitly needs them.
 
 ## Approval Pattern
+
+Local workspace tools should set `requiresApproval: true` and `approvalMode: "interrupt"`, or use a policy that returns `{ approved: false, approvalRequired: true }`. The runtime preflights the full tool-call batch and records local decisions in agent state without exposing them to the provider.
 
 ```ts
 const first = await agent.run({
@@ -90,6 +109,8 @@ if (first.status === "waiting_approval") {
 ```
 
 Use `createAgentApprovalQueue()` when approvals need durable queue items with tokens and resume URLs.
+
+Use `approvalVersion` and, for durable multi-worker systems, `toolApprovalSigner` so an approval cannot be replayed after the tool contract or bound input changes. Re-supply validated application `context` on resume; it is intentionally not persisted in the run state.
 
 ## App-Owned Local Tools
 
@@ -123,7 +144,7 @@ Store ledgers with the proposed patch, test output, approval records, and final 
 
 ## Competitive Boundary
 
-OpenAI Agents SDK and some product frameworks emphasize managed sandbox execution, workspace snapshots, voice/realtime surfaces, or operator UIs. Zhivex currently positions workspace agents as a portable SDK runtime plus app-owned execution boundary.
+OpenAI Agents SDK and some product frameworks emphasize managed sandbox execution, workspace snapshots, voice/realtime surfaces, or operator UIs. Zhivex positions workspace agents as a portable SDK runtime plus a first-class, app-owned execution-environment contract.
 
 That means Zhivex is a good fit when:
 
@@ -143,5 +164,7 @@ Before marketing workspace-agent support:
 3. Verify `rootDir` prevents path escape.
 4. Verify command output is bounded.
 5. Verify rejected approvals do not execute the tool.
-6. Export a ledger and tool audit records from a deterministic run.
-7. Document any provider-specific setup needed for remote MCP, shell, apply patch, or computer-use tools.
+6. Verify execution-environment batch denial is atomic and execute-time authorization is enforced.
+7. Verify a changed harness or environment fingerprint cannot resume the run.
+8. Export a ledger and tool audit records from a deterministic run.
+9. Document any provider-specific setup needed for remote MCP, shell, apply patch, or computer-use tools.
