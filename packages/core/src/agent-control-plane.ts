@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { cancelAgentRun, cancelAgentRunTree, resumeAgent, runAgent, streamAgent } from "./agent.js";
+import { createAgentHarnessBinding } from "./agent-harness.js";
 import { createAgentRunSnapshot, replayAgentRun, type AgentReplayResult, type AgentRunSnapshot } from "./agent-evaluation.js";
 import {
   createAgentTraceArtifact,
@@ -22,6 +23,7 @@ import { ValidationError } from "./errors.js";
 import type {
   AgentApprovalRequest,
   AgentDefinition,
+  AgentExecutionEnvironmentManifest,
   AgentRunCancellationOptions,
   AgentRunInput,
   AgentRunOutput,
@@ -95,12 +97,14 @@ export interface AgentCapsuleToolManifest {
   owner?: string;
   labels: string[];
   requiresApproval: boolean;
+  approvalVersion?: string;
   description?: string;
 }
 
 export interface AgentCapsuleManifest {
   schemaVersion: typeof AGENT_CONTROL_PLANE_SCHEMA_VERSION;
   id: string;
+  fingerprint: string;
   name: string;
   version: string;
   description?: string;
@@ -112,6 +116,7 @@ export interface AgentCapsuleManifest {
   mcpServers: AgentCapsuleMcpServerManifest[];
   evaluations: AgentCapsuleEvaluationManifest[];
   policy?: AgentCapsulePolicyManifest;
+  executionEnvironment?: AgentExecutionEnvironmentManifest;
   metadata?: Record<string, JsonValue>;
 }
 
@@ -392,18 +397,21 @@ const inspectTools = (tools: ToolCollection | undefined): AgentCapsuleToolManife
     const isHosted = "kind" in toolDefinition && toolDefinition.kind === "hosted";
     return {
       name: toolDefinition.name,
-      kind: isHosted ? "hosted" : "callable",
+      kind: isHosted ? "hosted" as const : "callable" as const,
       provider: isHosted ? toolDefinition.provider : undefined,
       hostedType: isHosted ? toolDefinition.type : undefined,
       source: toolSource(toolDefinition),
-      permissions: toolPermissions(toolDefinition),
+      permissions: [...toolPermissions(toolDefinition)].sort(),
       riskLevel: toolRiskLevel(toolDefinition),
       owner: typeof audit.owner === "string" ? audit.owner : undefined,
-      labels: Array.isArray(audit.labels) ? audit.labels.filter((label): label is string => typeof label === "string") : [],
+      labels: Array.isArray(audit.labels)
+        ? audit.labels.filter((label): label is string => typeof label === "string").sort()
+        : [],
       requiresApproval: Boolean(toolDefinition.requiresApproval),
+      approvalVersion: "approvalVersion" in toolDefinition ? toolDefinition.approvalVersion : undefined,
       description: "description" in toolDefinition ? toolDefinition.description : undefined
     };
-  });
+  }).sort((left, right) => left.name.localeCompare(right.name));
 };
 
 export const createAgentCapsule = <TAgent extends AgentDefinition>(
@@ -415,8 +423,7 @@ export const createAgentCapsule = <TAgent extends AgentDefinition>(
   const providerSupport = inspectProviderAgentSupport(options.agent.model);
   const tools = inspectTools(options.tools ?? options.agent.tools);
 
-  return {
-    manifest: {
+  const manifestWithoutFingerprint = {
       schemaVersion: AGENT_CONTROL_PLANE_SCHEMA_VERSION,
       id,
       name: options.name ?? id,
@@ -426,13 +433,34 @@ export const createAgentCapsule = <TAgent extends AgentDefinition>(
       modelId: options.agent.model.modelId,
       agentTier: providerSupport.agentTier,
       tools,
-      skills: options.skills ?? [],
-      mcpServers: options.mcpServers ?? [],
-      evaluations: options.evaluations ?? [],
+      skills: [...(options.skills ?? [])].sort((left, right) => left.id.localeCompare(right.id)),
+      mcpServers: [...(options.mcpServers ?? [])]
+        .map((server) => ({
+          ...server,
+          permissions: server.permissions ? [...server.permissions].sort() : undefined
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+      evaluations: [...(options.evaluations ?? [])].sort((left, right) => left.name.localeCompare(right.name)),
       policy: options.policy,
+      executionEnvironment: options.agent.executionEnvironment?.manifest,
       metadata: options.metadata
-    },
-    agent: options.agent,
+    } satisfies Omit<AgentCapsuleManifest, "fingerprint">;
+  const harness = createAgentHarnessBinding({
+    id,
+    version: manifestWithoutFingerprint.version,
+    manifest: manifestWithoutFingerprint
+  });
+  const manifest = {
+    ...manifestWithoutFingerprint,
+    fingerprint: harness.fingerprint
+  } satisfies AgentCapsuleManifest;
+
+  return {
+    manifest,
+    agent: {
+      ...options.agent,
+      harness
+    } as TAgent,
     providerSupport
   };
 };
@@ -782,8 +810,14 @@ const toRunnerInput = <TModel extends LanguageModel>(
 export const createAgentControlPlane = <TModel extends LanguageModel>(
   options: AgentControlPlaneOptions<TModel>
 ): AgentControlPlane<TModel> => {
+  const runtimeAgent = options.agent.harness
+    ? options.agent
+    : createAgentCapsule({
+        id: options.agent.id ?? "agent",
+        agent: options.agent
+      }).agent;
   const runner = options.appName && options.sessionService
-    ? createRunner({ appName: options.appName, agent: options.agent, sessionService: options.sessionService })
+    ? createRunner({ appName: options.appName, agent: runtimeAgent, sessionService: options.sessionService })
     : undefined;
 
   const record = (state: AgentRunState, session?: RunnerRunOutput["session"]): AgentControlPlaneRunRecord => ({
@@ -802,46 +836,46 @@ export const createAgentControlPlane = <TModel extends LanguageModel>(
         return record(output.output.state, output.session);
       }
 
-      const output = await runAgent(options.agent, input);
+      const output = await runAgent(runtimeAgent, input);
       return record(output.state);
     },
     async resume(input) {
-      const output = await resumeAgent(options.agent, input);
+      const output = await resumeAgent(runtimeAgent, input);
       return record(output.state);
     },
     stream(input = {}) {
       if (runner && hasSessionInput(options, input)) {
         return runner.stream(toRunnerInput(input));
       }
-      return streamAgent(options.agent, input);
+      return streamAgent(runtimeAgent, input);
     },
     async getRun(runId) {
-      return options.agent.store?.load(runId);
+      return runtimeAgent.store?.load(runId);
     },
     async getTrace(runId) {
-      const state = await options.agent.store?.load(runId);
+      const state = await runtimeAgent.store?.load(runId);
       return state ? createAgentTraceArtifact(state, options.trace) : undefined;
     },
     async getRunTree(runId) {
-      if (!options.agent.store) {
+      if (!runtimeAgent.store) {
         return undefined;
       }
-      return createHierarchicalAgentTrace(options.agent.store, runId, options.trace);
+      return createHierarchicalAgentTrace(runtimeAgent.store, runId, options.trace);
     },
     async cancel(runId, cancellationOptions) {
-      if (!options.agent.store) {
+      if (!runtimeAgent.store) {
         return undefined;
       }
-      return cancelAgentRun(options.agent.store, runId, cancellationOptions);
+      return cancelAgentRun(runtimeAgent.store, runId, cancellationOptions);
     },
     async cancelTree(runId, cancellationOptions) {
-      if (!options.agent.store) {
+      if (!runtimeAgent.store) {
         return { children: [] };
       }
-      return cancelAgentRunTree(options.agent.store, runId, cancellationOptions);
+      return cancelAgentRunTree(runtimeAgent.store, runId, cancellationOptions);
     },
     inspect() {
-      return inspectAgentControlPlane(options.agent);
+      return inspectAgentControlPlane(runtimeAgent);
     }
   };
 };

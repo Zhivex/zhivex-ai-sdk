@@ -62,6 +62,8 @@ Every agent run returns a serializable `state`:
 - `toolResults`: executed local tool results.
 - `pendingApprovals`: provider and SDK-managed local-tool approval requests that need a human decision.
 - `approvalHistory`: resolved local-tool approvals, including the input digest and tool version used for replay protection.
+- `harness` and `executionEnvironment`: immutable fingerprints checked before a durable resume.
+- `compactions`: replay-visible records of context summaries persisted before the next provider request.
 - `finalOutput`: the validated typed result when the agent has an `outputSchema`.
 - `usage`: normalized token usage aggregated across every model call in the run.
 - `status`: `completed`, `waiting_approval`, `failed`, `timed_out`, `cancel_requested`, or another production state.
@@ -85,6 +87,12 @@ For shared stores, always pass `scope: { tenantId, userId?, namespace? }`. It pa
 Streams have bounded replay/backpressure and state has a 4 MiB default serialized limit. Request snapshots are incremental, so multi-step histories grow linearly. Telemetry and memory adapters are best effort unless `hookFailurePolicy` explicitly selects strict failure semantics.
 
 Legacy states without a schema version or revision are normalized. Unknown future schema versions are rejected; use `normalizeAgentRunState()` or `migrateAgentRunState()` at application persistence boundaries.
+
+Capsules created with `createAgentCapsule()` bind a canonical SHA-256 harness fingerprint to their agent definition. Resume with `capsule.agent`; a mismatched id, version, fingerprint, or execution-environment binding is rejected before model or tool work. The legacy migration flags in `AgentRunPolicy` are explicit one-time escape hatches, not compatibility defaults.
+
+Use `executionEnvironment` when the application has a container, microVM, remote worker, or policy boundary that must own tool execution. The runtime acquires it once per run, authorizes every call during atomic batch preflight, reauthorizes immediately before execution, and releases it with the final status. The adapter must provide the actual isolation; the SDK contract alone is not a sandbox.
+
+Use `compaction` to bound active model context without rewriting prior completed runs through `AgentMemoryStore`. The runtime preserves leading system messages and a recent atomic tool tail, persists the compacted messages and digests before the provider call, resets the step snapshot offset at that boundary, and exposes compactions in replay and streaming.
 
 ## Tools And Safety
 
@@ -165,7 +173,7 @@ For app-facing queues, import `createAgentApprovalQueue()` from `@zhivex-ai/agen
 
 Tool execution timeouts abort the `AbortSignal` passed as the second argument to `tool.execute(input, context)`. Tools that perform I/O should forward `context.abortSignal` to their client so cancellation stops the underlying work; timeout cancellation is cooperative for tools that ignore the signal.
 
-Local-tool approval interrupts currently belong to the run that directly owns the tool call. A child agent used through `subagents` can receive typed context, but a child-local approval is not yet promoted into the parent run's pending approval queue.
+Child approvals are promoted to the parent as `kind: "subagent"` requests. The parent embeds the waiting child checkpoint in `state.childRuns`; after the parent decision is collected, `resumeAgent()` re-enters the same unresolved subagent tool and resumes the same child run. Child provider-approval messages remain isolated from the parent model transcript.
 
 ## Streaming And UI
 

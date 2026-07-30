@@ -64,6 +64,9 @@ describe("agents package public surface", () => {
   it("isolates beta control-plane and governance APIs", () => {
     expect(beta.createAgentCapsule).toBeTypeOf("function");
     expect(beta.createAgentControlPlane).toBeTypeOf("function");
+    expect(beta.createAgentExecutionEnvironmentBinding).toBeTypeOf("function");
+    expect(beta.createAgentHarnessBinding).toBeTypeOf("function");
+    expect(beta.fingerprintAgentHarness).toBeTypeOf("function");
     expect(beta.createAgentApprovalQueue).toBeTypeOf("function");
     expect(beta.createAgentRunLedger).toBeTypeOf("function");
     expect(beta.createAgentCapabilityRouter).toBeTypeOf("function");

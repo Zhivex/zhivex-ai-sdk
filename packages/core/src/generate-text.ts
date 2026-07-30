@@ -17,6 +17,7 @@ import {
 } from "./messages.js";
 import { mergeAbortSignals } from "./runtime.js";
 import { toToolSet } from "./tool-registry.js";
+import { ToolExecutionSuspendedError } from "./tool-execution-suspension.js";
 import type {
   GenerateResult,
   GenerateTextOptions,
@@ -569,6 +570,9 @@ const executeTools = async (
         latencyMs: finishedAt - startedAt
       });
     } catch (error) {
+      if (error instanceof ToolExecutionSuspendedError) {
+        throw error;
+      }
       const normalizedError = error instanceof Error ? error : new Error(String(error));
       let recoveredOutput: unknown;
       if (tool.onError && !(normalizedError instanceof GuardrailTriggeredError)) {
@@ -631,7 +635,17 @@ const executeTools = async (
 
   if (!parallel || validatedCalls.length <= 1) {
     for (const [index, item] of validatedCalls.entries()) {
-      await executeSingleTool(item, index);
+      try {
+        await executeSingleTool(item, index);
+      } catch (error) {
+        if (error instanceof ToolExecutionSuspendedError) {
+          throw new ToolExecutionSuspendedError(
+            error.approvals,
+            results.filter((result): result is ToolExecutionResult => Boolean(result))
+          );
+        }
+        throw error;
+      }
       if (stopOnError && results[index]?.isError) {
         throw new Error(`Tool "${item.call.name}" failed: ${results[index]?.error?.message ?? "Unknown tool error."}`);
       }
@@ -755,10 +769,37 @@ export const generateText = async <
       };
     }
     await options.onBeforeToolExecution?.({ request, step, toolCalls: pendingToolCalls });
-    const recoveredToolResults = await executeTools(preflight, options, {
-      request,
-      step
-    });
+    let recoveredToolResults: ToolExecutionResult[];
+    try {
+      recoveredToolResults = await executeTools(preflight, options, {
+        request,
+        step
+      });
+    } catch (error) {
+      if (!(error instanceof ToolExecutionSuspendedError)) {
+        throw error;
+      }
+      toolResults.push(...error.completedResults);
+      for (const result of error.completedResults) {
+        allMessages.push({ role: "tool", parts: [toolResultPart(result)] });
+      }
+      if (error.completedResults.length) {
+        await options.onToolExecutionComplete?.({
+          request,
+          step,
+          toolResults: error.completedResults
+        });
+      }
+      approvalRequests.push(...error.approvals);
+      return {
+        text: "",
+        finishReason: "tool-calls",
+        steps,
+        messages: allMessages,
+        toolResults,
+        approvalRequests
+      };
+    }
     toolResults.push(...recoveredToolResults);
     for (const result of recoveredToolResults) {
       allMessages.push({ role: "tool", parts: [toolResultPart(result)] });
@@ -767,8 +808,15 @@ export const generateText = async <
   }
 
   for (let step = 0; step < maxSteps; step += 1) {
-    const request = toRequest(options, allMessages);
     const absoluteStep = (options.stepOffset ?? 0) + step + 1;
+    const preparedMessages = await options.prepareModelMessages?.({
+      messages: structuredClone(allMessages),
+      step: absoluteStep
+    });
+    if (preparedMessages) {
+      allMessages.splice(0, allMessages.length, ...structuredClone(preparedMessages));
+    }
+    const request = toRequest(options, allMessages);
     await options.onBeforeModelStep?.({ request, step: absoluteStep });
     const startedAt = Date.now();
     let response = await options.model.generate(request);
@@ -805,10 +853,33 @@ export const generateText = async <
     }
 
     await options.onBeforeToolExecution?.({ request, step: absoluteStep, toolCalls });
-    const currentToolResults = await executeTools(preflight!, options, {
-      request,
-      step: absoluteStep
-    });
+    let currentToolResults: ToolExecutionResult[];
+    try {
+      currentToolResults = await executeTools(preflight!, options, {
+        request,
+        step: absoluteStep
+      });
+    } catch (error) {
+      if (!(error instanceof ToolExecutionSuspendedError)) {
+        throw error;
+      }
+      toolResults.push(...error.completedResults);
+      for (const result of error.completedResults) {
+        allMessages.push({
+          role: "tool",
+          parts: [toolResultPart(result)]
+        });
+      }
+      if (error.completedResults.length) {
+        await options.onToolExecutionComplete?.({
+          request,
+          step: absoluteStep,
+          toolResults: error.completedResults
+        });
+      }
+      approvalRequests.push(...error.approvals);
+      break;
+    }
     toolResults.push(...currentToolResults);
 
     for (const result of currentToolResults) {
@@ -914,10 +985,43 @@ export const streamText = <
         };
       }
       await options.onBeforeToolExecution?.({ request, step, toolCalls: pendingToolCalls });
-      const recoveredToolResults = await executeTools(preflight, options, {
-        request,
-        step
-      });
+      let recoveredToolResults: ToolExecutionResult[];
+      try {
+        recoveredToolResults = await executeTools(preflight, options, {
+          request,
+          step
+        });
+      } catch (error) {
+        if (!(error instanceof ToolExecutionSuspendedError)) {
+          throw error;
+        }
+        toolResults.push(...error.completedResults);
+        for (const result of error.completedResults) {
+          await publish({ type: "tool-result", toolResult: result });
+          allMessages.push({ role: "tool", parts: [toolResultPart(result)] });
+        }
+        if (error.completedResults.length) {
+          await options.onToolExecutionComplete?.({
+            request,
+            step,
+            toolResults: error.completedResults
+          });
+        }
+        approvalRequests.push(...error.approvals);
+        for (const approval of error.approvals) {
+          await publish({ type: "tool-approval-request", approval });
+        }
+        await publish({ type: "finish", finishReason: "tool-calls" }, true);
+        broadcast.close();
+        return {
+          text: "",
+          finishReason: "tool-calls",
+          steps,
+          messages: allMessages,
+          toolResults,
+          approvalRequests
+        };
+      }
       toolResults.push(...recoveredToolResults);
       for (const result of recoveredToolResults) {
         await publish({ type: "tool-result", toolResult: result });
@@ -927,8 +1031,15 @@ export const streamText = <
     }
 
     for (let step = 0; step < maxSteps; step += 1) {
-      const request = toRequest(options, allMessages);
       const absoluteStep = (options.stepOffset ?? 0) + step + 1;
+      const preparedMessages = await options.prepareModelMessages?.({
+        messages: structuredClone(allMessages),
+        step: absoluteStep
+      });
+      if (preparedMessages) {
+        allMessages.splice(0, allMessages.length, ...structuredClone(preparedMessages));
+      }
+      const request = toRequest(options, allMessages);
       await options.onBeforeModelStep?.({ request, step: absoluteStep });
       const startedAt = Date.now();
       const stream = await streamModel(request);
@@ -1030,10 +1141,37 @@ export const streamText = <
       }
 
       await options.onBeforeToolExecution?.({ request, step: absoluteStep, toolCalls });
-      const currentToolResults = await executeTools(preflight!, options, {
-        request,
-        step: absoluteStep
-      });
+      let currentToolResults: ToolExecutionResult[];
+      try {
+        currentToolResults = await executeTools(preflight!, options, {
+          request,
+          step: absoluteStep
+        });
+      } catch (error) {
+        if (!(error instanceof ToolExecutionSuspendedError)) {
+          throw error;
+        }
+        toolResults.push(...error.completedResults);
+        for (const result of error.completedResults) {
+          await publish({ type: "tool-result", toolResult: result });
+          allMessages.push({
+            role: "tool",
+            parts: [toolResultPart(result)]
+          });
+        }
+        if (error.completedResults.length) {
+          await options.onToolExecutionComplete?.({
+            request,
+            step: absoluteStep,
+            toolResults: error.completedResults
+          });
+        }
+        approvalRequests.push(...error.approvals);
+        for (const approval of error.approvals) {
+          await publish({ type: "tool-approval-request", approval });
+        }
+        break;
+      }
       toolResults.push(...currentToolResults);
 
       for (const toolResult of currentToolResults) {

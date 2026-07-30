@@ -36,6 +36,10 @@ describe("api stability manifest", () => {
       symbol: "createAgentControlPlane",
       stability: "beta"
     });
+    expect(api.listApiStability("beta")).toContainEqual({
+      symbol: "createAgentHarnessBinding",
+      stability: "beta"
+    });
     expect(api.listApiStability("stable")).toContainEqual({
       symbol: "chunkText",
       stability: "stable"
@@ -73,6 +77,9 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("createReadOnlyToolApprovalPolicy")?.stability).toBe("beta");
     expect(api.getApiStability("createAgentControlPlane")?.stability).toBe("beta");
     expect(api.getApiStability("createAgentCapsule")?.stability).toBe("beta");
+    expect(api.getApiStability("createAgentExecutionEnvironmentBinding")?.stability).toBe("beta");
+    expect(api.getApiStability("createAgentHarnessBinding")?.stability).toBe("beta");
+    expect(api.getApiStability("fingerprintAgentHarness")?.stability).toBe("beta");
     expect(api.getApiStability("createAgentRunLedger")?.stability).toBe("beta");
     expect(api.getApiStability("selectAgentModel")?.stability).toBe("beta");
 

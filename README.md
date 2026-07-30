@@ -503,7 +503,7 @@ For explicit migration/validation, use `migrateAgentSessionRecord(record)`. File
 
 The first Beta surface includes:
 
-- `createAgentCapsule()`: portable manifest for an agent, its tools, MCP servers, skills, evals, policy, provider, and agent tier.
+- `createAgentCapsule()`: portable manifest for an agent, its tools, MCP servers, skills, evals, policy, provider, and agent tier. Its canonical SHA-256 fingerprint is bound to new durable runs.
 - `createAgentToolPolicy()`: permission/risk-aware tool approval policy for read-only, supervised, write-deny, or allow-all modes.
 - `createAgentApprovalQueue()`: provider approval waits as app-facing queue items with approval tokens and resume URLs.
 - `createAgentRunLedger()`: normalized audit, trace, replay timeline, tool audit, summary, and cost record for a run.
@@ -521,9 +521,12 @@ import {
   createAgentCapabilityRouter
 } from "@zhivex-ai/sdk";
 
+const router = createAgentCapabilityRouter([openai("gpt-5"), anthropic("claude-sonnet-5")]);
+const selected = router.select({ minTier: "tier-b", approvals: true, remoteMcp: true });
+
 const agent = createAgent({
   id: "finance-risk",
-  model,
+  model: selected.model,
   tools,
   toolApprovalPolicy: createAgentToolPolicy({ mode: "read-only" })
 });
@@ -537,10 +540,7 @@ const capsule = createAgentCapsule({
   policy: { toolPolicyMode: "read-only", redaction: true }
 });
 
-const router = createAgentCapabilityRouter([openai("gpt-5"), anthropic("claude-sonnet-5")]);
-const selected = router.select({ minTier: "tier-b", approvals: true, remoteMcp: true });
-
-const controlPlane = createAgentControlPlane({ agent: { ...agent, model: selected.model } });
+const controlPlane = createAgentControlPlane({ agent: capsule.agent });
 const record = await controlPlane.run({ prompt: "Reconcile account acct_123." });
 
 const ledger = createAgentRunLedger(record.state, {
@@ -549,10 +549,13 @@ const ledger = createAgentRunLedger(record.state, {
 });
 
 console.log(capsule.manifest.agentTier);
+console.log(capsule.manifest.fingerprint);
 console.log(ledger.audit.toolCalls);
 ```
 
 The control-plane layer is intentionally SDK-only. Workspaces, billing, project keys, auth, rate limits, and queues remain application-owned or Gateway-owned concerns. Treat provider capability routing as a runtime snapshot: it helps select the best candidate, but does not remove the need for provider-specific integration tests.
+
+Resume a capsule-owned run with the same capsule definition. A changed capsule fingerprint is rejected before model or tool execution. Legacy states can only be attached to a fingerprint through the explicit `policy.allowLegacyHarnessResume` migration escape hatch.
 
 Approval queue tokens are cryptographically random opaque values. Persist them server-side, enforce the queue item's `expiresAt`, compare and consume the token before resuming a run, and never treat `resumeUrl` alone as authorization.
 
@@ -1143,6 +1146,9 @@ await cancelAgentRun(store, first.state.runId, {
 - Every persisted transition uses revision compare-and-swap. A stale concurrent resume, cancellation, or update throws `ConflictError` before starting another model/tool step.
 - `scope: { tenantId, userId?, namespace? }` isolates run IDs, idempotency keys, parent indexes, memory, leases, and tool journals. Pass the same scope to run, resume, lookup, and cancellation operations.
 - Active workers hold renewable leases. An expired lease can be recovered by another worker; a live lease prevents duplicate model/tool work. The runtime checkpoints every model response before tools and every tool batch before the next model call.
+- Capsule-owned runs persist their harness fingerprint. Resuming with a different capsule id, version, or fingerprint fails before model or tool execution.
+- `executionEnvironment` acquires an app-provided execution boundary per run, preauthorizes the complete tool-call batch, reauthorizes immediately before each call, and persists the environment fingerprint for safe resume. The SDK supplies the contract and enforcement hooks, not a managed sandbox service.
+- `compaction` can summarize an old message prefix before a provider request while preserving leading system messages and an atomic recent tool-call/result tail. The compacted state and digests are persisted before the provider call, appear in replay, and stream as `agent-compaction`.
 - Completed local tools are recorded in a durable journal. `tool.execute(input, context)` receives `context.idempotencyKey`; forward it to side-effecting APIs. Completed entries replay without rerunning the tool, while indeterminate executions are blocked for operator reconciliation.
 - Use SQLite or Postgres for durable concurrent workers. The file store is intended for local development because its cross-process CAS, lease, and recovery guarantees are best effort.
 - `cancelAgentRun()` marks the saved state as `cancel_requested` by default. Pass `{ mode: "final" }` to write a terminal `cancelled` state.
@@ -1173,7 +1179,7 @@ console.log(bookingResult.state.parentRunId);
 
 ### Native Subagents
 
-Agents can also expose specialist agents as callable subagent tools. The parent run records child run summaries in `state.childRuns`, and replay/trace helpers include those child links without re-running the child agent.
+Agents can also expose specialist agents as callable subagent tools. The parent run records child run summaries in `state.childRuns`, and replay/trace helpers include those child links without re-running the child agent. If a child pauses for approval, the parent exposes a `kind: "subagent"` request in its own `pendingApprovals`; resuming the parent continues the same child run and does not inject the child approval protocol into the parent model transcript.
 
 ```ts
 import { createAgent, runAgent } from "@zhivex-ai/sdk";
@@ -1333,7 +1339,7 @@ const agent = createAgent({
 });
 ```
 
-Provider MCP approvals and SDK-managed local-tool interrupts move a run to `waiting_approval` instead of failing. Local tools opt in with `requiresApproval: true` plus `approvalMode: "interrupt"`; a tool policy can also return `{ approved: false, approvalRequired: true }`. Inspect `state.pendingApprovals` and continue with `resumeAgent()`. Persisted legacy states with `status: "suspended"` are still accepted for compatibility.
+Provider MCP approvals, SDK-managed local-tool interrupts, and promoted subagent approvals move a run to `waiting_approval` instead of failing. Local tools opt in with `requiresApproval: true` plus `approvalMode: "interrupt"`; a tool policy can also return `{ approved: false, approvalRequired: true }`. Inspect `state.pendingApprovals` and continue with `resumeAgent()`. Persisted legacy states with `status: "suspended"` are still accepted for compatibility.
 
 ```ts
 import { createAgent, resumeAgent, runAgent, tool } from "@zhivex-ai/sdk";
@@ -1456,7 +1462,7 @@ const agent = createAgent({
 });
 ```
 
-Local tools also support `isEnabled`, input/output guardrails, and `onError`. `contextSchema` validates ephemeral application context before each run or resume, and the context is available to policies, guardrails, and tool execution. `outputSchema` validates the terminal result and exposes it as `result.finalOutput`; select `outputMode: "auto"`, `"native"`, or `"prompted"`.
+Local tools also support `isEnabled`, input/output guardrails, and `onError`. `contextSchema` parses and validates ephemeral application context before each run or resume; its transformed or defaulted value is available consistently to policies, guardrails, and tool execution. `outputSchema` validates the terminal result and exposes it as `result.finalOutput`; select `outputMode: "auto"`, `"native"`, or `"prompted"`. Prompted mode injects the generated JSON Schema into the model instructions and still validates the terminal JSON locally.
 
 Agents also support first-class input and output guardrails. A triggered guardrail fails the run, persists the failed state, and emits telemetry:
 

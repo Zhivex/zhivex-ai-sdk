@@ -14,6 +14,9 @@ describe("sdk public surface", () => {
     expect(sdk.listApiStability).toBeTypeOf("function");
     expect(sdk.API_STABILITY_MANIFEST.createRunner.stability).toBe("stable");
     expect(sdk.createAgent).toBeTypeOf("function");
+    expect(sdk.createAgentExecutionEnvironmentBinding).toBeTypeOf("function");
+    expect(sdk.createAgentHarnessBinding).toBeTypeOf("function");
+    expect(sdk.fingerprintAgentHarness).toBeTypeOf("function");
     expect(sdk.createAgentEvaluationFixture).toBeTypeOf("function");
     expect(sdk.createAgentEvaluationReport).toBeTypeOf("function");
     expect(sdk.createAgentRunSnapshot).toBeTypeOf("function");

@@ -188,7 +188,7 @@ describe("agent control plane", () => {
     });
     expect(capsule.manifest.tools[0]).toMatchObject({
       name: "delete_customer",
-      permissions: ["write", "external-side-effect"],
+      permissions: ["external-side-effect", "write"],
       riskLevel: "critical",
       owner: "ops"
     });
@@ -372,7 +372,12 @@ describe("agent control plane", () => {
 
     expect(record.ledger.type).toBe("agent_run_ledger");
     expect(record.summary.status).toBe("completed");
+    expect(record.state.harness).toMatchObject({
+      id: "ops",
+      algorithm: "sha256"
+    });
     expect(loaded?.runId).toBe(record.state.runId);
+    expect(loaded?.harness).toEqual(record.state.harness);
     expect(trace?.runId).toBe(record.state.runId);
     expect(controlPlane.inspect().provider.agentTier).toBe("tier-a");
   });

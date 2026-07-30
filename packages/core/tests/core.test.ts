@@ -1820,10 +1820,13 @@ describe("core helpers", () => {
         },
         async generate(input) {
           expect(input.structuredOutput).toBeUndefined();
-          expect(input.messages.at(-1)).toMatchObject({
-            role: "user",
-            parts: [{ type: "text", text: "Generate JSON\n\nReturn only valid JSON matching the requested schema." }]
-          });
+          const promptedText = input.messages
+            .flatMap((message) => message.parts)
+            .map((part) => part.type === "text" ? part.text : "")
+            .join("\n");
+          expect(promptedText).toContain("Generate JSON");
+          expect(promptedText).toContain("JSON Schema:");
+          expect(promptedText).toContain('"title"');
           return {
             messages: [createTextMessage("assistant", JSON.stringify({ title: "Soup" }))],
             text: JSON.stringify({ title: "Soup" })
@@ -1833,7 +1836,9 @@ describe("core helpers", () => {
       prompt: "Generate JSON",
       schema: z.object({
         title: z.string()
-      })
+      }),
+      schemaName: "recipe",
+      schemaDescription: "A generated recipe"
     });
 
     expect(result.objectMode).toBe("prompted");
@@ -1917,7 +1922,9 @@ describe("core helpers", () => {
 
     const final = await result.collect();
 
-    expect(firstMessageText).toBe("Generate recipe JSON\n\nReturn only valid JSON matching the requested schema.");
+    expect(firstMessageText).toContain("Generate recipe JSON");
+    expect(firstMessageText).toContain("JSON Schema:");
+    expect(firstMessageText).toContain('"title"');
     expect(final.objectMode).toBe("prompted");
     expect(final.object).toEqual({ title: "Soup" });
   });

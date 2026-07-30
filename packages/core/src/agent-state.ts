@@ -52,6 +52,13 @@ const optionalString = (value: unknown, path: string, allowEmpty = false) => {
   if (value !== undefined) string(value, path, allowEmpty);
 };
 
+const sha256 = (value: unknown, path: string) => {
+  const digest = string(value, path);
+  if (!/^sha256:[0-9a-f]{64}$/.test(digest)) {
+    invalid(path, "must be a canonical sha256 digest");
+  }
+};
+
 const finiteNumber = (value: unknown, path: string, minimum?: number) => {
   if (typeof value !== "number" || !Number.isFinite(value) || (minimum !== undefined && value < minimum)) {
     invalid(path, `must be a finite number${minimum === undefined ? "" : ` greater than or equal to ${minimum}`}`);
@@ -252,8 +259,13 @@ const step = (value: unknown, path: string) => {
 
 const approval = (value: unknown, path: string) => {
   const current = record(value, path);
-  if (current.kind !== undefined && current.kind !== "provider" && current.kind !== "local-tool") {
-    invalid(`${path}.kind`, 'must be "provider" or "local-tool"');
+  if (
+    current.kind !== undefined &&
+    current.kind !== "provider" &&
+    current.kind !== "local-tool" &&
+    current.kind !== "subagent"
+  ) {
+    invalid(`${path}.kind`, 'must be "provider", "local-tool", or "subagent"');
   }
   string(current.provider, `${path}.provider`);
   string(current.id, `${path}.id`);
@@ -265,14 +277,21 @@ const approval = (value: unknown, path: string) => {
   optionalString(current.inputDigest, `${path}.inputDigest`);
   optionalString(current.toolVersion, `${path}.toolVersion`);
   optionalString(current.signature, `${path}.signature`);
+  optionalString(current.childRunId, `${path}.childRunId`);
+  optionalString(current.childAgentId, `${path}.childAgentId`);
+  optionalString(current.childApprovalRequestId, `${path}.childApprovalRequestId`);
+  if (current.kind === "subagent") {
+    string(current.childRunId, `${path}.childRunId`);
+    string(current.childApprovalRequestId, `${path}.childApprovalRequestId`);
+  }
   jsonValue(current.rawData, `${path}.rawData`);
 };
 
 const approvalResolution = (value: unknown, path: string) => {
   const current = record(value, path);
   string(current.requestId, `${path}.requestId`);
-  if (current.kind !== "provider" && current.kind !== "local-tool") {
-    invalid(`${path}.kind`, 'must be "provider" or "local-tool"');
+  if (current.kind !== "provider" && current.kind !== "local-tool" && current.kind !== "subagent") {
+    invalid(`${path}.kind`, 'must be "provider", "local-tool", or "subagent"');
   }
   string(current.provider, `${path}.provider`);
   if (typeof current.approve !== "boolean") invalid(`${path}.approve`, "must be a boolean");
@@ -282,6 +301,13 @@ const approvalResolution = (value: unknown, path: string) => {
   optionalString(current.inputDigest, `${path}.inputDigest`);
   optionalString(current.toolVersion, `${path}.toolVersion`);
   optionalString(current.signature, `${path}.signature`);
+  optionalString(current.childRunId, `${path}.childRunId`);
+  optionalString(current.childAgentId, `${path}.childAgentId`);
+  optionalString(current.childApprovalRequestId, `${path}.childApprovalRequestId`);
+  if (current.kind === "subagent") {
+    string(current.childRunId, `${path}.childRunId`);
+    string(current.childApprovalRequestId, `${path}.childApprovalRequestId`);
+  }
   finiteNumber(current.resolvedAt, `${path}.resolvedAt`, 0);
 };
 
@@ -304,6 +330,7 @@ const childRun = (value: unknown, path: string) => {
   optionalString(current.agentId, `${path}.agentId`);
   optionalString(current.parentRunId, `${path}.parentRunId`);
   optionalString(current.toolName, `${path}.toolName`);
+  optionalString(current.toolCallId, `${path}.toolCallId`);
   if (!AGENT_STATUSES.has(current.status as string)) invalid(`${path}.status`, "must be a supported agent status");
   string(current.outputText, `${path}.outputText`, true);
   integer(current.steps, `${path}.steps`);
@@ -313,6 +340,53 @@ const childRun = (value: unknown, path: string) => {
   if (current.startedAt !== undefined) finiteNumber(current.startedAt, `${path}.startedAt`, 0);
   if (current.updatedAt !== undefined) finiteNumber(current.updatedAt, `${path}.updatedAt`, 0);
   if (current.error !== undefined) string(record(current.error, `${path}.error`).message, `${path}.error.message`);
+  optionalMetadata(current.metadata, `${path}.metadata`);
+  if (current.resumeState !== undefined) {
+    jsonValue(current.resumeState, `${path}.resumeState`, true);
+    normalizeAgentRunState(current.resumeState);
+  }
+};
+
+const harness = (value: unknown, path: string) => {
+  if (value === undefined) return;
+  const current = record(value, path);
+  if (current.schemaVersion !== 1) invalid(`${path}.schemaVersion`, "must be 1");
+  string(current.id, `${path}.id`);
+  string(current.version, `${path}.version`);
+  sha256(current.fingerprint, `${path}.fingerprint`);
+  if (current.algorithm !== "sha256") invalid(`${path}.algorithm`, 'must be "sha256"');
+};
+
+const executionEnvironment = (value: unknown, path: string) => {
+  if (value === undefined) return;
+  const current = record(value, path);
+  string(current.environmentId, `${path}.environmentId`);
+  optionalString(current.environmentVersion, `${path}.environmentVersion`);
+  sha256(current.fingerprint, `${path}.fingerprint`);
+  optionalString(current.workspaceId, `${path}.workspaceId`);
+};
+
+const compaction = (value: unknown, path: string) => {
+  const current = record(value, path);
+  string(current.id, `${path}.id`);
+  integer(current.beforeStep, `${path}.beforeStep`, 1);
+  finiteNumber(current.createdAt, `${path}.createdAt`, 0);
+  array(current.reasons, `${path}.reasons`).forEach((reason, index) => {
+    if (reason !== "message-count" && reason !== "estimated-input-tokens") {
+      invalid(`${path}.reasons[${index}]`, "must be a supported compaction reason");
+    }
+  });
+  sha256(current.sourceDigest, `${path}.sourceDigest`);
+  sha256(current.resultDigest, `${path}.resultDigest`);
+  sha256(current.summaryDigest, `${path}.summaryDigest`);
+  string(current.summary, `${path}.summary`);
+  integer(current.messageCountBefore, `${path}.messageCountBefore`);
+  integer(current.messageCountAfter, `${path}.messageCountAfter`);
+  integer(current.compactedMessageCount, `${path}.compactedMessageCount`);
+  integer(current.retainedMessageCount, `${path}.retainedMessageCount`);
+  integer(current.estimatedTokensBefore, `${path}.estimatedTokensBefore`);
+  integer(current.estimatedTokensAfter, `${path}.estimatedTokensAfter`);
+  usage(current.usage, `${path}.usage`);
   optionalMetadata(current.metadata, `${path}.metadata`);
 };
 
@@ -342,6 +416,8 @@ export const normalizeAgentRunState = (value: unknown): AgentRunState => {
   optionalString(state.parentRunId, "parentRunId");
   string(state.provider, "provider");
   string(state.modelId, "modelId");
+  harness(state.harness, "harness");
+  executionEnvironment(state.executionEnvironment, "executionEnvironment");
   if (!AGENT_STATUSES.has(state.status as string)) invalid("status", "must be a supported agent status");
   messages(state.messages, "messages");
   const stateSteps = array(state.steps, "steps");
@@ -372,6 +448,9 @@ export const normalizeAgentRunState = (value: unknown): AgentRunState => {
   }
   if (state.childRuns !== undefined) {
     array(state.childRuns, "childRuns").forEach((entry, index) => childRun(entry, `childRuns[${index}]`));
+  }
+  if (state.compactions !== undefined) {
+    array(state.compactions, "compactions").forEach((entry, index) => compaction(entry, `compactions[${index}]`));
   }
   optionalMetadata(state.metadata, "metadata");
   handoff(state.handoff, "handoff");

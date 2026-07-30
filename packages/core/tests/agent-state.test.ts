@@ -17,6 +17,19 @@ const validState = (): AgentRunState => ({
   agentId: "assistant",
   provider: "test",
   modelId: "model",
+  harness: {
+    schemaVersion: 1,
+    id: "assistant-capsule",
+    version: "1.0.0",
+    fingerprint: `sha256:${"a".repeat(64)}`,
+    algorithm: "sha256"
+  },
+  executionEnvironment: {
+    environmentId: "workspace",
+    environmentVersion: "1",
+    fingerprint: `sha256:${"b".repeat(64)}`,
+    workspaceId: "workspace_1"
+  },
   status: "completed",
   messages: [
     createTextMessage("user", "weather"),
@@ -51,9 +64,26 @@ const validState = (): AgentRunState => ({
   finishReason: "stop",
   usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 },
   pendingApprovals: [],
+  compactions: [{
+    id: "cmp_1",
+    beforeStep: 1,
+    createdAt: 9,
+    reasons: ["message-count"],
+    sourceDigest: `sha256:${"c".repeat(64)}`,
+    resultDigest: `sha256:${"d".repeat(64)}`,
+    summaryDigest: `sha256:${"e".repeat(64)}`,
+    summary: "Earlier context",
+    messageCountBefore: 8,
+    messageCountAfter: 4,
+    compactedMessageCount: 5,
+    retainedMessageCount: 2,
+    estimatedTokensBefore: 100,
+    estimatedTokensAfter: 40
+  }],
   childRuns: [{
     runId: "run_child",
     parentRunId: "run_1",
+    toolCallId: "call_child",
     status: "completed",
     outputText: "done",
     steps: 1,
@@ -110,6 +140,15 @@ describe("agent run state validation", () => {
     ["counter", (state: Record<string, unknown>) => { state.currentStep = 0.5; }],
     ["scope", (state: Record<string, unknown>) => {
       (state.scope as Record<string, unknown>).tenantId = "";
+    }],
+    ["harness", (state: Record<string, unknown>) => {
+      (state.harness as Record<string, unknown>).algorithm = "sha1";
+    }],
+    ["execution environment", (state: Record<string, unknown>) => {
+      (state.executionEnvironment as Record<string, unknown>).fingerprint = "";
+    }],
+    ["compaction", (state: Record<string, unknown>) => {
+      ((state.compactions as Array<Record<string, unknown>>)[0]!.reasons as unknown[])[0] = "automatic";
     }]
   ])("rejects invalid deeply nested %s", (_label, mutate) => {
     const state = structuredClone(validState()) as unknown as Record<string, unknown>;

@@ -198,6 +198,115 @@ export interface ToolRuntimeContext<TContext = any> {
   agentId?: string;
   scope?: AgentStoreScope;
   metadata?: Record<string, JsonValue>;
+  /** Acquired execution boundary for this run. Callbacks and secrets are never persisted. */
+  executionEnvironment?: AgentExecutionEnvironmentSession<TContext>;
+}
+
+export type AgentExecutionEnvironmentBackend =
+  | "host"
+  | "process"
+  | "container"
+  | "microvm"
+  | "remote"
+  | "custom";
+
+export interface AgentExecutionEnvironmentManifest {
+  schemaVersion: 1;
+  id: string;
+  version?: string;
+  backend: AgentExecutionEnvironmentBackend;
+  assurance: "best-effort" | "enforced";
+  isolation: "shared" | "per-run" | "per-tool-call";
+  workspace?: {
+    id?: string;
+    root: string;
+    cwd?: string;
+    access: "read-only" | "read-write";
+    followSymlinks?: boolean;
+    readablePaths?: string[];
+    writablePaths?: string[];
+  };
+  permissions?: {
+    undeclaredTools?: "allow" | "deny";
+    filesystem?: "deny" | "read-only" | "read-write";
+    network?: {
+      mode: "deny" | "allowlist";
+      allowedDomains?: string[];
+      allowedPorts?: number[];
+      allowPrivateNetworks?: boolean;
+    };
+    process?: {
+      shell: "deny" | "allowlist" | "allow";
+      allowedCommands?: string[];
+    };
+    environment?: {
+      inheritedVariables?: string[];
+    };
+  };
+  limits?: {
+    maxProcessRuntimeMs?: number;
+    maxProcessOutputBytes?: number;
+    maxConcurrentProcesses?: number;
+    maxMemoryMb?: number;
+    maxWorkspaceBytes?: number;
+    maxFileWriteBytes?: number;
+    maxNetworkRequests?: number;
+    maxNetworkBytes?: number;
+  };
+  metadata?: Record<string, JsonValue>;
+}
+
+export interface AgentExecutionEnvironmentBinding {
+  environmentId: string;
+  environmentVersion?: string;
+  fingerprint: string;
+  workspaceId?: string;
+}
+
+export interface AgentExecutionEnvironmentAcquireRequest<TContext = any> {
+  runId: string;
+  agentId?: string;
+  scope?: AgentStoreScope;
+  context?: TContext;
+  metadata?: Record<string, JsonValue>;
+  abortSignal?: AbortSignal;
+}
+
+export interface AgentExecutionAuthorizationRequest<TContext = any> {
+  manifest: AgentExecutionEnvironmentManifest;
+  binding: AgentExecutionEnvironmentBinding;
+  tool: ToolDefinition;
+  toolCall: ToolCall;
+  input: unknown;
+  context: ToolExecutionContext<TContext>;
+  phase: "preflight" | "execute";
+}
+
+export type AgentExecutionAuthorizationDecision =
+  | { decision: "allow"; metadata?: Record<string, JsonValue> }
+  | { decision: "deny"; reason: string; metadata?: Record<string, JsonValue> };
+
+export interface AgentExecutionEnvironmentSession<TContext = any> {
+  readonly manifest: AgentExecutionEnvironmentManifest;
+  readonly binding: AgentExecutionEnvironmentBinding;
+  authorize(
+    request: AgentExecutionAuthorizationRequest<TContext>
+  ): AgentExecutionAuthorizationDecision | Promise<AgentExecutionAuthorizationDecision>;
+  execute<TResult>(
+    request: AgentExecutionAuthorizationRequest<TContext>,
+    operation: () => TResult | Promise<TResult>
+  ): TResult | Promise<TResult>;
+  release?(result: {
+    status: AgentStatus;
+    error?: { message: string };
+  }): void | Promise<void>;
+}
+
+export interface AgentExecutionEnvironment<TContext = any> {
+  readonly manifest: AgentExecutionEnvironmentManifest;
+  acquire(
+    request: AgentExecutionEnvironmentAcquireRequest<TContext>
+  ): AgentExecutionEnvironmentSession<TContext> | Promise<AgentExecutionEnvironmentSession<TContext>>;
 }
 
 export interface StructuredOutputConfig<TSchema extends ZodTypeAny = ZodTypeAny> {
@@ -299,6 +408,11 @@ export interface AgentApprovalResolvedEvent {
   approval: AgentApprovalResponse;
 }
 
+export interface AgentCompactionEvent {
+  type: "agent-compaction";
+  compaction: AgentCompactionRecord;
+}
+
 export interface AgentRunFinishEvent {
   type: "agent-run-finish";
   status: AgentStatus;
@@ -312,6 +426,7 @@ export type AgentStreamEvent =
   | AgentStepFinishEvent
   | AgentApprovalRequestEvent
   | AgentApprovalResolvedEvent
+  | AgentCompactionEvent
   | AgentRunFinishEvent;
 
 export interface StreamObjectDeltaEvent {
@@ -1240,6 +1355,11 @@ export type GenerateTextOptions<
     toolApprovalResolutions?: AgentApprovalResolution[];
     toolContext?: ToolRuntimeContext<TContext>;
     onToolApprovalDecision?: ToolApprovalObserver;
+    /** Durable runtimes may replace the active context before each provider request. */
+    prepareModelMessages?: (context: {
+      messages: readonly ModelMessage[];
+      step: number;
+    }) => ModelMessage[] | undefined | Promise<ModelMessage[] | undefined>;
     /** Called immediately before each model request. Throw to stop the loop. */
     onBeforeModelStep?: (context: { request: ModelGenerateInput; step: number }) => void | Promise<void>;
     /** Called before a batch of approved local tool calls is executed. */
@@ -1308,6 +1428,10 @@ export type AgentStepStatus = "running" | "completed" | "suspended" | "waiting_a
 export interface AgentRunPolicy {
   timeoutMs?: number;
   onTimeout?: "fail" | "cancel-requested";
+  /** Explicit migration escape hatch for pre-fingerprint durable states. */
+  allowLegacyHarnessResume?: boolean;
+  /** Explicit migration escape hatch for states created before environment binding. */
+  allowLegacyExecutionEnvironmentResume?: boolean;
   /** Disable only for stores that intentionally provide CAS without worker leases. */
   leaseMode?: "required" | "disabled";
   /** Duration of the exclusive worker lease. Defaults to 30 seconds. */
@@ -1330,6 +1454,67 @@ export interface AgentRunPolicy {
     maxTotalTokens?: number;
     includeChildRuns?: boolean;
   };
+}
+
+export type AgentCompactionReason =
+  | "message-count"
+  | "estimated-input-tokens";
+
+export interface AgentCompactionRequest<TContext = any> {
+  runId: string;
+  agentId?: string;
+  scope?: AgentStoreScope;
+  beforeStep: number;
+  context?: TContext;
+  /** Historical prefix being summarized. System messages are never included. */
+  messages: ModelMessage[];
+  /** Literal tail preserved after the summary. */
+  retainedMessages: ModelMessage[];
+  reasons: AgentCompactionReason[];
+  estimatedTokensBefore: number;
+  sourceDigest: string;
+  idempotencyKey: string;
+  metadata?: Record<string, JsonValue>;
+  abortSignal?: AbortSignal;
+}
+
+export interface AgentCompactionResult {
+  summary: string;
+  usage?: TokenUsage;
+  metadata?: Record<string, JsonValue>;
+}
+
+export type AgentCompactor<TContext = any> = (
+  request: AgentCompactionRequest<TContext>
+) => AgentCompactionResult | Promise<AgentCompactionResult>;
+
+export interface AgentCompactionOptions<TContext = any> {
+  /** Compaction runs when either configured threshold is exceeded. */
+  maxMessages?: number;
+  maxEstimatedInputTokens?: number;
+  /** Literal non-system tail retained after compaction. Defaults to 8 messages. */
+  keepRecentMessages?: number;
+  estimateTokens?: (messages: readonly ModelMessage[]) => number;
+  compactor: AgentCompactor<TContext>;
+}
+
+export interface AgentCompactionRecord {
+  id: string;
+  beforeStep: number;
+  createdAt: number;
+  reasons: AgentCompactionReason[];
+  sourceDigest: string;
+  resultDigest: string;
+  summaryDigest: string;
+  summary: string;
+  messageCountBefore: number;
+  messageCountAfter: number;
+  compactedMessageCount: number;
+  retainedMessageCount: number;
+  estimatedTokensBefore: number;
+  estimatedTokensAfter: number;
+  usage?: TokenUsage;
+  metadata?: Record<string, JsonValue>;
 }
 
 export interface AgentStepRequest {
@@ -1373,6 +1558,7 @@ export interface AgentChildRun {
   agentId?: string;
   parentRunId?: string;
   toolName?: string;
+  toolCallId?: string;
   status: AgentStatus;
   outputText: string;
   steps: number;
@@ -1385,6 +1571,16 @@ export interface AgentChildRun {
     message: string;
   };
   metadata?: Record<string, JsonValue>;
+  /** Durable child state retained only while the parent must resume a child approval. */
+  resumeState?: AgentRunState;
+}
+
+export interface AgentHarnessBinding {
+  schemaVersion: 1;
+  id: string;
+  version: string;
+  fingerprint: string;
+  algorithm: "sha256";
 }
 
 export interface AgentRunState {
@@ -1402,6 +1598,8 @@ export interface AgentRunState {
   parentRunId?: string;
   provider: string;
   modelId: string;
+  harness?: AgentHarnessBinding;
+  executionEnvironment?: AgentExecutionEnvironmentBinding;
   status: AgentStatus;
   messages: ModelMessage[];
   steps: AgentStep[];
@@ -1417,6 +1615,7 @@ export interface AgentRunState {
   pendingApprovals: AgentApprovalRequest[];
   approvalHistory?: AgentApprovalResolution[];
   childRuns?: AgentChildRun[];
+  compactions?: AgentCompactionRecord[];
   metadata?: Record<string, JsonValue>;
   handoff?: AgentHandoff;
   startedAt?: number;
@@ -1830,6 +2029,10 @@ export interface AgentDefinition<
   outputGuardrails?: AgentOutputGuardrail<TContext, TOutput>[];
   providerOptions?: ProviderOptionsOf<TModel>;
   subagents?: AgentSubAgentDefinition[];
+  /** Immutable identity of the capsule/spec that owns durable resume semantics. */
+  harness?: AgentHarnessBinding;
+  executionEnvironment?: AgentExecutionEnvironment<TContext>;
+  compaction?: AgentCompactionOptions<TContext>;
   policy?: AgentRunPolicy;
   metadata?: Record<string, JsonValue>;
   store?: AgentRunStore;
@@ -1857,7 +2060,7 @@ export interface LiveAgentDefinition<TModel extends RealtimeModel = RealtimeMode
 
 export interface AgentApprovalRequest {
   /** Absent on legacy persisted states and treated as "provider". */
-  kind?: "provider" | "local-tool";
+  kind?: "provider" | "local-tool" | "subagent";
   provider: string;
   id: string;
   name: string;
@@ -1868,6 +2071,9 @@ export interface AgentApprovalRequest {
   inputDigest?: string;
   toolVersion?: string;
   signature?: string;
+  childRunId?: string;
+  childAgentId?: string;
+  childApprovalRequestId?: string;
   rawData: JsonValue;
 }
 
@@ -1881,7 +2087,7 @@ export interface AgentApprovalResponse {
 
 export interface AgentApprovalResolution {
   requestId: string;
-  kind: "provider" | "local-tool";
+  kind: "provider" | "local-tool" | "subagent";
   provider: string;
   approve: boolean;
   reason?: string;
@@ -1890,6 +2096,9 @@ export interface AgentApprovalResolution {
   inputDigest?: string;
   toolVersion?: string;
   signature?: string;
+  childRunId?: string;
+  childAgentId?: string;
+  childApprovalRequestId?: string;
   resolvedAt: number;
 }
 
@@ -1913,6 +2122,9 @@ export type AgentRunInput<
     toolChoice?: ToolChoice;
     toolExecution?: ToolExecutionOptions;
     toolApprovalPolicy?: ToolApprovalPolicy<TContext>;
+    executionEnvironment?: AgentExecutionEnvironment<TContext>;
+    /** Pass false to disable the agent default for this invocation. */
+    compaction?: AgentCompactionOptions<TContext> | false;
     maxSteps?: number;
     temperature?: number;
     maxTokens?: number;
@@ -1996,6 +2208,8 @@ export interface PrepareSubagentsForAgentOptions {
   onTelemetryEvent?: AgentTelemetryObserver;
   toolApprovalPolicy?: ToolApprovalPolicy;
   toolExecution?: ToolExecutionOptions;
+  executionEnvironment?: AgentExecutionEnvironment;
+  compaction?: AgentCompactionOptions;
   metadata?: Record<string, JsonValue>;
 }
 

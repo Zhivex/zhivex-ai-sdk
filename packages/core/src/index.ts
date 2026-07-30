@@ -72,6 +72,11 @@ export {
 } from "./agent-state.js";
 export type { AgentRunStateMigrationTarget } from "./agent-state.js";
 export {
+  createAgentExecutionEnvironmentBinding,
+  createAgentHarnessBinding,
+  fingerprintAgentHarness
+} from "./agent-harness.js";
+export {
   AdvancedToolRegistry,
   createAdvancedToolRegistry,
   createHttpTool,

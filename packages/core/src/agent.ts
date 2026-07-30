@@ -2,22 +2,31 @@ import { createHash } from "node:crypto";
 
 import { createAgentApprovalMessage, getAgentApprovalRequests } from "./agent-approval.js";
 import { createAgentHandoffMessage } from "./agent-handoff.js";
+import { createAgentExecutionEnvironmentBinding, fingerprintAgentHarness } from "./agent-harness.js";
 import { AGENT_RUN_STATE_SCHEMA_VERSION, normalizeAgentRunState } from "./agent-state.js";
 import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
 import { ConflictError, GuardrailTriggeredError, UnsupportedFeatureError, ValidationError } from "./errors.js";
 import { aggregateTokenUsage, generateText, getGenerateTextStepTiming, normalizeMessages, streamText } from "./generate-text.js";
-import { isCallableToolDefinition, serializeJsonValue } from "./messages.js";
+import { createTextMessage, isCallableToolDefinition, serializeJsonValue } from "./messages.js";
 import { mergeAbortSignals } from "./runtime.js";
 import { evaluateAgentBudgetPreflight, getAgentBudgetStatus } from "./safety-policy.js";
 import { createSecureId } from "./secure-id.js";
+import { createStructuredOutputPrompt } from "./structured-output-prompt.js";
+import { ToolExecutionSuspendedError } from "./tool-execution-suspension.js";
 import { toToolSet } from "./tool-registry.js";
 import { z } from "zod";
 import type {
   AgentChildRun,
+  AgentCompactionOptions,
+  AgentCompactionReason,
+  AgentCompactionRecord,
   AgentApprovalRequest,
   AgentApprovalResolution,
   AgentApprovalResponse,
   AgentDefinition,
+  AgentExecutionEnvironment,
+  AgentExecutionEnvironmentBinding,
+  AgentExecutionEnvironmentSession,
   AgentGroupMember,
   AgentGroupRunInput,
   AgentGroupRunOutput,
@@ -54,6 +63,8 @@ import type {
   ToolApprovalDecision,
   ToolApprovalEvent,
   ToolDefinition,
+  ToolExecutionContext,
+  ToolInputGuardrail,
   ToolExecutionResult
 } from "./types.js";
 
@@ -95,8 +106,11 @@ const resolveAgentOutputMode = (
 };
 
 const promptedOutputInstruction = (agent: AgentDefinition): string | undefined =>
-  resolveAgentOutputMode(agent) === "prompted"
-    ? "Return only valid JSON matching the requested output schema."
+  agent.outputSchema && resolveAgentOutputMode(agent) === "prompted"
+    ? createStructuredOutputPrompt(agent.outputSchema, {
+        name: agent.outputName,
+        description: agent.outputDescription
+      })
     : undefined;
 
 const hasToolCalls = (messages: ModelMessage[]): boolean =>
@@ -134,9 +148,24 @@ const countToolCalls = (messages: ModelMessage[]): number =>
     0
   );
 
+const messagePrefixLength = (
+  prefix: ModelMessage[],
+  messages: ModelMessage[]
+): number => {
+  if (prefix.length > messages.length) {
+    return 0;
+  }
+  for (let index = 0; index < prefix.length; index += 1) {
+    if (JSON.stringify(prefix[index]) !== JSON.stringify(messages[index])) {
+      return 0;
+    }
+  }
+  return prefix.length;
+};
+
 const mapSteps = (steps: GenerateTextStep[], offset: number, toolResults: ToolExecutionResult[]): AgentStep[] => {
   let toolResultCursor = 0;
-  let previousMessageCount = 0;
+  let previousMessages: ModelMessage[] = [];
 
   return steps.map((step, index) => {
     const response = snapshotResponse(step.response);
@@ -145,9 +174,9 @@ const mapSteps = (steps: GenerateTextStep[], offset: number, toolResults: ToolEx
     toolResultCursor += toolCallCount;
     const timing = getGenerateTextStepTiming(step.request);
     const finishedAt = timing?.finishedAt ?? Date.now();
-    const messageOffset = index === 0 ? 0 : previousMessageCount;
+    const messageOffset = index === 0 ? 0 : messagePrefixLength(previousMessages, step.request.messages);
     const incrementalMessages = step.request.messages.slice(messageOffset);
-    previousMessageCount = step.request.messages.length;
+    previousMessages = step.request.messages;
 
     return {
       index: offset + index + 1,
@@ -201,7 +230,9 @@ const createBaseState = (
   parentRunId: string | undefined,
   idempotencyKey: string | undefined,
   scope: AgentRunInput["scope"],
-  outputMode?: "native" | "prompted"
+  outputMode: "native" | "prompted" | undefined,
+  harness: AgentDefinition["harness"],
+  executionEnvironment: AgentExecutionEnvironmentBinding | undefined
 ): AgentRunState => {
   const startedAt = Date.now();
 
@@ -215,6 +246,8 @@ const createBaseState = (
     parentRunId: parentRunId ?? handoff?.fromRunId,
     provider,
     modelId,
+    harness,
+    executionEnvironment,
     status: "running",
     messages: initialMessages,
     steps: [],
@@ -225,6 +258,7 @@ const createBaseState = (
     outputMode,
     pendingApprovals: [],
     approvalHistory: [],
+    compactions: [],
     metadata,
     handoff,
     startedAt,
@@ -410,12 +444,31 @@ const applyApprovalResponses = async (
 
   const providerApprovals = approvals.filter((approval) => {
     const pending = pendingById.get(approval.approvalRequestId);
-    return pending?.kind !== "local-tool";
+    return pending?.kind === undefined || pending.kind === "provider";
   });
   const localResolutions: AgentApprovalResolution[] = [];
+  const subagentResolutions: AgentApprovalResolution[] = [];
   for (const approval of approvals) {
     const pending = pendingById.get(approval.approvalRequestId);
-    if (!pending || pending.kind !== "local-tool") {
+    if (!pending) {
+      continue;
+    }
+    if (pending.kind === "subagent") {
+      subagentResolutions.push({
+        requestId: pending.id,
+        kind: "subagent",
+        provider: pending.provider,
+        approve: approval.approve,
+        reason: approval.reason,
+        toolCallId: pending.toolCallId,
+        childRunId: pending.childRunId,
+        childAgentId: pending.childAgentId,
+        childApprovalRequestId: pending.childApprovalRequestId,
+        resolvedAt: Date.now()
+      });
+      continue;
+    }
+    if (pending.kind !== "local-tool") {
       continue;
     }
     if (signer) {
@@ -463,9 +516,12 @@ const applyApprovalResponses = async (
     ),
     approvalHistory: [
       ...approvalHistory.filter(
-        (existing) => !localResolutions.some((resolution) => resolution.requestId === existing.requestId)
+        (existing) =>
+          !localResolutions.some((resolution) => resolution.requestId === existing.requestId) &&
+          !subagentResolutions.some((resolution) => resolution.requestId === existing.requestId)
       ),
-      ...localResolutions
+      ...localResolutions,
+      ...subagentResolutions
     ]
   };
 };
@@ -569,6 +625,9 @@ const countToolErrors = (toolResults: ToolExecutionResult[]): number =>
 export const createSubAgentTool = <TModel extends LanguageModel>(
   options: CreateSubAgentToolOptions<TModel>
 ): ToolDefinition<typeof subAgentToolInputSchema, SubAgentToolOutput> => {
+  const runtimeState = (
+    options as CreateSubAgentToolOptions<TModel> & { runtimeState?: AgentRunState }
+  ).runtimeState;
   const toolName = options.toolName ?? options.name ?? defaultSubAgentToolName(options.agent);
   const metadata: Record<string, JsonValue> = {
     type: "subagent"
@@ -606,15 +665,43 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
       if (options.parentAgentId) {
         childMetadata.parentAgentId = options.parentAgentId;
       }
-      const output = await runAgent(options.agent, {
-        prompt: input.prompt,
-        system: joinInstructions(options.system, input.system),
-        parentRunId: options.parentRunId,
-        scope: options.scope,
-        context: executionContext?.context,
-        maxSteps: options.maxSteps,
-        metadata: cloneMetadata(options.metadata, childMetadata)
-      });
+      const toolCallId = executionContext?.toolCall.id;
+      const checkpoint = runtimeState?.childRuns?.find(
+        (childRun) => childRun.toolCallId === toolCallId && childRun.resumeState
+      );
+      const childApprovalResponses = checkpoint
+        ? (runtimeState?.approvalHistory ?? [])
+            .filter(
+              (resolution) =>
+                resolution.kind === "subagent" &&
+                resolution.toolCallId === toolCallId &&
+                resolution.childRunId === checkpoint.runId &&
+                resolution.childApprovalRequestId
+            )
+            .map((resolution) => ({
+              provider: resolution.provider,
+              approvalRequestId: resolution.childApprovalRequestId!,
+              approve: resolution.approve,
+              reason: resolution.reason
+            }))
+        : [];
+      const output = checkpoint?.resumeState
+        ? await resumeAgent(options.agent, {
+            state: checkpoint.resumeState,
+            approvals: childApprovalResponses,
+            scope: options.scope,
+            context: executionContext?.context,
+            maxSteps: options.maxSteps
+          })
+        : await runAgent(options.agent, {
+            prompt: input.prompt,
+            system: joinInstructions(options.system, input.system),
+            parentRunId: options.parentRunId,
+            scope: options.scope,
+            context: executionContext?.context,
+            maxSteps: options.maxSteps,
+            metadata: cloneMetadata(options.metadata, childMetadata)
+          });
       const childRun: AgentChildRun = {
         runId: output.state.runId,
         status: output.status,
@@ -623,6 +710,9 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
         toolCalls: countToolCallsInSteps(output.steps),
         toolErrors: countToolErrors(output.toolResults)
       };
+      if (toolCallId) {
+        childRun.toolCallId = toolCallId;
+      }
       if (output.state.agentId) {
         childRun.agentId = output.state.agentId;
       }
@@ -645,7 +735,40 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
       if (output.state.metadata) {
         childRun.metadata = output.state.metadata;
       }
+      if (output.status === "waiting_approval" && output.state.pendingApprovals.length) {
+        childRun.resumeState = output.state;
+      }
       await options.onFinish?.(childRun);
+      if (childRun.resumeState) {
+        const approvals = childRun.resumeState.pendingApprovals.map((approval) => {
+          const id = `subapproval_${createHash("sha256")
+            .update(
+              `${options.parentRunId ?? ""}\0${toolCallId ?? ""}\0${childRun.runId}\0${approval.id}`
+            )
+            .digest("hex")}`;
+          return {
+            kind: "subagent",
+            provider: approval.provider,
+            id,
+            name: approval.name,
+            arguments: approval.arguments,
+            serverLabel: approval.serverLabel,
+            toolCallId,
+            step: executionContext?.step,
+            childRunId: childRun.runId,
+            childAgentId: childRun.agentId,
+            childApprovalRequestId: approval.id,
+            rawData: {
+              type: "subagent_approval_request",
+              childRunId: childRun.runId,
+              childAgentId: childRun.agentId ?? null,
+              childApprovalRequestId: approval.id,
+              approval: approval.rawData
+            }
+          } satisfies AgentApprovalRequest;
+        });
+        throw new ToolExecutionSuspendedError(approvals);
+      }
       return serializeJsonValue(childRun) as SubAgentToolOutput;
     }
   };
@@ -813,6 +936,77 @@ const runGuardrails = async <TModel extends LanguageModel, TRequest>(
   return undefined;
 };
 
+const bindDurableRuntime = (
+  agent: AgentDefinition,
+  input: AgentRunInput,
+  state: AgentRunState,
+  executionEnvironment: AgentExecutionEnvironmentBinding | undefined
+) => {
+  const policy = {
+    ...(agent.policy ?? {}),
+    ...(input.policy ?? {})
+  };
+  if (state.harness && !agent.harness) {
+    throw new ConflictError(
+      `Agent run "${state.runId}" is bound to harness "${state.harness.id}", but the current agent has no harness binding.`
+    );
+  }
+  if (state.harness && agent.harness) {
+    if (
+      state.harness.id !== agent.harness.id ||
+      state.harness.version !== agent.harness.version ||
+      state.harness.fingerprint !== agent.harness.fingerprint
+    ) {
+      throw new ConflictError(`Agent run "${state.runId}" was created by a different harness fingerprint.`);
+    }
+  } else if (!state.harness && agent.harness) {
+    if (!policy?.allowLegacyHarnessResume) {
+      throw new ConflictError(
+        `Agent run "${state.runId}" predates harness binding; set allowLegacyHarnessResume only for an explicit migration.`
+      );
+    }
+    state.harness = agent.harness;
+  }
+
+  if (state.executionEnvironment && !executionEnvironment) {
+    throw new ConflictError(
+      `Agent run "${state.runId}" is bound to execution environment "${state.executionEnvironment.environmentId}".`
+    );
+  }
+  if (state.executionEnvironment && executionEnvironment) {
+    if (
+      state.executionEnvironment.environmentId !== executionEnvironment.environmentId ||
+      state.executionEnvironment.environmentVersion !== executionEnvironment.environmentVersion ||
+      state.executionEnvironment.fingerprint !== executionEnvironment.fingerprint ||
+      state.executionEnvironment.workspaceId !== executionEnvironment.workspaceId
+    ) {
+      throw new ConflictError(`Agent run "${state.runId}" was created in a different execution environment.`);
+    }
+  } else if (!state.executionEnvironment && executionEnvironment) {
+    if (!policy?.allowLegacyExecutionEnvironmentResume) {
+      throw new ConflictError(
+        `Agent run "${state.runId}" predates execution-environment binding; enable the explicit migration policy to resume it.`
+      );
+    }
+    state.executionEnvironment = executionEnvironment;
+  }
+};
+
+const validateHarnessBinding = (binding: AgentDefinition["harness"]) => {
+  if (!binding) {
+    return;
+  }
+  if (
+    binding.schemaVersion !== 1 ||
+    binding.algorithm !== "sha256" ||
+    !binding.id ||
+    !binding.version ||
+    !/^sha256:[0-9a-f]{64}$/.test(binding.fingerprint)
+  ) {
+    throw new ValidationError("Agent harness binding is invalid.");
+  }
+};
+
 const resolveContext = async <
   TModel extends LanguageModel,
   TContext,
@@ -821,11 +1015,18 @@ const resolveContext = async <
   agent: AgentDefinition<TModel, TContext, TOutput>,
   input: AgentRunInput<TModel, TContext>
 ) => {
+  validateHarnessBinding(agent.harness);
+  const executionEnvironment = input.executionEnvironment ?? agent.executionEnvironment;
+  const executionEnvironmentBinding = executionEnvironment
+    ? createAgentExecutionEnvironmentBinding(executionEnvironment.manifest)
+    : undefined;
+  let parsedContext = input.context;
   if (agent.contextSchema) {
-    const parsedContext = agent.contextSchema.safeParse(input.context);
-    if (!parsedContext.success) {
-      throw new ValidationError(`Invalid agent context: ${parsedContext.error.message}`);
+    const result = await agent.contextSchema.safeParseAsync(input.context);
+    if (!result.success) {
+      throw new ValidationError(`Invalid agent context: ${result.error.message}`);
     }
+    parsedContext = result.data;
   }
   ensureValidIdempotencyInput(input, agent.store);
   const inputScope = input.scope ?? input.handoff?.scope;
@@ -857,7 +1058,9 @@ const resolveContext = async <
       input.parentRunId,
       input.idempotencyKey,
       inputScope,
-      resolveAgentOutputMode(agent)
+      resolveAgentOutputMode(agent),
+      agent.harness,
+      executionEnvironmentBinding
     ) as AgentRunState & { idempotencyKey: string };
     const claim = await agent.store!.claimIdempotencyKey!(candidate);
     if (claim.claimed) {
@@ -866,6 +1069,8 @@ const resolveContext = async <
         messages: prepared.messages,
         remainingSteps: maxSteps,
         memoryMessages: prepared.memoryMessages,
+        context: parsedContext,
+        executionEnvironment,
         fresh: true
       };
     }
@@ -883,6 +1088,7 @@ const resolveContext = async <
 
   const metadata = cloneMetadata(agent.metadata, loadedState?.metadata, input.metadata, input.handoff?.metadata);
   if (loadedState) {
+    bindDurableRuntime(agent, input, loadedState, executionEnvironmentBinding);
     const maxSteps = input.maxSteps ?? loadedState.maxSteps;
     const resumed = await applyApprovalResponses(
       loadedState.messages,
@@ -912,6 +1118,8 @@ const resolveContext = async <
       messages: resumed.messages,
       remainingSteps: Math.max(0, maxSteps - loadedState.currentStep),
       memoryMessages: [] as ModelMessage[],
+      context: parsedContext,
+      executionEnvironment,
       fresh: false
     };
   }
@@ -933,11 +1141,15 @@ const resolveContext = async <
       input.parentRunId,
       input.idempotencyKey,
       inputScope,
-      resolveAgentOutputMode(agent)
+      resolveAgentOutputMode(agent),
+      agent.harness,
+      executionEnvironmentBinding
     ),
     messages: prepared.messages,
     remainingSteps: maxSteps,
     memoryMessages: prepared.memoryMessages,
+    context: parsedContext,
+    executionEnvironment,
     fresh: true
   };
 };
@@ -965,6 +1177,70 @@ const durableToolCallId = (
   `tool_${createHash("sha256")
     .update(`${runId}\0${step}\0${providerToolCallId}\0${toolName}\0${canonicalJson(input)}`)
     .digest("hex")}`;
+
+const wrapToolWithExecutionEnvironment = (
+  tool: ToolDefinition,
+  session: AgentExecutionEnvironmentSession
+): ToolDefinition => {
+  const authorize = async (
+    input: unknown,
+    context: ToolExecutionContext,
+    phase: "preflight" | "execute"
+  ) => session.authorize({
+    manifest: session.manifest,
+    binding: session.binding,
+    tool,
+    toolCall: context.toolCall,
+    input,
+    context,
+    phase
+  });
+  const environmentGuardrail: ToolInputGuardrail = async ({ input, context }) => {
+    const decision = await authorize(input, context, "preflight");
+    return decision.decision === "deny"
+      ? {
+          triggered: true,
+          reason: decision.reason,
+          metadata: decision.metadata
+        }
+      : undefined;
+  };
+
+  return {
+    ...tool,
+    approvalVersion: [
+      tool.approvalVersion,
+      `environment:${session.binding.fingerprint}`
+    ].filter(Boolean).join("|"),
+    inputGuardrails: [
+      environmentGuardrail,
+      ...(tool.inputGuardrails ?? [])
+    ],
+    execute: async (input, context) => {
+      if (!context) {
+        throw new ValidationError(`Tool "${tool.name}" requires an execution environment context.`);
+      }
+      const decision = await authorize(input, context, "execute");
+      if (decision.decision === "deny") {
+        throw new GuardrailTriggeredError(
+          "tool-input",
+          decision.reason,
+          { metadata: decision.metadata }
+        );
+      }
+      const request = {
+        manifest: session.manifest,
+        binding: session.binding,
+        tool,
+        toolCall: context.toolCall,
+        input,
+        context,
+        phase: "execute" as const
+      };
+      return session.execute(request, () => tool.execute(input, context));
+    }
+  } as ToolDefinition;
+};
 
 const wrapToolWithJournal = <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
@@ -1053,6 +1329,150 @@ const wrapToolWithJournal = <TModel extends LanguageModel>(
   };
 };
 
+const defaultEstimateInputTokens = (messages: readonly ModelMessage[]): number =>
+  Math.ceil(new TextEncoder().encode(JSON.stringify(messages)).byteLength / 4);
+
+const validateCompactionOptions = (options: AgentCompactionOptions) => {
+  if (
+    options.maxMessages !== undefined &&
+    (!Number.isSafeInteger(options.maxMessages) || options.maxMessages < 2)
+  ) {
+    throw new ValidationError("Agent compaction maxMessages must be an integer greater than or equal to 2.");
+  }
+  if (
+    options.maxEstimatedInputTokens !== undefined &&
+    (!Number.isSafeInteger(options.maxEstimatedInputTokens) || options.maxEstimatedInputTokens < 1)
+  ) {
+    throw new ValidationError("Agent compaction maxEstimatedInputTokens must be a positive integer.");
+  }
+  if (
+    options.keepRecentMessages !== undefined &&
+    (!Number.isSafeInteger(options.keepRecentMessages) || options.keepRecentMessages < 1)
+  ) {
+    throw new ValidationError("Agent compaction keepRecentMessages must be a positive integer.");
+  }
+  if (options.maxMessages === undefined && options.maxEstimatedInputTokens === undefined) {
+    throw new ValidationError("Agent compaction requires maxMessages or maxEstimatedInputTokens.");
+  }
+};
+
+const compactAgentMessages = async <TContext>(
+  options: AgentCompactionOptions<TContext>,
+  state: AgentRunState,
+  messages: readonly ModelMessage[],
+  beforeStep: number,
+  context: TContext | undefined,
+  abortSignal: AbortSignal | undefined
+): Promise<{ messages: ModelMessage[]; record: AgentCompactionRecord } | undefined> => {
+  validateCompactionOptions(options);
+  if (state.pendingApprovals.length) {
+    return undefined;
+  }
+
+  const estimateTokens = options.estimateTokens ?? defaultEstimateInputTokens;
+  const estimatedTokensBefore = estimateTokens(messages);
+  const reasons: AgentCompactionReason[] = [];
+  if (options.maxMessages !== undefined && messages.length > options.maxMessages) {
+    reasons.push("message-count");
+  }
+  if (
+    options.maxEstimatedInputTokens !== undefined &&
+    estimatedTokensBefore > options.maxEstimatedInputTokens
+  ) {
+    reasons.push("estimated-input-tokens");
+  }
+  if (!reasons.length) {
+    return undefined;
+  }
+
+  let systemCount = 0;
+  while (messages[systemCount]?.role === "system") {
+    systemCount += 1;
+  }
+  const maxTailForMessageLimit = options.maxMessages === undefined
+    ? Number.POSITIVE_INFINITY
+    : Math.max(1, options.maxMessages - systemCount - 1);
+  const keepRecentMessages = Math.min(
+    options.keepRecentMessages ?? 8,
+    maxTailForMessageLimit
+  );
+  let cut = Math.max(systemCount, messages.length - keepRecentMessages);
+  while (cut > systemCount && messages[cut]?.role === "tool") {
+    cut -= 1;
+  }
+  if (cut <= systemCount) {
+    throw new ValidationError("Agent compaction cannot satisfy its limits without removing protected messages.");
+  }
+
+  const compactedMessages = structuredClone(messages.slice(systemCount, cut));
+  const retainedMessages = structuredClone(messages.slice(cut));
+  const sourceDigest = fingerprintAgentHarness(messages);
+  const id = `cmp_${createHash("sha256")
+    .update(`${state.runId}\0${beforeStep}\0${sourceDigest}`)
+    .digest("hex")}`;
+  const result = await options.compactor({
+    runId: state.runId,
+    agentId: state.agentId,
+    scope: state.scope,
+    beforeStep,
+    context,
+    messages: compactedMessages,
+    retainedMessages,
+    reasons,
+    estimatedTokensBefore,
+    sourceDigest,
+    idempotencyKey: id,
+    metadata: state.metadata,
+    abortSignal
+  });
+  const summary = result.summary.trim();
+  if (!summary) {
+    throw new ValidationError("Agent compactor returned an empty summary.");
+  }
+
+  const compacted = [
+    ...structuredClone(messages.slice(0, systemCount)),
+    createTextMessage("assistant", `[Compacted prior conversation]\n${summary}`),
+    ...retainedMessages
+  ];
+  const estimatedTokensAfter = estimateTokens(compacted);
+  if (compacted.length >= messages.length || estimatedTokensAfter >= estimatedTokensBefore) {
+    throw new ValidationError("Agent compaction must reduce both message count and estimated input tokens.");
+  }
+  if (options.maxMessages !== undefined && compacted.length > options.maxMessages) {
+    throw new ValidationError("Agent compaction result still exceeds maxMessages.");
+  }
+  if (
+    options.maxEstimatedInputTokens !== undefined &&
+    estimatedTokensAfter > options.maxEstimatedInputTokens
+  ) {
+    throw new ValidationError("Agent compaction result still exceeds maxEstimatedInputTokens.");
+  }
+
+  const resultDigest = fingerprintAgentHarness(compacted);
+  return {
+    messages: compacted,
+    record: {
+      id,
+      beforeStep,
+      createdAt: Date.now(),
+      reasons,
+      sourceDigest,
+      resultDigest,
+      summaryDigest: fingerprintAgentHarness(summary),
+      summary,
+      messageCountBefore: messages.length,
+      messageCountAfter: compacted.length,
+      compactedMessageCount: compactedMessages.length,
+      retainedMessageCount: retainedMessages.length,
+      estimatedTokensBefore,
+      estimatedTokensAfter,
+      usage: result.usage,
+      metadata: result.metadata
+    }
+  };
+};
+
 const createGenerateOptions = <
   TModel extends LanguageModel,
   TContext,
@@ -1063,15 +1483,33 @@ const createGenerateOptions = <
   input: AgentRunInput<TModel, TContext>,
   messages: ModelMessage[],
   maxSteps: number,
-  abortSignal: AbortSignal | undefined = input.abortSignal
+  context: TContext | undefined,
+  executionEnvironmentSession: AgentExecutionEnvironmentSession<TContext> | undefined,
+  abortSignal: AbortSignal | undefined = input.abortSignal,
+  onCompaction?: (record: AgentCompactionRecord) => void | Promise<void>
 ): GenerateTextOptions<TModel, TContext> => {
   const tools = { ...(toToolSet(input.tools ?? agent.tools) ?? {}) };
   for (const subagent of agent.subagents ?? []) {
     const subagentTool = createSubAgentTool({
       ...subagent,
+      agent: {
+        ...subagent.agent,
+        store: subagent.agent.store ?? agent.store,
+        memory: subagent.agent.memory ?? agent.memory,
+        executionEnvironment:
+          subagent.agent.executionEnvironment ??
+          input.executionEnvironment ??
+          agent.executionEnvironment,
+        compaction: subagent.agent.compaction ?? (
+          input.compaction === false
+            ? undefined
+            : input.compaction ?? agent.compaction
+        )
+      },
       parentRunId: state.runId,
       parentAgentId: state.agentId,
       scope: state.scope,
+      runtimeState: state,
       onStart: async ({ toolName, childAgentId }) => {
         await emitTelemetryEvent(agent, {
           type: "subagent-start",
@@ -1082,7 +1520,14 @@ const createGenerateOptions = <
         });
       },
       onFinish: async (childRun) => {
-        state.childRuns = [...(state.childRuns ?? []), childRun];
+        state.childRuns = [
+          ...(state.childRuns ?? []).filter(
+            (existing) => childRun.toolCallId
+              ? existing.toolCallId !== childRun.toolCallId
+              : existing.runId !== childRun.runId
+          ),
+          childRun
+        ];
         await emitTelemetryEvent(agent, {
           type: "subagent-finish",
           runId: state.runId,
@@ -1090,7 +1535,7 @@ const createGenerateOptions = <
           childRun
         });
       }
-    });
+    } as CreateSubAgentToolOptions & { runtimeState: AgentRunState });
     if (tools[subagentTool.name]) {
       throw new ValidationError(`Subagent tool "${subagentTool.name}" conflicts with an existing tool.`);
     }
@@ -1098,12 +1543,20 @@ const createGenerateOptions = <
   }
   for (const [name, tool] of Object.entries(tools)) {
     if (isCallableToolDefinition(tool)) {
-      tools[name] = wrapToolWithJournal(agent, state, tool);
+      const environmentTool = executionEnvironmentSession
+        ? wrapToolWithExecutionEnvironment(tool, executionEnvironmentSession)
+        : tool;
+      tools[name] = tool.metadata?.type === "subagent"
+        ? environmentTool
+        : wrapToolWithJournal(agent, state, environmentTool);
     }
   }
   const finalTools = Object.keys(tools).length ? tools : undefined;
   const budget = input.policy?.budget ?? agent.policy?.budget;
   const runPolicy = resolveRunPolicy(agent, input);
+  const compaction = input.compaction === false
+    ? undefined
+    : input.compaction ?? agent.compaction;
   let checkpointState = cloneState(state);
   let reservedToolCalls = 0;
   const requestedMaxTokens = input.maxTokens ?? agent.maxTokens;
@@ -1114,26 +1567,72 @@ const createGenerateOptions = <
     budgetStatus?.remaining.totalTokens
   ].filter((value): value is number => value !== undefined);
   const maxTokens = tokenCeilings.length ? Math.min(...tokenCeilings) : undefined;
+  const requestedToolExecution = input.toolExecution ?? agent.toolExecution;
+  const toolExecution = agent.subagents?.length
+    ? {
+        ...requestedToolExecution,
+        parallel: false,
+        maxConcurrency: 1
+      }
+    : requestedToolExecution;
 
   return {
     model: agent.model,
     messages,
     tools: finalTools,
     toolChoice: input.toolChoice,
-    toolExecution: input.toolExecution ?? agent.toolExecution,
+    toolExecution,
     toolApprovalPolicy: input.toolApprovalPolicy ?? agent.toolApprovalPolicy,
     toolApprovalSigner: agent.toolApprovalSigner,
     toolApprovalResolutions: state.approvalHistory,
     toolContext: {
-      context: input.context,
+      context,
       runId: state.runId,
       agentId: state.agentId,
       scope: state.scope,
-      metadata: state.metadata
+      metadata: state.metadata,
+      executionEnvironment: executionEnvironmentSession
     },
     onToolApprovalDecision: async (event) => {
       await emitToolApprovalTelemetry(agent, state, event);
     },
+    prepareModelMessages: compaction
+      ? async ({ messages: activeMessages, step }) => {
+          const compacted = await compactAgentMessages(
+            compaction,
+            checkpointState,
+            activeMessages,
+            step,
+            context,
+            abortSignal
+          );
+          if (!compacted) {
+            return undefined;
+          }
+          checkpointState = {
+            ...checkpointState,
+            messages: compacted.messages,
+            usage: aggregateTokenUsage([
+              checkpointState.usage,
+              compacted.record.usage
+            ]),
+            compactions: [
+              ...(checkpointState.compactions ?? []).filter(
+                (existing) => existing.id !== compacted.record.id
+              ),
+              compacted.record
+            ],
+            updatedAt: Date.now()
+          };
+          state.messages = compacted.messages;
+          state.usage = checkpointState.usage;
+          state.compactions = checkpointState.compactions;
+          await persistState(agent, checkpointState, runPolicy);
+          state.revision = checkpointState.revision;
+          await onCompaction?.(compacted.record);
+          return compacted.messages;
+        }
+      : undefined,
     onBeforeModelStep: ({ step }) => {
       if (!budget) return;
       const trigger = evaluateAgentBudgetPreflight(state, budget, {
@@ -1154,7 +1653,14 @@ const createGenerateOptions = <
         ...approvalRequests,
         ...getAgentApprovalRequests(responseSnapshot.messages)
       ];
-      const requestOffset = Math.min(checkpointState.messages.length, request.messages.length);
+      const crossedCompactionBoundary = checkpointState.compactions?.some(
+        (record) =>
+          record.beforeStep === step &&
+          record.resultDigest === fingerprintAgentHarness(request.messages)
+      );
+      const requestOffset = crossedCompactionBoundary
+        ? 0
+        : messagePrefixLength(checkpointState.messages, request.messages);
       const timing = getGenerateTextStepTiming(request);
       const finishedAt = timing?.finishedAt ?? Date.now();
       const checkpointStep = {
@@ -1333,6 +1839,44 @@ const createAgentAbortContext = (
     },
     isTimedOut: () => timedOut
   };
+};
+
+const acquireExecutionEnvironment = async <TContext>(
+  environment: AgentExecutionEnvironment<TContext> | undefined,
+  state: AgentRunState,
+  context: TContext | undefined,
+  abortSignal: AbortSignal | undefined
+): Promise<AgentExecutionEnvironmentSession<TContext> | undefined> => {
+  if (!environment) {
+    return undefined;
+  }
+  const expected = state.executionEnvironment;
+  if (!expected) {
+    throw new ConflictError(`Agent run "${state.runId}" has no durable execution-environment binding.`);
+  }
+  const session = await environment.acquire({
+    runId: state.runId,
+    agentId: state.agentId,
+    scope: state.scope,
+    context,
+    metadata: state.metadata,
+    abortSignal
+  });
+  const manifestBinding = createAgentExecutionEnvironmentBinding(session.manifest);
+  if (
+    session.binding.environmentId !== expected.environmentId ||
+    session.binding.environmentVersion !== expected.environmentVersion ||
+    session.binding.fingerprint !== expected.fingerprint ||
+    session.binding.workspaceId !== expected.workspaceId ||
+    manifestBinding.fingerprint !== expected.fingerprint
+  ) {
+    await session.release?.({
+      status: "failed",
+      error: { message: "Execution environment returned a binding that differs from the durable run." }
+    });
+    throw new ConflictError(`Execution environment binding changed for agent run "${state.runId}".`);
+  }
+  return session;
 };
 
 interface AgentExecutionLeaseContext {
@@ -1524,6 +2068,9 @@ export class Agent<
   outputGuardrails?: AgentDefinition<TModel, TContext, TOutput>["outputGuardrails"];
   providerOptions?: AgentDefinition<TModel>["providerOptions"];
   subagents?: AgentDefinition<TModel>["subagents"];
+  harness?: AgentDefinition<TModel>["harness"];
+  executionEnvironment?: AgentDefinition<TModel, TContext>["executionEnvironment"];
+  compaction?: AgentDefinition<TModel, TContext>["compaction"];
   policy?: AgentRunPolicy;
   metadata?: Record<string, JsonValue>;
   store?: AgentRunStore;
@@ -1558,6 +2105,9 @@ export class Agent<
       outputGuardrails: this.outputGuardrails,
       providerOptions: this.providerOptions,
       subagents: this.subagents,
+      harness: this.harness,
+      executionEnvironment: this.executionEnvironment,
+      compaction: this.compaction,
       policy: this.policy,
       metadata: this.metadata,
       store: this.store,
@@ -1591,6 +2141,8 @@ export const prepareSubagentsForAgent = <TModel extends LanguageModel>(
   const onTelemetryEvent = options.onTelemetryEvent ?? agent.onTelemetryEvent;
   const toolApprovalPolicy = options.toolApprovalPolicy ?? agent.toolApprovalPolicy;
   const toolExecution = options.toolExecution ?? agent.toolExecution;
+  const executionEnvironment = options.executionEnvironment ?? agent.executionEnvironment;
+  const compaction = options.compaction ?? agent.compaction;
   const defaultMetadata = cloneMetadata(agent.metadata, options.metadata);
 
   return {
@@ -1606,6 +2158,8 @@ export const prepareSubagentsForAgent = <TModel extends LanguageModel>(
         onTelemetryEvent: subagent.agent.onTelemetryEvent ?? onTelemetryEvent,
         toolApprovalPolicy: subagent.agent.toolApprovalPolicy ?? toolApprovalPolicy,
         toolExecution: subagent.agent.toolExecution ?? toolExecution,
+        executionEnvironment: subagent.agent.executionEnvironment ?? executionEnvironment,
+        compaction: subagent.agent.compaction ?? compaction,
         metadata: cloneMetadata(defaultMetadata, subagent.agent.metadata)
       }
     }))
@@ -1795,7 +2349,7 @@ export const runAgent = async <
     return toOutput(context.state);
   }
 
-  if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
+  if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0) {
     context.state.status = currentStatus;
     return toOutput(context.state);
   }
@@ -1842,7 +2396,7 @@ export const runAgent = async <
     inputGuardrail = await runGuardrails(agent, context.state, "input", agent.inputGuardrails, () => ({
       runId: context.state.runId,
       agentId: context.state.agentId,
-      context: input.context,
+      context: context.context,
       state: cloneState(context.state),
       messages: context.messages,
       metadata: context.state.metadata
@@ -1875,14 +2429,40 @@ export const runAgent = async <
     mergeAbortSignals(input.abortSignal, executionLease.signal),
     policy
   );
+  let executionEnvironmentSession: AgentExecutionEnvironmentSession<TContext> | undefined;
+  let executionEnvironmentStatus: AgentStatus = "failed";
+  let executionEnvironmentError: { message: string } | undefined;
+  try {
+    executionEnvironmentSession = await acquireExecutionEnvironment(
+      context.executionEnvironment,
+      context.state,
+      context.context,
+      abortContext.signal
+    );
+  } catch (error) {
+    await executionLease.release();
+    throw error;
+  }
 
   try {
     const result = await withAgentPolicyTimeout(
-      generateText(createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps, abortContext.signal)),
+      generateText(
+        createGenerateOptions(
+          agent,
+          context.state,
+          input,
+          context.messages,
+          context.remainingSteps,
+          context.context,
+          executionEnvironmentSession,
+          abortContext.signal
+        )
+      ),
       abortContext
     );
     const cancelled = executionLease.cancelledState();
     if (cancelled) {
+      executionEnvironmentStatus = cancelled.status;
       await emitRunFinishTelemetry(agent, cancelled);
       return toOutput(cancelled);
     }
@@ -1895,7 +2475,7 @@ export const runAgent = async <
     const outputGuardrail = await runGuardrails(agent, output.state, "output", agent.outputGuardrails, () => ({
       runId: output.state.runId,
       agentId: output.state.agentId,
-      context: input.context,
+      context: context.context,
       state: cloneState(output.state),
       output,
       metadata: output.state.metadata
@@ -1912,10 +2492,15 @@ export const runAgent = async <
     await persistState(agent, output.state, policy);
     await emitRunFinishTelemetry(agent, output.state);
 
+    executionEnvironmentStatus = output.status;
     return output;
   } catch (error) {
+    executionEnvironmentError = {
+      message: error instanceof Error ? error.message : String(error)
+    };
     const cancelled = executionLease.cancelledState();
     if (cancelled) {
+      executionEnvironmentStatus = cancelled.status;
       await emitRunFinishTelemetry(agent, cancelled);
       return toOutput(cancelled);
     }
@@ -1931,6 +2516,7 @@ export const runAgent = async <
       const timedOutState = createTerminalState(durableState, status, message);
       await persistState(agent, timedOutState, policy);
       await emitRunFinishTelemetry(agent, timedOutState);
+      executionEnvironmentStatus = timedOutState.status;
       return toOutput(timedOutState);
     }
 
@@ -1943,8 +2529,13 @@ export const runAgent = async <
     );
     await persistState(agent, failedState, policy);
     await emitRunFinishTelemetry(agent, failedState);
+    executionEnvironmentStatus = failedState.status;
     throw error;
   } finally {
+    await executionEnvironmentSession?.release?.({
+      status: executionEnvironmentStatus,
+      error: executionEnvironmentError
+    });
     await executionLease.release();
   }
 };
@@ -1964,6 +2555,7 @@ export const streamAgent = <
   const publish = (event: AgentStreamEvent, terminal = false) =>
     broadcast.publish(event, { terminal });
   let activeLease: AgentExecutionLeaseContext | undefined;
+  let activeExecutionEnvironment: AgentExecutionEnvironmentSession<TContext> | undefined;
 
   const runner = (async () => {
     const context = await resolveContext(agent, input);
@@ -1994,7 +2586,7 @@ export const streamAgent = <
       };
     }
 
-    if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0 && !input.approvals?.length) {
+    if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0) {
       context.state.status = currentStatus;
       broadcast.close();
       return {
@@ -2047,7 +2639,7 @@ export const streamAgent = <
       inputGuardrail = await runGuardrails(agent, context.state, "input", agent.inputGuardrails, () => ({
         runId: context.state.runId,
         agentId: context.state.agentId,
-        context: input.context,
+        context: context.context,
         state: cloneState(context.state),
         messages: context.messages,
         metadata: context.state.metadata
@@ -2108,9 +2700,47 @@ export const streamAgent = <
       mergeAbortSignals(input.abortSignal, executionLease.signal),
       policy
     );
-    const streamResult = streamText(
-      createGenerateOptions(agent, context.state, input, context.messages, context.remainingSteps, abortContext.signal)
+    const executionEnvironmentSession = await acquireExecutionEnvironment(
+      context.executionEnvironment,
+      context.state,
+      context.context,
+      abortContext.signal
     );
+    activeExecutionEnvironment = executionEnvironmentSession;
+    let executionEnvironmentStatus: AgentStatus = "failed";
+    let executionEnvironmentError: { message: string } | undefined;
+    let streamResult: ReturnType<typeof streamText>;
+    try {
+      streamResult = streamText(
+        createGenerateOptions(
+          agent,
+          context.state,
+          input,
+          context.messages,
+          context.remainingSteps,
+          context.context,
+          executionEnvironmentSession,
+          abortContext.signal,
+          async (record) => {
+            await publish({
+              type: "agent-compaction",
+              compaction: record
+            });
+          }
+        )
+      );
+    } catch (error) {
+      executionEnvironmentError = {
+        message: error instanceof Error ? error.message : String(error)
+      };
+      await executionEnvironmentSession?.release?.({
+        status: "failed",
+        error: executionEnvironmentError
+      });
+      activeExecutionEnvironment = undefined;
+      await executionLease.release();
+      throw error;
+    }
     const approvalRequests: AgentApprovalRequest[] = [];
 
     const eventRelay = (async () => {
@@ -2172,6 +2802,7 @@ export const streamAgent = <
         );
         const cancelled = executionLease.cancelledState();
         if (cancelled) {
+          executionEnvironmentStatus = cancelled.status;
           await emitRunFinishTelemetry(agent, cancelled);
           await publish({
             type: "agent-run-finish",
@@ -2192,7 +2823,7 @@ export const streamAgent = <
         const outputGuardrail = await runGuardrails(agent, result.state, "output", agent.outputGuardrails, () => ({
           runId: result.state.runId,
           agentId: result.state.agentId,
-          context: input.context,
+          context: context.context,
           state: cloneState(result.state),
           output: result,
           metadata: result.state.metadata
@@ -2229,10 +2860,15 @@ export const streamAgent = <
           state: result.state
         }, true);
         broadcast.close();
+        executionEnvironmentStatus = result.status;
         return result;
       } catch (error) {
+        executionEnvironmentError = {
+          message: error instanceof Error ? error.message : String(error)
+        };
         const cancelled = executionLease.cancelledState();
         if (cancelled) {
+          executionEnvironmentStatus = cancelled.status;
           await emitRunFinishTelemetry(agent, cancelled);
           await publish({
             type: "agent-run-finish",
@@ -2266,6 +2902,7 @@ export const streamAgent = <
             state: timedOutState
           }, true);
           broadcast.close();
+          executionEnvironmentStatus = timedOutState.status;
           return toOutput(timedOutState);
         }
 
@@ -2285,8 +2922,14 @@ export const streamAgent = <
           state: failedState
         }, true);
         broadcast.close();
+        executionEnvironmentStatus = failedState.status;
         throw error;
       } finally {
+        await executionEnvironmentSession?.release?.({
+          status: executionEnvironmentStatus,
+          error: executionEnvironmentError
+        });
+        activeExecutionEnvironment = undefined;
         await executionLease.release();
       }
     })();
@@ -2296,6 +2939,11 @@ export const streamAgent = <
       textStream: streamResult.textStream
     };
   })().catch(async (error) => {
+    await activeExecutionEnvironment?.release?.({
+      status: "failed",
+      error: { message: error instanceof Error ? error.message : String(error) }
+    });
+    activeExecutionEnvironment = undefined;
     await activeLease?.release();
     broadcast.fail(error);
     throw error;

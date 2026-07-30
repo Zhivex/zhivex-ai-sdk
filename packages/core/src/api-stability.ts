@@ -160,6 +160,8 @@ const stableSymbols = [
 ] as const;
 
 const betaSymbols = [
+  "createAgentExecutionEnvironmentBinding",
+  "createAgentHarnessBinding",
   "AGENT_CONTROL_PLANE_SCHEMA_VERSION",
   "API_STABILITY_MANIFEST",
   "ARTIFACT_SCHEMA_VERSION",
@@ -183,6 +185,7 @@ const betaSymbols = [
   "createAgentControlPlaneRunRecord",
   "createAgentRunLedger",
   "createAgentToolPolicy",
+  "fingerprintAgentHarness",
   "createAgentAuditRecord",
   "createFileArtifactService",
   "createFileSearchStore",

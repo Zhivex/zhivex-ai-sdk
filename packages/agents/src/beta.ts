@@ -6,6 +6,8 @@
 export {
   AGENT_CONTROL_PLANE_SCHEMA_VERSION,
   PRODUCTION_AGENT_KIT_SCHEMA_VERSION,
+  createAgentExecutionEnvironmentBinding,
+  createAgentHarnessBinding,
   createAgentApprovalQueue,
   createAgentAuditRecord,
   createAgentCapabilityRouter,
@@ -18,6 +20,7 @@ export {
   createSensitiveDataPolicy,
   createToolAuditRecords,
   diffAgentRunLedgers,
+  fingerprintAgentHarness,
   getAgentCapabilities,
   getAgentSupportTier,
   getHostedToolClass,
