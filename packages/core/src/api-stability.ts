@@ -146,6 +146,7 @@ const stableSymbols = [
   "toUIMessage",
   "toUIMessageStream",
   "toUIMessageStreamResponse",
+  "toUIRunnerStreamResponse",
   "toUIMessages",
   "tool",
   "toolCallPart",

@@ -5,7 +5,7 @@ Use the SDK from server code: route handlers, server actions, API routes, or job
 ## Install
 
 ```bash
-bun add @zhivex-ai/sdk @zhivex-ai/openai
+bun add @zhivex-ai/react @zhivex-ai/sdk @zhivex-ai/openai react react-dom
 ```
 
 ## Route Handler
@@ -69,60 +69,17 @@ The SDK does not import a Postgres driver. Use the driver or managed database cl
 
 ## Client Component
 
+Import `@zhivex-ai/react/styles.css` once from `app/layout.tsx`, then use the ready-made chat or compose the lower-level primitives:
+
 ```tsx
 "use client";
 
-import { useState } from "react";
+import { ZhivexChat, useZhivexChat } from "@zhivex-ai/react";
 
 export function ChatBox() {
-  const [sessionId, setSessionId] = useState<string>();
-  const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState<Array<{ role: "user" | "assistant"; text: string }>>([]);
+  const chat = useZhivexChat({ endpoint: "/api/chat/stream" });
 
-  async function send() {
-    const userMessage = message.trim();
-    if (!userMessage) return;
-
-    setMessage("");
-    setMessages((current) => [...current, { role: "user", text: userMessage }]);
-
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId, message: userMessage })
-    });
-
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-
-    const data = await response.json() as {
-      sessionId: string;
-      text: string;
-    };
-
-    setSessionId(data.sessionId);
-    setMessages((current) => [...current, { role: "assistant", text: data.text }]);
-  }
-
-  return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        void send();
-      }}
-    >
-      <div>
-        {messages.map((item, index) => (
-          <p key={index}>
-            <strong>{item.role}:</strong> {item.text}
-          </p>
-        ))}
-      </div>
-      <input value={message} onChange={(event) => setMessage(event.target.value)} />
-      <button type="submit">Send</button>
-    </form>
-  );
+  return <ZhivexChat controller={chat} />;
 }
 ```
 
@@ -142,55 +99,37 @@ Do not use this as the primary production store on Vercel/serverless deployments
 
 ## Streaming Shape
 
-For streaming UIs, keep the same server boundary and expose a stream from the route handler. The SDK runtime can stream through `runner.stream()`, while your route decides whether the wire format is SSE, UI chunks, NDJSON, or a custom protocol.
+For streaming UIs, keep the same server boundary and use `toUIRunnerStreamResponse()`. It forwards normalized UI chunks, waits for `Runner.collect()` so persistence finishes, suppresses the internal `AgentRunState`, and emits a final `session-finish` event.
 
 ```ts
+import {
+  fromUIMessage,
+  toUIRunnerStreamResponse,
+  type AgentApprovalResponse,
+  type UIMessage
+} from "@zhivex-ai/sdk";
+
+const body = await request.json() as {
+  message?: UIMessage;
+  sessionId?: string;
+  approvals?: AgentApprovalResponse[];
+};
+
+if (!body.message && !body.approvals?.length) {
+  return Response.json({ error: "Missing message or approval." }, { status: 400 });
+}
+
 const stream = runner.stream({
   userId,
-  sessionId,
-  prompt: body.message
+  sessionId: body.sessionId,
+  messages: body.message ? [fromUIMessage(body.message)] : undefined,
+  approvals: body.approvals,
+  abortSignal: request.signal
 });
 
-const encoder = new TextEncoder();
-const encode = (event: unknown) => encoder.encode(`${JSON.stringify(event)}\n`);
-
-return new Response(
-  new ReadableStream({
-    async start(controller) {
-      try {
-        for await (const text of stream.textStream) {
-          controller.enqueue(encode({ type: "text", text }));
-        }
-
-        const result = await stream.collect();
-        controller.enqueue(
-          encode({
-            type: "finish",
-            sessionId: result.session.sessionId,
-            status: result.output.status
-          })
-        );
-      } catch (error) {
-        controller.enqueue(
-          encode({
-            type: "error",
-            error: error instanceof Error ? error.message : String(error)
-          })
-        );
-      } finally {
-        controller.close();
-      }
-    }
-  }),
-  {
-    headers: {
-      "cache-control": "no-cache",
-      "content-type": "application/x-ndjson; charset=utf-8"
-    }
-  }
-);
+return toUIRunnerStreamResponse(stream);
 ```
 
-Use `stream.collect()` to persist the final session state after the stream completes.
+The default React transport sends only the latest user message because `Runner + SessionService` owns prior history. Approval resumes omit that message to avoid recording it twice.
 
-The repo example in `examples/next-runner` includes both `/api/chat` for simple JSON responses and `/api/chat/stream` for incremental NDJSON responses.
+The repo example in `examples/next-runner` includes both `/api/chat` for simple JSON responses and `/api/chat/stream` for the React/SSE flow.

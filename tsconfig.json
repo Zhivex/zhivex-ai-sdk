@@ -17,6 +17,7 @@
     { "path": "./packages/azure-openai" },
     { "path": "./packages/openrouter" },
     { "path": "./packages/gateway" },
+    { "path": "./packages/react" },
     { "path": "./packages/sdk" }
   ]
 }

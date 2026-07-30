@@ -1,4 +1,5 @@
 import { ParseError, ProviderHTTPError } from "./errors.js";
+import type { RunnerStreamResult } from "./runner.js";
 import type { AgentStreamResult, StreamTextResult, UIMessageChunk } from "./types.js";
 import { toUIMessageStream } from "./ui.js";
 
@@ -239,3 +240,38 @@ export const toUIAgentStreamResponse = (
   source: AgentStreamResult | AsyncIterable<UIMessageChunk>,
   init: ResponseInit & { messageId?: string } = {}
 ): Response => toUIMessageStreamResponse(source, init);
+
+export const toUIRunnerStreamResponse = (
+  source: RunnerStreamResult,
+  init: ResponseInit & { messageId?: string } = {}
+): Response => {
+  const { messageId, ...responseInit } = init;
+  const uiStream = (async function* (): AsyncGenerator<UIMessageChunk> {
+    let hasStreamError = false;
+    let streamError: unknown;
+    try {
+      for await (const chunk of toUIMessageStream(source.eventStream, {
+        messageId,
+        includeAgentRunFinish: false
+      })) {
+        yield chunk;
+      }
+    } catch (error) {
+      hasStreamError = true;
+      streamError = error;
+    }
+
+    const result = await source.collect();
+    if (hasStreamError) {
+      throw streamError;
+    }
+
+    yield {
+      type: "session-finish",
+      sessionId: result.session.sessionId,
+      status: result.output.status
+    };
+  })();
+
+  return toUIMessageStreamResponse(uiStream, responseInit);
+};

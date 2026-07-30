@@ -23,6 +23,7 @@ The following packages are intended for npm consumers:
 - `@zhivex-ai/core`
 - `@zhivex-ai/sdk`
 - `@zhivex-ai/agents`
+- `@zhivex-ai/react`
 - `@zhivex-ai/openai`
 - `@zhivex-ai/xai`
 - `@zhivex-ai/meta`

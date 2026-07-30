@@ -183,6 +183,7 @@ export {
   toUIMessage,
   toUIMessageStream,
   toUIMessageStreamResponse,
+  toUIRunnerStreamResponse,
   toUIMessages,
   wrapLanguageModel,
   ToolRegistry,
@@ -688,6 +689,12 @@ export type {
   WorkflowStateSaveInput,
   WorkflowTaskStep,
   RunWorkflowEvaluationOptions,
+  UIAgentCompactionChunk,
   UIMessage,
-  UIMessageChunk
+  UIMessageChunk,
+  UIMessageGeneratedMedia,
+  UIMessageImageGenerationChunk,
+  UIMessageStreamOptions,
+  UIMessageToolApprovalRequestChunk,
+  UISessionFinishChunk
 } from "@zhivex-ai/core";

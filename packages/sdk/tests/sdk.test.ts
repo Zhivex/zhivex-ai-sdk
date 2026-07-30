@@ -74,6 +74,7 @@ describe("sdk public surface", () => {
     expect(sdk.runAgentEvaluation).toBeTypeOf("function");
     expect(sdk.getHostedToolClass).toBeTypeOf("function");
     expect(sdk.toUIAgentStreamResponse).toBeTypeOf("function");
+    expect(sdk.toUIRunnerStreamResponse).toBeTypeOf("function");
     expect(sdk.generateObject).toBeTypeOf("function");
     expect(sdk.streamObject).toBeTypeOf("function");
     expect(sdk.embed).toBeTypeOf("function");

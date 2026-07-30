@@ -7,6 +7,7 @@ Supported public imports should come from published package entrypoints such as:
 - `@zhivex-ai/sdk`
 - `@zhivex-ai/core`
 - `@zhivex-ai/agents`
+- `@zhivex-ai/react`
 - `@zhivex-ai/openai`
 - `@zhivex-ai/xai`
 - `@zhivex-ai/meta`
@@ -73,6 +74,7 @@ These APIs are the supported public contract for application code and production
 - Gateway: `createGateway` and its documented request/response surface
 - Middleware helpers for caching, circuit breaking, telemetry, and model wrapping
 - UI and SSE helpers exported from `@zhivex-ai/sdk` and `@zhivex-ai/core`
+- React chat state, transport, and component APIs exported from `@zhivex-ai/react`
 - Core shared types that are exported from package entrypoints
 
 The stable surface is intentionally narrower than the total number of exported symbols. Stable means Zhivex should avoid unnecessary breaking changes and should document meaningful behavior changes in release notes and changesets.

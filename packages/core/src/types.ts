@@ -2695,12 +2695,40 @@ export interface UIMessageToolResultChunk {
   toolResult: ToolExecutionResult;
 }
 
+export interface UIMessageToolApprovalRequestChunk {
+  type: "tool-approval-request";
+  messageId: string;
+  role: "assistant";
+  approval: AgentApprovalRequest;
+}
+
 export interface UIMessageProviderDataChunk {
   type: "provider-data";
   messageId: string;
   role: "assistant";
   provider: string;
   data: JsonValue;
+}
+
+export interface UIMessageGeneratedMedia {
+  data?: string;
+  encoding?: "base64";
+  uri?: string;
+  mediaType: string;
+  text?: string;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export interface UIMessageImageGenerationChunk {
+  type: "image-generation";
+  messageId: string;
+  role: "assistant";
+  provider: string;
+  image: UIMessageGeneratedMedia;
+  partial: boolean;
+  id?: string;
+  index?: number;
+  providerMetadata?: Record<string, JsonValue>;
 }
 
 export interface UIMessageFinishChunk {
@@ -2745,17 +2773,30 @@ export interface UIAgentApprovalResolvedChunk {
   approval: AgentApprovalResponse;
 }
 
+export interface UIAgentCompactionChunk {
+  type: "agent-compaction";
+  compaction: AgentCompactionRecord;
+}
+
 export interface UIAgentRunFinishChunk {
   type: "agent-run-finish";
   status: AgentStatus;
   state: AgentRunState;
 }
 
+export interface UISessionFinishChunk {
+  type: "session-finish";
+  sessionId: string;
+  status: AgentStatus;
+}
+
 export type UIMessageChunk =
   | UIMessageTextChunk
   | UIMessageToolCallChunk
   | UIMessageToolResultChunk
+  | UIMessageToolApprovalRequestChunk
   | UIMessageProviderDataChunk
+  | UIMessageImageGenerationChunk
   | UIMessageFinishChunk
   | UIMessageErrorChunk
   | UIAgentRunStartChunk
@@ -2763,7 +2804,9 @@ export type UIMessageChunk =
   | UIAgentStepFinishChunk
   | UIAgentApprovalRequestChunk
   | UIAgentApprovalResolvedChunk
-  | UIAgentRunFinishChunk;
+  | UIAgentCompactionChunk
+  | UIAgentRunFinishChunk
+  | UISessionFinishChunk;
 
 export interface EmbedInput {
   values: EmbedValue[];

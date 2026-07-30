@@ -7,6 +7,7 @@ export const workspaceAliases = {
   "@zhivex-ai/deepseek": resolve(__dirname, "packages/deepseek/src/index.ts"),
   "@zhivex-ai/anthropic": resolve(__dirname, "packages/anthropic/src/index.ts"),
   "@zhivex-ai/gemini": resolve(__dirname, "packages/gemini/src/index.ts"),
+  "@zhivex-ai/react": resolve(__dirname, "packages/react/src/index.ts"),
   "@zhivex-ai/sdk": resolve(__dirname, "packages/sdk/src/index.ts")
 };
 

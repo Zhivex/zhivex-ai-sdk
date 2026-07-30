@@ -1,0 +1,569 @@
+:where(.zhivex-chat) {
+  --zhivex-color-bg: #ffffff;
+  --zhivex-color-surface: #f6f7f9;
+  --zhivex-color-surface-strong: #eceef2;
+  --zhivex-color-text: #16181d;
+  --zhivex-color-muted: #667085;
+  --zhivex-color-border: #d9dde5;
+  --zhivex-color-accent: #3157d5;
+  --zhivex-color-accent-contrast: #ffffff;
+  --zhivex-color-danger: #b42318;
+  --zhivex-color-danger-surface: #fff1f0;
+  --zhivex-radius: 0.875rem;
+  --zhivex-radius-small: 0.625rem;
+  --zhivex-shadow: 0 16px 40px rgb(16 24 40 / 10%);
+  --zhivex-font: Inter, ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --zhivex-content-width: 52rem;
+  --zhivex-transition: 150ms ease;
+
+  box-sizing: border-box;
+  color: var(--zhivex-color-text);
+  color-scheme: light dark;
+  display: grid;
+  font-family: var(--zhivex-font);
+  grid-template-areas:
+    "header"
+    "messages"
+    "error"
+    "composer";
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  min-block-size: 24rem;
+  overflow: hidden;
+  background: var(--zhivex-color-bg);
+  border: 1px solid var(--zhivex-color-border);
+  border-radius: var(--zhivex-radius);
+  box-shadow: var(--zhivex-shadow);
+}
+
+:where(.zhivex-chat),
+:where(.zhivex-chat *) {
+  box-sizing: border-box;
+}
+
+.zhivex-chat__header {
+  align-items: center;
+  background: var(--zhivex-color-bg);
+  border-block-end: 1px solid var(--zhivex-color-border);
+  display: flex;
+  grid-area: header;
+  min-block-size: 3.5rem;
+  padding: 0.75rem 1rem;
+}
+
+.zhivex-message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.125rem;
+  grid-area: messages;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(1rem, 3vw, 2rem);
+  scroll-behavior: smooth;
+}
+
+.zhivex-message-list:focus-visible,
+.zhivex-composer textarea:focus-visible,
+.zhivex-button:focus-visible,
+.zhivex-card summary:focus-visible,
+.zhivex-file a:focus-visible {
+  outline: 3px solid
+    color-mix(in srgb, var(--zhivex-color-accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.zhivex-empty {
+  align-items: center;
+  color: var(--zhivex-color-muted);
+  display: grid;
+  flex: 1;
+  min-block-size: 12rem;
+  place-content: center;
+  text-align: center;
+}
+
+.zhivex-empty > :first-child {
+  margin-block-start: 0;
+}
+
+.zhivex-empty > :last-child {
+  margin-block-end: 0;
+}
+
+.zhivex-message {
+  align-self: flex-start;
+  content-visibility: auto;
+  inline-size: min(100%, var(--zhivex-content-width));
+}
+
+.zhivex-message[data-role="user"] {
+  align-self: flex-end;
+  inline-size: min(88%, var(--zhivex-content-width));
+}
+
+.zhivex-message__role {
+  color: var(--zhivex-color-muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.015em;
+  margin-block-end: 0.375rem;
+  padding-inline: 0.25rem;
+}
+
+.zhivex-message[data-role="user"] .zhivex-message__role {
+  text-align: end;
+}
+
+.zhivex-message__content {
+  display: grid;
+  gap: 0.625rem;
+}
+
+.zhivex-message[data-status="error"] .zhivex-message__content {
+  border-inline-start: 0.1875rem solid var(--zhivex-color-danger);
+  padding-inline-start: 0.625rem;
+}
+
+.zhivex-message__text {
+  background: var(--zhivex-color-surface);
+  border: 1px solid var(--zhivex-color-border);
+  border-radius: var(--zhivex-radius);
+  line-height: 1.6;
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: 0.75rem 0.875rem;
+  white-space: pre-wrap;
+}
+
+.zhivex-message[data-role="user"] .zhivex-message__text {
+  background: var(--zhivex-color-accent);
+  border-color: var(--zhivex-color-accent);
+  color: var(--zhivex-color-accent-contrast);
+}
+
+.zhivex-card {
+  background: var(--zhivex-color-surface);
+  border: 1px solid var(--zhivex-color-border);
+  border-radius: var(--zhivex-radius-small);
+  color: var(--zhivex-color-text);
+  overflow: clip;
+}
+
+.zhivex-card summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem 0.75rem;
+  justify-content: space-between;
+  min-block-size: 2.75rem;
+  padding: 0.625rem 0.75rem;
+}
+
+.zhivex-card summary::marker {
+  color: var(--zhivex-color-muted);
+}
+
+.zhivex-card summary span,
+.zhivex-card__label {
+  color: var(--zhivex-color-muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.zhivex-card summary strong {
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+.zhivex-card__body {
+  border-block-start: 1px solid var(--zhivex-color-border);
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+}
+
+.zhivex-card pre,
+.zhivex-approval pre {
+  background: var(--zhivex-color-bg);
+  border: 1px solid var(--zhivex-color-border);
+  border-radius: 0.5rem;
+  font: 0.8125rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+  margin: 0;
+  max-block-size: 18rem;
+  overflow: auto;
+  padding: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.zhivex-card--error {
+  background: var(--zhivex-color-danger-surface);
+  border-color: color-mix(in srgb, var(--zhivex-color-danger) 35%, transparent);
+}
+
+.zhivex-card__error {
+  color: var(--zhivex-color-danger);
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.zhivex-provider-data {
+  font-size: 0.875rem;
+}
+
+.zhivex-media {
+  margin: 0;
+}
+
+.zhivex-image img {
+  background: var(--zhivex-color-surface);
+  border: 1px solid var(--zhivex-color-border);
+  border-radius: var(--zhivex-radius-small);
+  display: block;
+  max-block-size: 32rem;
+  max-inline-size: 100%;
+  object-fit: contain;
+}
+
+.zhivex-media__fallback {
+  background: var(--zhivex-color-surface);
+  border: 1px dashed var(--zhivex-color-border);
+  border-radius: var(--zhivex-radius-small);
+  color: var(--zhivex-color-muted);
+  margin: 0;
+  padding: 0.75rem;
+}
+
+.zhivex-audio {
+  background: var(--zhivex-color-surface);
+  border: 1px solid var(--zhivex-color-border);
+  border-radius: var(--zhivex-radius-small);
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+}
+
+.zhivex-audio figcaption {
+  font-size: 0.875rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.zhivex-audio audio {
+  inline-size: 100%;
+}
+
+.zhivex-audio__transcript {
+  color: var(--zhivex-color-muted);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.zhivex-file {
+  align-items: center;
+  background: var(--zhivex-color-surface);
+  border: 1px solid var(--zhivex-color-border);
+  border-radius: var(--zhivex-radius-small);
+  display: flex;
+  gap: 0.75rem;
+  min-inline-size: 0;
+  padding: 0.75rem;
+}
+
+.zhivex-file__mark {
+  background: var(--zhivex-color-accent);
+  block-size: 2rem;
+  border-radius: 0.5rem;
+  color: transparent;
+  flex: 0 0 2rem;
+  inline-size: 2rem;
+}
+
+.zhivex-file__details {
+  display: grid;
+  flex: 1;
+  gap: 0.125rem;
+  min-inline-size: 0;
+}
+
+.zhivex-file__details strong,
+.zhivex-file__details small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zhivex-file__details small {
+  color: var(--zhivex-color-muted);
+}
+
+.zhivex-file a {
+  color: var(--zhivex-color-accent);
+  font-size: 0.875rem;
+  font-weight: 650;
+  text-underline-offset: 0.2em;
+}
+
+.zhivex-approval {
+  align-self: center;
+  border-color: color-mix(
+    in srgb,
+    var(--zhivex-color-accent) 35%,
+    var(--zhivex-color-border)
+  );
+  inline-size: min(100%, var(--zhivex-content-width));
+  padding: 1rem;
+}
+
+.zhivex-approval__heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.zhivex-approval h3 {
+  font-size: 1rem;
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.zhivex-approval > p {
+  color: var(--zhivex-color-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.zhivex-approval__server {
+  background: var(--zhivex-color-surface-strong);
+  border-radius: 999px;
+  color: var(--zhivex-color-muted);
+  font-size: 0.75rem;
+  max-inline-size: 45%;
+  overflow: hidden;
+  padding: 0.25rem 0.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zhivex-approval details {
+  margin-block: 0.75rem;
+}
+
+.zhivex-approval details summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 650;
+  margin-block-end: 0.5rem;
+}
+
+.zhivex-approval__actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-block-start: 1rem;
+}
+
+.zhivex-composer {
+  align-items: end;
+  background: var(--zhivex-color-bg);
+  border-block-start: 1px solid var(--zhivex-color-border);
+  display: grid;
+  gap: 0.625rem;
+  grid-area: composer;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0.75rem;
+}
+
+.zhivex-composer textarea {
+  background: var(--zhivex-color-surface);
+  border: 1px solid var(--zhivex-color-border);
+  border-radius: var(--zhivex-radius-small);
+  color: var(--zhivex-color-text);
+  field-sizing: content;
+  font: inherit;
+  line-height: 1.5;
+  max-block-size: 12rem;
+  min-block-size: 2.75rem;
+  min-inline-size: 0;
+  padding: 0.625rem 0.75rem;
+  resize: none;
+}
+
+.zhivex-composer textarea::placeholder {
+  color: var(--zhivex-color-muted);
+}
+
+.zhivex-button {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--zhivex-radius-small);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 650;
+  justify-content: center;
+  min-block-size: 2.75rem;
+  padding: 0.5rem 0.875rem;
+  transition: background-color var(--zhivex-transition),
+    border-color var(--zhivex-transition), opacity var(--zhivex-transition);
+}
+
+.zhivex-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.zhivex-button--primary {
+  background: var(--zhivex-color-accent);
+  color: var(--zhivex-color-accent-contrast);
+}
+
+.zhivex-button--secondary {
+  background: var(--zhivex-color-bg);
+  border-color: var(--zhivex-color-border);
+  color: var(--zhivex-color-text);
+}
+
+.zhivex-button--stop {
+  background: var(--zhivex-color-danger);
+  color: #ffffff;
+}
+
+.zhivex-error {
+  align-items: center;
+  background: var(--zhivex-color-danger-surface);
+  border-block-start: 1px solid
+    color-mix(in srgb, var(--zhivex-color-danger) 30%, transparent);
+  color: var(--zhivex-color-danger);
+  display: flex;
+  font-size: 0.875rem;
+  gap: 0.75rem;
+  grid-area: error;
+  justify-content: space-between;
+  padding: 0.625rem 0.75rem;
+}
+
+.zhivex-error span {
+  overflow-wrap: anywhere;
+}
+
+.zhivex-activity {
+  align-items: center;
+  align-self: flex-start;
+  background: var(--zhivex-color-surface);
+  border: 1px solid var(--zhivex-color-border);
+  border-radius: 999px;
+  display: flex;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+}
+
+.zhivex-activity span {
+  animation: zhivex-pulse 1.2s ease-in-out infinite;
+  background: var(--zhivex-color-muted);
+  block-size: 0.375rem;
+  border-radius: 50%;
+  inline-size: 0.375rem;
+}
+
+.zhivex-activity span:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.zhivex-activity span:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+.zhivex-sr-only {
+  block-size: 1px;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  inline-size: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+}
+
+@keyframes zhivex-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-0.125rem);
+  }
+}
+
+@media (hover: hover) {
+  .zhivex-button:not(:disabled):hover {
+    filter: brightness(0.96);
+  }
+
+  .zhivex-file a:hover {
+    text-decoration-thickness: 0.125rem;
+  }
+}
+
+@media (max-width: 40rem) {
+  .zhivex-message-list {
+    padding: 1rem 0.75rem;
+  }
+
+  .zhivex-message[data-role="user"] {
+    inline-size: 94%;
+  }
+
+  .zhivex-approval__heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .zhivex-approval__server {
+    max-inline-size: 100%;
+    width: fit-content;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :where(.zhivex-chat) {
+    --zhivex-color-bg: #121419;
+    --zhivex-color-surface: #1b1e25;
+    --zhivex-color-surface-strong: #272b35;
+    --zhivex-color-text: #f2f4f7;
+    --zhivex-color-muted: #a5adbd;
+    --zhivex-color-border: #343a46;
+    --zhivex-color-accent: #7894f6;
+    --zhivex-color-accent-contrast: #101933;
+    --zhivex-color-danger: #ff8a80;
+    --zhivex-color-danger-surface: #2a1718;
+    --zhivex-shadow: 0 16px 40px rgb(0 0 0 / 28%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zhivex-message-list {
+    scroll-behavior: auto;
+  }
+
+  .zhivex-button {
+    transition: none;
+  }
+
+  .zhivex-activity span {
+    animation: none;
+    opacity: 0.7;
+  }
+}

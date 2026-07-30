@@ -68,6 +68,7 @@ import {
   toUIMessage,
   toUIMessageStream,
   toUIMessageStreamResponse,
+  toUIRunnerStreamResponse,
   wrapLanguageModel,
   recordToolTestFixture,
   renderProviderSupportMatrix,
@@ -82,7 +83,7 @@ import {
   toToolSet,
   user
 } from "../src/index.js";
-import type { AgentRunState, EmbeddingModel, ImageGenerationModel, LanguageModel, MusicGenerationModel, PredictionModel, ProviderAdapter, StreamEvent, ToolSet, VideoGenerationModel } from "../src/index.js";
+import type { AgentRunState, EmbeddingModel, ImageGenerationModel, LanguageModel, MusicGenerationModel, PredictionModel, ProviderAdapter, RunnerStreamResult, StreamEvent, ToolSet, VideoGenerationModel } from "../src/index.js";
 import { ParseError, ProviderHTTPError, UnsupportedFeatureError, ValidationError } from "../src/index.js";
 
 const createLanguageModel = (overrides?: Partial<LanguageModel>): LanguageModel => ({
@@ -2179,6 +2180,90 @@ describe("core helpers", () => {
 
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     expect(await response.text()).toContain("event: text-delta");
+  });
+
+  it("finalizes Runner persistence before emitting the session finish chunk", async () => {
+    let eventStreamFinished = false;
+    let collected = false;
+    const sensitiveState = {
+      secretContext: "must-not-cross-runner-sse"
+    } as unknown as AgentRunState;
+    const source = {
+      session: Promise.resolve({ sessionId: "session-1" } as never),
+      eventStream: (async function* () {
+        yield { type: "text-delta" as const, textDelta: "hello" };
+        yield {
+          type: "agent-run-finish" as const,
+          status: "completed" as const,
+          state: sensitiveState
+        };
+        eventStreamFinished = true;
+      })(),
+      textStream: (async function* () {
+        yield "hello";
+      })(),
+      async collect() {
+        expect(eventStreamFinished).toBe(true);
+        collected = true;
+        return {
+          session: { sessionId: "session-1" } as never,
+          output: { status: "completed" } as never
+        };
+      }
+    } satisfies RunnerStreamResult;
+
+    const response = toUIRunnerStreamResponse(source, { messageId: "assistant-1" });
+    const body = await response.text();
+
+    expect(collected).toBe(true);
+    expect(body).toContain("event: text-delta");
+    expect(body).toContain(
+      'event: session-finish\ndata: {"type":"session-finish","sessionId":"session-1","status":"completed"}'
+    );
+    expect(body.indexOf("event: text-delta")).toBeLessThan(body.indexOf("event: session-finish"));
+    expect(body).not.toContain("event: agent-run-finish");
+    expect(body).not.toContain("must-not-cross-runner-sse");
+
+    const legacyChunks = await Array.fromAsync(toUIMessageStream(
+      (async function* () {
+        yield {
+          type: "agent-run-finish" as const,
+          status: "completed" as const,
+          state: sensitiveState
+        };
+      })(),
+      "assistant-legacy"
+    ));
+    expect(legacyChunks).toEqual([
+      {
+        type: "agent-run-finish",
+        status: "completed",
+        state: sensitiveState
+      }
+    ]);
+  });
+
+  it("awaits Runner collection when the event stream fails", async () => {
+    let collected = false;
+    const source = {
+      session: Promise.resolve({ sessionId: "session-1" } as never),
+      eventStream: (async function* () {
+        yield { type: "text-delta" as const, textDelta: "partial" };
+        throw new Error("stream failed");
+      })(),
+      textStream: (async function* () {
+        yield "partial";
+      })(),
+      async collect() {
+        collected = true;
+        throw new Error("collection failed after persistence");
+      }
+    } satisfies RunnerStreamResult;
+
+    const response = toUIRunnerStreamResponse(source);
+
+    await expect(response.text()).rejects.toThrow("collection failed after persistence");
+    expect(collected).toBe(true);
   });
 
   it("streams tools across multiple steps", async () => {

@@ -43,6 +43,7 @@ import {
   toUIMessageStream,
   tool,
   ValidationError,
+  type AgentStreamEvent,
   type AgentRunState,
   type AgentRunStore,
   type AgentExecutionEnvironment,
@@ -2091,6 +2092,93 @@ describe("agent runtime", () => {
 
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     expect(await response.text()).toContain("event: agent-run-start");
+  });
+
+  it("maps approval, generated image, and compaction events into UI chunks", async () => {
+    const approval = {
+      provider: "test",
+      id: "approval-1",
+      name: "delete_file",
+      arguments: "{\"path\":\"draft.txt\"}",
+      rawData: { reason: "destructive" }
+    };
+    const image = {
+      data: new Uint8Array([1, 2, 3]),
+      uri: "https://cdn.example/image.png",
+      mediaType: "image/png",
+      text: "preview",
+      providerMetadata: {
+        seed: 42,
+        omitted: undefined
+      }
+    };
+    const compaction = {
+      id: "compact-1",
+      beforeStep: 2,
+      createdAt: 1_700_000_000_000,
+      reasons: ["message-count" as const],
+      sourceDigest: "source",
+      resultDigest: "result",
+      summaryDigest: "summary",
+      summary: "Earlier conversation summary.",
+      messageCountBefore: 8,
+      messageCountAfter: 3,
+      compactedMessageCount: 6,
+      retainedMessageCount: 2,
+      estimatedTokensBefore: 120,
+      estimatedTokensAfter: 40
+    };
+    const source = (async function* (): AsyncGenerator<AgentStreamEvent> {
+      yield { type: "tool-approval-request", approval };
+      yield {
+        type: "image-generation",
+        provider: "test",
+        image,
+        partial: true,
+        id: "image-1",
+        index: 0,
+        providerMetadata: { quality: "preview" }
+      };
+      yield { type: "agent-compaction", compaction };
+    })();
+
+    const chunks = [];
+    for await (const chunk of toUIMessageStream(source, "assistant-1")) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([
+      {
+        type: "tool-approval-request",
+        messageId: "assistant-1",
+        role: "assistant",
+        approval
+      },
+      {
+        type: "image-generation",
+        messageId: "assistant-1",
+        role: "assistant",
+        provider: "test",
+        image: {
+          data: "AQID",
+          encoding: "base64",
+          uri: "https://cdn.example/image.png",
+          mediaType: "image/png",
+          text: "preview",
+          providerMetadata: {
+            seed: 42
+          }
+        },
+        partial: true,
+        id: "image-1",
+        index: 0,
+        providerMetadata: { quality: "preview" }
+      },
+      {
+        type: "agent-compaction",
+        compaction
+      }
+    ]);
   });
 
   it("persists and reloads agent state through the run store", async () => {

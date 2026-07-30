@@ -22,7 +22,7 @@ import { getApiStability } from "@zhivex-ai/sdk";
 console.log(getApiStability("createWorkflow")?.stability); // "beta"
 ```
 
-Runtime export drift is guarded by that manifest, and public declaration drift is guarded by type snapshot tests for `@zhivex-ai/core` and `@zhivex-ai/sdk`.
+Runtime export drift is guarded by that manifest, and public declaration drift is guarded by type snapshot tests for `@zhivex-ai/core`, `@zhivex-ai/sdk`, and `@zhivex-ai/react`.
 
 The stable boundary covers the shared generation primitives, the portable agent runtime, safety and evaluation helpers, and `Runner + SessionService`. Declarative workflows, artifacts, workflow state services, the control-plane/CLI surface, and other APIs named in the manifest remain Beta or Experimental.
 
@@ -90,6 +90,10 @@ Production adoption path:
 
 - `@zhivex-ai/agents`: agent-first facade over `core` for applications that only need the portable agent runtime, stores, memory, safety, tracing, evaluation, and provider support helpers.
 
+### React
+
+- `@zhivex-ai/react`: headless chat state, fetch/SSE transport, and customizable accessible React components for Zhivex applications.
+
 ### Providers
 
 - `@zhivex-ai/openai`
@@ -141,6 +145,7 @@ bun add @zhivex-ai/bedrock
 bun add @zhivex-ai/ollama
 bun add @zhivex-ai/gateway
 bun add @zhivex-ai/agents
+bun add @zhivex-ai/react react react-dom
 ```
 
 If you prefer working directly with the shared contract:
@@ -179,6 +184,24 @@ console.log(result.usage);
 ```
 
 The high-level API accepts either a `prompt` or explicit `messages`, and returns normalized output including text, messages, finish reason, usage, tool results, and execution steps.
+
+## React Chat UI
+
+`@zhivex-ai/react` provides a browser-safe controller, bounded fetch/SSE transport, accessible components, and a default theme:
+
+```tsx
+"use client";
+
+import { ZhivexChat, useZhivexChat } from "@zhivex-ai/react";
+import "@zhivex-ai/react/styles.css";
+
+export function Chat() {
+  const chat = useZhivexChat({ endpoint: "/api/chat" });
+  return <ZhivexChat controller={chat} />;
+}
+```
+
+The server route owns `Runner`, provider credentials, tools, authorization, and session persistence. See the [React package guide](./packages/react/README.md) and [Next.js example](./examples/next-runner/README.md).
 
 ## OpenAI GPT-5.6
 
@@ -2809,6 +2832,7 @@ packages/
   core/           Shared contracts, runtime helpers, streams, middleware, catalog
   sdk/            Aggregated public API
   agents/         Agent-first facade over the core runtime
+  react/          React chat state, transport, components, and styles
   openai/         OpenAI adapter
   xai/            xAI Grok adapter
   meta/           Meta Model API adapter

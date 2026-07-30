@@ -60,6 +60,7 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("normalizeAgentRunState")?.stability).toBe("stable");
 
     expect(api.getApiStability("createRunner")?.stability).toBe("stable");
+    expect(api.getApiStability("toUIRunnerStreamResponse")?.stability).toBe("stable");
     expect(api.getApiStability("createProductionSafetyPolicy")?.stability).toBe("stable");
     expect(api.getApiStability("createProductionTraceCollector")?.stability).toBe("stable");
     expect(api.getApiStability("createProductionTraceOptions")?.stability).toBe("stable");

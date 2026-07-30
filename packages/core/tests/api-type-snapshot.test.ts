@@ -10,11 +10,12 @@ import { describe, expect, it } from "vitest";
 import coreSnapshot from "./fixtures/api-type-snapshots/core.json" with { type: "json" };
 import sdkSnapshot from "./fixtures/api-type-snapshots/sdk.json" with { type: "json" };
 import agentsSnapshot from "./fixtures/api-type-snapshots/agents.json" with { type: "json" };
+import reactSnapshot from "./fixtures/api-type-snapshots/react.json" with { type: "json" };
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const declarationSnapshotTimeoutMs = 30_000;
-type SnapshotPackageName = "agents" | "core" | "sdk";
+type SnapshotPackageName = "agents" | "core" | "react" | "sdk";
 
 const walkDeclarationFiles = async (directory: string): Promise<string[]> => {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -72,5 +73,9 @@ describe("public API type snapshots", () => {
 
   it("keeps sdk declaration snapshots explicit", async () => {
     await expect(declarationHashes("sdk")).resolves.toEqual(sdkSnapshot);
+  }, declarationSnapshotTimeoutMs);
+
+  it("keeps React declaration snapshots explicit", async () => {
+    await expect(declarationHashes("react")).resolves.toEqual(reactSnapshot);
   }, declarationSnapshotTimeoutMs);
 });
