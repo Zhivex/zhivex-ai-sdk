@@ -991,6 +991,30 @@ describe("core helpers", () => {
     }
   });
 
+  it.each([204, 205])("preserves bodyless HTTP tool responses with status %i in Node", async (status) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(null, { status })) as typeof fetch;
+
+    try {
+      const entry = createHttpTool({
+        name: `bodyless${status}`,
+        schema: z.object({}),
+        url: "https://example.com/tool",
+        mapResponse: async (response) => ({
+          status: response.status,
+          body: await response.text()
+        })
+      });
+
+      await expect(testToolDefinition(entry.tool, {})).resolves.toMatchObject({
+        ok: true,
+        output: { status, body: "" }
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("bounds HTTP tool responses and propagates cancellation, redirects, and idempotency safely", async () => {
     const originalFetch = globalThis.fetch;
     const observed: RequestInit[] = [];

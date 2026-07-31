@@ -16,18 +16,31 @@ const codeqlWorkflow = readFileSync(
 );
 
 describe("release workflow", () => {
-  it("passes generated tags between jobs as single-line JSON", () => {
+  it("recovers published tags from npm metadata and passes them as single-line JSON", () => {
     expect(workflow).toContain("release_tags_json:");
     expect(workflow).toContain("has_release_tags:");
+    expect(workflow).toContain('bun scripts/collect-release-tags.ts --git-head="$GITHUB_SHA"');
     expect(workflow).toContain('echo "tags_json=$tags_json"');
     expect(workflow).toContain("jq -r '.[]'");
-    expect(workflow).not.toContain("release_tags: ${{ steps.collect_release_tags.outputs.tags }}");
+    expect(workflow).not.toContain("tags-before");
+    expect(workflow).not.toContain("comm -13");
+  });
+
+  it("tests packed packages through Node in CI and before publishing", () => {
+    expect(ciWorkflow).toContain("actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38");
+    expect(ciWorkflow).toContain("bun run scripts/package-consumer-smoke.ts");
+    expect(workflow).toContain("bun run scripts/package-consumer-smoke.ts");
   });
 
   it("creates the aggregate SDK GitHub release after pushing tags", () => {
     expect(workflow).toContain("gh release create");
     expect(workflow).toContain("--verify-tag");
     expect(workflow).toContain("--generate-notes");
+  });
+
+  it("accepts existing annotated tags only when they resolve to the release commit", () => {
+    expect(workflow).toContain('refs/tags/$tag^{}');
+    expect(workflow).toContain('tag -a "$tag" "$GITHUB_SHA" -m "$tag"');
   });
 
   it("uses immutable installs, an audit gate, OIDC, and bounded jobs", () => {

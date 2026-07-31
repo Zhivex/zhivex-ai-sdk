@@ -24,6 +24,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup Node for package consumer smoke
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -46,3 +52,6 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: Verify packed packages with Node
+        run: bun run scripts/package-consumer-smoke.ts

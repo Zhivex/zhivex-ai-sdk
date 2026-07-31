@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.0.3
+
+### Patch Changes
+
+- Fix bodyless HTTP tool responses in Node, honor Qwen realtime frame limits, and refresh GPT-5.6 Terra and Luna pricing.
+
 ## 1.0.2
 
 ### Patch Changes

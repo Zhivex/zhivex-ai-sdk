@@ -5,6 +5,8 @@ import { createBedrock } from "../../bedrock/src/index.js";
 import { createDeepSeek } from "../../deepseek/src/index.js";
 import { createGemini } from "../../gemini/src/index.js";
 import { createKimi } from "../../kimi/src/index.js";
+import { createMeta } from "../../meta/src/index.js";
+import { createOllama } from "../../ollama/src/index.js";
 import { createOpenAI } from "../../openai/src/index.js";
 import { createOpenRouter } from "../../openrouter/src/index.js";
 import { createQwen, type QwenRegion } from "../../qwen/src/index.js";
@@ -84,6 +86,10 @@ const xaiApiKey = process.env.XAI_API_KEY;
 const xaiBaseURL = process.env.XAI_BASE_URL;
 const xaiTextModelId = process.env.XAI_INTEGRATION_MODEL ?? "grok-4.5";
 
+const metaApiKey = process.env.MODEL_API_KEY;
+const metaBaseURL = process.env.META_BASE_URL;
+const metaTextModelId = process.env.META_INTEGRATION_MODEL ?? "muse-spark-1.1";
+
 const azureOpenAIApiKey = process.env.AZURE_OPENAI_API_KEY;
 const azureOpenAIEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
 const azureOpenAIApiVersion = process.env.AZURE_OPENAI_API_VERSION;
@@ -136,6 +142,11 @@ const bedrockOpenAIBaseURL = process.env.BEDROCK_OPENAI_BASE_URL;
 const bedrockOpenAIApiKey = process.env.BEDROCK_API_KEY ?? process.env.AWS_BEARER_TOKEN_BEDROCK;
 const bedrockOpenAITextModelId = process.env.BEDROCK_OPENAI_INTEGRATION_MODEL ?? "openai.gpt-oss-120b-1:0";
 
+const ollamaIntegrationEnabled = process.env.OLLAMA_INTEGRATION === "1";
+const ollamaBaseURL = process.env.OLLAMA_HOST;
+const ollamaTextModelId = process.env.OLLAMA_INTEGRATION_MODEL ?? "llama3.2";
+const ollamaEmbeddingModelId = process.env.OLLAMA_INTEGRATION_EMBEDDING_MODEL ?? "embeddinggemma";
+
 const vertexAccessToken = process.env.VERTEX_ACCESS_TOKEN ?? process.env.GOOGLE_ACCESS_TOKEN;
 const vertexApiKey = process.env.VERTEX_API_KEY ?? process.env.GOOGLE_API_KEY;
 const vertexProjectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
@@ -157,6 +168,15 @@ const openAISupports: IntegrationLanguageProvider["supports"] = {
 };
 const azureOpenAISupports: IntegrationLanguageProvider["supports"] = openAISupports;
 const xaiSupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: false,
+  reasoning: {
+    effort: "low"
+  }
+};
+const metaSupports: IntegrationLanguageProvider["supports"] = {
   streaming: true,
   tools: true,
   structuredOutputMode: "native",
@@ -240,10 +260,17 @@ const bedrockOpenAISupports: IntegrationLanguageProvider["supports"] = {
     effort: "low"
   }
 };
+const ollamaSupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: true
+};
 const vertexSupports: IntegrationLanguageProvider["supports"] = createGeminiSupports(vertexTextModelId);
 
 const openAIRequirements = [envRequirement(["OPENAI_API_KEY"])];
 const xaiRequirements = [envRequirement(["XAI_API_KEY"])];
+const metaRequirements = [envRequirement(["MODEL_API_KEY"])];
 const azureOpenAIRequirements = [
   envRequirement(["AZURE_OPENAI_API_KEY"]),
   envRequirement(["AZURE_OPENAI_ENDPOINT"])
@@ -263,6 +290,12 @@ const bedrockConverseRequirements: CredentialRequirement[] = [
 const bedrockOpenAIRequirements = [
   envRequirement(["BEDROCK_OPENAI_BASE_URL"]),
   envRequirement(["BEDROCK_API_KEY", "AWS_BEARER_TOKEN_BEDROCK"])
+];
+const ollamaRequirements: CredentialRequirement[] = [
+  {
+    label: "OLLAMA_INTEGRATION=1 (a reachable Ollama service is also required)",
+    satisfied: ollamaIntegrationEnabled
+  }
 ];
 const vertexRequirements: CredentialRequirement[] = [
   {
@@ -285,6 +318,12 @@ export const integrationProviderStatuses: IntegrationProviderStatus[] = [
     requirements: xaiRequirements,
     textModelId: xaiTextModelId,
     supports: xaiSupports
+  }),
+  createProviderStatus({
+    name: "meta",
+    requirements: metaRequirements,
+    textModelId: metaTextModelId,
+    supports: metaSupports
   }),
   createProviderStatus({
     name: "azure-openai",
@@ -344,6 +383,13 @@ export const integrationProviderStatuses: IntegrationProviderStatus[] = [
     supports: bedrockOpenAISupports
   }),
   createProviderStatus({
+    name: "ollama",
+    requirements: ollamaRequirements,
+    textModelId: ollamaTextModelId,
+    embeddingModelId: ollamaEmbeddingModelId,
+    supports: ollamaSupports
+  }),
+  createProviderStatus({
     name: "vertex",
     requirements: vertexRequirements,
     textModelId: vertexTextModelId,
@@ -385,6 +431,23 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               baseURL: xaiBaseURL
             })(xaiTextModelId),
           supports: xaiSupports,
+          toolChoiceForTool: (toolName) => ({
+            type: "tool",
+            toolName
+          })
+        } satisfies IntegrationLanguageProvider
+      ]
+    : []),
+  ...(metaApiKey
+    ? [
+        {
+          name: "meta",
+          createModel: () =>
+            createMeta({
+              apiKey: metaApiKey,
+              baseURL: metaBaseURL
+            })(metaTextModelId),
+          supports: metaSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
@@ -575,6 +638,22 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
             type: "tool",
             toolName
           })
+        } satisfies IntegrationLanguageProvider
+      ]
+    : []),
+  ...(ollamaIntegrationEnabled
+    ? [
+        {
+          name: "ollama",
+          createModel: () =>
+            createOllama({
+              baseURL: ollamaBaseURL
+            })(ollamaTextModelId),
+          createEmbeddingModel: () =>
+            createOllama({
+              baseURL: ollamaBaseURL
+            }).embeddingModel(ollamaEmbeddingModelId),
+          supports: ollamaSupports
         } satisfies IntegrationLanguageProvider
       ]
     : []),

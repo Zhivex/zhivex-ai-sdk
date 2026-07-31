@@ -70,6 +70,7 @@ Then run the standard release gate:
 bun run typecheck
 bun run test
 bun run build
+bun run smoke:packages
 ```
 
 After the build, verify the actual emitted entry points without network access:

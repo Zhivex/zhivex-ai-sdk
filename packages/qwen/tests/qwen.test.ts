@@ -1566,14 +1566,25 @@ describe("qwen adapter", () => {
       throw new Error("Expected a TCP address for the Qwen realtime test server.");
     }
 
-    const handshake = new Promise<{ authorization?: string; payload: Record<string, unknown> }>(
+    const handshake = new Promise<{
+      authorization?: string;
+      payload: Record<string, unknown>;
+      sendOversizedFrame: () => void;
+    }>(
       (resolve, reject) => {
         server.once("connection", (socket, request) => {
           socket.once("message", (data) => {
             try {
               resolve({
                 authorization: request.headers.authorization,
-                payload: JSON.parse(data.toString())
+                payload: JSON.parse(data.toString()),
+                sendOversizedFrame: () => {
+                  socket.send(JSON.stringify({
+                    type: "response.text.delta",
+                    delta: "x".repeat(256)
+                  }));
+                  socket.send(JSON.stringify({ type: "session.finished" }));
+                }
               });
             } catch (error) {
               reject(error);
@@ -1590,11 +1601,12 @@ describe("qwen adapter", () => {
     });
     const session = await provider.realtimeModel!("qwen3.5-omni-plus-realtime").connect(
       { instructions: "be concise" },
-      { timeoutMs: 5_000 }
+      { timeoutMs: 5_000, maxIncomingFrameBytes: 64 }
     );
 
     try {
-      await expect(handshake).resolves.toMatchObject({
+      const connected = await handshake;
+      expect(connected).toMatchObject({
         authorization: "Bearer qwen-secret",
         payload: {
           type: "session.update",
@@ -1605,10 +1617,38 @@ describe("qwen adapter", () => {
           }
         }
       });
+      connected.sendOversizedFrame();
+
+      const events = [];
+      for await (const event of session.eventStream()) {
+        events.push(event);
+      }
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: "realtime-error",
+          message: expect.stringMatching(/payload|message size|frame/i)
+        }),
+        expect.objectContaining({ type: "realtime-end", reason: "error" })
+      ]));
     } finally {
       await session.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+
+  it("validates Qwen Node realtime frame limits before opening a socket", async () => {
+    const provider = createQwen({
+      apiKey: "qwen-secret",
+      realtimeURL: "ws://127.0.0.1:1/realtime",
+      allowUnsafeEndpoints: true
+    });
+
+    await expect(
+      provider.realtimeModel!("qwen3.5-omni-plus-realtime").connect(
+        {},
+        { maxIncomingFrameBytes: 0 }
+      )
+    ).rejects.toThrow("positive safe integer");
   });
 
   it("rejects unsafe Qwen realtime endpoints unless explicitly opted in", () => {

@@ -13,7 +13,7 @@ bun run scripts/provider-smoke-report.ts
 bun run test:integration
 ```
 
-Missing credentials are reported as `skipped_missing_credentials`. That is not a passing live provider check; it only means the local environment is not configured for that provider. The report exits with code 0 so local machines and CI can run it without requiring every vendor credential.
+Missing credentials or opt-in service requirements are reported as `skipped_missing_credentials`. That is not a passing live provider check; it only means the local environment is not configured for that provider. The report exits with code 0 so local machines and CI can run it without requiring every vendor credential or local Ollama service.
 
 ## Covered Capabilities
 
@@ -33,6 +33,8 @@ Provider-specific integration files may cover additional adapter behavior.
 | Provider | Required environment |
 | --- | --- |
 | `openai` | `OPENAI_API_KEY` |
+| `xai` | `XAI_API_KEY` |
+| `meta` | `MODEL_API_KEY`; optional `META_BASE_URL` and `META_INTEGRATION_MODEL` |
 | `azure-openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
 | `anthropic` | `ANTHROPIC_API_KEY` |
 | `gemini` | `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` |
@@ -42,6 +44,7 @@ Provider-specific integration files may cover additional adapter behavior.
 | `kimi` | `KIMI_API_KEY` or `MOONSHOT_API_KEY`; optional `KIMI_BASE_URL` or `MOONSHOT_BASE_URL`, plus `KIMI_INTEGRATION_MODEL` (defaults to `kimi-k3`) |
 | `bedrock-converse` | `AWS_REGION`; AWS credentials are also required by the default provider chain |
 | `bedrock-openai` | `BEDROCK_OPENAI_BASE_URL`, plus `BEDROCK_API_KEY` or `AWS_BEARER_TOKEN_BEDROCK` |
+| `ollama` | `OLLAMA_INTEGRATION=1`; a reachable local service is required, with optional `OLLAMA_HOST`, `OLLAMA_INTEGRATION_MODEL`, and `OLLAMA_INTEGRATION_EMBEDDING_MODEL` |
 | `vertex` | `VERTEX_API_KEY` or `GOOGLE_API_KEY`; alternatively `VERTEX_ACCESS_TOKEN` or `GOOGLE_ACCESS_TOKEN` plus `GOOGLE_CLOUD_PROJECT`, `GCLOUD_PROJECT`, or `VERTEX_BASE_URL` |
 
 Optional variables such as provider base URLs, model overrides, API versions, and embedding model overrides are read by `packages/core/tests/integration-registry.ts`.
@@ -69,8 +72,8 @@ On a machine with no provider credentials configured, the report will look like 
 
 Generated: 2026-05-06T00:00:00.000Z
 
-Ready providers: 0/11
-Skipped providers: 11/11
+Ready providers: 0/14
+Skipped providers: 14/14
 
 | Provider | Status | Text model | Capabilities | Missing requirements |
 | --- | --- | --- | --- | --- |

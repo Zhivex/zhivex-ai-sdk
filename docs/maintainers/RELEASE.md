@@ -29,6 +29,7 @@ bun run docs:check
 bun run typecheck
 bun run test
 bun run build
+bun run smoke:packages
 ```
 
 Run provider smoke before meaningful stable or prerelease publishes:
@@ -39,7 +40,9 @@ bun run smoke:providers
 
 Missing credentials are reported as skipped, not passed. Save the report in release notes or the release checklist when live provider coverage matters.
 
-Check package contents without writing tarballs:
+`smoke:packages` packs every workspace package, installs the tarballs together in an isolated temporary Node consumer, imports every JavaScript export, and exercises runtime-sensitive Core behavior. It uses its own temporary npm cache and does not publish anything.
+
+For a quick manual inspection of individual package contents without writing tarballs:
 
 ```bash
 (cd packages/core && bun pm pack --dry-run)
@@ -63,10 +66,13 @@ bun run docs:check
 bun run typecheck
 bun run test
 bun run build
+bun run smoke:packages
 git status --short
 ```
 
-Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The workflow checks out immutable committed source, installs dependencies without lifecycle scripts, repeats audit/typecheck/test/build, publishes through npm trusted publishing, and only then pushes the package version tags created by Changesets to the same source commit.
+Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The workflow checks out immutable committed source, installs dependencies without lifecycle scripts, repeats audit/typecheck/test/build and the packed Node consumer smoke, publishes through npm trusted publishing, and only then pushes package tags whose immutable npm `gitHead` matches the release commit.
+
+Tag discovery comes from npm metadata rather than only from tags created inside the current runner. This lets a safe rerun recover every tag from a partially successful publish while excluding unchanged packages from older commits.
 
 `bun run release` is intentionally restricted to GitHub Actions with an available OIDC token. Do not add `NPM_TOKEN` to the workflow. If authentication fails, fix the npm trusted-publisher configuration and rerun the workflow; do not publish individual dependent packages around the failed batch.
 
@@ -110,6 +116,7 @@ bun run docs:check
 bun run typecheck
 bun run test
 bun run build
+bun run smoke:packages
 bun run smoke:providers
 ```
 
@@ -124,6 +131,7 @@ bun run docs:check
 bun run typecheck
 bun run test
 bun run build
+bun run smoke:packages
 ```
 
 Review the final stable versions and generated package changelogs before publishing to `latest`.
