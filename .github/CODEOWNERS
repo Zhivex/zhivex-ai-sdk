@@ -1,0 +1,8 @@
+* @mortiz-dev
+
+/.github/ @mortiz-dev
+/packages/core/ @mortiz-dev
+/packages/sdk/ @mortiz-dev
+/packages/agents/ @mortiz-dev
+/packages/gateway/ @mortiz-dev
+
