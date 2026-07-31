@@ -5,10 +5,13 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   ValidationError,
+  assertTrustedEndpoint,
   createProviderAdapter,
   isCallableToolDefinition,
   normalizeFinishReason,
   providerDataPart,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
   streamSSE,
   withRetry,
   withTimeoutSignal,
@@ -33,6 +36,7 @@ export interface DeepSeekProviderOptions {
   /** Base URL for DeepSeek beta APIs. Defaults to `<baseURL>/beta`. */
   betaBaseURL?: string;
   fetch?: typeof globalThis.fetch;
+  allowUnsafeEndpoints?: boolean;
 }
 
 export interface DeepSeekPrefixOptions {
@@ -112,7 +116,7 @@ const jsonHeaders = (apiKey: string) => ({
 
 const assertResponseOk = async (response: Response) => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response);
     throw new ProviderHTTPError(`DeepSeek request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
@@ -121,7 +125,11 @@ const assertResponseOk = async (response: Response) => {
 
 const parseJson = async (response: Response) => {
   await assertResponseOk(response);
-  return response.json();
+  return readJsonWithLimit<any>(response, {
+    maxBytes: 128 * 1024 * 1024,
+    provider: "deepseek",
+    endpoint: response.url || undefined
+  });
 };
 
 const mapContentParts = (message: ModelMessage) => {
@@ -869,17 +877,27 @@ export const createDeepSeek = (
     throw new ConfigurationError("Missing DeepSeek API key.");
   }
 
-  const baseURL = (options.baseURL ?? "https://api.deepseek.com").replace(/\/+$/, "");
-  const betaBaseURL = (
-    options.betaBaseURL ?? (isBetaBaseURL(baseURL) ? baseURL : `${baseURL}/beta`)
-  ).replace(/\/+$/, "");
+  const baseURL = assertTrustedEndpoint(options.baseURL ?? "https://api.deepseek.com", {
+    label: "DeepSeek baseURL",
+    protocols: ["https"],
+    allowUnsafe: options.allowUnsafeEndpoints
+  }).toString().replace(/\/+$/, "");
+  const betaBaseURL = assertTrustedEndpoint(
+    options.betaBaseURL ?? (isBetaBaseURL(baseURL) ? baseURL : `${baseURL}/beta`),
+    {
+      label: "DeepSeek betaBaseURL",
+      protocols: ["https"],
+      allowUnsafe: options.allowUnsafeEndpoints
+    }
+  ).toString().replace(/\/+$/, "");
   const stableClientBaseURL = baseURL.replace(/\/beta$/, "");
   const fetcher = options.fetch ?? globalThis.fetch;
   const clients = createDeepSeekClients({
     apiKey,
     baseURL: stableClientBaseURL,
     betaBaseURL,
-    fetch: fetcher
+    fetch: fetcher,
+    allowUnsafeEndpoints: options.allowUnsafeEndpoints
   });
 
   return createProviderAdapter({

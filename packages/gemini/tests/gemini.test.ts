@@ -599,7 +599,7 @@ describe("gemini adapter", () => {
         {},
         {
           headers: {
-            "x-goog-upload-url": "https://upload.example.test/session"
+            "x-goog-upload-url": "https://generativelanguage.googleapis.com/upload-session"
           }
         }
       )
@@ -628,10 +628,33 @@ describe("gemini adapter", () => {
     const deleted = await deleteFile({ provider, name: "files/abc" });
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/upload/v1beta/files?key=test");
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("https://upload.example.test/session");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("https://generativelanguage.googleapis.com/upload-session");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: "error" });
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ redirect: "error" });
     expect(uploaded.name).toBe("files/abc");
     expect(read.uri).toBe("https://files.example.test/abc");
     expect(deleted.name).toBe("files/abc");
+  });
+
+  it("rejects untrusted Gemini resumable upload URLs before sending file bytes", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, {
+        headers: {
+          "x-goog-upload-url": "https://169.254.169.254/latest/meta-data"
+        }
+      })
+    );
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      uploadFile({
+        provider,
+        data: "secret file",
+        mediaType: "text/plain"
+      })
+    ).rejects.toThrow("must not target a private");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("creates file search stores and imports files with operation polling", async () => {
@@ -2010,5 +2033,27 @@ describe("gemini adapter", () => {
     expect(token?.value).toBe("ephemeral-token");
     expect(typeof token?.expiresAtMs).toBe("number");
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/v1alpha/authTokens?key=test");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: "error" });
+  });
+
+  it("enforces Gemini browser-token timeouts", async () => {
+    fetchMock.mockImplementationOnce(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+        })
+    );
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      provider.realtimeModel!("gemini-live-2.5-flash-native-audio").createBrowserToken?.(
+        {},
+        { timeoutMs: 1 }
+      )
+    ).rejects.toBeInstanceOf(DOMException);
   });
 });

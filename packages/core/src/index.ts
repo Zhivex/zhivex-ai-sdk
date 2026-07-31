@@ -54,6 +54,12 @@ export type {
   ApiStabilityLevel
 } from "./api-stability.js";
 export {
+  assertTrustedEndpoint,
+  isLoopbackHostname,
+  isPrivateNetworkHostname
+} from "./url-security.js";
+export type { TrustedEndpointOptions } from "./url-security.js";
+export {
   Agent,
   cancelAgentRun,
   cancelAgentRunTree,
@@ -256,6 +262,7 @@ export type {
   AgentTraceApproval,
   AgentTraceArtifact,
   AgentTraceCollector,
+  AgentTraceCollectorOptions,
   AgentTraceEvent,
   AgentTraceOptions,
   AgentTraceStep,

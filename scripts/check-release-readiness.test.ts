@@ -19,6 +19,23 @@ const packages: PackageManifest[] = [
   }
 ];
 
+const releaseGitHead = "0123456789abcdef0123456789abcdef01234567";
+const publishedVersion = (
+  value: Omit<NonNullable<RegistryDocument["versions"]>[string], "gitHead" | "dist"> = {}
+) => ({
+  ...value,
+  gitHead: releaseGitHead,
+  dist: {
+    integrity: `sha512-${"A".repeat(86)}==`,
+    attestations: {
+      url: "https://registry.npmjs.org/-/npm/v1/attestations/example",
+      provenance: {
+        predicateType: "https://slsa.dev/provenance/v1"
+      }
+    }
+  }
+});
+
 const registry: Record<string, RegistryDocument> = {
   "@zhivex-ai/core": {
     versions: { "0.15.1": {}, "0.16.0": {} },
@@ -92,18 +109,27 @@ describe("release readiness", () => {
   it("requires latest to point to each stable version after publishing", () => {
     const publishedRegistry: Record<string, RegistryDocument> = {
       "@zhivex-ai/core": {
-        versions: { "0.16.1": {} },
+        versions: { "0.16.1": publishedVersion() },
         "dist-tags": { latest: "0.16.0" }
       },
       "@zhivex-ai/sdk": {
         versions: {
-          "0.15.1": { dependencies: { "@zhivex-ai/core": "^0.16.1" } }
+          "0.15.1": publishedVersion({
+            dependencies: { "@zhivex-ai/core": "^0.16.1" }
+          })
         },
         "dist-tags": { latest: "0.15.0" }
       }
     };
 
-    const audit = auditRelease("main", packages, publishedRegistry, "postpublish");
+    const audit = auditRelease(
+      "main",
+      packages,
+      publishedRegistry,
+      "postpublish",
+      "latest",
+      releaseGitHead
+    );
 
     expect(audit.errors).toContain(
       "@zhivex-ai/core@0.16.1: npm dist-tag latest points to 0.16.0."
@@ -116,12 +142,14 @@ describe("release readiness", () => {
   it("retries postpublish verification while npm registry propagation is incomplete", async () => {
     const publishedRegistry: Record<string, RegistryDocument> = {
       "@zhivex-ai/core": {
-        versions: { "0.16.1": {} },
+        versions: { "0.16.1": publishedVersion() },
         "dist-tags": { latest: "0.16.1" }
       },
       "@zhivex-ai/sdk": {
         versions: {
-          "0.15.1": { dependencies: { "@zhivex-ai/core": "^0.16.1" } }
+          "0.15.1": publishedVersion({
+            dependencies: { "@zhivex-ai/core": "^0.16.1" }
+          })
         },
         "dist-tags": { latest: "0.15.1" }
       }
@@ -141,7 +169,8 @@ describe("release readiness", () => {
       maxAttempts: 3,
       retryDelayMs: 0,
       sleep: async () => {},
-      onRetry: (message) => retryMessages.push(message)
+      onRetry: (message) => retryMessages.push(message),
+      expectedGitHead: releaseGitHead
     });
 
     expect(registryReads).toBe(2);
@@ -179,13 +208,69 @@ describe("release readiness", () => {
     ];
     const prereleaseRegistry: Record<string, RegistryDocument> = {
       "@zhivex-ai/core": {
-        versions: { "0.17.0-next.0": {} },
+        versions: { "0.17.0-next.0": publishedVersion() },
         "dist-tags": { latest: "0.16.1", next: "0.16.2-next.0" }
       }
     };
 
-    expect(auditRelease("main", prereleasePackage, prereleaseRegistry, "postpublish", "next").errors).toContain(
+    expect(auditRelease(
+      "main",
+      prereleasePackage,
+      prereleaseRegistry,
+      "postpublish",
+      "next",
+      releaseGitHead
+    ).errors).toContain(
       "@zhivex-ai/core@0.17.0-next.0: npm dist-tag next points to 0.16.2-next.0."
+    );
+  });
+
+  it("requires integrity, trusted publishing provenance, and the release commit after publishing", () => {
+    const insecureRegistry: Record<string, RegistryDocument> = {
+      "@zhivex-ai/core": {
+        versions: {
+          "0.16.1": {
+            gitHead: "ffffffffffffffffffffffffffffffffffffffff",
+            dist: {
+              integrity: "sha1-insecure",
+              attestations: {
+                url: "https://attacker.example/forged-attestation",
+                provenance: {
+                  predicateType: "https://slsa.dev/provenance/v1"
+                }
+              }
+            }
+          }
+        },
+        "dist-tags": { latest: "0.16.1" }
+      },
+      "@zhivex-ai/sdk": {
+        versions: {
+          "0.15.1": publishedVersion({
+            dependencies: { "@zhivex-ai/core": "^0.16.1" }
+          })
+        },
+        "dist-tags": { latest: "0.15.1" }
+      }
+    };
+
+    const audit = auditRelease(
+      "main",
+      packages,
+      insecureRegistry,
+      "postpublish",
+      "latest",
+      releaseGitHead
+    );
+
+    expect(audit.errors).toContain(
+      "@zhivex-ai/core@0.16.1: npm metadata is missing a sha512 integrity digest."
+    );
+    expect(audit.errors).toContain(
+      "@zhivex-ai/core@0.16.1: npm metadata is missing a trusted publishing provenance attestation."
+    );
+    expect(audit.errors).toContain(
+      "@zhivex-ai/core@0.16.1: npm gitHead ffffffffffffffffffffffffffffffffffffffff; expected 0123456789abcdef0123456789abcdef01234567."
     );
   });
 });

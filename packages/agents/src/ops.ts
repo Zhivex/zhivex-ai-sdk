@@ -82,6 +82,7 @@ export type {
   AgentTraceApproval,
   AgentTraceArtifact,
   AgentTraceCollector,
+  AgentTraceCollectorOptions,
   AgentTraceEvent,
   AgentTraceOptions,
   AgentTraceStep,

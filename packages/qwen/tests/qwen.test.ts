@@ -1305,7 +1305,7 @@ describe("qwen adapter", () => {
       .mockResolvedValueOnce(
         Response.json({
           output: {
-            audio: { url: "http://dashscope-result-sg.oss-ap-southeast-1.aliyuncs.com/speech.wav" }
+            audio: { url: "https://dashscope-result-sg.oss-ap-southeast-1.aliyuncs.com/speech.wav" }
           }
         })
       )
@@ -1404,7 +1404,7 @@ describe("qwen adapter", () => {
 
     await expect(
       generateSpeech({ model: provider.speechModel!("qwen3-tts-flash"), input: "hello" })
-    ).rejects.toThrow("rejected by the configured safety policy");
+    ).rejects.toThrow("require an HTTPS URL");
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     fetchMock.mockClear();
@@ -1412,7 +1412,7 @@ describe("qwen adapter", () => {
       .mockResolvedValueOnce(
         Response.json({
           output: {
-            audio: { url: "http://dashscope-result-sg.oss-ap-southeast-1.aliyuncs.com/speech.wav" }
+            audio: { url: "https://dashscope-result-sg.oss-ap-southeast-1.aliyuncs.com/speech.wav" }
           }
         })
       )
@@ -1422,7 +1422,7 @@ describe("qwen adapter", () => {
 
     await expect(
       generateSpeech({ model: provider.speechModel!("qwen3-tts-flash"), input: "hello" })
-    ).rejects.toThrow("rejected by the configured safety policy");
+    ).rejects.toThrow("require an HTTPS URL");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "GET", redirect: "manual" });
   });
@@ -1585,7 +1585,8 @@ describe("qwen adapter", () => {
     );
     const provider = createQwen({
       apiKey: "qwen-secret",
-      realtimeURL: `ws://127.0.0.1:${address.port}/realtime`
+      realtimeURL: `ws://127.0.0.1:${address.port}/realtime`,
+      allowUnsafeEndpoints: true
     });
     const session = await provider.realtimeModel!("qwen3.5-omni-plus-realtime").connect(
       { instructions: "be concise" },
@@ -1608,6 +1609,22 @@ describe("qwen adapter", () => {
       await session.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+
+  it("rejects unsafe Qwen realtime endpoints unless explicitly opted in", () => {
+    expect(() =>
+      createQwen({
+        apiKey: "qwen-secret",
+        realtimeURL: "ws://127.0.0.1:8787/collect"
+      })
+    ).toThrow("must use wss");
+
+    expect(() =>
+      createQwen({
+        apiKey: "qwen-secret",
+        realtimeURL: "wss://attacker.example/collect"
+      })
+    ).toThrow("is not trusted");
   });
 
   it("maps current Qwen realtime server events into the shared event contract", async () => {

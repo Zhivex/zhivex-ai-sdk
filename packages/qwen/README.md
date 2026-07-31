@@ -28,7 +28,9 @@ const qwen = createQwen({
 });
 ```
 
-Supported region values are `singapore`, `beijing`, `hong-kong`, `tokyo`, `frankfurt`, and `virginia`. `baseURL`, `taskBaseURL`, and `realtimeURL` remain available for private gateways or an explicit regional endpoint.
+Supported region values are `singapore`, `beijing`, `hong-kong`, `tokyo`, `frankfurt`, and `virginia`. `baseURL`, `taskBaseURL`, and `realtimeURL` remain available for explicit regional endpoints. They require HTTPS/WSS and a consistent trusted host; a server-side private gateway must opt in explicitly with `allowUnsafeEndpoints: true`.
+
+Qwen speech downloads accept HTTPS audio URLs only, validate every redirect manually, and never forward the provider API key to the media host.
 
 ### Qwen 3.8 Max Preview (Token Plan)
 

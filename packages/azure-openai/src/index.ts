@@ -4,6 +4,8 @@ import {
   CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
+  assertTrustedEndpoint,
+  decodeBase64WithLimit,
   readBodyWithLimit,
   readErrorBodyWithLimit,
   readJsonWithLimit,
@@ -61,6 +63,8 @@ export interface AzureOpenAIProviderOptions {
   realtimeURL?: string;
   browserTokenURL?: string;
   responseLimits?: AudioResponseLimits;
+  /** Allow non-HTTPS/private or cross-origin credentialed endpoint overrides. Server-side only. */
+  allowUnsafeEndpoints?: boolean;
 }
 
 export interface AzureOpenAIWebSearchToolConfig {
@@ -390,6 +394,9 @@ const jsonHeaders = (apiKey: string) => ({
   "api-key": apiKey
 });
 
+const AZURE_OPENAI_JSON_RESPONSE_MAX_BYTES = 128 * 1024 * 1024;
+const AZURE_OPENAI_REALTIME_AUDIO_MAX_BYTES = 16 * 1024 * 1024;
+
 const parseJson = async (
   response: Response,
   options: {
@@ -405,14 +412,12 @@ const parseJson = async (
       responseBody: body
     });
   }
-  return options.maxBytes
-    ? readJsonWithLimit<any>(response, {
-        maxBytes: options.maxBytes,
-        provider: "azure-openai",
-        endpoint: options.endpoint,
-        abort: options.abort
-      })
-    : response.json();
+  return readJsonWithLimit<any>(response, {
+    maxBytes: options.maxBytes ?? AZURE_OPENAI_JSON_RESPONSE_MAX_BYTES,
+    provider: "azure-openai",
+    endpoint: options.endpoint,
+    abort: options.abort
+  });
 };
 
 const toUint8Array = (data: AudioInput["data"]) => {
@@ -674,7 +679,11 @@ const parseAzureRealtimeEvent = (payload: Record<string, unknown>) => {
     return [
       {
         type: "realtime-audio-output" as const,
-        audio: Buffer.from(String(payload.delta ?? ""), "base64"),
+        audio: decodeBase64WithLimit(String(payload.delta ?? ""), {
+          maxBytes: AZURE_OPENAI_REALTIME_AUDIO_MAX_BYTES,
+          provider: "azure-openai",
+          endpoint: "realtime"
+        }),
         mediaType: typeof payload.media_type === "string" ? payload.media_type : "audio/pcm",
         sampleRateHz: typeof payload.sample_rate_hz === "number" ? payload.sample_rate_hz : undefined,
         channels: typeof payload.channels === "number" ? payload.channels : undefined,
@@ -1493,6 +1502,7 @@ class AzureOpenAITranscriptionModel implements TranscriptionModel {
         () =>
           this.fetcher(this.urlResolver(this.modelId, "audio/transcriptions"), {
             method: "POST",
+            redirect: "error",
             headers: { "api-key": this.apiKey },
             signal,
             body: form
@@ -1652,26 +1662,29 @@ class AzureOpenAIRealtimeModel implements RealtimeModel {
     private readonly fetcher: typeof globalThis.fetch,
     private readonly connectionFactory?: RealtimeConnectionFactory,
     private readonly realtimeURL?: string,
-    private readonly browserTokenURL?: string
+    private readonly browserTokenURL?: string,
+    private readonly allowUnsafeEndpoints = false
   ) {}
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
     const providerOptions = (config.providerOptions ?? {}) as Record<string, unknown>;
-    const url = new URL(
+    const url = assertTrustedEndpoint(
       azureOpenAIRealtimeURL(
         this.endpoint,
         this.modelId,
         this.apiVersion,
         this.realtimeURL ?? (typeof providerOptions.realtime_url === "string" ? providerOptions.realtime_url : undefined)
-      )
+      ),
+      {
+        label: "Azure OpenAI realtime endpoint",
+        protocols: ["wss"],
+        allowedHosts: [new URL(this.realtimeURL ?? this.endpoint).hostname],
+        allowUnsafe: this.allowUnsafeEndpoints
+      }
     );
-    if (!this.connectionFactory) {
-      url.searchParams.set("api-key", this.apiKey);
-    }
-
     const connection = await (this.connectionFactory ?? openWebSocketConnection)(
       url.toString(),
-      this.connectionFactory ? { "api-key": this.apiKey } : {},
+      { "api-key": this.apiKey },
       options
     );
 
@@ -1764,28 +1777,31 @@ class AzureOpenAIRealtimeModel implements RealtimeModel {
     delete providerOptions.expires_after;
 
     const url = this.browserTokenURL ?? `${this.endpoint}/openai/v1/realtime/client_secrets`;
-    const response = await withRetry(
-      () =>
-        this.fetcher(url, {
-          method: "POST",
-          headers: jsonHeaders(this.apiKey),
-          body: JSON.stringify({
-            ...(expiresAfter ? { expires_after: expiresAfter } : {}),
-            session: mapRealtimeSessionConfig(
-              {
-                ...config,
-                providerOptions
-              },
-              this.modelId
-            )
-          }),
-          signal: options?.signal
-        }),
-      {
-        timeoutMs: options?.timeoutMs
-      }
-    );
-    const payload = await parseJson(response);
+    const { signal, cleanup } = withTimeoutSignal({
+      abortSignal: options?.signal,
+      timeoutMs: options?.timeoutMs
+    });
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(url, {
+            method: "POST",
+            redirect: "error",
+            headers: jsonHeaders(this.apiKey),
+            body: JSON.stringify({
+              ...(expiresAfter ? { expires_after: expiresAfter } : {}),
+              session: mapRealtimeSessionConfig(
+                {
+                  ...config,
+                  providerOptions
+                },
+                this.modelId
+              )
+            }),
+            signal
+          })
+      );
+      const payload = await parseJson(response);
     const secret = payload.client_secret;
     const value =
       secret && typeof secret === "object" && typeof secret.value === "string"
@@ -1803,16 +1819,26 @@ class AzureOpenAIRealtimeModel implements RealtimeModel {
           : typeof payload.expires_at === "number"
             ? payload.expires_at * 1000
             : undefined;
-    return {
-      value,
-      expiresAtMs,
-      rawResponse: payload
-    };
+      return {
+        value,
+        expiresAtMs,
+        rawResponse: payload
+      };
+    } finally {
+      cleanup();
+    }
   }
 }
 
 const normalizeEndpoint = (endpoint: string) => endpoint.replace(/\/+$/, "");
 type AzurePath = "chat/completions" | "embeddings" | "audio/transcriptions" | "audio/speech" | "responses";
+
+const encodeAzureDeployment = (value: string) => {
+  if (!value || value === "." || value === ".." || /[\\/?#\s]/.test(value)) {
+    throw new ConfigurationError("Azure OpenAI deployment name must be a non-empty opaque identifier without path separators.");
+  }
+  return encodeURIComponent(value);
+};
 
 export const createAzureOpenAI = (
   options: AzureOpenAIProviderOptions = {}
@@ -1827,16 +1853,38 @@ export const createAzureOpenAI = (
     throw new ConfigurationError("Missing Azure OpenAI endpoint.");
   }
 
+  const normalizedTrustedEndpoint = assertTrustedEndpoint(endpoint, {
+    label: "Azure OpenAI endpoint",
+    protocols: ["https"],
+    allowUnsafe: options.allowUnsafeEndpoints
+  }).toString().replace(/\/+$/, "");
+  const trustedHost = new URL(normalizedTrustedEndpoint).hostname;
+  const realtimeURL = options.realtimeURL
+    ? assertTrustedEndpoint(options.realtimeURL, {
+        label: "Azure OpenAI realtimeURL",
+        protocols: ["wss"],
+        allowedHosts: [trustedHost],
+        allowUnsafe: options.allowUnsafeEndpoints
+      }).toString()
+    : undefined;
+  const browserTokenURL = options.browserTokenURL
+    ? assertTrustedEndpoint(options.browserTokenURL, {
+        label: "Azure OpenAI browserTokenURL",
+        protocols: ["https"],
+        allowedHosts: [trustedHost],
+        allowUnsafe: options.allowUnsafeEndpoints
+      }).toString()
+    : undefined;
   const apiVersion = options.apiVersion ?? process.env.AZURE_OPENAI_API_VERSION;
   const baseURL = apiVersion
-    ? `${normalizeEndpoint(endpoint)}/openai/deployments/{deployment}?api-version=${apiVersion}`
-    : `${normalizeEndpoint(endpoint)}/openai/v1`;
+    ? `${normalizedTrustedEndpoint}/openai/deployments/{deployment}?api-version=${encodeURIComponent(apiVersion)}`
+    : `${normalizedTrustedEndpoint}/openai/v1`;
   const fetcher = options.fetch ?? globalThis.fetch;
   const responseLimits = resolveAudioResponseLimits(options.responseLimits);
 
   const resolveURL = (modelId: string, path: AzurePath) =>
     baseURL.includes("{deployment}")
-      ? baseURL.replace("{deployment}", modelId).replace(/\?api-version=.*$/, `/${path}?api-version=${apiVersion}`)
+      ? baseURL.replace("{deployment}", encodeAzureDeployment(modelId)).replace(/\?api-version=.*$/, `/${path}?api-version=${encodeURIComponent(apiVersion!)}`)
       : `${baseURL}/${path}`;
 
   return createProviderAdapter({
@@ -2099,12 +2147,13 @@ export const createAzureOpenAI = (
       new AzureOpenAIRealtimeModel(
         modelId,
         apiKey,
-        normalizeEndpoint(endpoint),
+        normalizedTrustedEndpoint,
         apiVersion,
         fetcher,
         options.realtimeConnectionFactory,
-        options.realtimeURL,
-        options.browserTokenURL
+        realtimeURL,
+        browserTokenURL,
+        options.allowUnsafeEndpoints
       ),
     groundedLanguageModel: (modelId) => new AzureOpenAIGroundedLanguageModel(modelId, apiKey, resolveURL, fetcher),
     rawFetch: fetcher

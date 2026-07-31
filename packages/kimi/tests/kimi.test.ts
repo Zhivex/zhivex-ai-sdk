@@ -858,7 +858,11 @@ describe("kimi adapter", () => {
       prompt: "search",
       maxSteps: 2,
       tools: {
-        web_search: kimiWebSearchTool({ apiKey: "test", fetch: fetchMock as typeof fetch })
+        web_search: kimiWebSearchTool({
+          apiKey: "test",
+          fetch: fetchMock as typeof fetch,
+          requiresApproval: false
+        })
       }
     });
 
@@ -895,5 +899,59 @@ describe("kimi adapter", () => {
 
     expect(Object.keys(tools)).toEqual(["fetch"]);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://api.moonshot.ai/v1/formulas/moonshot/fetch:latest/tools");
+  });
+
+  it("propagates Formula timeout policy into dynamically loaded tools", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "fetch",
+              parameters: { type: "object", properties: { url: { type: "string" } } }
+            }
+          }
+        ]
+      })
+    );
+    const tools = await kimiFormulaTools({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      formulas: ["moonshot/fetch:latest"],
+      timeoutMs: 1
+    });
+    fetchMock.mockImplementationOnce(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+        })
+    );
+
+    await expect(tools.fetch!.execute({ url: "https://example.com" })).rejects.toBeInstanceOf(DOMException);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ redirect: "error" });
+  });
+
+  it("rejects invalid Kimi Formula timeout and traversal configuration", async () => {
+    await expect(
+      kimiFormulaTools({
+        apiKey: "test",
+        fetch: fetchMock as typeof fetch,
+        formulas: ["moonshot/fetch:latest"],
+        timeoutMs: 0
+      })
+    ).rejects.toThrow("timeoutMs must be a positive");
+
+    await expect(
+      kimiFormulaTools({
+        apiKey: "test",
+        fetch: fetchMock as typeof fetch,
+        formulas: ["../internal"]
+      })
+    ).rejects.toThrow("traversal");
   });
 });

@@ -314,6 +314,26 @@ describe("artifact services", () => {
     ).toEqual(artifact);
   });
 
+  it("keeps delimiter-containing artifact identities isolated", async () => {
+    const service = createInMemoryArtifactService();
+    await service.saveArtifact({
+      appName: "a:b",
+      userId: "c",
+      sessionId: "d",
+      id: "e",
+      name: "secret.txt",
+      contentType: "text/plain",
+      data: "secret"
+    });
+
+    expect(await service.loadArtifact({
+      appName: "a",
+      userId: "b:c",
+      sessionId: "d",
+      id: "e"
+    })).toBeUndefined();
+  });
+
   it("rejects invalid binary metadata", async () => {
     const service = createInMemoryArtifactService();
 
@@ -704,6 +724,39 @@ describe("artifact services", () => {
     ).resolves.toEqual([artifact]);
   });
 
+  it("migrates matching legacy artifact files without duplicate list entries", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-artifacts-legacy-"));
+    const service = createFileArtifactService({ directory });
+    const artifact = await service.saveArtifact({
+      appName: "a:b",
+      userId: "c",
+      sessionId: "d",
+      id: "e",
+      name: "legacy.txt",
+      contentType: "text/plain",
+      data: "old"
+    });
+    const canonical = (await fs.readdir(directory)).find((entry) => entry.endsWith(".json"))!;
+    const legacy = ["a:b", "c", "d", "e"].map(encodeURIComponent).join("__") + ".json";
+    await fs.rename(path.join(directory, canonical), path.join(directory, legacy));
+
+    await expect(service.loadArtifact({
+      appName: "a:b",
+      userId: "c",
+      sessionId: "d",
+      id: "e"
+    })).resolves.toEqual(artifact);
+    await service.saveArtifact({
+      ...artifact,
+      data: "new"
+    });
+
+    expect((await fs.readdir(directory)).filter((entry) => entry.endsWith(".json"))).toHaveLength(1);
+    await expect(service.listArtifacts({ appName: "a:b", userId: "c", sessionId: "d" })).resolves.toHaveLength(1);
+    expect((await fs.stat(path.join(directory, (await fs.readdir(directory)).find((entry) => entry.endsWith(".json"))!))).mode & 0o777)
+      .toBe(0o600);
+  });
+
   it("normalizes legacy file artifacts and rejects future schema versions", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-artifacts-"));
     const service = createFileArtifactService({ directory });
@@ -891,14 +944,7 @@ describe("artifact services", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).not.toContain("/");
     expect(path.dirname(path.join(directory, entries[0]!))).toBe(directory);
-    expect(entries[0]).toBe(
-      [
-        encodeURIComponent("../app"),
-        encodeURIComponent("user/slash"),
-        encodeURIComponent("session:colon"),
-        encodeURIComponent("../../artifact")
-      ].join("__") + ".json"
-    );
+    expect(entries[0]).toMatch(/^artifact_v2_[a-f0-9]{64}\.json$/);
   });
 
   it("rejects file artifact blob paths outside the managed blobs directory", async () => {
@@ -930,7 +976,10 @@ describe("artifact services", () => {
       contentType: "application/octet-stream",
       data: new Uint8Array([1])
     });
-    const metadataPath = path.join(directory, "app__user__session__binary.json");
+    const metadataPath = path.join(
+      directory,
+      (await fs.readdir(directory)).find((entry) => entry.endsWith(".json") && entry.includes("artifact_v2_"))!
+    );
     await fs.writeFile(metadataPath, JSON.stringify({ ...binary, blobPath: "../victim.txt" }), "utf8");
 
     const lookup = { appName: "app", userId: "user", sessionId: "session", id: "binary" };
@@ -1299,14 +1348,22 @@ describe("artifact services", () => {
       contentType: "application/json",
       data: { ok: true }
     });
-    await fs.writeFile(path.join(directory, "app__user__session__old.json"), JSON.stringify({ ...old, updatedAt: 10 }), "utf8");
-    await fs.writeFile(path.join(directory, "app__user__session__recent.json"), JSON.stringify({ ...recent, updatedAt: 100 }), "utf8");
+    const metadataEntries = await fs.readdir(directory);
+    for (const entry of metadataEntries.filter((candidate) => candidate.endsWith(".json"))) {
+      const metadataPath = path.join(directory, entry);
+      const artifact = JSON.parse(await fs.readFile(metadataPath, "utf8")) as typeof old;
+      await fs.writeFile(
+        metadataPath,
+        JSON.stringify({ ...artifact, updatedAt: artifact.id === "old" ? 10 : 100 }),
+        "utf8"
+      );
+    }
 
-    await expect(pruneFileArtifactStore({ directory, keepLast: 1, dryRun: false })).resolves.toMatchObject({
-      deletedArtifactKeys: ["app:user:session:old"],
-      keptArtifactKeys: ["app:user:session:recent"],
-      deletedBlobPaths: [old.blobPath]
-    });
+    const result = await pruneFileArtifactStore({ directory, keepLast: 1, dryRun: false });
+    expect(result.deletedArtifactKeys).toHaveLength(1);
+    expect(result.keptArtifactKeys).toHaveLength(1);
+    expect(result.deletedArtifactKeys[0]).not.toBe(result.keptArtifactKeys[0]);
+    expect(result.deletedBlobPaths).toEqual([old.blobPath]);
     await expect(service.loadArtifact({ appName: "app", userId: "user", sessionId: "session", id: "old" })).resolves.toBeUndefined();
   });
 });

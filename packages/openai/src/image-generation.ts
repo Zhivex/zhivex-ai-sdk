@@ -5,6 +5,7 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   ValidationError,
+  assertTrustedEndpoint,
   decodeBase64WithLimit,
   hostedTool,
   readErrorBodyWithLimit,
@@ -42,6 +43,8 @@ export type OpenAIImageGenerationOptions = Record<string, unknown> & {
   responseMaxBytes?: number;
   /** Maximum error response body retained for diagnostics. Defaults to 64 KiB. */
   errorBodyMaxBytes?: number;
+  /** Explicitly allow non-HTTPS or private custom endpoints. */
+  allowUnsafeEndpoints?: boolean;
   /** Streaming belongs to the Responses/Image streaming APIs, not ImageGenerationModel. */
   stream?: false;
   partial_images?: never;
@@ -69,6 +72,8 @@ export interface OpenAIImageGenerationModelConfig {
   fetch?: typeof globalThis.fetch;
   responseMaxBytes?: number;
   errorBodyMaxBytes?: number;
+  /** Explicitly allow non-HTTPS or private custom endpoints. */
+  allowUnsafeEndpoints?: boolean;
 }
 
 export interface OpenAIImageGenerationCall {
@@ -346,7 +351,11 @@ export class OpenAIImageGenerationModel implements ImageGenerationModel<OpenAIIm
   constructor(config: OpenAIImageGenerationModelConfig) {
     this.modelId = config.modelId;
     this.apiKey = config.apiKey;
-    this.baseURL = (config.baseURL ?? "https://api.openai.com/v1").replace(/\/$/, "");
+    this.baseURL = assertTrustedEndpoint(config.baseURL ?? "https://api.openai.com/v1", {
+      label: "OpenAI image generation baseURL",
+      protocols: ["https"],
+      allowUnsafe: config.allowUnsafeEndpoints
+    }).toString().replace(/\/$/, "");
     this.fetcher = config.fetch ?? globalThis.fetch;
     this.responseMaxBytes = normalizePositiveLimit(
       config.responseMaxBytes ?? DEFAULT_RESPONSE_MAX_BYTES,

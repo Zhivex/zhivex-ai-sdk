@@ -14,6 +14,16 @@ export interface RegistryVersion {
   dependencies?: DependencyMap;
   peerDependencies?: DependencyMap;
   optionalDependencies?: DependencyMap;
+  gitHead?: string;
+  dist?: {
+    integrity?: string;
+    attestations?: {
+      url?: string;
+      provenance?: {
+        predicateType?: string;
+      };
+    };
+  };
 }
 
 export interface RegistryDocument {
@@ -40,6 +50,7 @@ export interface VerifyReleaseOptions {
   retryDelayMs?: number;
   sleep?: (delayMs: number) => Promise<void>;
   onRetry?: (message: string) => void;
+  expectedGitHead?: string;
 }
 
 const internalPrefix = "@zhivex-ai/";
@@ -136,12 +147,36 @@ const sameDependencies = (left: DependencyMap, right: DependencyMap) => {
   return names.every((name) => left[name] === right[name]);
 };
 
+const hasSha512Integrity = (value: string | undefined) =>
+  typeof value === "string" &&
+  /^sha512-[A-Za-z0-9+/]{86}==$/.test(value);
+
+const hasTrustedNpmAttestationUrl = (value: string | undefined) => {
+  if (!value) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return (
+      url.origin === "https://registry.npmjs.org" &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      /^\/-\/npm\/v1\/attestations\/[^/]+\/?$/.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+};
+
 export const auditRelease = (
   branch: string,
   packages: PackageManifest[],
   registryByName: Record<string, RegistryDocument>,
   mode: ReleaseMode = "prepublish",
-  distTag: ReleaseDistTag = "latest"
+  distTag: ReleaseDistTag = "latest",
+  expectedGitHead?: string
 ): ReleaseAudit => {
   const errors: string[] = [];
   const pending: string[] = [];
@@ -210,6 +245,28 @@ export const auditRelease = (
     }
 
     const publishedManifest = registry.versions?.[manifest.version];
+    if (mode === "postpublish" && publishedManifest) {
+      if (!hasSha512Integrity(publishedManifest.dist?.integrity)) {
+        errors.push(
+          `${manifest.name}@${manifest.version}: npm metadata is missing a sha512 integrity digest.`
+        );
+      }
+      const provenance = publishedManifest.dist?.attestations?.provenance?.predicateType;
+      const attestationUrl = publishedManifest.dist?.attestations?.url;
+      if (
+        provenance !== "https://slsa.dev/provenance/v1" ||
+        !hasTrustedNpmAttestationUrl(attestationUrl)
+      ) {
+        errors.push(
+          `${manifest.name}@${manifest.version}: npm metadata is missing a trusted publishing provenance attestation.`
+        );
+      }
+      if (expectedGitHead && publishedManifest.gitHead !== expectedGitHead) {
+        errors.push(
+          `${manifest.name}@${manifest.version}: npm gitHead ${publishedManifest.gitHead ?? "is missing"}; expected ${expectedGitHead}.`
+        );
+      }
+    }
     if (
       publishedManifest &&
       !sameDependencies(internalDependencies(manifest), internalDependencies(publishedManifest))
@@ -253,7 +310,11 @@ export const auditRelease = (
 
 const retryablePostpublishAudit = (audit: ReleaseAudit) =>
   audit.pending.length > 0 ||
-  audit.errors.some((error) => error.includes("npm dist-tag"));
+  audit.errors.some((error) =>
+    error.includes("npm dist-tag") ||
+    error.includes("npm metadata") ||
+    error.includes("npm gitHead")
+  );
 
 const wait = (delayMs: number) =>
   new Promise<void>((resolve) => {
@@ -269,13 +330,21 @@ export const verifyReleaseWithRetry = async ({
   maxAttempts = postpublishRegistryAttempts,
   retryDelayMs = postpublishRegistryRetryDelayMs,
   sleep = wait,
-  onRetry
+  onRetry,
+  expectedGitHead
 }: VerifyReleaseOptions): Promise<ReleaseAudit> => {
   const attempts = mode === "postpublish" ? Math.max(1, maxAttempts) : 1;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const audit = auditRelease(branch, packages, await loadRegistry(), mode, distTag);
+      const audit = auditRelease(
+        branch,
+        packages,
+        await loadRegistry(),
+        mode,
+        distTag,
+        expectedGitHead
+      );
       if (mode !== "postpublish" || !retryablePostpublishAudit(audit) || attempt === attempts) {
         return audit;
       }
@@ -322,7 +391,9 @@ const loadRegistryDocument = async (name: string): Promise<RegistryDocument> => 
   const registry = (process.env.NPM_CONFIG_REGISTRY ?? "https://registry.npmjs.org").replace(/\/$/, "");
   const response = await fetch(`${registry}/${encodeURIComponent(name)}?cacheBust=${Date.now()}`, {
     cache: "no-store",
-    headers: { accept: "application/vnd.npm.install-v1+json" }
+    // The abbreviated install document intentionally omits gitHead. The full
+    // packument is required to bind the published artifact to this commit.
+    headers: { accept: "application/json" }
   });
   if (response.status === 404) {
     return {};
@@ -347,11 +418,15 @@ const run = async () => {
     { encoding: "utf8" }
   );
   const packages = await loadWorkspacePackages();
+  const expectedGitHead = execFileSync("git", ["rev-parse", "HEAD"], {
+    encoding: "utf8"
+  }).trim();
   const audit = await verifyReleaseWithRetry({
     branch,
     packages,
     mode,
     distTag,
+    expectedGitHead: mode === "postpublish" ? expectedGitHead : undefined,
     loadRegistry: async () => {
       const registryEntries = await Promise.all(
         packages.map(async (manifest) => [manifest.name, await loadRegistryDocument(manifest.name)] as const)

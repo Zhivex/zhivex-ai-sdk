@@ -87,6 +87,8 @@ Use the lowest durable store that matches the runtime:
 
 File-backed stores are intentionally simple and inspectable, but they rely on local disk. In serverless production, that disk may disappear or differ between instances.
 
+New file-store directories and files use private permissions (`0700` and `0600`). Session, workflow, artifact, run, idempotency, lease, journal, and memory identities are encoded as canonical opaque digests rather than delimiter-joined strings. Matching legacy records remain readable for compatibility and are removed after a successful migrated write; applications must not construct or parse physical store keys themselves.
+
 `createPostgresSessionService()` lazily creates its session table by default. Use `tableName` when a product needs an app-specific table name, and keep migrations or database ownership in the application if your deployment process requires strict schema control.
 
 ## Identity Mapping

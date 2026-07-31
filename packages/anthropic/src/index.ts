@@ -5,11 +5,14 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   ValidationError,
+  assertTrustedEndpoint,
   createProviderAdapter,
   isCallableToolDefinition,
   hostedTool,
   normalizeFinishReason,
   providerDataPart,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
   streamSSE,
   withRetry,
   withTimeoutSignal,
@@ -29,6 +32,7 @@ export interface AnthropicProviderOptions {
   baseURL?: string;
   anthropicVersion?: string;
   fetch?: typeof globalThis.fetch;
+  allowUnsafeEndpoints?: boolean;
 }
 
 export interface AnthropicLanguageModelOptions {
@@ -290,12 +294,16 @@ const mergeAnthropicUsage = (
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response);
     throw new ProviderHTTPError(`Anthropic request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
-  return response.json();
+  return readJsonWithLimit<any>(response, {
+    maxBytes: 128 * 1024 * 1024,
+    provider: "anthropic",
+    endpoint: response.url || undefined
+  });
 };
 
 const mapFilePart = (modelId: string, part: Extract<ModelMessage["parts"][number], { type: "file" }>) => {
@@ -1144,7 +1152,11 @@ export const createAnthropic = (
     throw new ConfigurationError("Missing Anthropic API key.");
   }
 
-  const baseURL = options.baseURL ?? "https://api.anthropic.com/v1";
+  const baseURL = assertTrustedEndpoint(options.baseURL ?? "https://api.anthropic.com/v1", {
+    label: "Anthropic baseURL",
+    protocols: ["https"],
+    allowUnsafe: options.allowUnsafeEndpoints
+  }).toString().replace(/\/+$/, "");
   const anthropicVersion = options.anthropicVersion ?? "2023-06-01";
   const fetcher = options.fetch ?? globalThis.fetch;
 

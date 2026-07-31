@@ -10,6 +10,72 @@ import type {
 const DEFAULT_ENDPOINT = "/api/chat";
 const DEFAULT_MAX_EVENT_CHARS = 1024 * 1024;
 const DEFAULT_MAX_BUFFER_CHARS = 2 * 1024 * 1024;
+const DEFAULT_MAX_STREAM_CHARS = 16 * 1024 * 1024;
+const DEFAULT_MAX_STREAM_EVENTS = 10_000;
+const DEFAULT_MAX_ERROR_BODY_BYTES = 8 * 1024;
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 30_000;
+
+const positiveSafeInteger = (
+  name: string,
+  value: number | false | undefined,
+  defaultValue: number
+): number | false => {
+  const normalized = value ?? defaultValue;
+  if (normalized === false) {
+    return false;
+  }
+  if (!Number.isSafeInteger(normalized) || normalized <= 0) {
+    throw new RangeError(`${name} must be a positive safe integer or false.`);
+  }
+  return normalized;
+};
+
+const abortReason = (signal: AbortSignal): unknown =>
+  signal.reason ??
+  new DOMException("The chat request was aborted.", "AbortError");
+
+const createRequestControl = (
+  parentSignal: AbortSignal,
+  timeoutMs: number | false
+) => {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onParentAbort = () => controller.abort(abortReason(parentSignal));
+  if (parentSignal.aborted) {
+    onParentAbort();
+  } else {
+    parentSignal.addEventListener("abort", onParentAbort, { once: true });
+  }
+
+  const timer =
+    timeoutMs === false
+      ? undefined
+      : setTimeout(() => {
+          timedOut = true;
+          controller.abort(
+            new ChatTransportError(
+              `Chat request exceeded the ${timeoutMs}ms total timeout.`
+            )
+          );
+        }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    timeoutError: () =>
+      new ChatTransportError(
+        `Chat request exceeded the ${timeoutMs}ms total timeout.`
+      ),
+    abort: (reason?: unknown) => controller.abort(reason),
+    dispose: () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      parentSignal.removeEventListener("abort", onParentAbort);
+    }
+  };
+};
 
 const toUIMessage = (message: ChatTransportRequest["message"]): UIMessage | undefined =>
   message
@@ -75,16 +141,45 @@ export class ChatStreamParseError extends ChatTransportError {
 
 const readSSELines = async function* (
   stream: ReadableStream<Uint8Array>,
-  maxBufferChars: number
+  maxBufferChars: number,
+  idleTimeoutMs: number | false
 ): AsyncGenerator<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let completed = false;
+
+  const read = async () => {
+    if (idleTimeoutMs === false) {
+      return reader.read();
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        reader.read(),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new ChatTransportError(
+                  `Chat stream was idle for more than ${idleTimeoutMs}ms.`
+                )
+              ),
+            idleTimeoutMs
+          );
+        })
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  };
 
   try {
     let done = false;
     while (!done) {
-      const result = await reader.read();
+      const result = await read();
       done = result.done;
       if (done) {
         buffer += decoder.decode();
@@ -124,7 +219,17 @@ const readSSELines = async function* (
     if (buffer.length > 0) {
       yield buffer;
     }
+    completed = true;
   } finally {
+    if (!completed) {
+      try {
+        await reader.cancel(
+          new DOMException("Chat stream consumption ended early.", "AbortError")
+        );
+      } catch {
+        // Preserve the original parser, timeout, or consumer error.
+      }
+    }
     reader.releaseLock();
   }
 };
@@ -166,28 +271,60 @@ export const parseChatEventStream = async function* (
   options: {
     maxEventChars?: number;
     maxBufferChars?: number;
+    maxStreamChars?: number;
+    maxStreamEvents?: number;
+    idleTimeoutMs?: number | false;
   } = {}
 ): AsyncGenerator<ChatStreamChunk> {
   const maxEventChars = options.maxEventChars ?? DEFAULT_MAX_EVENT_CHARS;
   const maxBufferChars = options.maxBufferChars ?? DEFAULT_MAX_BUFFER_CHARS;
+  const maxStreamChars =
+    options.maxStreamChars ?? DEFAULT_MAX_STREAM_CHARS;
+  const maxStreamEvents =
+    options.maxStreamEvents ?? DEFAULT_MAX_STREAM_EVENTS;
+  const idleTimeoutMs = positiveSafeInteger(
+    "idleTimeoutMs",
+    options.idleTimeoutMs,
+    DEFAULT_STREAM_IDLE_TIMEOUT_MS
+  );
   if (!Number.isSafeInteger(maxEventChars) || maxEventChars <= 0) {
     throw new RangeError("maxEventChars must be a positive safe integer.");
   }
   if (!Number.isSafeInteger(maxBufferChars) || maxBufferChars <= 0) {
     throw new RangeError("maxBufferChars must be a positive safe integer.");
   }
+  if (!Number.isSafeInteger(maxStreamChars) || maxStreamChars <= 0) {
+    throw new RangeError("maxStreamChars must be a positive safe integer.");
+  }
+  if (!Number.isSafeInteger(maxStreamEvents) || maxStreamEvents <= 0) {
+    throw new RangeError("maxStreamEvents must be a positive safe integer.");
+  }
 
   let dataLines: string[] = [];
   let event: string | undefined;
   let eventChars = 0;
+  let streamChars = 0;
+  let streamEvents = 0;
 
-  for await (const line of readSSELines(stream, maxBufferChars)) {
+  for await (const line of readSSELines(stream, maxBufferChars, idleTimeoutMs)) {
+    streamChars += line.length + 1;
+    if (streamChars > maxStreamChars) {
+      throw new ChatTransportError(
+        `Chat stream exceeded the ${maxStreamChars} character response limit.`
+      );
+    }
     if (line === "") {
       const chunk = decodeEvent(dataLines, event);
       dataLines = [];
       event = undefined;
       eventChars = 0;
       if (chunk) {
+        streamEvents += 1;
+        if (streamEvents > maxStreamEvents) {
+          throw new ChatTransportError(
+            `Chat stream exceeded the ${maxStreamEvents} event response limit.`
+          );
+        }
         yield chunk;
       }
       continue;
@@ -218,17 +355,82 @@ export const parseChatEventStream = async function* (
 
   const finalChunk = decodeEvent(dataLines, event);
   if (finalChunk) {
+    streamEvents += 1;
+    if (streamEvents > maxStreamEvents) {
+      throw new ChatTransportError(
+        `Chat stream exceeded the ${maxStreamEvents} event response limit.`
+      );
+    }
     yield finalChunk;
   }
 };
 
-const responseError = async (response: Response): Promise<ChatTransportError> => {
-  let responseBody: string | undefined;
-  try {
-    responseBody = (await response.text()).slice(0, 8_192);
-  } catch {
-    responseBody = undefined;
+const readResponseTextWithLimit = async (
+  response: Response,
+  maxBytes: number
+): Promise<string | undefined> => {
+  if (!response.body) {
+    return undefined;
   }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let receivedBytes = 0;
+  let text = "";
+  let completed = false;
+  let truncated = false;
+
+  try {
+    for (;;) {
+      const result = await reader.read();
+      if (result.done) {
+        completed = true;
+        text += decoder.decode();
+        break;
+      }
+
+      const remaining = maxBytes - receivedBytes;
+      if (remaining <= 0) {
+        truncated = true;
+        break;
+      }
+      const selected =
+        result.value.byteLength <= remaining
+          ? result.value
+          : result.value.subarray(0, remaining);
+      receivedBytes += selected.byteLength;
+      text += decoder.decode(selected, { stream: true });
+      if (selected.byteLength < result.value.byteLength) {
+        truncated = true;
+        break;
+      }
+    }
+  } catch {
+    return text || undefined;
+  } finally {
+    if (!completed) {
+      try {
+        await reader.cancel(
+          new DOMException("Chat response body limit reached.", "AbortError")
+        );
+      } catch {
+        // A bounded diagnostic body is best-effort.
+      }
+    }
+    reader.releaseLock();
+  }
+
+  return truncated ? `${text}\n...[truncated]` : text;
+};
+
+const responseError = async (
+  response: Response,
+  maxErrorBodyBytes: number
+): Promise<ChatTransportError> => {
+  const responseBody = await readResponseTextWithLimit(
+    response,
+    maxErrorBodyBytes
+  );
   const detail = responseBody?.trim();
   return new ChatTransportError(
     `Chat request failed with ${response.status} ${response.statusText || "HTTP error"}${
@@ -254,78 +456,125 @@ export class FetchChatTransport implements ChatTransport {
   }
 
   async *send(request: ChatTransportRequest): AsyncGenerator<ChatStreamChunk> {
-    const fetchImplementation = this.options.fetch ?? globalThis.fetch;
-    if (!fetchImplementation) {
-      throw new ChatTransportError(
-        "No fetch implementation is available for the chat transport."
-      );
+    const maxErrorBodyBytes = positiveSafeInteger(
+      "maxErrorBodyBytes",
+      this.options.maxErrorBodyBytes,
+      DEFAULT_MAX_ERROR_BODY_BYTES
+    );
+    const requestTimeoutMs = positiveSafeInteger(
+      "requestTimeoutMs",
+      this.options.requestTimeoutMs,
+      DEFAULT_REQUEST_TIMEOUT_MS
+    );
+    const streamIdleTimeoutMs = positiveSafeInteger(
+      "streamIdleTimeoutMs",
+      this.options.streamIdleTimeoutMs,
+      DEFAULT_STREAM_IDLE_TIMEOUT_MS
+    );
+    if (maxErrorBodyBytes === false) {
+      throw new RangeError("maxErrorBodyBytes cannot be false.");
     }
+    const control = createRequestControl(request.signal, requestTimeoutMs);
+    let completed = false;
 
-    const configuredHeaders =
-      typeof this.options.headers === "function"
-        ? await this.options.headers(request)
-        : this.options.headers;
-    const headers = new Headers(configuredHeaders);
-    if (!headers.has("accept")) {
-      headers.set("accept", "text/event-stream");
-    }
-    if (!headers.has("content-type")) {
-      headers.set("content-type", "application/json");
-    }
-
-    const buildRequestBody =
-      this.options.buildRequestBody ?? prepareChatRequestBody;
-    const body = await buildRequestBody(request);
-
-    let response: Response;
     try {
-      response = await fetchImplementation(this.endpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: request.signal,
-        credentials: this.options.credentials
+      const fetchImplementation = this.options.fetch ?? globalThis.fetch;
+      if (!fetchImplementation) {
+        throw new ChatTransportError(
+          "No fetch implementation is available for the chat transport."
+        );
+      }
+
+      const configuredHeaders =
+        typeof this.options.headers === "function"
+          ? await this.options.headers(request)
+          : this.options.headers;
+      const headers = new Headers(configuredHeaders);
+      if (!headers.has("accept")) {
+        headers.set("accept", "text/event-stream");
+      }
+      if (!headers.has("content-type")) {
+        headers.set("content-type", "application/json");
+      }
+
+      const buildRequestBody =
+        this.options.buildRequestBody ?? prepareChatRequestBody;
+      const body = await buildRequestBody(request);
+
+      let response: Response;
+      try {
+        response = await fetchImplementation(this.endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal: control.signal,
+          credentials: this.options.credentials,
+          redirect: this.options.redirect ?? "error"
+        });
+      } catch (error) {
+        if (request.signal.aborted) {
+          throw error;
+        }
+        if (control.timedOut()) {
+          throw control.timeoutError();
+        }
+        throw new ChatTransportError("Unable to reach the chat endpoint.", {
+          cause: error
+        });
+      }
+
+      if (!response.ok) {
+        throw await responseError(response, maxErrorBodyBytes);
+      }
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.toLowerCase().includes("text/event-stream")) {
+        const responseBody = await readResponseTextWithLimit(
+          response,
+          maxErrorBodyBytes
+        );
+        throw new ChatTransportError(
+          `Chat endpoint returned "${contentType || "unknown"}" instead of text/event-stream.`,
+          {
+            status: response.status,
+            statusText: response.statusText,
+            responseBody
+          }
+        );
+      }
+      if (!response.body) {
+        throw new ChatTransportError(
+          "The chat endpoint returned an empty response.",
+          {
+            status: response.status,
+            statusText: response.statusText
+          }
+        );
+      }
+
+      yield* parseChatEventStream(response.body, {
+        maxEventChars: this.options.maxEventChars,
+        maxBufferChars: this.options.maxBufferChars,
+        maxStreamChars: this.options.maxStreamChars,
+        maxStreamEvents: this.options.maxStreamEvents,
+        idleTimeoutMs: streamIdleTimeoutMs
       });
+      completed = true;
     } catch (error) {
       if (request.signal.aborted) {
         throw error;
       }
-      throw new ChatTransportError("Unable to reach the chat endpoint.", {
-        cause: error
-      });
-    }
-
-    if (!response.ok) {
-      throw await responseError(response);
-    }
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.toLowerCase().includes("text/event-stream")) {
-      let responseBody: string | undefined;
-      try {
-        responseBody = (await response.text()).slice(0, 8_192);
-      } catch {
-        responseBody = undefined;
+      if (control.timedOut()) {
+        throw control.timeoutError();
       }
-      throw new ChatTransportError(
-        `Chat endpoint returned "${contentType || "unknown"}" instead of text/event-stream.`,
-        {
-          status: response.status,
-          statusText: response.statusText,
-          responseBody
-        }
-      );
+      throw error;
+    } finally {
+      if (!completed) {
+        control.abort(
+          new DOMException("Chat transport consumption ended.", "AbortError")
+        );
+      }
+      control.dispose();
     }
-    if (!response.body) {
-      throw new ChatTransportError("The chat endpoint returned an empty response.", {
-        status: response.status,
-        statusText: response.statusText
-      });
-    }
-
-    yield* parseChatEventStream(response.body, {
-      maxEventChars: this.options.maxEventChars,
-      maxBufferChars: this.options.maxBufferChars
-    });
   }
 }
 

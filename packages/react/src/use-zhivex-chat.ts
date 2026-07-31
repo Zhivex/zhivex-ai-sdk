@@ -16,6 +16,7 @@ import {
   chatReducer,
   createInitialChatState
 } from "./reducer.js";
+import { selectPendingApproval } from "./approval.js";
 import { createFetchChatTransport } from "./transport.js";
 import type {
   ChatAction,
@@ -182,6 +183,7 @@ export const useZhivexChat = (
         }
         const normalized =
           error instanceof Error ? error : new Error(String(error));
+        controller.abort(normalized);
         commit({ type: "request-error", error: normalized });
         callbackRef.current.onError?.(normalized);
       } finally {
@@ -275,17 +277,17 @@ export const useZhivexChat = (
     async (
       approvalRequestId: string,
       approve: boolean,
-      reason?: string
+      reason?: string,
+      provider?: string
     ): Promise<void> => {
       if (activeRef.current) {
         return;
       }
-      const pending = stateRef.current.pendingApprovals.find(
-        (approval) => approval.id === approvalRequestId
+      const pending = selectPendingApproval(
+        stateRef.current.pendingApprovals,
+        approvalRequestId,
+        provider
       );
-      if (!pending) {
-        throw new Error(`Unknown approval request "${approvalRequestId}".`);
-      }
       const approval: AgentApprovalResponse = {
         provider: pending.provider,
         approvalRequestId,

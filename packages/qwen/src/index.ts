@@ -6,6 +6,7 @@ import {
   ConfigurationError,
   decodeBase64WithLimit,
   ProviderHTTPError,
+  assertTrustedEndpoint,
   readBodyWithLimit,
   readErrorBodyWithLimit,
   readJsonWithLimit,
@@ -82,6 +83,8 @@ export interface QwenProviderOptions {
   responseLimits?: AudioResponseLimits;
   speechAudioURLValidator?: QwenSpeechAudioURLValidator;
   speechAudioMaxRedirects?: number;
+  /** Allow non-HTTPS/private credentialed endpoint overrides. Server-side only. */
+  allowUnsafeEndpoints?: boolean;
 }
 
 export type QwenSpeechAudioURLValidator = (url: URL) => boolean | Promise<boolean>;
@@ -252,6 +255,9 @@ const nodeWebSocketDataToText = (data: RawData) => {
   return Buffer.from(data).toString("utf8");
 };
 
+const QWEN_REALTIME_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
+const QWEN_JSON_RESPONSE_MAX_BYTES = 128 * 1024 * 1024;
+
 const openQwenRealtimeConnection: RealtimeConnectionFactory = async (url, headers, options) => {
   if (typeof process === "undefined" || !process.versions?.node) {
     return openWebSocketConnection(url, headers, options);
@@ -262,8 +268,8 @@ const openQwenRealtimeConnection: RealtimeConnectionFactory = async (url, header
 
   const { default: WebSocket } = await import("ws");
   const socket = options?.subprotocols?.length
-    ? new WebSocket(url, options.subprotocols, { headers })
-    : new WebSocket(url, { headers });
+    ? new WebSocket(url, options.subprotocols, { headers, maxPayload: QWEN_REALTIME_MAX_MESSAGE_BYTES })
+    : new WebSocket(url, { headers, maxPayload: QWEN_REALTIME_MAX_MESSAGE_BYTES });
 
   await new Promise<void>((resolve, reject) => {
     let finished = false;
@@ -486,8 +492,8 @@ const parseQwenSpeechAudioURL = async (
     throw new ProviderHTTPError("Qwen speech response contained an invalid audio download URL.", 502);
   }
 
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new ProviderHTTPError("Qwen speech audio downloads require an HTTP(S) URL.", 502);
+  if (url.protocol !== "https:") {
+    throw new ProviderHTTPError("Qwen speech audio downloads require an HTTPS URL.", 502);
   }
 
   const allowed = validator ? await validator(url) : isOfficialQwenSpeechAudioURL(url);
@@ -717,14 +723,12 @@ const parseJson = async (
     });
   }
 
-  return options.maxBytes
-    ? readJsonWithLimit<any>(response, {
-        maxBytes: options.maxBytes,
-        provider: "qwen",
-        endpoint: options.endpoint,
-        abort: options.abort
-      })
-    : response.json();
+  return readJsonWithLimit<any>(response, {
+    maxBytes: options.maxBytes ?? QWEN_JSON_RESPONSE_MAX_BYTES,
+    provider: "qwen",
+    endpoint: options.endpoint,
+    abort: options.abort
+  });
 };
 
 type QwenMessageContentPart =
@@ -1912,7 +1916,14 @@ class QwenFilesClient implements FilesClient {
     }
     try {
       const response = await withRetry(
-        () => this.fetcher(`${this.baseURL}/files`, { method: "POST", headers: { authorization: `Bearer ${this.apiKey}` }, signal, body: form }),
+        () =>
+          this.fetcher(`${this.baseURL}/files`, {
+            method: "POST",
+            redirect: "error",
+            headers: { authorization: `Bearer ${this.apiKey}` },
+            signal,
+            body: form
+          }),
         input
       );
       return normalizeUploadedFile(await parseJson(response));
@@ -2251,7 +2262,13 @@ class QwenSpeechModel implements SpeechModel {
 
 const normalizeGeneratedMedia = (item: any, fallbackMimeType: string): GeneratedMedia => ({
   uri: item.url ?? item.uri ?? item.image ?? item.video_url,
-  data: item.b64_json || item.base64 ? Uint8Array.from(Buffer.from(item.b64_json ?? item.base64, "base64")) : undefined,
+  data: item.b64_json || item.base64
+    ? decodeBase64WithLimit(item.b64_json ?? item.base64, {
+        maxBytes: 64 * 1024 * 1024,
+        provider: "qwen",
+        endpoint: "media-generation"
+      })
+    : undefined,
   mediaType: item.mime_type ?? item.mediaType ?? fallbackMimeType,
   text: item.revised_prompt ?? item.text,
   providerMetadata: item
@@ -2523,7 +2540,11 @@ const parseRealtimeEvent = (payload: Record<string, unknown>): RealtimeEvent[] =
   if (type === "response.audio.delta" && typeof payload.delta === "string") {
     return [{
       type: "realtime-audio-output",
-      audio: Uint8Array.from(Buffer.from(payload.delta, "base64")),
+      audio: decodeBase64WithLimit(payload.delta, {
+        maxBytes: QWEN_REALTIME_MAX_MESSAGE_BYTES,
+        provider: "qwen",
+        endpoint: "realtime"
+      }),
       mediaType: "audio/pcm",
       sampleRateHz: 24_000,
       channels: 1,
@@ -2675,12 +2696,36 @@ export const createQwen = (
   const workspaceURLs = options.workspaceId
     ? qwenWorkspaceURLs(options.workspaceId, options.region ?? "singapore")
     : undefined;
-  const baseURL = options.baseURL ?? workspaceURLs?.baseURL ?? "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
-  const taskBaseURL = options.taskBaseURL ?? workspaceURLs?.taskBaseURL ?? qwenTaskBaseURLFrom(baseURL);
-  const realtimeURL =
+  const baseURL = assertTrustedEndpoint(
+    options.baseURL ?? workspaceURLs?.baseURL ?? "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    {
+      label: "Qwen baseURL",
+      protocols: ["https"],
+      allowUnsafe: options.allowUnsafeEndpoints
+    }
+  ).toString().replace(/\/+$/, "");
+  const taskBaseURL = assertTrustedEndpoint(
+    options.taskBaseURL ?? workspaceURLs?.taskBaseURL ?? qwenTaskBaseURLFrom(baseURL),
+    {
+      label: "Qwen taskBaseURL",
+      protocols: ["https"],
+      allowedHosts: [new URL(baseURL).hostname],
+      allowUnsafe: options.allowUnsafeEndpoints
+    }
+  ).toString().replace(/\/+$/, "");
+  const realtimeURL = assertTrustedEndpoint(
     options.realtimeURL ??
     workspaceURLs?.realtimeURL ??
-    "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime";
+    "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime",
+    {
+      label: "Qwen realtimeURL",
+      protocols: ["wss"],
+      allowedHosts: options.realtimeURL
+        ? [new URL(baseURL).hostname]
+        : [new URL(baseURL).hostname, "dashscope-intl.aliyuncs.com"],
+      allowUnsafe: options.allowUnsafeEndpoints
+    }
+  ).toString();
   const fetcher = options.fetch ?? globalThis.fetch;
   const responseLimits = resolveAudioResponseLimits(options.responseLimits);
   const speechAudioMaxRedirects = options.speechAudioMaxRedirects ?? 3;

@@ -413,6 +413,8 @@ const localApprovalResolutionPayload = (
   reason: reason ?? null
 });
 
+const approvalKey = (provider: string, requestId: string) => `${provider}\0${requestId}`;
+
 const applyApprovalResponses = async (
   messages: ModelMessage[],
   approvals: AgentApprovalResponse[] | undefined,
@@ -428,28 +430,26 @@ const applyApprovalResponses = async (
     };
   }
 
-  const pendingById = new Map(pendingApprovals.map((approval) => [approval.id, approval]));
+  const pendingById = new Map(
+    pendingApprovals.map((approval) => [approvalKey(approval.provider, approval.id), approval])
+  );
   for (const approval of approvals) {
-    const pending = pendingById.get(approval.approvalRequestId);
+    const pending = pendingById.get(approvalKey(approval.provider, approval.approvalRequestId));
     if (!pending) {
-      throw new ValidationError(`Unknown approval request "${approval.approvalRequestId}".`);
-    }
-
-    if (pending.provider !== approval.provider) {
       throw new ValidationError(
-        `Approval request "${approval.approvalRequestId}" belongs to provider "${pending.provider}", not "${approval.provider}".`
+        `Unknown approval request "${approval.approvalRequestId}" for provider "${approval.provider}".`
       );
     }
   }
 
   const providerApprovals = approvals.filter((approval) => {
-    const pending = pendingById.get(approval.approvalRequestId);
+    const pending = pendingById.get(approvalKey(approval.provider, approval.approvalRequestId));
     return pending?.kind === undefined || pending.kind === "provider";
   });
   const localResolutions: AgentApprovalResolution[] = [];
   const subagentResolutions: AgentApprovalResolution[] = [];
   for (const approval of approvals) {
-    const pending = pendingById.get(approval.approvalRequestId);
+    const pending = pendingById.get(approvalKey(approval.provider, approval.approvalRequestId));
     if (!pending) {
       continue;
     }
@@ -512,13 +512,25 @@ const applyApprovalResponses = async (
       ? [...messages, createAgentApprovalMessage(providerApprovals)]
       : messages,
     pendingApprovals: pendingApprovals.filter(
-      (pending) => !approvals.some((approval) => approval.approvalRequestId === pending.id)
+      (pending) => !approvals.some(
+        (approval) =>
+          approval.approvalRequestId === pending.id &&
+          approval.provider === pending.provider
+      )
     ),
     approvalHistory: [
       ...approvalHistory.filter(
         (existing) =>
-          !localResolutions.some((resolution) => resolution.requestId === existing.requestId) &&
-          !subagentResolutions.some((resolution) => resolution.requestId === existing.requestId)
+          !localResolutions.some(
+            (resolution) =>
+              resolution.requestId === existing.requestId &&
+              resolution.provider === existing.provider
+          ) &&
+          !subagentResolutions.some(
+            (resolution) =>
+              resolution.requestId === existing.requestId &&
+              resolution.provider === existing.provider
+          )
       ),
       ...localResolutions,
       ...subagentResolutions

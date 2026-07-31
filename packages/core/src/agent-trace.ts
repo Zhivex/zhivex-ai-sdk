@@ -141,6 +141,13 @@ export interface AgentTraceCollector {
   reset(runId?: string): void;
 }
 
+export interface AgentTraceCollectorOptions extends AgentTraceOptions {
+  maxRuns?: number;
+  maxEventsPerRun?: number;
+  retentionMs?: number;
+  now?: () => number;
+}
+
 export interface AgentRunTreeNode {
   runId: string;
   agentId?: string;
@@ -702,14 +709,59 @@ export const summarizeAgentTrace = (
   };
 };
 
-export const createAgentTraceCollector = (options: AgentTraceOptions = {}): AgentTraceCollector => {
+const positiveCollectorLimit = (value: number | undefined, fallback: number, name: string) => {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
+    throw new ValidationError(`The trace collector "${name}" option must be a positive safe integer.`);
+  }
+  return resolved;
+};
+
+export const createAgentTraceCollector = (options: AgentTraceCollectorOptions = {}): AgentTraceCollector => {
   const events = new Map<string, AgentTraceEvent[]>();
   const traces = new Map<string, AgentTraceArtifact>();
+  const lastSeen = new Map<string, number>();
+  const maxRuns = positiveCollectorLimit(options.maxRuns, 1_000, "maxRuns");
+  const maxEventsPerRun = positiveCollectorLimit(options.maxEventsPerRun, 1_000, "maxEventsPerRun");
+  const retentionMs = positiveCollectorLimit(options.retentionMs, 24 * 60 * 60 * 1_000, "retentionMs");
+  const now = options.now ?? Date.now;
   let latestRunId: string | undefined;
+
+  const removeRun = (runId: string) => {
+    events.delete(runId);
+    traces.delete(runId);
+    lastSeen.delete(runId);
+    if (latestRunId === runId) {
+      latestRunId = undefined;
+    }
+  };
+
+  const enforceRetention = () => {
+    const cutoff = now() - retentionMs;
+    for (const [runId, seenAt] of lastSeen) {
+      if (seenAt < cutoff) {
+        removeRun(runId);
+      }
+    }
+    while (lastSeen.size > maxRuns) {
+      const oldestRunId = lastSeen.keys().next().value as string | undefined;
+      if (!oldestRunId) {
+        break;
+      }
+      removeRun(oldestRunId);
+    }
+  };
 
   const appendEvent = (event: AgentTraceEvent) => {
     latestRunId = event.runId;
-    events.set(event.runId, [...(events.get(event.runId) ?? []), event]);
+    const seenAt = now();
+    lastSeen.delete(event.runId);
+    lastSeen.set(event.runId, seenAt);
+    events.set(
+      event.runId,
+      [...(events.get(event.runId) ?? []), event].slice(-maxEventsPerRun)
+    );
+    enforceRetention();
   };
 
   return {
@@ -721,9 +773,11 @@ export const createAgentTraceCollector = (options: AgentTraceOptions = {}): Agen
       }
     },
     getTrace(runId) {
+      enforceRetention();
       return traces.get(runId ?? latestRunId ?? "");
     },
     getEvents(runId) {
+      enforceRetention();
       if (runId) {
         return [...(events.get(runId) ?? [])];
       }
@@ -731,19 +785,16 @@ export const createAgentTraceCollector = (options: AgentTraceOptions = {}): Agen
     },
     reset(runId) {
       if (runId) {
-        events.delete(runId);
-        traces.delete(runId);
-        if (latestRunId === runId) {
-          latestRunId = undefined;
-        }
+        removeRun(runId);
         return;
       }
       events.clear();
       traces.clear();
+      lastSeen.clear();
       latestRunId = undefined;
     }
   };
 };
 
-export const createProductionTraceCollector = (options: AgentTraceOptions = {}): AgentTraceCollector =>
+export const createProductionTraceCollector = (options: AgentTraceCollectorOptions = {}): AgentTraceCollector =>
   createAgentTraceCollector(createProductionTraceOptions(options));

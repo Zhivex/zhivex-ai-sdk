@@ -4,11 +4,14 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
+  assertTrustedEndpoint,
   createProviderAdapter,
   hostedTool,
   isCallableToolDefinition,
   normalizeFinishReason,
   providerDataPart,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
   streamSSE,
   withRetry,
   withTimeoutSignal,
@@ -35,7 +38,15 @@ export interface MetaProviderOptions {
   apiKey?: string;
   baseURL?: string;
   fetch?: typeof globalThis.fetch;
+  allowUnsafeEndpoints?: boolean;
 }
+
+const encodeMetaResourceId = (value: string) => {
+  if (!value || value === "." || value === ".." || /[\\/?#\s]/.test(value)) {
+    throw new ConfigurationError("Meta file ID must be a non-empty opaque identifier without path separators.");
+  }
+  return encodeURIComponent(value);
+};
 
 export interface MetaLanguageModelOptions {
   apiMode?: "chat" | "responses";
@@ -116,12 +127,16 @@ const stripProviderOptions = (options: Record<string, unknown> | undefined) => {
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response);
     throw new ProviderHTTPError(`Meta request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
-  return response.json();
+  return readJsonWithLimit<any>(response, {
+    maxBytes: 128 * 1024 * 1024,
+    provider: "meta",
+    endpoint: response.url || undefined
+  });
 };
 
 const blobFromData = (data: FileUploadInput["data"], mediaType: string) => {
@@ -1034,6 +1049,7 @@ class MetaFilesClient implements FilesClient<MetaFileOptions> {
         () =>
           this.fetcher(`${this.baseURL}/files`, {
             method: "POST",
+            redirect: "error",
             headers: { authorization: `Bearer ${this.apiKey}` },
             signal,
             body: form
@@ -1051,7 +1067,7 @@ class MetaFilesClient implements FilesClient<MetaFileOptions> {
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/files/${input.name}`, {
+          this.fetcher(`${this.baseURL}/files/${encodeMetaResourceId(input.name)}`, {
             method: "GET",
             headers: jsonHeaders(this.apiKey),
             signal
@@ -1092,7 +1108,7 @@ class MetaFilesClient implements FilesClient<MetaFileOptions> {
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/files/${input.name}`, {
+          this.fetcher(`${this.baseURL}/files/${encodeMetaResourceId(input.name)}`, {
             method: "DELETE",
             headers: jsonHeaders(this.apiKey),
             signal
@@ -1117,7 +1133,11 @@ export const createMeta = (
     throw new ConfigurationError("Missing Meta Model API key.");
   }
 
-  const baseURL = (options.baseURL ?? "https://api.meta.ai/v1").replace(/\/+$/, "");
+  const baseURL = assertTrustedEndpoint(options.baseURL ?? "https://api.meta.ai/v1", {
+    label: "Meta baseURL",
+    protocols: ["https"],
+    allowUnsafe: options.allowUnsafeEndpoints
+  }).toString().replace(/\/+$/, "");
   const fetcher = options.fetch ?? globalThis.fetch;
 
   return createProviderAdapter({

@@ -4,12 +4,17 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
+  ValidationError,
+  assertTrustedEndpoint,
   createProviderAdapter,
   isCallableToolDefinition,
+  mergeAbortSignals,
   normalizeFinishReason,
   providerDataPart,
   serializeJsonValue,
   streamSSE,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
   tool,
   withRetry,
   withTimeoutSignal,
@@ -29,6 +34,7 @@ export interface KimiProviderOptions {
   apiKey?: string;
   baseURL?: string;
   fetch?: typeof globalThis.fetch;
+  allowUnsafeEndpoints?: boolean;
 }
 
 export interface KimiLanguageModelOptions {
@@ -53,6 +59,11 @@ export interface KimiFormulaToolOptions {
   apiKey?: string;
   baseURL?: string;
   fetch?: typeof globalThis.fetch;
+  abortSignal?: AbortSignal;
+  timeoutMs?: number;
+  maxRetries?: number;
+  retryBackoffMs?: number;
+  allowUnsafeEndpoints?: boolean;
 }
 
 export interface KimiOfficialToolOptions extends KimiFormulaToolOptions {
@@ -67,6 +78,19 @@ export interface KimiFormulaToolsOptions extends KimiFormulaToolOptions {
   formulas: string[];
   requiresApproval?: boolean;
 }
+
+const DEFAULT_FORMULA_TIMEOUT_MS = 30_000;
+const MAX_FORMULA_TIMEOUT_MS = 10 * 60_000;
+
+const normalizeFormulaRequestOptions = <T extends KimiFormulaToolOptions>(options: T): T & { timeoutMs: number } => {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_FORMULA_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_FORMULA_TIMEOUT_MS) {
+    throw new ValidationError(
+      `Kimi Formula timeoutMs must be a positive safe integer no greater than ${MAX_FORMULA_TIMEOUT_MS}.`
+    );
+  }
+  return { ...options, timeoutMs };
+};
 
 const capabilities: ModelCapabilities = {
   streaming: true,
@@ -160,9 +184,27 @@ const resolveFormulaConfig = (options: KimiFormulaToolOptions) => {
   }
   return {
     apiKey,
-    baseURL: (options.baseURL ?? process.env.KIMI_BASE_URL ?? process.env.MOONSHOT_BASE_URL ?? "https://api.moonshot.ai/v1").replace(/\/+$/, ""),
+    baseURL: assertTrustedEndpoint(
+      options.baseURL ?? process.env.KIMI_BASE_URL ?? process.env.MOONSHOT_BASE_URL ?? "https://api.moonshot.ai/v1",
+      {
+        label: "Kimi Formula baseURL",
+        protocols: ["https"],
+        allowUnsafe: options.allowUnsafeEndpoints
+      }
+    ).toString().replace(/\/+$/, ""),
     fetcher: options.fetch ?? globalThis.fetch
   };
+};
+
+const encodeKimiFormulaUri = (value: string) => {
+  if (!value || /[\\?#]/.test(value)) {
+    throw new ConfigurationError("Kimi formula URI must be a non-empty resource name without query or fragment delimiters.");
+  }
+  const segments = value.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new ConfigurationError("Kimi formula URI must not contain empty or traversal path segments.");
+  }
+  return segments.map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ":")).join("/");
 };
 
 const callKimiFormula = async (
@@ -171,20 +213,32 @@ const callKimiFormula = async (
   name: string,
   input: unknown
 ): Promise<JsonValue> => {
-  const { apiKey, baseURL, fetcher } = resolveFormulaConfig(options);
-  const response = await fetcher(`${baseURL}/formulas/${formulaUri}/fibers`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      name,
-      arguments: JSON.stringify(input ?? {})
-    })
-  });
-  const json = await parseJson(response);
-  return serializeJsonValue(json);
+  const requestOptions = normalizeFormulaRequestOptions(options);
+  const { apiKey, baseURL, fetcher } = resolveFormulaConfig(requestOptions);
+  const { signal, cleanup } = withTimeoutSignal(requestOptions);
+  try {
+    const response = await withRetry(
+      () =>
+        fetcher(`${baseURL}/formulas/${encodeKimiFormulaUri(formulaUri)}/fibers`, {
+          method: "POST",
+          redirect: "error",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${apiKey}`
+          },
+          signal,
+          body: JSON.stringify({
+            name,
+            arguments: JSON.stringify(input ?? {})
+          })
+        }),
+      requestOptions
+    );
+    const json = await parseJson(response);
+    return serializeJsonValue(json);
+  } finally {
+    cleanup();
+  }
 };
 
 const reasoningContentFromMessage = (message: ModelMessage) =>
@@ -207,13 +261,17 @@ const jsonHeaders = (apiKey: string) => ({
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response);
     throw new ProviderHTTPError(`Kimi request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
 
-  return response.json();
+  return readJsonWithLimit<any>(response, {
+    maxBytes: 128 * 1024 * 1024,
+    provider: "kimi",
+    endpoint: response.url || undefined
+  });
 };
 
 const mapContentParts = (message: ModelMessage) => {
@@ -751,7 +809,11 @@ export const createKimi = (
     throw new ConfigurationError("Missing Kimi API key.");
   }
 
-  const baseURL = options.baseURL ?? "https://api.moonshot.ai/v1";
+  const baseURL = assertTrustedEndpoint(options.baseURL ?? "https://api.moonshot.ai/v1", {
+    label: "Kimi baseURL",
+    protocols: ["https"],
+    allowUnsafe: options.allowUnsafeEndpoints
+  }).toString().replace(/\/+$/, "");
   const fetcher = options.fetch ?? globalThis.fetch;
 
   return createProviderAdapter({
@@ -770,8 +832,17 @@ export const kimiOfficialTool = (options: KimiOfficialToolOptions) =>
       formulaUri: options.formulaUri,
       parameters: options.parameters
     }),
-    requiresApproval: options.requiresApproval,
-    execute: (input) => callKimiFormula(options, options.formulaUri, options.name, input)
+    requiresApproval: options.requiresApproval ?? true,
+    execute: (input, context) =>
+      callKimiFormula(
+        {
+          ...options,
+          abortSignal: mergeAbortSignals(options.abortSignal, context?.abortSignal)
+        },
+        options.formulaUri,
+        options.name,
+        input
+      )
   });
 
 const kimiObjectSchema = (properties: Record<string, JsonValue>, required: string[] = []): JsonValue => ({
@@ -851,32 +922,44 @@ export const kimiDateTool = (options: KimiFormulaToolOptions & { requiresApprova
   });
 
 export const kimiFormulaTools = async (options: KimiFormulaToolsOptions): Promise<ToolSet> => {
-  const { apiKey, baseURL, fetcher } = resolveFormulaConfig(options);
+  const requestOptions = normalizeFormulaRequestOptions(options);
+  const { apiKey, baseURL, fetcher } = resolveFormulaConfig(requestOptions);
   const result: ToolSet = {};
-
-  for (const formulaUri of options.formulas) {
-    const response = await fetcher(`${baseURL}/formulas/${formulaUri}/tools`, {
-      headers: {
-        authorization: `Bearer ${apiKey}`
+  const { signal, cleanup } = withTimeoutSignal(requestOptions);
+  try {
+    for (const formulaUri of options.formulas) {
+      const response = await withRetry(
+        () =>
+          fetcher(`${baseURL}/formulas/${encodeKimiFormulaUri(formulaUri)}/tools`, {
+            redirect: "error",
+            headers: {
+              authorization: `Bearer ${apiKey}`
+            },
+            signal
+          }),
+        requestOptions
+      );
+      const json = await parseJson(response);
+      for (const definition of json.tools ?? []) {
+        const name = definition.function?.name;
+        if (!name) {
+          continue;
+        }
+        result[name] = kimiOfficialTool({
+          ...requestOptions,
+          apiKey,
+          baseURL,
+          fetch: fetcher,
+          name,
+          formulaUri,
+          description: definition.function?.description,
+          parameters: definition.function?.parameters,
+          requiresApproval: options.requiresApproval ?? true
+        });
       }
-    });
-    const json = await parseJson(response);
-    for (const definition of json.tools ?? []) {
-      const name = definition.function?.name;
-      if (!name) {
-        continue;
-      }
-      result[name] = kimiOfficialTool({
-        apiKey,
-        baseURL,
-        fetch: fetcher,
-        name,
-        formulaUri,
-        description: definition.function?.description,
-        parameters: definition.function?.parameters,
-        requiresApproval: options.requiresApproval
-      });
     }
+  } finally {
+    cleanup();
   }
 
   return result;

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { promises as fs } from "node:fs";
+import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -131,23 +131,51 @@ const readJsonFile = async <T>(filePath: string): Promise<T> =>
   JSON.parse(await fs.readFile(filePath, "utf8")) as T;
 
 const writeJsonFile = async (filePath: string, value: unknown): Promise<void> => {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, JSON.stringify(value, null, 2), "utf8");
+  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  const handle = await fs.open(
+    filePath,
+    constants.O_WRONLY |
+      constants.O_CREAT |
+      constants.O_NOFOLLOW,
+    0o600
+  );
+  try {
+    await handle.chmod(0o600);
+    await handle.truncate(0);
+    await handle.writeFile(JSON.stringify(value, null, 2), {
+      encoding: "utf8"
+    });
+  } finally {
+    await handle.close();
+  }
 };
 
 const writeTextFile = async (filePath: string, value: string, force: boolean): Promise<void> => {
-  if (!force) {
-    try {
-      await fs.access(filePath);
-      throw new Error(`Refusing to overwrite existing file: ${filePath}. Pass --force to overwrite.`);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
-    }
-  }
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, value, "utf8");
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    handle = await fs.open(
+      filePath,
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_NOFOLLOW |
+        (force ? 0 : constants.O_EXCL),
+      0o644
+    );
+  } catch (error) {
+    if (!force && (error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(`Refusing to overwrite existing file: ${filePath}. Pass --force to overwrite.`);
+    }
+    throw error;
+  }
+  try {
+    if (force) {
+      await handle.truncate(0);
+    }
+    await handle.writeFile(value, { encoding: "utf8" });
+  } finally {
+    await handle.close();
+  }
 };
 
 const listJsonFiles = async (directory: string): Promise<string[]> => {
@@ -165,49 +193,49 @@ const listJsonFiles = async (directory: string): Promise<string[]> => {
 const providerTemplates = {
   openai: {
     packageName: "@zhivex-ai/openai",
-    packageVersion: "0.9.0",
+    packageVersion: "0.9.3",
     factoryName: "createOpenAI",
     envName: "OPENAI_API_KEY",
     defaultModel: "gpt-5"
   },
   xai: {
     packageName: "@zhivex-ai/xai",
-    packageVersion: "0.1.0",
+    packageVersion: "0.1.4",
     factoryName: "createXAI",
     envName: "XAI_API_KEY",
     defaultModel: "grok-4.5"
   },
   meta: {
     packageName: "@zhivex-ai/meta",
-    packageVersion: "0.1.2",
+    packageVersion: "0.1.6",
     factoryName: "createMeta",
     envName: "MODEL_API_KEY",
     defaultModel: "muse-spark-1.1"
   },
   anthropic: {
     packageName: "@zhivex-ai/anthropic",
-    packageVersion: "0.6.5",
+    packageVersion: "0.7.1",
     factoryName: "createAnthropic",
     envName: "ANTHROPIC_API_KEY",
     defaultModel: "claude-sonnet-5"
   },
   gemini: {
     packageName: "@zhivex-ai/gemini",
-    packageVersion: "0.9.0",
+    packageVersion: "0.10.0",
     factoryName: "createGemini",
     envName: "GEMINI_API_KEY",
     defaultModel: "gemini-3.6-flash"
   },
   kimi: {
     packageName: "@zhivex-ai/kimi",
-    packageVersion: "0.7.0",
+    packageVersion: "0.7.3",
     factoryName: "createKimi",
     envName: "KIMI_API_KEY",
     defaultModel: "kimi-k3"
   },
   deepseek: {
     packageName: "@zhivex-ai/deepseek",
-    packageVersion: "0.3.0",
+    packageVersion: "0.4.1",
     factoryName: "createDeepSeek",
     envName: "DEEPSEEK_API_KEY",
     defaultModel: "deepseek-v4-flash"
@@ -232,7 +260,7 @@ const agentTemplate = (options: {
   model: string;
 }): string => {
   const provider = providerTemplates[options.provider];
-  return `import { promises as fs } from "node:fs";
+  return `import { constants, promises as fs } from "node:fs";
 
 import {
   applySafetyPolicyToAgent,
@@ -250,8 +278,8 @@ const provider = ${provider.factoryName}({
 });
 
 const baseAgent = createAgent({
-  id: "${options.appName}",
-  model: provider("${options.model}"),
+  id: ${JSON.stringify(options.appName)},
+  model: provider(${JSON.stringify(options.model)}),
   instructions: "You are a concise production assistant. Use tools only when they improve confidence.",
   maxSteps: 6,
   tools: {
@@ -273,7 +301,7 @@ const baseAgent = createAgent({
 const agent = applySafetyPolicyToAgent(baseAgent, createProductionSafetyPolicy());
 
 const runner = createRunner({
-  appName: "${options.appName}",
+  appName: ${JSON.stringify(options.appName)},
   agent,
   sessionService: createFileSessionService({
     directory: ".zhivex/sessions"
@@ -291,14 +319,32 @@ const result = await runner.run({
   }
 });
 
-await fs.mkdir(".zhivex/runs", { recursive: true });
-await fs.writeFile(".zhivex/runs/latest-agent-state.json", JSON.stringify(result.output.state, null, 2), "utf8");
+const runDirectory = ".zhivex/runs";
+const statePath = \`\${runDirectory}/latest-agent-state.json\`;
+const createdRunDirectory = await fs.mkdir(runDirectory, { recursive: true, mode: 0o700 });
+if (createdRunDirectory !== undefined) {
+  await fs.chmod(runDirectory, 0o700);
+}
+const stateFile = await fs.open(
+  statePath,
+  constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW,
+  0o600
+);
+try {
+  await stateFile.chmod(0o600);
+  await stateFile.truncate(0);
+  await stateFile.writeFile(JSON.stringify(result.output.state, null, 2), {
+    encoding: "utf8"
+  });
+} finally {
+  await stateFile.close();
+}
 
 console.log(JSON.stringify({
   sessionId: result.session.sessionId,
   status: result.output.status,
   outputText: result.output.outputText,
-  statePath: ".zhivex/runs/latest-agent-state.json"
+  statePath
 }, null, 2));
 `;
 };
@@ -317,7 +363,7 @@ const packageTemplate = (options: {
     ledger: "zhivex-ai agents ledger --state .zhivex/runs/latest-agent-state.json --out .zhivex/runs/latest-ledger.json"
   },
   dependencies: {
-    "@zhivex-ai/sdk": "^0.17.0",
+    "@zhivex-ai/sdk": "^1.0.1",
     [providerTemplates[options.provider].packageName]: `^${providerTemplates[options.provider].packageVersion}`,
     zod: "^4.4.3"
   },
@@ -597,7 +643,10 @@ const readAgentLedgerFromFlags = async (flags: Record<string, string | true>): P
   }
   const state = await readJsonFile<AgentRunState>(requiredFlag(flags, "state"));
   return createAgentRunLedger(state, {
-    includeTimeline: !booleanFlag(flags, "no-timeline")
+    includeTimeline: !booleanFlag(flags, "no-timeline"),
+    trace: {
+      includeOutputText: true
+    }
   });
 };
 

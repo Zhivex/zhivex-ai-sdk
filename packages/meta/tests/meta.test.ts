@@ -358,6 +358,19 @@ describe("meta adapter", () => {
 
     const uploadBody = (fetchMock.mock.calls[0]?.[1] as RequestInit).body as FormData;
     expect(uploadBody.get("purpose")).toBe("user_data");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: "error" });
+  });
+
+  it("rejects path-like Meta file IDs before sending credentials", async () => {
+    const provider = createMeta({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(provider.files!.get({ name: "../secret" })).rejects.toThrow(
+      "must be a non-empty opaque identifier"
+    );
+    await expect(provider.files!.delete({ name: "files/secret" })).rejects.toThrow(
+      "must be a non-empty opaque identifier"
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects unsupported reasoning fields before sending", async () => {

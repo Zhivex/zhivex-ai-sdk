@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -175,6 +175,22 @@ describe("runner sessions", () => {
     expect(second.session.sessionId).toBe("session_1");
     expect(second.session.events.filter((event) => event.type === "session-created")).toHaveLength(1);
     expect(second.session.events.filter((event) => event.type === "user-message")).toHaveLength(2);
+  });
+
+  it("keeps delimiter-containing session identities isolated", async () => {
+    const service = createInMemorySessionService();
+    await service.createSession({
+      appName: "a:b",
+      userId: "c",
+      sessionId: "d",
+      metadata: { secret: "value" }
+    });
+
+    expect(await service.loadSession({
+      appName: "a",
+      userId: "b:c",
+      sessionId: "d"
+    })).toBeUndefined();
   });
 
   it("injects previous session turns into the next agent run", async () => {
@@ -369,6 +385,26 @@ describe("runner sessions", () => {
 
     expect(reloaded?.events.map((event) => event.type)).toEqual(first.session.events.map((event) => event.type));
     expect(reloaded?.lastRunState?.runId).toBe(first.output.state.runId);
+  });
+
+  it("migrates matching legacy session files without duplicates", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "zhivex-sessions-legacy-"));
+    const service = createFileSessionService({ directory });
+    const session = await service.createSession({
+      appName: "a:b",
+      userId: "c",
+      sessionId: "d"
+    });
+    const canonical = (await readdir(directory))[0]!;
+    const legacy = ["a:b", "c", "d"].map(encodeURIComponent).join("__") + ".json";
+    await rename(path.join(directory, canonical), path.join(directory, legacy));
+
+    await service.saveSession(session);
+
+    const entries = (await readdir(directory)).filter((entry) => entry.endsWith(".json"));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatch(/^session_v2_[a-f0-9]{64}\.json$/);
+    expect((await stat(path.join(directory, entries[0]!))).mode & 0o777).toBe(0o600);
   });
 
   it("normalizes legacy file-backed sessions and rejects future schema versions", async () => {
@@ -686,14 +722,13 @@ describe("runner sessions", () => {
       events: []
     })), "utf8");
 
-    await expect(pruneFileSessionStore({ directory, keepLast: 1 })).resolves.toMatchObject({
-      dryRun: true,
-      deletedSessionKeys: ["app:user:old"]
-    });
-    await expect(pruneFileSessionStore({ directory, keepLast: 1, dryRun: false })).resolves.toMatchObject({
-      deletedSessionKeys: ["app:user:old"],
-      keptSessionKeys: ["app:user:new"]
-    });
+    const dryRun = await pruneFileSessionStore({ directory, keepLast: 1 });
+    expect(dryRun.dryRun).toBe(true);
+    expect(dryRun.deletedSessionKeys).toHaveLength(1);
+    const result = await pruneFileSessionStore({ directory, keepLast: 1, dryRun: false });
+    expect(result.deletedSessionKeys).toHaveLength(1);
+    expect(result.keptSessionKeys).toHaveLength(1);
+    expect(result.deletedSessionKeys[0]).not.toBe(result.keptSessionKeys[0]);
     await expect(service.loadSession({ appName: "app", userId: "user", sessionId: "old" })).resolves.toBeUndefined();
   });
 });

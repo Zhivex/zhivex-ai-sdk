@@ -230,6 +230,21 @@ describe("agent control plane", () => {
       approved: false,
       reason: 'Tool "charge_card" requests write permissions.'
     });
+
+    const undeclared = tool({
+      name: "delete_everything",
+      schema: z.object({}),
+      execute: async () => ({ deleted: true })
+    });
+    expect(createAgentToolPolicy({ mode: "read-only" })({
+      ...request,
+      tool: undeclared,
+      toolCall: { id: "call_2", name: undeclared.name, input: {} },
+      input: {}
+    })).toMatchObject({
+      approved: false,
+      reason: expect.stringContaining("does not declare permissions")
+    });
   });
 
   it("creates approval queues from provider approval waits", () => {
@@ -313,6 +328,8 @@ describe("agent control plane", () => {
     const ledger = createAgentRunLedger(baseState(), {
       includeInput: true,
       includeOutput: true,
+      includeTimeline: true,
+      trace: { includeOutputText: true, redaction: false },
       pricing: { inputCostPer1kTokens: 0.01, outputCostPer1kTokens: 0.02, currency: "USD" }
     });
     const changed = createAgentRunLedger(baseState({ runId: "run_2", outputText: "changed" }));
@@ -335,6 +352,40 @@ describe("agent control plane", () => {
       toolCalls: ["lookup"],
       approvals: 0
     });
+  });
+
+  it("keeps the complete run ledger fail-closed for sensitive payloads", () => {
+    const state = baseState({
+      outputText: "Bearer final-secret",
+      metadata: { token: "metadata-secret" },
+      pendingApprovals: [{
+        provider: "openai",
+        id: "approval_1",
+        name: "remote_mcp",
+        arguments: "approval-secret",
+        rawData: { token: "raw-secret" }
+      }]
+    });
+    const call = state.steps[0]?.response?.messages[0]?.parts[0];
+    if (call?.type === "tool-call") {
+      call.toolCall.input = { token: "input-secret" };
+    }
+    state.steps[0]!.toolResults[0]!.output = { token: "output-secret" };
+
+    const ledger = createAgentRunLedger(state, { includeInput: false, includeOutput: false });
+    const serialized = JSON.stringify(ledger);
+    expect(ledger.timeline).toBeUndefined();
+    expect(ledger.metadata).toBeUndefined();
+    for (const secret of [
+      "final-secret",
+      "metadata-secret",
+      "approval-secret",
+      "raw-secret",
+      "input-secret",
+      "output-secret"
+    ]) {
+      expect(serialized).not.toContain(secret);
+    }
   });
 
   it("routes models by agent capability requirements", () => {

@@ -3,6 +3,12 @@ import path from "node:path";
 
 import { ConflictError, ValidationError } from "./errors.js";
 import { assertPostgresClient } from "./postgres-client.js";
+import {
+  canonicalStoreFileStem,
+  canonicalStoreKey,
+  ensurePrivateDirectory,
+  writePrivateFile
+} from "./store-security.js";
 import type { JsonValue, PostgresClientLike, SqliteDatabaseLike, SqliteStatementLike } from "./types.js";
 import { normalizeWorkflowRunState, WORKFLOW_RUN_STATE_SCHEMA_VERSION, type PersistedWorkflowRunState, type WorkflowStatus } from "./workflow.js";
 
@@ -78,11 +84,23 @@ export interface PostgresWorkflowStateServiceOptions {
 
 export type WorkflowStateRecordMigrationTarget = typeof WORKFLOW_STATE_RECORD_SCHEMA_VERSION;
 
+const workflowStateParts = (input: WorkflowStateLookup) =>
+  [input.appName, input.userId, input.sessionId, input.workflowKey] as const;
 const workflowStateKey = (input: WorkflowStateLookup): string =>
+  canonicalStoreKey("workflow-state", workflowStateParts(input));
+const legacyWorkflowStateKey = (input: WorkflowStateLookup): string =>
   `${input.appName}:${input.userId}:${input.sessionId}:${input.workflowKey}`;
+const matchesWorkflowStateLookup = (record: WorkflowStateRecord, input: WorkflowStateLookup) =>
+  record.appName === input.appName &&
+  record.userId === input.userId &&
+  record.sessionId === input.sessionId &&
+  record.workflowKey === input.workflowKey;
 
 const fileNameForWorkflowState = (input: WorkflowStateLookup): string =>
-  [input.appName, input.userId, input.sessionId, input.workflowKey].map((part) => encodeURIComponent(part)).join("__") + ".json";
+  `${canonicalStoreFileStem("workflow-state", workflowStateParts(input))}.json`;
+
+const legacyFileNameForWorkflowState = (input: WorkflowStateLookup): string =>
+  workflowStateParts(input).map((part) => encodeURIComponent(part)).join("__") + ".json";
 
 export const normalizeWorkflowStateRecord = (value: unknown): WorkflowStateRecord => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -263,23 +281,44 @@ export const createInMemoryWorkflowStateService = (): WorkflowStateService => {
 
 export const createFileWorkflowStateService = (options: FileWorkflowStateServiceOptions): WorkflowStateService => {
   const filePath = (input: WorkflowStateLookup) => path.join(options.directory, fileNameForWorkflowState(input));
+  const legacyFilePath = (input: WorkflowStateLookup) =>
+    path.join(options.directory, legacyFileNameForWorkflowState(input));
   const load = async (input: WorkflowStateLookup): Promise<WorkflowStateRecord | undefined> => {
-    try {
-      return normalizeWorkflowStateRecord(JSON.parse(await fs.readFile(filePath(input), "utf8")) as WorkflowStateRecord);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return undefined;
+    for (const candidate of [filePath(input), legacyFilePath(input)]) {
+      try {
+        const record = normalizeWorkflowStateRecord(
+          JSON.parse(await fs.readFile(candidate, "utf8")) as WorkflowStateRecord
+        );
+        if (matchesWorkflowStateLookup(record, input)) {
+          return record;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
       }
-      throw error;
     }
+    return undefined;
   };
   return {
     async saveWorkflowState(input) {
       const existing = await load(input);
       assertExpectedRevision(existing, input.expectedRevision);
       const record = createRecord(input, existing);
-      await fs.mkdir(options.directory, { recursive: true });
-      await fs.writeFile(filePath(input), JSON.stringify(record, null, 2), "utf8");
+      await ensurePrivateDirectory(options.directory);
+      await writePrivateFile(filePath(input), JSON.stringify(record, null, 2));
+      try {
+        const legacy = normalizeWorkflowStateRecord(
+          JSON.parse(await fs.readFile(legacyFilePath(input), "utf8")) as WorkflowStateRecord
+        );
+        if (matchesWorkflowStateLookup(legacy, input)) {
+          await fs.unlink(legacyFilePath(input));
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
+      }
       return cloneRecord(record);
     },
     loadWorkflowState(input) {
@@ -295,21 +334,36 @@ export const createFileWorkflowStateService = (options: FileWorkflowStateService
         }
         throw error;
       }
-      const records: WorkflowStateRecord[] = [];
+      const records = new Map<string, WorkflowStateRecord>();
       for (const entry of entries) {
         if (!entry.endsWith(".json")) {
           continue;
         }
         const record = normalizeWorkflowStateRecord(JSON.parse(await fs.readFile(path.join(options.directory, entry), "utf8")) as WorkflowStateRecord);
         if (matchesListInput(record, input)) {
-          records.push(cloneRecord(record));
+          const key = workflowStateKey(record);
+          if (!records.has(key) || entry === fileNameForWorkflowState(record)) {
+            records.set(key, cloneRecord(record));
+          }
         }
       }
-      return records.sort((left, right) => left.updatedAt - right.updatedAt || left.workflowKey.localeCompare(right.workflowKey));
+      return [...records.values()].sort(
+        (left, right) => left.updatedAt - right.updatedAt || left.workflowKey.localeCompare(right.workflowKey)
+      );
     },
     async deleteWorkflowState(input) {
+      await fs.unlink(filePath(input)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") {
+          throw error;
+        }
+      });
       try {
-        await fs.unlink(filePath(input));
+        const legacy = normalizeWorkflowStateRecord(
+          JSON.parse(await fs.readFile(legacyFilePath(input), "utf8")) as WorkflowStateRecord
+        );
+        if (matchesWorkflowStateLookup(legacy, input)) {
+          await fs.unlink(legacyFilePath(input));
+        }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
           throw error;
@@ -334,21 +388,25 @@ export const pruneFileWorkflowStateStore = async (
     throw error;
   }
 
-  const records: Array<{ filePath: string; key: string; updatedAt: number }> = [];
+  const records = new Map<string, { filePaths: string[]; key: string; updatedAt: number }>();
   for (const entry of entries) {
     if (!entry.endsWith(".json")) {
       continue;
     }
     const filePath = path.join(options.directory, entry);
     const record = normalizeWorkflowStateRecord(JSON.parse(await fs.readFile(filePath, "utf8")) as WorkflowStateRecord);
-    records.push({
-      filePath,
-      key: workflowStateKey(record),
-      updatedAt: record.updatedAt
+    const key = workflowStateKey(record);
+    const existing = records.get(key);
+    records.set(key, {
+      filePaths: [...(existing?.filePaths ?? []), filePath],
+      key,
+      updatedAt: entry === fileNameForWorkflowState(record) || !existing ? record.updatedAt : existing.updatedAt
     });
   }
 
-  const sorted = records.sort((left, right) => right.updatedAt - left.updatedAt || left.key.localeCompare(right.key));
+  const sorted = [...records.values()].sort(
+    (left, right) => right.updatedAt - left.updatedAt || left.key.localeCompare(right.key)
+  );
   const keepByCount = new Set(
     options.keepLast === undefined ? [] : sorted.slice(0, Math.max(0, options.keepLast)).map((record) => record.key)
   );
@@ -359,7 +417,9 @@ export const pruneFileWorkflowStateStore = async (
 
   if (!dryRun) {
     for (const record of deleted) {
-      await fs.unlink(record.filePath);
+      for (const filePath of record.filePaths) {
+        await fs.unlink(filePath);
+      }
     }
   }
 
@@ -430,27 +490,60 @@ export const createSqliteWorkflowStateService = (options: SqliteWorkflowStateSer
       AND updated_at_ms = ?
   `);
   const deleteStatement = prepareSqliteStatement(options.db, `DELETE FROM ${tableName} WHERE workflow_state_key = ?`);
-  const load = (input: WorkflowStateLookup): WorkflowStateRecord | undefined =>
-    parseWorkflowStateJson(getRecordField(loadStatement.get([workflowStateKey(input)]), ["state_json", "stateJson"]));
+  const load = (input: WorkflowStateLookup): WorkflowStateRecord | undefined => {
+    for (const key of [workflowStateKey(input), legacyWorkflowStateKey(input)]) {
+      const record = parseWorkflowStateJson(
+        getRecordField(loadStatement.get([key]), ["state_json", "stateJson"])
+      );
+      if (record && matchesWorkflowStateLookup(record, input)) {
+        return record;
+      }
+    }
+    return undefined;
+  };
   const save = (
     record: WorkflowStateRecord,
     options?: { existing?: WorkflowStateRecord; expectedRevision?: number }
   ): WorkflowStateRecord => {
     if (options?.expectedRevision !== undefined && options.existing) {
-      const result = updateCasStatement.run([
-        record.appName,
-        record.userId,
-        record.sessionId,
-        record.workflowKey,
-        record.runId,
-        record.status,
-        JSON.stringify(record),
-        record.updatedAt,
-        workflowStateKey(record),
-        options.existing.updatedAt
-      ]);
-      if (sqliteMutationCount(result) === 0) {
-        throw new ConflictError("WorkflowStateRecord revision conflict.");
+      const canonical = parseWorkflowStateJson(
+        getRecordField(loadStatement.get([workflowStateKey(record)]), ["state_json", "stateJson"])
+      );
+      if (canonical && matchesWorkflowStateLookup(canonical, record)) {
+        const result = updateCasStatement.run([
+          record.appName,
+          record.userId,
+          record.sessionId,
+          record.workflowKey,
+          record.runId,
+          record.status,
+          JSON.stringify(record),
+          record.updatedAt,
+          workflowStateKey(record),
+          options.existing.updatedAt
+        ]);
+        if (sqliteMutationCount(result) === 0) {
+          throw new ConflictError("WorkflowStateRecord revision conflict.");
+        }
+      } else {
+        const legacy = parseWorkflowStateJson(
+          getRecordField(loadStatement.get([legacyWorkflowStateKey(record)]), ["state_json", "stateJson"])
+        );
+        if (!legacy || !matchesWorkflowStateLookup(legacy, record) || legacy.updatedAt !== options.existing.updatedAt) {
+          throw new ConflictError("WorkflowStateRecord revision conflict.");
+        }
+        saveStatement.run([
+          workflowStateKey(record),
+          record.appName,
+          record.userId,
+          record.sessionId,
+          record.workflowKey,
+          record.runId,
+          record.status,
+          JSON.stringify(record),
+          record.createdAt,
+          record.updatedAt
+        ]);
       }
     } else {
       saveStatement.run([
@@ -465,6 +558,12 @@ export const createSqliteWorkflowStateService = (options: SqliteWorkflowStateSer
         record.createdAt,
         record.updatedAt
       ]);
+    }
+    const legacy = parseWorkflowStateJson(
+      getRecordField(loadStatement.get([legacyWorkflowStateKey(record)]), ["state_json", "stateJson"])
+    );
+    if (legacy && matchesWorkflowStateLookup(legacy, record)) {
+      deleteStatement.run([legacyWorkflowStateKey(record)]);
     }
     return cloneRecord(record);
   };
@@ -492,13 +591,23 @@ export const createSqliteWorkflowStateService = (options: SqliteWorkflowStateSer
         input.status ?? null
       ];
       const rows = listStatement.all?.(params) ?? [];
-      return rows.flatMap((row) => {
+      const records = new Map<string, WorkflowStateRecord>();
+      for (const row of rows) {
         const record = parseWorkflowStateJson(getRecordField(row, ["state_json", "stateJson"]));
-        return record ? [record] : [];
-      });
+        if (record) {
+          records.set(workflowStateKey(record), record);
+        }
+      }
+      return [...records.values()];
     },
     deleteWorkflowState(input) {
       deleteStatement.run([workflowStateKey(input)]);
+      const legacy = parseWorkflowStateJson(
+        getRecordField(loadStatement.get([legacyWorkflowStateKey(input)]), ["state_json", "stateJson"])
+      );
+      if (legacy && matchesWorkflowStateLookup(legacy, input)) {
+        deleteStatement.run([legacyWorkflowStateKey(input)]);
+      }
     }
   };
 };
@@ -522,11 +631,17 @@ export const createPostgresWorkflowStateService = (options: PostgresWorkflowStat
   `;
   const load = async (input: WorkflowStateLookup): Promise<WorkflowStateRecord | undefined> => {
     await ensurePostgresTable(options.client, tableName, createSql);
-    const result = await options.client.query<{ state_json?: WorkflowStateRecord; stateJson?: WorkflowStateRecord }>(
-      `SELECT state_json FROM ${tableName} WHERE workflow_state_key = $1`,
-      [workflowStateKey(input)]
-    );
-    return parseWorkflowStateJson(getRecordField(result.rows[0], ["state_json", "stateJson"]));
+    for (const key of [workflowStateKey(input), legacyWorkflowStateKey(input)]) {
+      const result = await options.client.query<{ state_json?: WorkflowStateRecord; stateJson?: WorkflowStateRecord }>(
+        `SELECT state_json FROM ${tableName} WHERE workflow_state_key = $1`,
+        [key]
+      );
+      const record = parseWorkflowStateJson(getRecordField(result.rows[0], ["state_json", "stateJson"]));
+      if (record && matchesWorkflowStateLookup(record, input)) {
+        return record;
+      }
+    }
+    return undefined;
   };
   const save = async (
     record: WorkflowStateRecord,
@@ -561,7 +676,37 @@ export const createPostgresWorkflowStateService = (options: PostgresWorkflowStat
         ]
       );
       if (result.rows.length === 0) {
-        throw new ConflictError("WorkflowStateRecord revision conflict.");
+        const migrated = await options.client.query(
+          `UPDATE ${tableName}
+           SET workflow_state_key = $1,
+               app_name = $2,
+               user_id = $3,
+               session_id = $4,
+               workflow_key = $5,
+               run_id = $6,
+               status = $7,
+               state_json = $8::jsonb,
+               updated_at_ms = $9
+           WHERE workflow_state_key = $10
+             AND updated_at_ms = $11
+           RETURNING state_json`,
+          [
+            workflowStateKey(record),
+            record.appName,
+            record.userId,
+            record.sessionId,
+            record.workflowKey,
+            record.runId,
+            record.status,
+            JSON.stringify(record),
+            record.updatedAt,
+            legacyWorkflowStateKey(record),
+            saveOptions.existing.updatedAt
+          ]
+        );
+        if (migrated.rows.length === 0) {
+          throw new ConflictError("WorkflowStateRecord revision conflict.");
+        }
       }
     } else {
       await options.client.query(
@@ -592,6 +737,17 @@ export const createPostgresWorkflowStateService = (options: PostgresWorkflowStat
         ]
       );
     }
+    const legacyResult = await options.client.query<{ state_json?: WorkflowStateRecord; stateJson?: WorkflowStateRecord }>(
+      `SELECT state_json FROM ${tableName} WHERE workflow_state_key = $1`,
+      [legacyWorkflowStateKey(record)]
+    );
+    const legacy = parseWorkflowStateJson(getRecordField(legacyResult.rows[0], ["state_json", "stateJson"]));
+    if (legacy && matchesWorkflowStateLookup(legacy, record)) {
+      await options.client.query(
+        `DELETE FROM ${tableName} WHERE workflow_state_key = $1`,
+        [legacyWorkflowStateKey(record)]
+      );
+    }
     return cloneRecord(record);
   };
   return {
@@ -618,14 +774,29 @@ export const createPostgresWorkflowStateService = (options: PostgresWorkflowStat
          ORDER BY updated_at_ms ASC, workflow_key ASC`,
         [input.appName, input.userId, input.sessionId ?? null, input.workflowKey ?? null, input.status ?? null]
       );
-      return result.rows.flatMap((row) => {
+      const records = new Map<string, WorkflowStateRecord>();
+      for (const row of result.rows) {
         const record = parseWorkflowStateJson(getRecordField(row, ["state_json", "stateJson"]));
-        return record ? [record] : [];
-      });
+        if (record) {
+          records.set(workflowStateKey(record), record);
+        }
+      }
+      return [...records.values()];
     },
     async deleteWorkflowState(input) {
       await ensurePostgresTable(options.client, tableName, createSql);
       await options.client.query(`DELETE FROM ${tableName} WHERE workflow_state_key = $1`, [workflowStateKey(input)]);
+      const legacyResult = await options.client.query<{ state_json?: WorkflowStateRecord; stateJson?: WorkflowStateRecord }>(
+        `SELECT state_json FROM ${tableName} WHERE workflow_state_key = $1`,
+        [legacyWorkflowStateKey(input)]
+      );
+      const legacy = parseWorkflowStateJson(getRecordField(legacyResult.rows[0], ["state_json", "stateJson"]));
+      if (legacy && matchesWorkflowStateLookup(legacy, input)) {
+        await options.client.query(
+          `DELETE FROM ${tableName} WHERE workflow_state_key = $1`,
+          [legacyWorkflowStateKey(input)]
+        );
+      }
     }
   };
 };

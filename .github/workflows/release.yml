@@ -22,16 +22,18 @@ jobs:
   publish:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: npm
     permissions:
       contents: read
       id-token: write
     outputs:
-      release_tags: ${{ steps.release_tags.outputs.tags }}
+      release_tags_json: ${{ steps.release_tags.outputs.tags_json }}
+      has_release_tags: ${{ steps.release_tags.outputs.has_tags }}
 
     steps:
       - name: Checkout immutable release source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -88,6 +90,7 @@ jobs:
         id: release_tags
         shell: bash
         run: |
+          set -euo pipefail
           export LC_ALL=C
           new_tags="$(comm -13 "$RUNNER_TEMP/tags-before" <(git tag --list | sort))"
 
@@ -99,23 +102,29 @@ jobs:
             fi
           done <<< "$new_tags"
 
-          {
-            echo 'tags<<RELEASE_TAGS_EOF'
-            printf '%s\n' "$new_tags"
-            echo 'RELEASE_TAGS_EOF'
-          } >> "$GITHUB_OUTPUT"
+          tags_json="$(
+            printf '%s\n' "$new_tags" |
+              jq -R -s -c 'split("\n") | map(select(length > 0))'
+          )"
+          echo "tags_json=$tags_json" >> "$GITHUB_OUTPUT"
+          if [ "$tags_json" = "[]" ]; then
+            echo "has_tags=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_tags=true" >> "$GITHUB_OUTPUT"
+          fi
 
   push_tags:
     name: Push verified release tags
     needs: publish
-    if: needs.publish.result == 'success' && needs.publish.outputs.release_tags != ''
+    if: needs.publish.result == 'success' && needs.publish.outputs.has_release_tags == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
 
     steps:
       - name: Checkout published source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -125,9 +134,15 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAGS: ${{ needs.publish.outputs.release_tags }}
+          RELEASE_TAGS_JSON: ${{ needs.publish.outputs.release_tags_json }}
         run: |
           set -euo pipefail
+
+          mapfile -t release_tags < <(jq -r '.[]' <<< "$RELEASE_TAGS_JSON")
+          if [ "${#release_tags[@]}" -eq 0 ]; then
+            echo "No release tags were supplied." >&2
+            exit 1
+          fi
 
           while IFS= read -r tag; do
             [ -z "$tag" ] && continue
@@ -154,7 +169,7 @@ jobs:
               echo "Tag $tag already exists at a different commit." >&2
               exit 1
             fi
-          done <<< "$RELEASE_TAGS"
+          done < <(printf '%s\n' "${release_tags[@]}")
 
           gh auth setup-git
           while IFS= read -r tag; do
@@ -165,4 +180,27 @@ jobs:
             fi
             git tag "$tag" "$GITHUB_SHA"
             git push origin "refs/tags/$tag:refs/tags/$tag"
-          done <<< "$RELEASE_TAGS"
+          done < <(printf '%s\n' "${release_tags[@]}")
+
+      - name: Publish aggregate GitHub release
+        if: inputs.channel == 'latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAGS_JSON: ${{ needs.publish.outputs.release_tags_json }}
+        run: |
+          set -euo pipefail
+
+          sdk_tag="$(
+            jq -r '.[] | select(startswith("@zhivex-ai/sdk@"))' \
+              <<< "$RELEASE_TAGS_JSON"
+          )"
+          if [ -z "$sdk_tag" ]; then
+            echo "No @zhivex-ai/sdk tag was generated; skipping aggregate release."
+            exit 0
+          fi
+
+          gh release create "$sdk_tag" \
+            --verify-tag \
+            --generate-notes \
+            --title "Zhivex AI SDK ${sdk_tag##*@}"

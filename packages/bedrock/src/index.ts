@@ -15,12 +15,15 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   ValidationError,
+  assertTrustedEndpoint,
   createProviderAdapter,
   createMcpToolSet,
   hostedTool,
   normalizeFinishReason,
   providerDataPart,
   streamSSE,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
   withRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
@@ -50,6 +53,7 @@ export interface BedrockProviderOptions {
   baseURL?: string;
   apiKey?: string;
   fetch?: typeof globalThis.fetch;
+  allowUnsafeEndpoints?: boolean;
 }
 
 export interface BedrockLanguageModelOptions {
@@ -106,6 +110,7 @@ export interface BedrockAgentCoreMcpClientOptions {
   headers?: Record<string, string>;
   sessionId?: string;
   fetch?: typeof globalThis.fetch;
+  allowUnsafeEndpoints?: boolean;
 }
 
 export type BedrockAgentCoreMcpToolSetOptions = BedrockAgentCoreMcpClientOptions;
@@ -160,7 +165,11 @@ const parseAgentCoreRegion = (runtimeArn: string) => runtimeArn.split(":")[3];
 
 const createBedrockAgentCoreMcpEndpoint = (options: BedrockAgentCoreMcpClientOptions) => {
   if (options.endpoint) {
-    return options.endpoint;
+    return assertTrustedEndpoint(options.endpoint, {
+      label: "Bedrock AgentCore MCP endpoint",
+      protocols: ["https"],
+      allowUnsafe: options.allowUnsafeEndpoints
+    }).toString();
   }
 
   if (!options.runtimeArn) {
@@ -194,7 +203,11 @@ const parseMcpHttpResponse = async (response: Response): Promise<Record<string, 
     throw new ProviderHTTPError("Bedrock AgentCore MCP response did not include a JSON-RPC payload.", response.status);
   }
 
-  return (await response.json()) as Record<string, unknown>;
+  return readJsonWithLimit<Record<string, unknown>>(response, {
+    maxBytes: 16 * 1024 * 1024,
+    provider: "bedrock",
+    endpoint: "agentcore-mcp"
+  });
 };
 
 const requireJsonRpcResult = <T>(json: Record<string, unknown>, method: string): T => {
@@ -653,7 +666,7 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
-    const { cleanup } = withTimeoutSignal(input);
+    const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
       if (input.reasoning) {
@@ -662,7 +675,7 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
 
       const commandInput = this.toCommandInput(input);
 
-      const response = await withRetry(() => this.client.send(new ConverseCommand(commandInput)), input).catch((error) => {
+      const response = await withRetry(() => this.client.send(new ConverseCommand(commandInput), { abortSignal: signal }), input).catch((error) => {
         throw normalizeBedrockError(error);
       });
 
@@ -691,18 +704,25 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
   }
 
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
-    const { cleanup } = withTimeoutSignal(input);
+    const { signal, cleanup } = withTimeoutSignal(input);
 
-    if (input.reasoning) {
-      throw new UnsupportedFeatureError('Provider "bedrock" does not support "reasoning".');
-    }
-
-    const commandInput = this.toCommandInput(input);
-    const response = await withRetry(() => this.client.send(new ConverseStreamCommand(commandInput)), input).catch(
-      (error) => {
-        throw normalizeBedrockError(error);
+    let response;
+    try {
+      if (input.reasoning) {
+        throw new UnsupportedFeatureError('Provider "bedrock" does not support "reasoning".');
       }
-    );
+
+      const commandInput = this.toCommandInput(input);
+      response = await withRetry(
+        () => this.client.send(new ConverseStreamCommand(commandInput), { abortSignal: signal }),
+        input
+      ).catch((error) => {
+        throw normalizeBedrockError(error);
+      });
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
 
     return (async function* () {
       try {
@@ -828,12 +848,17 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
           }),
         input
       );
-      const json = await response.json();
       if (!response.ok) {
+        const body = await readErrorBodyWithLimit(response);
         throw new ProviderHTTPError(`Bedrock OpenAI-compatible request failed with status ${response.status}.`, response.status, {
-          responseBody: JSON.stringify(json)
+          responseBody: body
         });
       }
+      const json = await readJsonWithLimit<any>(response, {
+        maxBytes: 128 * 1024 * 1024,
+        provider: "bedrock",
+        endpoint: "responses"
+      });
       const assistantMessage = parseOpenAICompatibleMessage(json);
       const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
       return {
@@ -953,10 +978,15 @@ class BedrockAgentCoreMcpClient implements McpClient {
   }
 
   private headers(): Record<string, string> {
+    const customHeaders = Object.fromEntries(
+      Object.entries(this.options.headers ?? {}).filter(
+        ([key]) => !["authorization", "content-type", "content-length", "host", "connection", "transfer-encoding"].includes(key.toLowerCase())
+      )
+    );
     return {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
-      ...(this.options.headers ?? {}),
+      ...customHeaders,
       ...(this.options.authorization || this.options.bearerToken
         ? { Authorization: this.options.authorization ?? `Bearer ${this.options.bearerToken}` }
         : {}),
@@ -971,6 +1001,7 @@ class BedrockAgentCoreMcpClient implements McpClient {
   ): Promise<T> {
     const response = await this.fetcher(this.endpoint, {
       method: "POST",
+      redirect: "error",
       headers: this.headers(),
       signal: abortSignal,
       body: JSON.stringify({
@@ -1024,10 +1055,15 @@ export const createBedrock = (options: BedrockProviderOptions = {}): CallablePro
     if (!apiKey) {
       throw new ConfigurationError("Missing Bedrock OpenAI-compatible API key.");
     }
-    const baseURL = (options.baseURL ?? process.env.BEDROCK_OPENAI_BASE_URL)?.replace(/\/+$/, "");
-    if (!baseURL) {
+    const configuredBaseURL = options.baseURL ?? process.env.BEDROCK_OPENAI_BASE_URL;
+    if (!configuredBaseURL) {
       throw new ConfigurationError("Missing Bedrock OpenAI-compatible base URL.");
     }
+    const baseURL = assertTrustedEndpoint(configuredBaseURL, {
+      label: "Bedrock OpenAI-compatible baseURL",
+      protocols: ["https"],
+      allowUnsafe: options.allowUnsafeEndpoints
+    }).toString().replace(/\/+$/, "");
     const fetcher = options.fetch ?? globalThis.fetch;
     return createProviderAdapter({
       name: "bedrock",

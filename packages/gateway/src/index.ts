@@ -97,6 +97,7 @@ type RouteRequest = Pick<
   | "tools"
   | "toolChoice"
   | "reasoning"
+  | "abortSignal"
 > & {
   messages?: GatewayRequest["messages"];
 };
@@ -122,6 +123,30 @@ type RouteContext = {
   lock: (candidate: RouteCandidate) => Promise<void>;
 };
 
+const DEFAULT_MAX_FALLBACKS = 8;
+const MAX_MAX_FALLBACKS = 32;
+const DEFAULT_MAX_TOTAL_ATTEMPTS = 32;
+const MAX_MAX_TOTAL_ATTEMPTS = 128;
+const MAX_MAX_RETRIES = 5;
+const DEFAULT_OBSERVER_TIMEOUT_MS = 1_000;
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000;
+const MAX_MODEL_ID_CHARS = 256;
+const GATEWAY_PROVIDERS = new Set<GatewayProviderId>([
+  "openai",
+  "xai",
+  "meta",
+  "anthropic",
+  "gemini",
+  "vertex",
+  "qwen",
+  "kimi",
+  "deepseek",
+  "bedrock",
+  "ollama",
+  "azure-openai",
+  "openrouter"
+]);
+
 const defaultScoreTarget = (
   mode: GatewayRoutingMode,
   intent: GatewayTaskIntent,
@@ -135,7 +160,20 @@ const defaultScoreTarget = (
   const reasoningBoost = model.includes("pro") || model.includes("claude") ? 2 : 0;
   const catalogCost = config.modelCatalog?.find(target.provider, target.modelId)?.costPer1kTokens;
   const costPenalty = config.providerCostsPer1kTokens?.[target.provider] ?? catalogCost ?? 0;
-  const latencyPenalty = (config.latencyBiasMs?.[target.provider] ?? 0) / 100;
+  const latencyBiasMs = config.latencyBiasMs?.[target.provider] ?? 0;
+  if (!Number.isFinite(costPenalty) || costPenalty < 0) {
+    throw new GatewayError(
+      `Gateway cost for ${target.provider}/${target.modelId} must be a finite non-negative number.`,
+      false
+    );
+  }
+  if (!Number.isFinite(latencyBiasMs) || latencyBiasMs < 0) {
+    throw new GatewayError(
+      `Gateway latency bias for ${target.provider} must be a finite non-negative number.`,
+      false
+    );
+  }
+  const latencyPenalty = latencyBiasMs / 100;
 
   if (mode === "speed") {
     return speedBoost + localBoost - latencyPenalty;
@@ -171,6 +209,100 @@ const scoreTarget = (
     throw new GatewayError("Gateway scoreTarget() must return a finite number.", false);
   }
   return score;
+};
+
+const boundedInteger = (
+  name: string,
+  value: number | undefined,
+  defaultValue: number,
+  options: { min: number; max: number }
+) => {
+  const normalized = value ?? defaultValue;
+  if (
+    !Number.isSafeInteger(normalized) ||
+    normalized < options.min ||
+    normalized > options.max
+  ) {
+    throw new GatewayError(
+      `${name} must be a safe integer between ${options.min} and ${options.max}.`,
+      false
+    );
+  }
+  return normalized;
+};
+
+const getMaxFallbacks = (config: GatewayConfig) =>
+  boundedInteger("Gateway maxFallbacks", config.maxFallbacks, DEFAULT_MAX_FALLBACKS, {
+    min: 0,
+    max: MAX_MAX_FALLBACKS
+  });
+
+const getMaxTotalAttempts = (config: GatewayConfig) =>
+  boundedInteger(
+    "Gateway maxTotalAttempts",
+    config.maxTotalAttempts,
+    DEFAULT_MAX_TOTAL_ATTEMPTS,
+    { min: 1, max: MAX_MAX_TOTAL_ATTEMPTS }
+  );
+
+const getObserverTimeoutMs = (config: GatewayConfig) => {
+  const timeoutMs = config.observerTimeoutMs ?? DEFAULT_OBSERVER_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new GatewayError(
+      "Gateway observerTimeoutMs must be a finite positive number.",
+      false
+    );
+  }
+  return timeoutMs;
+};
+
+const validateTarget = (target: GatewayModelTarget, label: string) => {
+  if (
+    !target ||
+    typeof target !== "object" ||
+    typeof target.provider !== "string" ||
+    !GATEWAY_PROVIDERS.has(target.provider as GatewayProviderId)
+  ) {
+    throw new GatewayError(`${label} contains an unsupported provider.`, false);
+  }
+  if (
+    typeof target.modelId !== "string" ||
+    target.modelId.length === 0 ||
+    target.modelId.length > MAX_MODEL_ID_CHARS ||
+    /[\u0000-\u001f\u007f]/.test(target.modelId)
+  ) {
+    throw new GatewayError(
+      `${label} modelId must contain 1-${MAX_MODEL_ID_CHARS} characters without control characters.`,
+      false
+    );
+  }
+};
+
+const validateRouteRequest = (config: GatewayConfig, request: RouteRequest) => {
+  const fallbacks = request.fallbacks ?? [];
+  const maxFallbacks = getMaxFallbacks(config);
+  if (fallbacks.length > maxFallbacks) {
+    throw new GatewayError(
+      `Gateway request contains ${fallbacks.length} fallback targets; the configured maximum is ${maxFallbacks}.`,
+      false
+    );
+  }
+
+  validateTarget(request.primary, "Gateway primary target");
+  fallbacks.forEach((target, index) =>
+    validateTarget(target, `Gateway fallback target at index ${index}`)
+  );
+
+  if (
+    request.maxCostPer1kTokens != null &&
+    (!Number.isFinite(request.maxCostPer1kTokens) ||
+      request.maxCostPer1kTokens < 0)
+  ) {
+    throw new GatewayError(
+      "Gateway maxCostPer1kTokens must be a finite non-negative number.",
+      false
+    );
+  }
 };
 
 const orderTargets = (
@@ -252,6 +384,12 @@ const costBudgetSkipReason = (
     return config.unknownCostPolicy === "allow"
       ? undefined
       : "Skipped because model cost is unknown under the configured budget.";
+  }
+  if (!Number.isFinite(effectiveCost) || effectiveCost < 0) {
+    throw new GatewayError(
+      `Gateway cost for ${target.provider}/${target.modelId} must be a finite non-negative number.`,
+      false
+    );
   }
 
   return effectiveCost <= request.maxCostPer1kTokens
@@ -449,12 +587,31 @@ const getAttemptTimeoutMs = (config: GatewayConfig, provider: GatewayProviderId)
   return timeoutMs;
 };
 
-const getMaxRetries = (config: GatewayConfig) => {
-  const maxRetries = config.maxRetries ?? 2;
-  if (!Number.isFinite(maxRetries) || maxRetries < 0) {
-    throw new GatewayError("Gateway maxRetries must be a finite non-negative number.", false);
+const getStreamIdleTimeoutMs = (
+  config: GatewayConfig,
+  provider: GatewayProviderId
+) => {
+  const timeoutMs =
+    config.streamIdleTimeoutsMs?.[provider] ??
+    config.streamIdleTimeoutMs ??
+    DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+  if (timeoutMs === false) {
+    return false;
   }
-  return Math.floor(maxRetries);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new GatewayError(
+      "Gateway stream idle timeouts must be finite positive numbers or false.",
+      false
+    );
+  }
+  return timeoutMs;
+};
+
+const getMaxRetries = (config: GatewayConfig) => {
+  return boundedInteger("Gateway maxRetries", config.maxRetries, 2, {
+    min: 0,
+    max: MAX_MAX_RETRIES
+  });
 };
 
 const retryBackoffMs = (config: GatewayConfig, retry: number) => {
@@ -480,16 +637,68 @@ const createAttempt = (
   ...options
 });
 
-const notifyAttempt = async (config: GatewayConfig, attempt: GatewayAttempt) => {
+const runBoundedObserver = (
+  config: GatewayConfig,
+  parentSignal: AbortSignal | undefined,
+  observer: (signal: AbortSignal) => void | Promise<void>
+) => {
+  const controller = new AbortController();
+  let releaseBoundary: (() => void) | undefined;
+  const boundary = new Promise<void>((resolve) => {
+    releaseBoundary = resolve;
+  });
+  const onParentAbort = () => {
+    controller.abort(
+      parentSignal ? abortReason(parentSignal) : new DOMException("Gateway request aborted.", "AbortError")
+    );
+    releaseBoundary?.();
+  };
+  if (parentSignal?.aborted) {
+    onParentAbort();
+  } else {
+    parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+  }
+
+  const timeoutMs = getObserverTimeoutMs(config);
+  const timer = setTimeout(() => {
+    controller.abort(
+      new GatewayError(`Gateway observer timed out after ${timeoutMs}ms.`, false)
+    );
+    releaseBoundary?.();
+  }, timeoutMs);
+
+  const cleanup = () => {
+    clearTimeout(timer);
+    parentSignal?.removeEventListener("abort", onParentAbort);
+  };
+
+  let observerResult: void | Promise<void>;
   try {
-    await config.onAttempt?.({
+    observerResult = observer(controller.signal);
+  } catch {
+    cleanup();
+    return;
+  }
+  const completion = Promise.resolve(observerResult).catch(() => undefined);
+  void Promise.race([completion, boundary]).finally(cleanup);
+};
+
+const notifyAttempt = async (
+  config: GatewayConfig,
+  attempt: GatewayAttempt,
+  parentSignal?: AbortSignal
+) => {
+  if (!config.onAttempt) {
+    return;
+  }
+  runBoundedObserver(config, parentSignal, (abortSignal) =>
+    config.onAttempt?.({
       ...attempt,
       retry: attempt.retry ?? 0,
-      targetRank: attempt.targetRank ?? 0
-    });
-  } catch {
-    // Observability is best-effort and must never retry or fail provider work.
-  }
+      targetRank: attempt.targetRank ?? 0,
+      abortSignal
+    })
+  );
 };
 
 const normalizeUsage = (
@@ -675,9 +884,14 @@ export const createGateway = (config: GatewayConfig) => {
       defaultIntent?: GatewayTaskIntent;
       extraRequiredCapabilities?: NonNullable<GatewayRequest["requiredCapabilities"]>;
       getSkipReason?: (model: LanguageModel, target: GatewayModelTarget) => RouteSkip | undefined;
-      onWinner?: (candidate: RouteCandidate, attempts: GatewayAttempt[]) => void | Promise<void>;
+      onWinner?: (
+        candidate: RouteCandidate,
+        attempts: GatewayAttempt[],
+        abortSignal: AbortSignal
+      ) => void | Promise<void>;
     } = {}
   ): RouteContext => {
+    validateRouteRequest(config, request);
     const mode = request.routingMode ?? "balanced";
     const intent = request.taskIntent ?? options.defaultIntent ?? "chat";
     const orderedTargets = orderTargets(mode, intent, request.primary, request.fallbacks ?? [], config);
@@ -688,7 +902,9 @@ export const createGateway = (config: GatewayConfig) => {
 
     const queueAttempt = (attempt: GatewayAttempt) => {
       attempts.push(attempt);
-      notificationChain = notificationChain.then(() => notifyAttempt(config, attempt));
+      notificationChain = notificationChain.then(() =>
+        notifyAttempt(config, attempt, request.abortSignal)
+      );
     };
 
     const requiredCapabilities = buildRequiredCapabilities(
@@ -781,10 +997,10 @@ export const createGateway = (config: GatewayConfig) => {
           return;
         }
         context.winner = candidate;
-        try {
-          await options.onWinner?.(candidate, [...attempts]);
-        } catch {
-          // Routing observers are best-effort and cannot fail provider work.
+        if (options.onWinner) {
+          runBoundedObserver(config, request.abortSignal, (abortSignal) =>
+            options.onWinner?.(candidate, [...attempts], abortSignal)
+          );
         }
       }
     };
@@ -794,6 +1010,18 @@ export const createGateway = (config: GatewayConfig) => {
 
   const createRoutedLanguageModel = (context: RouteContext): LanguageModel => {
     const first = context.candidates[0]!;
+    const maxTotalAttempts = getMaxTotalAttempts(config);
+    let totalProviderAttempts = 0;
+
+    const reserveProviderAttempt = () => {
+      if (totalProviderAttempts >= maxTotalAttempts) {
+        throw new GatewayError(
+          `Gateway operation exceeded the configured maximum of ${maxTotalAttempts} provider attempts.`,
+          false
+        );
+      }
+      totalProviderAttempts += 1;
+    };
 
     const recordInputSkip = async (candidate: RouteCandidate, message: string) => {
       await context.recordAttempt(
@@ -826,6 +1054,7 @@ export const createGateway = (config: GatewayConfig) => {
         }
 
         for (let retry = 0; retry <= maxRetries; retry += 1) {
+          reserveProviderAttempt();
           const attemptStartedAt = Date.now();
           const control = createAttemptControl(
             input.abortSignal,
@@ -909,6 +1138,7 @@ export const createGateway = (config: GatewayConfig) => {
         }
 
         for (let retry = 0; retry <= maxRetries; retry += 1) {
+          reserveProviderAttempt();
           const attemptStartedAt = Date.now();
           const control = createAttemptControl(
             input.abortSignal,
@@ -941,13 +1171,35 @@ export const createGateway = (config: GatewayConfig) => {
               })
             );
             await context.lock(candidate);
+            const streamIdleTimeoutMs = getStreamIdleTimeoutMs(
+              config,
+              candidate.target.provider
+            );
+            const nextEvent = async () => {
+              if (streamIdleTimeoutMs === false) {
+                return control.waitFor(iterator!.next());
+              }
+              const idleError = new GatewayError(
+                `Provider stream was idle for more than ${streamIdleTimeoutMs}ms.`,
+                false
+              );
+              const timer = setTimeout(
+                () => control.abort(idleError),
+                streamIdleTimeoutMs
+              );
+              try {
+                return await control.waitFor(iterator!.next());
+              } finally {
+                clearTimeout(timer);
+              }
+            };
 
             return (async function* () {
               let completed = false;
               try {
                 yield firstEvent.value;
                 for (;;) {
-                  const next = await control.waitFor(iterator!.next());
+                  const next = await nextEvent();
                   if (next.done) {
                     completed = true;
                     return;
@@ -1032,7 +1284,11 @@ export const createGateway = (config: GatewayConfig) => {
       defaultIntent?: GatewayTaskIntent;
       extraRequiredCapabilities?: NonNullable<GatewayRequest["requiredCapabilities"]>;
       getSkipReason?: (model: LanguageModel, target: GatewayModelTarget) => RouteSkip | undefined;
-      onWinner?: (candidate: RouteCandidate, attempts: GatewayAttempt[]) => void | Promise<void>;
+      onWinner?: (
+        candidate: RouteCandidate,
+        attempts: GatewayAttempt[],
+        abortSignal: AbortSignal
+      ) => void | Promise<void>;
     } = {}
   ) => {
     const context = createRouteContext(request, options);
@@ -1152,13 +1408,14 @@ export const createGateway = (config: GatewayConfig) => {
                 reasonCode: "agent-capabilities",
                 message: "Skipped because agent capabilities do not satisfy the request."
               },
-        onWinner: async (candidate, attempts) => {
+        onWinner: async (candidate, attempts, abortSignal) => {
           await config.onAgentRoute?.({
             provider: candidate.target.provider,
             modelId: candidate.target.modelId,
             routeDecision: route.context.routeDecision,
             attempts,
-            targetRank: candidate.targetRank
+            targetRank: candidate.targetRank,
+            abortSignal
           });
         }
       });
@@ -1203,13 +1460,14 @@ export const createGateway = (config: GatewayConfig) => {
                 reasonCode: "agent-capabilities",
                 message: "Skipped because agent capabilities do not satisfy the request."
               },
-        onWinner: async (candidate, attempts) => {
+        onWinner: async (candidate, attempts, abortSignal) => {
           await config.onAgentRoute?.({
             provider: candidate.target.provider,
             modelId: candidate.target.modelId,
             routeDecision: route.context.routeDecision,
             attempts,
-            targetRank: candidate.targetRank
+            targetRank: candidate.targetRank,
+            abortSignal
           });
         }
       });

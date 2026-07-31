@@ -5,6 +5,7 @@ import { createAgentHarnessBinding } from "./agent-harness.js";
 import { createAgentRunSnapshot, replayAgentRun, type AgentReplayResult, type AgentRunSnapshot } from "./agent-evaluation.js";
 import {
   createAgentTraceArtifact,
+  createProductionTraceOptions,
   createHierarchicalAgentTrace,
   estimateAgentRunCost,
   summarizeAgentTrace,
@@ -15,6 +16,7 @@ import {
   type CostEstimate,
   type HierarchicalAgentTrace
 } from "./agent-trace.js";
+import { createRedactionPolicy, type RedactionPolicy, type RedactionPolicyOptions } from "./safety-policy.js";
 import { createAgentAuditRecord, createToolAuditRecords, type AgentAuditRecord, type AgentAuditRecordOptions, type ToolAuditRecord, type ToolAuditRecordOptions } from "./production-agent-kit.js";
 import { inspectProviderAgentSupport, type ProviderAgentSupport } from "./provider-parity.js";
 import { createRunner, type RunnerRunInput, type RunnerRunOutput, type RunnerStreamResult, type SessionService } from "./runner.js";
@@ -191,6 +193,64 @@ export interface AgentRunLedgerOptions extends AgentAuditRecordOptions, ToolAudi
   pricing?: AgentRunCostPricing;
   trace?: AgentTraceOptions;
 }
+
+const resolveLedgerRedaction = (
+  redaction: RedactionPolicy | RedactionPolicyOptions | false | undefined
+): RedactionPolicy | undefined => {
+  if (redaction === false) {
+    return undefined;
+  }
+  if (redaction && "redactJson" in redaction && typeof redaction.redactJson === "function") {
+    return redaction;
+  }
+  return createRedactionPolicy(redaction ?? { includeEmails: true });
+};
+
+const sanitizeLedgerValue = (
+  value: unknown,
+  options: {
+    includeMessages: boolean;
+    includeToolInputs: boolean;
+    includeToolOutputs: boolean;
+    includeApprovalArguments: boolean;
+    includeOutputText: boolean;
+  },
+  redaction?: RedactionPolicy
+): JsonValue => {
+  if (value === undefined) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeLedgerValue(entry, options, redaction));
+  }
+  if (value && typeof value === "object") {
+    const sanitized = Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
+        if (!options.includeMessages && (key === "messages" || key === "contextMessages")) {
+          return [key, []];
+        }
+        if (!options.includeToolInputs && key === "input") {
+          return [key, null];
+        }
+        if (!options.includeToolOutputs && key === "output") {
+          return [key, null];
+        }
+        if (!options.includeApprovalArguments && key === "arguments") {
+          return [key, "[REDACTED]"];
+        }
+        if (!options.includeApprovalArguments && key === "rawData") {
+          return [key, null];
+        }
+        if (!options.includeOutputText && key === "outputText") {
+          return [key, "[REDACTED]"];
+        }
+        return [key, sanitizeLedgerValue(entry, options, redaction)];
+      })
+    ) as JsonValue;
+    return redaction ? redaction.redactJson(sanitized) : sanitized;
+  }
+  return redaction && typeof value === "string" ? redaction.redactText(value) : value as JsonValue;
+};
 
 export interface AgentRunLedger {
   schemaVersion: typeof AGENT_CONTROL_PLANE_SCHEMA_VERSION;
@@ -565,10 +625,18 @@ export const createAgentToolPolicy = (options: AgentToolPolicyOptions = {}): Too
     }
 
     if (mode === "read-only") {
-      const isReadOnly = permissions.length === 0 || permissions.every((permission) => permission === "read" || allowPermissions.has(permission));
+      const isReadOnly =
+        permissions.length > 0 &&
+        permissions.every((permission) => permission === "read" || allowPermissions.has(permission));
       return isReadOnly && !hasWritePermission(permissions)
         ? { approved: true, metadata: { policy: "agent-control-plane", mode } }
-        : decision(false, `Tool "${request.tool.name}" is not read-only.`, mode);
+        : decision(
+            false,
+            permissions.length === 0
+              ? `Tool "${request.tool.name}" does not declare permissions and cannot be treated as read-only.`
+              : `Tool "${request.tool.name}" is not read-only.`,
+            mode
+          );
     }
 
     if (mode === "deny-write" && hasWritePermission(permissions)) {
@@ -603,10 +671,30 @@ export const createAgentRunLedger = (
   state: AgentRunState,
   options: AgentRunLedgerOptions = {}
 ): AgentRunLedger => {
-  const snapshot = createAgentRunSnapshot(state);
+  const traceOptions = createProductionTraceOptions({
+    ...options.trace,
+    includeToolInputs: options.trace?.includeToolInputs ?? options.includeInput ?? false,
+    includeToolOutputs: options.trace?.includeToolOutputs ?? options.includeOutput ?? false,
+    redaction: options.trace?.redaction ?? options.redaction ?? { includeEmails: true }
+  });
+  const sanitizationOptions = {
+    includeMessages: traceOptions.includeMessages ?? false,
+    includeToolInputs: traceOptions.includeToolInputs ?? false,
+    includeToolOutputs: traceOptions.includeToolOutputs ?? false,
+    includeApprovalArguments: traceOptions.includeApprovalArguments ?? false,
+    includeOutputText: traceOptions.includeOutputText ?? false
+  };
+  const redaction = resolveLedgerRedaction(traceOptions.redaction);
+  const snapshot = sanitizeLedgerValue(
+    createAgentRunSnapshot(state),
+    sanitizationOptions,
+    redaction
+  ) as unknown as AgentRunSnapshot;
   const replay = replayAgentRun(state);
-  const trace = createAgentTraceArtifact(state, options.trace);
+  const trace = createAgentTraceArtifact(state, traceOptions);
   const summary = summarizeAgentTrace(trace, { pricing: options.pricing });
+  const auditOptions = { ...options, redaction: traceOptions.redaction };
+  const audit = createAgentAuditRecord(state, auditOptions);
 
   return {
     schemaVersion: AGENT_CONTROL_PLANE_SCHEMA_VERSION,
@@ -618,12 +706,16 @@ export const createAgentRunLedger = (
     status: state.status,
     snapshot,
     trace,
-    audit: createAgentAuditRecord(state, options),
-    toolAudit: createToolAuditRecords(state, options),
-    timeline: options.includeTimeline === false ? undefined : replay.timeline,
+    audit,
+    toolAudit: createToolAuditRecords(state, auditOptions),
+    timeline: options.includeTimeline === true
+      ? sanitizeLedgerValue(replay.timeline, sanitizationOptions, redaction) as unknown as AgentReplayResult["timeline"]
+      : undefined,
     summary,
     cost: options.pricing ? estimateAgentRunCost(state, options.pricing) : undefined,
-    metadata: state.metadata ? toJsonValue(state.metadata) as Record<string, JsonValue> : undefined
+    metadata: options.includeMetadata && audit.metadata
+      ? audit.metadata
+      : undefined
   };
 };
 

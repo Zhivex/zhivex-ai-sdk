@@ -93,8 +93,8 @@ describe("zhivex-ai CLI", () => {
         inspect: "zhivex-ai agents inspect --state .zhivex/runs/latest-agent-state.json"
       },
       dependencies: {
-        "@zhivex-ai/sdk": "^0.17.0",
-        "@zhivex-ai/openai": "^0.9.0"
+        "@zhivex-ai/sdk": "^1.0.1",
+        "@zhivex-ai/openai": "^0.9.3"
       }
     });
     await expect(fs.readFile(path.join(directory, "src", "agent.ts"), "utf8")).resolves.toContain("createProductionSafetyPolicy");
@@ -122,8 +122,8 @@ describe("zhivex-ai CLI", () => {
     });
     await expect(readJson(path.join(directory, "package.json"))).resolves.toMatchObject({
       dependencies: {
-        "@zhivex-ai/sdk": "^0.17.0",
-        "@zhivex-ai/kimi": "^0.7.0"
+        "@zhivex-ai/sdk": "^1.0.1",
+        "@zhivex-ai/kimi": "^0.7.3"
       }
     });
     const agentSource = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
@@ -176,8 +176,8 @@ describe("zhivex-ai CLI", () => {
     });
     await expect(readJson(path.join(directory, "package.json"))).resolves.toMatchObject({
       dependencies: {
-        "@zhivex-ai/sdk": "^0.17.0",
-        "@zhivex-ai/deepseek": "^0.3.0"
+        "@zhivex-ai/sdk": "^1.0.1",
+        "@zhivex-ai/deepseek": "^0.4.1"
       }
     });
     const agentSource = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
@@ -200,6 +200,24 @@ describe("zhivex-ai CLI", () => {
         expect.objectContaining({ name: "deepseek-env", detail: expect.stringContaining("DEEPSEEK_API_KEY") })
       ])
     });
+  });
+
+  it("escapes model identifiers before embedding them in generated TypeScript", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-injection-"), "safe-agent");
+    const model = 'safe-model" + (globalThis.process.exitCode = 73, "") + "';
+
+    await expect(runCli([
+      "init",
+      "agent",
+      "--dir",
+      directory,
+      "--model",
+      model
+    ], createCapture().io)).resolves.toBe(0);
+
+    const source = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
+    expect(source).toContain(`model: provider(${JSON.stringify(model)})`);
+    expect(source).not.toContain('model: provider("safe-model" +');
   });
 
   it("runs doctor checks for generated projects", async () => {
@@ -244,6 +262,31 @@ describe("zhivex-ai CLI", () => {
       name: "happy-path",
       expectations: { status: "completed", outputText: "done" }
     });
+    if (process.platform !== "win32") {
+      expect((await fs.stat(ledgerPath)).mode & 0o777).toBe(0o600);
+      expect((await fs.stat(goldenPath)).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it("refuses to follow a symlink for JSON output", async () => {
+    const directory = await tempDir("zhivex-cli-output-link-");
+    const statePath = path.join(directory, "state.json");
+    const targetPath = path.join(directory, "target.json");
+    const outputPath = path.join(directory, "ledger.json");
+    await fs.writeFile(statePath, JSON.stringify(baseAgentState()), "utf8");
+    await fs.writeFile(targetPath, "untouched", "utf8");
+    await fs.symlink(targetPath, outputPath);
+    const capture = createCapture();
+
+    await expect(runCli([
+      "agents",
+      "ledger",
+      "--state",
+      statePath,
+      "--out",
+      outputPath
+    ], capture.io)).resolves.toBe(1);
+    expect(await fs.readFile(targetPath, "utf8")).toBe("untouched");
   });
 
   it("inspects agent ledgers and evaluates golden traces", async () => {
@@ -253,7 +296,9 @@ describe("zhivex-ai CLI", () => {
     const goldenPath = path.join(directory, "golden.json");
     const evalPath = path.join(directory, "eval.json");
     const state = baseAgentState();
-    const ledger = createAgentRunLedger(state);
+    const ledger = createAgentRunLedger(state, {
+      trace: { includeOutputText: true }
+    });
     await fs.writeFile(statePath, JSON.stringify(state), "utf8");
     await fs.writeFile(ledgerPath, JSON.stringify(ledger), "utf8");
     await fs.writeFile(goldenPath, JSON.stringify({
@@ -305,8 +350,12 @@ describe("zhivex-ai CLI", () => {
     const directory = await tempDir("zhivex-cli-agents-");
     const basePath = path.join(directory, "base.json");
     const targetPath = path.join(directory, "target.json");
-    await fs.writeFile(basePath, JSON.stringify(createAgentRunLedger(baseAgentState())), "utf8");
-    await fs.writeFile(targetPath, JSON.stringify(createAgentRunLedger(baseAgentState({ runId: "run_2", outputText: "changed" }))), "utf8");
+    const ledgerOptions = { trace: { includeOutputText: true } } as const;
+    await fs.writeFile(basePath, JSON.stringify(createAgentRunLedger(baseAgentState(), ledgerOptions)), "utf8");
+    await fs.writeFile(targetPath, JSON.stringify(createAgentRunLedger(
+      baseAgentState({ runId: "run_2", outputText: "changed" }),
+      ledgerOptions
+    )), "utf8");
     const capture = createCapture();
 
     const code = await runCli(["agents", "diff", "--base", basePath, "--target", targetPath], capture.io);
@@ -1010,7 +1059,10 @@ export const workflow = {
     });
     const sessions = createCapture();
     await expect(runCli(["sessions", "prune", "--dir", sessionDir, "--keep-last", "0"], sessions.io)).resolves.toBe(0);
-    expect(JSON.parse(sessions.stdout[0]!)).toMatchObject({ dryRun: true, deletedSessionKeys: ["app:user:session"] });
+    expect(JSON.parse(sessions.stdout[0]!)).toMatchObject({
+      dryRun: true,
+      deletedSessionKeys: [expect.stringMatching(/^session:v2:[a-f0-9]{64}$/)]
+    });
 
     const artifactDir = await tempDir("zhivex-cli-prune-artifacts-");
     await createFileArtifactService({ directory: artifactDir }).saveArtifact({
@@ -1024,7 +1076,10 @@ export const workflow = {
     });
     const artifacts = createCapture();
     await expect(runCli(["artifacts", "prune", "--dir", artifactDir, "--keep-last", "0"], artifacts.io)).resolves.toBe(0);
-    expect(JSON.parse(artifacts.stdout[0]!)).toMatchObject({ dryRun: true, deletedArtifactKeys: ["app:user:session:artifact"] });
+    expect(JSON.parse(artifacts.stdout[0]!)).toMatchObject({
+      dryRun: true,
+      deletedArtifactKeys: [expect.stringMatching(/^artifact:v2:[a-f0-9]{64}$/)]
+    });
 
     const workflowDir = await tempDir("zhivex-cli-prune-workflow-states-");
     await createFileWorkflowStateService({ directory: workflowDir }).saveWorkflowState({
@@ -1046,7 +1101,10 @@ export const workflow = {
     });
     const workflows = createCapture();
     await expect(runCli(["workflow-states", "prune", "--dir", workflowDir, "--keep-last", "0"], workflows.io)).resolves.toBe(0);
-    expect(JSON.parse(workflows.stdout[0]!)).toMatchObject({ dryRun: true, deletedWorkflowStateKeys: ["app:user:session:workflow"] });
+    expect(JSON.parse(workflows.stdout[0]!)).toMatchObject({
+      dryRun: true,
+      deletedWorkflowStateKeys: [expect.stringMatching(/^workflow-state:v2:[a-f0-9]{64}$/)]
+    });
   });
 
   it("returns exit code 1 for invalid commands and missing flags", async () => {

@@ -2,6 +2,8 @@ import { toJSONSchema } from "zod";
 
 import {
   ConfigurationError,
+  assertTrustedEndpoint,
+  isLoopbackHostname,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
@@ -11,6 +13,8 @@ import {
   ValidationError,
   createProviderAdapter,
   normalizeFinishReason,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
   withRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
@@ -26,6 +30,7 @@ import {
 export interface OllamaProviderOptions {
   baseURL?: string;
   fetch?: typeof globalThis.fetch;
+  allowUnsafeEndpoints?: boolean;
 }
 
 export interface OllamaLanguageModelOptions {
@@ -157,17 +162,21 @@ const parseAssistantMessage = (message: any) => ({
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response);
     throw new ProviderHTTPError(`Ollama request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
-  return response.json();
+  return readJsonWithLimit<any>(response, {
+    maxBytes: 128 * 1024 * 1024,
+    provider: "ollama",
+    endpoint: response.url || undefined
+  });
 };
 
 const parseJsonLines = async function* (response: Response): AsyncGenerator<any> {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response);
     throw new ProviderHTTPError(`Ollama request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
@@ -190,6 +199,10 @@ const parseJsonLines = async function* (response: Response): AsyncGenerator<any>
       }
 
       buffer += decoder.decode(value, { stream: true });
+      if (buffer.length > 1024 * 1024) {
+        await reader.cancel("Ollama JSON line exceeded 1048576 characters.").catch(() => {});
+        throw new ValidationError("Ollama streaming response line exceeded 1048576 characters.");
+      }
 
       let newlineIndex = buffer.indexOf("\n");
       while (newlineIndex !== -1) {
@@ -424,7 +437,22 @@ class OllamaEmbeddingModel implements EmbeddingModel {
 }
 
 export const createOllama = (options: OllamaProviderOptions = {}): CallableProviderAdapter & ProviderAdapter => {
-  const baseURL = options.baseURL ?? process.env.OLLAMA_HOST ?? "http://localhost:11434";
+  const configuredBaseURL = options.baseURL ?? process.env.OLLAMA_HOST ?? "http://localhost:11434";
+  let candidate: URL;
+  try {
+    candidate = new URL(configuredBaseURL);
+  } catch (error) {
+    throw new ConfigurationError("Ollama baseURL must be an absolute URL.", { cause: error });
+  }
+  const baseURL = assertTrustedEndpoint(configuredBaseURL, {
+    label: "Ollama baseURL",
+    protocols:
+      options.allowUnsafeEndpoints || candidate.protocol === "https:" || isLoopbackHostname(candidate.hostname)
+        ? ["http", "https"]
+        : ["https"],
+    allowLoopback: true,
+    allowUnsafe: options.allowUnsafeEndpoints
+  }).toString().replace(/\/+$/, "");
   const fetcher = options.fetch ?? globalThis.fetch;
 
   return createProviderAdapter({

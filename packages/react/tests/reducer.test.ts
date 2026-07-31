@@ -4,6 +4,7 @@ import {
   chatReducer,
   createInitialChatState
 } from "../src/reducer.js";
+import { selectPendingApproval } from "../src/approval.js";
 import type { ChatMessage, ChatStreamChunk } from "../src/types.js";
 
 const userMessage: ChatMessage = {
@@ -162,6 +163,80 @@ describe("chat reducer", () => {
     ]);
     expect(state.sessionId).toBe("session-1");
     expect(state.status).toBe("ready");
+  });
+
+  it("keeps the same approval id isolated by provider", () => {
+    let state = createInitialChatState();
+    state = applyUIMessageChunk(state, {
+      type: "agent-approval-request",
+      approval: {
+        provider: "provider-a",
+        id: "shared-id",
+        name: "safe-action",
+        arguments: "{}",
+        rawData: {}
+      }
+    });
+    state = applyUIMessageChunk(state, {
+      type: "agent-approval-request",
+      approval: {
+        provider: "provider-b",
+        id: "shared-id",
+        name: "other-action",
+        arguments: "{}",
+        rawData: {}
+      }
+    });
+
+    expect(state.status).toBe("streaming");
+    expect(state.pendingApprovals).toMatchObject([
+      { provider: "provider-a", id: "shared-id" },
+      { provider: "provider-b", id: "shared-id" }
+    ]);
+    expect(() =>
+      selectPendingApproval(state.pendingApprovals, "shared-id")
+    ).toThrow("ambiguous");
+    expect(
+      selectPendingApproval(
+        state.pendingApprovals,
+        "shared-id",
+        "provider-b"
+      ).provider
+    ).toBe("provider-b");
+  });
+
+  it("ignores malformed or duplicate terminal agent state", () => {
+    const state = createInitialChatState();
+    const malformed = applyUIMessageChunk(state, {
+      type: "agent-run-finish",
+      status: "completed",
+      state: { pendingApprovals: "not-an-array" }
+    } as ChatStreamChunk);
+    const duplicate = applyUIMessageChunk(state, {
+      type: "agent-run-finish",
+      status: "completed",
+      state: {
+        pendingApprovals: [
+          {
+            provider: "provider-a",
+            id: "shared-id",
+            name: "first",
+            arguments: "{}",
+            rawData: {}
+          },
+          {
+            provider: "provider-a",
+            id: "shared-id",
+            name: "second",
+            arguments: "{}",
+            rawData: {}
+          }
+        ]
+      }
+    } as ChatStreamChunk);
+
+    expect(malformed).toBe(state);
+    expect(duplicate).toBe(state);
   });
 
   it("ignores unknown and malformed chunks without changing state", () => {

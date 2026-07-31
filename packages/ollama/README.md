@@ -36,6 +36,8 @@ The adapter supports streaming, callable tools, JSON/structured output, image in
 
 `createOllama()` reads `OLLAMA_HOST` and otherwise defaults to `http://localhost:11434`. An explicit `baseURL` takes precedence.
 
+Plain HTTP is accepted only for loopback Ollama endpoints. Remote endpoints require HTTPS unless a server-side integration explicitly sets `allowUnsafeEndpoints: true`.
+
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
