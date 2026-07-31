@@ -1,5 +1,5 @@
 import { BoundedReplayBroadcast, StreamBufferOverflowError } from "./bounded-broadcast.js";
-import { ConfigurationError, UnsupportedFeatureError } from "./errors.js";
+import { ConfigurationError, UnsupportedFeatureError, ValidationError } from "./errors.js";
 import type {
   AudioFrame,
   MediaFrame,
@@ -235,11 +235,24 @@ class BrowserRealtimeConnection implements RealtimeConnection {
   private readonly resolvers: Array<(value: unknown) => void> = [];
   private closed = false;
   private queueFailure?: Error;
+  private readonly maxIncomingFrameBytes: number;
 
-  constructor(socket: WebSocketLike) {
+  constructor(socket: WebSocketLike, maxIncomingFrameBytes: number) {
     this.socket = socket;
+    this.maxIncomingFrameBytes = maxIncomingFrameBytes;
     socket.onmessage = (event) => {
       const value = event.data;
+      if (incomingFrameBytes(value) > this.maxIncomingFrameBytes) {
+        this.queueFailure = new ValidationError(
+          `Realtime frame exceeds the ${this.maxIncomingFrameBytes}-byte limit.`
+        );
+        this.closed = true;
+        while (this.resolvers.length > 0) {
+          this.resolvers.shift()!(undefined);
+        }
+        this.socket.close();
+        return;
+      }
       if (this.resolvers.length > 0) {
         this.resolvers.shift()!(value);
       } else {
@@ -275,7 +288,7 @@ class BrowserRealtimeConnection implements RealtimeConnection {
       throw this.queueFailure;
     }
     if (this.queue.length > 0) {
-      return parseIncoming(this.queue.shift());
+      return parseIncoming(this.queue.shift(), this.maxIncomingFrameBytes);
     }
 
     if (this.closed) {
@@ -285,7 +298,10 @@ class BrowserRealtimeConnection implements RealtimeConnection {
     const next = await new Promise<unknown>((resolve) => {
       this.resolvers.push(resolve);
     });
-    return parseIncoming(next);
+    if (this.queueFailure) {
+      throw this.queueFailure;
+    }
+    return parseIncoming(next, this.maxIncomingFrameBytes);
   }
 
   async close() {
@@ -293,15 +309,31 @@ class BrowserRealtimeConnection implements RealtimeConnection {
   }
 }
 
-const parseIncoming = (value: unknown) => {
+const incomingFrameBytes = (value: unknown): number => {
+  if (typeof value === "string") {
+    return new TextEncoder().encode(value).byteLength;
+  }
+  if (value instanceof ArrayBuffer) {
+    return value.byteLength;
+  }
+  if (typeof Blob !== "undefined" && value instanceof Blob) {
+    return value.size;
+  }
+  return 0;
+};
+
+const parseIncoming = (value: unknown, maxIncomingFrameBytes: number) => {
   if (value == null) {
     return undefined;
+  }
+  if (incomingFrameBytes(value) > maxIncomingFrameBytes) {
+    throw new ValidationError(`Realtime frame exceeds the ${maxIncomingFrameBytes}-byte limit.`);
   }
   if (typeof value === "string") {
     return JSON.parse(value) as unknown;
   }
   if (value instanceof ArrayBuffer) {
-    return JSON.parse(Buffer.from(value).toString("utf8")) as unknown;
+    return JSON.parse(new TextDecoder().decode(value)) as unknown;
   }
   if (typeof Blob !== "undefined" && value instanceof Blob) {
     return value.text().then((text) => JSON.parse(text) as unknown);
@@ -312,40 +344,48 @@ const parseIncoming = (value: unknown) => {
 const waitForOpen = (socket: WebSocketLike, signal?: AbortSignal, timeoutMs?: number) =>
   new Promise<void>((resolve, reject) => {
     let finished = false;
-    const onAbort = () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const fail = (message: string) => {
       if (finished) {
         return;
       }
       finished = true;
-      reject(new Error("Realtime connection aborted."));
-    };
-    const timer = timeoutMs ? setTimeout(() => {
-      if (!finished) {
-        finished = true;
-        reject(new Error(`Realtime connection timed out after ${timeoutMs}ms.`));
+      cleanup();
+      try {
+        socket.close();
+      } catch {
+        // Best-effort cleanup must not hide the connection error.
       }
+      reject(new Error(message));
+    };
+    const onAbort = () => {
+      fail("Realtime connection aborted.");
+    };
+    timer = timeoutMs ? setTimeout(() => {
+      fail(`Realtime connection timed out after ${timeoutMs}ms.`);
     }, timeoutMs) : undefined;
     socket.onopen = () => {
       if (finished) {
         return;
       }
       finished = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
+      cleanup();
       resolve();
     };
     socket.onerror = () => {
-      if (finished) {
-        return;
-      }
-      finished = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
-      reject(new Error("Realtime connection failed."));
+      fail("Realtime connection failed.");
     };
-    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+    } else {
+      signal?.addEventListener("abort", onAbort, { once: true });
+    }
   });
 
 export const openWebSocketConnection: RealtimeConnectionFactory = async (url, headers, options) => {
@@ -362,9 +402,15 @@ export const openWebSocketConnection: RealtimeConnectionFactory = async (url, he
     );
   }
 
+  const maxIncomingFrameBytes = options?.maxIncomingFrameBytes ?? 16 * 1024 * 1024;
+  if (!Number.isSafeInteger(maxIncomingFrameBytes) || maxIncomingFrameBytes <= 0) {
+    throw new ConfigurationError(
+      'The realtime "maxIncomingFrameBytes" option must be a positive safe integer.'
+    );
+  }
   const socket = new WebSocketCtor(url, options?.subprotocols);
   await waitForOpen(socket, options?.signal, options?.timeoutMs);
-  return new BrowserRealtimeConnection(socket);
+  return new BrowserRealtimeConnection(socket, maxIncomingFrameBytes);
 };
 
 export const unsupportedBrowserToken = async (): Promise<never> => {

@@ -79,6 +79,8 @@ import {
   testToolDefinition,
   testToolRegistry,
   uploadFile,
+  withRetry,
+  withTimeoutSignal,
   predictRaw,
   toToolSet,
   user
@@ -984,6 +986,59 @@ describe("core helpers", () => {
       expect(requests[0]?.init?.method).toBe("POST");
       expect(requests[0]?.init?.body).toBe(JSON.stringify({ city: "Madrid" }));
       expect((requests[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer test");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("bounds HTTP tool responses and propagates cancellation, redirects, and idempotency safely", async () => {
+    const originalFetch = globalThis.fetch;
+    const observed: RequestInit[] = [];
+    globalThis.fetch = (async (_url, init) => {
+      observed.push(init ?? {});
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "content-type": "application/json" }
+      });
+    }) as typeof fetch;
+    try {
+      const controller = new AbortController();
+      controller.abort("cancelled");
+      const entry = createHttpTool({
+        name: "secureHttp",
+        schema: z.object({}),
+        url: "https://example.com/tool",
+        timeoutMs: 1_000,
+        maxResponseBytes: 64
+      });
+      if (!("execute" in entry.tool)) {
+        throw new Error("Expected callable HTTP tool.");
+      }
+      await entry.tool.execute({}, {
+        abortSignal: controller.signal,
+        idempotencyKey: "idem-123",
+        toolCall: { id: "call_1", name: "secureHttp", input: {} },
+        step: 1,
+        model: createLanguageModel()
+      });
+      expect(observed[0]?.signal?.aborted).toBe(true);
+      expect(observed[0]?.redirect).toBe("error");
+      expect(new Headers(observed[0]?.headers).get("idempotency-key")).toBe("idem-123");
+
+      globalThis.fetch = (async () =>
+        new Response("x".repeat(65), {
+          headers: { "content-length": "65", "content-type": "text/plain" }
+        })) as typeof fetch;
+      await expect(entry.tool.execute({}, {
+        toolCall: { id: "call_2", name: "secureHttp", input: {} },
+        step: 1,
+        model: createLanguageModel()
+      })).rejects.toThrow("exceeded");
+      expect(() => createHttpTool({
+        name: "invalidTimeout",
+        schema: z.object({}),
+        url: "https://example.com",
+        timeoutMs: Number.NaN
+      })).toThrow(ValidationError);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2973,6 +3028,52 @@ describe("core helpers", () => {
 
     const linesResponse = createUIMessageLinesResponse(messages);
     expect(await linesResponse.text()).toContain("\"id\":\"msg_1\"");
+  });
+
+  it("bounds and validates JSON and JSONL UI message requests", async () => {
+    const valid = JSON.stringify([{ id: "msg_1", role: "user", parts: [{ type: "text", text: "ok" }] }]);
+    await expect(parseUIMessageRequest(new Request("https://example.com", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: valid
+    }), { maxBytes: valid.length - 1 })).rejects.toThrow("byte limit");
+
+    await expect(parseUIMessageRequest(new Request("https://example.com", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}"
+    }))).rejects.toThrow("must be an array");
+
+    await expect(parseUIMessageRequest(new Request("https://example.com", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify([{ id: "msg_1", role: "user", parts: [{ type: "text" }] }])
+    }))).rejects.toThrow('"text"');
+
+    await expect(parseUIMessageRequest(new Request("https://example.com", {
+      method: "POST",
+      body: JSON.stringify({ id: "msg_1", role: "user", parts: [{ type: "unknown" }] })
+    }))).rejects.toThrow('unsupported "type"');
+  });
+
+  it("caps retries, aborts retry backoff, and rejects invalid timeouts", async () => {
+    let attempts = 0;
+    await expect(withRetry(async () => {
+      attempts += 1;
+      throw new ProviderHTTPError("retry", 500);
+    }, { maxRetries: 100, retryBackoffMs: 0 })).rejects.toThrow("retry");
+    expect(attempts).toBe(11);
+
+    const controller = new AbortController();
+    const retrying = withRetry(async () => {
+      throw new ProviderHTTPError("retry", 500);
+    }, { maxRetries: 2, retryBackoffMs: 1_000, abortSignal: controller.signal });
+    setTimeout(() => controller.abort(), 5);
+    await expect(retrying).rejects.toMatchObject({ name: "AbortError" });
+
+    for (const timeoutMs of [Number.NaN, Number.POSITIVE_INFINITY, -1, 0, 86_400_001]) {
+      expect(() => withTimeoutSignal({ timeoutMs })).toThrow(ValidationError);
+    }
   });
 
   it("creates a searchable model catalog", () => {

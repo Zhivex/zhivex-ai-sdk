@@ -351,6 +351,19 @@ describe("xai adapter", () => {
 
     const uploadBody = (fetchMock.mock.calls[1]?.[1] as RequestInit).body as FormData;
     expect([...uploadBody.keys()]).toEqual(["expires_after", "purpose", "file"]);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ redirect: "error" });
+  });
+
+  it("rejects path-like xAI file IDs before sending credentials", async () => {
+    const xai = createXAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(xai.files.get({ name: "../secret" })).rejects.toThrow(
+      "must be a non-empty opaque identifier"
+    );
+    await expect(xai.files.delete({ name: "files/secret" })).rejects.toThrow(
+      "must be a non-empty opaque identifier"
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("grounds text with Web Search and returns unique sources", async () => {

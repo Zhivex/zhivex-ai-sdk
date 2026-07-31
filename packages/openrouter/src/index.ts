@@ -4,11 +4,14 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
+  assertTrustedEndpoint,
   createProviderAdapter,
   hostedTool,
   isCallableToolDefinition,
   isHostedToolDefinition,
   normalizeFinishReason,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
   streamSSE,
   withRetry,
   withTimeoutSignal,
@@ -28,6 +31,7 @@ export interface OpenRouterProviderOptions {
   baseURL?: string;
   appName?: string;
   appURL?: string;
+  allowUnsafeEndpoints?: boolean;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -101,12 +105,16 @@ const jsonHeaders = (apiKey: string, appName?: string, appURL?: string) => ({
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response);
     throw new ProviderHTTPError(`OpenRouter request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
-  return response.json();
+  return readJsonWithLimit<any>(response, {
+    maxBytes: 128 * 1024 * 1024,
+    provider: "openrouter",
+    endpoint: response.url || undefined
+  });
 };
 
 const mapContentParts = (message: ModelMessage) => {
@@ -412,7 +420,11 @@ export const createOpenRouter = (
     throw new ConfigurationError("Missing OpenRouter API key.");
   }
 
-  const baseURL = options.baseURL ?? "https://openrouter.ai/api/v1";
+  const baseURL = assertTrustedEndpoint(options.baseURL ?? "https://openrouter.ai/api/v1", {
+    label: "OpenRouter baseURL",
+    protocols: ["https"],
+    allowUnsafe: options.allowUnsafeEndpoints
+  }).toString().replace(/\/+$/, "");
   const fetcher = options.fetch ?? globalThis.fetch;
 
   return createProviderAdapter({

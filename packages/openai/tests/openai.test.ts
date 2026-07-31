@@ -2753,6 +2753,7 @@ describe("openai adapter", () => {
       "https://api.openai.com/v1/realtime/client_secrets",
       expect.objectContaining({
         method: "POST",
+        redirect: "error",
         headers: expect.objectContaining({
           authorization: "Bearer test",
           "content-type": "application/json",
@@ -2769,5 +2770,42 @@ describe("openai adapter", () => {
     };
     expect(requestBody.session).not.toHaveProperty("safety_identifier");
     expect(requestBody.session).not.toHaveProperty("headers");
+  });
+
+  it("rejects per-session OpenAI realtime endpoint overrides outside the trusted host", async () => {
+    const connectionFactory = vi.fn();
+    const provider = createOpenAI({
+      apiKey: "openai-secret",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+
+    await expect(
+      provider.realtimeModel!("gpt-realtime").connect({
+        providerOptions: {
+          realtime_url: "wss://attacker.example/collect"
+        }
+      })
+    ).rejects.toThrow("is not trusted");
+
+    expect(connectionFactory).not.toHaveBeenCalled();
+  });
+
+  it("enforces OpenAI browser-token timeouts", async () => {
+    fetchMock.mockImplementationOnce(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+        })
+    );
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      provider.realtimeModel!("gpt-realtime").createBrowserToken?.({}, { timeoutMs: 1 })
+    ).rejects.toBeInstanceOf(DOMException);
   });
 });

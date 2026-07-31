@@ -1,7 +1,30 @@
-import { ProviderHTTPError } from "./errors.js";
+import { ProviderHTTPError, ValidationError } from "./errors.js";
 import type { CallableProviderAdapter, ProviderAdapter, RetryOptions } from "./types.js";
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const throwIfAborted = (signal: AbortSignal | undefined) => {
+  if (!signal?.aborted) {
+    return;
+  }
+  if (signal.reason instanceof Error) {
+    throw signal.reason;
+  }
+  throw new DOMException("The operation was aborted.", "AbortError");
+};
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    throwIfAborted(signal);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(signal?.reason instanceof Error ? signal.reason : new DOMException("The operation was aborted.", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 
 const isRetryableError = (error: unknown): boolean => {
   if (error instanceof ProviderHTTPError) {
@@ -31,6 +54,12 @@ export const mergeAbortSignals = (...signals: Array<AbortSignal | undefined>) =>
 };
 
 export const withTimeoutSignal = (options: RetryOptions) => {
+  if (
+    options.timeoutMs !== undefined &&
+    (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 || options.timeoutMs > 24 * 60 * 60 * 1_000)
+  ) {
+    throw new ValidationError('The "timeoutMs" option must be a positive safe integer no greater than 86400000.');
+  }
   const controller = new AbortController();
   const abortFromCaller = () => controller.abort(options.abortSignal?.reason);
   if (options.abortSignal?.aborted) {
@@ -38,7 +67,9 @@ export const withTimeoutSignal = (options: RetryOptions) => {
   } else {
     options.abortSignal?.addEventListener("abort", abortFromCaller, { once: true });
   }
-  const timeout = options.timeoutMs ? setTimeout(() => controller.abort(), options.timeoutMs) : undefined;
+  const timeout = options.timeoutMs === undefined
+    ? undefined
+    : setTimeout(() => controller.abort(new DOMException("The operation timed out.", "TimeoutError")), options.timeoutMs);
 
   return {
     signal: controller.signal,
@@ -53,11 +84,20 @@ export const withTimeoutSignal = (options: RetryOptions) => {
 };
 
 export const withRetry = async <T>(operation: () => Promise<T>, options: RetryOptions = {}): Promise<T> => {
-  const maxRetries = Math.max(0, options.maxRetries ?? 0);
-  const retryBackoffMs = options.retryBackoffMs ?? 250;
+  const configuredMaxRetries = options.maxRetries ?? 0;
+  if (!Number.isSafeInteger(configuredMaxRetries) || configuredMaxRetries < 0) {
+    throw new ValidationError('The "maxRetries" option must be a non-negative safe integer.');
+  }
+  const maxRetries = Math.min(configuredMaxRetries, 10);
+  const configuredBackoff = options.retryBackoffMs ?? 250;
+  if (!Number.isSafeInteger(configuredBackoff) || configuredBackoff < 0) {
+    throw new ValidationError('The "retryBackoffMs" option must be a non-negative safe integer.');
+  }
+  const retryBackoffMs = Math.min(configuredBackoff, 60_000);
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    throwIfAborted(options.abortSignal);
     try {
       return await operation();
     } catch (error) {
@@ -65,7 +105,7 @@ export const withRetry = async <T>(operation: () => Promise<T>, options: RetryOp
       if (attempt >= maxRetries || !isRetryableError(error)) {
         throw error;
       }
-      await sleep(retryBackoffMs * (attempt + 1));
+      await sleep(Math.min(retryBackoffMs * (attempt + 1), 60_000), options.abortSignal);
     }
   }
 

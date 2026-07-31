@@ -984,6 +984,7 @@ export interface RealtimeConnectOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   subprotocols?: string[];
+  maxIncomingFrameBytes?: number;
 }
 
 export interface RealtimeSessionConfig {

@@ -184,6 +184,24 @@ describe("workflow state services", () => {
     expect(await service.listWorkflowStates({ appName: "app", userId: "user" })).toEqual([]);
   });
 
+  it("keeps delimiter-containing workflow identities isolated", async () => {
+    const service = createInMemoryWorkflowStateService();
+    await service.saveWorkflowState({
+      appName: "a:b",
+      userId: "c",
+      sessionId: "d",
+      workflowKey: "e",
+      state: { ...state, userId: "c", sessionId: "d" }
+    });
+
+    expect(await service.loadWorkflowState({
+      appName: "a",
+      userId: "b:c",
+      sessionId: "d",
+      workflowKey: "e"
+    })).toBeUndefined();
+  });
+
   it("persists file workflow states across service instances", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-workflow-states-"));
     const service = createFileWorkflowStateService({ directory });
@@ -202,6 +220,35 @@ describe("workflow state services", () => {
       sessionId: "session",
       workflowKey: "workflow"
     })).resolves.toEqual(record);
+  });
+
+  it("migrates matching legacy workflow files without duplicate list entries", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-workflow-states-legacy-"));
+    const service = createFileWorkflowStateService({ directory });
+    const record = await service.saveWorkflowState({
+      appName: "a:b",
+      userId: "c",
+      sessionId: "d",
+      workflowKey: "e",
+      state: { ...state, userId: "c", sessionId: "d" }
+    });
+    const canonical = (await fs.readdir(directory))[0]!;
+    const legacy = ["a:b", "c", "d", "e"].map(encodeURIComponent).join("__") + ".json";
+    await fs.rename(path.join(directory, canonical), path.join(directory, legacy));
+
+    await service.saveWorkflowState({
+      appName: record.appName,
+      userId: record.userId,
+      sessionId: record.sessionId,
+      workflowKey: record.workflowKey,
+      state: record.state
+    });
+
+    const entries = (await fs.readdir(directory)).filter((entry) => entry.endsWith(".json"));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatch(/^workflow-state_v2_[a-f0-9]{64}\.json$/);
+    expect((await fs.stat(path.join(directory, entries[0]!))).mode & 0o777).toBe(0o600);
+    await expect(service.listWorkflowStates({ appName: "a:b", userId: "c" })).resolves.toHaveLength(1);
   });
 
   it("normalizes legacy file workflow states and rejects future schema versions", async () => {
@@ -404,9 +451,9 @@ describe("workflow state services", () => {
       updatedAt: 100
     })), "utf8");
 
-    await expect(pruneFileWorkflowStateStore({ directory, keepLast: 1, dryRun: false })).resolves.toMatchObject({
-      deletedWorkflowStateKeys: ["app:user:session:old"],
-      keptWorkflowStateKeys: ["app:user:session:new"]
-    });
+    const result = await pruneFileWorkflowStateStore({ directory, keepLast: 1, dryRun: false });
+    expect(result.deletedWorkflowStateKeys).toHaveLength(1);
+    expect(result.keptWorkflowStateKeys).toHaveLength(1);
+    expect(result.deletedWorkflowStateKeys[0]).not.toBe(result.keptWorkflowStateKeys[0]);
   });
 });

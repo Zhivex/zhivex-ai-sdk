@@ -205,17 +205,32 @@ export interface GatewayConfig {
   latencyBiasMs?: Partial<Record<GatewayProviderId, number>>;
   unknownCostPolicy?: GatewayUnknownCostPolicy;
   scoreTarget?: (context: GatewayRoutingScoreContext) => number;
+  /** Maximum fallback targets accepted per request. Defaults to 8 and cannot exceed 32. */
+  maxFallbacks?: number;
+  /** Retries per target. Defaults to 2 and cannot exceed 5. */
   maxRetries?: number;
+  /** Maximum provider calls across one routed operation, including agent steps. Defaults to 32 and cannot exceed 128. */
+  maxTotalAttempts?: number;
   attemptTimeoutMs?: number;
   attemptTimeoutsMs?: Partial<Record<GatewayProviderId, number>>;
+  /** Maximum wait between provider stream events. Defaults to 60 seconds; set false to disable. */
+  streamIdleTimeoutMs?: number | false;
+  streamIdleTimeoutsMs?: Partial<Record<GatewayProviderId, number | false>>;
   retryBackoffMs?: number;
-  onAttempt?: (attempt: GatewayAttempt & { retry: number; targetRank: number }) => void | Promise<void>;
+  /** Maximum time spent awaiting a best-effort observer. Defaults to 1 second. */
+  observerTimeoutMs?: number;
+  onAttempt?: (attempt: GatewayAttempt & {
+    retry: number;
+    targetRank: number;
+    abortSignal: AbortSignal;
+  }) => void | Promise<void>;
   onAgentRoute?: (selection: {
     provider: GatewayProviderId;
     modelId: string;
     routeDecision: GatewayResponse["routeDecision"];
     attempts: GatewayAttempt[];
     targetRank: number;
+    abortSignal: AbortSignal;
   }) => void | Promise<void>;
 }
 

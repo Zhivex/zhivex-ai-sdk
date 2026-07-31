@@ -381,6 +381,34 @@ describe("otel observability", () => {
     expect(collector.getTrace("run_1")?.steps[0]?.messages).toBeUndefined();
   });
 
+  it("bounds trace collector runs, events, and retention", async () => {
+    let now = 1_000;
+    const collector = createAgentTraceCollector({
+      maxRuns: 2,
+      maxEventsPerRun: 2,
+      retentionMs: 100,
+      now: () => now
+    });
+    const start = (runId: string): AgentTelemetryEvent => ({
+      type: "run-start",
+      runId,
+      provider: "test",
+      modelId: "model",
+      maxSteps: 1
+    });
+
+    await collector.observer(start("run_1"));
+    await collector.observer(start("run_1"));
+    await collector.observer(start("run_1"));
+    expect(collector.getEvents("run_1")).toHaveLength(2);
+    await collector.observer(start("run_2"));
+    await collector.observer(start("run_3"));
+    expect(collector.getEvents("run_1")).toEqual([]);
+
+    now += 101;
+    expect(collector.getEvents()).toEqual([]);
+  });
+
   it("creates low-level span handles from a tracer", async () => {
     const tracer = new FakeTracer();
     const observer = await createOtelObserver({

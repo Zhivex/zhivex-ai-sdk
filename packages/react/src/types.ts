@@ -113,10 +113,22 @@ export interface FetchChatTransportOptions {
   buildRequestBody?: ChatRequestBodyBuilder;
   fetch?: typeof globalThis.fetch;
   credentials?: RequestCredentials;
+  /** Redirects are rejected by default so request bodies cannot cross an unexpected origin. */
+  redirect?: RequestRedirect;
   /** Maximum decoded characters retained for one SSE event. Defaults to 1 MiB. */
   maxEventChars?: number;
   /** Maximum undecoded line buffer size. Defaults to 2 MiB. */
   maxBufferChars?: number;
+  /** Maximum decoded characters across the whole SSE response. Defaults to 16 MiB. */
+  maxStreamChars?: number;
+  /** Maximum decoded SSE events per response. Defaults to 10,000. */
+  maxStreamEvents?: number;
+  /** Maximum bytes retained from an HTTP error or non-SSE response. Defaults to 8 KiB. */
+  maxErrorBodyBytes?: number;
+  /** Total request lifetime. Defaults to 120 seconds; set false to disable. */
+  requestTimeoutMs?: number | false;
+  /** Maximum wait between response body chunks. Defaults to 30 seconds; set false to disable. */
+  streamIdleTimeoutMs?: number | false;
   /** Opt in only when the endpoint implements idempotent regeneration. */
   supportsReload?: boolean;
 }
@@ -154,7 +166,8 @@ export interface UseZhivexChatResult {
   resolveApproval: (
     approvalRequestId: string,
     approve: boolean,
-    reason?: string
+    reason?: string,
+    provider?: string
   ) => Promise<void>;
 }
 

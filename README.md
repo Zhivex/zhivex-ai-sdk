@@ -580,6 +580,8 @@ The control-plane layer is intentionally SDK-only. Workspaces, billing, project 
 
 Resume a capsule-owned run with the same capsule definition. A changed capsule fingerprint is rejected before model or tool execution. Legacy states can only be attached to a fingerprint through the explicit `policy.allowLegacyHarnessResume` migration escape hatch.
 
+The `read-only` tool policy only auto-approves tools that explicitly declare read permissions; missing permission metadata is denied. Run ledgers omit replay timelines, metadata, messages, tool payloads, approval arguments, and output text unless their corresponding opt-in is enabled. Included ledger fields are still passed through the configured redaction policy.
+
 Approval queue tokens are cryptographically random opaque values. Persist them server-side, enforce the queue item's `expiresAt`, compare and consume the token before resuming a run, and never treat `resumeUrl` alone as authorization.
 
 ### Declarative Workflows
@@ -793,7 +795,7 @@ const savedReport = await artifacts.loadArtifact({
 });
 ```
 
-The file-backed service writes one JSON file per artifact with a path-safe filename derived from `appName`, `userId`, `sessionId`, and `id`. The SDK also exposes `createSqliteArtifactService()` and `createPostgresArtifactService()` for production applications that already provide compatible database clients.
+The file-backed service writes one JSON file per artifact with a collision-resistant canonical key derived from `appName`, `userId`, `sessionId`, and `id`. Session, artifact, and workflow-state stores transparently fall back to legacy keys and migrate them on write. Newly created local-store directories use mode `0700` and files use `0600` on POSIX systems. The SDK also exposes `createSqliteArtifactService()` and `createPostgresArtifactService()` for production applications that already provide compatible database clients.
 
 Binary artifacts use a formal metadata convention: store base64 as `data`, set `encoding: "base64"`, and optionally include `size` and `sha256`. When base64 metadata is omitted, `saveArtifact()` calculates `size` and `sha256`; when metadata is provided, the SDK validates it against the decoded bytes. Native streaming/binary storage is intentionally left for a later artifact phase.
 
@@ -919,7 +921,7 @@ zhivex-ai agents golden --ledger run-ledger.json --name happy-path --out golden-
 zhivex-ai agents eval --golden golden-trace.json --ledger run-ledger.json --out agent-eval.json
 ```
 
-Output is JSON pretty-printed by default. `init agent` scaffolds a Bun-first agent project with file-backed local sessions, a production safety policy, a provider package, a smoke-test tool, and scripts for doctor/inspect/ledger. `doctor` checks runtime, package metadata, provider dependencies, provider environment variables, TypeScript config, and local store readiness. Use `workflow-states list/show` for first-class durable workflow state inspection; `sessions workflow-state show` remains available for legacy session-metadata fallback state. The `agents` inspection and evaluation commands are dry local control-plane utilities over saved run states and ledgers; they never execute models or tools. Prune commands are dry-run by default; pass `--execute` to delete. The CLI is intentionally local-only and does not introduce auth, workspaces, or Gateway calls.
+Output is JSON pretty-printed by default. JSON output files are written with mode `0600`, and `init agent` creates its new project directory with mode `0700` on POSIX systems. `init agent` scaffolds a Bun-first agent project with file-backed local sessions, a production safety policy, a provider package, a smoke-test tool, and scripts for doctor/inspect/ledger. Generated source safely quotes provider and model values. `doctor` checks runtime, package metadata, provider dependencies, provider environment variables, TypeScript config, and local store readiness. Use `workflow-states list/show` for first-class durable workflow state inspection; `sessions workflow-state show` remains available for legacy session-metadata fallback state. The `agents` inspection and evaluation commands are dry local control-plane utilities over saved run states and ledgers; they never execute models or tools. The CLI ledger command explicitly includes redacted output text so golden-trace and diff workflows remain useful. Prune commands are dry-run by default; pass `--execute` to delete. The CLI is intentionally local-only and does not introduce auth, workspaces, or Gateway calls.
 
 ### Realtime Sessions
 
@@ -1017,7 +1019,10 @@ Current shared provider coverage for realtime sessions:
 
 Notes:
 
-- Providers that require auth headers during the WebSocket handshake, such as OpenAI server-side sessions and Vertex, should be given a custom `realtimeConnectionFactory` in Node/Bun.
+- Providers that require auth headers during the WebSocket handshake, such as OpenAI, Azure OpenAI, and Vertex server-side sessions, should be given a custom `realtimeConnectionFactory` in Node/Bun. Azure API keys are never placed in realtime URLs.
+- Credentialed provider endpoints require HTTPS and realtime endpoints require WSS. Per-session realtime overrides stay on the provider's trusted host. Server-side private gateways can opt out explicitly with `allowUnsafeEndpoints: true`; never derive that option or an endpoint URL from untrusted request input.
+- Credentialed uploads do not follow redirects. Gemini resumable uploads additionally accept `x-goog-upload-url` only on the configured API host or a public `googleapis.com` host before any file bytes are sent.
+- The browser-safe default WebSocket connection bounds each incoming frame to 16 MiB before decoding. Use `maxIncomingFrameBytes` when a provider contract needs a different bound.
 - Browser-token helpers are currently exposed for OpenAI, Azure OpenAI, and Gemini.
 - Gemini, Vertex, and Azure OpenAI sessions support `sendMedia()` for image inputs such as `image/jpeg`.
 - OpenAI supports `sendMedia()` for image inputs on `gpt-realtime`, `gpt-realtime-2`, `gpt-realtime-2.1`, `gpt-realtime-mini`, and `gpt-realtime-2.1-mini`, but not on the older `gpt-4o-*-realtime-preview`, `gpt-realtime-translate`, or `gpt-realtime-whisper` models.
@@ -1462,7 +1467,7 @@ const agent = createAgent({
 });
 ```
 
-Trace payloads are fail-closed by default: full messages, tool inputs, tool outputs, approval arguments, and full output text are omitted unless their corresponding `include*` option is enabled. `createProductionTraceCollector()` also redacts common credentials and email addresses from the remaining preview and metadata. Enable full payload flags only for an approved server-side destination.
+Trace payloads are fail-closed by default: full messages, tool inputs, tool outputs, approval arguments, and full output text are omitted unless their corresponding `include*` option is enabled. `createProductionTraceCollector()` also redacts common credentials and email addresses from the remaining preview and metadata. Its in-memory retention defaults to at most 1,000 runs, 1,000 events per run, and 24 hours; customize `maxRuns`, `maxEventsPerRun`, and `retentionMs` when a tighter budget is required. Enable full payload flags only for an approved server-side destination.
 
 See [Production Guide](./docs/PRODUCTION.md#observability-export-path) and `examples/sdk/observability-export.ts` for a JSONL export pattern with redacted trace artifacts, tool-call audit records, and reproducible cost/latency summaries.
 
@@ -2230,6 +2235,8 @@ const tools = registry.toToolSet();
 
 `toToolSet()` preserves compatibility with `generateText()`, `runAgent()`, `streamAgent()`, and provider adapters. Sensitive permissions such as `write`, `filesystem`, `code-execution`, `shell`, and `external-side-effect`, as well as `high` or `critical` audit risk, mark the materialized tool as `requiresApproval`.
 
+`createHttpTool()` defaults to a 30-second abortable timeout, rejects redirects, limits response bodies to 4 MiB, and forwards the execution idempotency key in the `idempotency-key` header. These defaults can be tightened per tool.
+
 For OpenAI and Azure OpenAI remote MCP servers, use the provider helpers and pass approval responses back as `provider-data` parts:
 
 ```ts
@@ -2864,6 +2871,8 @@ bun run build
 The integration layer now includes provider-specific tests plus capability-first suites under [`packages/core/tests/`](./packages/core/tests). These capability suites exercise the shared contract across any providers that have credentials available in the current environment.
 
 Maintainer-only release and provider-smoke workflows live under [`docs/maintainers/`](./docs/maintainers/README.md).
+
+CI installs the immutable lockfile with dependency lifecycle scripts disabled, runs `bun audit`, and analyzes TypeScript with CodeQL. Stable and prerelease publishing remains OIDC-only; post-publish verification requires registry SHA-512 integrity, SLSA provenance, and a `gitHead` matching the immutable release commit before GitHub release metadata is created.
 
 ## Design Principles
 

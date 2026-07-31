@@ -172,7 +172,11 @@ Run stores claim an `idempotencyKey` before model or tool execution and persist 
 
 SQLite and Postgres support renewable worker leases, expired-run recovery, model/tool checkpoints, paginated run queries, retention cleanup, and a durable tool journal. The journal reuses completed results and refuses to repeat an indeterminate effect. Forward `context.idempotencyKey` and `context.abortSignal` from every side-effecting tool to the external API. The file store is a local-development backend with best-effort cross-process coordination.
 
+Store keys are canonical opaque digests of the full identity tuple, so delimiter-containing tenant, user, session, workflow, artifact, run, and memory identifiers remain isolated. File stores create new directories and files with private permissions (`0700`/`0600`). Matching legacy delimiter-based records remain readable and are removed after a successful migrated write.
+
 Active workers observe durable cancellation and abort in-flight provider/tool work. Streams and persisted state are bounded: stream overflow is explicit, step request snapshots are incremental, and `policy.maxStateBytes` defaults to 4 MiB. Telemetry and memory failures are isolated by default and can be reported through `hookFailurePolicy.onError`.
+
+Read-only governance is fail-closed: a tool must declare a non-empty explicit permission set that contains only `read`; missing permission metadata requires review. Production trace collectors retain bounded runs/events and expire old entries. Ledgers redact snapshot, timeline, audit, trace, metadata, and output payloads by default; enable each sensitive family only for an approved server-side destination.
 
 New states use `AGENT_RUN_STATE_SCHEMA_VERSION`. `normalizeAgentRunState()` accepts legacy states without a version or revision, while rejecting unknown future schema versions; `migrateAgentRunState()` is the explicit application-boundary helper.
 

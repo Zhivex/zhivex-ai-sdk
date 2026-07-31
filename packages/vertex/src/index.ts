@@ -6,6 +6,7 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
+  assertTrustedEndpoint,
   createMcpToolSet,
   createProviderAdapter,
   decodeBase64WithLimit,
@@ -91,7 +92,27 @@ export interface VertexProviderOptions {
   fetch?: typeof globalThis.fetch;
   realtimeURL?: string;
   realtimeConnectionFactory?: RealtimeConnectionFactory;
+  /** Allow non-HTTPS/private or cross-origin credentialed endpoint overrides. Server-side only. */
+  allowUnsafeEndpoints?: boolean;
 }
+
+const encodeVertexPathSegment = (value: string, label: string) => {
+  if (!value || value === "." || value === ".." || /[\\/?#\s]/.test(value)) {
+    throw new ConfigurationError(`${label} must be a non-empty opaque identifier without path separators.`);
+  }
+  return encodeURIComponent(value);
+};
+
+const encodeVertexResourceName = (value: string, label: string) => {
+  if (!value || /[\\?#]/.test(value)) {
+    throw new ConfigurationError(`${label} must be a non-empty resource name without query or fragment delimiters.`);
+  }
+  const segments = value.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new ConfigurationError(`${label} must not contain empty or traversal path segments.`);
+  }
+  return segments.map(encodeURIComponent).join("/");
+};
 
 export interface VertexLanguageModelOptions {
   topP?: number;
@@ -795,12 +816,14 @@ const vertexRealtimeURL = (
 };
 
 const vertexRealtimeHeaders = (accessToken: string, providerOptions?: Record<string, unknown>) => ({
-  authorization: `Bearer ${accessToken}`,
   ...(typeof providerOptions?.headers === "object" && providerOptions.headers && !Array.isArray(providerOptions.headers)
     ? Object.fromEntries(
-        Object.entries(providerOptions.headers as Record<string, unknown>).map(([key, value]) => [key, String(value)])
+        Object.entries(providerOptions.headers as Record<string, unknown>)
+          .filter(([key]) => !["authorization", "content-length", "host", "connection", "transfer-encoding"].includes(key.toLowerCase()))
+          .map(([key, value]) => [key, String(value)])
       )
-    : {})
+    : {}),
+  authorization: `Bearer ${accessToken}`
 });
 
 const mapRealtimeTranscriptionConfig = (value: boolean | Record<string, unknown> | undefined) => {
@@ -1338,7 +1361,7 @@ class VertexContextCachesClient implements ContextCachesClient {
   async get(input: ContextCacheGetInput): Promise<CachedContent> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${input.name}`, { method: "GET", headers: this.headers(), signal }), input);
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${encodeVertexResourceName(input.name, "Vertex cache name")}`, { method: "GET", headers: this.headers(), signal }), input);
       return normalizeCachedContent(await parseJson(response));
     } finally {
       cleanup();
@@ -1371,7 +1394,7 @@ class VertexContextCachesClient implements ContextCachesClient {
   async delete(input: ContextCacheDeleteInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${input.name}`, { method: "DELETE", headers: this.headers(), signal }), input);
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${encodeVertexResourceName(input.name, "Vertex cache name")}`, { method: "DELETE", headers: this.headers(), signal }), input);
       const json = await parseJson(response);
       return { name: input.name, rawResponse: json };
     } finally {
@@ -1400,7 +1423,7 @@ class VertexBatchesClient implements BatchesClient {
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/publishers/google/models/${input.modelId}:batchGenerateContent`, {
+          this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(input.modelId, "Vertex model ID")}:batchGenerateContent`, {
             method: "POST",
             headers: this.headers(),
             signal,
@@ -1429,7 +1452,7 @@ class VertexBatchesClient implements BatchesClient {
   async get(input: BatchGetInput): Promise<BatchJob> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${input.name}`, { method: "GET", headers: this.headers(), signal }), input);
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${encodeVertexResourceName(input.name, "Vertex batch name")}`, { method: "GET", headers: this.headers(), signal }), input);
       return normalizeBatchJob(await parseJson(response));
     } finally {
       cleanup();
@@ -1464,7 +1487,7 @@ class VertexBatchesClient implements BatchesClient {
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/${input.name}:cancel`, {
+          this.fetcher(`${this.baseURL}/${encodeVertexResourceName(input.name, "Vertex batch name")}:cancel`, {
             method: "POST",
             headers: this.headers(),
             signal,
@@ -1481,7 +1504,7 @@ class VertexBatchesClient implements BatchesClient {
   async delete(input: BatchDeleteInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${input.name}:delete`, { method: "POST", headers: this.headers(), signal }), input);
+      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${encodeVertexResourceName(input.name, "Vertex batch name")}:delete`, { method: "POST", headers: this.headers(), signal }), input);
       const json = await parseJson(response);
       return { name: input.name, rawResponse: json };
     } finally {
@@ -1511,7 +1534,7 @@ class VertexPredictionModel implements PredictionModel {
   }
 
   private url(action: string) {
-    return `${this.baseURL}/publishers/google/models/${this.modelId}:${action}`;
+    return `${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:${action}`;
   }
 
   private body(input: PredictionModelInput) {
@@ -1636,7 +1659,7 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
   }
 
   private url(action: string) {
-    return `${this.baseURL}/publishers/google/models/${this.modelId}:${action}`;
+    return `${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:${action}`;
   }
 
   private headers() {
@@ -1762,7 +1785,7 @@ class VertexEmbeddingModel implements EmbeddingModel {
   ) {}
 
   private url() {
-    return `${this.baseURL}/publishers/google/models/${this.modelId}:predict`;
+    return `${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:predict`;
   }
 
   private headers() {
@@ -1819,7 +1842,7 @@ class VertexTranscriptionModel implements TranscriptionModel {
   ) {}
 
   private url() {
-    return `${this.baseURL}/publishers/google/models/${this.modelId}:generateContent`;
+    return `${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:generateContent`;
   }
 
   private headers() {
@@ -1896,7 +1919,7 @@ class VertexSpeechModel implements SpeechModel {
   ) {}
 
   private url(method = "generateContent") {
-    return `${this.baseURL}/publishers/google/models/${this.modelId}:${method}`;
+    return `${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:${method}`;
   }
 
   private headers() {
@@ -2050,7 +2073,7 @@ class VertexImageGenerationModel implements ImageGenerationModel {
       if (isImagenModel(this.modelId)) {
         const response = await withRetry(
           () =>
-            this.fetcher(`${this.baseURL}/publishers/google/models/${this.modelId}:predict`, {
+            this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:predict`, {
               method: "POST",
               headers: this.headers(),
               signal,
@@ -2096,7 +2119,7 @@ class VertexImageGenerationModel implements ImageGenerationModel {
       const { generationConfig, providerOptions } = splitGenerationConfig(input.providerOptions);
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/publishers/google/models/${this.modelId}:generateContent`, {
+          this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:generateContent`, {
             method: "POST",
             headers: this.headers(),
             signal,
@@ -2177,7 +2200,7 @@ class VertexMusicGenerationModel implements MusicGenerationModel {
       if (this.modelId === "lyria-002") {
         const response = await withRetry(
           () =>
-            this.fetcher(`${this.baseURL}/publishers/google/models/${this.modelId}:predict`, {
+            this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:predict`, {
               method: "POST",
               headers: this.headers(),
               signal,
@@ -2210,7 +2233,7 @@ class VertexMusicGenerationModel implements MusicGenerationModel {
       const { generationConfig, providerOptions } = splitGenerationConfig(input.providerOptions);
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/publishers/google/models/${this.modelId}:generateContent`, {
+          this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:generateContent`, {
             method: "POST",
             headers: this.headers(),
             signal,
@@ -2287,7 +2310,7 @@ class VertexVideoGenerationModel implements VideoGenerationModel {
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/publishers/google/models/${this.modelId}:predictLongRunning`, {
+          this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:predictLongRunning`, {
             method: "POST",
             headers: this.headers(),
             signal,
@@ -2322,7 +2345,7 @@ class VertexVideoGenerationModel implements VideoGenerationModel {
         await sleep(pollIntervalMs, signal);
         const pollResponse = await withRetry(
           () =>
-            this.fetcher(`${this.baseURL}/publishers/google/models/${this.modelId}:fetchPredictOperation`, {
+            this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:fetchPredictOperation`, {
               method: "POST",
               headers: this.headers(),
               signal,
@@ -2360,7 +2383,7 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
   }
 
   private url() {
-    return `${this.baseURL}/publishers/google/models/${this.modelId}:generateContent`;
+    return `${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:generateContent`;
   }
 
   private headers() {
@@ -2435,7 +2458,8 @@ class VertexRealtimeModel implements RealtimeModel {
     private readonly location: string,
     private readonly apiVersion: string,
     private readonly connectionFactory?: RealtimeConnectionFactory,
-    private readonly realtimeURL?: string
+    private readonly realtimeURL?: string,
+    private readonly allowUnsafeEndpoints = false
   ) {}
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
@@ -2451,8 +2475,18 @@ class VertexRealtimeModel implements RealtimeModel {
     }
 
     const providerOptions = (config.providerOptions ?? {}) as Record<string, unknown>;
-    const connection = await (this.connectionFactory ?? openWebSocketConnection)(
+    const expectedRealtimeURL = vertexRealtimeURL(this.location, this.apiVersion, undefined, this.realtimeURL);
+    const realtimeEndpoint = assertTrustedEndpoint(
       vertexRealtimeURL(this.location, this.apiVersion, providerOptions, this.realtimeURL),
+      {
+        label: "Vertex realtime endpoint",
+        protocols: ["wss"],
+        allowedHosts: [new URL(expectedRealtimeURL).hostname],
+        allowUnsafe: this.allowUnsafeEndpoints
+      }
+    ).toString();
+    const connection = await (this.connectionFactory ?? openWebSocketConnection)(
+      realtimeEndpoint,
       vertexRealtimeHeaders(accessToken, providerOptions),
       options
     );
@@ -2557,14 +2591,19 @@ export const createVertex = (
   const location = options.location ?? process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION ?? "global";
   const apiVersion = options.apiVersion ?? "v1";
   const apiHost = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
-  const baseURL =
+  const configuredBaseURL =
     options.baseURL ??
     (auth.type === "api-key"
       ? `https://aiplatform.googleapis.com/${apiVersion}`
       : `https://${apiHost}/${apiVersion}/projects/${projectId}/locations/${location}`);
+  const baseURL = assertTrustedEndpoint(configuredBaseURL, {
+    label: "Vertex baseURL",
+    protocols: ["https"],
+    allowUnsafe: options.allowUnsafeEndpoints
+  }).toString().replace(/\/+$/, "");
   const veoLocation = location === "global" ? "us-central1" : location;
   const veoBaseURL =
-    options.baseURL ??
+    (options.baseURL ? baseURL : undefined) ??
     (auth.type === "api-key"
       ? baseURL
       : `https://${veoLocation}-aiplatform.googleapis.com/${apiVersion}/projects/${projectId}/locations/${veoLocation}`);
@@ -2614,6 +2653,14 @@ export const createVertex = (
         apiVersion,
         options.realtimeConnectionFactory,
         options.realtimeURL
+          ? assertTrustedEndpoint(options.realtimeURL, {
+              label: "Vertex realtimeURL",
+              protocols: ["wss"],
+              allowedHosts: [apiHost],
+              allowUnsafe: options.allowUnsafeEndpoints
+            }).toString()
+          : undefined,
+        options.allowUnsafeEndpoints
       ),
     groundedLanguageModel,
     caches: new VertexContextCachesClient(baseURL, "", fetcher, assertModelLocation),

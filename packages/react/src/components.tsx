@@ -11,10 +11,12 @@ import type {
   ComponentPropsWithoutRef,
   ComponentType,
   FormEvent,
+  HTMLAttributeReferrerPolicy,
   HTMLAttributes,
   KeyboardEvent,
   ReactNode,
 } from "react";
+import { approvalKey } from "./approval.js";
 import type { ChatMessage, ChatState, ChatStatus } from "./types.js";
 
 export interface ChatLabels {
@@ -106,11 +108,160 @@ const prettyJson = (value: JsonValue | undefined): string => {
 const URL_SOURCE_PATTERN = /^(?:https?:|blob:|data:)/i;
 const BASE64_PATTERN = /^[a-z\d+/]+={0,2}$/i;
 
+export type MediaSourceKind = "image" | "audio" | "file";
+
+export interface MediaUrlContext {
+  kind: MediaSourceKind;
+  mediaType: string;
+}
+
+export interface MediaUrlPolicy {
+  /** Allow public HTTP(S) media. Defaults to false. */
+  allowRemote?: boolean;
+  /** Allow loopback, link-local, private, and single-label hosts. Defaults to false. */
+  allowPrivateNetwork?: boolean;
+  /** Allow data URLs and raw base64 conversion. Defaults to true. */
+  allowDataUrls?: boolean;
+  /** Allow browser-managed blob URLs. Defaults to true. */
+  allowBlobUrls?: boolean;
+  /** Additional application policy applied after the built-in network checks. */
+  allowUrl?: (url: URL, context: MediaUrlContext) => boolean;
+  /** Referrer policy for rendered links and media. Defaults to no-referrer. */
+  referrerPolicy?: HTMLAttributeReferrerPolicy;
+}
+
+const normalizeHostname = (hostname: string) =>
+  hostname
+    .toLowerCase()
+    .replace(/^\[/, "")
+    .replace(/\]$/, "")
+    .replace(/\.$/, "");
+
+const isPrivateIPv4 = (hostname: string) => {
+  const octets = hostname.split(".").map(Number);
+  if (
+    octets.length !== 4 ||
+    octets.some(
+      (octet) => !Number.isInteger(octet) || octet < 0 || octet > 255
+    )
+  ) {
+    return false;
+  }
+  const [first, second] = octets as [number, number, number, number];
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 &&
+      (second === 0 || second === 168)) ||
+    (first === 198 && (second === 18 || second === 19)) ||
+    first >= 224
+  );
+};
+
+const isPrivateIPv6 = (hostname: string) => {
+  if (!hostname.includes(":")) {
+    return false;
+  }
+  if (
+    hostname === "::" ||
+    hostname === "::1" ||
+    hostname.startsWith("::ffff:")
+  ) {
+    return true;
+  }
+  const first = Number.parseInt(hostname.split(":")[0] ?? "", 16);
+  return (
+    (Number.isFinite(first) && (first & 0xfe00) === 0xfc00) ||
+    (Number.isFinite(first) && (first & 0xffc0) === 0xfe80)
+  );
+};
+
+const isPrivateHostname = (hostname: string) => {
+  const normalized = normalizeHostname(hostname);
+  return (
+    normalized.length === 0 ||
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized.endsWith(".local") ||
+    normalized.endsWith(".localdomain") ||
+    normalized.endsWith(".internal") ||
+    normalized.endsWith(".lan") ||
+    (!normalized.includes(".") && !normalized.includes(":")) ||
+    isPrivateIPv4(normalized) ||
+    isPrivateIPv6(normalized)
+  );
+};
+
+const mediaUrl = (
+  value: string,
+  context: MediaUrlContext,
+  policy: MediaUrlPolicy
+): string | undefined => {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return undefined;
+  }
+
+  if (url.username || url.password) {
+    return undefined;
+  }
+
+  if (url.protocol === "http:" || url.protocol === "https:") {
+    if (policy.allowRemote !== true) {
+      return undefined;
+    }
+    if (
+      policy.allowPrivateNetwork !== true &&
+      isPrivateHostname(url.hostname)
+    ) {
+      return undefined;
+    }
+  } else if (url.protocol === "blob:") {
+    if (policy.allowBlobUrls === false) {
+      return undefined;
+    }
+    try {
+      const inner = new URL(url.pathname);
+      if (
+        (inner.protocol === "http:" || inner.protocol === "https:") &&
+        policy.allowPrivateNetwork !== true &&
+        isPrivateHostname(inner.hostname)
+      ) {
+        return undefined;
+      }
+    } catch {
+      // Opaque browser-managed blob URLs are still governed by allowBlobUrls.
+    }
+  } else if (url.protocol === "data:") {
+    if (policy.allowDataUrls === false) {
+      return undefined;
+    }
+  } else {
+    return undefined;
+  }
+
+  if (policy.allowUrl && !policy.allowUrl(url, context)) {
+    return undefined;
+  }
+  return url.href;
+};
+
 const stringMediaSource = (
   data: string,
-  mediaType: string
+  mediaType: string,
+  kind: MediaSourceKind,
+  policy: MediaUrlPolicy = {}
 ): string | undefined => {
-  if (URL_SOURCE_PATTERN.test(data)) return data;
+  const context = { kind, mediaType };
+  if (URL_SOURCE_PATTERN.test(data)) {
+    return mediaUrl(data, context, policy);
+  }
 
   const compact = data.replace(/\s/g, "");
   if (
@@ -118,7 +269,11 @@ const stringMediaSource = (
     compact.length % 4 === 0 &&
     BASE64_PATTERN.test(compact)
   ) {
-    return `data:${mediaType};base64,${compact}`;
+    return mediaUrl(
+      `data:${mediaType};base64,${compact}`,
+      context,
+      policy
+    );
   }
   return undefined;
 };
@@ -158,6 +313,7 @@ export interface MessagePartRendererProps<
   message: ChatMessage;
   partIndex: number;
   labels: ChatLabels;
+  mediaUrlPolicy?: MediaUrlPolicy;
 }
 
 export type MessagePartRenderer<TType extends PartType = PartType> =
@@ -274,9 +430,10 @@ export function ProviderDataDetails({
 interface AudioContentProps {
   part: Extract<ContentPart, { type: "audio" }>;
   labels: ChatLabels;
+  mediaUrlPolicy?: MediaUrlPolicy;
 }
 
-function AudioContent({ part, labels }: AudioContentProps) {
+function AudioContent({ part, labels, mediaUrlPolicy }: AudioContentProps) {
   const [binarySource, setBinarySource] = useState<string>();
 
   useEffect(() => {
@@ -303,15 +460,26 @@ function AudioContent({ part, labels }: AudioContentProps) {
 
   const stringSource =
     typeof part.data === "string"
-      ? stringMediaSource(part.data, part.mediaType)
+      ? stringMediaSource(
+          part.data,
+          part.mediaType,
+          "audio",
+          mediaUrlPolicy
+        )
       : undefined;
   const source = stringSource ?? binarySource;
+  const referrerPolicy = mediaUrlPolicy?.referrerPolicy ?? "no-referrer";
 
   return (
     <figure className="zhivex-media zhivex-audio">
       {part.filename ? <figcaption>{part.filename}</figcaption> : null}
       {source ? (
-        <audio controls preload="metadata" src={source}>
+        <audio
+          controls
+          preload="metadata"
+          src={source}
+          {...({ referrerPolicy } as Record<string, string>)}
+        >
           {labels.audioUnavailable}
         </audio>
       ) : (
@@ -327,17 +495,28 @@ function AudioContent({ part, labels }: AudioContentProps) {
 function DefaultMessagePart({
   part,
   labels,
+  mediaUrlPolicy,
 }: MessagePartRendererProps): ReactNode {
   if (part.type === "text") {
     return <p className="zhivex-message__text">{part.text}</p>;
   }
 
   if (part.type === "image") {
-    const source = stringMediaSource(part.image, part.mediaType ?? "image/png");
+    const source = stringMediaSource(
+      part.image,
+      part.mediaType ?? "image/png",
+      "image",
+      mediaUrlPolicy
+    );
     return (
       <figure className="zhivex-media zhivex-image">
         {source ? (
-          <img alt={labels.imageAlt} loading="lazy" src={source} />
+          <img
+            alt={labels.imageAlt}
+            loading="lazy"
+            referrerPolicy={mediaUrlPolicy?.referrerPolicy ?? "no-referrer"}
+            src={source}
+          />
         ) : (
           <figcaption className="zhivex-media__fallback">
             {labels.imageUnavailable}
@@ -348,11 +527,23 @@ function DefaultMessagePart({
   }
 
   if (part.type === "audio") {
-    return <AudioContent labels={labels} part={part} />;
+    return (
+      <AudioContent
+        labels={labels}
+        mediaUrlPolicy={mediaUrlPolicy}
+        part={part}
+      />
+    );
   }
 
   if (part.type === "file") {
-    const source = stringMediaSource(part.data, part.mediaType);
+    const source = stringMediaSource(
+      part.data,
+      part.mediaType,
+      "file",
+      mediaUrlPolicy
+    );
+    const protocol = source ? new URL(source).protocol : undefined;
     return (
       <div className="zhivex-file">
         <span aria-hidden="true" className="zhivex-file__mark">
@@ -365,13 +556,18 @@ function DefaultMessagePart({
         {source ? (
           <a
             download={
-              source.startsWith("data:")
+              protocol === "data:" || protocol === "blob:"
                 ? part.filename ?? "download"
                 : undefined
             }
             href={source}
             rel="noreferrer"
-            target={source.startsWith("http") ? "_blank" : undefined}
+            referrerPolicy={mediaUrlPolicy?.referrerPolicy ?? "no-referrer"}
+            target={
+              protocol === "http:" || protocol === "https:"
+                ? "_blank"
+                : undefined
+            }
           >
             {labels.openFile}
           </a>
@@ -401,6 +597,7 @@ export interface MessagePartProps {
   partIndex: number;
   renderers?: MessagePartRenderers;
   labels?: Partial<ChatLabels>;
+  mediaUrlPolicy?: MediaUrlPolicy;
 }
 
 export function MessagePart({
@@ -409,6 +606,7 @@ export function MessagePart({
   partIndex,
   renderers,
   labels: labelsOverride,
+  mediaUrlPolicy,
 }: MessagePartProps) {
   const labels = mergeLabels(labelsOverride);
   const Renderer = renderers?.[part.type] as
@@ -420,6 +618,7 @@ export function MessagePart({
       <Renderer
         labels={labels}
         message={message}
+        mediaUrlPolicy={mediaUrlPolicy}
         part={part}
         partIndex={partIndex}
       />
@@ -430,6 +629,7 @@ export function MessagePart({
     <DefaultMessagePart
       labels={labels}
       message={message}
+      mediaUrlPolicy={mediaUrlPolicy}
       part={part}
       partIndex={partIndex}
     />
@@ -440,12 +640,14 @@ export interface MessageProps extends HTMLAttributes<HTMLElement> {
   message: ChatMessage;
   renderers?: MessagePartRenderers;
   labels?: Partial<ChatLabels>;
+  mediaUrlPolicy?: MediaUrlPolicy;
 }
 
 function MessageView({
   message,
   renderers,
   labels: labelsOverride,
+  mediaUrlPolicy,
   className,
   ...props
 }: MessageProps) {
@@ -467,6 +669,7 @@ function MessageView({
             key={`${part.type}-${partIndex}`}
             labels={labels}
             message={message}
+            mediaUrlPolicy={mediaUrlPolicy}
             part={part}
             partIndex={partIndex}
             renderers={renderers}
@@ -570,6 +773,7 @@ export interface MessageListProps
   renderers?: MessagePartRenderers;
   emptyState?: ReactNode;
   labels?: Partial<ChatLabels>;
+  mediaUrlPolicy?: MediaUrlPolicy;
 }
 
 export function MessageList({
@@ -580,6 +784,7 @@ export function MessageList({
   renderers,
   emptyState,
   labels: labelsOverride,
+  mediaUrlPolicy,
   className,
   ...props
 }: MessageListProps) {
@@ -608,12 +813,13 @@ export function MessageList({
               key={message.id}
               labels={labels}
               message={message}
+              mediaUrlPolicy={mediaUrlPolicy}
               renderers={renderers}
             />
           ))}
           {pendingApprovals.map((approval) => (
             <ApprovalCard
-              key={approval.id}
+              key={approvalKey(approval)}
               approval={approval}
               disabled={isBusy}
               labels={labels}
@@ -745,7 +951,8 @@ export interface ChatController {
   resolveApproval: (
     approvalRequestId: string,
     approve: boolean,
-    reason?: string
+    reason?: string,
+    provider?: string
   ) => Promise<void>;
 }
 
@@ -756,6 +963,7 @@ export interface ZhivexChatProps
   emptyState?: ReactNode;
   renderers?: MessagePartRenderers;
   labels?: Partial<ChatLabels>;
+  mediaUrlPolicy?: MediaUrlPolicy;
   onApproval?: (
     approval: AgentApprovalRequest,
     approved: boolean
@@ -786,6 +994,7 @@ export function ZhivexChat({
   emptyState,
   renderers,
   labels: labelsOverride,
+  mediaUrlPolicy,
   onApproval,
   onRetry,
   composerProps,
@@ -797,7 +1006,12 @@ export function ZhivexChat({
   const handleApproval =
     onApproval ??
     ((approval: AgentApprovalRequest, approved: boolean) =>
-      controller.resolveApproval(approval.id, approved));
+      controller.resolveApproval(
+        approval.id,
+        approved,
+        undefined,
+        approval.provider
+      ));
 
   return (
     <ChatRoot {...props} className={className} label={labels.chat}>
@@ -808,6 +1022,7 @@ export function ZhivexChat({
         emptyState={emptyState}
         labels={labels}
         messages={controller.state.messages}
+        mediaUrlPolicy={mediaUrlPolicy}
         onApproval={handleApproval}
         pendingApprovals={controller.state.pendingApprovals}
         renderers={renderers}

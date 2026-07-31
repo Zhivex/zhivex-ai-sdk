@@ -1,7 +1,6 @@
 import type {
   AgentApprovalRequest,
   AgentApprovalResponse,
-  AgentRunState,
   AgentStatus,
   ContentPart,
   JsonValue,
@@ -16,6 +15,7 @@ import type {
   ChatState,
   ChatStreamChunk
 } from "./types.js";
+import { approvalKey } from "./approval.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -98,9 +98,6 @@ const toError = (value: unknown): Error => {
   return new Error("The chat request failed.");
 };
 
-const approvalKey = (approval: AgentApprovalRequest) =>
-  `${approval.provider}:${approval.id}`;
-
 const upsertApproval = (
   approvals: readonly AgentApprovalRequest[],
   approval: AgentApprovalRequest
@@ -113,6 +110,45 @@ const upsertApproval = (
   const next = [...approvals];
   next[index] = approval;
   return next;
+};
+
+const appendApproval = (
+  state: ChatState,
+  approval: AgentApprovalRequest
+): ChatState => {
+  return {
+    ...state,
+    pendingApprovals: upsertApproval(state.pendingApprovals, approval),
+    activity: [...state.activity, { type: "approval-request", approval }],
+    status: "streaming"
+  };
+};
+
+const parseTerminalPendingApprovals = (
+  state: Record<string, unknown>
+): { valid: true; value?: AgentApprovalRequest[] } | { valid: false } => {
+  if (!("pendingApprovals" in state)) {
+    return { valid: true };
+  }
+  if (
+    !Array.isArray(state.pendingApprovals) ||
+    !state.pendingApprovals.every(isApprovalRequest)
+  ) {
+    return { valid: false };
+  }
+
+  const keys = new Set<string>();
+  for (const approval of state.pendingApprovals) {
+    const key = approvalKey(approval);
+    if (keys.has(key)) {
+      return { valid: false };
+    }
+    keys.add(key);
+  }
+  return {
+    valid: true,
+    value: state.pendingApprovals.map((approval) => ({ ...approval }))
+  };
 };
 
 const mergeUsage = (
@@ -481,13 +517,7 @@ export const applyUIMessageChunk = (
     if (!isApprovalRequest(chunk.approval)) {
       return state;
     }
-    const approval = chunk.approval;
-    return {
-      ...state,
-      pendingApprovals: upsertApproval(state.pendingApprovals, approval),
-      activity: [...state.activity, { type: "approval-request", approval }],
-      status: "streaming"
-    };
+    return appendApproval(state, chunk.approval);
   }
 
   if (chunk.type === "finish") {
@@ -559,13 +589,7 @@ export const applyUIMessageChunk = (
     if (!isApprovalRequest(chunk.approval)) {
       return state;
     }
-    const approval = chunk.approval;
-    return {
-      ...state,
-      pendingApprovals: upsertApproval(state.pendingApprovals, approval),
-      activity: [...state.activity, { type: "approval-request", approval }],
-      status: "streaming"
-    };
+    return appendApproval(state, chunk.approval);
   }
 
   if (chunk.type === "agent-approval-resolved") {
@@ -605,18 +629,37 @@ export const applyUIMessageChunk = (
     if (!isAgentStatus(chunk.status)) {
       return state;
     }
-    const runState = isRecord(chunk.state)
-      ? (chunk.state as unknown as AgentRunState)
-      : undefined;
-    const error = runState?.error ? toError(runState.error) : state.error;
+    const runState = isRecord(chunk.state) ? chunk.state : undefined;
+    const parsedApprovals = runState
+      ? parseTerminalPendingApprovals(runState)
+      : { valid: true as const, value: undefined };
+    if (!parsedApprovals.valid) {
+      return state;
+    }
+    if (
+      runState &&
+      "usage" in runState &&
+      runState.usage !== undefined &&
+      !isRecord(runState.usage)
+    ) {
+      return state;
+    }
+    const error =
+      runState && "error" in runState && runState.error
+        ? toError(runState.error)
+        : state.error;
+    const usage =
+      runState && "usage" in runState
+        ? toTokenUsage(runState.usage)
+        : state.usage;
     const failed = terminalStatusIsError(chunk.status);
     return {
       ...state,
       messages: settleMessages(state.messages, failed ? "error" : "complete"),
       status: failed ? "error" : "ready",
       error: failed ? error ?? new Error(`Agent run ${chunk.status}.`) : undefined,
-      usage: runState?.usage ?? state.usage,
-      pendingApprovals: runState?.pendingApprovals ?? state.pendingApprovals,
+      usage,
+      pendingApprovals: parsedApprovals.value ?? state.pendingApprovals,
       activity: [
         ...state.activity,
         { type: "run-finish", status: chunk.status }

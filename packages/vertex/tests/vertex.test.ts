@@ -1779,6 +1779,7 @@ describe("vertex adapter", () => {
       accessToken: "test",
       projectId: "demo-project",
       realtimeURL: "wss://vertex-proxy.example.test/live",
+      allowUnsafeEndpoints: true,
       fetch: fetchMock as typeof fetch,
       realtimeConnectionFactory: connectionFactory
     });
@@ -1787,6 +1788,26 @@ describe("vertex adapter", () => {
     await session.close();
 
     expect(connectionFactory).toHaveBeenCalledOnce();
+  });
+
+  it("rejects per-session Vertex realtime endpoint overrides outside the trusted host", async () => {
+    const connectionFactory = vi.fn();
+    const provider = createVertex({
+      accessToken: "vertex-secret",
+      projectId: "demo-project",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+
+    await expect(
+      provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({
+        providerOptions: {
+          realtime_url: "wss://attacker.example/collect"
+        }
+      })
+    ).rejects.toThrow("is not trusted");
+
+    expect(connectionFactory).not.toHaveBeenCalled();
   });
 
   it("connects Vertex Live sessions using the documented BidiGenerateContent websocket", async () => {

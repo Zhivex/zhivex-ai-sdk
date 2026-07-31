@@ -7,6 +7,12 @@ import { normalizeMessages } from "./generate-text.js";
 import { createTextMessage, serializeJsonValue } from "./messages.js";
 import { assertPostgresClient } from "./postgres-client.js";
 import { createSecureId } from "./secure-id.js";
+import {
+  canonicalStoreFileStem,
+  canonicalStoreKey,
+  ensurePrivateDirectory,
+  writePrivateFile
+} from "./store-security.js";
 import type {
   AgentApprovalRequest,
   AgentDefinition,
@@ -153,7 +159,14 @@ export interface FileSessionStorePruneResult {
 
 export type AgentSessionMigrationTarget = typeof SESSION_SCHEMA_VERSION;
 
-const sessionKey = (input: SessionLookup) => `${input.appName}:${input.userId}:${input.sessionId}`;
+const sessionParts = (input: SessionLookup) =>
+  [input.appName, input.userId, input.sessionId] as const;
+const sessionKey = (input: SessionLookup) => canonicalStoreKey("session", sessionParts(input));
+const legacySessionKey = (input: SessionLookup) => `${input.appName}:${input.userId}:${input.sessionId}`;
+const matchesSessionLookup = (session: AgentSession, input: SessionLookup) =>
+  session.appName === input.appName &&
+  session.userId === input.userId &&
+  session.sessionId === input.sessionId;
 const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const validateIdentifier = (value: string, fieldName: string): string => {
@@ -384,28 +397,49 @@ const appendEventToSession = (session: AgentSession, event: SessionEvent): Agent
 });
 
 const fileNameForSession = (input: SessionLookup): string =>
-  [input.appName, input.userId, input.sessionId].map((part) => encodeURIComponent(part)).join("__") + ".json";
+  `${canonicalStoreFileStem("session", sessionParts(input))}.json`;
+
+const legacyFileNameForSession = (input: SessionLookup): string =>
+  sessionParts(input).map((part) => encodeURIComponent(part)).join("__") + ".json";
 
 export const createFileSessionService = (options: FileSessionServiceOptions): SessionService => {
   const filePath = (input: SessionLookup) => path.join(options.directory, fileNameForSession(input));
+  const legacyFilePath = (input: SessionLookup) => path.join(options.directory, legacyFileNameForSession(input));
   const load = async (input: SessionLookup): Promise<AgentSession | undefined> => {
-    try {
-      const content = await fs.readFile(filePath(input), "utf8");
-      return normalizeAgentSession(JSON.parse(content) as AgentSession);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return undefined;
+    for (const candidate of [filePath(input), legacyFilePath(input)]) {
+      try {
+        const content = await fs.readFile(candidate, "utf8");
+        const session = normalizeAgentSession(JSON.parse(content) as AgentSession);
+        if (matchesSessionLookup(session, input)) {
+          return session;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
       }
-      throw error;
     }
+    return undefined;
   };
   const save = async (session: AgentSession, saveOptions?: SessionSaveOptions): Promise<void> => {
     const existing = await load(session);
     assertExpectedRevision(existing, saveOptions?.expectedRevision, "AgentSession");
     const next = normalizeAgentSession({ ...session, schemaVersion: SESSION_SCHEMA_VERSION, updatedAt: Date.now() });
     next.revision = existing ? existing.revision + 1 : next.revision;
-    await fs.mkdir(options.directory, { recursive: true });
-    await fs.writeFile(filePath(next), JSON.stringify(next, null, 2), "utf8");
+    await ensurePrivateDirectory(options.directory);
+    await writePrivateFile(filePath(next), JSON.stringify(next, null, 2));
+    try {
+      const legacy = normalizeAgentSession(
+        JSON.parse(await fs.readFile(legacyFilePath(next), "utf8")) as AgentSession
+      );
+      if (matchesSessionLookup(legacy, next)) {
+        await fs.unlink(legacyFilePath(next));
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
   };
 
   return {
@@ -449,21 +483,25 @@ export const pruneFileSessionStore = async (
     throw error;
   }
 
-  const sessions: Array<{ filePath: string; key: string; updatedAt: number }> = [];
+  const sessions = new Map<string, { filePaths: string[]; key: string; updatedAt: number }>();
   for (const entry of entries) {
     if (!entry.endsWith(".json")) {
       continue;
     }
     const filePath = path.join(options.directory, entry);
     const session = normalizeAgentSession(JSON.parse(await fs.readFile(filePath, "utf8")) as AgentSession);
-    sessions.push({
-      filePath,
-      key: sessionKey(session),
-      updatedAt: session.updatedAt
+    const key = sessionKey(session);
+    const existing = sessions.get(key);
+    sessions.set(key, {
+      filePaths: [...(existing?.filePaths ?? []), filePath],
+      key,
+      updatedAt: entry === fileNameForSession(session) || !existing ? session.updatedAt : existing.updatedAt
     });
   }
 
-  const sorted = sessions.sort((left, right) => right.updatedAt - left.updatedAt || left.key.localeCompare(right.key));
+  const sorted = [...sessions.values()].sort(
+    (left, right) => right.updatedAt - left.updatedAt || left.key.localeCompare(right.key)
+  );
   const keepByCount = new Set(
     options.keepLast === undefined ? [] : sorted.slice(0, Math.max(0, options.keepLast)).map((session) => session.key)
   );
@@ -474,7 +512,9 @@ export const pruneFileSessionStore = async (
   const deleted = sorted.filter(shouldDelete);
   if (!dryRun) {
     for (const session of deleted) {
-      await fs.unlink(session.filePath);
+      for (const filePath of session.filePaths) {
+        await fs.unlink(filePath);
+      }
     }
   }
 
@@ -524,6 +564,7 @@ export const createSqliteSessionService = (options: SqliteSessionServiceOptions)
     WHERE session_key = ?
       AND updated_at_ms = ?
   `);
+  const deleteStatement = prepareSqliteStatement(options.db, `DELETE FROM ${tableName} WHERE session_key = ?`);
 
   const save = (session: AgentSession, saveOptions?: SessionSaveOptions) => {
     const existing = load(session);
@@ -531,17 +572,37 @@ export const createSqliteSessionService = (options: SqliteSessionServiceOptions)
     const next = cloneSession({ ...session, updatedAt: Date.now() });
     next.revision = existing ? existing.revision + 1 : next.revision;
     if (saveOptions?.expectedRevision !== undefined && existing) {
-      const result = updateCasStatement.run([
-        next.appName,
-        next.userId,
-        next.sessionId,
-        JSON.stringify(next),
-        next.updatedAt,
-        sessionKey(next),
-        existing.updatedAt
-      ]);
-      if (sqliteMutationCount(result) === 0) {
-        throw new ConflictError("AgentSession revision conflict.");
+      const canonical = parseSessionJson(
+        getRecordField(loadStatement.get([sessionKey(next)]), ["session_json", "sessionJson"])
+      );
+      if (canonical && matchesSessionLookup(canonical, next)) {
+        const result = updateCasStatement.run([
+          next.appName,
+          next.userId,
+          next.sessionId,
+          JSON.stringify(next),
+          next.updatedAt,
+          sessionKey(next),
+          existing.updatedAt
+        ]);
+        if (sqliteMutationCount(result) === 0) {
+          throw new ConflictError("AgentSession revision conflict.");
+        }
+      } else {
+        const legacy = parseSessionJson(
+          getRecordField(loadStatement.get([legacySessionKey(next)]), ["session_json", "sessionJson"])
+        );
+        if (!legacy || !matchesSessionLookup(legacy, next) || legacy.updatedAt !== existing.updatedAt) {
+          throw new ConflictError("AgentSession revision conflict.");
+        }
+        saveStatement.run([
+          sessionKey(next),
+          next.appName,
+          next.userId,
+          next.sessionId,
+          JSON.stringify(next),
+          next.updatedAt
+        ]);
       }
     } else {
       saveStatement.run([
@@ -553,11 +614,23 @@ export const createSqliteSessionService = (options: SqliteSessionServiceOptions)
         next.updatedAt
       ]);
     }
+    const legacy = parseSessionJson(
+      getRecordField(loadStatement.get([legacySessionKey(next)]), ["session_json", "sessionJson"])
+    );
+    if (legacy && matchesSessionLookup(legacy, next)) {
+      deleteStatement.run([legacySessionKey(next)]);
+    }
     return next;
   };
   const load = (input: SessionLookup): AgentSession | undefined => {
-    const row = loadStatement.get([sessionKey(input)]);
-    return parseSessionJson(getRecordField(row, ["session_json", "sessionJson"]));
+    for (const key of [sessionKey(input), legacySessionKey(input)]) {
+      const row = loadStatement.get([key]);
+      const session = parseSessionJson(getRecordField(row, ["session_json", "sessionJson"]));
+      if (session && matchesSessionLookup(session, input)) {
+        return session;
+      }
+    }
+    return undefined;
   };
 
   return {
@@ -601,11 +674,17 @@ export const createPostgresSessionService = (options: PostgresSessionServiceOpti
 
   const load = async (input: SessionLookup): Promise<AgentSession | undefined> => {
     await ensurePostgresTable(options.client, tableName, createSql);
-    const result = await options.client.query<{ session_json?: AgentSession; sessionJson?: AgentSession }>(
-      `SELECT session_json FROM ${tableName} WHERE session_key = $1`,
-      [sessionKey(input)]
-    );
-    return parseSessionJson(getRecordField(result.rows[0], ["session_json", "sessionJson"]));
+    for (const key of [sessionKey(input), legacySessionKey(input)]) {
+      const result = await options.client.query<{ session_json?: AgentSession; sessionJson?: AgentSession }>(
+        `SELECT session_json FROM ${tableName} WHERE session_key = $1`,
+        [key]
+      );
+      const session = parseSessionJson(getRecordField(result.rows[0], ["session_json", "sessionJson"]));
+      if (session && matchesSessionLookup(session, input)) {
+        return session;
+      }
+    }
+    return undefined;
   };
 
   const save = async (session: AgentSession, saveOptions?: SessionSaveOptions): Promise<AgentSession> => {
@@ -628,7 +707,31 @@ export const createPostgresSessionService = (options: PostgresSessionServiceOpti
         [sessionKey(next), next.appName, next.userId, next.sessionId, JSON.stringify(next), next.updatedAt, existing.updatedAt]
       );
       if (result.rows.length === 0) {
-        throw new ConflictError("AgentSession revision conflict.");
+        const migrated = await options.client.query(
+          `UPDATE ${tableName}
+           SET session_key = $1,
+               app_name = $2,
+               user_id = $3,
+               session_id = $4,
+               session_json = $5::jsonb,
+               updated_at_ms = $6
+           WHERE session_key = $7
+             AND updated_at_ms = $8
+           RETURNING session_json`,
+          [
+            sessionKey(next),
+            next.appName,
+            next.userId,
+            next.sessionId,
+            JSON.stringify(next),
+            next.updatedAt,
+            legacySessionKey(next),
+            existing.updatedAt
+          ]
+        );
+        if (migrated.rows.length === 0) {
+          throw new ConflictError("AgentSession revision conflict.");
+        }
       }
     } else {
       await options.client.query(
@@ -642,6 +745,14 @@ export const createPostgresSessionService = (options: PostgresSessionServiceOpti
            updated_at_ms = EXCLUDED.updated_at_ms`,
         [sessionKey(next), next.appName, next.userId, next.sessionId, JSON.stringify(next), next.updatedAt]
       );
+    }
+    const legacyResult = await options.client.query<{ session_json?: AgentSession; sessionJson?: AgentSession }>(
+      `SELECT session_json FROM ${tableName} WHERE session_key = $1`,
+      [legacySessionKey(next)]
+    );
+    const legacy = parseSessionJson(getRecordField(legacyResult.rows[0], ["session_json", "sessionJson"]));
+    if (legacy && matchesSessionLookup(legacy, next)) {
+      await options.client.query(`DELETE FROM ${tableName} WHERE session_key = $1`, [legacySessionKey(next)]);
     }
     return next;
   };

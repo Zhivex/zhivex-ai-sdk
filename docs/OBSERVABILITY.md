@@ -91,6 +91,10 @@ const golden = promoteAgentGoldenTrace(ledger, {
 
 Golden traces are regression fixtures. Promote them from reviewed successful runs, not from arbitrary production traffic.
 
+Ledgers are fail-closed by default: snapshot messages/output, replay timeline payloads, audit metadata, tool inputs/outputs, approval arguments, trace payloads, and full output text are omitted or redacted unless the corresponding `include*` option is explicitly enabled. `includeTimeline` is also opt-in. Keep a single reviewed option set for the entire ledger so a permissive nested trace cannot bypass the outer export policy.
+
+`createProductionTraceCollector()` bounds retained runs and events and expires inactive runs. Its defaults retain at most 1,000 runs, 1,000 events per run, and 24 hours of inactive data; lower these limits for high-volume or sensitive workloads.
+
 ## Local CLI Inspection
 
 `@zhivex-ai/sdk` includes local dry-run utilities for saved states and ledgers:

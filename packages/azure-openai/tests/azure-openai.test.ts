@@ -906,6 +906,20 @@ describe("azure openai adapter", () => {
     expect(sent[3]).toEqual({ type: "response.create" });
   });
 
+  it("rejects path-like Azure deployment names before sending credentials", async () => {
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      apiVersion: "2025-04-01-preview",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(
+      generateText({ model: provider(".."), prompt: "hello" })
+    ).rejects.toThrow("deployment name must be a non-empty opaque identifier");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects non-image realtime media input for Azure sessions", async () => {
     const connectionFactory = vi.fn(async () => ({
       async sendJson() {},
@@ -926,6 +940,19 @@ describe("azure openai adapter", () => {
     await expect(session.sendMedia({ data: "video", mediaType: "video/mp4" })).rejects.toThrow(
       'Provider "azure-openai" only supports realtime image media input, but received "video/mp4".'
     );
+  });
+
+  it("never puts the Azure API key in a realtime URL", async () => {
+    const provider = createAzureOpenAI({
+      apiKey: "azure-secret",
+      endpoint: "https://example.openai.azure.com",
+      apiVersion: "2025-04-01-preview",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(
+      provider.realtimeModel!("gpt-realtime").connect()
+    ).rejects.toThrow("do not support custom headers");
   });
 
   it("creates Azure realtime browser tokens", async () => {
@@ -962,9 +989,52 @@ describe("azure openai adapter", () => {
       "https://example.openai.azure.com/openai/v1/realtime/client_secrets",
       expect.objectContaining({
         method: "POST",
+        redirect: "error",
         headers: expect.objectContaining({ "api-key": "test" }),
         body: expect.stringContaining("\"model\":\"gpt-realtime\"")
       })
     );
+  });
+
+  it("rejects per-session Azure realtime endpoint overrides outside the trusted host", async () => {
+    const connectionFactory = vi.fn();
+    const provider = createAzureOpenAI({
+      apiKey: "azure-secret",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+
+    await expect(
+      provider.realtimeModel!("gpt-realtime").connect({
+        providerOptions: {
+          realtime_url: "wss://attacker.example/collect"
+        }
+      })
+    ).rejects.toThrow("is not trusted");
+
+    expect(connectionFactory).not.toHaveBeenCalled();
+  });
+
+  it("enforces Azure browser-token timeouts", async () => {
+    fetchMock.mockImplementationOnce(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+        })
+    );
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(
+      provider.realtimeModel!("gpt-realtime").createBrowserToken?.({}, { timeoutMs: 1 })
+    ).rejects.toBeInstanceOf(DOMException);
   });
 });

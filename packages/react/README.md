@@ -41,6 +41,25 @@ export function SupportChat() {
 
 `useZhivexChat()` performs a `POST` request and consumes the SDK UI stream over SSE. The default request body contains the latest `UIMessage`, current `sessionId`, and approval decisions. A `Runner` remains the source of truth for durable conversation history.
 
+The default fetch transport rejects redirects, limits HTTP diagnostic bodies to 8 KiB, limits each SSE response to 16 MiB and 10,000 events, aborts the whole request after 120 seconds, and aborts a stream after 30 seconds without response bytes. Configure the bounds or explicitly disable only the timeouts for longer agent workloads:
+
+```tsx
+import { createFetchChatTransport, useZhivexChat } from "@zhivex-ai/react";
+
+const chat = useZhivexChat({
+  transport: createFetchChatTransport({
+    endpoint: "/api/chat",
+    requestTimeoutMs: 5 * 60_000,
+    streamIdleTimeoutMs: 60_000,
+    maxErrorBodyBytes: 8 * 1024,
+    maxStreamChars: 16 * 1024 * 1024,
+    maxStreamEvents: 10_000
+  })
+});
+```
+
+Set either timeout to `false` only when another application-level deadline and cancellation mechanism is present. Following redirects requires an explicit `redirect: "follow"` opt-in because a `307` or `308` can replay the chat POST body to the redirect destination.
+
 ## Server Route
 
 This Next.js App Router route keeps identity and provider configuration on the server and finalizes Runner persistence before the terminal `session-finish` event:
@@ -129,6 +148,21 @@ For structural changes, compose `ChatRoot`, `MessageList`, `Composer`, `Message`
 
 The default renderer intentionally treats text as plaintext. Applications can plug in their preferred Markdown renderer and sanitization policy.
 
+Remote image and audio URLs are blocked by default so model or tool content cannot silently create tracking requests from the browser. `data:` and browser `blob:` sources remain supported. Opted-in HTTP(S) media is rendered with a `no-referrer` policy, while loopback, private, link-local, `.local`, `.internal`, `.lan`, and single-label hosts remain rejected unless separately enabled. Supply a narrow application policy:
+
+```tsx
+<ZhivexChat
+  controller={chat}
+  mediaUrlPolicy={{
+    allowRemote: true,
+    allowPrivateNetwork: process.env.NODE_ENV === "development",
+    allowUrl: (url) => url.hostname.endsWith(".example-cdn.com")
+  }}
+/>
+```
+
+Hostname filtering cannot prevent DNS rebinding by itself. For high-trust applications, combine `allowUrl` with a strict browser CSP and proxy remote media through a server-side fetch policy.
+
 ## Headless APIs
 
 - `useZhivexChat()`: optimistic messages, abort, approval resume, session state, and stream reduction.
@@ -140,3 +174,5 @@ The default renderer intentionally treats text as plaintext. Applications can pl
 Unknown stream events are ignored so newer servers can interoperate with older clients. Generated image bytes are transported as base64 and converted into renderable data URLs by the reducer.
 
 `reload()` is disabled by default because replaying the last user message can duplicate durable Runner history. Enable `supportsReload` only for an endpoint that implements idempotent regeneration, and pass `onRetry={() => chat.reload()}` to `ZhivexChat` when that guarantee exists.
+
+Approval identity is the pair `provider + approvalRequestId`. The ready-made `ZhivexChat` forwards both values and keeps equal provider-scoped IDs distinct. The legacy three-argument `resolveApproval(id, approved, reason)` form remains available only when the ID has one unambiguous pending match; custom approval UIs should call `resolveApproval(id, approved, reason, provider)`.

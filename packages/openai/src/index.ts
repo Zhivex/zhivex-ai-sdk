@@ -12,6 +12,8 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   ProviderResponseTooLargeError,
+  assertTrustedEndpoint,
+  decodeBase64WithLimit,
   readBodyWithLimit,
   readErrorBodyWithLimit,
   readJsonWithLimit,
@@ -110,6 +112,8 @@ export interface OpenAIProviderOptions {
   browserTokenURL?: string;
   realtimeConnectionFactory?: RealtimeConnectionFactory;
   responseLimits?: OpenAIResponseLimits;
+  /** Allow non-HTTPS/private or cross-origin credentialed endpoint overrides. Server-side only. */
+  allowUnsafeEndpoints?: boolean;
 }
 
 export interface OpenAIRealtimeProviderOptions {
@@ -688,6 +692,17 @@ const jsonHeaders = (apiKey: string) => ({
   authorization: `Bearer ${apiKey}`
 });
 
+const OPENAI_JSON_RESPONSE_MAX_BYTES = 128 * 1024 * 1024;
+const OPENAI_REALTIME_AUDIO_MAX_BYTES = 16 * 1024 * 1024;
+const RESERVED_REQUEST_HEADERS = new Set([
+  "authorization",
+  "content-type",
+  "content-length",
+  "host",
+  "connection",
+  "transfer-encoding"
+]);
+
 const resolveOpenAIRealtimeHeaders = (
   apiKey: string,
   providerOptions: Record<string, unknown> | undefined,
@@ -703,8 +718,7 @@ const resolveOpenAIRealtimeHeaders = (
   for (const key of Object.keys(customHeaders)) {
     const normalizedKey = key.toLowerCase();
     if (
-      normalizedKey === "authorization" ||
-      normalizedKey === "content-type" ||
+      RESERVED_REQUEST_HEADERS.has(normalizedKey) ||
       (typeof safetyIdentifier === "string" && safetyIdentifier && normalizedKey === "openai-safety-identifier")
     ) {
       delete customHeaders[key];
@@ -738,6 +752,11 @@ const resolveOpenAILanguageRequestOptions = (providerOptions: Record<string, unk
       }
     }
     delete customHeaders[existingBetaHeaderKey];
+  }
+  for (const key of Object.keys(customHeaders)) {
+    if (RESERVED_REQUEST_HEADERS.has(key.toLowerCase())) {
+      delete customHeaders[key];
+    }
   }
 
   delete bodyOptions.apiMode;
@@ -834,14 +853,12 @@ const parseJson = async (
       responseBody: body
     });
   }
-  return options.maxBytes
-    ? readJsonWithLimit<any>(response, {
-        maxBytes: options.maxBytes,
-        provider: options.provider ?? "openai",
-        endpoint: options.endpoint,
-        abort: options.abort
-      })
-    : response.json();
+  return readJsonWithLimit<any>(response, {
+    maxBytes: options.maxBytes ?? OPENAI_JSON_RESPONSE_MAX_BYTES,
+    provider: options.provider ?? "openai",
+    endpoint: options.endpoint,
+    abort: options.abort
+  });
 };
 
 const isOpenAIPromptCacheBreakpointPart = (
@@ -1431,7 +1448,11 @@ const parseOpenAIRealtimeEvent = (payload: Record<string, unknown>) => {
     return [
       {
         type: "realtime-audio-output" as const,
-        audio: Buffer.from(String(payload.delta ?? ""), "base64"),
+        audio: decodeBase64WithLimit(String(payload.delta ?? ""), {
+          maxBytes: OPENAI_REALTIME_AUDIO_MAX_BYTES,
+          provider: "openai",
+          endpoint: "realtime"
+        }),
         mediaType: typeof payload.media_type === "string" ? payload.media_type : "audio/pcm",
         sampleRateHz: typeof payload.sample_rate_hz === "number" ? payload.sample_rate_hz : undefined,
         channels: typeof payload.channels === "number" ? payload.channels : undefined,
@@ -2928,6 +2949,7 @@ class OpenAITranscriptionModel implements TranscriptionModel {
         () =>
           this.fetcher(`${this.baseURL}/audio/transcriptions`, {
             method: "POST",
+            redirect: "error",
             headers: { authorization: `Bearer ${this.apiKey}` },
             signal,
             body: form
@@ -3086,7 +3108,8 @@ class OpenAIRealtimeModel implements RealtimeModel {
     private readonly fetcher: typeof globalThis.fetch,
     private readonly connectionFactory?: RealtimeConnectionFactory,
     private readonly realtimeURL?: string,
-    private readonly browserTokenURL?: string
+    private readonly browserTokenURL?: string,
+    private readonly allowUnsafeEndpoints = false
   ) {
     this.capabilities = realtimeCapabilities(modelId);
   }
@@ -3113,7 +3136,8 @@ class OpenAIRealtimeModel implements RealtimeModel {
     const initialConfig = this.resolveConfig(config);
     const providerOptions = initialConfig.providerOptions as Record<string, unknown> | undefined;
     const headers = resolveOpenAIRealtimeHeaders(this.apiKey, providerOptions);
-    const connection = await (this.connectionFactory ?? openWebSocketConnection)(
+    const trustedRealtimeHost = new URL(this.realtimeURL ?? this.baseURL).hostname;
+    const realtimeEndpoint = assertTrustedEndpoint(
       this.realtimeURL ??
         openAIRealtimeURL(
           this.baseURL,
@@ -3121,6 +3145,15 @@ class OpenAIRealtimeModel implements RealtimeModel {
           inferOpenAIRealtimeMode(this.modelId, initialConfig.mode),
           providerOptions
         ),
+      {
+        label: "OpenAI realtime endpoint",
+        protocols: ["wss"],
+        allowedHosts: [trustedRealtimeHost],
+        allowUnsafe: this.allowUnsafeEndpoints
+      }
+    ).toString();
+    const connection = await (this.connectionFactory ?? openWebSocketConnection)(
+      realtimeEndpoint,
       headers,
       options
     );
@@ -3259,28 +3292,31 @@ class OpenAIRealtimeModel implements RealtimeModel {
     const expiresAfter = providerOptions.expires_after;
     delete providerOptions.expires_after;
 
-    const response = await withRetry(
-      () =>
-        this.fetcher(this.browserTokenURL ?? `${this.baseURL}/realtime/client_secrets`, {
-          method: "POST",
-          headers: resolveOpenAIRealtimeHeaders(this.apiKey, providerOptions, true),
-          body: JSON.stringify({
-            ...(expiresAfter ? { expires_after: expiresAfter } : {}),
-            session: mapRealtimeSessionConfig(
-              {
-                ...resolvedConfig,
-                providerOptions
-              },
-              this.modelId
-            )
-          }),
-          signal: options?.signal
-        }),
-      {
-        timeoutMs: options?.timeoutMs
-      }
-    );
-    const payload = await parseJson(response);
+    const { signal, cleanup } = withTimeoutSignal({
+      abortSignal: options?.signal,
+      timeoutMs: options?.timeoutMs
+    });
+    try {
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.browserTokenURL ?? `${this.baseURL}/realtime/client_secrets`, {
+            method: "POST",
+            redirect: "error",
+            headers: resolveOpenAIRealtimeHeaders(this.apiKey, providerOptions, true),
+            body: JSON.stringify({
+              ...(expiresAfter ? { expires_after: expiresAfter } : {}),
+              session: mapRealtimeSessionConfig(
+                {
+                  ...resolvedConfig,
+                  providerOptions
+                },
+                this.modelId
+              )
+            }),
+            signal
+          })
+      );
+      const payload = await parseJson(response);
     const secret = payload.client_secret;
     const value =
       secret && typeof secret === "object" && typeof secret.value === "string"
@@ -3298,11 +3334,14 @@ class OpenAIRealtimeModel implements RealtimeModel {
           : typeof payload.expires_at === "number"
             ? payload.expires_at * 1000
             : undefined;
-    return {
-      value,
-      expiresAtMs,
-      rawResponse: payload
-    };
+      return {
+        value,
+        expiresAtMs,
+        rawResponse: payload
+      };
+    } finally {
+      cleanup();
+    }
   }
 }
 
@@ -3314,7 +3353,28 @@ export const createOpenAI = (
     throw new ConfigurationError("Missing OpenAI API key.");
   }
 
-  const baseURL = options.baseURL ?? "https://api.openai.com/v1";
+  const baseURL = assertTrustedEndpoint(options.baseURL ?? "https://api.openai.com/v1", {
+    label: "OpenAI baseURL",
+    protocols: ["https"],
+    allowUnsafe: options.allowUnsafeEndpoints
+  }).toString().replace(/\/+$/, "");
+  const trustedHost = new URL(baseURL).hostname;
+  const realtimeURL = options.realtimeURL
+    ? assertTrustedEndpoint(options.realtimeURL, {
+        label: "OpenAI realtimeURL",
+        protocols: ["wss"],
+        allowedHosts: [trustedHost],
+        allowUnsafe: options.allowUnsafeEndpoints
+      }).toString()
+    : undefined;
+  const browserTokenURL = options.browserTokenURL
+    ? assertTrustedEndpoint(options.browserTokenURL, {
+        label: "OpenAI browserTokenURL",
+        protocols: ["https"],
+        allowedHosts: [trustedHost],
+        allowUnsafe: options.allowUnsafeEndpoints
+      }).toString()
+    : undefined;
   const fetcher = options.fetch ?? globalThis.fetch;
   const responseLimits = resolveOpenAIResponseLimits(options.responseLimits);
 
@@ -3325,7 +3385,13 @@ export const createOpenAI = (
     transcriptionModel: (modelId) => new OpenAITranscriptionModel(modelId, apiKey, baseURL, fetcher, responseLimits),
     speechModel: (modelId) => new OpenAISpeechModel(modelId, apiKey, baseURL, fetcher, responseLimits),
     imageGenerationModel: (modelId) =>
-      createOpenAIImageGenerationModel({ modelId, apiKey, baseURL, fetch: fetcher }),
+      createOpenAIImageGenerationModel({
+        modelId,
+        apiKey,
+        baseURL,
+        fetch: fetcher,
+        allowUnsafeEndpoints: options.allowUnsafeEndpoints
+      }),
     realtimeModel: (modelId) =>
       new OpenAIRealtimeModel(
         modelId,
@@ -3333,8 +3399,9 @@ export const createOpenAI = (
         baseURL,
         fetcher,
         options.realtimeConnectionFactory,
-        options.realtimeURL,
-        options.browserTokenURL
+        realtimeURL,
+        browserTokenURL,
+        options.allowUnsafeEndpoints
       ),
     groundedLanguageModel: (modelId) => new OpenAIGroundedLanguageModel(modelId, apiKey, baseURL, fetcher),
     rawFetch: fetcher

@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { ValidationError } from "./errors.js";
 import { isHostedToolDefinition, serializeJsonValue, tool } from "./messages.js";
+import { readBodyWithLimit } from "./response.js";
+import { withTimeoutSignal } from "./runtime.js";
 import { isToolRegistry, toToolSet } from "./tool-registry.js";
 import type { AnyToolDefinition, JsonValue, ToolCollection, ToolDefinition, ToolRegistryLike, ToolSet } from "./types.js";
 
@@ -40,6 +42,9 @@ export interface HttpToolOptions<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   headers?: Record<string, string>;
   timeoutMs?: number;
+  maxResponseBytes?: number;
+  redirect?: "error" | "follow";
+  idempotencyHeaderName?: string | false;
   mapResponse?: (response: Response, input: z.infer<TSchema>) => Promise<JsonValue> | JsonValue;
   metadata?: Record<string, JsonValue>;
 }
@@ -192,17 +197,11 @@ const appendSearchParams = (url: URL, input: JsonValue) => {
   }
 };
 
-const withTimeoutSignal = (timeoutMs: number | undefined) => {
-  if (!timeoutMs) {
-    return undefined;
+const positiveSafeInteger = (value: number, name: string) => {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new ValidationError(`The HTTP tool "${name}" option must be a positive safe integer.`);
   }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return {
-    signal: controller.signal,
-    clear: () => clearTimeout(timer)
-  };
+  return value;
 };
 
 export class AdvancedToolRegistry implements ToolRegistryLike {
@@ -308,6 +307,14 @@ export const createHttpTool = <TSchema extends z.ZodTypeAny>(
   options: HttpToolOptions<TSchema>
 ): AdvancedToolRegistryEntry<ToolDefinition<TSchema, JsonValue>> => {
   const method = options.method ?? "POST";
+  const timeoutMs = positiveSafeInteger(options.timeoutMs ?? 30_000, "timeoutMs");
+  const maxResponseBytes = positiveSafeInteger(options.maxResponseBytes ?? 4 * 1024 * 1024, "maxResponseBytes");
+  const idempotencyHeaderName = options.idempotencyHeaderName === false
+    ? undefined
+    : options.idempotencyHeaderName ?? "idempotency-key";
+  if (idempotencyHeaderName !== undefined && !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(idempotencyHeaderName)) {
+    throw new ValidationError('The HTTP tool "idempotencyHeaderName" option must be a valid HTTP header name.');
+  }
   const definition = tool({
     name: options.name,
     description: options.description,
@@ -318,17 +325,24 @@ export const createHttpTool = <TSchema extends z.ZodTypeAny>(
       url: String(options.url),
       method
     }) as Record<string, JsonValue>,
-    execute: async (input) => {
+    execute: async (input, context) => {
       const serializedInput = serializeJsonValue(input);
       const url = new URL(String(options.url));
-      const timeout = withTimeoutSignal(options.timeoutMs);
+      const timeout = withTimeoutSignal({ abortSignal: context?.abortSignal, timeoutMs });
+      const headers: Record<string, string> = {
+        accept: "application/json, text/plain;q=0.9, */*;q=0.8",
+        ...options.headers
+      };
+      if (context?.idempotencyKey && idempotencyHeaderName && !(idempotencyHeaderName.toLowerCase() in Object.fromEntries(
+        Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])
+      ))) {
+        headers[idempotencyHeaderName] = context.idempotencyKey;
+      }
       const init: RequestInit = {
         method,
-        headers: {
-          accept: "application/json, text/plain;q=0.9, */*;q=0.8",
-          ...options.headers
-        },
-        signal: timeout?.signal
+        headers,
+        redirect: options.redirect ?? "error",
+        signal: timeout.signal
       };
 
       if (method === "GET") {
@@ -347,11 +361,24 @@ export const createHttpTool = <TSchema extends z.ZodTypeAny>(
           throw new Error(`HTTP tool "${options.name}" failed with status ${response.status}.`);
         }
 
+        const bytes = await readBodyWithLimit(response, {
+          maxBytes: maxResponseBytes,
+          provider: "http-tool",
+          endpoint: url.origin,
+          abort: timeout.abort
+        });
+        const boundedResponse = new Response(new Uint8Array(bytes), {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers
+        });
         return serializeJsonValue(
-          options.mapResponse ? await options.mapResponse(response, input as z.infer<TSchema>) : await jsonResponse(response)
+          options.mapResponse
+            ? await options.mapResponse(boundedResponse, input as z.infer<TSchema>)
+            : await jsonResponse(boundedResponse)
         );
       } finally {
-        timeout?.clear();
+        timeout.cleanup();
       }
     }
   });

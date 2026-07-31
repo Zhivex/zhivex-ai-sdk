@@ -2,10 +2,13 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
+  assertTrustedEndpoint,
   createProviderAdapter,
   hostedTool,
   isHostedToolDefinition,
   normalizeMessages,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
   withRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
@@ -34,7 +37,15 @@ export interface XAIProviderOptions {
   baseURL?: string;
   headers?: Record<string, string>;
   fetch?: typeof globalThis.fetch;
+  allowUnsafeEndpoints?: boolean;
 }
+
+const encodeXAIResourceId = (value: string) => {
+  if (!value || value === "." || value === ".." || /[\\/?#\s]/.test(value)) {
+    throw new ConfigurationError("xAI file ID must be a non-empty opaque identifier without path separators.");
+  }
+  return encodeURIComponent(value);
+};
 
 export interface XAILanguageModelOptions {
   apiMode?: "chat" | "responses";
@@ -140,12 +151,16 @@ const jsonHeaders = (apiKey: string) => ({
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
-    const body = await response.text();
+    const body = await readErrorBodyWithLimit(response);
     throw new ProviderHTTPError(`xAI request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
-  return response.json();
+  return readJsonWithLimit<any>(response, {
+    maxBytes: 128 * 1024 * 1024,
+    provider: "xai",
+    endpoint: response.url || undefined
+  });
 };
 
 const remapHTTPError = (error: unknown): never => {
@@ -435,6 +450,7 @@ class XAIFilesClient implements FilesClient<XAIFileOptions> {
         () =>
           this.fetcher(`${this.baseURL}/files`, {
             method: "POST",
+            redirect: "error",
             headers: { authorization: `Bearer ${this.apiKey}` },
             signal,
             body: form
@@ -452,7 +468,7 @@ class XAIFilesClient implements FilesClient<XAIFileOptions> {
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/files/${input.name}`, {
+          this.fetcher(`${this.baseURL}/files/${encodeXAIResourceId(input.name)}`, {
             method: "GET",
             headers: jsonHeaders(this.apiKey),
             signal
@@ -499,7 +515,7 @@ class XAIFilesClient implements FilesClient<XAIFileOptions> {
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/files/${input.name}`, {
+          this.fetcher(`${this.baseURL}/files/${encodeXAIResourceId(input.name)}`, {
             method: "DELETE",
             headers: jsonHeaders(this.apiKey),
             signal
@@ -580,10 +596,18 @@ export const createXAI = (
   const apiKey = options.apiKey ?? process.env.XAI_API_KEY;
   if (!apiKey) throw new ConfigurationError("Missing xAI API key.");
 
-  const baseURL = (options.baseURL ?? "https://api.x.ai/v1").replace(/\/+$/, "");
+  const baseURL = assertTrustedEndpoint(options.baseURL ?? "https://api.x.ai/v1", {
+    label: "xAI baseURL",
+    protocols: ["https"],
+    allowUnsafe: options.allowUnsafeEndpoints
+  }).toString().replace(/\/+$/, "");
   const fetcher = options.fetch ?? globalThis.fetch;
-  const transport = createOpenAI({ apiKey, baseURL, fetch: fetcher });
-  const defaultHeaders = options.headers ?? {};
+  const transport = createOpenAI({ apiKey, baseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints });
+  const defaultHeaders = Object.fromEntries(
+    Object.entries(options.headers ?? {}).filter(
+      ([key]) => !["authorization", "content-type", "content-length", "host", "connection", "transfer-encoding"].includes(key.toLowerCase())
+    )
+  );
   const languageModel = (modelId: string) =>
     new XAILanguageModel(modelId, transport.languageModel(modelId), defaultHeaders);
 

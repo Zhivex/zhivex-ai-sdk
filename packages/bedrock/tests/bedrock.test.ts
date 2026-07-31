@@ -987,7 +987,9 @@ describe("bedrock adapter", () => {
       region: "us-west-2",
       bearerToken: "token-123",
       headers: {
-        "X-Team": "platform"
+        "X-Team": "platform",
+        authorization: "Bearer attacker",
+        Host: "attacker.example"
       },
       sessionId: "initial-session",
       fetch: fetchMock as typeof fetch
@@ -1015,6 +1017,8 @@ describe("bedrock adapter", () => {
       "X-Team": "platform",
       "Mcp-Session-Id": "initial-session"
     });
+    expect(firstRequest.headers).not.toHaveProperty("authorization");
+    expect(firstRequest.headers).not.toHaveProperty("Host");
     expect(JSON.parse(String(firstRequest.body))).toMatchObject({
       jsonrpc: "2.0",
       method: "tools/list",
@@ -1235,6 +1239,32 @@ describe("bedrock adapter", () => {
         name: "fetch_docs",
         arguments: { path: "README.md" }
       }
+    });
+  });
+
+  it("propagates Bedrock timeouts to the native AWS request", async () => {
+    sendMock.mockImplementationOnce(
+      (_command: unknown, options?: { abortSignal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          options?.abortSignal?.addEventListener(
+            "abort",
+            () => reject(options.abortSignal?.reason ?? new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+        })
+    );
+    const provider = createBedrock({ region: "us-east-1" });
+
+    await expect(
+      generateText({
+        model: provider("anthropic.claude-3-5-sonnet"),
+        prompt: "timeout",
+        timeoutMs: 1
+      })
+    ).rejects.toBeInstanceOf(DOMException);
+
+    expect(sendMock.mock.calls[0]?.[1]).toMatchObject({
+      abortSignal: expect.any(AbortSignal)
     });
   });
 });

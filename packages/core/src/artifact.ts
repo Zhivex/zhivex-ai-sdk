@@ -5,6 +5,12 @@ import path from "node:path";
 import { ConflictError, ValidationError } from "./errors.js";
 import { assertPostgresClient } from "./postgres-client.js";
 import { createSecureId } from "./secure-id.js";
+import {
+  canonicalStoreFileStem,
+  canonicalStoreKey,
+  ensurePrivateDirectory,
+  writePrivateFile
+} from "./store-security.js";
 import type { JsonValue, PostgresClientLike, SqliteDatabaseLike, SqliteStatementLike } from "./types.js";
 
 const randomId = createSecureId;
@@ -184,8 +190,17 @@ export interface ExternalArtifactReference {
 
 export type ArtifactRecordMigrationTarget = typeof ARTIFACT_SCHEMA_VERSION;
 
+const artifactParts = (input: ArtifactLookup) =>
+  [input.appName, input.userId, input.sessionId, input.id] as const;
 const artifactKey = (input: ArtifactLookup): string =>
+  canonicalStoreKey("artifact", artifactParts(input));
+const legacyArtifactKey = (input: ArtifactLookup): string =>
   `${input.appName}:${input.userId}:${input.sessionId}:${input.id}`;
+const matchesArtifactLookup = (artifact: ArtifactRecord, input: ArtifactLookup): boolean =>
+  artifact.appName === input.appName &&
+  artifact.userId === input.userId &&
+  artifact.sessionId === input.sessionId &&
+  artifact.id === input.id;
 const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export const normalizeArtifactRecord = (value: unknown): ArtifactRecord => {
@@ -427,18 +442,28 @@ const matchesListInput = (artifact: ArtifactRecord, input: ArtifactListInput): b
   (input.agentRunId === undefined || artifact.agentRunId === input.agentRunId);
 
 const fileNameForArtifact = (input: ArtifactLookup): string =>
-  [input.appName, input.userId, input.sessionId, input.id].map((part) => encodeURIComponent(part)).join("__") + ".json";
+  `${canonicalStoreFileStem("artifact", artifactParts(input))}.json`;
 
 const blobPathForArtifact = (input: ArtifactLookup): string =>
-  path.join("blobs", [input.appName, input.userId, input.sessionId, input.id].map((part) => encodeURIComponent(part)).join("__") + ".bin");
+  path.join("blobs", `${canonicalStoreFileStem("artifact", artifactParts(input))}.bin`);
+
+const legacyFileNameForArtifact = (input: ArtifactLookup): string =>
+  artifactParts(input).map((part) => encodeURIComponent(part)).join("__") + ".json";
+
+const legacyBlobPathForArtifact = (input: ArtifactLookup): string =>
+  path.join("blobs", artifactParts(input).map((part) => encodeURIComponent(part)).join("__") + ".bin");
 
 const resolveFileArtifactBlobPath = (directory: string, artifact: ArtifactRecord): string | undefined => {
   if (!artifact.blobPath) {
     return undefined;
   }
 
-  const expectedBlobPath = blobPathForArtifact(artifact);
-  if (path.normalize(artifact.blobPath) !== expectedBlobPath) {
+  const normalizedBlobPath = path.normalize(artifact.blobPath);
+  const expectedBlobPaths = new Set([
+    blobPathForArtifact(artifact),
+    legacyBlobPathForArtifact(artifact)
+  ]);
+  if (!expectedBlobPaths.has(normalizedBlobPath)) {
     throw new ValidationError(`Artifact "${artifact.id}" has an unsafe blobPath.`);
   }
 
@@ -600,7 +625,7 @@ const listFilesRecursive = async (directory: string): Promise<string[]> => {
 export const inspectFileArtifactStore = async (
   options: FileArtifactServiceOptions
 ): Promise<FileArtifactStoreInspection> => {
-  const artifacts: ArtifactRecord[] = [];
+  const artifacts = new Map<string, ArtifactRecord>();
   const issues: FileArtifactStoreInspectionIssue[] = [];
   const referencedBlobPaths = new Set<string>();
   let entries: string[] = [];
@@ -620,7 +645,10 @@ export const inspectFileArtifactStore = async (
     try {
       const artifact = normalizeArtifactRecord(JSON.parse(await fs.readFile(metadataPath, "utf8")) as ArtifactRecord);
       const fullBlobPath = resolveFileArtifactBlobPath(options.directory, artifact);
-      artifacts.push(artifact);
+      const key = artifactKey(artifact);
+      if (!artifacts.has(key) || entry === fileNameForArtifact(artifact)) {
+        artifacts.set(key, artifact);
+      }
       if (artifact.blobPath) {
         referencedBlobPaths.add(path.normalize(artifact.blobPath));
       }
@@ -672,7 +700,9 @@ export const inspectFileArtifactStore = async (
 
   return {
     directory: options.directory,
-    artifacts: artifacts.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)),
+    artifacts: [...artifacts.values()].sort(
+      (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+    ),
     issues
   };
 };
@@ -824,24 +854,50 @@ export const createInMemoryArtifactService = (): ArtifactService => {
 export const createFileArtifactService = (options: FileArtifactServiceOptions): ArtifactService => {
   const filePath = (input: ArtifactLookup) => path.join(options.directory, fileNameForArtifact(input));
   const binaryPath = (input: ArtifactLookup) => path.join(options.directory, blobPathForArtifact(input));
+  const legacyFilePath = (input: ArtifactLookup) => path.join(options.directory, legacyFileNameForArtifact(input));
 
   const load = async (input: ArtifactLookup): Promise<ArtifactRecord | undefined> => {
-    try {
-      const content = await fs.readFile(filePath(input), "utf8");
-      const artifact = normalizeArtifactRecord(JSON.parse(content) as ArtifactRecord);
-      resolveFileArtifactBlobPath(options.directory, artifact);
-      return artifact;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return undefined;
+    for (const candidate of [filePath(input), legacyFilePath(input)]) {
+      try {
+        const content = await fs.readFile(candidate, "utf8");
+        const artifact = normalizeArtifactRecord(JSON.parse(content) as ArtifactRecord);
+        if (!matchesArtifactLookup(artifact, input)) {
+          continue;
+        }
+        resolveFileArtifactBlobPath(options.directory, artifact);
+        return artifact;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
       }
-      throw error;
     }
+    return undefined;
   };
 
   const save = async (artifact: ArtifactRecord): Promise<void> => {
-    await fs.mkdir(options.directory, { recursive: true });
-    await fs.writeFile(filePath(artifact), JSON.stringify(cloneArtifact(artifact), null, 2), "utf8");
+    await ensurePrivateDirectory(options.directory);
+    await writePrivateFile(filePath(artifact), JSON.stringify(cloneArtifact(artifact), null, 2));
+    try {
+      const legacyArtifact = normalizeArtifactRecord(
+        JSON.parse(await fs.readFile(legacyFilePath(artifact), "utf8")) as ArtifactRecord
+      );
+      if (matchesArtifactLookup(legacyArtifact, artifact)) {
+        const legacyBlob = resolveFileArtifactBlobPath(options.directory, legacyArtifact);
+        await fs.unlink(legacyFilePath(artifact));
+        if (legacyBlob && legacyArtifact.blobPath !== artifact.blobPath) {
+          await fs.unlink(legacyBlob).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== "ENOENT") {
+              throw error;
+            }
+          });
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
   };
 
   return {
@@ -888,8 +944,8 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         sha256,
         storageMode: "binary"
       }, existing, { blobPath });
-      await fs.mkdir(path.dirname(binaryPath(lookup)), { recursive: true });
-      await fs.writeFile(binaryPath(lookup), bytes);
+      await ensurePrivateDirectory(path.dirname(binaryPath(lookup)));
+      await writePrivateFile(binaryPath(lookup), bytes);
       await save(artifact);
       return cloneArtifact(artifact);
     },
@@ -928,7 +984,7 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         throw error;
       }
 
-      const artifacts: ArtifactRecord[] = [];
+      const artifacts = new Map<string, ArtifactRecord>();
       for (const entry of entries) {
         if (!entry.endsWith(".json")) {
           continue;
@@ -937,17 +993,32 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         const artifact = normalizeArtifactRecord(JSON.parse(content) as ArtifactRecord);
         resolveFileArtifactBlobPath(options.directory, artifact);
         if (matchesListInput(artifact, input)) {
-          artifacts.push(cloneArtifact(artifact));
+          const key = artifactKey(artifact);
+          if (!artifacts.has(key) || entry === fileNameForArtifact(artifact)) {
+            artifacts.set(key, cloneArtifact(artifact));
+          }
         }
       }
 
-      return artifacts.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+      return [...artifacts.values()].sort(
+        (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+      );
     },
 
     async deleteArtifact(input) {
       const artifact = await load(input);
+      await fs.unlink(filePath(input)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") {
+          throw error;
+        }
+      });
       try {
-        await fs.unlink(filePath(input));
+        const legacyArtifact = normalizeArtifactRecord(
+          JSON.parse(await fs.readFile(legacyFilePath(input), "utf8")) as ArtifactRecord
+        );
+        if (matchesArtifactLookup(legacyArtifact, input)) {
+          await fs.unlink(legacyFilePath(input));
+        }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
           throw error;
@@ -1043,8 +1114,14 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
   const deleteStatement = prepareSqliteStatement(options.db, `DELETE FROM ${tableName} WHERE artifact_key = ?`);
 
   const load = (input: ArtifactLookup): ArtifactRecord | undefined => {
-    const row = loadStatement.get([artifactKey(input)]);
-    return parseArtifactJson(getRecordField(row, ["artifact_json", "artifactJson"]));
+    for (const key of [artifactKey(input), legacyArtifactKey(input)]) {
+      const row = loadStatement.get([key]);
+      const artifact = parseArtifactJson(getRecordField(row, ["artifact_json", "artifactJson"]));
+      if (artifact && matchesArtifactLookup(artifact, input)) {
+        return artifact;
+      }
+    }
+    return undefined;
   };
 
   const save = (
@@ -1052,21 +1129,46 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
     options?: { existing?: ArtifactRecord; expectedRevision?: number }
   ): ArtifactRecord => {
     if (options?.expectedRevision !== undefined && options.existing) {
-      const result = updateCasStatement.run([
-        artifact.appName,
-        artifact.userId,
-        artifact.sessionId,
-        artifact.id,
-        artifact.workflowRunId ?? null,
-        artifact.workflowStepId ?? null,
-        artifact.agentRunId ?? null,
-        JSON.stringify(artifact),
-        artifact.updatedAt,
-        artifactKey(lookupFromArtifact(artifact)),
-        options.existing.updatedAt
-      ]);
-      if (sqliteMutationCount(result) === 0) {
-        throw new ConflictError("ArtifactRecord revision conflict.");
+      const canonicalExisting = parseArtifactJson(
+        getRecordField(loadStatement.get([artifactKey(artifact)]), ["artifact_json", "artifactJson"])
+      );
+      if (canonicalExisting && matchesArtifactLookup(canonicalExisting, artifact)) {
+        const result = updateCasStatement.run([
+          artifact.appName,
+          artifact.userId,
+          artifact.sessionId,
+          artifact.id,
+          artifact.workflowRunId ?? null,
+          artifact.workflowStepId ?? null,
+          artifact.agentRunId ?? null,
+          JSON.stringify(artifact),
+          artifact.updatedAt,
+          artifactKey(lookupFromArtifact(artifact)),
+          options.existing.updatedAt
+        ]);
+        if (sqliteMutationCount(result) === 0) {
+          throw new ConflictError("ArtifactRecord revision conflict.");
+        }
+      } else {
+        const legacy = parseArtifactJson(
+          getRecordField(loadStatement.get([legacyArtifactKey(artifact)]), ["artifact_json", "artifactJson"])
+        );
+        if (!legacy || !matchesArtifactLookup(legacy, artifact) || legacy.updatedAt !== options.existing.updatedAt) {
+          throw new ConflictError("ArtifactRecord revision conflict.");
+        }
+        saveStatement.run([
+          artifactKey(artifact),
+          artifact.appName,
+          artifact.userId,
+          artifact.sessionId,
+          artifact.id,
+          artifact.workflowRunId ?? null,
+          artifact.workflowStepId ?? null,
+          artifact.agentRunId ?? null,
+          JSON.stringify(artifact),
+          artifact.createdAt,
+          artifact.updatedAt
+        ]);
       }
     } else {
       saveStatement.run([
@@ -1082,6 +1184,12 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
         artifact.createdAt,
         artifact.updatedAt
       ]);
+    }
+    const legacy = parseArtifactJson(
+      getRecordField(loadStatement.get([legacyArtifactKey(artifact)]), ["artifact_json", "artifactJson"])
+    );
+    if (legacy && matchesArtifactLookup(legacy, artifact)) {
+      deleteStatement.run([legacyArtifactKey(artifact)]);
     }
     return cloneArtifact(artifact);
   };
@@ -1154,14 +1262,24 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
         input.agentRunId ?? null
       ];
       const rows = listStatement.all?.(params) ?? [];
-      return rows.flatMap((row) => {
+      const artifacts = new Map<string, ArtifactRecord>();
+      for (const row of rows) {
         const artifact = parseArtifactJson(getRecordField(row, ["artifact_json", "artifactJson"]));
-        return artifact ? [artifact] : [];
-      });
+        if (artifact) {
+          artifacts.set(artifactKey(artifact), artifact);
+        }
+      }
+      return [...artifacts.values()];
     },
 
     deleteArtifact(input) {
       deleteStatement.run([artifactKey(input)]);
+      const legacy = parseArtifactJson(
+        getRecordField(loadStatement.get([legacyArtifactKey(input)]), ["artifact_json", "artifactJson"])
+      );
+      if (legacy && matchesArtifactLookup(legacy, input)) {
+        deleteStatement.run([legacyArtifactKey(input)]);
+      }
     }
   };
 };
@@ -1187,11 +1305,17 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
 
   const load = async (input: ArtifactLookup): Promise<ArtifactRecord | undefined> => {
     await ensurePostgresTable(options.client, tableName, createSql);
-    const result = await options.client.query<{ artifact_json?: ArtifactRecord; artifactJson?: ArtifactRecord }>(
-      `SELECT artifact_json FROM ${tableName} WHERE artifact_key = $1`,
-      [artifactKey(input)]
-    );
-    return parseArtifactJson(getRecordField(result.rows[0], ["artifact_json", "artifactJson"]));
+    for (const key of [artifactKey(input), legacyArtifactKey(input)]) {
+      const result = await options.client.query<{ artifact_json?: ArtifactRecord; artifactJson?: ArtifactRecord }>(
+        `SELECT artifact_json FROM ${tableName} WHERE artifact_key = $1`,
+        [key]
+      );
+      const artifact = parseArtifactJson(getRecordField(result.rows[0], ["artifact_json", "artifactJson"]));
+      if (artifact && matchesArtifactLookup(artifact, input)) {
+        return artifact;
+      }
+    }
+    return undefined;
   };
 
   const save = async (
@@ -1229,7 +1353,39 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
         ]
       );
       if (result.rows.length === 0) {
-        throw new ConflictError("ArtifactRecord revision conflict.");
+        const migrated = await options.client.query(
+          `UPDATE ${tableName}
+           SET artifact_key = $1,
+               app_name = $2,
+               user_id = $3,
+               session_id = $4,
+               artifact_id = $5,
+               workflow_run_id = $6,
+               workflow_step_id = $7,
+               agent_run_id = $8,
+               artifact_json = $9::jsonb,
+               updated_at_ms = $10
+           WHERE artifact_key = $11
+             AND updated_at_ms = $12
+           RETURNING artifact_json`,
+          [
+            artifactKey(artifact),
+            artifact.appName,
+            artifact.userId,
+            artifact.sessionId,
+            artifact.id,
+            artifact.workflowRunId ?? null,
+            artifact.workflowStepId ?? null,
+            artifact.agentRunId ?? null,
+            JSON.stringify(artifact),
+            artifact.updatedAt,
+            legacyArtifactKey(artifact),
+            saveOptions.existing.updatedAt
+          ]
+        );
+        if (migrated.rows.length === 0) {
+          throw new ConflictError("ArtifactRecord revision conflict.");
+        }
       }
     } else {
       await options.client.query(
@@ -1271,6 +1427,14 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
           artifact.updatedAt
         ]
       );
+    }
+    const legacyResult = await options.client.query<{ artifact_json?: ArtifactRecord; artifactJson?: ArtifactRecord }>(
+      `SELECT artifact_json FROM ${tableName} WHERE artifact_key = $1`,
+      [legacyArtifactKey(artifact)]
+    );
+    const legacy = parseArtifactJson(getRecordField(legacyResult.rows[0], ["artifact_json", "artifactJson"]));
+    if (legacy && matchesArtifactLookup(legacy, artifact)) {
+      await options.client.query(`DELETE FROM ${tableName} WHERE artifact_key = $1`, [legacyArtifactKey(artifact)]);
     }
     return cloneArtifact(artifact);
   };
@@ -1350,15 +1514,27 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
           input.agentRunId ?? null
         ]
       );
-      return result.rows.flatMap((row) => {
+      const artifacts = new Map<string, ArtifactRecord>();
+      for (const row of result.rows) {
         const artifact = parseArtifactJson(getRecordField(row, ["artifact_json", "artifactJson"]));
-        return artifact ? [artifact] : [];
-      });
+        if (artifact) {
+          artifacts.set(artifactKey(artifact), artifact);
+        }
+      }
+      return [...artifacts.values()];
     },
 
     async deleteArtifact(input) {
       await ensurePostgresTable(options.client, tableName, createSql);
       await options.client.query(`DELETE FROM ${tableName} WHERE artifact_key = $1`, [artifactKey(input)]);
+      const legacyResult = await options.client.query<{ artifact_json?: ArtifactRecord; artifactJson?: ArtifactRecord }>(
+        `SELECT artifact_json FROM ${tableName} WHERE artifact_key = $1`,
+        [legacyArtifactKey(input)]
+      );
+      const legacy = parseArtifactJson(getRecordField(legacyResult.rows[0], ["artifact_json", "artifactJson"]));
+      if (legacy && matchesArtifactLookup(legacy, input)) {
+        await options.client.query(`DELETE FROM ${tableName} WHERE artifact_key = $1`, [legacyArtifactKey(input)]);
+      }
     }
   };
 };

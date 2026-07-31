@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -1589,13 +1589,10 @@ describe("agent runtime", () => {
           compactedWasDurable =
             persisted?.compactions?.length === 1 &&
             JSON.stringify(persisted.messages) === JSON.stringify(input.messages);
-          expect(input.messages[0]).toMatchObject({
-            role: "assistant",
-            parts: [{
-              type: "text",
-              text: expect.stringContaining("[Compacted prior conversation]")
-            }]
-          });
+          expect(input.messages[0]?.role).toBe("assistant");
+          const summaryPart = input.messages[0]?.parts[0];
+          expect(summaryPart?.type).toBe("text");
+          expect(summaryPart?.type === "text" ? summaryPart.text : "").toContain("[Compacted prior conversation]");
           return {
             messages: [createTextMessage("assistant", "compacted answer")],
             text: "compacted answer",
@@ -1892,6 +1889,75 @@ describe("agent runtime", () => {
 
     expect(sawApproval).toBe(true);
     expect(resumed.status).toBe("completed");
+  });
+
+  it("resolves approval ids by provider without removing another provider's request", async () => {
+    const agent = createAgent({
+      model: createLanguageModel({
+        async generate() {
+          return {
+            messages: [{
+              role: "assistant",
+              parts: [{
+                type: "provider-data",
+                provider: "azure-openai",
+                data: {
+                  type: "mcp_approval_request",
+                  id: "shared-id",
+                  arguments: "{}",
+                  name: "azure_action"
+                }
+              }]
+            }],
+            finishReason: "stop"
+          };
+        }
+      }),
+      maxSteps: 2
+    });
+    const state = {
+      schemaVersion: 1,
+      runId: "provider-scoped-approvals",
+      provider: "test",
+      modelId: "agent-model",
+      status: "suspended",
+      messages: [createTextMessage("user", "Continue")],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 2,
+      outputText: "",
+      pendingApprovals: [
+        {
+          provider: "openai",
+          id: "shared-id",
+          arguments: "{}",
+          name: "openai_action",
+          rawData: { type: "mcp_approval_request", id: "shared-id" }
+        },
+        {
+          provider: "azure-openai",
+          id: "shared-id",
+          arguments: "{}",
+          name: "azure_action",
+          rawData: { type: "mcp_approval_request", id: "shared-id" }
+        }
+      ]
+    } as AgentRunState;
+
+    const resumed = await resumeAgent(agent, {
+      state,
+      approvals: [{
+        provider: "openai",
+        approvalRequestId: "shared-id",
+        approve: true
+      }]
+    });
+
+    expect(resumed.status).toBe("waiting_approval");
+    expect(resumed.state.pendingApprovals).toEqual([
+      expect.objectContaining({ provider: "azure-openai", id: "shared-id" })
+    ]);
   });
 
   it("builds reusable approval response parts and messages", () => {
@@ -2742,6 +2808,8 @@ describe("agent runtime", () => {
     };
     expect(saved.runId).toBe(result.state.runId);
     expect(saved.outputText).toBe("hello world");
+    expect((await stat(path.join(directory, `${encodeURIComponent(result.state.runId)}.json`))).mode & 0o777)
+      .toBe(0o600);
     await expect(Promise.resolve(store.findByIdempotencyKey?.("missing-key"))).resolves.toBeUndefined();
     await expect(Promise.resolve(store.findByParentRunId?.("missing-parent"))).resolves.toEqual([]);
   });

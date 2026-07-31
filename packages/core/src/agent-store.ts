@@ -5,6 +5,7 @@ import path from "node:path";
 import { normalizeAgentRunState } from "./agent-state.js";
 import { ConflictError, ValidationError } from "./errors.js";
 import { assertPostgresClient } from "./postgres-client.js";
+import { ensurePrivateDirectory, writePrivateFile } from "./store-security.js";
 import type {
   AgentMemoryContext,
   AgentMemoryStore,
@@ -488,15 +489,16 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       return states;
     },
     async claimIdempotencyKey(state) {
-      await fs.mkdir(options.directory, { recursive: true });
+      await ensurePrivateDirectory(options.directory);
       const scope = effectiveScope(state.scope);
       const normalized = normalizeAgentRunState({ ...state, ...(scope ? { scope } : {}) });
       try {
-        await fs.writeFile(idempotencyPath(state.idempotencyKey, scope), JSON.stringify(normalized, null, 2), {
-          encoding: "utf8",
-          flag: "wx"
-        });
-        await fs.writeFile(runPath(normalized.runId, scope), JSON.stringify(normalized, null, 2), "utf8");
+        await writePrivateFile(
+          idempotencyPath(state.idempotencyKey, scope),
+          JSON.stringify(normalized, null, 2),
+          { flag: "wx" }
+        );
+        await writePrivateFile(runPath(normalized.runId, scope), JSON.stringify(normalized, null, 2));
         return { claimed: true, state: normalized };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
@@ -510,7 +512,7 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       }
     },
     async save(state, saveOptions) {
-      await fs.mkdir(options.directory, { recursive: true });
+      await ensurePrivateDirectory(options.directory);
       const scope = effectiveScope(state.scope);
       const current = await load(state.runId, scope);
       assertExpectedRevision(current, saveOptions?.expectedRevision);
@@ -522,9 +524,9 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
         }
       }
       const stored = { ...normalized, ...(scope ? { scope } : {}) };
-      await fs.writeFile(runPath(normalized.runId, scope), JSON.stringify(stored, null, 2), "utf8");
+      await writePrivateFile(runPath(normalized.runId, scope), JSON.stringify(stored, null, 2));
       if (normalized.idempotencyKey) {
-        await fs.writeFile(idempotencyPath(normalized.idempotencyKey, scope), JSON.stringify(stored, null, 2), "utf8");
+        await writePrivateFile(idempotencyPath(normalized.idempotencyKey, scope), JSON.stringify(stored, null, 2));
       }
     },
     async delete(runId, scope) {
@@ -591,19 +593,19 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
     async acquireLease(runId, leaseOptions, scope) {
       validateLeaseOptions(leaseOptions);
       if (!await load(runId, scope)) return undefined;
-      await fs.mkdir(options.directory, { recursive: true });
+      await ensurePrivateDirectory(options.directory);
       const file = leasePath(runId, scope);
       const now = leaseOptions.now ?? Date.now();
       const lease = { runId, ownerId: leaseOptions.ownerId, expiresAt: now + leaseOptions.ttlMs };
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-          await fs.writeFile(file, JSON.stringify(lease), { encoding: "utf8", flag: "wx" });
+          await writePrivateFile(file, JSON.stringify(lease), { flag: "wx" });
           return lease;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
           const current = JSON.parse(await fs.readFile(file, "utf8")) as AgentRunLease;
           if (current.ownerId === leaseOptions.ownerId) {
-            await fs.writeFile(file, JSON.stringify(lease), "utf8");
+            await writePrivateFile(file, JSON.stringify(lease));
             return lease;
           }
           if (current.expiresAt > now) return undefined;
@@ -620,7 +622,7 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
         const current = JSON.parse(await fs.readFile(file, "utf8")) as AgentRunLease;
         if (current.ownerId !== leaseOptions.ownerId || current.expiresAt <= now) return undefined;
         const lease = { runId, ownerId: leaseOptions.ownerId, expiresAt: now + leaseOptions.ttlMs };
-        await fs.writeFile(file, JSON.stringify(lease), "utf8");
+        await writePrivateFile(file, JSON.stringify(lease));
         return lease;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -666,15 +668,19 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       const current = await this.loadToolCall?.(entry.runId, entry.toolCallId, entry.scope);
       assertJournalRevision(current, journalOptions?.expectedRevision);
       const next = nextJournalEntry(entry, journalOptions);
-      await fs.writeFile(file, JSON.stringify(next, null, 2), "utf8");
+      await writePrivateFile(file, JSON.stringify(next, null, 2));
       return next;
     },
     async claimToolExecution(entry) {
-      await fs.mkdir(options.directory, { recursive: true });
+      await ensurePrivateDirectory(options.directory);
       if (!await load(entry.runId, entry.scope)) throw new ValidationError("Cannot journal a tool call for an unknown run.");
       const next = nextJournalEntry({ ...entry, status: "running", revision: 0 });
       try {
-        await fs.writeFile(toolPath(entry.runId, entry.toolCallId, entry.scope), JSON.stringify(next, null, 2), { encoding: "utf8", flag: "wx" });
+        await writePrivateFile(
+          toolPath(entry.runId, entry.toolCallId, entry.scope),
+          JSON.stringify(next, null, 2),
+          { flag: "wx" }
+        );
         return { claimed: true, entry: next };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -733,11 +739,10 @@ export const createFileAgentMemoryStore = (options: {
       }
     },
     async save(context) {
-      await fs.mkdir(options.directory, { recursive: true });
-      await fs.writeFile(
+      await ensurePrivateDirectory(options.directory);
+      await writePrivateFile(
         path.join(options.directory, fileNameForAgentStoreKey(keyFor(context))),
-        JSON.stringify(selectMessages(context.state), null, 2),
-        "utf8"
+        JSON.stringify(selectMessages(context.state), null, 2)
       );
     }
   };

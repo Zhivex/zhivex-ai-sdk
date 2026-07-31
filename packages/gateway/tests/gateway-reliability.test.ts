@@ -523,6 +523,163 @@ describe("gateway reliability", () => {
     expect(generate).toHaveBeenCalledTimes(1);
   });
 
+  it("bounds attempt and route observers and aborts their observer signals", async () => {
+    let attemptSignal: AbortSignal | undefined;
+    let routeSignal: AbortSignal | undefined;
+    let resolveAttemptAborted!: () => void;
+    let resolveRouteAborted!: () => void;
+    const attemptAborted = new Promise<void>((resolve) => {
+      resolveAttemptAborted = resolve;
+    });
+    const routeAborted = new Promise<void>((resolve) => {
+      resolveRouteAborted = resolve;
+    });
+    const gateway = createGateway({
+      adapters: {
+        openai: createAdapter(
+          async () => ({ text: "success" }),
+          agentCapabilities()
+        )
+      },
+      observerTimeoutMs: 50,
+      onAttempt(attempt) {
+        attemptSignal = attempt.abortSignal;
+        attempt.abortSignal.addEventListener("abort", resolveAttemptAborted, {
+          once: true
+        });
+        return new Promise<void>(() => undefined);
+      },
+      onAgentRoute(selection) {
+        routeSignal = selection.abortSignal;
+        selection.abortSignal.addEventListener("abort", resolveRouteAborted, {
+          once: true
+        });
+        return new Promise<void>(() => undefined);
+      }
+    });
+
+    const resultPromise = gateway.runAgent({
+      primary: { provider: "openai", modelId: "observer-model" },
+      prompt: "finish despite unavailable telemetry"
+    });
+    const firstCompletion = await Promise.race([
+      resultPromise.then(() => "result"),
+      attemptAborted.then(() => "observer-timeout")
+    ]);
+    const result = await resultPromise;
+
+    expect(firstCompletion).toBe("result");
+    expect(result.outputText).toBe("success");
+    await Promise.all([attemptAborted, routeAborted]);
+    expect(attemptSignal?.aborted).toBe(true);
+    expect(routeSignal?.aborted).toBe(true);
+  });
+
+  it("enforces fallback, retry, total-attempt, target, and cost limits", async () => {
+    const generate = vi.fn(async () => {
+      throw new ProviderHTTPError("retry later", 503);
+    });
+    const limitedGateway = createGateway({
+      adapters: {
+        openai: createAdapter(generate)
+      },
+      maxRetries: 1,
+      maxTotalAttempts: 1,
+      retryBackoffMs: 0
+    });
+
+    await expect(
+      limitedGateway.generate({
+        ...request,
+        primary: { provider: "openai", modelId: "limited-model" }
+      })
+    ).rejects.toThrow("maximum of 1 provider attempts");
+    expect(generate).toHaveBeenCalledTimes(1);
+
+    const gateway = createGateway({
+      adapters: {
+        openai: createAdapter(async () => ({ text: "unused" }))
+      }
+    });
+    const tooManyFallbacks = Array.from({ length: 9 }, (_, index) => ({
+      provider: "openai" as const,
+      modelId: `fallback-${index}`
+    }));
+
+    await expect(
+      gateway.generate({
+        ...request,
+        primary: { provider: "openai", modelId: "primary" },
+        fallbacks: tooManyFallbacks
+      })
+    ).rejects.toThrow("configured maximum is 8");
+    await expect(
+      gateway.generate({
+        ...request,
+        primary: { provider: "openai", modelId: "bad\nmodel" }
+      })
+    ).rejects.toThrow("without control characters");
+    await expect(
+      gateway.generate({
+        ...request,
+        primary: { provider: "openai", modelId: "primary" },
+        maxCostPer1kTokens: Number.POSITIVE_INFINITY
+      })
+    ).rejects.toThrow("finite non-negative");
+
+    const invalidRetryGateway = createGateway({
+      adapters: {
+        openai: createAdapter(async () => ({ text: "unused" }))
+      },
+      maxRetries: 6
+    });
+    await expect(
+      invalidRetryGateway.generate({
+        ...request,
+        primary: { provider: "openai", modelId: "primary" }
+      })
+    ).rejects.toThrow("between 0 and 5");
+  });
+
+  it("aborts a provider stream that exceeds the idle timeout after its first event", async () => {
+    let observedSignal: AbortSignal | undefined;
+    const stream = vi.fn(async (input: ModelGenerateInput) => {
+      observedSignal = input.abortSignal;
+      return (async function* () {
+        yield { type: "text-delta" as const, textDelta: "started" };
+        await new Promise<void>((_resolve, reject) => {
+          const rejectWithAbort = () =>
+            reject(
+              input.abortSignal?.reason ??
+                new DOMException("Aborted", "AbortError")
+            );
+          if (input.abortSignal?.aborted) {
+            rejectWithAbort();
+          } else {
+            input.abortSignal?.addEventListener("abort", rejectWithAbort, {
+              once: true
+            });
+          }
+        });
+      })();
+    });
+    const gateway = createGateway({
+      adapters: {
+        openai: createStreamingAdapter(stream)
+      },
+      streamIdleTimeoutMs: 10,
+      maxRetries: 0
+    });
+
+    const result = gateway.streamText({
+      ...request,
+      primary: { provider: "openai", modelId: "idle-stream" }
+    });
+
+    await expect(result.collect()).rejects.toThrow(/idle/i);
+    expect(observedSignal?.aborted).toBe(true);
+  });
+
   it("stops retry and fallback when the caller aborts during backoff", async () => {
     const controller = new AbortController();
     const primaryGenerate = vi.fn(async () => {

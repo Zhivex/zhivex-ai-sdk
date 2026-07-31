@@ -2,7 +2,10 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   ValidationError,
+  assertTrustedEndpoint,
   normalizeFinishReason,
+  readErrorBodyWithLimit,
+  readJsonWithLimit,
   streamSSE,
   withRetry,
   withTimeoutSignal,
@@ -16,6 +19,7 @@ export interface DeepSeekClientsOptions {
   baseURL?: string;
   betaBaseURL?: string;
   fetch?: typeof globalThis.fetch;
+  allowUnsafeEndpoints?: boolean;
 }
 
 export type DeepSeekFIMModel = "deepseek-v4-flash" | "deepseek-v4-pro";
@@ -124,7 +128,7 @@ const assertResponseOk = async (response: Response, operation: string) => {
     return;
   }
 
-  const responseBody = await response.text();
+  const responseBody = await readErrorBodyWithLimit(response);
   throw new ProviderHTTPError(`DeepSeek ${operation} request failed with status ${response.status}.`, response.status, {
     responseBody
   });
@@ -140,7 +144,11 @@ const requestJson = async (
   withRetry(async () => {
     const response = await fetcher(url, init);
     await assertResponseOk(response, operation);
-    return response.json();
+    return readJsonWithLimit<any>(response, {
+      maxBytes: 128 * 1024 * 1024,
+      provider: "deepseek",
+      endpoint: operation
+    });
   }, retryOptions);
 
 const normalizeUsage = (usage: any): TokenUsage | undefined =>
@@ -438,10 +446,23 @@ export const createDeepSeekClients = (options: DeepSeekClientsOptions = {}): Dee
     throw new ConfigurationError("Missing DeepSeek API key.");
   }
 
-  const configuredBaseURL = trimURL(options.baseURL ?? "https://api.deepseek.com");
+  const configuredBaseURL = trimURL(
+    assertTrustedEndpoint(options.baseURL ?? "https://api.deepseek.com", {
+      label: "DeepSeek clients baseURL",
+      protocols: ["https"],
+      allowUnsafe: options.allowUnsafeEndpoints
+    }).toString()
+  );
   const baseURL = configuredBaseURL.replace(/\/beta$/, "");
   const betaBaseURL = trimURL(
-    options.betaBaseURL ?? (configuredBaseURL.endsWith("/beta") ? configuredBaseURL : `${configuredBaseURL}/beta`)
+    assertTrustedEndpoint(
+      options.betaBaseURL ?? (configuredBaseURL.endsWith("/beta") ? configuredBaseURL : `${configuredBaseURL}/beta`),
+      {
+        label: "DeepSeek clients betaBaseURL",
+        protocols: ["https"],
+        allowUnsafe: options.allowUnsafeEndpoints
+      }
+    ).toString()
   );
   const fetcher = options.fetch ?? globalThis.fetch;
 
