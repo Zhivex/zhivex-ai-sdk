@@ -1093,6 +1093,99 @@ const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
 
 const isGemini3ProModel = (modelId: string) => /^gemini-3([.-].*)?pro([.-]|$)/.test(modelId);
 
+const usesCurrentGeminiRequestRules = (modelId: string) =>
+  modelId === "gemini-3.6-flash" || modelId === "gemini-3.5-flash-lite";
+
+const currentGeminiReasoningEfforts: NonNullable<ModelCapabilities["reasoningEfforts"]> = [
+  "minimal",
+  "low",
+  "medium",
+  "high"
+];
+
+const modelCapabilities = (
+  modelId: string,
+  baseCapabilities: ModelCapabilities = capabilities
+): ModelCapabilities =>
+  usesCurrentGeminiRequestRules(modelId)
+    ? {
+        ...baseCapabilities,
+        computerUse: false,
+        reasoningEfforts: [...currentGeminiReasoningEfforts],
+        agentCapabilities: baseCapabilities.agentCapabilities
+          ? {
+              ...baseCapabilities.agentCapabilities,
+              computerUse: false
+            }
+          : undefined
+      }
+    : baseCapabilities;
+
+const currentGeminiGenerationControlKeys = [
+  "temperature",
+  "topP",
+  "top_p",
+  "topK",
+  "top_k",
+  "candidateCount",
+  "candidate_count",
+  "frequencyPenalty",
+  "frequency_penalty",
+  "presencePenalty",
+  "presence_penalty"
+] as const;
+
+const firstUnsupportedGenerationControl = (...sources: unknown[]) => {
+  for (const source of sources) {
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+      continue;
+    }
+    for (const key of currentGeminiGenerationControlKeys) {
+      if ((source as Record<string, unknown>)[key] !== undefined) {
+        return key;
+      }
+    }
+  }
+  return undefined;
+};
+
+const hasAssistantPrefill = (messages: ModelMessage[]) =>
+  messages
+    .slice()
+    .reverse()
+    .find((message) => message.role !== "system" && message.parts.length > 0)?.role === "assistant";
+
+const assertCurrentGeminiGenerateInput = (
+  provider: "gemini" | "vertex",
+  modelId: string,
+  input: ModelGenerateInput
+) => {
+  if (!usesCurrentGeminiRequestRules(modelId)) {
+    return;
+  }
+
+  const providerOptions = input.providerOptions as Record<string, unknown> | undefined;
+  const unsupportedControl = firstUnsupportedGenerationControl(
+    input.temperature === undefined ? undefined : { temperature: input.temperature },
+    providerOptions,
+    providerOptions?.generationConfig,
+    providerOptions?.generation_config
+  );
+  if (unsupportedControl) {
+    throw new UnsupportedFeatureError(
+      `Provider "${provider}" does not support generation control "${unsupportedControl}" for model "${modelId}". ` +
+        "Remove temperature, topP/top_p, topK/top_k, candidateCount/candidate_count, and frequency/presence penalties; " +
+        "these models use provider-managed sampling."
+    );
+  }
+
+  if (hasAssistantPrefill(input.messages)) {
+    throw new UnsupportedFeatureError(
+      `Provider "${provider}" does not support assistant prefill for model "${modelId}".`
+    );
+  }
+};
+
 const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
   if (!input.reasoning) {
     return undefined;
@@ -1196,7 +1289,8 @@ class VertexContextCachesClient implements ContextCachesClient {
   constructor(
     private readonly baseURL: string,
     private readonly accessToken: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly assertModelLocation: (modelId: string) => void
   ) {}
 
   private headers() {
@@ -1211,6 +1305,7 @@ class VertexContextCachesClient implements ContextCachesClient {
   }
 
   async create(input: ContextCacheCreateInput): Promise<CachedContent> {
+    this.assertModelLocation(input.modelId);
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const response = await withRetry(
@@ -1289,7 +1384,8 @@ class VertexBatchesClient implements BatchesClient {
   constructor(
     private readonly baseURL: string,
     private readonly accessToken: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly assertModelLocation: (modelId: string) => void
   ) {}
 
   private headers() {
@@ -1299,6 +1395,7 @@ class VertexBatchesClient implements BatchesClient {
   }
 
   async create(input: BatchCreateInput): Promise<BatchJob> {
+    this.assertModelLocation(input.modelId);
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const response = await withRetry(
@@ -1527,14 +1624,16 @@ class VertexPredictionModel implements PredictionModel {
 
 class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
   readonly provider = "vertex";
-  readonly capabilities = capabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
     private readonly baseURL: string,
     private readonly accessToken: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {}
+  ) {
+    this.capabilities = modelCapabilities(modelId);
+  }
 
   private url(action: string) {
     return `${this.baseURL}/publishers/google/models/${this.modelId}:${action}`;
@@ -1547,6 +1646,7 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
   }
 
   async generate(input: ModelGenerateInput<VertexLanguageModelOptions>): Promise<GenerateResult> {
+    assertCurrentGeminiGenerateInput("vertex", this.modelId, input);
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
@@ -1588,6 +1688,7 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
   }
 
   async stream(input: ModelGenerateInput<VertexLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
+    assertCurrentGeminiGenerateInput("vertex", this.modelId, input);
     const { signal, cleanup } = withTimeoutSignal(input);
     const response = await withRetry(
       () =>
@@ -2247,14 +2348,16 @@ class VertexVideoGenerationModel implements VideoGenerationModel {
 
 class VertexGroundedLanguageModel implements GroundedLanguageModel {
   readonly provider = "vertex";
-  readonly capabilities = groundedCapabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
     private readonly baseURL: string,
     private readonly accessToken: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {}
+  ) {
+    this.capabilities = modelCapabilities(modelId, groundedCapabilities);
+  }
 
   private url() {
     return `${this.baseURL}/publishers/google/models/${this.modelId}:generateContent`;
@@ -2277,6 +2380,7 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<GroundedGenerateResult> {
+    assertCurrentGeminiGenerateInput("vertex", this.modelId, input as ModelGenerateInput);
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
@@ -2466,10 +2570,35 @@ export const createVertex = (
       : `https://${veoLocation}-aiplatform.googleapis.com/${apiVersion}/projects/${projectId}/locations/${veoLocation}`);
   const rawFetch = options.fetch ?? globalThis.fetch;
   const fetcher = createVertexAuthenticatedFetch(rawFetch, auth);
+  const assertModelLocation = (modelId: string) => {
+    if (options.baseURL || auth.type !== "bearer") {
+      return;
+    }
+    const supportedLocations =
+      modelId === "gemini-3.6-flash"
+        ? ["global"]
+        : modelId === "gemini-3.5-flash-lite"
+          ? ["global", "us", "eu"]
+          : undefined;
+    if (supportedLocations && !supportedLocations.includes(location)) {
+      throw new ConfigurationError(
+        `Vertex model "${modelId}" is not available in location "${location}". ` +
+          `Use ${supportedLocations.map((supportedLocation) => `"${supportedLocation}"`).join(", ")} or provide a custom baseURL.`
+      );
+    }
+  };
+  const languageModel = (modelId: string) => {
+    assertModelLocation(modelId);
+    return new VertexLanguageModel(modelId, baseURL, "", fetcher);
+  };
+  const groundedLanguageModel = (modelId: string) => {
+    assertModelLocation(modelId);
+    return new VertexGroundedLanguageModel(modelId, baseURL, "", fetcher);
+  };
 
   return createProviderAdapter({
     name: "vertex",
-    languageModel: (modelId) => new VertexLanguageModel(modelId, baseURL, "", fetcher),
+    languageModel,
     embeddingModel: (modelId) => new VertexEmbeddingModel(modelId, baseURL, "", fetcher),
     transcriptionModel: (modelId) => new VertexTranscriptionModel(modelId, baseURL, "", fetcher),
     speechModel: (modelId) => new VertexSpeechModel(modelId, baseURL, "", fetcher),
@@ -2486,9 +2615,9 @@ export const createVertex = (
         options.realtimeConnectionFactory,
         options.realtimeURL
       ),
-    groundedLanguageModel: (modelId) => new VertexGroundedLanguageModel(modelId, baseURL, "", fetcher),
-    caches: new VertexContextCachesClient(baseURL, "", fetcher),
-    batches: new VertexBatchesClient(baseURL, "", fetcher),
+    groundedLanguageModel,
+    caches: new VertexContextCachesClient(baseURL, "", fetcher, assertModelLocation),
+    batches: new VertexBatchesClient(baseURL, "", fetcher, assertModelLocation),
     predictionModel: (modelId) => new VertexPredictionModel(modelId, baseURL, "", fetcher),
     rawFetch
   });

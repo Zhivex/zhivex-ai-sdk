@@ -1283,6 +1283,145 @@ describe("gemini adapter", () => {
     });
   });
 
+  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+    "exposes and maps the supported reasoning levels for %s",
+    async (modelId) => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: { parts: [{ text: "hello from current gemini" }] }
+            }
+          ]
+        })
+      );
+
+      const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+      const model = provider(modelId);
+      expect(model.capabilities.reasoningEfforts).toEqual(["minimal", "low", "medium", "high"]);
+
+      await generateText({
+        model,
+        prompt: "hello",
+        reasoning: {
+          effort: modelId === "gemini-3.6-flash" ? "medium" : "minimal"
+        }
+      });
+
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+      const body = JSON.parse(String(requestInit.body)) as {
+        generationConfig: { thinkingConfig: { thinkingLevel: string } };
+      };
+      expect(body.generationConfig.thinkingConfig).toEqual({
+        thinkingLevel: modelId === "gemini-3.6-flash" ? "medium" : "minimal"
+      });
+    }
+  );
+
+  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+    "rejects deprecated sampling controls locally for %s",
+    async (modelId) => {
+      const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+      await expect(
+        generateText({
+          model: provider(modelId),
+          prompt: "hello",
+          temperature: 0.7
+        })
+      ).rejects.toThrow(`does not support generation control "temperature" for model "${modelId}"`);
+
+      await expect(
+        generateText({
+          model: provider(modelId),
+          prompt: "hello",
+          providerOptions: {
+            generation_config: {
+              top_p: 0.9
+            }
+          }
+        })
+      ).rejects.toThrow(`does not support generation control "top_p" for model "${modelId}"`);
+
+      await expect(
+        generateText({
+          model: provider(modelId),
+          prompt: "hello",
+          providerOptions: {
+            presencePenalty: 0.2
+          }
+        })
+      ).rejects.toThrow(`does not support generation control "presencePenalty" for model "${modelId}"`);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+    "rejects assistant prefill locally for %s",
+    async (modelId) => {
+      const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+      await expect(
+        generateText({
+          model: provider(modelId),
+          messages: [
+            { role: "user", parts: [{ type: "text", text: "Complete this." }] },
+            { role: "assistant", parts: [{ type: "text", text: "Prefill" }] }
+          ]
+        })
+      ).rejects.toThrow(`Provider "gemini" does not support assistant prefill for model "${modelId}".`);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it("enforces current Gemini request rules through the Interactions API", async () => {
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      createInteraction({
+        provider,
+        modelId: "gemini-3.6-flash",
+        input: "hello",
+        generationConfig: {
+          top_k: 40
+        }
+      })
+    ).rejects.toThrow('does not support generation control "top_k" for model "gemini-3.6-flash"');
+
+    await expect(
+      createInteraction({
+        provider,
+        modelId: "gemini-3.5-flash-lite",
+        input: "hello",
+        providerOptions: {
+          generationConfig: {
+            presencePenalty: 0.2
+          }
+        }
+      })
+    ).rejects.toThrow(
+      'does not support generation control "presencePenalty" for model "gemini-3.5-flash-lite"'
+    );
+
+    await expect(
+      createInteraction({
+        provider,
+        modelId: "gemini-3.5-flash-lite",
+        input: [
+          { type: "user_input", content: [{ type: "text", text: "Complete this." }] },
+          { type: "model_output", content: [{ type: "text", text: "Prefill" }] }
+        ]
+      })
+    ).rejects.toThrow(
+      'Provider "gemini" does not support model-output prefill for model "gemini-3.5-flash-lite".'
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects legacy reasoning budget tokens for Gemini 3 models", async () => {
     const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
 

@@ -132,6 +132,29 @@ describe("zhivex-ai CLI", () => {
     await expect(fs.readFile(path.join(directory, ".env.example"), "utf8")).resolves.toContain("KIMI_API_KEY=");
   });
 
+  it("scaffolds Gemini agents with the current stable Flash model", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-gemini-init-"), "gemini-agent");
+    const capture = createCapture();
+
+    const code = await runCli([
+      "init",
+      "agent",
+      "--dir",
+      directory,
+      "--provider",
+      "gemini"
+    ], capture.io);
+
+    expect(code).toBe(0);
+    expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+      ok: true,
+      provider: "gemini",
+      model: "gemini-3.6-flash"
+    });
+    const agentSource = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
+    expect(agentSource).toContain('model: provider("gemini-3.6-flash")');
+  });
+
   it("scaffolds and diagnoses a DeepSeek V4 agent project", async () => {
     const directory = path.join(await tempDir("zhivex-cli-deepseek-init-"), "deepseek-agent");
     const capture = createCapture();

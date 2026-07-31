@@ -9,7 +9,7 @@ const apiKey = process.env.VERTEX_API_KEY ?? process.env.GOOGLE_API_KEY;
 const projectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
 const location = process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION;
 const baseURL = process.env.VERTEX_BASE_URL;
-const textModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-3.5-flash";
+const textModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-3.6-flash";
 const embeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-005";
 const usableAccessToken = accessToken && (projectId || baseURL) ? accessToken : undefined;
 
@@ -30,7 +30,6 @@ describeIntegration("vertex adapter integration", () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-vertex-ok",
-      temperature: 0,
       maxTokens: 32
     });
 
@@ -42,7 +41,6 @@ describeIntegration("vertex adapter integration", () => {
     const result = streamText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-vertex-stream-ok",
-      temperature: 0,
       maxTokens: 32
     });
 
@@ -61,7 +59,6 @@ describeIntegration("vertex adapter integration", () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
-      temperature: 0,
       maxTokens: 32,
       maxSteps: 2,
       tools: {
@@ -89,7 +86,6 @@ describeIntegration("vertex adapter integration", () => {
     const result = await generateObject({
       model: provider()(textModelId),
       prompt: "Return a city-country pair for Buenos Aires, Argentina.",
-      temperature: 0,
       schema: z.object({
         city: z.string(),
         country: z.string()

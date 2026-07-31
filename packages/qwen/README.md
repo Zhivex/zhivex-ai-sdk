@@ -30,6 +30,30 @@ const qwen = createQwen({
 
 Supported region values are `singapore`, `beijing`, `hong-kong`, `tokyo`, `frankfurt`, and `virginia`. `baseURL`, `taskBaseURL`, and `realtimeURL` remain available for private gateways or an explicit regional endpoint.
 
+### Qwen 3.8 Max Preview (Token Plan)
+
+`qwen3.8-max-preview` is a preview model available only through QwenCloud Token Plan Personal or Team Edition in Singapore. Token Plan keys use the `sk-sp-` prefix; they are not interchangeable with pay-as-you-go keys, and the regular `dashscope-intl.aliyuncs.com` endpoint does not serve this model. Configure the dedicated Token Plan Base URL explicitly:
+
+```ts
+import {
+  createQwen,
+  QWEN_TOKEN_PLAN_BASE_URL
+} from "@zhivex-ai/qwen";
+
+const qwenTokenPlan = createQwen({
+  apiKey: process.env.QWEN_TOKEN_PLAN_API_KEY,
+  baseURL:
+    process.env.QWEN_TOKEN_PLAN_BASE_URL ??
+    QWEN_TOKEN_PLAN_BASE_URL
+});
+
+const model = qwenTokenPlan("qwen3.8-max-preview");
+```
+
+The adapter rejects `qwen3.8-max-preview` before fetch when `baseURL` is a pay-as-you-go, workspace, non-HTTPS, or otherwise non-Token-Plan endpoint. `QWEN_TOKEN_PLAN_BASE_URL` resolves to the QwenCloud Singapore endpoint `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1`; `baseURL` remains explicit so configuration can be managed through environment settings while the adapter validates it against the current QwenCloud contract.
+
+Token Plan terms limit these credentials to interactive use in programming and agent tools. Do not use a Token Plan key for automated scripts, application backends, scheduled jobs, or non-interactive batch processing; use QwenCloud pay-as-you-go with a supported production model for those workloads.
+
 ## Text, tools, and structured output
 
 The default `apiMode: "auto"` selects the protocol required by the request:
@@ -56,6 +80,17 @@ const result = await generateObject({
 ```
 
 Responses reasoning maps shared `effort` to `reasoning.effort` (`low` becomes Qwen `minimal`). Chat reasoning maps to `enable_thinking`; `budgetTokens` maps to `thinking_budget`.
+
+`qwen3.8-max-preview` has a stricter contract:
+
+- Thinking is always enabled. Shared `effort: "none"`, `providerOptions.enable_thinking: false`, and `providerOptions.reasoning_effort: "none"` are rejected before a request is sent.
+- Its native efforts are `low`, `medium`, and `xhigh`. OpenAI-compatible aliases are normalized as documented by Qwen: `minimal` → `low`, `high`/`max` → `xhigh`. The provider default is `xhigh` when no effort is supplied.
+- `reasoning.effort`/`providerOptions.reasoning_effort` cannot be combined with `reasoning.budgetTokens`/`providerOptions.thinking_budget`. Shared budgets must be positive and both paths enforce the model maximum of 262144; raw `thinking_budget` also accepts the documented value `0`.
+- Automatic mode uses Responses for ordinary text, images, local functions, and hosted tools. A thinking budget selects Chat Completions because `thinking_budget` is not available in Responses. For Chat requests, shared `maxTokens` is sent as `max_completion_tokens`.
+- Chat requests always send `preserve_thinking: true`, and reasoning returned by the adapter is kept as Qwen `reasoning_content` provider data so multi-turn and tool-call histories return it in the correct field. Setting `preserve_thinking: false` is rejected.
+- The model supports text, images, function calling, and built-in tools. It does not support native structured output or JSON mode. `generateObject({ mode: "native" })` is rejected through its capabilities; the default `auto` mode can still use prompted output with local schema validation.
+
+See QwenCloud's official [Token Plan quickstart](https://docs.qwencloud.com/token-plan/quickstart), [Token Plan terms](https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview), [OpenAI-compatible Chat contract](https://docs.qwencloud.com/api-reference/chat/openai-chat), and [Responses contract](https://docs.qwencloud.com/api-reference/chat/openai-responses).
 
 ### Hosted tools
 
@@ -195,7 +230,7 @@ Authenticated realtime connections use the package's Node/Bun `ws` transport by 
 
 ## Current catalog coverage
 
-The default catalog includes current text and multimodal Qwen families plus the specialized IDs wired above: `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, `qwen3.5-omni-plus-realtime`, `qwen3.5-ocr`, `tongyi-embedding-vision-plus` for international/Singapore, `qwen3-vl-embedding` for Beijing, `qwen3-rerank`, `qwen3-asr-flash`, `qwen3-tts-flash`, `qwen-image-2.0-pro`, and `wan2.7-t2v`.
+The default catalog includes current text and multimodal Qwen families plus the specialized IDs wired above: `qwen3.8-max-preview` for Token Plan, `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, `qwen3.5-omni-plus-realtime`, `qwen3.5-ocr`, `tongyi-embedding-vision-plus` for international/Singapore, `qwen3-vl-embedding` for Beijing, `qwen3-rerank`, `qwen3-asr-flash`, `qwen3-tts-flash`, `qwen-image-2.0-pro`, and `wan2.7-t2v`.
 
 Run opt-in live coverage with:
 

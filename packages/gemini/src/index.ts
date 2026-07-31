@@ -1286,6 +1286,135 @@ const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
 
 const isGemini3ProModel = (modelId: string) => /^gemini-3([.-].*)?pro([.-]|$)/.test(modelId);
 
+const usesCurrentGeminiRequestRules = (modelId: string) =>
+  modelId === "gemini-3.6-flash" || modelId === "gemini-3.5-flash-lite";
+
+const currentGeminiReasoningEfforts: NonNullable<ModelCapabilities["reasoningEfforts"]> = [
+  "minimal",
+  "low",
+  "medium",
+  "high"
+];
+
+const modelCapabilities = (
+  modelId: string,
+  baseCapabilities: ModelCapabilities = capabilities
+): ModelCapabilities =>
+  usesCurrentGeminiRequestRules(modelId)
+    ? {
+        ...baseCapabilities,
+        reasoningEfforts: [...currentGeminiReasoningEfforts]
+      }
+    : baseCapabilities;
+
+const currentGeminiGenerationControlKeys = [
+  "temperature",
+  "topP",
+  "top_p",
+  "topK",
+  "top_k",
+  "candidateCount",
+  "candidate_count",
+  "frequencyPenalty",
+  "frequency_penalty",
+  "presencePenalty",
+  "presence_penalty"
+] as const;
+
+const firstUnsupportedGenerationControl = (...sources: unknown[]) => {
+  for (const source of sources) {
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+      continue;
+    }
+    for (const key of currentGeminiGenerationControlKeys) {
+      if ((source as Record<string, unknown>)[key] !== undefined) {
+        return key;
+      }
+    }
+  }
+  return undefined;
+};
+
+const hasAssistantPrefill = (messages: ModelMessage[]) =>
+  messages
+    .slice()
+    .reverse()
+    .find((message) => message.role !== "system" && message.parts.length > 0)?.role === "assistant";
+
+const assertCurrentGeminiGenerateInput = (
+  provider: "gemini" | "vertex",
+  modelId: string,
+  input: ModelGenerateInput
+) => {
+  if (!usesCurrentGeminiRequestRules(modelId)) {
+    return;
+  }
+
+  const providerOptions = input.providerOptions as Record<string, unknown> | undefined;
+  const unsupportedControl = firstUnsupportedGenerationControl(
+    input.temperature === undefined ? undefined : { temperature: input.temperature },
+    providerOptions,
+    providerOptions?.generationConfig,
+    providerOptions?.generation_config
+  );
+  if (unsupportedControl) {
+    throw new UnsupportedFeatureError(
+      `Provider "${provider}" does not support generation control "${unsupportedControl}" for model "${modelId}". ` +
+        "Remove temperature, topP/top_p, topK/top_k, candidateCount/candidate_count, and frequency/presence penalties; " +
+        "these models use provider-managed sampling."
+    );
+  }
+
+  if (hasAssistantPrefill(input.messages)) {
+    throw new UnsupportedFeatureError(
+      `Provider "${provider}" does not support assistant prefill for model "${modelId}".`
+    );
+  }
+};
+
+const assertCurrentGeminiInteractionBody = (body: Record<string, unknown>) => {
+  const modelId = typeof body.model === "string" ? body.model : undefined;
+  if (!modelId || !usesCurrentGeminiRequestRules(modelId)) {
+    return;
+  }
+
+  const unsupportedControl = firstUnsupportedGenerationControl(
+    body,
+    body.generationConfig,
+    body.generation_config
+  );
+  if (unsupportedControl) {
+    throw new UnsupportedFeatureError(
+      `Provider "gemini" does not support generation control "${unsupportedControl}" for model "${modelId}". ` +
+        "Remove temperature, topP/top_p, topK/top_k, candidateCount/candidate_count, and frequency/presence penalties; " +
+        "these models use provider-managed sampling."
+    );
+  }
+
+  if (Array.isArray(body.input)) {
+    const latestInput = body.input
+      .slice()
+      .reverse()
+      .find(
+        (value) =>
+          value !== null &&
+          value !== undefined &&
+          (typeof value !== "object" || Array.isArray(value) || Object.keys(value as Record<string, unknown>).length > 0)
+      );
+    if (
+      latestInput &&
+      typeof latestInput === "object" &&
+      !Array.isArray(latestInput) &&
+      ((latestInput as Record<string, unknown>).type === "model_output" ||
+        (latestInput as Record<string, unknown>).role === "model")
+    ) {
+      throw new UnsupportedFeatureError(
+        `Provider "gemini" does not support model-output prefill for model "${modelId}". Use previousInteractionId for continuation.`
+      );
+    }
+  }
+};
+
 const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
   if (!input.reasoning) {
     return undefined;
@@ -1846,7 +1975,7 @@ class GeminiInteractionsClient implements InteractionsClient {
 
   private body(input: InteractionCreateInput, stream = false) {
     const tools = input.tools ? toToolSet(input.tools) : undefined;
-    return {
+    const body = {
       ...(input.modelId ? { model: input.modelId } : {}),
       ...(input.agent ? { agent: input.agent } : {}),
       input: input.input,
@@ -1863,6 +1992,8 @@ class GeminiInteractionsClient implements InteractionsClient {
       ...(stream ? { stream: true } : {}),
       ...(input.providerOptions ?? {})
     };
+    assertCurrentGeminiInteractionBody(body);
+    return body;
   }
 
   async create(input: InteractionCreateInput) {
@@ -2237,14 +2368,16 @@ class GeminiPredictionModel implements PredictionModel {
 
 class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
   readonly provider = "gemini";
-  readonly capabilities = capabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {}
+  ) {
+    this.capabilities = modelCapabilities(modelId);
+  }
 
   private url(action: string) {
     const separator = action.includes("?") ? "&" : "?";
@@ -2252,6 +2385,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
+    assertCurrentGeminiGenerateInput("gemini", this.modelId, input);
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
@@ -2293,6 +2427,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
   }
 
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
+    assertCurrentGeminiGenerateInput("gemini", this.modelId, input);
     const { signal, cleanup } = withTimeoutSignal(input);
     const response = await withRetry(
       () =>
@@ -2819,14 +2954,16 @@ class GeminiVideoGenerationModel implements VideoGenerationModel {
 
 class GeminiGroundedLanguageModel implements GroundedLanguageModel {
   readonly provider = "gemini";
-  readonly capabilities = groundedCapabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {}
+  ) {
+    this.capabilities = modelCapabilities(modelId, groundedCapabilities);
+  }
 
   async generate(input: {
     messages: ModelMessage[];
@@ -2839,6 +2976,7 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<GroundedGenerateResult> {
+    assertCurrentGeminiGenerateInput("gemini", this.modelId, input as ModelGenerateInput);
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {

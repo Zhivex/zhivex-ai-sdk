@@ -20,5 +20,5 @@ const customCatalog = createModelCatalog([
 ]);
 
 console.log(customCatalog.find("openai", "fast-chat"));
-console.log(defaultModelCatalog.find("gemini", "gemini-2.0-flash"));
+console.log(defaultModelCatalog.find("gemini", "gemini-3.6-flash"));
 console.log(defaultModelCatalog.list().map((entry) => `${entry.provider}:${entry.modelId}`));

@@ -6,7 +6,7 @@ import { createGemini } from "../src/index.js";
 
 const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const baseURL = process.env.GEMINI_BASE_URL;
-const textModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.1-flash-lite";
+const textModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.6-flash";
 const embeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "gemini-embedding-2";
 const liveModelId = process.env.GEMINI_INTEGRATION_LIVE_MODEL ?? "gemini-3.1-flash-live-preview";
 
@@ -23,7 +23,6 @@ describeIntegration("gemini adapter integration", () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-gemini-ok",
-      temperature: 0,
       maxTokens: 128
     });
 
@@ -35,7 +34,6 @@ describeIntegration("gemini adapter integration", () => {
     const result = streamText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-gemini-stream-ok",
-      temperature: 0,
       maxTokens: 128
     });
 
@@ -54,7 +52,6 @@ describeIntegration("gemini adapter integration", () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
-      temperature: 0,
       maxTokens: 128,
       maxSteps: 2,
       tools: {
@@ -82,7 +79,6 @@ describeIntegration("gemini adapter integration", () => {
     const result = await generateObject({
       model: provider()(textModelId),
       prompt: "Return a city-country pair for Buenos Aires, Argentina.",
-      temperature: 0,
       schema: z.object({
         city: z.string(),
         country: z.string()

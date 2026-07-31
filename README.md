@@ -1739,7 +1739,7 @@ Provider compatibility for the common `reasoning` option:
   - Gemini 3 models support `effort`
   - Gemini 2.5 and earlier models support `budgetTokens`
 - Qwen:
-  - supported on reasoning-capable model families such as `qwen3.7-plus`, `qwen3.7-max`, `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`
+  - supported on reasoning-capable model families such as `qwen3.8-max-preview`, `qwen3.7-plus`, `qwen3.7-max`, `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`
   - Responses maps `effort` to `reasoning.effort`; shared `low` maps to Qwen `minimal`
   - Chat Completions maps `effort` to `enable_thinking`, and `budgetTokens` to `thinking_budget`
   - automatic API routing selects Chat for token budgets, audio inputs, and structured output; hosted tools, OCR files, and response continuations use Responses
@@ -1853,7 +1853,7 @@ const gemini = createGemini({
 });
 
 const recipe = await generateObject({
-  model: gemini("gemini-3.5-flash"),
+  model: gemini("gemini-3.6-flash"),
   prompt: "Return JSON with title and servings.",
   mode: "native",
   schema: z.object({
@@ -2052,7 +2052,7 @@ const result = await generateText({
 });
 ```
 
-Qwen automatically selects between DashScope-compatible Responses and Chat Completions. Responses is used for hosted web search, web extraction, code interpreter, file search, remote MCP, image search, OCR file input, and response continuation; Chat is selected for structured output, audio input, `maxTokens`, or `reasoning.budgetTokens`. You can force a compatible path with `providerOptions.apiMode`. Current catalog examples prefer `qwen3.7-plus` for multimodal reasoning, `qwen3.7-max` for text reasoning, and `qwen-image-2.0-pro` for image generation. The default international endpoint uses `tongyi-embedding-vision-plus` for multimodal embeddings; `qwen3-vl-embedding` requires a Beijing workspace. Text reranking uses the DashScope-native endpoint so both the global international host and workspace-specific hosts work. Authenticated realtime sessions use a Node/Bun WebSocket transport by default.
+Qwen automatically selects between DashScope-compatible Responses and Chat Completions. Responses is used for hosted web search, web extraction, code interpreter, file search, remote MCP, image search, OCR file input, and response continuation; Chat is selected for structured output, audio input, `maxTokens`, or `reasoning.budgetTokens`. You can force a compatible path with `providerOptions.apiMode`. Current catalog examples include the Token Plan-only `qwen3.8-max-preview` for multimodal reasoning, `qwen3.7-plus` for pay-as-you-go multimodal reasoning, `qwen3.7-max` for text reasoning, and `qwen-image-2.0-pro` for image generation. Qwen 3.8 requires a dedicated `sk-sp-` key and the exported `QWEN_TOKEN_PLAN_BASE_URL`; the adapter rejects pay-as-you-go/workspace endpoints before fetch. Token Plan terms restrict those credentials to interactive programming and agent tools, so use a pay-as-you-go model for application backends, scripts, scheduled jobs, and batch processing. The default international endpoint uses `tongyi-embedding-vision-plus` for multimodal embeddings; `qwen3-vl-embedding` requires a Beijing workspace. Text reranking uses the DashScope-native endpoint so both the global international host and workspace-specific hosts work. Authenticated realtime sessions use a Node/Bun WebSocket transport by default.
 
 ```ts
 import { generateText } from "@zhivex-ai/sdk";
@@ -2123,7 +2123,7 @@ const tools = await createMcpToolSet(myMcpClient, {
 });
 
 const result = await generateText({
-  model: gemini("gemini-3.5-flash"),
+  model: gemini("gemini-3.6-flash"),
   prompt: "Use the MCP tools if needed.",
   tools
 });
@@ -2502,7 +2502,7 @@ const gemini = createGemini({
 });
 
 const summary = await generateText({
-  model: gemini("gemini-3.5-flash"),
+  model: gemini("gemini-3.6-flash"),
   messages: [
     {
       role: "user",
@@ -2615,7 +2615,7 @@ const file = await uploadFile({
 const store = await createFileSearchStore({ provider: gemini, displayName: "Docs" });
 
 await generateText({
-  model: gemini("gemini-3.5-flash"),
+  model: gemini("gemini-3.6-flash"),
   prompt: "Answer from the indexed docs and this URL.",
   tools: {
     docs: googleFileSearchTool([store.name]),
@@ -2625,19 +2625,19 @@ await generateText({
 
 await createContextCache({
   provider: gemini,
-  modelId: "gemini-3.5-flash",
+  modelId: "gemini-3.6-flash",
   contents: [{ role: "user", parts: [{ type: "file", data: file.uri ?? file.name, mediaType: "text/plain" }] }]
 });
 
 await createBatch({
   provider: gemini,
-  modelId: "gemini-3.5-flash",
+  modelId: "gemini-3.6-flash",
   requests: [{ request: { contents: [{ parts: [{ text: "Summarize this." }] }] } }]
 });
 
 const nearby = await createInteraction({
   provider: gemini,
-  modelId: "gemini-3.5-flash",
+  modelId: "gemini-3.6-flash",
   input: "Find well-reviewed cafes within walking distance.",
   store: false,
   tools: {
@@ -2704,7 +2704,7 @@ const productionVertex = createVertex({
 });
 
 await generateText({
-  model: vertex("gemini-3.5-flash"),
+  model: vertex("gemini-3.6-flash"),
   prompt: "Use the API-key quickstart path."
 });
 
@@ -2730,9 +2730,9 @@ Current Google model selection differs by platform:
 - Gemini managed-agent calls use the `agent` field with IDs such as `deep-research-preview-04-2026`, `deep-research-max-preview-04-2026`, and `antigravity-preview-05-2026`; they are not model IDs.
 - Gemini Developer API video helpers use `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview`, or `veo-3.1-lite-generate-preview`. Conversational video generation/editing uses the Interactions-only `gemini-omni-flash-preview`.
 - Vertex uses the Veo IDs `veo-3.1-generate-001`, `veo-3.1-fast-generate-001`, and `veo-3.1-lite-generate-001`. Do not copy the Gemini Developer API Veo `*-preview` IDs into Vertex examples.
-- Both catalogs prefer `gemini-3.5-flash`, `gemini-3.1-flash-lite`, the current Gemini 3 image models, and `gemini-embedding-2`. Imagen 4 is omitted because its Gemini API shutdown is scheduled for August 17, 2026 and Google Cloud already required migration away from it.
+- Both catalogs prefer `gemini-3.6-flash` for the current general-purpose Flash model and `gemini-3.5-flash-lite` for high-volume, low-cost work, while retaining `gemini-3.5-flash`, `gemini-3.1-flash-lite`, the current Gemini 3 image models, and `gemini-embedding-2`. The mutable `gemini-flash-latest` and `gemini-flash-lite-latest` IDs are accepted upstream, but stable IDs are required for reproducible routing and pricing; the catalog therefore keeps only Google's last explicit `gemini-flash-latest` mapping and does not infer a new alias target. Imagen 4 is omitted because its Gemini API shutdown is scheduled for August 17, 2026 and Google Cloud already required migration away from it.
 - Vertex defaults to `location: "global"`, which uses `aiplatform.googleapis.com`. Veo models created through `videoGenerationModel()` are routed from that global default to `us-central1`, where Veo 3.1 is available; explicit non-global locations and custom `baseURL` values are preserved. Use `us`, `eu`, or another regional endpoint only after checking model availability, data-residency requirements, and the non-global pricing/features for that model.
-- Catalog pricing for Gemini 3.5 Flash uses separate Standard global input, cached-input, and output text-token rates. It is not a blended estimate; non-global Vertex, audio/media, tools, agents, Batch/Flex, Priority, tuning, storage, and Provisioned Throughput prices are outside that catalog entry.
+- Catalog pricing for Gemini 3.6 Flash and Gemini 3.5 Flash-Lite uses separate Standard global input, cached-input, and output text-token rates. It is not a blended estimate; non-global Vertex, tools, agents, Batch/Flex, Priority, tuning, storage, and Provisioned Throughput prices are outside those catalog entries.
 
 Official references: [Gemini Interactions](https://ai.google.dev/gemini-api/docs/interactions-overview), [Gemini TTS and streaming](https://ai.google.dev/gemini-api/docs/speech-generation), [Google Maps grounding requirements](https://ai.google.dev/gemini-api/docs/maps-grounding), [Gemini models](https://ai.google.dev/gemini-api/docs/models), [Gemini deprecations](https://ai.google.dev/gemini-api/docs/deprecations), [Agent Platform model lifecycle](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions), and [Agent Platform locations](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations).
 
