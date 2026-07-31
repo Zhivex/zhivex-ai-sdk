@@ -367,7 +367,10 @@ export const createHttpTool = <TSchema extends z.ZodTypeAny>(
           endpoint: url.origin,
           abort: timeout.abort
         });
-        const boundedResponse = new Response(new Uint8Array(bytes), {
+        const responseBody = response.status === 204 || response.status === 205
+          ? null
+          : new Uint8Array(bytes);
+        const boundedResponse = new Response(responseBody, {
           status: response.status,
           statusText: response.statusText,
           headers: response.headers

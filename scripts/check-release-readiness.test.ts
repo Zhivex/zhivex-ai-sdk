@@ -273,4 +273,66 @@ describe("release readiness", () => {
       "@zhivex-ai/core@0.16.1: npm gitHead ffffffffffffffffffffffffffffffffffffffff; expected 0123456789abcdef0123456789abcdef01234567."
     );
   });
+
+  it("binds gitHead verification to the package batch selected before publishing", () => {
+    const previousGitHead = "f".repeat(40);
+    const publishedRegistry: Record<string, RegistryDocument> = {
+      "@zhivex-ai/core": {
+        versions: { "0.16.1": publishedVersion() },
+        "dist-tags": { latest: "0.16.1" }
+      },
+      "@zhivex-ai/sdk": {
+        versions: {
+          "0.15.1": {
+            ...publishedVersion({ dependencies: { "@zhivex-ai/core": "^0.16.1" } }),
+            gitHead: previousGitHead
+          }
+        },
+        "dist-tags": { latest: "0.15.1" }
+      }
+    };
+
+    const audit = auditRelease(
+      "main",
+      packages,
+      publishedRegistry,
+      "postpublish",
+      "latest",
+      releaseGitHead,
+      new Set(["@zhivex-ai/core@0.16.1"])
+    );
+
+    expect(audit.errors).toEqual([]);
+  });
+
+  it("checks prerelease dist-tags only for packages in the published batch", () => {
+    const prereleasePackages: PackageManifest[] = [
+      { name: "@zhivex-ai/core", version: "0.17.0-next.0" },
+      { name: "@zhivex-ai/sdk", version: "0.15.1", dependencies: { "@zhivex-ai/core": "^0.17.0-next.0" } }
+    ];
+    const publishedRegistry: Record<string, RegistryDocument> = {
+      "@zhivex-ai/core": {
+        versions: { "0.17.0-next.0": publishedVersion() },
+        "dist-tags": { latest: "0.16.1", next: "0.17.0-next.0" }
+      },
+      "@zhivex-ai/sdk": {
+        versions: {
+          "0.15.1": publishedVersion({ dependencies: { "@zhivex-ai/core": "^0.17.0-next.0" } })
+        },
+        "dist-tags": { latest: "0.15.1" }
+      }
+    };
+
+    const audit = auditRelease(
+      "main",
+      prereleasePackages,
+      publishedRegistry,
+      "postpublish",
+      "next",
+      releaseGitHead,
+      new Set(["@zhivex-ai/core@0.17.0-next.0"])
+    );
+
+    expect(audit.errors).toEqual([]);
+  });
 });

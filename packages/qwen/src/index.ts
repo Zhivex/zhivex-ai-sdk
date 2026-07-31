@@ -6,6 +6,7 @@ import {
   ConfigurationError,
   decodeBase64WithLimit,
   ProviderHTTPError,
+  ValidationError,
   assertTrustedEndpoint,
   readBodyWithLimit,
   readErrorBodyWithLimit,
@@ -265,11 +266,17 @@ const openQwenRealtimeConnection: RealtimeConnectionFactory = async (url, header
   if (options?.signal?.aborted) {
     throw new Error("Qwen realtime connection aborted.");
   }
+  const maxIncomingFrameBytes = options?.maxIncomingFrameBytes ?? QWEN_REALTIME_MAX_MESSAGE_BYTES;
+  if (!Number.isSafeInteger(maxIncomingFrameBytes) || maxIncomingFrameBytes <= 0) {
+    throw new ValidationError(
+      'The realtime "maxIncomingFrameBytes" option must be a positive safe integer.'
+    );
+  }
 
   const { default: WebSocket } = await import("ws");
   const socket = options?.subprotocols?.length
-    ? new WebSocket(url, options.subprotocols, { headers, maxPayload: QWEN_REALTIME_MAX_MESSAGE_BYTES })
-    : new WebSocket(url, { headers, maxPayload: QWEN_REALTIME_MAX_MESSAGE_BYTES });
+    ? new WebSocket(url, options.subprotocols, { headers, maxPayload: maxIncomingFrameBytes })
+    : new WebSocket(url, { headers, maxPayload: maxIncomingFrameBytes });
 
   await new Promise<void>((resolve, reject) => {
     let finished = false;

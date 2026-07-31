@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 
 type DependencyMap = Record<string, string>;
 
@@ -51,6 +52,7 @@ export interface VerifyReleaseOptions {
   sleep?: (delayMs: number) => Promise<void>;
   onRetry?: (message: string) => void;
   expectedGitHead?: string;
+  expectedGitHeadPackages?: ReadonlySet<string>;
 }
 
 const internalPrefix = "@zhivex-ai/";
@@ -176,7 +178,8 @@ export const auditRelease = (
   registryByName: Record<string, RegistryDocument>,
   mode: ReleaseMode = "prepublish",
   distTag: ReleaseDistTag = "latest",
-  expectedGitHead?: string
+  expectedGitHead?: string,
+  expectedGitHeadPackages?: ReadonlySet<string>
 ): ReleaseAudit => {
   const errors: string[] = [];
   const pending: string[] = [];
@@ -191,6 +194,8 @@ export const auditRelease = (
     const registry = registryByName[manifest.name] ?? {};
     const registryVersions = Object.keys(registry.versions ?? {});
     const localIsPublished = registryVersions.includes(manifest.version);
+    const packageVersion = `${manifest.name}@${manifest.version}`;
+    const packageIsInReleaseBatch = !expectedGitHeadPackages || expectedGitHeadPackages.has(packageVersion);
     const highestStable = highestStableVersion(registryVersions);
     const latest = registry["dist-tags"]?.latest;
 
@@ -237,6 +242,7 @@ export const auditRelease = (
     if (
       mode === "postpublish" &&
       localIsPublished &&
+      packageIsInReleaseBatch &&
       registry["dist-tags"]?.[distTag] !== manifest.version
     ) {
       errors.push(
@@ -261,7 +267,11 @@ export const auditRelease = (
           `${manifest.name}@${manifest.version}: npm metadata is missing a trusted publishing provenance attestation.`
         );
       }
-      if (expectedGitHead && publishedManifest.gitHead !== expectedGitHead) {
+      if (
+        expectedGitHead &&
+        packageIsInReleaseBatch &&
+        publishedManifest.gitHead !== expectedGitHead
+      ) {
         errors.push(
           `${manifest.name}@${manifest.version}: npm gitHead ${publishedManifest.gitHead ?? "is missing"}; expected ${expectedGitHead}.`
         );
@@ -331,7 +341,8 @@ export const verifyReleaseWithRetry = async ({
   retryDelayMs = postpublishRegistryRetryDelayMs,
   sleep = wait,
   onRetry,
-  expectedGitHead
+  expectedGitHead,
+  expectedGitHeadPackages
 }: VerifyReleaseOptions): Promise<ReleaseAudit> => {
   const attempts = mode === "postpublish" ? Math.max(1, maxAttempts) : 1;
 
@@ -343,7 +354,8 @@ export const verifyReleaseWithRetry = async ({
         await loadRegistry(),
         mode,
         distTag,
-        expectedGitHead
+        expectedGitHead,
+        expectedGitHeadPackages
       );
       if (mode !== "postpublish" || !retryablePostpublishAudit(audit) || attempt === attempts) {
         return audit;
@@ -407,6 +419,8 @@ const loadRegistryDocument = async (name: string): Promise<RegistryDocument> => 
 const run = async () => {
   const mode = process.argv.includes("--postpublish") ? "postpublish" : "prepublish";
   const distTagArgument = process.argv.find((argument) => argument.startsWith("--tag="));
+  const releaseBatchArgument = process.argv.find((argument) => argument.startsWith("--release-batch-file="));
+  const releaseBatchFile = releaseBatchArgument?.slice("--release-batch-file=".length);
   const distTag = (distTagArgument?.slice("--tag=".length) ?? "latest") as ReleaseDistTag;
   if (distTag !== "latest" && distTag !== "next") {
     throw new Error(`Unsupported release dist-tag: ${distTag}.`);
@@ -421,12 +435,16 @@ const run = async () => {
   const expectedGitHead = execFileSync("git", ["rev-parse", "HEAD"], {
     encoding: "utf8"
   }).trim();
+  const expectedGitHeadPackages = mode === "postpublish" && releaseBatchFile
+    ? new Set(JSON.parse(readFileSync(releaseBatchFile, "utf8")) as string[])
+    : undefined;
   const audit = await verifyReleaseWithRetry({
     branch,
     packages,
     mode,
     distTag,
     expectedGitHead: mode === "postpublish" ? expectedGitHead : undefined,
+    expectedGitHeadPackages,
     loadRegistry: async () => {
       const registryEntries = await Promise.all(
         packages.map(async (manifest) => [manifest.name, await loadRegistryDocument(manifest.name)] as const)
@@ -457,6 +475,9 @@ const run = async () => {
     }
     process.exitCode = 1;
     return;
+  }
+  if (mode === "prepublish" && releaseBatchFile) {
+    writeFileSync(releaseBatchFile, `${JSON.stringify(audit.pending)}\n`);
   }
   console.log(`Release ${mode} check passed on ${branch}.`);
 };

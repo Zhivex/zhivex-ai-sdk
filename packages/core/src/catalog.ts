@@ -52,11 +52,11 @@ export const defaultModelCatalog = createModelCatalog([
   {
     provider: "openai",
     modelId: "gpt-5.6-terra",
-    inputCostPer1kTokens: 0.0025,
-    cachedInputCostPer1kTokens: 0.00025,
-    cacheWriteCostPer1kTokens: 0.003125,
-    outputCostPer1kTokens: 0.015,
-    costPer1kTokens: 0.0025,
+    inputCostPer1kTokens: 0.002,
+    cachedInputCostPer1kTokens: 0.0002,
+    cacheWriteCostPer1kTokens: 0.0025,
+    outputCostPer1kTokens: 0.012,
+    costPer1kTokens: 0.002,
     longContextPricing: {
       inputTokenThreshold: 272_000,
       inputMultiplier: 2,
@@ -67,11 +67,11 @@ export const defaultModelCatalog = createModelCatalog([
   {
     provider: "openai",
     modelId: "gpt-5.6-luna",
-    inputCostPer1kTokens: 0.001,
-    cachedInputCostPer1kTokens: 0.0001,
-    cacheWriteCostPer1kTokens: 0.00125,
-    outputCostPer1kTokens: 0.006,
-    costPer1kTokens: 0.001,
+    inputCostPer1kTokens: 0.0002,
+    cachedInputCostPer1kTokens: 0.00002,
+    cacheWriteCostPer1kTokens: 0.00025,
+    outputCostPer1kTokens: 0.0012,
+    costPer1kTokens: 0.0002,
     longContextPricing: {
       inputTokenThreshold: 272_000,
       inputMultiplier: 2,
