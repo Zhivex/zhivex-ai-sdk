@@ -196,7 +196,7 @@ const providerTemplates = {
     packageVersion: "0.9.0",
     factoryName: "createGemini",
     envName: "GEMINI_API_KEY",
-    defaultModel: "gemini-3.5-flash"
+    defaultModel: "gemini-3.6-flash"
   },
   kimi: {
     packageName: "@zhivex-ai/kimi",

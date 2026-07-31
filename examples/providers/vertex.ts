@@ -10,7 +10,7 @@ const vertex = createVertex({
 });
 
 const result = await generateText({
-  model: vertex("gemini-3.5-flash"),
+  model: vertex("gemini-3.6-flash"),
   prompt: "Say hello from the Vertex adapter."
 });
 

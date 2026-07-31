@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.0.1
+
+### Patch Changes
+
+- Add production-ready support for Gemini 3.6 Flash, Gemini 3.5 Flash-Lite, and the Token Plan-only Qwen 3.8 Max Preview, including model-specific request validation, catalog metadata, documentation, examples, and regression coverage.
+
 ## 1.0.0
 
 ### Major Changes

@@ -107,7 +107,7 @@ const anthropicReasoning = anthropicModelCapabilities.reasoningEfforts?.includes
 
 const geminiApiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const geminiBaseURL = process.env.GEMINI_BASE_URL;
-const geminiTextModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.1-flash-lite";
+const geminiTextModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.6-flash";
 const geminiEmbeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "gemini-embedding-2";
 
 const openRouterApiKey = process.env.OPENROUTER_API_KEY;
@@ -141,7 +141,7 @@ const vertexApiKey = process.env.VERTEX_API_KEY ?? process.env.GOOGLE_API_KEY;
 const vertexProjectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
 const vertexLocation = process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION;
 const vertexBaseURL = process.env.VERTEX_BASE_URL;
-const vertexTextModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-3.5-flash";
+const vertexTextModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-3.6-flash";
 const vertexEmbeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-005";
 const usableVertexAccessToken = vertexAccessToken && (vertexProjectId || vertexBaseURL) ? vertexAccessToken : undefined;
 
@@ -452,11 +452,18 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: geminiApiKey,
               baseURL: geminiBaseURL
             }).embeddingModel(geminiEmbeddingModelId),
+          omitTemperature: /^gemini-3\.(?:6-flash|5-flash-lite)$/.test(geminiTextModelId),
           supports: geminiSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
-          })
+          }),
+          // Gemini 3.x counts thinking tokens against maxOutputTokens. The
+          // generic 32/64-token integration limits can therefore finish before
+          // any visible text or tool call is emitted.
+          textMaxTokens: 128,
+          toolMaxTokens: 128,
+          reasoningMaxTokens: 256
         } satisfies IntegrationLanguageProvider
       ]
     : []),
@@ -591,11 +598,15 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               location: vertexLocation,
               baseURL: vertexBaseURL
             }).embeddingModel(vertexEmbeddingModelId),
+          omitTemperature: /^gemini-3\.(?:6-flash|5-flash-lite)$/.test(vertexTextModelId),
           supports: vertexSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
             toolName
-          })
+          }),
+          textMaxTokens: 128,
+          toolMaxTokens: 128,
+          reasoningMaxTokens: 256
         } satisfies IntegrationLanguageProvider
       ]
     : [])

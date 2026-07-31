@@ -3052,13 +3052,22 @@ describe("core helpers", () => {
   });
 
   it("tracks current Gemini Developer API and Vertex model IDs", () => {
-    expect(defaultModelCatalog.find("gemini", "gemini-3.5-flash")).toMatchObject({
-      modelId: "gemini-3.5-flash",
+    expect(defaultModelCatalog.find("gemini", "gemini-3.6-flash")).toMatchObject({
+      modelId: "gemini-3.6-flash",
       inputCostPer1kTokens: 0.0015,
       cachedInputCostPer1kTokens: 0.00015,
-      outputCostPer1kTokens: 0.009,
+      outputCostPer1kTokens: 0.0075,
       recommendedFor: expect.arrayContaining(["reasoning", "speed", "tools", "vision"])
     });
+    expect(defaultModelCatalog.find("gemini", "gemini-flash-latest")?.modelId).toBe("gemini-3.5-flash");
+    expect(defaultModelCatalog.find("gemini", "gemini-3.5-flash-lite")).toMatchObject({
+      modelId: "gemini-3.5-flash-lite",
+      inputCostPer1kTokens: 0.0003,
+      cachedInputCostPer1kTokens: 0.00003,
+      outputCostPer1kTokens: 0.0025,
+      recommendedFor: expect.arrayContaining(["reasoning", "speed", "tools", "vision"])
+    });
+    expect(defaultModelCatalog.find("gemini", "gemini-flash-lite-latest")).toBeUndefined();
     expect(defaultModelCatalog.find("gemini", "gemini-3.1-flash-lite-image")).toMatchObject({
       modelId: "gemini-3.1-flash-lite-image",
       recommendedFor: expect.arrayContaining(["speed", "vision"])
@@ -3085,6 +3094,7 @@ describe("core helpers", () => {
       cachedInputCostPer1kTokens: 0.00015,
       outputCostPer1kTokens: 0.009
     });
+    expect(defaultModelCatalog.find("vertex", "gemini-flash-lite-latest")).toBeUndefined();
     expect(defaultModelCatalog.find("vertex", "gemini-3.1-flash-lite")?.modelId).toBe("gemini-3.1-flash-lite");
     expect(defaultModelCatalog.find("vertex", "gemini-3.1-flash-lite-image")?.modelId).toBe(
       "gemini-3.1-flash-lite-image"
@@ -3107,6 +3117,10 @@ describe("core helpers", () => {
   });
 
   it("includes current Qwen and Kimi catalog entries", () => {
+    expect(defaultModelCatalog.find("qwen", "qwen3.8-max-preview")).toMatchObject({
+      modelId: "qwen3.8-max-preview",
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
+    });
     expect(defaultModelCatalog.find("qwen", "qwen3.7-plus")).toMatchObject({
       modelId: "qwen3.7-plus",
       recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])

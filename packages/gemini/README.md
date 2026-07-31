@@ -55,7 +55,7 @@ await generateImage({
 });
 
 await generateText({
-  model: gemini("gemini-3.5-flash"),
+  model: gemini("gemini-3.6-flash"),
   messages: [
     {
       role: "user",
@@ -118,7 +118,7 @@ const file = await uploadFile({
 const store = await createFileSearchStore({ provider: gemini, displayName: "Docs" });
 
 await generateText({
-  model: gemini("gemini-3.5-flash"),
+  model: gemini("gemini-3.6-flash"),
   prompt: "Use the indexed docs and URL context.",
   tools: {
     docs: googleFileSearchTool([store.name]),
@@ -128,19 +128,19 @@ await generateText({
 
 await createContextCache({
   provider: gemini,
-  modelId: "gemini-3.5-flash",
+  modelId: "gemini-3.6-flash",
   contents: [{ role: "user", parts: [{ type: "file", data: file.uri ?? file.name, mediaType: "text/plain" }] }]
 });
 
 await createBatch({
   provider: gemini,
-  modelId: "gemini-3.5-flash",
+  modelId: "gemini-3.6-flash",
   requests: [{ request: { contents: [{ parts: [{ text: "Summarize this." }] }] } }]
 });
 
 const nearby = await createInteraction({
   provider: gemini,
-  modelId: "gemini-3.5-flash",
+  modelId: "gemini-3.6-flash",
   input: "Find well-reviewed cafes within walking distance.",
   store: false,
   tools: {
@@ -182,19 +182,24 @@ Gemini 3.1 TTS supports buffered audio through `generateSpeech()` and incrementa
 
 Current model guidance:
 
-- Default text/agentic work: `gemini-3.5-flash`; high-volume low-latency work: `gemini-3.1-flash-lite`.
+- Complex text, multimodal, coding, and multi-step agentic work: `gemini-3.6-flash`.
+- High-volume extraction, routing, document parsing, and low-latency subagent work: `gemini-3.5-flash-lite`. It defaults to minimal thinking; use medium or high for autonomous multi-step agents.
 - Managed agents: pass `deep-research-preview-04-2026`, `deep-research-max-preview-04-2026`, or `antigravity-preview-05-2026` through the `agent` field instead of `modelId`.
 - Image generation: `gemini-3.1-flash-lite-image` for 1K low-cost output, `gemini-3.1-flash-image` for up to 4K/high-volume work, or `gemini-3-pro-image` for highest-quality composition.
 - Video: `gemini-omni-flash-preview` is an Interactions-only preview for conversational 3-10 second video generation/editing. The `generateVideo()` helper uses the separate Veo family, including `veo-3.1-lite-generate-preview`, `veo-3.1-generate-preview`, and `veo-3.1-fast-generate-preview`.
 - Imagen 4 IDs are intentionally no longer recommended: Google has announced shutdown for August 17, 2026. Gemini 2.0 model IDs and the old image preview IDs are already shut down.
 
-The built-in catalog records Gemini 3.5 Flash Standard text-token pricing as separate input, cached-input, and output rates; it does not treat the input price as a blended per-token estimate. Audio, media output, tools, agents, Batch, Flex, Priority, and storage have separate upstream prices.
+Gemini 3.6 Flash and Gemini 3.5 Flash-Lite use provider-managed sampling. Do not pass `temperature`, `topP` / `top_p`, `topK` / `top_k`, `candidateCount` / `candidate_count`, or frequency/presence penalties; the adapter rejects those controls locally for these model IDs. Both models accept `reasoning.effort` values `minimal`, `low`, `medium`, and `high`. They also reject a final assistant/model-output prefill: end `generateText()` history with a user or tool-result turn, and use `previousInteractionId` for stateful Interactions continuation.
+
+The mutable aliases `gemini-flash-latest` and `gemini-flash-lite-latest` are available upstream but can be remapped. Prefer the stable IDs above for production workloads and reproducible pricing.
+
+The built-in catalog records Gemini 3.6 Flash and Gemini 3.5 Flash-Lite Standard text-token pricing as separate input, cached-input, and output rates; it does not treat the input price as a blended per-token estimate. Audio, media output, tools, agents, Batch, Flex, Priority, and storage have separate upstream prices.
 
 Interactions store resources by default upstream. Pass `store: false` when you do not need server-side continuation, background execution, or stored interaction logs. Preview models and managed agents can have narrower availability and rate limits than GA models.
 
 Google Maps grounding returns place-citation annotations in the interaction's model-output content. Applications must display the associated Google Maps source names and links immediately after the grounded content, following Google's attribution rules; do not discard `steps` when rendering a Maps answer.
 
-See Google's current [Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview), [TTS guide](https://ai.google.dev/gemini-api/docs/speech-generation), [Maps grounding requirements](https://ai.google.dev/gemini-api/docs/maps-grounding), [model list](https://ai.google.dev/gemini-api/docs/models), [deprecation schedule](https://ai.google.dev/gemini-api/docs/deprecations), [pricing](https://ai.google.dev/gemini-api/docs/pricing), and [Gemini Omni Flash guide](https://ai.google.dev/gemini-api/docs/omni).
+See Google's current [latest-model migration guide](https://ai.google.dev/gemini-api/docs/latest-model), [thinking guide](https://ai.google.dev/gemini-api/docs/thinking), [Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview), [TTS guide](https://ai.google.dev/gemini-api/docs/speech-generation), [Maps grounding requirements](https://ai.google.dev/gemini-api/docs/maps-grounding), [model list](https://ai.google.dev/gemini-api/docs/models), [deprecation schedule](https://ai.google.dev/gemini-api/docs/deprecations), [pricing](https://ai.google.dev/gemini-api/docs/pricing), and [Gemini Omni Flash guide](https://ai.google.dev/gemini-api/docs/omni).
 
 Model Garden-style coverage is intentionally raw/prediction based. The adapter does not add a dedicated wrapper for every Google model family.
 

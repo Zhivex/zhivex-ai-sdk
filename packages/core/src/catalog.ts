@@ -140,6 +140,22 @@ export const defaultModelCatalog = createModelCatalog([
   },
   {
     provider: "gemini",
+    modelId: "gemini-3.6-flash",
+    inputCostPer1kTokens: 0.0015,
+    cachedInputCostPer1kTokens: 0.00015,
+    outputCostPer1kTokens: 0.0075,
+    recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
+  },
+  {
+    provider: "gemini",
+    modelId: "gemini-3.5-flash-lite",
+    inputCostPer1kTokens: 0.0003,
+    cachedInputCostPer1kTokens: 0.00003,
+    outputCostPer1kTokens: 0.0025,
+    recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
+  },
+  {
+    provider: "gemini",
     modelId: "gemini-3.5-flash",
     aliases: ["gemini-flash-latest"],
     inputCostPer1kTokens: 0.0015,
@@ -247,6 +263,22 @@ export const defaultModelCatalog = createModelCatalog([
   },
   {
     provider: "vertex",
+    modelId: "gemini-3.6-flash",
+    inputCostPer1kTokens: 0.0015,
+    cachedInputCostPer1kTokens: 0.00015,
+    outputCostPer1kTokens: 0.0075,
+    recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
+  },
+  {
+    provider: "vertex",
+    modelId: "gemini-3.5-flash-lite",
+    inputCostPer1kTokens: 0.0003,
+    cachedInputCostPer1kTokens: 0.00003,
+    outputCostPer1kTokens: 0.0025,
+    recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
+  },
+  {
+    provider: "vertex",
     modelId: "gemini-3.5-flash",
     aliases: ["gemini-flash-latest"],
     inputCostPer1kTokens: 0.0015,
@@ -323,6 +355,7 @@ export const defaultModelCatalog = createModelCatalog([
     provider: "vertex",
     modelId: "lyria-002"
   },
+  { provider: "qwen", modelId: "qwen3.8-max-preview", recommendedFor: ["chat", "tools", "reasoning", "vision"] },
   { provider: "qwen", modelId: "qwen3.7-max", costPer1kTokens: 0.0016, recommendedFor: ["chat", "tools", "reasoning"] },
   { provider: "qwen", modelId: "qwen3.7-plus", costPer1kTokens: 0.0008, recommendedFor: ["chat", "tools", "reasoning", "vision"] },
   { provider: "qwen", modelId: "qwen3.6-flash", costPer1kTokens: 0.0002, recommendedFor: ["chat", "speed", "tools", "vision"] },

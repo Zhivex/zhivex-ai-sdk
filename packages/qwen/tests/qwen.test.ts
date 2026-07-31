@@ -23,6 +23,7 @@ import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-c
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import {
   createQwen,
+  QWEN_TOKEN_PLAN_BASE_URL,
   qwenCodeInterpreterTool,
   qwenFileSearchTool,
   qwenImageSearchTool,
@@ -166,6 +167,253 @@ describe("qwen adapter", () => {
       reasoning: false,
       webSearch: false
     });
+  });
+
+  it("declares qwen3.8-max-preview as a thinking-only multimodal Token Plan model", () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("qwen3.8-max-preview");
+
+    expect(model.capabilities).toMatchObject({
+      reasoning: true,
+      reasoningEfforts: ["minimal", "low", "medium", "high", "xhigh", "max"],
+      vision: true,
+      tools: true,
+      structuredOutput: false,
+      jsonMode: false,
+      parallelToolCalls: false
+    });
+    expect(model.capabilities.reasoningEfforts).not.toContain("none");
+  });
+
+  it("rejects native structured output for qwen3.8-max-preview before fetch", async () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateObject({
+        model: provider("qwen3.8-max-preview"),
+        prompt: "Return an object.",
+        schema: z.object({ answer: z.string() }),
+        mode: "native"
+      })
+    ).rejects.toThrow("does not support native structured output");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["minimal", "low"],
+    ["low", "low"],
+    ["medium", "medium"],
+    ["high", "xhigh"],
+    ["xhigh", "xhigh"],
+    ["max", "xhigh"]
+  ] as const)(
+    "maps qwen3.8-max-preview Responses effort %s to %s",
+    async (effort, expectedEffort) => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          id: "resp_38",
+          status: "completed",
+          output: [{ type: "message", content: [{ type: "output_text", text: "ok" }] }]
+        })
+      );
+      const provider = createQwen({
+        apiKey: "token-plan-key",
+        baseURL: QWEN_TOKEN_PLAN_BASE_URL,
+        fetch: fetchMock as typeof fetch
+      });
+
+      await generateText({
+        model: provider("qwen3.8-max-preview"),
+        messages: [
+          {
+            role: "user",
+            parts: [
+              { type: "image", image: "https://example.com/diagram.png", mediaType: "image/png" },
+              { type: "text", text: "Explain this diagram." }
+            ]
+          }
+        ],
+        reasoning: { effort }
+      });
+
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        `${QWEN_TOKEN_PLAN_BASE_URL}/responses`
+      );
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(body.reasoning).toEqual({ effort: expectedEffort });
+      expect(body.input[0].content).toEqual([
+        { type: "input_image", image_url: "https://example.com/diagram.png" },
+        { type: "input_text", text: "Explain this diagram." }
+      ]);
+      expect(body.reasoning_effort).toBeUndefined();
+      expect(body.thinking_budget).toBeUndefined();
+      expect(body.enable_thinking).toBeUndefined();
+    }
+  );
+
+  it("maps qwen3.8-max-preview reasoning effort in forced Chat mode", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "ok" } }]
+      })
+    );
+    const provider = createQwen({
+      apiKey: "test",
+      baseURL: QWEN_TOKEN_PLAN_BASE_URL,
+      fetch: fetchMock as typeof fetch
+    });
+
+    await generateText({
+      model: provider("qwen3.8-max-preview"),
+      prompt: "Think deeply.",
+      reasoning: { effort: "high" },
+      providerOptions: { apiMode: "chat" }
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      reasoning_effort: "xhigh",
+      preserve_thinking: true
+    });
+    expect(body.reasoning).toBeUndefined();
+    expect(body.enable_thinking).toBeUndefined();
+  });
+
+  it("routes qwen3.8-max-preview thinking budgets through Chat and preserves reasoning", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "ok" } }]
+      })
+    );
+    const provider = createQwen({
+      apiKey: "test",
+      baseURL: QWEN_TOKEN_PLAN_BASE_URL,
+      fetch: fetchMock as typeof fetch
+    });
+
+    await generateText({
+      model: provider("qwen3.8-max-preview"),
+      prompt: "Solve this.",
+      maxTokens: 512,
+      reasoning: { budgetTokens: 16_384 }
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/completions");
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      thinking_budget: 16_384,
+      preserve_thinking: true,
+      max_completion_tokens: 512
+    });
+    expect(body.reasoning_effort).toBeUndefined();
+    expect(body.enable_thinking).toBeUndefined();
+    expect(body.max_tokens).toBeUndefined();
+  });
+
+  it("always returns qwen3.8-max-preview Chat reasoning_content with preserve_thinking", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "continued" } }]
+      })
+    );
+    const provider = createQwen({
+      apiKey: "test",
+      baseURL: QWEN_TOKEN_PLAN_BASE_URL,
+      fetch: fetchMock as typeof fetch
+    });
+
+    await generateText({
+      model: provider("qwen3.8-max-preview"),
+      messages: [
+        {
+          role: "assistant",
+          parts: [
+            {
+              type: "provider-data",
+              provider: "qwen",
+              data: { type: "reasoning_content", reasoningContent: "Earlier reasoning." }
+            },
+            { type: "text", text: "Earlier answer." }
+          ]
+        },
+        createTextMessage("user", "Continue.")
+      ],
+      providerOptions: { apiMode: "chat" }
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.preserve_thinking).toBe(true);
+    expect(body.messages[0]).toMatchObject({
+      role: "assistant",
+      reasoning_content: "Earlier reasoning.",
+      content: "Earlier answer."
+    });
+  });
+
+  it("rejects the pay-as-you-go endpoint for qwen3.8-max-preview before fetch", async () => {
+    expect(QWEN_TOKEN_PLAN_BASE_URL).toBe(
+      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("qwen3.8-max-preview"),
+        prompt: "hello"
+      })
+    ).rejects.toThrow("is Token Plan only");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects decorated Token Plan base URLs before fetch", async () => {
+    const provider = createQwen({
+      apiKey: "test",
+      baseURL: `${QWEN_TOKEN_PLAN_BASE_URL}?redirect=paygo`,
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(
+      generateText({
+        model: provider("qwen3.8-max-preview"),
+        prompt: "hello"
+      })
+    ).rejects.toThrow("is Token Plan only");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid qwen3.8-max-preview thinking controls before fetch", async () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("qwen3.8-max-preview");
+
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        reasoning: { effort: "none" }
+      })
+    ).rejects.toThrow('does not support reasoning effort "none"');
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        reasoning: { effort: "medium", budgetTokens: 16_384 }
+      })
+    ).rejects.toThrow("does not allow reasoning_effort and thinking_budget");
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        providerOptions: { reasoning_effort: "none" }
+      })
+    ).rejects.toThrow("thinking-only");
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        providerOptions: { preserve_thinking: false }
+      })
+    ).rejects.toThrow("requires preserve_thinking");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("routes Qwen Omni through streaming Chat Completions and preserves multimodal order", async () => {

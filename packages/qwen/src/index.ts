@@ -86,6 +86,9 @@ export interface QwenProviderOptions {
 
 export type QwenSpeechAudioURLValidator = (url: URL) => boolean | Promise<boolean>;
 
+export const QWEN_TOKEN_PLAN_BASE_URL =
+  "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
+
 export interface QwenLanguageModelOptions {
   apiMode?: "auto" | "responses" | "chat";
   conversation?: string;
@@ -93,6 +96,8 @@ export interface QwenLanguageModelOptions {
   "x-dashscope-session-cache"?: "enable" | "disable";
   enable_thinking?: boolean;
   thinking_budget?: number;
+  preserve_thinking?: boolean;
+  reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   top_p?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
@@ -554,6 +559,40 @@ const stripResponsesRequestOptions = (providerOptions: Record<string, unknown> |
 };
 
 const modelFamily = (modelId: string) => modelId.toLowerCase();
+const isQwen38MaxPreview = (modelId: string) => modelFamily(modelId) === "qwen3.8-max-preview";
+const validateQwen38BaseURL = (baseURL: string) => {
+  let url: URL;
+  try {
+    url = new URL(baseURL);
+  } catch {
+    throw new ConfigurationError(
+      "Qwen qwen3.8-max-preview requires a valid QwenCloud Token Plan baseURL."
+    );
+  }
+
+  const path = url.pathname.replace(/\/+$/, "");
+  const tokenPlanURL = new URL(QWEN_TOKEN_PLAN_BASE_URL);
+  if (
+    url.origin !== tokenPlanURL.origin ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    path !== "/compatible-mode/v1"
+  ) {
+    throw new ConfigurationError(
+      `Qwen qwen3.8-max-preview is Token Plan only. Configure baseURL with QWEN_TOKEN_PLAN_BASE_URL (${QWEN_TOKEN_PLAN_BASE_URL}); pay-as-you-go and workspace endpoints cannot serve this model.`
+    );
+  }
+};
+const stripQwen38ReasoningOptions = (providerOptions: Record<string, unknown>) => {
+  const next = { ...providerOptions };
+  delete next.enable_thinking;
+  delete next.thinking_budget;
+  delete next.preserve_thinking;
+  delete next.reasoning_effort;
+  return next;
+};
 const supportsQwenReasoning = (modelId: string) =>
   !isQwenOmniLanguageModel(modelId) &&
   supportsQwenTools(modelId) &&
@@ -565,6 +604,7 @@ const supportsQwenVision = (modelId: string) => {
     model.includes("omni") ||
     model.includes("ocr") ||
     model.includes("vision") ||
+    isQwen38MaxPreview(modelId) ||
     /^qwen3\.7-plus(?:$|-)/.test(model) ||
     /^qwen3\.6-flash(?:$|-)/.test(model)
   );
@@ -577,20 +617,25 @@ const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
   const tools = supportsQwenTools(modelId);
   const omni = isQwenOmniLanguageModel(modelId);
   const reasoning = supportsQwenReasoning(modelId);
+  const qwen38 = isQwen38MaxPreview(modelId);
 
   return {
     ...capabilities,
     vision: supportsQwenVision(modelId),
     tools,
-    structuredOutput: tools && !omni,
-    jsonMode: tools && !omni,
+    structuredOutput: tools && !omni && !qwen38,
+    jsonMode: tools && !omni && !qwen38,
     toolChoice: tools,
     parallelToolCalls: false,
     webSearch: tools && !omni,
     files: supportsQwenFiles(modelId),
     audioInput: supportsQwenAudioInput(modelId),
     reasoning,
-    reasoningEfforts: reasoning ? ["none", "minimal", "low", "medium", "high"] : undefined,
+    reasoningEfforts: qwen38
+      ? ["minimal", "low", "medium", "high", "xhigh", "max"]
+      : reasoning
+        ? ["none", "minimal", "low", "medium", "high"]
+        : undefined,
     agentCapabilities: {
       ...capabilities.agentCapabilities!,
       supportTier: tools && !omni ? "tier-b" : "tier-c",
@@ -871,7 +916,101 @@ const withStructuredOutputMessages = (input: ModelGenerateInput) => {
 const hasPreservedReasoning = (messages: ModelMessage[]) =>
   messages.some((message) => message.role === "assistant" && reasoningContentFromMessage(message));
 
-const mapChatReasoning = (input: ModelGenerateInput) => {
+const mapQwen38ReasoningEffort = (effort: unknown) => {
+  switch (effort) {
+    case undefined:
+      return undefined;
+    case "minimal":
+    case "low":
+      return "low" as const;
+    case "medium":
+      return "medium" as const;
+    case "high":
+    case "xhigh":
+    case "max":
+      return "xhigh" as const;
+    case "none":
+      throw new UnsupportedFeatureError(
+        'Qwen model "qwen3.8-max-preview" is thinking-only and does not support reasoning effort "none".'
+      );
+    default:
+      throw new ConfigurationError(
+        `Qwen qwen3.8-max-preview reasoning effort must be low, medium, or xhigh (or a documented OpenAI alias), not "${String(effort)}".`
+      );
+  }
+};
+
+const validateQwen38Reasoning = (
+  input: ModelGenerateInput,
+  providerOptions: QwenLanguageModelOptions
+) => {
+  const sharedEffort = input.reasoning?.effort;
+  const providerEffort = providerOptions.reasoning_effort;
+  const sharedBudget = input.reasoning?.budgetTokens;
+  const providerBudget = providerOptions.thinking_budget;
+
+  if (providerOptions.enable_thinking === false || providerEffort === "none") {
+    throw new UnsupportedFeatureError(
+      'Qwen model "qwen3.8-max-preview" is thinking-only; thinking cannot be disabled.'
+    );
+  }
+  if (providerOptions.preserve_thinking === false) {
+    throw new ConfigurationError(
+      'Qwen model "qwen3.8-max-preview" requires preserve_thinking so historical reasoning_content is retained.'
+    );
+  }
+  if (sharedEffort !== undefined && providerEffort !== undefined) {
+    throw new ConfigurationError(
+      'Configure qwen3.8-max-preview reasoning effort with either reasoning.effort or providerOptions.reasoning_effort, not both.'
+    );
+  }
+  if (sharedBudget !== undefined && providerBudget !== undefined) {
+    throw new ConfigurationError(
+      'Configure qwen3.8-max-preview thinking budget with either reasoning.budgetTokens or providerOptions.thinking_budget, not both.'
+    );
+  }
+
+  const effort = sharedEffort ?? providerEffort;
+  const budget = sharedBudget ?? providerBudget;
+  if (effort !== undefined && budget !== undefined) {
+    throw new ConfigurationError(
+      "Qwen qwen3.8-max-preview does not allow reasoning_effort and thinking_budget in the same request."
+    );
+  }
+  mapQwen38ReasoningEffort(effort);
+
+  if (
+    providerBudget !== undefined &&
+    (!Number.isInteger(providerBudget) || providerBudget < 0 || providerBudget > 262_144)
+  ) {
+    throw new ConfigurationError(
+      "Qwen qwen3.8-max-preview thinking_budget must be an integer between 0 and 262144."
+    );
+  }
+  if (sharedBudget !== undefined && sharedBudget > 262_144) {
+    throw new ConfigurationError(
+      "Qwen qwen3.8-max-preview reasoning.budgetTokens cannot exceed 262144."
+    );
+  }
+};
+
+const mapChatReasoning = (
+  modelId: string,
+  input: ModelGenerateInput,
+  providerOptions: QwenLanguageModelOptions
+) => {
+  if (isQwen38MaxPreview(modelId)) {
+    const effort = mapQwen38ReasoningEffort(
+      input.reasoning?.effort ?? providerOptions.reasoning_effort
+    );
+    const budget = input.reasoning?.budgetTokens ?? providerOptions.thinking_budget;
+    return {
+      ...(effort ? { reasoning_effort: effort } : {}),
+      ...(budget !== undefined ? { thinking_budget: budget } : {}),
+      preserve_thinking: true
+    };
+  }
+
   if (!input.reasoning) {
     return undefined;
   }
@@ -885,15 +1024,23 @@ const mapChatReasoning = (input: ModelGenerateInput) => {
   };
 };
 
-const mapResponsesReasoning = (input: ModelGenerateInput) => {
-  const effort = input.reasoning?.effort;
+const mapResponsesReasoning = (
+  modelId: string,
+  input: ModelGenerateInput,
+  providerOptions: QwenLanguageModelOptions
+) => {
+  const effort = input.reasoning?.effort ?? providerOptions.reasoning_effort;
   if (!effort) {
     return undefined;
   }
 
   return {
     reasoning: {
-      effort: effort === "low" ? "minimal" : effort
+      effort: isQwen38MaxPreview(modelId)
+        ? mapQwen38ReasoningEffort(effort)
+        : effort === "low"
+          ? "minimal"
+          : effort
     }
   };
 };
@@ -929,11 +1076,13 @@ const hasMessagePart = (messages: ModelMessage[], type: "audio" | "file") =>
 const resolveApiMode = (
   modelId: string,
   requestedMode: QwenLanguageModelOptions["apiMode"],
-  input: ModelGenerateInput
+  input: ModelGenerateInput,
+  providerOptions: QwenLanguageModelOptions
 ): "responses" | "chat" => {
   const needsChat =
     input.maxTokens !== undefined ||
     input.reasoning?.budgetTokens !== undefined ||
+    providerOptions.thinking_budget !== undefined ||
     input.structuredOutput?.mode === "native" ||
     hasMessagePart(input.messages, "audio");
   const needsResponses = hasHostedTools(input.tools) || hasMessagePart(input.messages, "file");
@@ -1321,15 +1470,22 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
         `Qwen Omni model "${this.modelId}" is streaming-only. Use streamText() instead of generateText().`
       );
     }
-    const { signal, cleanup } = withTimeoutSignal(input);
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
-    const apiMode = resolveApiMode(this.modelId, providerOptions.apiMode ?? "auto", input);
+    if (isQwen38MaxPreview(this.modelId)) {
+      validateQwen38Reasoning(input, providerOptions);
+      validateQwen38BaseURL(this.baseURL);
+    }
+    const apiMode = resolveApiMode(this.modelId, providerOptions.apiMode ?? "auto", input, providerOptions);
     delete providerOptions.apiMode;
+    const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
       if (apiMode === "responses") {
         const previousResponse = getProviderResponseId(input.messages);
-        const responseProviderOptions = stripResponsesRequestOptions(providerOptions);
+        const baseResponseProviderOptions = stripResponsesRequestOptions(providerOptions);
+        const responseProviderOptions = isQwen38MaxPreview(this.modelId)
+          ? stripQwen38ReasoningOptions(baseResponseProviderOptions)
+          : baseResponseProviderOptions;
         const messages =
           previousResponse && previousResponse.index < input.messages.length - 1
             ? input.messages.slice(previousResponse.index + 1)
@@ -1348,7 +1504,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
                 tools: mapResponsesTools(input.tools),
                 tool_choice: mapResponsesToolChoice(input.toolChoice, input.tools),
                 temperature: input.temperature,
-                ...mapResponsesReasoning(input),
+                ...mapResponsesReasoning(this.modelId, input, providerOptions),
                 stream: false
               })
             }),
@@ -1372,6 +1528,10 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
         };
       }
 
+      const baseChatProviderOptions = stripHeaderOptions(providerOptions);
+      const chatProviderOptions = isQwen38MaxPreview(this.modelId)
+        ? stripQwen38ReasoningOptions(baseChatProviderOptions)
+        : baseChatProviderOptions;
       const response = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
@@ -1379,16 +1539,17 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             headers: providerHeaders(this.apiKey, providerOptions),
             signal,
             body: JSON.stringify({
-              ...stripHeaderOptions(providerOptions),
+              ...chatProviderOptions,
               model: this.modelId,
               messages: mapMessages(withStructuredOutputMessages(input)),
               tools: mapChatTools(input.tools),
               tool_choice: mapChatToolChoice(input.toolChoice),
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
-              max_tokens: input.maxTokens,
+              max_tokens: isQwen38MaxPreview(this.modelId) ? undefined : input.maxTokens,
+              max_completion_tokens: isQwen38MaxPreview(this.modelId) ? input.maxTokens : undefined,
               stream: false,
-              ...mapChatReasoning(input)
+              ...mapChatReasoning(this.modelId, input, providerOptions)
             })
           }),
         input
@@ -1416,14 +1577,21 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
   }
 
   async stream(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
-    const apiMode = resolveApiMode(this.modelId, providerOptions.apiMode ?? "auto", input);
+    if (isQwen38MaxPreview(this.modelId)) {
+      validateQwen38Reasoning(input, providerOptions);
+      validateQwen38BaseURL(this.baseURL);
+    }
+    const apiMode = resolveApiMode(this.modelId, providerOptions.apiMode ?? "auto", input, providerOptions);
     delete providerOptions.apiMode;
+    const { signal, cleanup } = withTimeoutSignal(input);
 
     if (apiMode === "responses") {
       const previousResponse = getProviderResponseId(input.messages);
-      const responseProviderOptions = stripResponsesRequestOptions(providerOptions);
+      const baseResponseProviderOptions = stripResponsesRequestOptions(providerOptions);
+      const responseProviderOptions = isQwen38MaxPreview(this.modelId)
+        ? stripQwen38ReasoningOptions(baseResponseProviderOptions)
+        : baseResponseProviderOptions;
       const messages =
         previousResponse && previousResponse.index < input.messages.length - 1
           ? input.messages.slice(previousResponse.index + 1)
@@ -1442,7 +1610,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               tools: mapResponsesTools(input.tools),
               tool_choice: mapResponsesToolChoice(input.toolChoice, input.tools),
               temperature: input.temperature,
-              ...mapResponsesReasoning(input),
+              ...mapResponsesReasoning(this.modelId, input, providerOptions),
               stream: true
             })
           }),
@@ -1458,6 +1626,10 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       })();
     }
 
+    const baseChatProviderOptions = stripHeaderOptions(providerOptions);
+    const chatProviderOptions = isQwen38MaxPreview(this.modelId)
+      ? stripQwen38ReasoningOptions(baseChatProviderOptions)
+      : baseChatProviderOptions;
     const response = await withRetry(
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {
@@ -1465,7 +1637,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           headers: providerHeaders(this.apiKey, providerOptions),
           signal,
           body: JSON.stringify({
-            ...stripHeaderOptions(providerOptions),
+            ...chatProviderOptions,
             model: this.modelId,
             modalities: isQwenOmniLanguageModel(this.modelId) ? providerOptions.modalities ?? ["text"] : undefined,
             messages: mapMessages(withStructuredOutputMessages(input)),
@@ -1473,10 +1645,11 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             tool_choice: mapChatToolChoice(input.toolChoice),
             response_format: mapStructuredOutput(input),
             temperature: input.temperature,
-            max_tokens: input.maxTokens,
+            max_tokens: isQwen38MaxPreview(this.modelId) ? undefined : input.maxTokens,
+            max_completion_tokens: isQwen38MaxPreview(this.modelId) ? input.maxTokens : undefined,
             stream: true,
             stream_options: { include_usage: true },
-            ...mapChatReasoning(input)
+            ...mapChatReasoning(this.modelId, input, providerOptions)
           })
         }),
       input

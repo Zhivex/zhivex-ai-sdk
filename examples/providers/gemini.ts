@@ -8,7 +8,7 @@ const gemini = createGemini({
 });
 
 const result = await generateText({
-  model: gemini("gemini-2.0-flash"),
+  model: gemini("gemini-3.6-flash"),
   prompt: "Say hello from the Gemini adapter."
 });
 

@@ -1271,6 +1271,162 @@ describe("vertex adapter", () => {
     });
   });
 
+  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+    "exposes and maps current Vertex Gemini reasoning levels for %s",
+    async (modelId) => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: { parts: [{ text: "hello from current vertex gemini" }] }
+            }
+          ]
+        })
+      );
+
+      const provider = createVertex({
+        accessToken: "test",
+        projectId: "demo-project",
+        fetch: fetchMock as typeof fetch
+      });
+      const model = provider(modelId);
+      expect(model.capabilities.reasoningEfforts).toEqual(["minimal", "low", "medium", "high"]);
+      expect(model.capabilities.computerUse).toBe(false);
+      expect(model.capabilities.agentCapabilities?.computerUse).toBe(false);
+
+      await generateText({
+        model,
+        prompt: "hello",
+        reasoning: {
+          effort: modelId === "gemini-3.6-flash" ? "medium" : "minimal"
+        }
+      });
+
+      const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+      const body = JSON.parse(String(requestInit.body)) as {
+        generationConfig: { thinkingConfig: { thinkingLevel: string } };
+      };
+      expect(body.generationConfig.thinkingConfig).toEqual({
+        thinkingLevel: modelId === "gemini-3.6-flash" ? "medium" : "minimal"
+      });
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+        `/publishers/google/models/${modelId}:generateContent`
+      );
+    }
+  );
+
+  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+    "rejects deprecated Vertex Gemini sampling controls locally for %s",
+    async (modelId) => {
+      const provider = createVertex({
+        accessToken: "test",
+        projectId: "demo-project",
+        fetch: fetchMock as typeof fetch
+      });
+
+      await expect(
+        generateText({
+          model: provider(modelId),
+          prompt: "hello",
+          temperature: 0.7
+        })
+      ).rejects.toThrow(`does not support generation control "temperature" for model "${modelId}"`);
+
+      await expect(
+        generateText({
+          model: provider(modelId),
+          prompt: "hello",
+          providerOptions: {
+            topK: 40
+          }
+        })
+      ).rejects.toThrow(`does not support generation control "topK" for model "${modelId}"`);
+
+      await expect(
+        generateText({
+          model: provider(modelId),
+          prompt: "hello",
+          providerOptions: {
+            frequency_penalty: 0.2
+          }
+        })
+      ).rejects.toThrow(`does not support generation control "frequency_penalty" for model "${modelId}"`);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+    "rejects Vertex Gemini assistant prefill locally for %s",
+    async (modelId) => {
+      const provider = createVertex({
+        accessToken: "test",
+        projectId: "demo-project",
+        fetch: fetchMock as typeof fetch
+      });
+
+      await expect(
+        generateText({
+          model: provider(modelId),
+          messages: [
+            { role: "user", parts: [{ type: "text", text: "Complete this." }] },
+            { role: "assistant", parts: [{ type: "text", text: "Prefill" }] }
+          ]
+        })
+      ).rejects.toThrow(`Provider "vertex" does not support assistant prefill for model "${modelId}".`);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it("enforces documented Vertex locations for the new stable models", async () => {
+    const regionalProvider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+    expect(() => regionalProvider("gemini-3.6-flash")).toThrow(
+      'Vertex model "gemini-3.6-flash" is not available in location "us-central1". Use "global"'
+    );
+    expect(() => regionalProvider("gemini-3.5-flash-lite")).toThrow(
+      'Vertex model "gemini-3.5-flash-lite" is not available in location "us-central1". Use "global", "us", "eu"'
+    );
+    await expect(
+      createContextCache({
+        provider: regionalProvider,
+        modelId: "gemini-3.6-flash",
+        contents: [{ role: "user", parts: [{ type: "text", text: "cache me" }] }]
+      })
+    ).rejects.toThrow('Vertex model "gemini-3.6-flash" is not available in location "us-central1".');
+    await expect(
+      createBatch({
+        provider: regionalProvider,
+        modelId: "gemini-3.5-flash-lite",
+        requests: [{ request: { contents: [{ parts: [{ text: "hello" }] }] } }]
+      })
+    ).rejects.toThrow('Vertex model "gemini-3.5-flash-lite" is not available in location "us-central1".');
+
+    const usProvider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us",
+      fetch: fetchMock as typeof fetch
+    });
+    expect(usProvider("gemini-3.5-flash-lite").modelId).toBe("gemini-3.5-flash-lite");
+
+    const customProvider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      baseURL: "https://vertex.example.test/v1",
+      fetch: fetchMock as typeof fetch
+    });
+    expect(customProvider("gemini-3.6-flash").modelId).toBe("gemini-3.6-flash");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects legacy reasoning budget tokens for Vertex Gemini 3 models", async () => {
     const provider = createVertex({
       accessToken: "test",

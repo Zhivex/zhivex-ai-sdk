@@ -15,7 +15,7 @@ const releaseSchema = z.object({
 });
 
 const result = await generateObject({
-  model: gemini("gemini-2.0-flash"),
+  model: gemini("gemini-3.6-flash"),
   prompt: "Create a release summary for a provider-agnostic AI SDK update.",
   schema: releaseSchema,
   mode: "native",
