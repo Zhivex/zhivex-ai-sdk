@@ -1,4 +1,4 @@
-import type { UIMessage } from "@zhivex-ai/core";
+import type { ContentPart, UIMessage } from "@zhivex-ai/core";
 import type {
   ChatRequestBody,
   ChatStreamChunk,
@@ -15,6 +15,23 @@ const DEFAULT_MAX_STREAM_EVENTS = 10_000;
 const DEFAULT_MAX_ERROR_BODY_BYTES = 8 * 1024;
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 30_000;
+
+const encodeBase64 = (data: Uint8Array | ArrayBuffer): string => {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  let binary = "";
+  const chunkSize = 32_768;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(
+      ...bytes.subarray(offset, offset + chunkSize)
+    );
+  }
+  return btoa(binary);
+};
+
+const toJsonSafeContentPart = (part: ContentPart): ContentPart =>
+  part.type === "audio" && typeof part.data !== "string"
+    ? { ...part, data: encodeBase64(part.data) }
+    : part;
 
 const positiveSafeInteger = (
   name: string,
@@ -122,7 +139,7 @@ const toUIMessage = (message: ChatTransportRequest["message"]): UIMessage | unde
     ? {
         id: message.id,
         role: message.role,
-        parts: message.parts
+        parts: message.parts.map(toJsonSafeContentPart)
       }
     : undefined;
 

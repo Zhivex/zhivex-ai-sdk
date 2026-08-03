@@ -413,7 +413,11 @@ export const useZhivexChat = (
 
     const nextMessages = messages
       .slice(0, userIndex + 1)
-      .map((message) => ({ ...message, parts: [...message.parts] }));
+      .map((message, index) => ({
+        ...message,
+        parts: [...message.parts],
+        status: index === userIndex ? ("pending" as const) : message.status
+      }));
     await runRequest({
       messages: nextMessages,
       message: nextMessages[userIndex]

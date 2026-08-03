@@ -180,6 +180,9 @@ await chat.sendMessage([
 
 `sendMessage()` rejects with `ChatBusyError` when another request is active;
 the legacy text-only `send()` keeps its previous no-op behavior in that case.
+The default fetch transport encodes `Uint8Array` and `ArrayBuffer` audio data as
+base64 before constructing its JSON request. A custom `buildRequestBody` owns
+the serialization and size limits of any binary values it returns.
 
 Prefer bounded application-owned uploads and URLs over placing large base64
 payloads in durable session history. `reset()` starts a new local conversation.

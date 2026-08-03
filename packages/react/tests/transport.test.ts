@@ -187,6 +187,58 @@ describe("chat SSE transport", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("serializes binary audio as base64 in the default request body", async () => {
+    const binaryMessage: ChatMessage = {
+      id: "user-audio",
+      role: "user",
+      parts: [
+        {
+          type: "audio",
+          data: new Uint8Array([0, 255, 127]),
+          mediaType: "audio/wav"
+        },
+        {
+          type: "audio",
+          data: new Uint8Array([1, 2, 3]).buffer,
+          mediaType: "audio/mpeg"
+        }
+      ],
+      createdAt: 3,
+      status: "pending"
+    };
+    const fetchMock = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.message.parts).toEqual([
+          { type: "audio", data: "AP9/", mediaType: "audio/wav" },
+          { type: "audio", data: "AQID", mediaType: "audio/mpeg" }
+        ]);
+        return new Response(
+          'event: finish\ndata: {"type":"finish","messageId":"assistant-audio"}\n\n',
+          {
+            headers: { "content-type": "text/event-stream" }
+          }
+        );
+      }
+    );
+    const transport = createFetchChatTransport({ fetch: fetchMock });
+
+    await expect(
+      collect(
+        transport.send(
+          request({ message: binaryMessage, messages: [binaryMessage] })
+        )
+      )
+    ).resolves.toHaveLength(1);
+    expect(binaryMessage.parts[0]).toMatchObject({
+      data: new Uint8Array([0, 255, 127])
+    });
+    expect(
+      binaryMessage.parts[1]?.type === "audio" && binaryMessage.parts[1].data
+    ).toBeInstanceOf(ArrayBuffer);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("omits the message when resuming an approval", () => {
     expect(
       prepareChatRequestBody(

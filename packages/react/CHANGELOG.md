@@ -1,5 +1,11 @@
 # @zhivex-ai/react
 
+## 0.2.1
+
+### Patch Changes
+
+- Serialize binary audio safely in the default fetch transport and restore stopped user-message status when reloading a request.
+
 ## 0.2.0
 
 ### Minor Changes

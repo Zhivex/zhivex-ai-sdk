@@ -331,6 +331,53 @@ describe("useZhivexChat", () => {
     expect(chat.current.messages.at(-1)?.status).toBe("stopped");
   });
 
+  it("restores a stopped user message before reloading it", async () => {
+    let request: ChatTransportRequest | undefined;
+    const transport: ChatTransport = {
+      supportsReload: true,
+      async *send(nextRequest) {
+        request = nextRequest;
+        yield {
+          type: "finish",
+          messageId: "assistant-reload",
+          finishReason: "stop"
+        };
+      }
+    };
+    const chat = await mountChat({
+      transport,
+      initialMessages: [
+        {
+          id: "user-stopped",
+          role: "user",
+          parts: [{ type: "text", text: "Intentar otra vez" }],
+          createdAt: 1,
+          status: "stopped"
+        },
+        {
+          id: "assistant-stopped",
+          role: "assistant",
+          parts: [{ type: "text", text: "Respuesta parcial" }],
+          createdAt: 2,
+          status: "stopped"
+        }
+      ]
+    });
+
+    await act(async () => {
+      await chat.current.reload();
+    });
+
+    expect(request?.message).toMatchObject({
+      id: "user-stopped",
+      status: "pending"
+    });
+    expect(request?.messages).toHaveLength(1);
+    expect(chat.current.messages).toEqual([
+      expect.objectContaining({ id: "user-stopped", status: "complete" })
+    ]);
+  });
+
   it("aborts and ignores an old request when the controlled session changes", async () => {
     const releaseOldStream = createDeferred();
     let oldRequest: ChatTransportRequest | undefined;
