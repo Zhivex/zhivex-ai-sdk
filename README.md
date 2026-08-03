@@ -187,7 +187,9 @@ The high-level API accepts either a `prompt` or explicit `messages`, and returns
 
 ## React Chat UI
 
-`@zhivex-ai/react` provides a browser-safe controller, bounded fetch/SSE transport, accessible components, and a default theme:
+`@zhivex-ai/react` provides a browser-safe controller, multimodal chat input,
+bounded fetch/SSE transport, controlled sessions, accessible auto-following
+components, and a default theme:
 
 ```tsx
 "use client";
@@ -201,7 +203,10 @@ export function Chat() {
 }
 ```
 
-The server route owns `Runner`, provider credentials, tools, authorization, and session persistence. See the [React package guide](./packages/react/README.md) and [Next.js example](./examples/next-runner/README.md).
+Use the `/hooks` and `/components` subpaths for client UI, or `/headless` and
+`/transport` for server-safe state and transport imports that do not import
+React at runtime. The server route owns `Runner`, provider credentials, tools,
+authorization, and session persistence. See the [React package guide](./packages/react/README.md) and [Next.js example](./examples/next-runner/README.md).
 
 ## OpenAI GPT-5.6
 

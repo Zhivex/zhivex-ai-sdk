@@ -112,14 +112,39 @@ const upsertApproval = (
   return next;
 };
 
+export const DEFAULT_CHAT_ACTIVITY_LIMIT = 200;
+
+const appendActivity = (
+  activity: readonly ChatState["activity"][number][],
+  entry: ChatState["activity"][number],
+  limit: number
+): ChatState["activity"] => {
+  const normalizedLimit =
+    Number.isSafeInteger(limit) && limit >= 0
+      ? limit
+      : DEFAULT_CHAT_ACTIVITY_LIMIT;
+  if (normalizedLimit === 0) {
+    return [];
+  }
+  const next = [...activity, entry];
+  return next.length > normalizedLimit
+    ? next.slice(next.length - normalizedLimit)
+    : next;
+};
+
 const appendApproval = (
   state: ChatState,
-  approval: AgentApprovalRequest
+  approval: AgentApprovalRequest,
+  activityLimit: number
 ): ChatState => {
   return {
     ...state,
     pendingApprovals: upsertApproval(state.pendingApprovals, approval),
-    activity: [...state.activity, { type: "approval-request", approval }],
+    activity: appendActivity(
+      state.activity,
+      { type: "approval-request", approval },
+      activityLimit
+    ),
     status: "streaming"
   };
 };
@@ -384,7 +409,7 @@ const failMessage = (
 
 const settleMessages = (
   messages: readonly ChatMessage[],
-  status: "complete" | "error"
+  status: "complete" | "error" | "stopped"
 ): ChatMessage[] =>
   messages.map((message) =>
     message.status === "pending" || message.status === "streaming"
@@ -394,6 +419,9 @@ const settleMessages = (
 
 const terminalStatusIsError = (status: unknown) =>
   status === "failed" || status === "timed_out";
+
+const terminalStatusIsStopped = (status: unknown) =>
+  status === "cancel_requested" || status === "cancelled";
 
 export const createInitialChatState = (
   options: {
@@ -411,7 +439,8 @@ export const createInitialChatState = (
 export const applyUIMessageChunk = (
   state: ChatState,
   chunk: ChatStreamChunk,
-  now: number = Date.now()
+  now: number = Date.now(),
+  activityLimit: number = DEFAULT_CHAT_ACTIVITY_LIMIT
 ): ChatState => {
   if (!isRecord(chunk) || !isString(chunk.type)) {
     return state;
@@ -517,7 +546,7 @@ export const applyUIMessageChunk = (
     if (!isApprovalRequest(chunk.approval)) {
       return state;
     }
-    return appendApproval(state, chunk.approval);
+    return appendApproval(state, chunk.approval, activityLimit);
   }
 
   if (chunk.type === "finish") {
@@ -545,14 +574,15 @@ export const applyUIMessageChunk = (
     }
     return {
       ...state,
-      activity: [
-        ...state.activity,
+      activity: appendActivity(
+        state.activity,
         {
           type: "run-start",
           currentStep: chunk.currentStep,
           maxSteps: chunk.maxSteps
-        }
-      ],
+        },
+        activityLimit
+      ),
       status: "streaming"
     };
   }
@@ -563,10 +593,11 @@ export const applyUIMessageChunk = (
     }
     return {
       ...state,
-      activity: [
-        ...state.activity,
-        { type: "step-start", stepIndex: chunk.stepIndex }
-      ],
+      activity: appendActivity(
+        state.activity,
+        { type: "step-start", stepIndex: chunk.stepIndex },
+        activityLimit
+      ),
       status: "streaming"
     };
   }
@@ -577,10 +608,11 @@ export const applyUIMessageChunk = (
     }
     return {
       ...state,
-      activity: [
-        ...state.activity,
-        { type: "step-finish", step: chunk.step as never }
-      ],
+      activity: appendActivity(
+        state.activity,
+        { type: "step-finish", step: chunk.step as never },
+        activityLimit
+      ),
       status: "streaming"
     };
   }
@@ -589,7 +621,7 @@ export const applyUIMessageChunk = (
     if (!isApprovalRequest(chunk.approval)) {
       return state;
     }
-    return appendApproval(state, chunk.approval);
+    return appendApproval(state, chunk.approval, activityLimit);
   }
 
   if (chunk.type === "agent-approval-resolved") {
@@ -606,7 +638,11 @@ export const applyUIMessageChunk = (
           pending.id !== approvalRequestId ||
           pending.provider !== provider
       ),
-      activity: [...state.activity, { type: "approval-resolved", approval }],
+      activity: appendActivity(
+        state.activity,
+        { type: "approval-resolved", approval },
+        activityLimit
+      ),
       status: "streaming"
     };
   }
@@ -617,10 +653,11 @@ export const applyUIMessageChunk = (
     }
     return {
       ...state,
-      activity: [
-        ...state.activity,
-        { type: "compaction", compaction: chunk.compaction as never }
-      ],
+      activity: appendActivity(
+        state.activity,
+        { type: "compaction", compaction: chunk.compaction as never },
+        activityLimit
+      ),
       status: "streaming"
     };
   }
@@ -653,17 +690,22 @@ export const applyUIMessageChunk = (
         ? toTokenUsage(runState.usage)
         : state.usage;
     const failed = terminalStatusIsError(chunk.status);
+    const stopped = terminalStatusIsStopped(chunk.status);
     return {
       ...state,
-      messages: settleMessages(state.messages, failed ? "error" : "complete"),
+      messages: settleMessages(
+        state.messages,
+        failed ? "error" : stopped ? "stopped" : "complete"
+      ),
       status: failed ? "error" : "ready",
       error: failed ? error ?? new Error(`Agent run ${chunk.status}.`) : undefined,
       usage,
       pendingApprovals: parsedApprovals.value ?? state.pendingApprovals,
-      activity: [
-        ...state.activity,
-        { type: "run-finish", status: chunk.status }
-      ]
+      activity: appendActivity(
+        state.activity,
+        { type: "run-finish", status: chunk.status },
+        activityLimit
+      )
     };
   }
 
@@ -672,22 +714,27 @@ export const applyUIMessageChunk = (
       return state;
     }
     const failed = terminalStatusIsError(chunk.status);
+    const stopped = terminalStatusIsStopped(chunk.status);
     return {
       ...state,
-      messages: settleMessages(state.messages, failed ? "error" : "complete"),
+      messages: settleMessages(
+        state.messages,
+        failed ? "error" : stopped ? "stopped" : "complete"
+      ),
       sessionId: chunk.sessionId,
       status: failed ? "error" : "ready",
       error: failed
         ? state.error ?? new Error(`Agent session ${chunk.status}.`)
         : undefined,
-      activity: [
-        ...state.activity,
+      activity: appendActivity(
+        state.activity,
         {
           type: "session-finish",
           sessionId: chunk.sessionId,
           status: chunk.status
-        }
-      ]
+        },
+        activityLimit
+      )
     };
   }
 
@@ -705,12 +752,32 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
       ...state,
       messages,
       status: "submitting",
-      error: undefined
+      error: undefined,
+      usage: undefined,
+      activity: []
     };
   }
 
   if (action.type === "stream-chunk") {
-    return applyUIMessageChunk(state, action.chunk, action.now);
+    return applyUIMessageChunk(
+      state,
+      action.chunk,
+      action.now,
+      action.activityLimit
+    );
+  }
+
+  if (action.type === "stream-chunks") {
+    return action.chunks.reduce(
+      (next, chunk) =>
+        applyUIMessageChunk(
+          next,
+          chunk,
+          action.now,
+          action.activityLimit
+        ),
+      state
+    );
   }
 
   if (action.type === "request-finish" || action.type === "request-stop") {
@@ -719,7 +786,10 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
     }
     return {
       ...state,
-      messages: settleMessages(state.messages, "complete"),
+      messages: settleMessages(
+        state.messages,
+        action.type === "request-stop" ? "stopped" : "complete"
+      ),
       status: "ready",
       error: undefined
     };
@@ -741,6 +811,20 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
       error: undefined,
       status: "ready"
     };
+  }
+
+  if (action.type === "set-session") {
+    return {
+      ...state,
+      sessionId: action.sessionId
+    };
+  }
+
+  if (action.type === "reset") {
+    return createInitialChatState({
+      messages: action.messages,
+      sessionId: action.sessionId
+    });
   }
 
   return state;

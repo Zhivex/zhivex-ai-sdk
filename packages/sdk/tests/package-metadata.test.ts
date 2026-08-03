@@ -126,9 +126,56 @@ describe("package metadata", () => {
       types: "./dist/index.d.ts",
       import: "./dist/index.js"
     });
+    expect(pkg.exports).toMatchObject({
+      "./headless": {
+        types: "./dist/headless.d.ts",
+        import: "./dist/headless.js"
+      },
+      "./transport": {
+        types: "./dist/transport.d.ts",
+        import: "./dist/transport.js"
+      },
+      "./hooks": {
+        types: "./dist/hooks.d.ts",
+        import: "./dist/hooks.js"
+      },
+      "./components": {
+        types: "./dist/components.d.ts",
+        import: "./dist/components.js"
+      }
+    });
+    expect(Object.keys(pkg.exports ?? {}).sort()).toEqual([
+      ".",
+      "./components",
+      "./headless",
+      "./hooks",
+      "./styles.css",
+      "./transport"
+    ]);
     expect(pkg.exports?.["./styles.css"]).toBe("./styles.css");
     expect(pkg.files).toEqual(expect.arrayContaining(["dist", "styles.css"]));
     expect(pkg.sideEffects).toContain("./styles.css");
+  });
+
+  it("keeps React server-safe and client entrypoint boundaries explicit", async () => {
+    const reactSrc = path.join(packagesDir, "react", "src");
+    const [headless, reducer, transport, types, hooks, components] = await Promise.all([
+      readFile(path.join(reactSrc, "headless.ts"), "utf8"),
+      readFile(path.join(reactSrc, "reducer.ts"), "utf8"),
+      readFile(path.join(reactSrc, "transport.ts"), "utf8"),
+      readFile(path.join(reactSrc, "types.ts"), "utf8"),
+      readFile(path.join(reactSrc, "hooks.ts"), "utf8"),
+      readFile(path.join(reactSrc, "components.tsx"), "utf8")
+    ]);
+    const importsReactAtRuntime =
+      /(?:import|export)\s+(?!type\b)[^;]*\bfrom\s+["']react(?:\/[^"']*)?["']|import\s*["']react(?:\/[^"']*)?["']/;
+
+    for (const source of [headless, reducer, transport, types]) {
+      expect(source).not.toContain('"use client"');
+      expect(source).not.toMatch(importsReactAtRuntime);
+    }
+    expect(hooks.trimStart().startsWith('"use client";')).toBe(true);
+    expect(components.trimStart().startsWith('"use client";')).toBe(true);
   });
 
   it("keeps every workspace package publish-ready", async () => {
