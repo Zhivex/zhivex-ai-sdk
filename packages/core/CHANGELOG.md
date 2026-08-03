@@ -1,5 +1,15 @@
 # @zhivex-ai/core
 
+## 1.1.0
+
+### Minor Changes
+
+- 4188b59: Graduate the declarative workflow runtime, replay and schema contracts, and the in-memory and file-backed workflow state services from Beta to Stable. SQL workflow state services, workflow evaluations, artifact helpers, and CLI workflows remain Beta.
+
+### Patch Changes
+
+- 4188b59: Write file-backed agent, workflow, artifact, and session state through atomic private-file replacements so concurrent readers cannot observe truncated JSON.
+
 ## 1.0.3
 
 ### Patch Changes

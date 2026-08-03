@@ -1,5 +1,14 @@
 # @zhivex-ai/gemini
 
+## 0.10.2
+
+### Patch Changes
+
+- 4188b59: Map Gemini GenerateContent usage metadata into the shared token usage contract for generated and streamed responses.
+- Updated dependencies [4188b59]
+- Updated dependencies [4188b59]
+  - @zhivex-ai/core@1.1.0
+
 ## 0.10.1
 
 ### Patch Changes
