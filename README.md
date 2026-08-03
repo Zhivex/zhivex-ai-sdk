@@ -19,12 +19,12 @@ Runtime exports from `@zhivex-ai/core` are also classified by a verifiable API m
 ```ts
 import { getApiStability } from "@zhivex-ai/sdk";
 
-console.log(getApiStability("createWorkflow")?.stability); // "beta"
+console.log(getApiStability("createWorkflow")?.stability); // "stable"
 ```
 
 Runtime export drift is guarded by that manifest, and public declaration drift is guarded by type snapshot tests for `@zhivex-ai/core`, `@zhivex-ai/sdk`, and `@zhivex-ai/react`.
 
-The stable boundary covers the shared generation primitives, the portable agent runtime, safety and evaluation helpers, and `Runner + SessionService`. Declarative workflows, artifacts, workflow state services, the control-plane/CLI surface, and other APIs named in the manifest remain Beta or Experimental.
+The stable boundary covers the shared generation primitives, the portable agent runtime, safety and evaluation helpers, `Runner + SessionService`, the declarative workflow runtime, and in-memory/file workflow state. SQL workflow state services, workflow evaluations, artifacts, the control-plane/CLI surface, and other APIs named in the manifest remain Beta or Experimental.
 
 ### Installing The Stable Package
 
@@ -591,7 +591,7 @@ Approval queue tokens are cryptographically random opaque values. Persist them s
 
 ### Declarative Workflows
 
-`createWorkflow()` and `runWorkflow()` run agent workflows on top of `Runner`. The Beta workflow surface supports sequential task steps, parallel groups, and bounded task loops. Each task calls a runner, can read previous step outputs, and can persist its own `outputKey` into the workflow state.
+`createWorkflow()` and `runWorkflow()` run agent workflows on top of `Runner`. The Stable workflow surface supports sequential task steps, parallel groups, and bounded task loops. Each task calls a runner, can read previous step outputs, and can persist its own `outputKey` into the workflow state.
 
 ```ts
 import { createWorkflow, runWorkflow } from "@zhivex-ai/sdk";
@@ -676,6 +676,8 @@ const resumed = await runWorkflow(workflow, {
 
 `WorkflowStateService` is the recommended durable workflow-state path. When `workflowStateService` is configured, the full state is stored by `appName`, `userId`, `sessionId`, and workflow key while the session keeps only a lightweight reference. Without it, the compatibility fallback stores state under `session.metadata.workflowRuns[workflow.id]`. Use `persistence.metadataKey` or `persistence.workflowKey` if your app needs a different namespace for the fallback or key.
 
+The `WorkflowStateService` contract and its in-memory and file-backed implementations are Stable. The SQLite and Postgres implementations remain Beta while their real-database certification is moved into remote CI; keep database clients and tenancy enforcement application-owned.
+
 Workflow run states and dedicated workflow state records are also schema-versioned. New records use `schemaVersion: 1`, and legacy records without a version are normalized on load.
 
 Workflow steps can also fan out with a parallel group. Child steps run concurrently, preserve result order, and write their own `outputKey` values for later sequential steps:
@@ -724,7 +726,7 @@ const workflow = createWorkflow({
 
 Loop iterations are recorded in the loop result's `children`. If an iteration pauses for approval, pass the saved workflow `state` and approval responses back to `runWorkflow()` to resume that pending iteration.
 
-For local regression suites, workflow evaluations mirror the agent evaluation helpers:
+The workflow evaluation/report helpers remain Beta. For local regression suites, they mirror the agent evaluation helpers:
 
 ```ts
 import {
@@ -2827,7 +2829,7 @@ The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives 
 - `generateGroundedText`
 - `embed`, `embedMany`
 - portable agent, runner, session, safety, evaluation, replay, and trace helpers
-- Beta workflow, artifact, model-catalog, and control-plane helpers, classified by `API_STABILITY_MANIFEST`
+- Stable declarative workflow helpers plus Beta SQL workflow state, workflow evaluation, artifact, model-catalog, and control-plane helpers, classified by `API_STABILITY_MANIFEST`
 - message helpers such as `system`, `user`, `assistant`, `tool`, `textPart`
 - shared types such as `ReasoningConfig`, `GenerateTextOptions`, and `GenerateObjectOptions`
 - stream and HTTP helpers such as `toTextStreamResponse`, `toUIMessageStreamResponse`, `toSSEStream`, and related UI serialization utilities

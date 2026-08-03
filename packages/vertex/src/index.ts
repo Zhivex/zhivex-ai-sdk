@@ -491,6 +491,24 @@ const normalizeBatchJob = (json: any): BatchJob => ({
   providerMetadata: json
 });
 
+const definedNumber = (value: unknown) => (typeof value === "number" ? value : undefined);
+
+const normalizeGenerateContentUsage = (usage: any): GenerateResult["usage"] => {
+  if (!usage || typeof usage !== "object") {
+    return undefined;
+  }
+
+  const normalized = {
+    inputTokens: definedNumber(usage.promptTokenCount ?? usage.prompt_token_count),
+    cachedInputTokens: definedNumber(usage.cachedContentTokenCount ?? usage.cached_content_token_count),
+    outputTokens: definedNumber(usage.candidatesTokenCount ?? usage.candidates_token_count),
+    reasoningTokens: definedNumber(usage.thoughtsTokenCount ?? usage.thoughts_token_count),
+    totalTokens: definedNumber(usage.totalTokenCount ?? usage.total_token_count)
+  };
+
+  return Object.values(normalized).some((value) => value !== undefined) ? normalized : undefined;
+};
+
 const normalizeOperation = (json: any): PredictionOperation => ({
   name: json.name ?? "",
   done: json.done,
@@ -1703,6 +1721,7 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
           .join(""),
         finishReason: normalizeFinishReason(candidate?.finishReason),
         providerFinishReason: candidate?.finishReason,
+        usage: normalizeGenerateContentUsage(json.usageMetadata ?? json.usage_metadata),
         rawResponse: json
       };
     } finally {
@@ -1762,7 +1781,8 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
             yield {
               type: "finish",
               finishReason: normalizeFinishReason(candidate.finishReason),
-              providerFinishReason: candidate.finishReason
+              providerFinishReason: candidate.finishReason,
+              usage: normalizeGenerateContentUsage(json.usageMetadata ?? json.usage_metadata)
             } satisfies StreamEvent;
           }
         }

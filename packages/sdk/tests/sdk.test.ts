@@ -137,9 +137,14 @@ describe("sdk public surface", () => {
     expect(sdk.getApiStability("retrieveContext")?.stability).toBe("stable");
     expect(sdk.getApiStability("createInMemorySessionService")?.stability).toBe("stable");
     expect(sdk.getApiStability("createFileSessionService")?.stability).toBe("stable");
-    expect(sdk.getApiStability("createWorkflow")?.stability).toBe("beta");
+    expect(sdk.getApiStability("createWorkflow")?.stability).toBe("stable");
+    expect(sdk.getApiStability("runWorkflow")?.stability).toBe("stable");
+    expect(sdk.getApiStability("replayWorkflowRun")?.stability).toBe("stable");
     expect(sdk.getApiStability("createFileArtifactService")?.stability).toBe("beta");
-    expect(sdk.getApiStability("createFileWorkflowStateService")?.stability).toBe("beta");
+    expect(sdk.getApiStability("createFileWorkflowStateService")?.stability).toBe("stable");
+    expect(sdk.getApiStability("createInMemoryWorkflowStateService")?.stability).toBe("stable");
+    expect(sdk.getApiStability("createPostgresWorkflowStateService")?.stability).toBe("beta");
+    expect(sdk.getApiStability("createWorkflowEvaluationFixture")?.stability).toBe("beta");
     expect(sdk.getApiStability("verifyArtifactIntegrity")?.stability).toBe("beta");
     expect(sdk.getApiStability("createAgentControlPlane")?.stability).toBe("beta");
     expect(sdk.getApiStability("createAgentCapsule")?.stability).toBe("beta");

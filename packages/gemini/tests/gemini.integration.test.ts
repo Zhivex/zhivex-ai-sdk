@@ -9,8 +9,11 @@ const baseURL = process.env.GEMINI_BASE_URL;
 const textModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.6-flash";
 const embeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "gemini-embedding-2";
 const liveModelId = process.env.GEMINI_INTEGRATION_LIVE_MODEL ?? "gemini-3.1-flash-live-preview";
+const selectedProvider = process.env.ZHIVEX_INTEGRATION_PROVIDER?.trim();
 
-const describeIntegration = apiKey ? (describe.sequential ?? describe.skip) : describe.skip;
+const describeIntegration = apiKey && (!selectedProvider || selectedProvider === "gemini")
+  ? (describe.sequential ?? describe.skip)
+  : describe.skip;
 
 describeIntegration("gemini adapter integration", () => {
   const provider = () =>
@@ -23,7 +26,7 @@ describeIntegration("gemini adapter integration", () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-gemini-ok",
-      maxTokens: 128
+      maxTokens: 256
     });
 
     expect(result.text.toLowerCase()).toContain("integration-gemini-ok");
@@ -34,7 +37,7 @@ describeIntegration("gemini adapter integration", () => {
     const result = streamText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-gemini-stream-ok",
-      maxTokens: 128
+      maxTokens: 256
     });
 
     const chunks: string[] = [];
@@ -52,7 +55,7 @@ describeIntegration("gemini adapter integration", () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
-      maxTokens: 128,
+      maxTokens: 512,
       maxSteps: 2,
       tools: {
         sum: tool({

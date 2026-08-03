@@ -251,7 +251,7 @@ Zhivex is strongest when the agent must be portable across providers:
 | Human approvals | Runtime state + queues | Native HITL | Tool approval flows | Interrupts/checkpoints | Approval APIs |
 | Durable state | Run/session/workflow stores | Sessions | App persistence | Checkpointing focus | Storage/framework services |
 | UI streaming | Agent/UI stream helpers | Realtime/voice focus | Best React/UI DX | Event streaming | Streaming APIs + Studio |
-| Graph orchestration | Beta workflows | Code orchestration | Code patterns | Strongest graph runtime | Strong workflows |
+| Graph orchestration | Stable declarative workflows | Code orchestration | Code patterns | Strongest graph runtime | Strong workflows |
 | Product UI/Studio | Local CLI/artifacts | OpenAI platform | DevTools | LangSmith | Mastra Studio |
 
 Use Zhivex when provider portability, capability routing, Gateway alignment, explicit state, and local control-plane artifacts matter more than a managed platform UI.
