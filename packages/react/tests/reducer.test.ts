@@ -269,4 +269,70 @@ describe("chat reducer", () => {
     expect(finished.status).toBe("error");
     expect(finished.error?.message).toBe("boom");
   });
+
+  it("marks partial messages as stopped instead of complete when aborted", () => {
+    const started = chatReducer(createInitialChatState(), {
+      type: "request-start",
+      messages: [userMessage]
+    });
+    const streaming = applyUIMessageChunk(started, {
+      type: "text-delta",
+      messageId: "assistant-1",
+      role: "assistant",
+      textDelta: "Partial"
+    });
+    const stopped = chatReducer(streaming, { type: "request-stop" });
+
+    expect(stopped.status).toBe("ready");
+    expect(stopped.messages[0]?.status).toBe("stopped");
+    expect(stopped.messages[1]).toMatchObject({
+      status: "stopped",
+      parts: [{ type: "text", text: "Partial" }]
+    });
+  });
+
+  it("treats cancelled runner sessions as stopped", () => {
+    let state = createInitialChatState({
+      messages: [{ ...userMessage, status: "streaming" }]
+    });
+    state = applyUIMessageChunk(state, {
+      type: "session-finish",
+      sessionId: "session-1",
+      status: "cancelled"
+    });
+
+    expect(state.status).toBe("ready");
+    expect(state.messages[0]?.status).toBe("stopped");
+    expect(state.sessionId).toBe("session-1");
+  });
+
+  it("batches chunks, bounds activity, and resets per-request telemetry", () => {
+    let state = chatReducer(createInitialChatState(), {
+      type: "stream-chunks",
+      chunks: [
+        { type: "agent-step-start", stepIndex: 0 },
+        { type: "agent-step-start", stepIndex: 1 },
+        { type: "agent-step-start", stepIndex: 2 }
+      ],
+      activityLimit: 2
+    });
+
+    expect(state.activity).toEqual([
+      { type: "step-start", stepIndex: 1 },
+      { type: "step-start", stepIndex: 2 }
+    ]);
+
+    state = applyUIMessageChunk(state, {
+      type: "finish",
+      messageId: "assistant-1",
+      usage: { totalTokens: 4 }
+    });
+    const restarted = chatReducer(state, {
+      type: "request-start",
+      messages: [userMessage]
+    });
+
+    expect(restarted.activity).toEqual([]);
+    expect(restarted.usage).toBeUndefined();
+  });
 });

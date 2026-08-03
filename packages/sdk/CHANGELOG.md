@@ -1,5 +1,17 @@
 # @zhivex-ai/sdk
 
+## 1.1.0
+
+### Minor Changes
+
+- 4188b59: Graduate the declarative workflow runtime, replay and schema contracts, and the in-memory and file-backed workflow state services from Beta to Stable. SQL workflow state services, workflow evaluations, artifact helpers, and CLI workflows remain Beta.
+
+### Patch Changes
+
+- Updated dependencies [4188b59]
+- Updated dependencies [4188b59]
+  - @zhivex-ai/core@1.1.0
+
 ## 1.0.2
 
 ### Patch Changes

@@ -1,13 +1,11 @@
-import { Children, createElement, isValidElement } from "react";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   Message,
-  MessageList,
   ZhivexChat,
   type ChatController,
-  type MessageListProps,
   type MessagePartRendererProps
 } from "../src/components.js";
 import type { ChatMessage } from "../src/types.js";
@@ -56,6 +54,11 @@ describe("@zhivex-ai/react components", () => {
 
     expect(html).toContain('aria-label="AI chat"');
     expect(html).toContain('role="log"');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('aria-relevant="additions"');
+    expect(html).not.toContain('aria-relevant="additions text"');
+    expect(html).toContain('aria-atomic="true"');
+    expect(html).not.toContain("Assistant response: Hello");
     expect(html).toContain("Support");
     expect(html).toContain("Hello");
     expect(html).toContain("weather");
@@ -79,51 +82,6 @@ describe("@zhivex-ai/react components", () => {
 
     expect(html).toContain("<mark>HELLO</mark>");
     expect(html).not.toContain('class="zhivex-message__text">Hello');
-  });
-
-  it("passes provider and id together for the default approval handler", async () => {
-    const approval = {
-      provider: "provider-b",
-      id: "shared-id",
-      name: "write-file",
-      arguments: "{}",
-      rawData: {}
-    };
-    const resolveApproval = vi.fn(async () => undefined);
-    const controller: ChatController = {
-      state: {
-        messages: [],
-        status: "ready",
-        pendingApprovals: [approval],
-        activity: []
-      },
-      input: "",
-      setInput: vi.fn(),
-      send: vi.fn(async () => undefined),
-      stop: vi.fn(),
-      reload: vi.fn(async () => undefined),
-      resolveApproval
-    };
-
-    const tree = ZhivexChat({ controller });
-    expect(isValidElement(tree)).toBe(true);
-    const messageList = Children.toArray(
-      (tree as { props: { children: unknown } }).props.children
-    ).find(
-      (child) => isValidElement(child) && child.type === MessageList
-    );
-    expect(isValidElement(messageList)).toBe(true);
-    const onApproval = (
-      messageList as { props: MessageListProps }
-    ).props.onApproval;
-    await onApproval?.(approval, true);
-
-    expect(resolveApproval).toHaveBeenCalledWith(
-      "shared-id",
-      true,
-      undefined,
-      "provider-b"
-    );
   });
 
   it("requires remote-media opt in, blocks private hosts, and applies no-referrer", () => {

@@ -524,9 +524,9 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
           // Gemini 3.x counts thinking tokens against maxOutputTokens. The
           // generic 32/64-token integration limits can therefore finish before
           // any visible text or tool call is emitted.
-          textMaxTokens: 128,
-          toolMaxTokens: 128,
-          reasoningMaxTokens: 256
+          textMaxTokens: 256,
+          toolMaxTokens: 512,
+          reasoningMaxTokens: 512
         } satisfies IntegrationLanguageProvider
       ]
     : []),

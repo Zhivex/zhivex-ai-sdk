@@ -570,7 +570,14 @@ describe("vertex adapter", () => {
             finishReason: "STOP",
             content: { parts: [{ text: "hello from vertex" }] }
           }
-        ]
+        ],
+        usage_metadata: {
+          prompt_token_count: 8,
+          cached_content_token_count: 3,
+          candidates_token_count: 5,
+          thoughts_token_count: 2,
+          total_token_count: 15
+        }
       })
     );
 
@@ -587,6 +594,52 @@ describe("vertex adapter", () => {
 
     expect(result.text).toBe("hello from vertex");
     expect(result.finishReason).toBe("stop");
+    expect(result.usage).toEqual({
+      inputTokens: 8,
+      cachedInputTokens: 3,
+      outputTokens: 5,
+      reasoningTokens: 2,
+      totalTokens: 15
+    });
+  });
+
+  it("maps streamed Vertex usage metadata into the common contract", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2,"totalTokenCount":6}}\n\n'
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await streamText({
+      model: provider("gemini-2.0-flash"),
+      prompt: "hello"
+    }).collect();
+
+    expect(result).toMatchObject({
+      text: "hello",
+      usage: {
+        inputTokens: 4,
+        outputTokens: 2,
+        totalTokens: 6
+      }
+    });
   });
 
   it("maps audio input to Vertex inlineData", async () => {

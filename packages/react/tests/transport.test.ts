@@ -187,6 +187,58 @@ describe("chat SSE transport", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("serializes binary audio as base64 in the default request body", async () => {
+    const binaryMessage: ChatMessage = {
+      id: "user-audio",
+      role: "user",
+      parts: [
+        {
+          type: "audio",
+          data: new Uint8Array([0, 255, 127]),
+          mediaType: "audio/wav"
+        },
+        {
+          type: "audio",
+          data: new Uint8Array([1, 2, 3]).buffer,
+          mediaType: "audio/mpeg"
+        }
+      ],
+      createdAt: 3,
+      status: "pending"
+    };
+    const fetchMock = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.message.parts).toEqual([
+          { type: "audio", data: "AP9/", mediaType: "audio/wav" },
+          { type: "audio", data: "AQID", mediaType: "audio/mpeg" }
+        ]);
+        return new Response(
+          'event: finish\ndata: {"type":"finish","messageId":"assistant-audio"}\n\n',
+          {
+            headers: { "content-type": "text/event-stream" }
+          }
+        );
+      }
+    );
+    const transport = createFetchChatTransport({ fetch: fetchMock });
+
+    await expect(
+      collect(
+        transport.send(
+          request({ message: binaryMessage, messages: [binaryMessage] })
+        )
+      )
+    ).resolves.toHaveLength(1);
+    expect(binaryMessage.parts[0]).toMatchObject({
+      data: new Uint8Array([0, 255, 127])
+    });
+    expect(
+      binaryMessage.parts[1]?.type === "audio" && binaryMessage.parts[1].data
+    ).toBeInstanceOf(ArrayBuffer);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("omits the message when resuming an approval", () => {
     expect(
       prepareChatRequestBody(
@@ -214,16 +266,53 @@ describe("chat SSE transport", () => {
     });
   });
 
-  it("includes the bounded response body in HTTP errors", async () => {
+  it("retains HTTP diagnostics without exposing them in the public message", async () => {
     const transport = createFetchChatTransport({
-      fetch: async () => new Response("bad request", { status: 400 })
+      fetch: async () =>
+        new Response("database password: secret", {
+          status: 400,
+          statusText: "Bad Request"
+        })
     });
 
     await expect(collect(transport.send(request()))).rejects.toMatchObject({
       name: "ChatTransportError",
+      code: "http_error",
       status: 400,
-      responseBody: "bad request"
+      message: "Chat request failed with 400 Bad Request.",
+      responseBody: "database password: secret"
     } satisfies Partial<ChatTransportError>);
+  });
+
+  it("allows explicit formatting of safe HTTP error messages", async () => {
+    const formatError = vi.fn(
+      ({ status, responseBody }: { status: number; responseBody?: string }) =>
+        `Public error ${status}: ${responseBody === "safe detail" ? "invalid input" : "unknown"}`
+    );
+    const transport = createFetchChatTransport({
+      endpoint: "/custom-chat",
+      fetch: async () =>
+        new Response("safe detail", {
+          status: 422,
+          statusText: "Unprocessable Content"
+        }),
+      formatError
+    });
+
+    await expect(collect(transport.send(request()))).rejects.toMatchObject({
+      name: "ChatTransportError",
+      code: "http_error",
+      message: "Public error 422: invalid input",
+      responseBody: "safe detail"
+    } satisfies Partial<ChatTransportError>);
+    expect(formatError).toHaveBeenCalledWith({
+      endpoint: "/custom-chat",
+      status: 422,
+      statusText: "Unprocessable Content",
+      responseBody: "safe detail",
+      defaultMessage:
+        "Chat request failed with 422 Unprocessable Content."
+    });
   });
 
   it("reads HTTP diagnostics incrementally and cancels at the byte limit", async () => {
@@ -247,6 +336,25 @@ describe("chat SSE transport", () => {
     expect(cancelled).toBe(true);
   });
 
+  it("cancels an HTTP diagnostic body that exactly fills the byte limit", async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("12345678"));
+      },
+      cancel
+    });
+    const transport = createFetchChatTransport({
+      fetch: async () => new Response(body, { status: 500 }),
+      maxErrorBodyBytes: 8
+    });
+
+    await expect(collect(transport.send(request()))).rejects.toMatchObject({
+      responseBody: "12345678\n...[truncated]"
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("rejects successful responses with the wrong content type", async () => {
     const transport = createFetchChatTransport({
       fetch: async () =>
@@ -255,6 +363,7 @@ describe("chat SSE transport", () => {
 
     await expect(collect(transport.send(request()))).rejects.toMatchObject({
       name: "ChatTransportError",
+      code: "invalid_response",
       status: 200,
       responseBody: '{"error":"not a stream"}'
     } satisfies Partial<ChatTransportError>);
@@ -278,9 +387,25 @@ describe("chat SSE transport", () => {
         })
     });
 
-    await expect(collect(transport.send(request()))).rejects.toThrow(
-      "total timeout"
-    );
+    await expect(collect(transport.send(request()))).rejects.toMatchObject({
+      code: "request_timeout",
+      timeoutMs: 10
+    } satisfies Partial<ChatTransportError>);
+  });
+
+  it("applies the total timeout while preparing request headers", async () => {
+    const fetchMock = vi.fn();
+    const transport = createFetchChatTransport({
+      requestTimeoutMs: 10,
+      headers: () => new Promise<HeadersInit>(() => undefined),
+      fetch: fetchMock
+    });
+
+    await expect(collect(transport.send(request()))).rejects.toMatchObject({
+      code: "request_timeout",
+      timeoutMs: 10
+    } satisfies Partial<ChatTransportError>);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("cancels streams that exceed the idle timeout", async () => {
@@ -306,7 +431,10 @@ describe("chat SSE transport", () => {
         })
     });
 
-    await expect(collect(transport.send(request()))).rejects.toThrow("idle");
+    await expect(collect(transport.send(request()))).rejects.toMatchObject({
+      code: "stream_idle_timeout",
+      timeoutMs: 10
+    } satisfies Partial<ChatTransportError>);
     expect(cancelled).toBe(true);
   });
 });

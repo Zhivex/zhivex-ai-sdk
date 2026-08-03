@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/react",
-  "version": "0.1.1",
+  "version": "0.2.1",
   "description": "Headless React chat state, streaming transport, and customizable components for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -13,6 +13,22 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./headless": {
+      "types": "./dist/headless.d.ts",
+      "import": "./dist/headless.js"
+    },
+    "./transport": {
+      "types": "./dist/transport.d.ts",
+      "import": "./dist/transport.js"
+    },
+    "./hooks": {
+      "types": "./dist/hooks.d.ts",
+      "import": "./dist/hooks.js"
+    },
+    "./components": {
+      "types": "./dist/components.d.ts",
+      "import": "./dist/components.js"
     },
     "./styles.css": "./styles.css"
   },
@@ -44,7 +60,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^1.0.2"
+    "@zhivex-ai/core": "^1.1.0"
   },
   "peerDependencies": {
     "react": ">=18.2.0 <20",

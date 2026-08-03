@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import * as react from "../src/index.js";
+import * as headless from "../src/headless.js";
+import * as hooks from "../src/hooks.js";
 
 describe("@zhivex-ai/react public surface", () => {
   it("exports the headless and component entry points", () => {
@@ -13,5 +15,12 @@ describe("@zhivex-ai/react public surface", () => {
     expect(react.ZhivexChat).toBeTypeOf("function");
     expect(react.MessageList).toBeTypeOf("function");
     expect(react.Composer).toBeTypeOf("function");
+    expect(react.ChatBusyError).toBeTypeOf("function");
+  });
+
+  it("exposes dedicated headless and hooks entrypoints", () => {
+    expect(headless.chatReducer).toBeTypeOf("function");
+    expect(headless.ChatBusyError).toBeTypeOf("function");
+    expect(hooks.useZhivexChat).toBeTypeOf("function");
   });
 });

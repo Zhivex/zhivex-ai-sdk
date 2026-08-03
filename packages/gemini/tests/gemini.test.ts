@@ -178,7 +178,14 @@ describe("gemini adapter", () => {
             finishReason: "STOP",
             content: { parts: [{ text: "hello from gemini" }] }
           }
-        ]
+        ],
+        usageMetadata: {
+          promptTokenCount: 7,
+          cachedContentTokenCount: 2,
+          candidatesTokenCount: 4,
+          thoughtsTokenCount: 1,
+          totalTokenCount: 12
+        }
       })
     );
 
@@ -190,6 +197,13 @@ describe("gemini adapter", () => {
 
     expect(result.text).toBe("hello from gemini");
     expect(result.finishReason).toBe("stop");
+    expect(result.usage).toEqual({
+      inputTokens: 7,
+      cachedInputTokens: 2,
+      outputTokens: 4,
+      reasoningTokens: 1,
+      totalTokens: 12
+    });
   });
 
   it("creates equivalent language models from the callable provider", () => {
@@ -1467,7 +1481,7 @@ describe("gemini adapter", () => {
         controller.enqueue(
           new TextEncoder().encode(
             "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\n\n" +
-              "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" world\"}]},\"finishReason\":\"STOP\"}]}\n\n"
+              "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" world\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":3,\"candidatesTokenCount\":2,\"thoughtsTokenCount\":1,\"totalTokenCount\":6}}\n\n"
           )
         );
         controller.close();
@@ -1487,7 +1501,15 @@ describe("gemini adapter", () => {
       prompt: "hello"
     });
 
-    expect((await result.collect()).text).toBe("hello world");
+    expect(await result.collect()).toMatchObject({
+      text: "hello world",
+      usage: {
+        inputTokens: 3,
+        outputTokens: 2,
+        reasoningTokens: 1,
+        totalTokens: 6
+      }
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=test"

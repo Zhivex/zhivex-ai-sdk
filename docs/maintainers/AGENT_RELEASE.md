@@ -37,7 +37,7 @@ Beta entry points from `@zhivex-ai/agents/beta` may remain beta if their docs sa
 
 `streamLiveAgent` must remain isolated under the experimental `@zhivex-ai/agents/realtime` entry point. Deterministic mocks belong under `@zhivex-ai/agents/testing`; neither belongs in the stable root.
 
-Declarative workflows and workflow state services remain beta surfaces in `@zhivex-ai/sdk`; they are intentionally not re-exported by `@zhivex-ai/agents/beta`.
+Declarative workflows and the in-memory/file workflow state services are stable surfaces in `@zhivex-ai/sdk`; they are intentionally not re-exported by `@zhivex-ai/agents/beta`. SQL workflow state services, workflow evaluations, artifact helpers, and CLI workflow commands remain Beta.
 
 ## Focused Test Gate
 
@@ -85,6 +85,31 @@ Run provider smoke when credentials are available:
 
 ```bash
 bun run smoke:providers
+```
+
+Before releasing workflow changes or promoting a remaining SQL persistence
+service, run the opt-in live workflow certification with Gemini or Qwen and a
+disposable Postgres database:
+
+```bash
+ZHIVEX_INTEGRATION_PROVIDER=gemini \
+ZHIVEX_POSTGRES_INTEGRATION_URL=postgres://user:password@127.0.0.1:5432/database \
+bun run test:integration:workflows
+
+ZHIVEX_INTEGRATION_PROVIDER=qwen \
+ZHIVEX_POSTGRES_INTEGRATION_URL=postgres://user:password@127.0.0.1:5432/database \
+bun run test:integration:workflows
+```
+
+The Postgres suite creates uniquely named `zhivex_it_*` tables, validates
+restart/resume, compare-and-swap conflicts, artifact durability, and tenant
+isolation, then drops those tables. Keep the database URL opt-in so normal test
+runs cannot target an application database accidentally.
+
+Run the deterministic public workflow example as a credential-free smoke:
+
+```bash
+bun run examples/sdk/workflow.ts
 ```
 
 ## Example Smoke

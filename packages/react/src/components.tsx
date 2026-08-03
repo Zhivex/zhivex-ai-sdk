@@ -1,6 +1,14 @@
 "use client";
 
-import { memo, useEffect, useId, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import type {
   AgentApprovalRequest,
   ContentPart,
@@ -15,6 +23,7 @@ import type {
   HTMLAttributes,
   KeyboardEvent,
   ReactNode,
+  UIEvent
 } from "react";
 import { approvalKey } from "./approval.js";
 import type { ChatMessage, ChatState, ChatStatus } from "./types.js";
@@ -39,6 +48,7 @@ export interface ChatLabels {
   providerData: string;
   approval: string;
   approvalDescription: string;
+  approvalError: string;
   arguments: string;
   approve: string;
   reject: string;
@@ -48,6 +58,8 @@ export interface ChatLabels {
   stop: string;
   retry: string;
   activity: string;
+  jumpToLatest: string;
+  responseComplete: string;
 }
 
 export const defaultChatLabels: ChatLabels = {
@@ -70,6 +82,7 @@ export const defaultChatLabels: ChatLabels = {
   providerData: "Provider data",
   approval: "Approval required",
   approvalDescription: "Review this action before allowing it to continue.",
+  approvalError: "The decision could not be submitted. Try again.",
   arguments: "Arguments",
   approve: "Approve",
   reject: "Reject",
@@ -79,12 +92,20 @@ export const defaultChatLabels: ChatLabels = {
   stop: "Stop",
   retry: "Retry",
   activity: "The assistant is working",
+  jumpToLatest: "Jump to latest message",
+  responseComplete: "Assistant response",
 };
 
-const mergeLabels = (labels?: Partial<ChatLabels>): ChatLabels => ({
-  ...defaultChatLabels,
-  ...labels,
-});
+const mergeLabels = (labels?: Partial<ChatLabels>): ChatLabels =>
+  labels
+    ? {
+        ...defaultChatLabels,
+        ...labels
+      }
+    : defaultChatLabels;
+
+const useChatLabels = (labels?: Partial<ChatLabels>): ChatLabels =>
+  useMemo(() => mergeLabels(labels), [labels]);
 
 const joinClassNames = (...classNames: Array<string | undefined>): string =>
   classNames.filter(Boolean).join(" ");
@@ -281,6 +302,29 @@ const stringMediaSource = (
 const isBusyStatus = (status: ChatStatus): boolean =>
   status === "submitting" || status === "streaming";
 
+const EMPTY_APPROVALS: readonly AgentApprovalRequest[] = [];
+const DEFAULT_AUTO_FOLLOW_THRESHOLD = 96;
+
+const completedAssistantText = (
+  messages: readonly ChatMessage[]
+): { id: string; text: string } | undefined => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant" || message.status !== "complete") {
+      continue;
+    }
+    const text = message.parts
+      .filter(
+        (part): part is Extract<ContentPart, { type: "text" }> =>
+          part.type === "text"
+      )
+      .map((part) => part.text)
+      .join("");
+    return text.length > 0 ? { id: message.id, text } : undefined;
+  }
+  return undefined;
+};
+
 export interface ChatRootProps extends HTMLAttributes<HTMLElement> {
   children: ReactNode;
   label?: string;
@@ -335,7 +379,7 @@ export function ToolCallCard({
   className,
   ...props
 }: ToolCallCardProps) {
-  const labels = mergeLabels(labelsOverride);
+  const labels = useChatLabels(labelsOverride);
   const { toolCall } = part;
 
   return (
@@ -367,7 +411,7 @@ export function ToolResultCard({
   className,
   ...props
 }: ToolResultCardProps) {
-  const labels = mergeLabels(labelsOverride);
+  const labels = useChatLabels(labelsOverride);
   const { toolResult } = part;
   const title = toolResult.isError ? labels.toolError : labels.toolResult;
 
@@ -409,7 +453,7 @@ export function ProviderDataDetails({
   className,
   ...props
 }: ProviderDataDetailsProps) {
-  const labels = mergeLabels(labelsOverride);
+  const labels = useChatLabels(labelsOverride);
 
   return (
     <details
@@ -608,7 +652,7 @@ export function MessagePart({
   labels: labelsOverride,
   mediaUrlPolicy,
 }: MessagePartProps) {
-  const labels = mergeLabels(labelsOverride);
+  const labels = useChatLabels(labelsOverride);
   const Renderer = renderers?.[part.type] as
     | ComponentType<MessagePartRendererProps>
     | undefined;
@@ -651,7 +695,7 @@ function MessageView({
   className,
   ...props
 }: MessageProps) {
-  const labels = mergeLabels(labelsOverride);
+  const labels = useChatLabels(labelsOverride);
   const roleLabel = labelForRole(message.role, labels);
 
   return (
@@ -688,35 +732,54 @@ export interface ApprovalCardProps extends HTMLAttributes<HTMLElement> {
     approval: AgentApprovalRequest,
     approved: boolean
   ) => void | Promise<void>;
+  onDecisionError?: (
+    error: unknown,
+    approval: AgentApprovalRequest,
+    approved: boolean
+  ) => void;
   disabled?: boolean;
+  decisionErrorLabel?: string;
   labels?: Partial<ChatLabels>;
 }
 
 export function ApprovalCard({
   approval,
   onDecision,
+  onDecisionError,
   disabled = false,
+  decisionErrorLabel,
   labels: labelsOverride,
   className,
   ...props
 }: ApprovalCardProps) {
-  const labels = mergeLabels(labelsOverride);
+  const labels = useChatLabels(labelsOverride);
   const [resolving, setResolving] = useState<"approve" | "reject" | null>(null);
+  const [decisionErrorFor, setDecisionErrorFor] = useState<string>();
   const headingId = useId();
+  const decisionErrorId = useId();
+  const currentApprovalKey = approvalKey(approval);
+  const hasDecisionError = decisionErrorFor === currentApprovalKey;
 
-  const decide = (approved: boolean) => {
+  const decide = async (approved: boolean) => {
     if (!onDecision || disabled || resolving) return;
 
+    setDecisionErrorFor(undefined);
     setResolving(approved ? "approve" : "reject");
-    void Promise.resolve(onDecision(approval, approved))
-      .catch(() => undefined)
-      .finally(() => setResolving(null));
+    try {
+      await onDecision(approval, approved);
+    } catch (error) {
+      setDecisionErrorFor(currentApprovalKey);
+      onDecisionError?.(error, approval, approved);
+    } finally {
+      setResolving(null);
+    }
   };
 
   return (
     <article
       {...props}
       aria-labelledby={headingId}
+      aria-describedby={hasDecisionError ? decisionErrorId : undefined}
       className={joinClassNames("zhivex-card zhivex-approval", className)}
     >
       <div className="zhivex-approval__heading">
@@ -737,12 +800,21 @@ export function ApprovalCard({
           <pre>{approval.arguments}</pre>
         </details>
       ) : null}
+      {hasDecisionError ? (
+        <p
+          className="zhivex-approval__error"
+          id={decisionErrorId}
+          role="alert"
+        >
+          {decisionErrorLabel ?? labels.approvalError}
+        </p>
+      ) : null}
       {onDecision ? (
         <div className="zhivex-approval__actions">
           <button
             className="zhivex-button zhivex-button--secondary"
             disabled={disabled || resolving !== null}
-            onClick={() => decide(false)}
+            onClick={() => void decide(false)}
             type="button"
           >
             {resolving === "reject" ? `${labels.reject}…` : labels.reject}
@@ -750,7 +822,7 @@ export function ApprovalCard({
           <button
             className="zhivex-button zhivex-button--primary"
             disabled={disabled || resolving !== null}
-            onClick={() => decide(true)}
+            onClick={() => void decide(true)}
             type="button"
           >
             {resolving === "approve" ? `${labels.approve}…` : labels.approve}
@@ -770,38 +842,123 @@ export interface MessageListProps
     approval: AgentApprovalRequest,
     approved: boolean
   ) => void | Promise<void>;
+  onApprovalError?: ApprovalCardProps["onDecisionError"];
   renderers?: MessagePartRenderers;
   emptyState?: ReactNode;
   labels?: Partial<ChatLabels>;
   mediaUrlPolicy?: MediaUrlPolicy;
+  autoFollow?: boolean;
+  autoFollowThreshold?: number;
+  jumpToLatestLabel?: string;
 }
 
 export function MessageList({
   messages,
   status = "ready",
-  pendingApprovals = [],
+  pendingApprovals = EMPTY_APPROVALS,
   onApproval,
+  onApprovalError,
   renderers,
   emptyState,
   labels: labelsOverride,
   mediaUrlPolicy,
+  autoFollow = true,
+  autoFollowThreshold = DEFAULT_AUTO_FOLLOW_THRESHOLD,
+  jumpToLatestLabel,
   className,
+  onScroll,
   ...props
 }: MessageListProps) {
-  const labels = mergeLabels(labelsOverride);
+  const labels = useChatLabels(labelsOverride);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [isFollowing, setIsFollowing] = useState(true);
+  const [completionAnnouncement, setCompletionAnnouncement] = useState<{
+    key: string;
+    text: string;
+  }>();
   const isBusy = isBusyStatus(status);
   const isEmpty = messages.length === 0 && pendingApprovals.length === 0;
+  const latestCompletedAssistant = useMemo(
+    () => completedAssistantText(messages),
+    [messages]
+  );
+  const latestCompletionKey = latestCompletedAssistant
+    ? `${latestCompletedAssistant.id}\0${latestCompletedAssistant.text}`
+    : undefined;
+  const previousBusyRef = useRef(isBusy);
+  const previousCompletionKeyRef = useRef(latestCompletionKey);
+  const normalizedThreshold = Number.isFinite(autoFollowThreshold)
+    ? Math.max(0, autoFollowThreshold)
+    : DEFAULT_AUTO_FOLLOW_THRESHOLD;
+
+  const scrollToLatest = useCallback(() => {
+    const list = listRef.current;
+    if (!list) return;
+    setIsFollowing(true);
+    list.scrollTop = list.scrollHeight;
+  }, []);
+
+  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+    onScroll?.(event);
+    if (!autoFollow || event.defaultPrevented) return;
+    const list = event.currentTarget;
+    const distanceFromBottom =
+      list.scrollHeight - list.scrollTop - list.clientHeight;
+    setIsFollowing(distanceFromBottom <= normalizedThreshold);
+  };
+
+  useEffect(() => {
+    if (!autoFollow || !isFollowing) return;
+    scrollToLatest();
+  }, [
+    autoFollow,
+    isFollowing,
+    messages,
+    pendingApprovals,
+    scrollToLatest,
+    status
+  ]);
+
+  useEffect(() => {
+    const wasBusy = previousBusyRef.current;
+    previousBusyRef.current = isBusy;
+    if (isBusy) return;
+    if (
+      wasBusy &&
+      latestCompletedAssistant &&
+      latestCompletionKey !== undefined &&
+      latestCompletionKey !== previousCompletionKeyRef.current
+    ) {
+      setCompletionAnnouncement({
+        key: latestCompletionKey,
+        text: latestCompletedAssistant.text
+      });
+    }
+    previousCompletionKeyRef.current = latestCompletionKey;
+  }, [isBusy, latestCompletedAssistant, latestCompletionKey]);
 
   return (
-    <div
-      {...props}
-      aria-busy={isBusy}
-      aria-live="polite"
-      aria-relevant="additions text"
-      className={joinClassNames("zhivex-message-list", className)}
-      role="log"
-      tabIndex={0}
-    >
+    <>
+      <div
+        {...props}
+        aria-busy={isBusy}
+        aria-live={isBusy ? "off" : "polite"}
+        aria-relevant="additions"
+        className={joinClassNames("zhivex-message-list", className)}
+        onScroll={handleScroll}
+        ref={listRef}
+        role="log"
+        tabIndex={0}
+      >
+      {autoFollow && !isFollowing ? (
+        <button
+          className="zhivex-button zhivex-button--secondary zhivex-jump-to-latest"
+          onClick={scrollToLatest}
+          type="button"
+        >
+          {jumpToLatestLabel ?? labels.jumpToLatest}
+        </button>
+      ) : null}
       {isEmpty ? (
         <div className="zhivex-empty">
           {emptyState ?? <p>{labels.empty}</p>}
@@ -824,6 +981,7 @@ export function MessageList({
               disabled={isBusy}
               labels={labels}
               onDecision={onApproval}
+              onDecisionError={onApprovalError}
             />
           ))}
         </>
@@ -839,7 +997,20 @@ export function MessageList({
           <span aria-hidden="true" />
         </p>
       ) : null}
-    </div>
+      </div>
+      <p
+        aria-atomic="true"
+        aria-live="polite"
+        className="zhivex-sr-only"
+        role="status"
+      >
+        {completionAnnouncement ? (
+          <span key={completionAnnouncement.key}>
+            {labels.responseComplete}: {completionAnnouncement.text}
+          </span>
+        ) : null}
+      </p>
+    </>
   );
 }
 
@@ -868,7 +1039,7 @@ export function Composer({
   className,
   ...props
 }: ComposerProps) {
-  const labels = mergeLabels(labelsOverride);
+  const labels = useChatLabels(labelsOverride);
   const generatedTextareaId = useId();
   const textareaId = textareaProps?.id ?? generatedTextareaId;
   const isBusy = isBusyStatus(status);
@@ -964,10 +1135,23 @@ export interface ZhivexChatProps
   renderers?: MessagePartRenderers;
   labels?: Partial<ChatLabels>;
   mediaUrlPolicy?: MediaUrlPolicy;
+  messageListProps?: Omit<
+    MessageListProps,
+    | "messages"
+    | "status"
+    | "pendingApprovals"
+    | "onApproval"
+    | "onApprovalError"
+    | "renderers"
+    | "emptyState"
+    | "labels"
+    | "mediaUrlPolicy"
+  >;
   onApproval?: (
     approval: AgentApprovalRequest,
     approved: boolean
   ) => void | Promise<void>;
+  onApprovalError?: ApprovalCardProps["onDecisionError"];
   onRetry?: () => void | Promise<void>;
   composerProps?: Omit<
     ComposerProps,
@@ -995,13 +1179,15 @@ export function ZhivexChat({
   renderers,
   labels: labelsOverride,
   mediaUrlPolicy,
+  messageListProps,
   onApproval,
+  onApprovalError,
   onRetry,
   composerProps,
   className,
   ...props
 }: ZhivexChatProps) {
-  const labels = mergeLabels(labelsOverride);
+  const labels = useChatLabels(labelsOverride);
   const error = errorMessage(controller.state.error);
   const handleApproval =
     onApproval ??
@@ -1019,11 +1205,13 @@ export function ZhivexChat({
         <header className="zhivex-chat__header">{header}</header>
       ) : null}
       <MessageList
+        {...messageListProps}
         emptyState={emptyState}
         labels={labels}
         messages={controller.state.messages}
         mediaUrlPolicy={mediaUrlPolicy}
         onApproval={handleApproval}
+        onApprovalError={onApprovalError}
         pendingApprovals={controller.state.pendingApprovals}
         renderers={renderers}
         status={controller.state.status}

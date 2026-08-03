@@ -46,7 +46,7 @@ listApiStability("beta");
 
 The manifest classifies runtime exports as `stable`, `beta`, or `experimental`. Contract tests fail if `packages/core/src/index.ts` adds a runtime export that is not classified. Type-only exports are guarded separately by declaration snapshots for `@zhivex-ai/core` and `@zhivex-ai/sdk`; intentional public type changes should update those snapshots and the relevant docs together.
 
-The stable boundary includes shared generation, media, agent runtime, safety, evaluation, replay, trace, and Runner/session APIs listed by the manifest. Workflows, artifacts, workflow state services, control-plane and CLI UX, and their schema/versioning helpers remain Beta. Advanced tool registry helpers remain Experimental.
+The stable boundary includes shared generation, media, agent runtime, safety, evaluation, replay, trace, Runner/session APIs, declarative workflows, and in-memory/file workflow state services listed by the manifest. SQL workflow state services, workflow evaluations, artifacts, control-plane, and CLI UX remain Beta. Advanced tool registry helpers remain Experimental.
 
 The current stable npm package is published under the `latest` dist-tag. Install it with `@zhivex-ai/sdk`. Use `@next` only for prerelease validation.
 
@@ -62,6 +62,8 @@ These APIs are the supported public contract for application code and production
 - Generative media: `generateImage`, `generateVideo`, `generateMusic`
 - Agent runtime: `createAgent`, `runAgent`, `resumeAgent`, `streamAgent`
 - Runner/session APIs: `createRunner`, in-memory/file/SQLite/Postgres `SessionService` implementations, `AgentSession`, `SessionEvent`, session schema v1 normalization/migration helpers, and file-backed session pruning helpers
+- Declarative workflows: `createWorkflow`, `runWorkflow`, `replayWorkflowRun`, sequential/parallel/loop step contracts, approval resume, schema-versioned `WorkflowRunState`, and its normalization/migration helpers
+- Workflow state: the `WorkflowStateService` contract, `loadWorkflowState`, `saveWorkflowState`, schema-versioned records and migration helpers, plus the in-memory and file-backed implementations
 - Agent persistence contracts: `AgentRunStore`, `AgentMemoryStore`
 - Durable agent helpers: `cancelAgentRun`, schema-versioned `AgentRunState`, and `idempotencyKey` support on built-in run stores
 - Native subagent helpers: `AgentDefinition.subagents`, `createSubAgentTool`, `prepareSubagentsForAgent`, `runAgentGroup`, `AgentRunInput.parentRunId`, `AgentRunState.childRuns`, `AgentRunStore.findByParentRunId`, shared child-run budget accounting, and `cancelAgentRunTree`
@@ -84,9 +86,10 @@ The stable surface is intentionally narrower than the total number of exported s
 These APIs are supported and documented, but they may still change between minor releases as the SDK matures:
 
 - Agent telemetry event details and observer patterns
-- Declarative workflow APIs: `createWorkflow`, `runWorkflow`, `replayWorkflowRun`, schema-versioned workflow state helpers, dedicated `WorkflowStateService` implementations, workflow artifact helpers, sequential workflow types, parallel workflow groups, loop workflow steps, workflow evaluation/report helpers, and workflow evaluation diff helpers
+- SQL workflow state implementations: `createSqliteWorkflowStateService` and `createPostgresWorkflowStateService`
+- Workflow evaluation/report and diff helpers, workflow artifact helpers, and file workflow-state pruning
 - Artifact service APIs: `createInMemoryArtifactService`, `createFileArtifactService`, `createSqliteArtifactService`, `createPostgresArtifactService`, `createBase64ArtifactData`, schema-versioned artifact records, binary artifact helpers, `ArtifactService`, and `ArtifactRecord`
-- Schema/versioning and migration helpers for Beta artifact, workflow run, and workflow state records
+- Schema/versioning and migration helpers for Beta artifact records
 - Artifact integrity verification, external artifact references, file artifact cleanup/pruning helpers, and workflow state pruning helpers
 - CLI / Dev UX: the `zhivex-ai` local inspection and local workflow execution CLI, including workflow artifact save, workflow state inspection, and evaluation report compare commands
 - OTEL observability helpers

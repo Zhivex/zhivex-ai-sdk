@@ -1,5 +1,26 @@
 # @zhivex-ai/react
 
+## 0.2.1
+
+### Patch Changes
+
+- Serialize binary audio safely in the default fetch transport and restore stopped user-message status when reloading a request.
+
+## 0.2.0
+
+### Minor Changes
+
+- ec9a323: Add server-safe package subpaths, multimodal chat input, controlled sessions,
+  batched streaming updates, bounded activity, explicit stopped messages,
+  public-safe transport errors, respectful auto-follow, accessible completion
+  announcements, and browser interaction coverage.
+
+### Patch Changes
+
+- Updated dependencies [4188b59]
+- Updated dependencies [4188b59]
+  - @zhivex-ai/core@1.1.0
+
 ## 0.1.1
 
 ### Patch Changes

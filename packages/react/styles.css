@@ -93,6 +93,7 @@
 
 .zhivex-message {
   align-self: flex-start;
+  contain-intrinsic-size: auto 8rem;
   content-visibility: auto;
   inline-size: min(100%, var(--zhivex-content-width));
 }
@@ -368,6 +369,26 @@
   gap: 0.5rem;
   justify-content: flex-end;
   margin-block-start: 1rem;
+}
+
+.zhivex-approval__error {
+  background: var(--zhivex-color-danger-surface);
+  border: 1px solid
+    color-mix(in srgb, var(--zhivex-color-danger) 30%, transparent);
+  border-radius: 0.5rem;
+  color: var(--zhivex-color-danger);
+  font-size: 0.875rem;
+  margin-block: 0.75rem 0;
+  padding: 0.625rem 0.75rem;
+}
+
+.zhivex-jump-to-latest {
+  align-self: center;
+  box-shadow: 0 0.25rem 1rem rgb(16 24 40 / 16%);
+  inset-block-start: calc(100% - 3.25rem);
+  margin-block-end: -2.75rem;
+  position: sticky;
+  z-index: 1;
 }
 
 .zhivex-composer {

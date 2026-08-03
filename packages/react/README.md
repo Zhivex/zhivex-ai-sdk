@@ -60,6 +60,10 @@ const chat = useZhivexChat({
 
 Set either timeout to `false` only when another application-level deadline and cancellation mechanism is present. Following redirects requires an explicit `redirect: "follow"` opt-in because a `307` or `308` can replay the chat POST body to the redirect destination.
 
+HTTP response bodies are retained in bounded `ChatTransportError.responseBody`
+for diagnostics, but are not included in the public error message. Use
+`formatError` only when the server response is explicitly safe to show users.
+
 ## Server Route
 
 This Next.js App Router route keeps identity and provider configuration on the server and finalizes Runner persistence before the terminal `session-finish` event:
@@ -148,6 +152,57 @@ For structural changes, compose `ChatRoot`, `MessageList`, `Composer`, `Message`
 
 The default renderer intentionally treats text as plaintext. Applications can plug in their preferred Markdown renderer and sanitization policy.
 
+`MessageList` follows new content only while the user remains near the bottom.
+When the user scrolls upward it preserves their reading position and shows a
+localized jump-to-latest control:
+
+```tsx
+<ZhivexChat
+  controller={chat}
+  messageListProps={{
+    autoFollow: true,
+    autoFollowThreshold: 128
+  }}
+/>
+```
+
+## Multimodal messages and sessions
+
+`send()` remains the text convenience API. Use `sendMessage()` for user image,
+audio, or file parts:
+
+```tsx
+await chat.sendMessage([
+  { type: "image", image: uploadedImageUrl, mediaType: "image/png" },
+  { type: "text", text: "Describe this image." }
+]);
+```
+
+`sendMessage()` rejects with `ChatBusyError` when another request is active;
+the legacy text-only `send()` keeps its previous no-op behavior in that case.
+The default fetch transport encodes `Uint8Array` and `ArrayBuffer` audio data as
+base64 before constructing its JSON request. A custom `buildRequestBody` owns
+the serialization and size limits of any binary values it returns.
+
+Prefer bounded application-owned uploads and URLs over placing large base64
+payloads in durable session history. `reset()` starts a new local conversation.
+For router- or store-owned sessions, pass `sessionId` (`null` explicitly clears
+it) and handle `onSessionChange`:
+
+```tsx
+const chat = useZhivexChat({
+  endpoint: "/api/chat",
+  sessionId: selectedSessionId,
+  onSessionChange: setSelectedSessionId
+});
+```
+
+Stream chunks are batched into one React update every 16 ms by default. Set
+`streamBatchMs: 0` only when immediate per-chunk rendering is required.
+Lifecycle `activity` is reset for each request and bounded to 200 entries by
+default; customize it with `activityLimit`. Stopped requests preserve partial
+content with message status `stopped`.
+
 Remote image and audio URLs are blocked by default so model or tool content cannot silently create tracking requests from the browser. `data:` and browser `blob:` sources remain supported. Opted-in HTTP(S) media is rendered with a `no-referrer` policy, while loopback, private, link-local, `.local`, `.internal`, `.lan`, and single-label hosts remain rejected unless separately enabled. Supply a narrow application policy:
 
 ```tsx
@@ -165,7 +220,11 @@ Hostname filtering cannot prevent DNS rebinding by itself. For high-trust applic
 
 ## Headless APIs
 
-- `useZhivexChat()`: optimistic messages, abort, approval resume, session state, and stream reduction.
+- `@zhivex-ai/react/hooks`: `useZhivexChat()` and its client-only types.
+- `@zhivex-ai/react/transport`: configurable `fetch`/SSE transport and bounded parsing without a React runtime import.
+- `@zhivex-ai/react/headless`: reducer, state factory, errors, and shared chat types without a React runtime import.
+- `@zhivex-ai/react/components`: accessible UI primitives without pulling the hook into the entrypoint.
+- `useZhivexChat()`: optimistic messages, multimodal input, abort, approval resume, controlled sessions, and stream reduction.
 - `createFetchChatTransport()`: configurable `fetch`/SSE transport.
 - `prepareChatRequestBody()`: default latest-message Runner request.
 - `parseChatEventStream()`: bounded SSE parser.

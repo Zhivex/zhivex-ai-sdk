@@ -28,6 +28,7 @@ bun run examples/sdk/full-agent.ts
 bun run examples/agents/full-agent.ts
 bun run examples/agents/approval-hitl.ts
 bun run examples/sdk/runner-session.ts
+bun run examples/sdk/workflow.ts
 bun run examples/sdk/tools-with-safety-policy.ts
 bun run examples/sdk/observability-export.ts
 bun run examples/sdk/agent-control-plane.ts
@@ -49,6 +50,8 @@ bun run examples/providers/deepseek.ts
 ```
 
 The `examples/sdk/runner-session.ts` example is deterministic and does not require provider credentials. It is useful as a quick smoke for `Runner + SessionService`.
+
+`examples/sdk/workflow.ts` is deterministic and does not require provider credentials. It runs a two-step workflow, persists sessions and workflow state to private local files, recreates the workflow state service, and replays the saved run without another model call.
 
 `examples/sdk/full-agent.ts` is deterministic and does not require provider credentials. It is the fastest smoke for the stable `Agent` class, local tool loops, serializable run state, and streaming from the aggregator package.
 

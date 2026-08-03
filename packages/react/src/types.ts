@@ -4,13 +4,19 @@ import type {
   AgentCompactionRecord,
   AgentStatus,
   AgentStep,
+  ContentPart,
   JsonValue,
   TokenUsage,
   UIMessage,
   UIMessageChunk
 } from "@zhivex-ai/core";
 
-export type ChatMessageStatus = "pending" | "streaming" | "complete" | "error";
+export type ChatMessageStatus =
+  | "pending"
+  | "streaming"
+  | "complete"
+  | "stopped"
+  | "error";
 export type ChatStatus = "ready" | "submitting" | "streaming" | "error";
 
 export interface ChatMessage extends UIMessage {
@@ -65,6 +71,17 @@ export interface ChatState {
   activity: ChatActivity[];
 }
 
+export class ChatBusyError extends Error {
+  readonly code = "chat_busy" as const;
+  readonly operation: "send" | "reload" | "approval";
+
+  constructor(operation: "send" | "reload" | "approval") {
+    super(`Cannot ${operation} while another chat request is active.`);
+    this.name = "ChatBusyError";
+    this.operation = operation;
+  }
+}
+
 export interface UnknownUIMessageChunk {
   type: string;
   [key: string]: unknown;
@@ -107,6 +124,20 @@ export type ChatHeaders =
   | HeadersInit
   | ((request: ChatTransportRequest) => HeadersInit | Promise<HeadersInit>);
 
+export interface ChatTransportErrorContext {
+  endpoint: string;
+  status: number;
+  statusText?: string;
+  /** Bounded diagnostic response text. It is never public by default. */
+  responseBody?: string;
+  /** Safe default message that never contains the response body. */
+  defaultMessage: string;
+}
+
+export type ChatTransportErrorFormatter = (
+  context: ChatTransportErrorContext
+) => string | undefined | Promise<string | undefined>;
+
 export interface FetchChatTransportOptions {
   endpoint?: string;
   headers?: ChatHeaders;
@@ -125,6 +156,8 @@ export interface FetchChatTransportOptions {
   maxStreamEvents?: number;
   /** Maximum bytes retained from an HTTP error or non-SSE response. Defaults to 8 KiB. */
   maxErrorBodyBytes?: number;
+  /** Explicitly customize public messages for non-successful HTTP responses. */
+  formatError?: ChatTransportErrorFormatter;
   /** Total request lifetime. Defaults to 120 seconds; set false to disable. */
   requestTimeoutMs?: number | false;
   /** Maximum wait between response body chunks. Defaults to 30 seconds; set false to disable. */
@@ -137,14 +170,43 @@ export type ChatMessagesUpdate =
   | readonly ChatMessage[]
   | ((messages: readonly ChatMessage[]) => readonly ChatMessage[]);
 
+export type ChatInputPart = Extract<
+  ContentPart,
+  { type: "text" | "image" | "audio" | "file" }
+>;
+
+export interface ChatInputMessage {
+  id?: string;
+  parts: readonly ChatInputPart[];
+  createdAt?: number;
+  metadata?: Record<string, JsonValue>;
+}
+
+export type ChatSendInput =
+  | string
+  | readonly ChatInputPart[]
+  | ChatInputMessage;
+
+export interface ChatResetOptions {
+  messages?: readonly (UIMessage | ChatMessage)[];
+  sessionId?: string;
+}
+
 export interface UseZhivexChatOptions {
   transport?: ChatTransport;
   endpoint?: string;
   initialMessages?: readonly (UIMessage | ChatMessage)[];
   initialSessionId?: string;
+  /** Controlled session id. Pass null to explicitly clear it. */
+  sessionId?: string | null;
   metadata?: Record<string, JsonValue>;
+  /** Maximum lifecycle entries retained for the active request. Defaults to 200. */
+  activityLimit?: number;
+  /** Stream batching window in milliseconds. Defaults to 16; use 0 for immediate updates. */
+  streamBatchMs?: number;
   onError?: (error: Error) => void;
   onFinish?: (state: ChatState) => void;
+  onSessionChange?: (sessionId: string | undefined) => void;
 }
 
 export interface UseZhivexChatResult {
@@ -159,10 +221,12 @@ export interface UseZhivexChatResult {
   input: string;
   setInput: (value: string) => void;
   send: (input?: string) => Promise<void>;
+  sendMessage: (input: ChatSendInput) => Promise<void>;
   stop: () => void;
   canReload: boolean;
   reload: () => Promise<void>;
   setMessages: (update: ChatMessagesUpdate) => void;
+  reset: (options?: ChatResetOptions) => void;
   resolveApproval: (
     approvalRequestId: string,
     approve: boolean,
@@ -181,6 +245,13 @@ export type ChatAction =
       type: "stream-chunk";
       chunk: ChatStreamChunk;
       now?: number;
+      activityLimit?: number;
+    }
+  | {
+      type: "stream-chunks";
+      chunks: readonly ChatStreamChunk[];
+      now?: number;
+      activityLimit?: number;
     }
   | {
       type: "request-finish";
@@ -195,4 +266,13 @@ export type ChatAction =
   | {
       type: "set-messages";
       messages: readonly ChatMessage[];
+    }
+  | {
+      type: "set-session";
+      sessionId?: string;
+    }
+  | {
+      type: "reset";
+      messages?: readonly ChatMessage[];
+      sessionId?: string;
     };
