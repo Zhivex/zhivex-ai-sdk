@@ -475,6 +475,30 @@ describe("qwen adapter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects tool_stream for non-streaming requests across Qwen model families", async () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("qwen3.7-plus");
+
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        providerOptions: { tool_stream: true }
+      })
+    ).rejects.toThrow("tool_stream requires streamText");
+
+    await expect(
+      generateObject({
+        model,
+        prompt: "Return JSON.",
+        schema: z.object({ answer: z.string() }),
+        providerOptions: { tool_stream: true }
+      })
+    ).rejects.toThrow("tool_stream requires streamText");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("declares qwen3.8-max-preview as a thinking-only multimodal Token Plan model", () => {
     const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const model = provider("qwen3.8-max-preview");

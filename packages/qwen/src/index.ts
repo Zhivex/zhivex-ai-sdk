@@ -1003,11 +1003,22 @@ const mapQwen38ChatReasoningEffort = (modelId: string, effort: unknown) => {
   }
 };
 
+const validateQwenToolStream = (
+  modelId: string,
+  providerOptions: QwenLanguageModelOptions,
+  streaming: boolean
+) => {
+  if (providerOptions.tool_stream === true && !streaming) {
+    throw new ConfigurationError(
+      `Qwen ${modelId} tool_stream requires streamText(); it cannot be used with generateText() or generateObject().`
+    );
+  }
+};
+
 const validateQwen38Request = (
   modelId: string,
   input: ModelGenerateInput,
-  providerOptions: QwenLanguageModelOptions,
-  streaming: boolean
+  providerOptions: QwenLanguageModelOptions
 ) => {
   const sharedEffort = input.reasoning?.effort;
   const providerEffort = providerOptions.reasoning_effort;
@@ -1025,11 +1036,6 @@ const validateQwen38Request = (
   if (providerOptions.preserve_thinking === false) {
     throw new ConfigurationError(
       `Qwen model "${modelId}" requires preserve_thinking so historical reasoning_content is retained.`
-    );
-  }
-  if (providerOptions.tool_stream === true && !streaming) {
-    throw new ConfigurationError(
-      `Qwen ${modelId} tool_stream requires streamText(); it cannot be used with generateText() or generateObject().`
     );
   }
   if (sharedEffort !== undefined && providerEffort !== undefined) {
@@ -1623,8 +1629,9 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       );
     }
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
+    validateQwenToolStream(this.modelId, providerOptions, false);
     if (isQwen38MaxFamily(this.modelId)) {
-      validateQwen38Request(this.modelId, input, providerOptions, false);
+      validateQwen38Request(this.modelId, input, providerOptions);
     }
     if (isQwen38Max(this.modelId)) {
       validateQwen38MaxBaseURL(this.baseURL);
@@ -1735,8 +1742,9 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
 
   async stream(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
+    validateQwenToolStream(this.modelId, providerOptions, true);
     if (isQwen38MaxFamily(this.modelId)) {
-      validateQwen38Request(this.modelId, input, providerOptions, true);
+      validateQwen38Request(this.modelId, input, providerOptions);
     }
     if (isQwen38Max(this.modelId)) {
       validateQwen38MaxBaseURL(this.baseURL);
