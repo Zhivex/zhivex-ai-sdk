@@ -355,6 +355,7 @@ export const defaultModelCatalog = createModelCatalog([
     provider: "vertex",
     modelId: "lyria-002"
   },
+  { provider: "qwen", modelId: "qwen3.8-max", recommendedFor: ["chat", "tools", "reasoning", "vision"] },
   { provider: "qwen", modelId: "qwen3.8-max-preview", recommendedFor: ["chat", "tools", "reasoning", "vision"] },
   { provider: "qwen", modelId: "qwen3.7-max", costPer1kTokens: 0.0016, recommendedFor: ["chat", "tools", "reasoning"] },
   { provider: "qwen", modelId: "qwen3.7-plus", costPer1kTokens: 0.0008, recommendedFor: ["chat", "tools", "reasoning", "vision"] },

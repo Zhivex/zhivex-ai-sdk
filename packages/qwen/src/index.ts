@@ -102,7 +102,11 @@ export interface QwenLanguageModelOptions {
   thinking_budget?: number;
   preserve_thinking?: boolean;
   reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  parallel_tool_calls?: boolean;
+  tool_stream?: boolean;
   top_p?: number;
+  top_k?: number;
+  repetition_penalty?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
   stop?: string | string[];
@@ -564,7 +568,8 @@ const stripResponsesRequestOptions = (providerOptions: Record<string, unknown> |
     "reasoning",
     "previous_response_id",
     "max_output_tokens",
-    "response_format"
+    "response_format",
+    "tool_stream"
   ]) {
     delete next[key];
   }
@@ -572,7 +577,21 @@ const stripResponsesRequestOptions = (providerOptions: Record<string, unknown> |
 };
 
 const modelFamily = (modelId: string) => modelId.toLowerCase();
+const isQwen38Max = (modelId: string) => modelFamily(modelId) === "qwen3.8-max";
 const isQwen38MaxPreview = (modelId: string) => modelFamily(modelId) === "qwen3.8-max-preview";
+const isQwen38MaxFamily = (modelId: string) => isQwen38Max(modelId) || isQwen38MaxPreview(modelId);
+const isQwenTokenPlanURL = (url: URL) => {
+  const path = url.pathname.replace(/\/+$/, "");
+  const tokenPlanURL = new URL(QWEN_TOKEN_PLAN_BASE_URL);
+  return (
+    url.origin === tokenPlanURL.origin &&
+    !url.username &&
+    !url.password &&
+    !url.search &&
+    !url.hash &&
+    path === "/compatible-mode/v1"
+  );
+};
 const validateQwen38BaseURL = (baseURL: string) => {
   let url: URL;
   try {
@@ -583,18 +602,22 @@ const validateQwen38BaseURL = (baseURL: string) => {
     );
   }
 
-  const path = url.pathname.replace(/\/+$/, "");
-  const tokenPlanURL = new URL(QWEN_TOKEN_PLAN_BASE_URL);
-  if (
-    url.origin !== tokenPlanURL.origin ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    path !== "/compatible-mode/v1"
-  ) {
+  if (!isQwenTokenPlanURL(url)) {
     throw new ConfigurationError(
       `Qwen qwen3.8-max-preview is Token Plan only. Configure baseURL with QWEN_TOKEN_PLAN_BASE_URL (${QWEN_TOKEN_PLAN_BASE_URL}); pay-as-you-go and workspace endpoints cannot serve this model.`
+    );
+  }
+};
+const validateQwen38MaxBaseURL = (baseURL: string) => {
+  let url: URL;
+  try {
+    url = new URL(baseURL);
+  } catch {
+    return;
+  }
+  if (isQwenTokenPlanURL(url)) {
+    throw new ConfigurationError(
+      "Qwen qwen3.8-max uses standard Model Studio credentials and endpoints; QWEN_TOKEN_PLAN_BASE_URL is reserved for qwen3.8-max-preview."
     );
   }
 };
@@ -617,6 +640,7 @@ const supportsQwenVision = (modelId: string) => {
     model.includes("omni") ||
     model.includes("ocr") ||
     model.includes("vision") ||
+    isQwen38Max(modelId) ||
     isQwen38MaxPreview(modelId) ||
     /^qwen3\.7-plus(?:$|-)/.test(model) ||
     /^qwen3\.6-flash(?:$|-)/.test(model)
@@ -630,21 +654,24 @@ const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
   const tools = supportsQwenTools(modelId);
   const omni = isQwenOmniLanguageModel(modelId);
   const reasoning = supportsQwenReasoning(modelId);
-  const qwen38 = isQwen38MaxPreview(modelId);
+  const qwen38Max = isQwen38Max(modelId);
+  const qwen38MaxPreview = isQwen38MaxPreview(modelId);
 
   return {
     ...capabilities,
     vision: supportsQwenVision(modelId),
     tools,
-    structuredOutput: tools && !omni && !qwen38,
-    jsonMode: tools && !omni && !qwen38,
+    structuredOutput: tools && !omni && !qwen38MaxPreview,
+    jsonMode: tools && !omni && !qwen38MaxPreview,
     toolChoice: tools,
-    parallelToolCalls: false,
+    parallelToolCalls: qwen38Max,
     webSearch: tools && !omni,
-    files: supportsQwenFiles(modelId),
+    files: supportsQwenFiles(modelId) || qwen38Max,
     audioInput: supportsQwenAudioInput(modelId),
     reasoning,
-    reasoningEfforts: qwen38
+    reasoningEfforts: qwen38Max
+      ? ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+      : qwen38MaxPreview
       ? ["minimal", "low", "medium", "high", "xhigh", "max"]
       : reasoning
         ? ["none", "minimal", "low", "medium", "high"]
@@ -741,10 +768,19 @@ const parseJson = async (
 type QwenMessageContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string } }
+  | { type: "video_url"; video_url: { url: string } }
   | { type: "input_audio"; input_audio: { data: string } };
 
+const toQwenMediaURL = (data: string, mediaType: string) =>
+  /^(?:https?:\/\/|data:)/i.test(data) ? data : `data:${mediaType};base64,${data}`;
+
 const mapContentParts = (message: ModelMessage) => {
-  const hasMedia = message.parts.some((part) => part.type === "image" || part.type === "audio");
+  const hasMedia = message.parts.some(
+    (part) =>
+      part.type === "image" ||
+      part.type === "audio" ||
+      (part.type === "file" && part.mediaType.toLowerCase().startsWith("video/"))
+  );
 
   if (!hasMedia) {
     return message.parts
@@ -762,6 +798,19 @@ const mapContentParts = (message: ModelMessage) => {
     }
     if (part.type === "audio") {
       return [{ type: "input_audio", input_audio: { data: toDataURL(part.data, part.mediaType) } }];
+    }
+    if (part.type === "file") {
+      if (!part.mediaType.toLowerCase().startsWith("video/")) {
+        throw new UnsupportedFeatureError(
+          'Qwen Chat Completions accepts FilePart input only for video/* media. Use ImagePart for images or Responses with a supported OCR model for documents.'
+        );
+      }
+      return [
+        {
+          type: "video_url",
+          video_url: { url: toQwenMediaURL(part.data, part.mediaType) }
+        }
+      ];
     }
     return [];
   });
@@ -927,7 +976,7 @@ const withStructuredOutputMessages = (input: ModelGenerateInput) => {
 const hasPreservedReasoning = (messages: ModelMessage[]) =>
   messages.some((message) => message.role === "assistant" && reasoningContentFromMessage(message));
 
-const mapQwen38ReasoningEffort = (effort: unknown) => {
+const mapQwen38ChatReasoningEffort = (modelId: string, effort: unknown) => {
   switch (effort) {
     case undefined:
       return undefined;
@@ -941,17 +990,33 @@ const mapQwen38ReasoningEffort = (effort: unknown) => {
     case "max":
       return "xhigh" as const;
     case "none":
-      throw new UnsupportedFeatureError(
-        'Qwen model "qwen3.8-max-preview" is thinking-only and does not support reasoning effort "none".'
-      );
+      if (isQwen38MaxPreview(modelId)) {
+        throw new UnsupportedFeatureError(
+          'Qwen model "qwen3.8-max-preview" is thinking-only and does not support reasoning effort "none".'
+        );
+      }
+      return undefined;
     default:
       throw new ConfigurationError(
-        `Qwen qwen3.8-max-preview reasoning effort must be low, medium, or xhigh (or a documented OpenAI alias), not "${String(effort)}".`
+        `Qwen ${modelId} reasoning effort must be low, medium, or xhigh (or a documented OpenAI alias), not "${String(effort)}".`
       );
   }
 };
 
-const validateQwen38Reasoning = (
+const validateQwenToolStream = (
+  modelId: string,
+  providerOptions: QwenLanguageModelOptions,
+  streaming: boolean
+) => {
+  if (providerOptions.tool_stream === true && !streaming) {
+    throw new ConfigurationError(
+      `Qwen ${modelId} tool_stream requires streamText(); it cannot be used with generateText() or generateObject().`
+    );
+  }
+};
+
+const validateQwen38Request = (
+  modelId: string,
   input: ModelGenerateInput,
   providerOptions: QwenLanguageModelOptions
 ) => {
@@ -960,24 +1025,27 @@ const validateQwen38Reasoning = (
   const sharedBudget = input.reasoning?.budgetTokens;
   const providerBudget = providerOptions.thinking_budget;
 
-  if (providerOptions.enable_thinking === false || providerEffort === "none") {
+  if (
+    isQwen38MaxPreview(modelId) &&
+    (providerOptions.enable_thinking === false || providerEffort === "none")
+  ) {
     throw new UnsupportedFeatureError(
       'Qwen model "qwen3.8-max-preview" is thinking-only; thinking cannot be disabled.'
     );
   }
   if (providerOptions.preserve_thinking === false) {
     throw new ConfigurationError(
-      'Qwen model "qwen3.8-max-preview" requires preserve_thinking so historical reasoning_content is retained.'
+      `Qwen model "${modelId}" requires preserve_thinking so historical reasoning_content is retained.`
     );
   }
   if (sharedEffort !== undefined && providerEffort !== undefined) {
     throw new ConfigurationError(
-      'Configure qwen3.8-max-preview reasoning effort with either reasoning.effort or providerOptions.reasoning_effort, not both.'
+      `Configure ${modelId} reasoning effort with either reasoning.effort or providerOptions.reasoning_effort, not both.`
     );
   }
   if (sharedBudget !== undefined && providerBudget !== undefined) {
     throw new ConfigurationError(
-      'Configure qwen3.8-max-preview thinking budget with either reasoning.budgetTokens or providerOptions.thinking_budget, not both.'
+      `Configure ${modelId} thinking budget with either reasoning.budgetTokens or providerOptions.thinking_budget, not both.`
     );
   }
 
@@ -985,22 +1053,59 @@ const validateQwen38Reasoning = (
   const budget = sharedBudget ?? providerBudget;
   if (effort !== undefined && budget !== undefined) {
     throw new ConfigurationError(
-      "Qwen qwen3.8-max-preview does not allow reasoning_effort and thinking_budget in the same request."
+      `Qwen ${modelId} does not allow reasoning_effort and thinking_budget in the same request.`
     );
   }
-  mapQwen38ReasoningEffort(effort);
+  mapQwen38ChatReasoningEffort(modelId, effort);
 
   if (
     providerBudget !== undefined &&
     (!Number.isInteger(providerBudget) || providerBudget < 0 || providerBudget > 262_144)
   ) {
     throw new ConfigurationError(
-      "Qwen qwen3.8-max-preview thinking_budget must be an integer between 0 and 262144."
+      `Qwen ${modelId} thinking_budget must be an integer between 0 and 262144.`
     );
   }
   if (sharedBudget !== undefined && sharedBudget > 262_144) {
     throw new ConfigurationError(
-      "Qwen qwen3.8-max-preview reasoning.budgetTokens cannot exceed 262144."
+      `Qwen ${modelId} reasoning.budgetTokens cannot exceed 262144.`
+    );
+  }
+
+  if (
+    isQwen38Max(modelId) &&
+    providerOptions.enable_thinking === false &&
+    ((effort !== undefined && effort !== "none") || budget !== undefined)
+  ) {
+    throw new ConfigurationError(
+      "Qwen qwen3.8-max cannot disable thinking while also configuring a reasoning effort or thinking budget."
+    );
+  }
+  if (isQwen38Max(modelId) && providerOptions.enable_thinking === true && effort === "none") {
+    throw new ConfigurationError(
+      'Qwen qwen3.8-max cannot enable thinking with reasoning effort "none".'
+    );
+  }
+
+  const thinkingEnabled =
+    isQwen38MaxPreview(modelId) ||
+    !(effort === "none" || providerOptions.enable_thinking === false);
+  if (thinkingEnabled && (input.toolChoice === "required" || typeof input.toolChoice === "object")) {
+    throw new UnsupportedFeatureError(
+      `Qwen ${modelId} supports toolChoice "required" or a named tool only when thinking is disabled.`
+    );
+  }
+
+  if (
+    isQwen38Max(modelId) &&
+    input.messages.some((message) =>
+      message.parts.some(
+        (part) => part.type === "file" && !part.mediaType.toLowerCase().startsWith("video/")
+      )
+    )
+  ) {
+    throw new UnsupportedFeatureError(
+      "Qwen qwen3.8-max FilePart input is reserved for video/* media. Use ImagePart for images."
     );
   }
 };
@@ -1010,14 +1115,27 @@ const mapChatReasoning = (
   input: ModelGenerateInput,
   providerOptions: QwenLanguageModelOptions
 ) => {
-  if (isQwen38MaxPreview(modelId)) {
-    const effort = mapQwen38ReasoningEffort(
+  if (isQwen38MaxFamily(modelId)) {
+    const rawEffort = input.reasoning?.effort ?? providerOptions.reasoning_effort;
+    const thinkingDisabled = rawEffort === "none" || providerOptions.enable_thinking === false;
+    if (thinkingDisabled) {
+      return {
+        enable_thinking: false,
+        preserve_thinking: true
+      };
+    }
+
+    const effort = mapQwen38ChatReasoningEffort(
+      modelId,
       input.reasoning?.effort ?? providerOptions.reasoning_effort
     );
     const budget = input.reasoning?.budgetTokens ?? providerOptions.thinking_budget;
     return {
       ...(effort ? { reasoning_effort: effort } : {}),
       ...(budget !== undefined ? { thinking_budget: budget } : {}),
+      ...(providerOptions.enable_thinking === true && effort === undefined && budget === undefined
+        ? { enable_thinking: true }
+        : {}),
       preserve_thinking: true
     };
   }
@@ -1041,17 +1159,23 @@ const mapResponsesReasoning = (
   providerOptions: QwenLanguageModelOptions
 ) => {
   const effort = input.reasoning?.effort ?? providerOptions.reasoning_effort;
-  if (!effort) {
+  const qwen38Effort =
+    isQwen38Max(modelId) && providerOptions.enable_thinking === false && effort === undefined
+      ? "none"
+      : effort;
+  if (!qwen38Effort) {
     return undefined;
   }
 
   return {
     reasoning: {
       effort: isQwen38MaxPreview(modelId)
-        ? mapQwen38ReasoningEffort(effort)
-        : effort === "low"
+        ? mapQwen38ChatReasoningEffort(modelId, qwen38Effort)
+        : isQwen38Max(modelId)
+          ? qwen38Effort
+          : qwen38Effort === "low"
           ? "minimal"
-          : effort
+          : qwen38Effort
     }
   };
 };
@@ -1084,23 +1208,46 @@ const hasHostedTools = (tools: ModelGenerateInput["tools"]) =>
 const hasMessagePart = (messages: ModelMessage[], type: "audio" | "file") =>
   messages.some((message) => message.parts.some((part) => part.type === type));
 
+const hasVideoInput = (messages: ModelMessage[]) =>
+  messages.some((message) =>
+    message.parts.some(
+      (part) => part.type === "file" && part.mediaType.toLowerCase().startsWith("video/")
+    )
+  );
+
+const hasNonVideoFileInput = (messages: ModelMessage[]) =>
+  messages.some((message) =>
+    message.parts.some(
+      (part) => part.type === "file" && !part.mediaType.toLowerCase().startsWith("video/")
+    )
+  );
+
 const resolveApiMode = (
   modelId: string,
   requestedMode: QwenLanguageModelOptions["apiMode"],
   input: ModelGenerateInput,
   providerOptions: QwenLanguageModelOptions
 ): "responses" | "chat" => {
+  const videoInput = hasVideoInput(input.messages);
+  if (videoInput && !isQwen38Max(modelId)) {
+    throw new UnsupportedFeatureError(
+      `Qwen model "${modelId}" does not support video FilePart input through this adapter.`
+    );
+  }
+
   const needsChat =
     input.maxTokens !== undefined ||
     input.reasoning?.budgetTokens !== undefined ||
     providerOptions.thinking_budget !== undefined ||
+    providerOptions.tool_stream === true ||
     input.structuredOutput?.mode === "native" ||
-    hasMessagePart(input.messages, "audio");
-  const needsResponses = hasHostedTools(input.tools) || hasMessagePart(input.messages, "file");
+    hasMessagePart(input.messages, "audio") ||
+    videoInput;
+  const needsResponses = hasHostedTools(input.tools) || hasNonVideoFileInput(input.messages);
 
   if (needsChat && needsResponses) {
     throw new UnsupportedFeatureError(
-      "Qwen cannot combine Responses-only hosted/file inputs with Chat-only maxTokens, audio, reasoning budgets, or structured output."
+      "Qwen cannot combine Responses-only hosted/file inputs with Chat-only maxTokens, audio, video, reasoning budgets, structured output, or tool streaming."
     );
   }
 
@@ -1115,7 +1262,7 @@ const resolveApiMode = (
 
   if (requestedMode === "responses" && needsChat) {
     throw new UnsupportedFeatureError(
-      'Qwen Responses does not process maxTokens, audio input, reasoning budgets, or native structured output; use apiMode "chat" or "auto".'
+      'Qwen Responses does not process maxTokens, audio/video input, reasoning budgets, native structured output, or tool_stream; use apiMode "chat" or "auto".'
     );
   }
   if (requestedMode === "chat" && needsResponses) {
@@ -1482,8 +1629,14 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       );
     }
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
+    validateQwenToolStream(this.modelId, providerOptions, false);
+    if (isQwen38MaxFamily(this.modelId)) {
+      validateQwen38Request(this.modelId, input, providerOptions);
+    }
+    if (isQwen38Max(this.modelId)) {
+      validateQwen38MaxBaseURL(this.baseURL);
+    }
     if (isQwen38MaxPreview(this.modelId)) {
-      validateQwen38Reasoning(input, providerOptions);
       validateQwen38BaseURL(this.baseURL);
     }
     const apiMode = resolveApiMode(this.modelId, providerOptions.apiMode ?? "auto", input, providerOptions);
@@ -1494,7 +1647,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       if (apiMode === "responses") {
         const previousResponse = getProviderResponseId(input.messages);
         const baseResponseProviderOptions = stripResponsesRequestOptions(providerOptions);
-        const responseProviderOptions = isQwen38MaxPreview(this.modelId)
+        const responseProviderOptions = isQwen38MaxFamily(this.modelId)
           ? stripQwen38ReasoningOptions(baseResponseProviderOptions)
           : baseResponseProviderOptions;
         const messages =
@@ -1540,7 +1693,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       }
 
       const baseChatProviderOptions = stripHeaderOptions(providerOptions);
-      const chatProviderOptions = isQwen38MaxPreview(this.modelId)
+      const chatProviderOptions = isQwen38MaxFamily(this.modelId)
         ? stripQwen38ReasoningOptions(baseChatProviderOptions)
         : baseChatProviderOptions;
       const response = await withRetry(
@@ -1557,8 +1710,8 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               tool_choice: mapChatToolChoice(input.toolChoice),
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
-              max_tokens: isQwen38MaxPreview(this.modelId) ? undefined : input.maxTokens,
-              max_completion_tokens: isQwen38MaxPreview(this.modelId) ? input.maxTokens : undefined,
+              max_tokens: isQwen38MaxFamily(this.modelId) ? undefined : input.maxTokens,
+              max_completion_tokens: isQwen38MaxFamily(this.modelId) ? input.maxTokens : undefined,
               stream: false,
               ...mapChatReasoning(this.modelId, input, providerOptions)
             })
@@ -1589,8 +1742,14 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
 
   async stream(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
+    validateQwenToolStream(this.modelId, providerOptions, true);
+    if (isQwen38MaxFamily(this.modelId)) {
+      validateQwen38Request(this.modelId, input, providerOptions);
+    }
+    if (isQwen38Max(this.modelId)) {
+      validateQwen38MaxBaseURL(this.baseURL);
+    }
     if (isQwen38MaxPreview(this.modelId)) {
-      validateQwen38Reasoning(input, providerOptions);
       validateQwen38BaseURL(this.baseURL);
     }
     const apiMode = resolveApiMode(this.modelId, providerOptions.apiMode ?? "auto", input, providerOptions);
@@ -1600,7 +1759,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     if (apiMode === "responses") {
       const previousResponse = getProviderResponseId(input.messages);
       const baseResponseProviderOptions = stripResponsesRequestOptions(providerOptions);
-      const responseProviderOptions = isQwen38MaxPreview(this.modelId)
+      const responseProviderOptions = isQwen38MaxFamily(this.modelId)
         ? stripQwen38ReasoningOptions(baseResponseProviderOptions)
         : baseResponseProviderOptions;
       const messages =
@@ -1638,7 +1797,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     }
 
     const baseChatProviderOptions = stripHeaderOptions(providerOptions);
-    const chatProviderOptions = isQwen38MaxPreview(this.modelId)
+    const chatProviderOptions = isQwen38MaxFamily(this.modelId)
       ? stripQwen38ReasoningOptions(baseChatProviderOptions)
       : baseChatProviderOptions;
     const response = await withRetry(
@@ -1656,8 +1815,8 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             tool_choice: mapChatToolChoice(input.toolChoice),
             response_format: mapStructuredOutput(input),
             temperature: input.temperature,
-            max_tokens: isQwen38MaxPreview(this.modelId) ? undefined : input.maxTokens,
-            max_completion_tokens: isQwen38MaxPreview(this.modelId) ? input.maxTokens : undefined,
+            max_tokens: isQwen38MaxFamily(this.modelId) ? undefined : input.maxTokens,
+            max_completion_tokens: isQwen38MaxFamily(this.modelId) ? input.maxTokens : undefined,
             stream: true,
             stream_options: { include_usage: true },
             ...mapChatReasoning(this.modelId, input, providerOptions)

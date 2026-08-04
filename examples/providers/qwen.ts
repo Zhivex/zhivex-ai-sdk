@@ -15,12 +15,12 @@ const qwen = tokenPlanApiKey
     })
   : createQwen({
       apiKey: requiredEnv("QWEN_API_KEY"),
-      workspaceId: process.env.QWEN_WORKSPACE_ID,
-      region: (process.env.QWEN_REGION as QwenRegion | undefined) ?? "singapore"
+      workspaceId: requiredEnv("QWEN_WORKSPACE_ID"),
+      region: (process.env.QWEN_REGION as QwenRegion | undefined) ?? "beijing"
     });
 
 const result = await generateText({
-  model: qwen(tokenPlanApiKey ? "qwen3.8-max-preview" : "qwen3.7-plus"),
+  model: qwen(tokenPlanApiKey ? "qwen3.8-max-preview" : "qwen3.8-max"),
   prompt: "Say hello from the Qwen adapter."
 });
 

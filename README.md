@@ -1751,10 +1751,12 @@ Provider compatibility for the common `reasoning` option:
   - Gemini 3 models support `effort`
   - Gemini 2.5 and earlier models support `budgetTokens`
 - Qwen:
-  - supported on reasoning-capable model families such as `qwen3.8-max-preview`, `qwen3.7-plus`, `qwen3.7-max`, `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`
-  - Responses maps `effort` to `reasoning.effort`; shared `low` maps to Qwen `minimal`
-  - Chat Completions maps `effort` to `enable_thinking`, and `budgetTokens` to `thinking_budget`
-  - automatic API routing selects Chat for token budgets, audio inputs, and structured output; hosted tools, OCR files, and response continuations use Responses
+  - supported on reasoning-capable model families such as `qwen3.8-max`, `qwen3.8-max-preview`, `qwen3.7-plus`, `qwen3.7-max`, `qwen-plus`, `qwen-turbo`, `qwq`, and `qwen3*`
+  - final `qwen3.8-max` is hybrid and exposes all seven shared efforts in Responses; Chat normalizes them to native `low`, `medium`, or `xhigh`, while `none` disables thinking
+  - final and preview Chat requests preserve `reasoning_content`, reject simultaneous effort and budget controls, cap thinking budgets at 262144, and send `maxTokens` as `max_completion_tokens`
+  - while Qwen 3.8 thinking is active, forced or named tool choices are rejected; final `qwen3.8-max` can use them after thinking is disabled
+  - automatic API routing selects Chat for token budgets, audio/video inputs, structured output, and `tool_stream`; hosted tools, OCR files, and response continuations use Responses
+  - older families retain the generic Responses mapping where shared `low` becomes Qwen `minimal`
 - Kimi:
   - `kimi-k3` always reasons and maps `effort: "max"` to top-level `reasoning_effort: "max"`; lower efforts are rejected until upstream enables them
   - K2.6, K2.5, and legacy thinking models map to Kimi `thinking.enabled/disabled`; K2.7 Code uses preserved `thinking.enabled` with `keep: "all"`
@@ -2064,7 +2066,7 @@ const result = await generateText({
 });
 ```
 
-Qwen automatically selects between DashScope-compatible Responses and Chat Completions. Responses is used for hosted web search, web extraction, code interpreter, file search, remote MCP, image search, OCR file input, and response continuation; Chat is selected for structured output, audio input, `maxTokens`, or `reasoning.budgetTokens`. You can force a compatible path with `providerOptions.apiMode`. Current catalog examples include the Token Plan-only `qwen3.8-max-preview` for multimodal reasoning, `qwen3.7-plus` for pay-as-you-go multimodal reasoning, `qwen3.7-max` for text reasoning, and `qwen-image-2.0-pro` for image generation. Qwen 3.8 requires a dedicated `sk-sp-` key and the exported `QWEN_TOKEN_PLAN_BASE_URL`; the adapter rejects pay-as-you-go/workspace endpoints before fetch. Token Plan terms restrict those credentials to interactive programming and agent tools, so use a pay-as-you-go model for application backends, scripts, scheduled jobs, and batch processing. The default international endpoint uses `tongyi-embedding-vision-plus` for multimodal embeddings; `qwen3-vl-embedding` requires a Beijing workspace. Text reranking uses the DashScope-native endpoint so both the global international host and workspace-specific hosts work. Authenticated realtime sessions use a Node/Bun WebSocket transport by default.
+Qwen automatically selects between DashScope-compatible Responses and Chat Completions. Responses is used for hosted web search, web extraction, code interpreter, file search, remote MCP, image search, OCR file input, and response continuation; Chat is selected for structured output, audio/video input, `maxTokens`, `reasoning.budgetTokens`, or `providerOptions.tool_stream`. You can force a compatible path with `providerOptions.apiMode`. Current catalog examples include the production `qwen3.8-max` for standard Model Studio multimodal reasoning, the Token Plan-only `qwen3.8-max-preview`, `qwen3.7-plus`, `qwen3.7-max`, and `qwen-image-2.0-pro` for image generation. The final Qwen 3.8 model uses a regular Model Studio key and a compatible standard or workspace endpoint, supports hybrid reasoning, image/video understanding, parallel tools, and structured output, and keeps thinking enabled by default. Video is represented by a `FilePart` with a `video/*` MIME type and routed to Chat `video_url`; generic document files are rejected for that model. The preview remains thinking-only and requires a dedicated `sk-sp-` key plus the exported `QWEN_TOKEN_PLAN_BASE_URL`; the adapter rejects pay-as-you-go/workspace endpoints for that preview before fetch. Token Plan terms restrict those credentials to interactive programming and agent tools. The default international endpoint uses `tongyi-embedding-vision-plus` for multimodal embeddings; `qwen3-vl-embedding` requires a Beijing workspace. Text reranking uses the DashScope-native endpoint so both the global international host and workspace-specific hosts work. Authenticated realtime sessions use a Node/Bun WebSocket transport by default.
 
 ```ts
 import { generateText } from "@zhivex-ai/sdk";
@@ -2078,11 +2080,13 @@ import {
 } from "@zhivex-ai/qwen";
 
 const qwen = createQwen({
-  apiKey: process.env.DASHSCOPE_API_KEY
+  apiKey: process.env.DASHSCOPE_API_KEY,
+  workspaceId: process.env.QWEN_WORKSPACE_ID,
+  region: "beijing"
 });
 
 const result = await generateText({
-  model: qwen("qwen3.7-plus"),
+  model: qwen("qwen3.8-max"),
   prompt: "Find current docs, extract the relevant page, and check a sample with code.",
   tools: {
     search: qwenWebSearchTool(),

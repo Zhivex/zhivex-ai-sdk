@@ -169,6 +169,336 @@ describe("qwen adapter", () => {
     });
   });
 
+  it("declares qwen3.8-max as a hybrid multimodal production model", () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("qwen3.8-max");
+
+    expect(model.capabilities).toMatchObject({
+      reasoning: true,
+      reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+      vision: true,
+      files: true,
+      tools: true,
+      structuredOutput: true,
+      jsonMode: true,
+      parallelToolCalls: true,
+      webSearch: true
+    });
+  });
+
+  it("routes qwen3.8-max multimodal reasoning through the standard Responses endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_38_max",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "explained" }] }]
+      })
+    );
+    const provider = createQwen({
+      apiKey: "pay-as-you-go-key",
+      workspaceId: "ws_123",
+      region: "beijing",
+      fetch: fetchMock as typeof fetch
+    });
+
+    const result = await generateText({
+      model: provider("qwen3.8-max"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "image", image: "https://example.com/diagram.png", mediaType: "image/png" },
+            { type: "text", text: "Explain this diagram." }
+          ]
+        }
+      ],
+      reasoning: { effort: "low" }
+    });
+
+    expect(result.text).toBe("explained");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://ws_123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/responses"
+    );
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      model: "qwen3.8-max",
+      reasoning: { effort: "low" },
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_image", image_url: "https://example.com/diagram.png" },
+            { type: "input_text", text: "Explain this diagram." }
+          ]
+        }
+      ]
+    });
+  });
+
+  it("supports qwen3.8-max native structured output with hybrid thinking disabled", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { content: JSON.stringify({ title: "Architecture", components: 3 }) }
+          }
+        ]
+      })
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    const result = await generateObject({
+      model: provider("qwen3.8-max"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "image", image: "https://example.com/architecture.png", mediaType: "image/png" },
+            { type: "text", text: "Return a JSON summary." }
+          ]
+        }
+      ],
+      schema: z.object({ title: z.string(), components: z.number() }),
+      mode: "native",
+      maxTokens: 256,
+      reasoning: { effort: "none" }
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/completions");
+    expect(body).toMatchObject({
+      model: "qwen3.8-max",
+      response_format: { type: "json_object" },
+      enable_thinking: false,
+      preserve_thinking: true,
+      max_completion_tokens: 256
+    });
+    expect(body.max_tokens).toBeUndefined();
+    expect(body.messages[0]?.content).toContain("JSON Schema");
+    expect(body.messages[1]?.content).toEqual([
+      { type: "image_url", image_url: { url: "https://example.com/architecture.png" } },
+      { type: "text", text: "Return a JSON summary." }
+    ]);
+    expect(result.object).toEqual({ title: "Architecture", components: 3 });
+  });
+
+  it("maps qwen3.8-max Chat reasoning aliases and always preserves thinking history", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "reasoned" } }]
+      })
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await generateText({
+      model: provider("qwen3.8-max"),
+      prompt: "Think carefully.",
+      reasoning: { effort: "high" },
+      providerOptions: { apiMode: "chat" }
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      reasoning_effort: "xhigh",
+      preserve_thinking: true
+    });
+    expect(body.reasoning).toBeUndefined();
+    expect(body.enable_thinking).toBeUndefined();
+  });
+
+  it("streams qwen3.8-max video and Chat tool options without losing multimodal order", async () => {
+    const responseBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"video understood"},"finish_reason":"stop"}]}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(responseBody, { status: 200, headers: { "content-type": "text/event-stream" } })
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    const result = streamText({
+      model: provider("qwen3.8-max"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            {
+              type: "file",
+              data: "https://example.com/demo.mp4",
+              mediaType: "video/mp4",
+              filename: "demo.mp4"
+            },
+            { type: "text", text: "Summarize the video." }
+          ]
+        }
+      ],
+      providerOptions: {
+        parallel_tool_calls: true,
+        tool_stream: true
+      }
+    });
+
+    expect((await result.collect()).text).toBe("video understood");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/completions");
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      model: "qwen3.8-max",
+      parallel_tool_calls: true,
+      tool_stream: true,
+      preserve_thinking: true,
+      stream: true
+    });
+    expect(body.messages[0]?.content).toEqual([
+      { type: "video_url", video_url: { url: "https://example.com/demo.mp4" } },
+      { type: "text", text: "Summarize the video." }
+    ]);
+  });
+
+  it("enforces qwen3.8-max thinking tool-choice restrictions and allows forcing a tool when disabled", async () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("qwen3.8-max");
+    const tools = {
+      weather: tool({
+        name: "weather",
+        schema: z.object({ city: z.string() }),
+        execute: ({ city }) => ({ city })
+      })
+    };
+
+    await expect(
+      generateText({
+        model,
+        prompt: "Use the weather tool.",
+        tools,
+        toolChoice: "required"
+      })
+    ).rejects.toThrow('only when thinking is disabled');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "done" } }]
+      })
+    );
+    await generateText({
+      model,
+      prompt: "Use the weather tool.",
+      tools,
+      toolChoice: { type: "tool", toolName: "weather" },
+      reasoning: { effort: "none" },
+      providerOptions: { apiMode: "chat" }
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      enable_thinking: false,
+      preserve_thinking: true,
+      tool_choice: { type: "function", function: { name: "weather" } }
+    });
+  });
+
+  it("rejects invalid qwen3.8-max reasoning and non-video FilePart controls before fetch", async () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("qwen3.8-max");
+
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        reasoning: { effort: "medium", budgetTokens: 16_384 }
+      })
+    ).rejects.toThrow("does not allow reasoning_effort and thinking_budget");
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        providerOptions: { thinking_budget: 262_145 }
+      })
+    ).rejects.toThrow("thinking_budget must be an integer between 0 and 262144");
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        providerOptions: { preserve_thinking: false }
+      })
+    ).rejects.toThrow("requires preserve_thinking");
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        providerOptions: { tool_stream: true }
+      })
+    ).rejects.toThrow("tool_stream requires streamText");
+    await expect(
+      generateText({
+        model,
+        messages: [
+          {
+            role: "user",
+            parts: [{ type: "file", data: "https://example.com/report.pdf", mediaType: "application/pdf" }]
+          }
+        ]
+      })
+    ).rejects.toThrow("FilePart input is reserved for video/* media");
+    await expect(
+      generateText({
+        model,
+        messages: [
+          {
+            role: "user",
+            parts: [{ type: "file", data: "https://example.com/demo.mp4", mediaType: "video/mp4" }]
+          }
+        ],
+        providerOptions: { apiMode: "responses" }
+      })
+    ).rejects.toThrow("does not process maxTokens, audio/video input");
+
+    const tokenPlanProvider = createQwen({
+      apiKey: "token-plan-key",
+      baseURL: QWEN_TOKEN_PLAN_BASE_URL,
+      fetch: fetchMock as typeof fetch
+    });
+    await expect(
+      generateText({
+        model: tokenPlanProvider("qwen3.8-max"),
+        prompt: "hello"
+      })
+    ).rejects.toThrow("QWEN_TOKEN_PLAN_BASE_URL is reserved for qwen3.8-max-preview");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects tool_stream for non-streaming requests across Qwen model families", async () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("qwen3.7-plus");
+
+    await expect(
+      generateText({
+        model,
+        prompt: "hello",
+        providerOptions: { tool_stream: true }
+      })
+    ).rejects.toThrow("tool_stream requires streamText");
+
+    await expect(
+      generateObject({
+        model,
+        prompt: "Return JSON.",
+        schema: z.object({ answer: z.string() }),
+        providerOptions: { tool_stream: true }
+      })
+    ).rejects.toThrow("tool_stream requires streamText");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("declares qwen3.8-max-preview as a thinking-only multimodal Token Plan model", () => {
     const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const model = provider("qwen3.8-max-preview");
@@ -384,6 +714,13 @@ describe("qwen adapter", () => {
   it("rejects invalid qwen3.8-max-preview thinking controls before fetch", async () => {
     const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const model = provider("qwen3.8-max-preview");
+    const tools = {
+      weather: tool({
+        name: "weather",
+        schema: z.object({ city: z.string() }),
+        execute: ({ city }) => ({ city })
+      })
+    };
 
     await expect(
       generateText({
@@ -413,6 +750,14 @@ describe("qwen adapter", () => {
         providerOptions: { preserve_thinking: false }
       })
     ).rejects.toThrow("requires preserve_thinking");
+    await expect(
+      generateText({
+        model,
+        prompt: "Use weather.",
+        tools,
+        toolChoice: "required"
+      })
+    ).rejects.toThrow('only when thinking is disabled');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
