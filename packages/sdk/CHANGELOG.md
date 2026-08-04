@@ -1,5 +1,13 @@
 # @zhivex-ai/sdk
 
+## 1.1.1
+
+### Patch Changes
+
+- 0b8ecd5: Add first-class support for the production `qwen3.8-max` contract, including standard Model Studio endpoints, hybrid reasoning, multimodal input, tools, structured output, catalog metadata, documentation, examples, and regression coverage while preserving the separate Token Plan preview behavior.
+- Updated dependencies [0b8ecd5]
+  - @zhivex-ai/core@1.1.1
+
 ## 1.1.0
 
 ### Minor Changes
