@@ -32,6 +32,28 @@ Supported region values are `singapore`, `beijing`, `hong-kong`, `tokyo`, `frank
 
 Qwen speech downloads accept HTTPS audio URLs only, validate every redirect manually, and never forward the provider API key to the media host.
 
+### Qwen 3.8 Max
+
+`qwen3.8-max` is the production Qwen 3.8 flagship exposed through standard Alibaba Cloud Model Studio credentials and compatible endpoints, including regional workspace endpoints. It has a 1M-token context window and supports text, image and video understanding, hybrid reasoning, function calling, built-in tools, parallel function calls, and JSON structured output.
+
+```ts
+const qwen = createQwen({
+  apiKey: process.env.DASHSCOPE_API_KEY,
+  workspaceId: process.env.QWEN_WORKSPACE_ID,
+  region: "beijing"
+});
+
+const model = qwen("qwen3.8-max");
+```
+
+Thinking is enabled by default but remains hybrid. Responses accepts the shared `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` efforts directly. Chat Completions uses Qwen's native `low`, `medium`, and `xhigh` levels, so `minimal` maps to `low`, while `high` and `max` map to `xhigh`; `none` sends `enable_thinking: false`. A reasoning effort and a thinking budget are mutually exclusive, and budgets cannot exceed 262144 tokens. Chat requests always send `preserve_thinking: true`, while shared `maxTokens` uses the non-deprecated `max_completion_tokens` field.
+
+Video input uses a `FilePart` with a `video/*` MIME type and automatically selects Chat Completions. Public HTTP(S) URLs, data URLs, and raw base64 strings are accepted; non-video `FilePart` values are rejected for this model. Set `providerOptions.parallel_tool_calls` to opt in to upstream parallel tool calls and `providerOptions.tool_stream` to select Chat tool-call streaming. While thinking is active, Qwen permits only `toolChoice: "auto"` or `"none"`; disable thinking before using `"required"` or selecting a named tool.
+
+A standard Model Studio key is region-scoped, so keep the key, workspace, and selected region aligned. The adapter does not hard-code a region allowlist for this final model; model availability still depends on the selected Model Studio region.
+
+Do not configure `QWEN_TOKEN_PLAN_BASE_URL` for `qwen3.8-max`. That endpoint and its dedicated `sk-sp-` credentials belong to the separate preview contract below; the adapter rejects this exact final-model mismatch before fetch.
+
 ### Qwen 3.8 Max Preview (Token Plan)
 
 `qwen3.8-max-preview` is a preview model available only through QwenCloud Token Plan Personal or Team Edition in Singapore. Token Plan keys use the `sk-sp-` prefix; they are not interchangeable with pay-as-you-go keys, and the regular `dashscope-intl.aliyuncs.com` endpoint does not serve this model. Configure the dedicated Token Plan Base URL explicitly:
@@ -61,7 +83,7 @@ Token Plan terms limit these credentials to interactive use in programming and a
 The default `apiMode: "auto"` selects the protocol required by the request:
 
 - Responses for hosted tools, Qwen OCR file URLs, and `previous_response_id` continuation.
-- Chat Completions for structured output, audio input, `maxTokens`, or `reasoning.budgetTokens`.
+- Chat Completions for structured output, audio/video input, `maxTokens`, `reasoning.budgetTokens`, or `providerOptions.tool_stream`.
 - Either path for ordinary text and local function tools; automatic mode prefers Responses.
 
 Use `providerOptions: { apiMode: "responses" }` or `{ apiMode: "chat" }` only when you need to force a compatible path. Unsupported combinations fail before the network request instead of silently dropping fields.
@@ -81,7 +103,9 @@ const result = await generateObject({
 });
 ```
 
-Responses reasoning maps shared `effort` to `reasoning.effort` (`low` becomes Qwen `minimal`). Chat reasoning maps to `enable_thinking`; `budgetTokens` maps to `thinking_budget`.
+For older Qwen families, Responses reasoning maps shared `effort` to `reasoning.effort` (`low` becomes Qwen `minimal`), while Chat reasoning maps to `enable_thinking` and `budgetTokens` to `thinking_budget`.
+
+`qwen3.8-max` uses its stricter model-specific mapping described above, keeps native structured output enabled in thinking and non-thinking modes, accepts images through either compatible API, and routes video through Chat. With no explicit reasoning option, the provider leaves Qwen's thinking-enabled default intact.
 
 `qwen3.8-max-preview` has a stricter contract:
 
@@ -90,9 +114,12 @@ Responses reasoning maps shared `effort` to `reasoning.effort` (`low` becomes Qw
 - `reasoning.effort`/`providerOptions.reasoning_effort` cannot be combined with `reasoning.budgetTokens`/`providerOptions.thinking_budget`. Shared budgets must be positive and both paths enforce the model maximum of 262144; raw `thinking_budget` also accepts the documented value `0`.
 - Automatic mode uses Responses for ordinary text, images, local functions, and hosted tools. A thinking budget selects Chat Completions because `thinking_budget` is not available in Responses. For Chat requests, shared `maxTokens` is sent as `max_completion_tokens`.
 - Chat requests always send `preserve_thinking: true`, and reasoning returned by the adapter is kept as Qwen `reasoning_content` provider data so multi-turn and tool-call histories return it in the correct field. Setting `preserve_thinking: false` is rejected.
+- Because this preview is always thinking, forced or named tool choices are rejected; use `toolChoice: "auto"` or `"none"`.
 - The model supports text, images, function calling, and built-in tools. It does not support native structured output or JSON mode. `generateObject({ mode: "native" })` is rejected through its capabilities; the default `auto` mode can still use prompted output with local schema validation.
 
-See QwenCloud's official [Token Plan quickstart](https://docs.qwencloud.com/token-plan/quickstart), [Token Plan terms](https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview), [OpenAI-compatible Chat contract](https://docs.qwencloud.com/api-reference/chat/openai-chat), and [Responses contract](https://docs.qwencloud.com/api-reference/chat/openai-responses).
+For the final model contract, see Alibaba Cloud Model Studio's official [model list](https://help.aliyun.com/en/model-studio/models), [deep-thinking controls](https://help.aliyun.com/en/model-studio/deep-thinking), [OpenAI-compatible Chat contract](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions), [Responses contract](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-responses), and [structured-output guide](https://help.aliyun.com/en/model-studio/qwen-structured-output).
+
+For the preview contract, see QwenCloud's official [Token Plan quickstart](https://docs.qwencloud.com/token-plan/quickstart), [Token Plan terms](https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview), [OpenAI-compatible Chat contract](https://docs.qwencloud.com/api-reference/chat/openai-chat), and [Responses contract](https://docs.qwencloud.com/api-reference/chat/openai-responses).
 
 ### Hosted tools
 
@@ -232,7 +259,7 @@ Authenticated realtime connections use the package's Node/Bun `ws` transport by 
 
 ## Current catalog coverage
 
-The default catalog includes current text and multimodal Qwen families plus the specialized IDs wired above: `qwen3.8-max-preview` for Token Plan, `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, `qwen3.5-omni-plus-realtime`, `qwen3.5-ocr`, `tongyi-embedding-vision-plus` for international/Singapore, `qwen3-vl-embedding` for Beijing, `qwen3-rerank`, `qwen3-asr-flash`, `qwen3-tts-flash`, `qwen-image-2.0-pro`, and `wan2.7-t2v`.
+The default catalog includes current text and multimodal Qwen families plus the specialized IDs wired above: `qwen3.8-max` for standard Model Studio production traffic, `qwen3.8-max-preview` for Token Plan, `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, `qwen3.5-omni-plus-realtime`, `qwen3.5-ocr`, `tongyi-embedding-vision-plus` for international/Singapore, `qwen3-vl-embedding` for Beijing, `qwen3-rerank`, `qwen3-asr-flash`, `qwen3-tts-flash`, `qwen-image-2.0-pro`, and `wan2.7-t2v`.
 
 Run opt-in live coverage with:
 
@@ -240,7 +267,9 @@ Run opt-in live coverage with:
 QWEN_EXTENDED_INTEGRATION=1 bun --env-file=.env run test:integration:qwen
 ```
 
-Set only the surfaces you want to exercise: `QWEN_MULTIMODAL_EMBEDDING_MODEL`, `QWEN_MULTIMODAL_IMAGE_URL`, `QWEN_RERANK_MODEL`, `QWEN_ASR_MODEL`, `QWEN_ASR_AUDIO_URL`, `QWEN_TTS_MODEL`, `QWEN_IMAGE_MODEL`, `QWEN_VIDEO_MODEL`, and `QWEN_REALTIME_MODEL`. For the default international endpoint, use `tongyi-embedding-vision-plus`; use `qwen3-vl-embedding` only with a Beijing workspace. Workspace and endpoint overrides use `QWEN_WORKSPACE_ID`, `QWEN_REGION`, `QWEN_BASE_URL`, `QWEN_TASK_BASE_URL`, and `QWEN_REALTIME_URL`.
+The shared provider smoke keeps `qwen3.7-plus` as its compatibility default. Certify the final model explicitly with `QWEN_INTEGRATION_MODEL=qwen3.8-max`; the standard international endpoint can be used when the account exposes the model there, while `QWEN_WORKSPACE_ID` and `QWEN_REGION` select an explicit regional workspace (use `beijing` for the currently documented Responses model list). Set only the extended surfaces you want to exercise: `QWEN_MULTIMODAL_EMBEDDING_MODEL`, `QWEN_MULTIMODAL_IMAGE_URL`, `QWEN_RERANK_MODEL`, `QWEN_ASR_MODEL`, `QWEN_ASR_AUDIO_URL`, `QWEN_TTS_MODEL`, `QWEN_IMAGE_MODEL`, `QWEN_VIDEO_MODEL`, and `QWEN_REALTIME_MODEL`. For the default international endpoint, use `tongyi-embedding-vision-plus`; use `qwen3-vl-embedding` only with a Beijing workspace. Workspace and endpoint overrides use `QWEN_WORKSPACE_ID`, `QWEN_REGION`, `QWEN_BASE_URL`, `QWEN_TASK_BASE_URL`, and `QWEN_REALTIME_URL`.
+
+The catalog intentionally omits a price for `qwen3.8-max` until Alibaba Cloud publishes a stable public rate for the final model.
 
 Repository and full documentation:
 

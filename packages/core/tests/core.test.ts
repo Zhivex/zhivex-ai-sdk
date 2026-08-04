@@ -3242,6 +3242,10 @@ describe("core helpers", () => {
   });
 
   it("includes current Qwen and Kimi catalog entries", () => {
+    expect(defaultModelCatalog.find("qwen", "qwen3.8-max")).toMatchObject({
+      modelId: "qwen3.8-max",
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
+    });
     expect(defaultModelCatalog.find("qwen", "qwen3.8-max-preview")).toMatchObject({
       modelId: "qwen3.8-max-preview",
       recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])

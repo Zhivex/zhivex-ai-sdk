@@ -63,6 +63,17 @@ The Kimi K3 smoke path uses `temperature: 1`, `reasoning.effort: "max"`, and `to
 
 For extended Qwen coverage, enable `QWEN_EXTENDED_INTEGRATION=1` and run `bun run test:integration:qwen`. The provider-specific tests are individually gated by `QWEN_MULTIMODAL_EMBEDDING_MODEL`, `QWEN_RERANK_MODEL`, `QWEN_ASR_MODEL`, `QWEN_TTS_MODEL`, `QWEN_IMAGE_MODEL`, `QWEN_VIDEO_MODEL`, and `QWEN_REALTIME_MODEL`; URL inputs and workspace/endpoint variables are documented in `packages/qwen/README.md`. A skipped surface is not a live validation.
 
+The common Qwen smoke keeps `qwen3.7-plus` as its compatibility default. To certify the final Qwen 3.8 model against the standard international endpoint when the account exposes it there, run:
+
+```bash
+QWEN_INTEGRATION_MODEL=qwen3.8-max \
+bun --env-file=.env run test:integration:qwen
+```
+
+Add `QWEN_WORKSPACE_ID=... QWEN_REGION=beijing` to target the currently documented Beijing Responses workspace explicitly.
+
+Passing contract tests without this authenticated run proves adapter behavior, not live provider availability.
+
 ## No-Credentials Example
 
 On a machine with no provider credentials configured, the report will look like this:

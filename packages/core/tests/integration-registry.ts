@@ -130,6 +130,7 @@ const qwenWorkspaceId = process.env.QWEN_WORKSPACE_ID;
 const qwenRegion = process.env.QWEN_REGION as QwenRegion | undefined;
 const qwenTextModelId = process.env.QWEN_INTEGRATION_MODEL ?? "qwen3.7-plus";
 const qwenEmbeddingModelId = process.env.QWEN_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-v4";
+const isQwen38MaxIntegrationModel = /^qwen3\.8-max$/i.test(qwenTextModelId);
 
 const kimiApiKey = process.env.KIMI_API_KEY ?? process.env.MOONSHOT_API_KEY;
 const kimiBaseURL = process.env.KIMI_BASE_URL ?? process.env.MOONSHOT_BASE_URL;
@@ -582,6 +583,7 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
             }).embeddingModel(qwenEmbeddingModelId),
           // Qwen thinking models need automatic tool selection and enough output
           // budget to emit complete JSON arguments before the follow-up answer.
+          ...(isQwen38MaxIntegrationModel ? { textMaxTokens: 128 } : {}),
           toolMaxTokens: 128,
           supports: qwenSupports
         } satisfies IntegrationLanguageProvider
