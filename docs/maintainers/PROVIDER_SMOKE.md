@@ -28,6 +28,11 @@ The common integration tests cover:
 
 Provider-specific integration files may cover additional adapter behavior.
 
+The generic provider smoke does not certify the durable agent runtime. For the
+fail-closed Gemini, DeepSeek, Qwen, approval/resume, streaming, and real
+Postgres gate, run `bun run test:integration:agents` as documented in
+[`AGENT_RELEASE.md`](./AGENT_RELEASE.md).
+
 ## Environment Variables
 
 | Provider | Required environment |
