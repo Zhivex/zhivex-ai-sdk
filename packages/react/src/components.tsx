@@ -145,7 +145,10 @@ export interface MediaUrlPolicy {
   allowDataUrls?: boolean;
   /** Allow browser-managed blob URLs. Defaults to true. */
   allowBlobUrls?: boolean;
-  /** Additional application policy applied after the built-in network checks. */
+  /**
+   * Required for remote HTTP(S) media. Restrict it to exact
+   * application-controlled hosts; browser URL checks cannot pin DNS answers.
+   */
   allowUrl?: (url: URL, context: MediaUrlContext) => boolean;
   /** Referrer policy for rendered links and media. Defaults to no-referrer. */
   referrerPolicy?: HTMLAttributeReferrerPolicy;
@@ -201,18 +204,31 @@ const isPrivateIPv6 = (hostname: string) => {
   );
 };
 
+const hasEmbeddedPrivateIPv4 = (hostname: string) => {
+  const labels = hostname.split(".");
+  for (let index = 0; index <= labels.length - 4; index += 1) {
+    if (isPrivateIPv4(labels.slice(index, index + 4).join("."))) {
+      return true;
+    }
+  }
+  return false;
+};
+
 const isPrivateHostname = (hostname: string) => {
   const normalized = normalizeHostname(hostname);
   return (
     normalized.length === 0 ||
     normalized === "localhost" ||
     normalized.endsWith(".localhost") ||
+    normalized === "localtest.me" ||
+    normalized.endsWith(".localtest.me") ||
     normalized.endsWith(".local") ||
     normalized.endsWith(".localdomain") ||
     normalized.endsWith(".internal") ||
     normalized.endsWith(".lan") ||
     (!normalized.includes(".") && !normalized.includes(":")) ||
     isPrivateIPv4(normalized) ||
+    hasEmbeddedPrivateIPv4(normalized) ||
     isPrivateIPv6(normalized)
   );
 };
@@ -234,7 +250,7 @@ const mediaUrl = (
   }
 
   if (url.protocol === "http:" || url.protocol === "https:") {
-    if (policy.allowRemote !== true) {
+    if (policy.allowRemote !== true || !policy.allowUrl) {
       return undefined;
     }
     if (

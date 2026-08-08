@@ -61,7 +61,7 @@ const tools = await kimiFormulaTools({
 });
 ```
 
-Formula tools require approval by default, reject unsafe Formula resource paths, and apply a 30-second request timeout. Use `requiresApproval: false` only when the caller has an equivalent policy boundary. `timeoutMs` can set a positive timeout up to 10 minutes; caller and agent abort signals are propagated to both loaded and statically declared Formula tools.
+Formula tools require approval by default, reject unsafe Formula resource paths and prototype-sensitive remote tool names, return a prototype-free tool set, and apply a 30-second request timeout. Use `requiresApproval: false` only when the caller has an equivalent policy boundary. `timeoutMs` can set a positive timeout up to 10 minutes; caller and agent abort signals are propagated to both loaded and statically declared Formula tools.
 
 Built-in shortcuts include `kimiWebSearchTool()`, `kimiFetchTool()`, `kimiCodeRunnerTool()`, `kimiExcelTool()`, and `kimiDateTool()`. Current first-class model IDs are `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6`, and `kimi-k2.5`. The older `kimi-k2-0905-preview` and `kimi-k2-thinking` IDs are kept for passthrough compatibility but are deprecated upstream.
 

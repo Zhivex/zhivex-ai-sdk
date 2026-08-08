@@ -71,6 +71,8 @@ const agent = new Agent({
 });
 ```
 
+`supervised` requests resumable approval for tools marked `requiresApproval`, high-risk tools, and tools declaring network or write-like permissions. Use `allowToolNames` or `allowPermissions` only for explicit reviewed exceptions; critical risk remains denied by default.
+
 Keep `applyOperation` app-owned. Many products should record proposed patches for review instead of applying them automatically.
 
 ## Safety Requirements
@@ -82,6 +84,7 @@ For workspace agents, enforce:
 - `maxOutputLength`: bound shell output.
 - approval policy: require human approval for shell, patch, filesystem, network, code-execution, deployment, publish, transfer, or payment actions.
 - durable state: persist the run before and after tool calls.
+- durable subagents: use a run store with atomic idempotency claims so a completed child is reused after a failed parent checkpoint.
 - durable identity: resume with the same capsule fingerprint and execution-environment binding.
 - audit export: record redacted run and tool audit records.
 - no implicit secrets: do not expose environment variables unless the tool explicitly needs them.

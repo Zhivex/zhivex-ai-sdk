@@ -59,6 +59,7 @@ describe("zhivex-ai CLI", () => {
     expect(capture.stdout[0]).toContain("doctor");
     expect(capture.stdout[0]).toContain("agents ledger|inspect|diff|golden|eval");
     expect(capture.stdout[0]).toContain("sessions list|show|workflow-state|prune");
+    expect(capture.stdout[0]).toContain("--include-output-text");
   });
 
   it("scaffolds a production agent project", async () => {
@@ -99,6 +100,11 @@ describe("zhivex-ai CLI", () => {
     });
     await expect(fs.readFile(path.join(directory, "src", "agent.ts"), "utf8")).resolves.toContain("createProductionSafetyPolicy");
     await expect(fs.readFile(path.join(directory, ".env.example"), "utf8")).resolves.toContain("OPENAI_API_KEY=");
+    await expect(fs.readFile(path.join(directory, ".env"), "utf8")).resolves.toContain("OPENAI_API_KEY=");
+    await expect(fs.readFile(path.join(directory, ".gitignore"), "utf8")).resolves.toContain("!.env.example");
+    if (process.platform !== "win32") {
+      expect((await fs.stat(path.join(directory, ".env"))).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("scaffolds a Kimi K3 agent project", async () => {
@@ -234,9 +240,45 @@ describe("zhivex-ai CLI", () => {
       checks: expect.arrayContaining([
         expect.objectContaining({ name: "sdk-dependency", status: "pass" }),
         expect.objectContaining({ name: "openai-dependency", status: "pass" }),
-        expect.objectContaining({ name: "openai-env", status: "warn" })
+        expect.objectContaining({ name: "openai-env", status: "warn" }),
+        expect.objectContaining({ name: "env-file-permissions", status: "pass" })
       ])
     });
+  });
+
+  if (process.platform !== "win32") {
+    it("warns when .env is readable by other users", async () => {
+      const directory = path.join(await tempDir("zhivex-cli-env-mode-"), "support-agent");
+      await runCli(["init", "agent", "--dir", directory], createCapture().io);
+      await fs.chmod(path.join(directory, ".env"), 0o644);
+      const capture = createCapture();
+
+      await expect(runCli(["doctor", "--dir", directory], capture.io)).resolves.toBe(0);
+
+      expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+        checks: expect.arrayContaining([
+          expect.objectContaining({
+            name: "env-file-permissions",
+            status: "warn",
+            detail: expect.stringContaining("mode 0600")
+          })
+        ])
+      });
+    });
+  }
+
+  it("preserves an existing .env while tightening its permissions", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-existing-env-"), "support-agent");
+    await fs.mkdir(directory, { recursive: true });
+    const envPath = path.join(directory, ".env");
+    await fs.writeFile(envPath, "OPENAI_API_KEY=keep-me\n", { mode: 0o644 });
+
+    await expect(runCli(["init", "agent", "--dir", directory], createCapture().io)).resolves.toBe(0);
+
+    await expect(fs.readFile(envPath, "utf8")).resolves.toBe("OPENAI_API_KEY=keep-me\n");
+    if (process.platform !== "win32") {
+      expect((await fs.stat(envPath)).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("creates agent ledgers and golden traces from local JSON", async () => {
@@ -247,7 +289,15 @@ describe("zhivex-ai CLI", () => {
     await fs.writeFile(statePath, JSON.stringify(baseAgentState()), "utf8");
     const capture = createCapture();
 
-    const ledgerCode = await runCli(["agents", "ledger", "--state", statePath, "--out", ledgerPath], capture.io);
+    const ledgerCode = await runCli([
+      "agents",
+      "ledger",
+      "--state",
+      statePath,
+      "--out",
+      ledgerPath,
+      "--include-output-text"
+    ], capture.io);
     const goldenCode = await runCli(["agents", "golden", "--ledger", ledgerPath, "--name", "happy-path", "--out", goldenPath], capture.io);
 
     expect(ledgerCode).toBe(0);
@@ -266,6 +316,30 @@ describe("zhivex-ai CLI", () => {
       expect((await fs.stat(ledgerPath)).mode & 0o777).toBe(0o600);
       expect((await fs.stat(goldenPath)).mode & 0o777).toBe(0o600);
     }
+  });
+
+  it("omits full agent output from ledgers unless explicitly requested", async () => {
+    const directory = await tempDir("zhivex-cli-ledger-redaction-");
+    const statePath = path.join(directory, "state.json");
+    const marker = ["sk", "example", "A".repeat(28)].join("-");
+    await fs.writeFile(statePath, JSON.stringify(baseAgentState({ outputText: marker })), "utf8");
+    const safeCapture = createCapture();
+    const explicitCapture = createCapture();
+
+    await expect(runCli(["agents", "ledger", "--state", statePath], safeCapture.io)).resolves.toBe(0);
+    await expect(runCli([
+      "agents",
+      "ledger",
+      "--state",
+      statePath,
+      "--include-output-text"
+    ], explicitCapture.io)).resolves.toBe(0);
+
+    const safeLedger = JSON.parse(safeCapture.stdout[0]!);
+    const explicitLedger = JSON.parse(explicitCapture.stdout[0]!);
+    expect(JSON.stringify(safeLedger)).not.toContain(marker);
+    expect(safeLedger.snapshot.outputText).toBeUndefined();
+    expect(explicitLedger.snapshot.outputText).toBe(marker);
   });
 
   it("refuses to follow a symlink for JSON output", async () => {

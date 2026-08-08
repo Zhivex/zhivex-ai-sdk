@@ -518,10 +518,18 @@ const providerHTTPStatus = (error: unknown): number | undefined => {
   return undefined;
 };
 
+const redactSensitiveErrorMessage = (message: string): string =>
+  message
+    .replace(
+      /([?&](?:api[-_]?key|key|token|access[-_]?token|secret)=)[^&#\s]*/gi,
+      "$1[REDACTED]"
+    )
+    .replace(/\b(Bearer)\s+[a-z\d._~+/=-]+/gi, "$1 [REDACTED]");
+
 const normalizeError = (error: unknown): ErrorDisposition => {
   if (error instanceof ValidationError || error instanceof ConflictError || error instanceof GuardrailTriggeredError) {
     return {
-      error: new GatewayError(error.message, false),
+      error: new GatewayError(redactSensitiveErrorMessage(error.message), false),
       retrySameTarget: false,
       fallbackNextTarget: false
     };
@@ -529,7 +537,7 @@ const normalizeError = (error: unknown): ErrorDisposition => {
 
   if (error instanceof GatewayError) {
     return {
-      error,
+      error: new GatewayError(redactSensitiveErrorMessage(error.message), error.retryable),
       retrySameTarget: error.retryable,
       fallbackNextTarget: true
     };
@@ -539,7 +547,10 @@ const normalizeError = (error: unknown): ErrorDisposition => {
   if (status != null) {
     const retryable = status === 408 || status === 429 || status >= 500;
     return {
-      error: new GatewayError(error instanceof Error ? error.message : `Provider HTTP ${status}.`, retryable),
+      error: new GatewayError(
+        error instanceof Error ? redactSensitiveErrorMessage(error.message) : `Provider HTTP ${status}.`,
+        retryable
+      ),
       retrySameTarget: retryable,
       fallbackNextTarget: true
     };
@@ -548,7 +559,7 @@ const normalizeError = (error: unknown): ErrorDisposition => {
   if (error instanceof Error) {
     if (error.name === "AbortError") {
       return {
-        error: new GatewayError(error.message, false),
+        error: new GatewayError(redactSensitiveErrorMessage(error.message), false),
         retrySameTarget: false,
         fallbackNextTarget: false
       };
@@ -566,7 +577,7 @@ const normalizeError = (error: unknown): ErrorDisposition => {
       message.includes("network") ||
       /\b50[0234]\b/.test(message);
     return {
-      error: new GatewayError(error.message, retryable),
+      error: new GatewayError(redactSensitiveErrorMessage(error.message), retryable),
       retrySameTarget: retryable,
       fallbackNextTarget: true
     };

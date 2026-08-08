@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -2517,6 +2518,77 @@ describe("agent runtime", () => {
     }
   });
 
+  it("serializes file-store revision CAS across independent store instances", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-file-cas-"));
+    const firstStore = createFileAgentRunStore({ directory });
+    const secondStore = createFileAgentRunStore({ directory });
+    const state = normalizeAgentRunState({
+      schemaVersion: 1,
+      revision: 1,
+      runId: "shared-file-run",
+      provider: "test",
+      modelId: "agent-model",
+      status: "running",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "base",
+      pendingApprovals: []
+    });
+    await firstStore.save(state);
+
+    const results = await Promise.allSettled([
+      firstStore.save({ ...state, outputText: "writer-a" }, { expectedRevision: 1 }),
+      secondStore.save({ ...state, outputText: "writer-b" }, { expectedRevision: 1 })
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected?.status === "rejected" ? rejected.reason : undefined).toBeInstanceOf(ConflictError);
+    await expect(firstStore.load(state.runId)).resolves.toMatchObject({
+      revision: 2,
+      outputText: expect.stringMatching(/^writer-[ab]$/)
+    });
+    expect((await readdir(directory)).filter((entry) => entry.startsWith(".run-lock-"))).toEqual([]);
+  });
+
+  it("recovers a file-store revision lock left by an exited process", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "zhivex-agent-file-lock-recovery-"));
+    const store = createFileAgentRunStore({ directory });
+    const runId = "recovered-file-run";
+    const lockPath = path.join(
+      directory,
+      `.run-lock-${createHash("sha256").update(runId).digest("hex")}.lock`
+    );
+    await writeFile(lockPath, JSON.stringify({
+      ownerId: "exited-owner",
+      pid: 99_999_999,
+      createdAt: Date.now()
+    }));
+    const state = normalizeAgentRunState({
+      schemaVersion: 1,
+      revision: 1,
+      runId,
+      provider: "test",
+      modelId: "agent-model",
+      status: "running",
+      messages: [],
+      steps: [],
+      toolResults: [],
+      currentStep: 0,
+      maxSteps: 1,
+      outputText: "recovered",
+      pendingApprovals: []
+    });
+
+    await store.save(state);
+
+    await expect(store.load(runId)).resolves.toMatchObject({ outputText: "recovered" });
+    expect((await readdir(directory)).filter((entry) => entry.startsWith(".run-lock-"))).toEqual([]);
+  });
+
   it("isolates run ids and idempotency keys by tenant scope", async () => {
     const store = createInMemoryAgentRunStore();
     const createState = (tenantId: string): AgentRunState & { idempotencyKey: string } => ({
@@ -3496,6 +3568,117 @@ describe("agent runtime", () => {
     const trace = createAgentTraceArtifact(result.state);
     expect(trace.childRuns?.[0]?.agentId).toBe("researcher");
     expect(summarizeAgentTrace(trace).childRuns).toBe(1);
+  });
+
+  it("reuses a completed durable subagent after the parent checkpoint fails", async () => {
+    let sideEffects = 0;
+    const baseStore = createInMemoryAgentRunStore();
+    let failParentCheckpoint = true;
+    const store: AgentRunStore = {
+      ...baseStore,
+      async save(state, options) {
+        if (
+          failParentCheckpoint &&
+          state.agentId === "parent" &&
+          ((state.childRuns?.length ?? 0) > 0 || state.toolResults.length > 0)
+        ) {
+          throw new Error("simulated crash before parent checkpoint");
+        }
+        await baseStore.save(state, options);
+      }
+    };
+    const child = createAgent({
+      id: "child",
+      store,
+      model: createLanguageModel({
+        async generate(input) {
+          const hasToolResult = input.messages.some((message) =>
+            message.parts.some((part) => part.type === "tool-result")
+          );
+          return hasToolResult
+            ? {
+                messages: [createTextMessage("assistant", "child done")],
+                text: "child done",
+                finishReason: "stop"
+              }
+            : {
+                messages: [{
+                  role: "assistant",
+                  parts: [{
+                    type: "tool-call",
+                    toolCall: { id: "child-call", name: "write", input: { value: "x" } }
+                  }]
+                }],
+                finishReason: "tool-calls"
+              };
+        }
+      }),
+      tools: {
+        write: tool({
+          name: "write",
+          schema: z.object({ value: z.string() }),
+          execute: () => {
+            sideEffects += 1;
+            return { ok: true, count: sideEffects };
+          }
+        })
+      },
+      maxSteps: 2
+    });
+    const parent = createAgent({
+      id: "parent",
+      store,
+      model: createLanguageModel({
+        async generate(input) {
+          const hasToolResult = input.messages.some((message) =>
+            message.parts.some((part) => part.type === "tool-result")
+          );
+          return hasToolResult
+            ? {
+                messages: [createTextMessage("assistant", "parent done")],
+                text: "parent done",
+                finishReason: "stop"
+              }
+            : {
+                messages: [{
+                  role: "assistant",
+                  parts: [{
+                    type: "tool-call",
+                    toolCall: { id: "delegate-call", name: "delegate", input: { prompt: "do it" } }
+                  }]
+                }],
+                finishReason: "tool-calls"
+              };
+        }
+      }),
+      subagents: [{ name: "delegate", agent: child, maxSteps: 2 }],
+      maxSteps: 2
+    });
+
+    await expect(runAgent(parent, {
+      runId: "parent-run",
+      prompt: "go",
+      maxSteps: 2
+    })).rejects.toThrow("simulated crash before parent checkpoint");
+    const childrenBeforeRetry = await Promise.resolve(store.findByParentRunId?.("parent-run"));
+    expect(sideEffects).toBe(1);
+    expect(childrenBeforeRetry).toHaveLength(1);
+
+    failParentCheckpoint = false;
+    const retried = await runAgent(parent, { runId: "parent-run", maxSteps: 2 });
+    const childrenAfterRetry = await Promise.resolve(store.findByParentRunId?.("parent-run"));
+
+    expect(retried.status).toBe("completed");
+    expect(sideEffects).toBe(1);
+    expect(childrenAfterRetry).toHaveLength(1);
+    expect(childrenAfterRetry?.[0]?.runId).toBe(childrenBeforeRetry?.[0]?.runId);
+    expect(retried.state.childRuns).toEqual([
+      expect.objectContaining({
+        runId: childrenBeforeRetry?.[0]?.runId,
+        toolCallId: "delegate-call",
+        status: "completed"
+      })
+    ]);
   });
 
   it("creates hierarchical snapshots and traces from stored parent-child runs", async () => {

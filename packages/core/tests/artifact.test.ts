@@ -449,6 +449,55 @@ describe("artifact services", () => {
     ).toThrow('The "sha256" artifact option does not match the decoded base64 data.');
   });
 
+  it("rejects mismatched sha256 metadata for memory and file binary artifacts", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-artifacts-binary-sha-"));
+    const services = [
+      createInMemoryArtifactService(),
+      createFileArtifactService({ directory })
+    ];
+
+    for (const [index, service] of services.entries()) {
+      const input = {
+        appName: "app",
+        userId: "user",
+        sessionId: "session",
+        id: `bad-binary-sha-${index}`,
+        name: "payload.bin",
+        contentType: "application/octet-stream",
+        data: "tampered",
+        sha256: createHash("sha256").update("trusted").digest("hex")
+      };
+      await expect(Promise.resolve().then(() => service.saveBinaryArtifact(input))).rejects.toThrow(
+        'The "sha256" artifact option does not match the binary data.'
+      );
+      await expect(Promise.resolve(service.loadArtifact(input))).resolves.toBeUndefined();
+    }
+  });
+
+  it("normalizes matching sha256 metadata before persisting binary artifacts", async () => {
+    const service = createInMemoryArtifactService();
+    const data = "trusted";
+    const expectedSha256 = createHash("sha256").update(data).digest("hex");
+    const artifact = await service.saveBinaryArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "uppercase-binary-sha",
+      name: "payload.bin",
+      contentType: "application/octet-stream",
+      data,
+      sha256: expectedSha256.toUpperCase()
+    });
+
+    expect(artifact.sha256).toBe(expectedSha256);
+    await expect(verifyArtifactIntegrity(service, {
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: artifact.id
+    })).resolves.toMatchObject({ ok: true, issues: [] });
+  });
+
   it("saves and loads binary artifacts in memory", async () => {
     const service = createInMemoryArtifactService();
     const artifact = await service.saveBinaryArtifact({

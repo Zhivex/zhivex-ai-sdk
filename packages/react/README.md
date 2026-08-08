@@ -203,7 +203,7 @@ Lifecycle `activity` is reset for each request and bounded to 200 entries by
 default; customize it with `activityLimit`. Stopped requests preserve partial
 content with message status `stopped`.
 
-Remote image and audio URLs are blocked by default so model or tool content cannot silently create tracking requests from the browser. `data:` and browser `blob:` sources remain supported. Opted-in HTTP(S) media is rendered with a `no-referrer` policy, while loopback, private, link-local, `.local`, `.internal`, `.lan`, and single-label hosts remain rejected unless separately enabled. Supply a narrow application policy:
+Remote image and audio URLs are blocked by default so model or tool content cannot silently create tracking requests from the browser. `data:` and browser `blob:` sources remain supported. Remote HTTP(S) media requires both `allowRemote: true` and an application-owned `allowUrl` allowlist, and is rendered with a `no-referrer` policy. Loopback, private, link-local, embedded private-IP aliases, `.local`, `.internal`, `.lan`, and single-label hosts remain rejected unless separately enabled. Supply a narrow application policy:
 
 ```tsx
 <ZhivexChat

@@ -921,10 +921,12 @@ export const kimiDateTool = (options: KimiFormulaToolOptions & { requiresApprova
     parameters: kimiObjectSchema({})
   });
 
+const UNSAFE_FORMULA_TOOL_NAMES = new Set(["__proto__", "prototype", "constructor"]);
+
 export const kimiFormulaTools = async (options: KimiFormulaToolsOptions): Promise<ToolSet> => {
   const requestOptions = normalizeFormulaRequestOptions(options);
   const { apiKey, baseURL, fetcher } = resolveFormulaConfig(requestOptions);
-  const result: ToolSet = {};
+  const result = Object.create(null) as ToolSet;
   const { signal, cleanup } = withTimeoutSignal(requestOptions);
   try {
     for (const formulaUri of options.formulas) {
@@ -944,6 +946,9 @@ export const kimiFormulaTools = async (options: KimiFormulaToolsOptions): Promis
         const name = definition.function?.name;
         if (!name) {
           continue;
+        }
+        if (UNSAFE_FORMULA_TOOL_NAMES.has(name)) {
+          throw new ValidationError(`Kimi Formula returned unsafe tool name "${name}".`);
         }
         result[name] = kimiOfficialTool({
           ...requestOptions,

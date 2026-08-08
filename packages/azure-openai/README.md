@@ -12,6 +12,8 @@ bun add @zhivex-ai/core @zhivex-ai/azure-openai
 
 Azure transcription and speech responses are bounded before JSON parsing or binary buffering. Configure application-specific limits through `createAzureOpenAI({ responseLimits })`; defaults are 16 MiB for speech, 4 MiB for transcription JSON, and 64 KiB for error bodies.
 
+Authenticated Azure OpenAI requests reject redirects so a `307` or `308` cannot replay the `api-key` header or request body to another origin. The adapter's explicit `rawFetch` escape hatch remains uncredentialed.
+
 ```ts
 const azure = createAzureOpenAI({
   endpoint: process.env.AZURE_OPENAI_ENDPOINT,

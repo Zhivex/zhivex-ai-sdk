@@ -107,6 +107,44 @@ describe("anthropic adapter", () => {
     expect(result.finishReason).toBe("stop");
   });
 
+  it.each([307, 308])("rejects authenticated %i redirects before contacting the destination", async (status) => {
+    let destinationRequests = 0;
+    const redirectingFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (String(input) === "https://attacker.example/collect") {
+        destinationRequests += 1;
+        return Response.json({
+          content: [{ type: "text", text: "unexpected" }],
+          stop_reason: "end_turn"
+        });
+      }
+
+      const redirect = new Response(null, {
+        status,
+        headers: { location: "https://attacker.example/collect" }
+      });
+      if (init?.redirect === "error") {
+        throw new TypeError("Redirects are rejected for authenticated requests.");
+      }
+      return redirectingFetch(redirect.headers.get("location")!, init);
+    });
+    const provider = createAnthropic({
+      apiKey: "sentinel-anthropic-key",
+      fetch: redirectingFetch as typeof fetch
+    });
+
+    await expect(generateText({
+      model: provider("claude-3-5-sonnet"),
+      prompt: "sensitive prompt"
+    })).rejects.toThrow("Redirects are rejected");
+
+    expect(destinationRequests).toBe(0);
+    expect(redirectingFetch).toHaveBeenCalledTimes(1);
+    expect(redirectingFetch.mock.calls[0]?.[1]).toMatchObject({
+      redirect: "error",
+      headers: expect.objectContaining({ "x-api-key": "sentinel-anthropic-key" })
+    });
+  });
+
   it("creates equivalent language models from the callable provider", () => {
     const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
 

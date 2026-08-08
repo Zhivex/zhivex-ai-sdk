@@ -61,6 +61,7 @@ Beta APIs may change between minor releases. Experimental APIs may change more f
 - Durable harnesses: capsule fingerprints, app-provided execution-environment enforcement, and replay-visible context compaction.
 - Memory and stores from `/ops`: in-memory, file, SQLite, and Postgres run stores and memory stores.
 - Multi-agent patterns: handoffs, subagents as tools, parallel agent groups, and hierarchical traces.
+- Durable subagents: stores with atomic idempotency claims reuse a completed child after a failed parent checkpoint instead of repeating child tools.
 - Production safety: stable safety policies and budget guards in the root; beta governance policies and audit records under `/beta`.
 - Observability and evaluation from `/ops`: trace collectors, run snapshots, replay, cost estimates, and evaluation fixtures.
 - Provider inspection from `/ops`, with beta capability routing and model selection under `/beta`.

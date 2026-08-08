@@ -15,6 +15,12 @@ const codeqlWorkflow = readFileSync(
   "utf8"
 );
 
+const jobSection = (name: string, nextName: string) => {
+  const start = workflow.indexOf(`  ${name}:`);
+  const end = workflow.indexOf(`  ${nextName}:`, start + 1);
+  return workflow.slice(start, end === -1 ? undefined : end);
+};
+
 describe("release workflow", () => {
   it("recovers published tags from npm metadata and passes them as single-line JSON", () => {
     expect(workflow).toContain("release_tags_json:");
@@ -48,6 +54,36 @@ describe("release workflow", () => {
     expect(workflow).toContain("bun audit");
     expect(workflow).toContain("id-token: write");
     expect(workflow).toContain("timeout-minutes:");
+  });
+
+  it("keeps validation outside the npm OIDC trust boundary", () => {
+    const validateJob = jobSection("validate", "publish");
+    const publishJob = jobSection("publish", "push_tags");
+
+    expect(validateJob).toContain("bun run test");
+    expect(validateJob).toContain("bun run build");
+    expect(validateJob).toContain("bun run scripts/package-consumer-smoke.ts");
+    expect(validateJob).not.toContain("id-token: write");
+    expect(publishJob).toContain("needs: validate");
+    expect(publishJob).toContain("id-token: write");
+    expect(publishJob).not.toContain("bun run test");
+    expect(publishJob).not.toContain("bun run build");
+    expect(publishJob).not.toContain("bun install");
+  });
+
+  it("publishes only commit-bound tarballs verified with SHA-512", () => {
+    expect(workflow).toContain('release-artifacts.ts prepare --git-head="$GITHUB_SHA"');
+    expect(workflow).toContain(".release/tarballs/*.tgz");
+    expect(workflow).toContain("shasum -a 512 -c .release/SHA512SUMS");
+    expect(workflow).toContain('release-artifacts.ts publish --tag=latest --git-head="$GITHUB_SHA"');
+    expect(workflow).toContain('release-artifacts.ts publish --tag=next --git-head="$GITHUB_SHA"');
+    expect(workflow).toContain("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02");
+    expect(workflow).toContain("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093");
+  });
+
+  it("runs the repository-pinned secret scanner in CI and release validation", () => {
+    expect(ciWorkflow).toContain("bun run scripts/scan-secrets.ts");
+    expect(jobSection("validate", "publish")).toContain("bun run scripts/scan-secrets.ts");
   });
 
   it("pins every third-party action to a full commit and uses current security majors", () => {

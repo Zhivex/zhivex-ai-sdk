@@ -532,7 +532,7 @@ For explicit migration/validation, use `migrateAgentSessionRecord(record)`. File
 The first Beta surface includes:
 
 - `createAgentCapsule()`: portable manifest for an agent, its tools, MCP servers, skills, evals, policy, provider, and agent tier. Its canonical SHA-256 fingerprint is bound to new durable runs.
-- `createAgentToolPolicy()`: permission/risk-aware tool approval policy for read-only, supervised, write-deny, or allow-all modes.
+- `createAgentToolPolicy()`: permission/risk-aware tool approval policy for read-only, supervised, write-deny, or allow-all modes. Supervised mode pauses tools marked `requiresApproval`, high-risk tools, and tools with network or write-like permissions unless the application explicitly allowlists the tool or permission.
 - `createAgentApprovalQueue()`: provider approval waits as app-facing queue items with approval tokens and resume URLs.
 - `createAgentRunLedger()`: normalized audit, trace, replay timeline, tool audit, summary, and cost record for a run.
 - `diffAgentRunLedgers()` and `promoteAgentGoldenTrace()`: compare run behavior and turn a successful run into a regression fixture.
@@ -585,7 +585,9 @@ The control-plane layer is intentionally SDK-only. Workspaces, billing, project 
 
 Resume a capsule-owned run with the same capsule definition. A changed capsule fingerprint is rejected before model or tool execution. Legacy states can only be attached to a fingerprint through the explicit `policy.allowLegacyHarnessResume` migration escape hatch.
 
-The `read-only` tool policy only auto-approves tools that explicitly declare read permissions; missing permission metadata is denied. Run ledgers omit replay timelines, metadata, messages, tool payloads, approval arguments, and output text unless their corresponding opt-in is enabled. Included ledger fields are still passed through the configured redaction policy.
+Durable subagent calls derive a stable child idempotency key when the configured run store supports atomic idempotency claims. If the child completes but the parent checkpoint fails, retrying the parent reuses that child run instead of repeating its tools. Effectful integrations should still honor the execution idempotency key they receive.
+
+The `read-only` tool policy only auto-approves tools that explicitly declare read permissions; missing permission metadata is denied. Run ledgers omit replay timelines, metadata, messages, tool payloads, approval arguments, and output text unless their corresponding opt-in is enabled. Included ledger fields, including run errors, tool errors, and cancellation reasons, are passed through the configured redaction policy.
 
 Approval queue tokens are cryptographically random opaque values. Persist them server-side, enforce the queue item's `expiresAt`, compare and consume the token before resuming a run, and never treat `resumeUrl` alone as authorization.
 
@@ -839,7 +841,7 @@ const loaded = await artifacts.loadBinaryArtifact({
 });
 ```
 
-The file store writes blobs under a path-safe `blobs/` subdirectory and calculates `size` and `sha256` for `saveBinaryArtifact()`. Blob paths are SDK-managed: callers cannot set them, and file-store metadata that points outside the expected blob location is rejected before any read, prune, or delete. SQLite and Postgres stores keep binary payloads as base64 JSON compatibility records in this Beta cut. For heavy production binaries, prefer app-owned blob/object storage with durable artifact metadata in SQL until native SQL/blob streaming is introduced; `createExternalArtifactReference()` creates the standard metadata shape for that pattern.
+The file store writes blobs under a path-safe `blobs/` subdirectory and calculates `size` and `sha256` for `saveBinaryArtifact()`. If the caller supplies `sha256`, every built-in store verifies it against the bytes before persisting and stores the canonical lowercase digest. Blob paths are SDK-managed: callers cannot set them, and file-store metadata that points outside the expected blob location is rejected before any read, prune, or delete. SQLite and Postgres stores keep binary payloads as base64 JSON compatibility records in this Beta cut. For heavy production binaries, prefer app-owned blob/object storage with durable artifact metadata in SQL until native SQL/blob streaming is introduced; `createExternalArtifactReference()` creates the standard metadata shape for that pattern.
 
 Artifact records are schema-versioned as well. New artifacts use `schemaVersion: 1`; old JSON artifacts without a version are accepted and normalized, but future versions are rejected until the SDK has an explicit migration path.
 
@@ -922,13 +924,14 @@ zhivex-ai artifacts prune --dir .zhivex/artifacts --keep-last 100
 zhivex-ai workflow-states prune --dir .zhivex/workflow-states --older-than-ms 2592000000
 
 zhivex-ai agents ledger --state agent-run-state.json --out run-ledger.json
+zhivex-ai agents ledger --state agent-run-state.json --out full-run-ledger.json --include-output-text
 zhivex-ai agents inspect --ledger run-ledger.json
 zhivex-ai agents diff --base previous-ledger.json --target current-ledger.json
 zhivex-ai agents golden --ledger run-ledger.json --name happy-path --out golden-trace.json
 zhivex-ai agents eval --golden golden-trace.json --ledger run-ledger.json --out agent-eval.json
 ```
 
-Output is JSON pretty-printed by default. JSON output files are written with mode `0600`, and `init agent` creates its new project directory with mode `0700` on POSIX systems. `init agent` scaffolds a Bun-first agent project with file-backed local sessions, a production safety policy, a provider package, a smoke-test tool, and scripts for doctor/inspect/ledger. Generated source safely quotes provider and model values. `doctor` checks runtime, package metadata, provider dependencies, provider environment variables, TypeScript config, and local store readiness. Use `workflow-states list/show` for first-class durable workflow state inspection; `sessions workflow-state show` remains available for legacy session-metadata fallback state. The `agents` inspection and evaluation commands are dry local control-plane utilities over saved run states and ledgers; they never execute models or tools. The CLI ledger command explicitly includes redacted output text so golden-trace and diff workflows remain useful. Prune commands are dry-run by default; pass `--execute` to delete. The CLI is intentionally local-only and does not introduce auth, workspaces, or Gateway calls.
+Output is JSON pretty-printed by default. JSON output files are written with mode `0600`, and `init agent` creates its new project directory with mode `0700` on POSIX systems. The scaffold creates both `.env.example` and a private `.env` with mode `0600`, preserves an existing `.env`, and adds the local secret paths to `.gitignore`; `doctor` warns when `.env` permissions are unsafe. `init agent` scaffolds a Bun-first agent project with file-backed local sessions, a production safety policy, a provider package, a smoke-test tool, and scripts for doctor/inspect/ledger. Generated source safely quotes provider and model values. Use `workflow-states list/show` for first-class durable workflow state inspection; `sessions workflow-state show` remains available for legacy session-metadata fallback state. The `agents` inspection and evaluation commands are dry local control-plane utilities over saved run states and ledgers; they never execute models or tools. The CLI ledger command omits full output text and previews by default; pass `--include-output-text` only for an approved local destination. Prune commands are dry-run by default; pass `--execute` to delete. The CLI is intentionally local-only and does not introduce auth, workspaces, or Gateway calls.
 
 ### Realtime Sessions
 
@@ -1028,7 +1031,7 @@ Notes:
 
 - Providers that require auth headers during the WebSocket handshake, such as OpenAI, Azure OpenAI, and Vertex server-side sessions, should be given a custom `realtimeConnectionFactory` in Node/Bun. Azure API keys are never placed in realtime URLs.
 - Credentialed provider endpoints require HTTPS and realtime endpoints require WSS. Per-session realtime overrides stay on the provider's trusted host. Server-side private gateways can opt out explicitly with `allowUnsafeEndpoints: true`; never derive that option or an endpoint URL from untrusted request input.
-- Credentialed uploads do not follow redirects. Gemini resumable uploads additionally accept `x-goog-upload-url` only on the configured API host or a public `googleapis.com` host before any file bytes are sent.
+- Credentialed provider requests do not follow redirects. Anthropic and Azure OpenAI reject redirected authenticated requests before replaying their non-standard API-key headers or request bodies; their explicit `rawFetch` escape hatches remain uncredentialed. Gemini resumable uploads additionally accept `x-goog-upload-url` only on the configured API host or a public `googleapis.com` host before any file bytes are sent.
 - The browser-safe default WebSocket connection bounds each incoming frame to 16 MiB before decoding. Use `maxIncomingFrameBytes` when a provider contract needs a different bound.
 - Browser-token helpers are currently exposed for OpenAI, Azure OpenAI, and Gemini.
 - Gemini, Vertex, and Azure OpenAI sessions support `sendMedia()` for image inputs such as `image/jpeg`.
@@ -1185,7 +1188,7 @@ await cancelAgentRun(store, first.state.runId, {
 - `executionEnvironment` acquires an app-provided execution boundary per run, preauthorizes the complete tool-call batch, reauthorizes immediately before each call, and persists the environment fingerprint for safe resume. The SDK supplies the contract and enforcement hooks, not a managed sandbox service.
 - `compaction` can summarize an old message prefix before a provider request while preserving leading system messages and an atomic recent tool-call/result tail. The compacted state and digests are persisted before the provider call, appear in replay, and stream as `agent-compaction`.
 - Completed local tools are recorded in a durable journal. `tool.execute(input, context)` receives `context.idempotencyKey`; forward it to side-effecting APIs. Completed entries replay without rerunning the tool, while indeterminate executions are blocked for operator reconciliation.
-- Use SQLite or Postgres for durable concurrent workers. The file store is intended for local development because its cross-process CAS, lease, and recovery guarantees are best effort.
+- Use SQLite or Postgres for durable concurrent workers. The file store serializes revision CAS across local processes with a private, bounded lock that recovers after the owner exits or the lock becomes stale, but its leases and broader crash recovery remain local-development facilities rather than production coordination guarantees.
 - `cancelAgentRun()` marks the saved state as `cancel_requested` by default. Pass `{ mode: "final" }` to write a terminal `cancelled` state.
 - Active workers poll durable cancellation and abort the provider/tool `AbortSignal`. Cancellation cannot undo an external side effect that already completed, so tools must forward both `context.abortSignal` and `context.idempotencyKey`.
 - Add `policy: { timeoutMs, onTimeout }` to `createAgent()` or `runAgent()` to enforce an SDK-level runtime timeout. The default timeout result is `timed_out`; `onTimeout: "cancel-requested"` writes `cancel_requested` instead. The timeout is propagated to providers through `AbortSignal`.
@@ -2883,7 +2886,7 @@ The integration layer now includes provider-specific tests plus capability-first
 
 Maintainer-only release and provider-smoke workflows live under [`docs/maintainers/`](./docs/maintainers/README.md).
 
-CI installs the immutable lockfile with dependency lifecycle scripts disabled, runs `bun audit`, and analyzes TypeScript with CodeQL. Stable and prerelease publishing remains OIDC-only; post-publish verification requires registry SHA-512 integrity, SLSA provenance, and a `gitHead` matching the immutable release commit before GitHub release metadata is created.
+CI scans version-controlled candidate files for recognized credential signatures without printing matched values, installs the immutable lockfile with dependency lifecycle scripts disabled, runs `bun audit`, and analyzes TypeScript with CodeQL. Release validation runs without OIDC, builds and tests the source, then packs the exact release batch into commit-bound SHA-512 manifests. A separate minimal OIDC job publishes only those verified tarballs. Post-publish verification requires registry SHA-512 integrity, SLSA provenance, and a `gitHead` matching the immutable release commit before GitHub release metadata is created.
 
 ## Design Principles
 

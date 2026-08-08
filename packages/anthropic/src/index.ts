@@ -306,6 +306,13 @@ const parseJson = async (response: Response) => {
   });
 };
 
+const rejectCredentialedRedirects = (fetcher: typeof globalThis.fetch): typeof globalThis.fetch =>
+  ((input: RequestInfo | URL, init?: RequestInit) =>
+    fetcher(input, {
+      ...init,
+      redirect: "error"
+    })) as typeof globalThis.fetch;
+
 const mapFilePart = (modelId: string, part: Extract<ModelMessage["parts"][number], { type: "file" }>) => {
   if (!supportsAnthropicFiles(modelId)) {
     throw new UnsupportedFeatureError(`Model "anthropic/${modelId}" does not support file inputs.`);
@@ -1158,12 +1165,13 @@ export const createAnthropic = (
     allowUnsafe: options.allowUnsafeEndpoints
   }).toString().replace(/\/+$/, "");
   const anthropicVersion = options.anthropicVersion ?? "2023-06-01";
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = rejectCredentialedRedirects(rawFetch);
 
   return createProviderAdapter({
     name: "anthropic",
     languageModel: (modelId) => new AnthropicLanguageModel(modelId, apiKey, baseURL, anthropicVersion, fetcher),
-    rawFetch: fetcher
+    rawFetch
   });
 };
 

@@ -68,4 +68,27 @@ describe("trusted endpoint validation", () => {
     expect(isPrivateNetworkHostname("::ffff:ac10:1")).toBe(true);
     expect(isPrivateNetworkHostname("100.64.0.1")).toBe(true);
   });
+
+  it("rejects DNS aliases that lexically target private addresses", () => {
+    for (const endpoint of [
+      "https://127.0.0.1.nip.io/v1",
+      "https://10.0.0.1.sslip.io/v1",
+      "https://localtest.me/v1",
+      "https://api.localtest.me/v1"
+    ]) {
+      expect(() => assertTrustedEndpoint(endpoint, { protocols: ["https"] })).toThrow("private");
+    }
+    expect(isPrivateNetworkHostname("cdn.203.0.113.5.example.com")).toBe(false);
+  });
+
+  it("uses an application host allowlist as the synchronous rebinding boundary", () => {
+    expect(assertTrustedEndpoint("https://media.example.com/object", {
+      protocols: ["https"],
+      allowedHosts: ["media.example.com"]
+    }).hostname).toBe("media.example.com");
+    expect(() => assertTrustedEndpoint("https://attacker.example.net/object", {
+      protocols: ["https"],
+      allowedHosts: ["media.example.com"]
+    })).toThrow("is not trusted");
+  });
 });

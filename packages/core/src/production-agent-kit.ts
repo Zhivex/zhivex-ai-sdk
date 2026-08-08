@@ -98,6 +98,16 @@ const redactJson = <T extends JsonValue | undefined>(
   value: T
 ): T => (redaction ? redaction.redactJson(value) : value);
 
+const redactError = <T extends { message: string } | undefined>(
+  redaction: RedactionPolicy | undefined,
+  value: T
+): T => value
+  ? {
+      ...cloneJson(value),
+      message: redaction ? redaction.redactText(value.message) : value.message
+    } as T
+  : value;
+
 const preview = (redaction: RedactionPolicy | undefined, text: string, length: number): string => {
   const redacted = redaction ? redaction.redactText(text) : text;
   return redacted.length > length ? `${redacted.slice(0, Math.max(0, length))}...` : redacted;
@@ -210,8 +220,10 @@ export const createAgentAuditRecord = (
     outputPreview: preview(redaction, state.outputText, options.outputPreviewLength ?? 500),
     finishReason: state.finishReason,
     providerFinishReason: state.providerFinishReason,
-    error: state.error ? cloneJson(state.error) : undefined,
-    cancellationReason: state.cancellationReason,
+    error: redactError(redaction, state.error),
+    cancellationReason: state.cancellationReason === undefined
+      ? undefined
+      : redaction?.redactText(state.cancellationReason) ?? state.cancellationReason,
     metadata: options.includeMetadata ? redactJson(redaction, state.metadata) : undefined
   };
 };
@@ -238,7 +250,7 @@ export const createToolAuditRecords = (
       status: result.isError ? "failed" : "completed",
       input: options.includeInput ? redactJson(redaction, call?.call.input) : undefined,
       output: options.includeOutput ? redactJson(redaction, result.output) : undefined,
-      error: result.error ? cloneJson(result.error) : undefined,
+      error: redactError(redaction, result.error),
       metadata: options.includeMetadata ? redactJson(redaction, state.metadata) : undefined
     };
   });

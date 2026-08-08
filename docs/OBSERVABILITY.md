@@ -101,13 +101,14 @@ Ledgers are fail-closed by default: snapshot messages/output, replay timeline pa
 
 ```bash
 zhivex-ai agents ledger --state agent-run-state.json --out run-ledger.json
+zhivex-ai agents ledger --state agent-run-state.json --out full-run-ledger.json --include-output-text
 zhivex-ai agents inspect --ledger run-ledger.json
 zhivex-ai agents diff --base previous-ledger.json --target current-ledger.json
 zhivex-ai agents golden --ledger run-ledger.json --name happy-path --out golden-trace.json
 zhivex-ai agents eval --golden golden-trace.json --ledger run-ledger.json --out agent-eval.json
 ```
 
-These commands do not execute models or tools.
+These commands do not execute models or tools. Ledger generation omits full output text and output previews by default; `--include-output-text` is an explicit opt-in for a reviewed local destination.
 
 ## Evaluation Fixtures
 

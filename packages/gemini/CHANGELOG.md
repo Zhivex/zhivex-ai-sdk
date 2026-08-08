@@ -1,5 +1,14 @@
 # @zhivex-ai/gemini
 
+## 0.10.3
+
+### Patch Changes
+
+- Harden durable subagent recovery, file-store revision CAS, supervised approvals, ledger redaction, artifact integrity, authenticated redirects, provider diagnostics, remote-media policies, Formula tool names, local CLI exports, and release artifact trust boundaries.
+- Updated dependencies [888bf99]
+- Updated dependencies
+  - @zhivex-ai/core@1.1.2
+
 ## 0.10.2
 
 ### Patch Changes

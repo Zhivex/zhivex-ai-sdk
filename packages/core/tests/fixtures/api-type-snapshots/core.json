@@ -45,7 +45,7 @@
   "tool-registry.d.ts": "0ff2d81cdb947298e4157f2cd8de1212882afcfd626b94581aab2d0599620ba0",
   "types.d.ts": "3c0d85f856a0f2e35048a97b9f0780fde577071218dfc260b0917027a51b6e5f",
   "ui.d.ts": "789d47ec91ef0632dfcbaffeabb6927d56dbf9740a21b9bae8ad30df00c89937",
-  "url-security.d.ts": "ffc70a5b2dac855eaae37ef383f70eb1962e271d868b1fe87b49edd0d6d7c348",
+  "url-security.d.ts": "c8dce8eafc004977ea28992f1d154807aa46479977598dfb97442b258dfd94df",
   "workflow-artifacts.d.ts": "3a5be174acb836de8e4f5fa05f97913de1e0d9f6742d61a2068f44b4e92c65ce",
   "workflow-evaluation-diff.d.ts": "30f9da4c461aa60bfd37c7c30ba157e2edaeca561b6bdba9fc3271771a07aeb7",
   "workflow-evaluation.d.ts": "0ea24f51a7720e925f67836b889364abaa89039ce2d924eb6c7e9539e08ffffb",
