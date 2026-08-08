@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.1.2
+
+### Patch Changes
+
+- 888bf99: Fix Postgres-backed agent state, tool-journal, and memory JSON persistence, retry the catalog conflict raised by concurrent table initialization, and publish file-backed execution claims atomically.
+
 ## 1.1.1
 
 ### Patch Changes
