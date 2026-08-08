@@ -272,7 +272,12 @@ class FakePostgresClient implements PostgresClientLike {
         const revisionMatches = expectedRevision === undefined || (existing?.revision ?? 0) === expectedRevision;
         const shouldWrite = revisionMatches && (!sql.includes("DO NOTHING") || !existing);
         if (shouldWrite) {
-          table?.set(runId, JSON.parse(String(params[1])) as AgentRunState);
+          table?.set(
+            runId,
+            typeof params[1] === "string"
+              ? JSON.parse(params[1]) as AgentRunState
+              : structuredClone(params[1]) as AgentRunState
+          );
         }
         return {
           rows: sql.includes("RETURNING") && shouldWrite
@@ -280,7 +285,12 @@ class FakePostgresClient implements PostgresClientLike {
             : [] as TResult[]
         };
       } else {
-        this.memoryTables.get(tableName)?.set(String(params[0]), JSON.parse(String(params[1])) as ModelMessage[]);
+        this.memoryTables.get(tableName)?.set(
+          String(params[0]),
+          typeof params[1] === "string"
+            ? JSON.parse(params[1]) as ModelMessage[]
+            : structuredClone(params[1]) as ModelMessage[]
+        );
       }
       return { rows: [] as TResult[] };
     }
@@ -3072,6 +3082,30 @@ describe("agent runtime", () => {
         client: {} as PostgresClientLike
       })
     ).toThrow(/app-owned Postgres-compatible client/);
+  });
+
+  it("recovers from concurrent Postgres table creation conflicts", async () => {
+    const baseClient = new FakePostgresClient();
+    let conflicts = 0;
+    const client: PostgresClientLike = {
+      async query<TResult extends Record<string, unknown> = Record<string, unknown>>(
+        sql: string,
+        params: readonly unknown[] = []
+      ) {
+        if (conflicts === 0 && /CREATE TABLE IF NOT EXISTS\s+agent_runs/i.test(sql)) {
+          conflicts += 1;
+          throw Object.assign(new Error("concurrent table creation"), {
+            code: "23505",
+            constraint_name: "pg_type_typname_nsp_index"
+          });
+        }
+        return baseClient.query<TResult>(sql, params);
+      }
+    };
+    const store = createPostgresAgentRunStore({ client, tableName: "agent_runs" });
+
+    await expect(store.load("missing-run")).resolves.toBeUndefined();
+    expect(conflicts).toBe(1);
   });
 
   it("looks up and deletes postgres-backed runs by idempotency key", async () => {

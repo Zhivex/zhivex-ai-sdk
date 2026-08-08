@@ -213,6 +213,14 @@ const nextStoredState = (state: AgentRunState, options?: AgentRunSaveOptions): A
     : { ...normalized, revision: options.expectedRevision + 1 };
 };
 
+const isConcurrentPostgresTableCreationConflict = (error: unknown): boolean => {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { code?: unknown; constraint?: unknown; constraint_name?: unknown };
+  return record.code === "23505" &&
+    (record.constraint === "pg_type_typname_nsp_index" ||
+      record.constraint_name === "pg_type_typname_nsp_index");
+};
+
 const ensurePostgresTable = (() => {
   const initializedTables = new WeakMap<PostgresClientLike, Map<string, Promise<void>>>();
 
@@ -225,11 +233,30 @@ const ensurePostgresTable = (() => {
 
     let initialization = tables.get(tableName);
     if (!initialization) {
-      initialization = Promise.resolve(client.query(createSql, [])).then(() => undefined);
+      initialization = (async () => {
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            await client.query(createSql, []);
+            return;
+          } catch (error) {
+            if (!isConcurrentPostgresTableCreationConflict(error) || attempt >= 2) {
+              throw error;
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+          }
+        }
+      })();
       tables.set(tableName, initialization);
     }
 
-    await initialization;
+    try {
+      await initialization;
+    } catch (error) {
+      if (tables.get(tableName) === initialization) {
+        tables.delete(tableName);
+      }
+      throw error;
+    }
   };
 })();
 
@@ -1224,7 +1251,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
         `INSERT INTO ${tableName} (run_id, state_json, updated_at_ms)
          VALUES ($1, $2::jsonb, $3)
          ON CONFLICT(run_id) DO NOTHING`,
-        [dbKey(normalized.runId, scope), JSON.stringify(normalized), updatedAt]
+        [dbKey(normalized.runId, scope), normalized, updatedAt]
       );
       const claim = await options.client.query<{ run_id?: string; runId?: string }>(
         `INSERT INTO ${idempotencyTableName} (idempotency_key, run_id, updated_at_ms)
@@ -1290,7 +1317,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
            ON CONFLICT(run_id) DO UPDATE SET
              state_json = EXCLUDED.state_json,
              updated_at_ms = EXCLUDED.updated_at_ms`,
-          [dbKey(normalized.runId, scope), JSON.stringify(stored), updatedAt]
+          [dbKey(normalized.runId, scope), stored, updatedAt]
         );
       } else {
         const saved = await options.client.query<{ run_id?: string; runId?: string }>(
@@ -1301,7 +1328,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
              updated_at_ms = EXCLUDED.updated_at_ms
            WHERE COALESCE((${tableName}.state_json->>'revision')::bigint, 0) = $4
            RETURNING run_id`,
-          [dbKey(normalized.runId, scope), JSON.stringify(stored), updatedAt, saveOptions.expectedRevision]
+          [dbKey(normalized.runId, scope), stored, updatedAt, saveOptions.expectedRevision]
         );
         if (getRecordField(saved.rows[0], ["run_id", "runId"]) !== dbKey(normalized.runId, scope)) {
           throw new ConflictError("AgentRunState revision conflict.");
@@ -1442,7 +1469,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
              revision = EXCLUDED.revision,
              updated_at_ms = EXCLUDED.updated_at_ms
            RETURNING revision`,
-          [key, entry.toolCallId, JSON.stringify(next), next.revision, next.updatedAt]
+          [key, entry.toolCallId, next, next.revision, next.updatedAt]
         )
         : await options.client.query<{ revision?: number | string }>(
           `UPDATE ${journalTableName}
@@ -1451,7 +1478,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
                updated_at_ms = $5
            WHERE run_key = $1 AND tool_call_id = $2 AND revision = $6
            RETURNING revision`,
-          [key, entry.toolCallId, JSON.stringify(next), next.revision, next.updatedAt, journalOptions.expectedRevision]
+          [key, entry.toolCallId, next, next.revision, next.updatedAt, journalOptions.expectedRevision]
         );
       if (getRecordField(result.rows[0], ["revision"]) === undefined) {
         throw new ConflictError("Agent tool-call journal revision conflict.");
@@ -1467,7 +1494,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
          WHERE EXISTS (SELECT 1 FROM ${tableName} WHERE run_id = $1)
          ON CONFLICT(run_key, tool_call_id) DO NOTHING
          RETURNING entry_json`,
-        [dbKey(entry.runId, entry.scope), entry.toolCallId, JSON.stringify(next), next.updatedAt]
+        [dbKey(entry.runId, entry.scope), entry.toolCallId, next, next.updatedAt]
       );
       const claimed = getRecordField(result.rows[0], ["entry_json", "entryJson"]);
       if (claimed && typeof claimed === "object") return { claimed: true, entry: next };
@@ -1513,7 +1540,7 @@ export const createPostgresAgentMemoryStore = (options: PostgresAgentMemoryStore
          ON CONFLICT(memory_key) DO UPDATE SET
            messages_json = EXCLUDED.messages_json,
            updated_at_ms = EXCLUDED.updated_at_ms`,
-        [keyFor(context), JSON.stringify(selectMessages(context.state)), Date.now()]
+        [keyFor(context), selectMessages(context.state), Date.now()]
       );
     }
   };

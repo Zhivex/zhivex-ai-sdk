@@ -23,12 +23,14 @@
     "test:integration:meta": "ZHIVEX_INTEGRATION_PROVIDER=meta vitest run --config vitest.integration.config.ts packages/core/tests/*.integration.test.ts",
     "test:integration:deepseek": "ZHIVEX_INTEGRATION_PROVIDER=deepseek vitest run --config vitest.integration.config.ts packages/deepseek/tests/deepseek.integration.test.ts packages/core/tests/*.integration.test.ts",
     "test:integration:qwen": "ZHIVEX_INTEGRATION_PROVIDER=qwen vitest run --config vitest.integration.config.ts packages/qwen/tests/qwen.integration.test.ts packages/core/tests/*.integration.test.ts",
+    "test:integration:agents": "ZHIVEX_AGENT_LIVE_CERTIFICATION=1 vitest run --config vitest.integration.config.ts packages/core/tests/agent-live.integration.test.ts",
     "test:integration:workflows": "vitest run --config vitest.integration.config.ts packages/core/tests/workflow-providers.integration.test.ts packages/core/tests/workflow-postgres.integration.test.ts",
     "test:integration:ollama": "OLLAMA_INTEGRATION=1 ZHIVEX_INTEGRATION_PROVIDER=ollama vitest run --config vitest.integration.config.ts packages/core/tests/*.integration.test.ts",
     "test:integration:vertex": "vitest run --config vitest.integration.config.ts packages/vertex/tests/vertex.integration.test.ts",
     "smoke:providers": "bun run scripts/provider-smoke-report.ts && bun run test:integration",
     "smoke:dist": "bun run build && bun run packages/agents/tests/dist-entrypoints.smoke.ts",
     "smoke:packages": "bun run build && bun run scripts/package-consumer-smoke.ts",
+    "smoke:packages:agents-live": "bun run build && bun run scripts/agent-package-live-smoke.ts",
     "typecheck": "tsc --noEmit",
     "version-packages": "changeset version",
     "release:check": "bun run scripts/check-release-readiness.ts",
@@ -38,23 +40,28 @@
     "release:next": "bun run scripts/check-release-readiness.ts --tag=next --require-oidc --release-batch-file=$RUNNER_TEMP/zhivex-release-batch.json && bun run build && changeset publish --tag next && bun run scripts/check-release-readiness.ts --postpublish --tag=next --release-batch-file=$RUNNER_TEMP/zhivex-release-batch.json"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
-    "@types/node": "^25.7.0",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
+    "@changesets/cli": "^2.31.1",
+    "@types/node": "^25.9.5",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "@types/ws": "^8.18.1",
-    "happy-dom": "^20.11.1",
+    "happy-dom": "^20.11.2",
     "postgres": "^3.4.9",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.6",
+    "vitest": "^4.1.10",
     "zod": "^4.4.3"
   },
   "overrides": {
+    "js-yaml": "^4.3.1",
+    "nanoid": "^3.3.17",
     "picomatch": "^4.0.4",
     "postcss": "^8.5.23",
     "tinyglobby": "^0.2.16",
     "vite": "^8.1.4"
+  },
+  "patchedDependencies": {
+    "read-yaml-file@1.1.0": "patches/read-yaml-file@1.1.0.patch"
   }
 }

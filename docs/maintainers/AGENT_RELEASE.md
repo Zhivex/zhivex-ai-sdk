@@ -87,6 +87,37 @@ Run provider smoke when credentials are available:
 bun run smoke:providers
 ```
 
+Before certifying an agent-focused release, run the fail-closed live agent gate
+against Gemini, DeepSeek, Qwen, and a disposable Postgres database:
+
+```bash
+ZHIVEX_POSTGRES_INTEGRATION_URL=postgres://user:password@127.0.0.1:5432/database \
+bun run test:integration:agents
+```
+
+The gate defaults to `gemini,deepseek,qwen`; override the exact set with
+`ZHIVEX_AGENT_LIVE_PROVIDERS=gemini,deepseek,qwen`. It fails instead of
+skipping when any requested provider credential or the Postgres URL is missing.
+For every provider it validates a real forced tool call, local approval wait,
+process/client restart, approval resume, exactly-once tool execution, durable
+tool journal, streaming lifecycle, and final-state persistence. It also checks
+real Postgres idempotency claims, compare-and-swap, leases, and concurrent tool
+journal ownership with separate database connections.
+The latest recorded matrix and scope are in
+[`AGENT_LIVE_CERTIFICATION.md`](./AGENT_LIVE_CERTIFICATION.md).
+
+Before publishing, repeat the approval/restart/journal path from tarballs
+installed in an isolated Bun consumer:
+
+```bash
+ZHIVEX_POSTGRES_INTEGRATION_URL=postgres://user:password@127.0.0.1:5432/database \
+bun run smoke:packages:agents-live
+```
+
+This second gate packs `core`, `agents`, Gemini, DeepSeek, and Qwen, installs
+those tarballs through `file:` dependencies, and executes only their public npm
+entrypoints. It is also fail-closed for the database and provider credentials.
+
 Before releasing workflow changes or promoting a remaining SQL persistence
 service, run the opt-in live workflow certification with Gemini or Qwen and a
 disposable Postgres database:
