@@ -392,6 +392,10 @@ const writePermissions = new Set<AgentToolPermission>([
   "shell",
   "external-side-effect"
 ]);
+const supervisedPermissions = new Set<AgentToolPermission>([
+  ...writePermissions,
+  "network"
+]);
 
 const normalizeNames = (names: string[] | undefined) => new Set((names ?? []).map((name) => name.toLowerCase()));
 const normalizePermissions = (permissions: AgentToolPermission[] | undefined) => new Set(permissions ?? []);
@@ -591,6 +595,13 @@ const decision = (approved: boolean, reason: string, mode: AgentToolPolicyMode):
   metadata: { policy: "agent-control-plane", mode }
 });
 
+const approvalRequiredDecision = (reason: string, mode: AgentToolPolicyMode): ToolApprovalDecision => ({
+  approved: false,
+  approvalRequired: true,
+  reason,
+  metadata: { policy: "agent-control-plane", mode }
+});
+
 export const createAgentToolPolicy = (options: AgentToolPolicyOptions = {}): ToolApprovalPolicy => {
   const mode = options.mode ?? "supervised";
   const allowNames = normalizeNames(options.allowToolNames);
@@ -641,6 +652,21 @@ export const createAgentToolPolicy = (options: AgentToolPolicyOptions = {}): Too
 
     if (mode === "deny-write" && hasWritePermission(permissions)) {
       return decision(false, `Tool "${request.tool.name}" requests write permissions.`, mode);
+    }
+
+    if (mode === "supervised") {
+      if (request.tool.requiresApproval) {
+        return approvalRequiredDecision(`Tool "${request.tool.name}" requires explicit approval.`, mode);
+      }
+      if (riskLevel === "high" || riskLevel === "critical") {
+        return approvalRequiredDecision(
+          `Tool "${request.tool.name}" requires approval for risk level "${riskLevel}".`,
+          mode
+        );
+      }
+      if (permissions.some((permission) => supervisedPermissions.has(permission) && !allowPermissions.has(permission))) {
+        return approvalRequiredDecision(`Tool "${request.tool.name}" requests sensitive permissions.`, mode);
+      }
     }
 
     return { approved: true, metadata: { policy: "agent-control-plane", mode } };

@@ -297,6 +297,22 @@ const MAX_JSON_RESPONSE_BYTES = 128 * MIB;
 const MAX_MEDIA_RESPONSE_BYTES = 64 * MIB;
 const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
 
+const diagnosticEndpoint = (response: Response): string | undefined => {
+  if (!response.url) {
+    return undefined;
+  }
+  try {
+    const endpoint = new URL(response.url);
+    endpoint.username = "";
+    endpoint.password = "";
+    endpoint.search = "";
+    endpoint.hash = "";
+    return endpoint.toString();
+  } catch {
+    return undefined;
+  }
+};
+
 const parseJson = async (response: Response): Promise<any> => {
   if (!response.ok) {
     const body = await readErrorBodyWithLimit(response, MAX_ERROR_RESPONSE_BYTES);
@@ -308,7 +324,7 @@ const parseJson = async (response: Response): Promise<any> => {
   return readJsonWithLimit(response, {
     maxBytes: MAX_JSON_RESPONSE_BYTES,
     provider: "vertex",
-    endpoint: response.url || undefined
+    endpoint: diagnosticEndpoint(response)
   });
 };
 

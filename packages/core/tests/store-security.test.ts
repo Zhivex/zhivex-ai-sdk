@@ -40,6 +40,33 @@ describe("private store files", () => {
     expect((await fs.readdir(directory)).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
   });
 
+  it("publishes exclusive files only after their complete contents are durable", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-private-store-"));
+    const file = path.join(directory, "claim.json");
+    const payload = "x".repeat(512 * 1024);
+
+    const attempts = await Promise.all(
+      Array.from({ length: 20 }, async (_, claim) => {
+        try {
+          await writePrivateFile(file, JSON.stringify({ claim, payload }), { flag: "wx" });
+          return { claimed: true };
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          const snapshot = JSON.parse(await fs.readFile(file, "utf8")) as {
+            claim: number;
+            payload: string;
+          };
+          expect(snapshot.payload).toHaveLength(payload.length);
+          return { claimed: false };
+        }
+      })
+    );
+
+    expect(attempts.filter((attempt) => attempt.claimed)).toHaveLength(1);
+    expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+    expect((await fs.readdir(directory)).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("refuses to follow a store-file symlink", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-private-store-"));
     const target = path.join(directory, "target.json");

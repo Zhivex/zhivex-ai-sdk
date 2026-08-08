@@ -420,6 +420,13 @@ const parseJson = async (
   });
 };
 
+const rejectCredentialedRedirects = (fetcher: typeof globalThis.fetch): typeof globalThis.fetch =>
+  ((input: RequestInfo | URL, init?: RequestInit) =>
+    fetcher(input, {
+      ...init,
+      redirect: "error"
+    })) as typeof globalThis.fetch;
+
 const toUint8Array = (data: AudioInput["data"]) => {
   if (data instanceof Uint8Array) {
     return data;
@@ -1879,7 +1886,8 @@ export const createAzureOpenAI = (
   const baseURL = apiVersion
     ? `${normalizedTrustedEndpoint}/openai/deployments/{deployment}?api-version=${encodeURIComponent(apiVersion)}`
     : `${normalizedTrustedEndpoint}/openai/v1`;
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = rejectCredentialedRedirects(rawFetch);
   const responseLimits = resolveAudioResponseLimits(options.responseLimits);
 
   const resolveURL = (modelId: string, path: AzurePath) =>
@@ -2156,7 +2164,7 @@ export const createAzureOpenAI = (
         options.allowUnsafeEndpoints
       ),
     groundedLanguageModel: (modelId) => new AzureOpenAIGroundedLanguageModel(modelId, apiKey, resolveURL, fetcher),
-    rawFetch: fetcher
+    rawFetch
   });
 };
 

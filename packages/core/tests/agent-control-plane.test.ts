@@ -18,6 +18,7 @@ import {
   diffAgentRunLedgers,
   inspectAgentCapsule,
   promoteAgentGoldenTrace,
+  runAgent,
   selectAgentModel,
   tool,
   type AgentRunState,
@@ -247,6 +248,110 @@ describe("agent control plane", () => {
     });
   });
 
+  it("requires supervised approval for marked and high-risk tools unless explicitly allowed", async () => {
+    const highRiskTool = tool({
+      name: "charge_card",
+      schema: z.object({ amount: z.number() }),
+      metadata: {
+        advancedRegistry: {
+          permissions: ["read"],
+          audit: { riskLevel: "high" }
+        }
+      },
+      execute: async () => ({ ok: true })
+    });
+    const markedTool = tool({
+      name: "delete_customer",
+      schema: z.object({ id: z.string() }),
+      requiresApproval: true,
+      execute: async () => ({ deleted: true })
+    });
+    const networkTool = tool({
+      name: "fetch_external",
+      schema: z.object({ url: z.string() }),
+      metadata: {
+        advancedRegistry: { permissions: ["network"] }
+      },
+      execute: async () => ({ ok: true })
+    });
+    const request = {
+      tool: markedTool,
+      toolCall: { id: "call_1", name: markedTool.name, input: { id: "42" } },
+      input: { id: "42" },
+      step: 1,
+      model: createTierAModel()
+    } satisfies ToolApprovalRequest;
+    const supervised = createAgentToolPolicy({ mode: "supervised" });
+
+    expect(supervised(request)).toMatchObject({
+      approved: false,
+      approvalRequired: true,
+      reason: expect.stringContaining("requires explicit approval")
+    });
+    expect(supervised({
+      ...request,
+      tool: highRiskTool,
+      toolCall: { id: "call_2", name: highRiskTool.name, input: { amount: 10 } },
+      input: { amount: 10 }
+    })).toMatchObject({
+      approved: false,
+      approvalRequired: true,
+      reason: expect.stringContaining('risk level "high"')
+    });
+    expect(createAgentToolPolicy({ mode: "supervised", allowToolNames: ["delete_customer"] })(request)).toMatchObject({
+      approved: true
+    });
+    const networkRequest = {
+      ...request,
+      tool: networkTool,
+      toolCall: { id: "call_3", name: networkTool.name, input: { url: "https://example.test" } },
+      input: { url: "https://example.test" }
+    };
+    expect(supervised(networkRequest)).toMatchObject({
+      approved: false,
+      approvalRequired: true,
+      reason: expect.stringContaining("sensitive permissions")
+    });
+    expect(createAgentToolPolicy({ mode: "supervised", allowPermissions: ["network"] })(networkRequest)).toMatchObject({
+      approved: true
+    });
+
+    let sideEffects = 0;
+    const agent = createAgent({
+      model: createMockLanguageModel({
+        capabilities: { tools: true },
+        responses: [{
+          messages: [{
+            role: "assistant",
+            parts: [{
+              type: "tool-call",
+              toolCall: { id: "call_1", name: "delete_customer", input: { id: "42" } }
+            }]
+          }],
+          finishReason: "tool-calls"
+        }]
+      }),
+      maxSteps: 2,
+      toolApprovalPolicy: supervised,
+      tools: {
+        delete_customer: tool({
+          name: "delete_customer",
+          schema: z.object({ id: z.string() }),
+          requiresApproval: true,
+          execute: async () => {
+            sideEffects += 1;
+            return { deleted: true };
+          }
+        })
+      }
+    });
+
+    const waiting = await runAgent(agent, { prompt: "delete", maxSteps: 2 });
+    expect(waiting.status).toBe("waiting_approval");
+    expect(waiting.state.pendingApprovals).toHaveLength(1);
+    expect(sideEffects).toBe(0);
+  });
+
   it("creates approval queues from provider approval waits", () => {
     const queue = createAgentApprovalQueue(
       baseState({
@@ -358,6 +463,8 @@ describe("agent control plane", () => {
     const state = baseState({
       outputText: "Bearer final-secret",
       metadata: { token: "metadata-secret" },
+      error: { message: "run failed with token=run-secret-12345678" },
+      cancellationReason: "Bearer cancellation-secret",
       pendingApprovals: [{
         provider: "openai",
         id: "approval_1",
@@ -371,6 +478,8 @@ describe("agent control plane", () => {
       call.toolCall.input = { token: "input-secret" };
     }
     state.steps[0]!.toolResults[0]!.output = { token: "output-secret" };
+    state.toolResults[0]!.isError = true;
+    state.toolResults[0]!.error = { message: "tool failed with Bearer tool-secret" };
 
     const ledger = createAgentRunLedger(state, { includeInput: false, includeOutput: false });
     const serialized = JSON.stringify(ledger);
@@ -382,10 +491,16 @@ describe("agent control plane", () => {
       "approval-secret",
       "raw-secret",
       "input-secret",
-      "output-secret"
+      "output-secret",
+      "run-secret-12345678",
+      "cancellation-secret",
+      "tool-secret"
     ]) {
       expect(serialized).not.toContain(secret);
     }
+    expect(ledger.audit.error?.message).toContain("[REDACTED]");
+    expect(ledger.audit.cancellationReason).toBe("[REDACTED]");
+    expect(ledger.toolAudit[0]?.error?.message).toContain("[REDACTED]");
   });
 
   it("routes models by agent capability requirements", () => {

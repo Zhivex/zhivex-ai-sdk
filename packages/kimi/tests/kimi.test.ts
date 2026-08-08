@@ -898,7 +898,32 @@ describe("kimi adapter", () => {
     });
 
     expect(Object.keys(tools)).toEqual(["fetch"]);
+    expect(Object.getPrototypeOf(tools)).toBeNull();
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://api.moonshot.ai/v1/formulas/moonshot/fetch:latest/tools");
+  });
+
+  it("rejects prototype-sensitive Formula tool names", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "__proto__",
+              parameters: { type: "object", properties: {} }
+            }
+          }
+        ]
+      })
+    );
+
+    await expect(
+      kimiFormulaTools({
+        apiKey: "test",
+        fetch: fetchMock as typeof fetch,
+        formulas: ["moonshot/untrusted:latest"]
+      })
+    ).rejects.toThrow('unsafe tool name "__proto__"');
   });
 
   it("propagates Formula timeout policy into dynamically loaded tools", async () => {

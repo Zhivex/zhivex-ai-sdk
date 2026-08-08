@@ -74,6 +74,8 @@ The package also supports current Claude families such as Claude Sonnet 5, Claud
 Mythos 5, Claude Opus 4.8, and Claude Haiku 4.5, with model-specific capability validation. Models
 that reject assistant-prefilled conversations fail locally before an API request is attempted.
 
+Authenticated Anthropic requests reject redirects so a `307` or `308` cannot replay `x-api-key` or the prompt body to another origin. The adapter's explicit `rawFetch` escape hatch remains uncredentialed.
+
 Official references:
 
 - [Claude Opus 5](https://platform.claude.com/docs/en/about-claude/models/whats-new-opus-5)

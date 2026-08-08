@@ -1,5 +1,5 @@
-import { promises as fs } from "node:fs";
-import { createHash } from "node:crypto";
+import { constants, promises as fs } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { normalizeAgentRunState } from "./agent-state.js";
@@ -76,6 +76,166 @@ const fileNameForAgentStoreKey = (key: string): string => `${encodeURIComponent(
 const fileNameForIdempotencyKey = (key: string): string =>
   `.idempotency-${createHash("sha256").update(key).digest("hex")}.json`;
 const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const FILE_RUN_LOCK_TIMEOUT_MS = 2_000;
+const FILE_RUN_LOCK_RETRY_MS = 10;
+const FILE_RUN_LOCK_STALE_MS = 30_000;
+
+interface FileRunStoreLock {
+  ownerId: string;
+  pid: number;
+  createdAt: number;
+}
+
+const waitForFileRunLock = () => new Promise<void>((resolve) => {
+  setTimeout(resolve, FILE_RUN_LOCK_RETRY_MS);
+});
+
+const parseFileRunStoreLock = (value: string): FileRunStoreLock | undefined => {
+  try {
+    const lock = JSON.parse(value) as Partial<FileRunStoreLock>;
+    return typeof lock.ownerId === "string" &&
+      Number.isSafeInteger(lock.pid) &&
+      lock.pid! > 0 &&
+      Number.isFinite(lock.createdAt)
+      ? lock as FileRunStoreLock
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+};
+
+const readFileRunStoreLock = async (
+  lockPath: string
+): Promise<{ lock?: FileRunStoreLock; modifiedAt: number } | undefined> => {
+  let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+  try {
+    handle = await fs.open(lockPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stats = await handle.stat();
+    return {
+      lock: parseFileRunStoreLock(await handle.readFile("utf8")),
+      modifiedAt: stats.mtimeMs
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new ValidationError("Refusing to follow a file AgentRunStore lock symlink.");
+    }
+    throw error;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+};
+
+const removeFileRunStoreLock = async (lockPath: string, ownerId: string): Promise<boolean> => {
+  const current = await readFileRunStoreLock(lockPath);
+  if (current?.lock?.ownerId !== ownerId) {
+    return false;
+  }
+  try {
+    await fs.unlink(lockPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+};
+
+const recoverFileRunStoreLock = async (lockPath: string): Promise<boolean> => {
+  const current = await readFileRunStoreLock(lockPath);
+  if (!current) {
+    return true;
+  }
+  const malformedAndStale = !current.lock && Date.now() - current.modifiedAt >= FILE_RUN_LOCK_STALE_MS;
+  const ownerExited = current.lock ? !isProcessAlive(current.lock.pid) : false;
+  // Never steal an old lock from a live owner: a large local store can make a
+  // legitimate CAS operation exceed the stale threshold. The age fallback is
+  // reserved for malformed locks that have no verifiable owner.
+  if (!malformedAndStale && !ownerExited) {
+    return false;
+  }
+  const recoveryId = createHash("sha256")
+    .update(current.lock?.ownerId ?? "malformed")
+    .digest("hex");
+  const recoveryPath = `${lockPath}.${recoveryId}.recovery`;
+  try {
+    await fs.link(lockPath, recoveryPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return true;
+    }
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      return false;
+    }
+    throw error;
+  }
+
+  try {
+    const [lockStats, recoveryStats] = await Promise.all([
+      fs.lstat(lockPath),
+      fs.lstat(recoveryPath)
+    ]);
+    if (lockStats.dev !== recoveryStats.dev || lockStats.ino !== recoveryStats.ino) {
+      return false;
+    }
+    const verified = await readFileRunStoreLock(lockPath);
+    if (
+      current.lock?.ownerId !== verified?.lock?.ownerId ||
+      (!current.lock && verified?.lock)
+    ) {
+      return false;
+    }
+    await fs.unlink(lockPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return true;
+    }
+    throw error;
+  } finally {
+    await fs.unlink(recoveryPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+};
+
+const acquireFileRunStoreLock = async (lockPath: string): Promise<() => Promise<void>> => {
+  const ownerId = randomUUID();
+  const startedAt = Date.now();
+  const lock: FileRunStoreLock = { ownerId, pid: process.pid, createdAt: startedAt };
+  while (true) {
+    try {
+      await writePrivateFile(lockPath, JSON.stringify(lock), { flag: "wx" });
+      return async () => {
+        await removeFileRunStoreLock(lockPath, ownerId);
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+    }
+
+    if (await recoverFileRunStoreLock(lockPath)) {
+      continue;
+    }
+    if (Date.now() - startedAt >= FILE_RUN_LOCK_TIMEOUT_MS) {
+      throw new ConflictError("Timed out acquiring the file AgentRunStore revision lock.");
+    }
+    await waitForFileRunLock();
+  }
+};
 
 const normalizeLimit = (value: number | undefined, fallback = 50): number => {
   if (value === undefined) return fallback;
@@ -213,6 +373,14 @@ const nextStoredState = (state: AgentRunState, options?: AgentRunSaveOptions): A
     : { ...normalized, revision: options.expectedRevision + 1 };
 };
 
+const isConcurrentPostgresTableCreationConflict = (error: unknown): boolean => {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { code?: unknown; constraint?: unknown; constraint_name?: unknown };
+  return record.code === "23505" &&
+    (record.constraint === "pg_type_typname_nsp_index" ||
+      record.constraint_name === "pg_type_typname_nsp_index");
+};
+
 const ensurePostgresTable = (() => {
   const initializedTables = new WeakMap<PostgresClientLike, Map<string, Promise<void>>>();
 
@@ -225,11 +393,30 @@ const ensurePostgresTable = (() => {
 
     let initialization = tables.get(tableName);
     if (!initialization) {
-      initialization = Promise.resolve(client.query(createSql, [])).then(() => undefined);
+      initialization = (async () => {
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            await client.query(createSql, []);
+            return;
+          } catch (error) {
+            if (!isConcurrentPostgresTableCreationConflict(error) || attempt >= 2) {
+              throw error;
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+          }
+        }
+      })();
       tables.set(tableName, initialization);
     }
 
-    await initialization;
+    try {
+      await initialization;
+    } catch (error) {
+      if (tables.get(tableName) === initialization) {
+        tables.delete(tableName);
+      }
+      throw error;
+    }
   };
 })();
 
@@ -414,6 +601,7 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
   const idempotencyPath = (key: string, scope?: AgentStoreScope) => path.join(options.directory, fileNameForIdempotencyKey(scopedKey(effectiveScope(scope), key)));
   const leasePath = (runId: string, scope?: AgentStoreScope) => path.join(options.directory, `.lease-${createHash("sha256").update(scopedKey(effectiveScope(scope), runId)).digest("hex")}.json`);
   const toolPath = (runId: string, toolCallId: string, scope?: AgentStoreScope) => path.join(options.directory, `.tool-${createHash("sha256").update(`${scopedKey(effectiveScope(scope), runId)}:${toolCallId}`).digest("hex")}.json`);
+  const revisionLockPath = (runId: string, scope?: AgentStoreScope) => path.join(options.directory, `.run-lock-${createHash("sha256").update(scopedKey(effectiveScope(scope), runId)).digest("hex")}.lock`);
 
   const load = async (runId: string, scope?: AgentStoreScope): Promise<AgentRunState | undefined> => {
     try {
@@ -514,19 +702,24 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
     async save(state, saveOptions) {
       await ensurePrivateDirectory(options.directory);
       const scope = effectiveScope(state.scope);
-      const current = await load(state.runId, scope);
-      assertExpectedRevision(current, saveOptions?.expectedRevision);
-      const normalized = nextStoredState(state, saveOptions);
-      if (normalized.idempotencyKey) {
-        const owner = await findByIdempotencyKey(normalized.idempotencyKey, scope);
-        if (owner && owner.runId !== normalized.runId) {
-          throw new ConflictError("AgentRunState idempotency key conflict.");
+      const releaseLock = await acquireFileRunStoreLock(revisionLockPath(state.runId, scope));
+      try {
+        const current = await load(state.runId, scope);
+        assertExpectedRevision(current, saveOptions?.expectedRevision);
+        const normalized = nextStoredState(state, saveOptions);
+        if (normalized.idempotencyKey) {
+          const owner = await findByIdempotencyKey(normalized.idempotencyKey, scope);
+          if (owner && owner.runId !== normalized.runId) {
+            throw new ConflictError("AgentRunState idempotency key conflict.");
+          }
         }
-      }
-      const stored = { ...normalized, ...(scope ? { scope } : {}) };
-      await writePrivateFile(runPath(normalized.runId, scope), JSON.stringify(stored, null, 2));
-      if (normalized.idempotencyKey) {
-        await writePrivateFile(idempotencyPath(normalized.idempotencyKey, scope), JSON.stringify(stored, null, 2));
+        const stored = { ...normalized, ...(scope ? { scope } : {}) };
+        await writePrivateFile(runPath(normalized.runId, scope), JSON.stringify(stored, null, 2));
+        if (normalized.idempotencyKey) {
+          await writePrivateFile(idempotencyPath(normalized.idempotencyKey, scope), JSON.stringify(stored, null, 2));
+        }
+      } finally {
+        await releaseLock();
       }
     },
     async delete(runId, scope) {
@@ -1224,7 +1417,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
         `INSERT INTO ${tableName} (run_id, state_json, updated_at_ms)
          VALUES ($1, $2::jsonb, $3)
          ON CONFLICT(run_id) DO NOTHING`,
-        [dbKey(normalized.runId, scope), JSON.stringify(normalized), updatedAt]
+        [dbKey(normalized.runId, scope), normalized, updatedAt]
       );
       const claim = await options.client.query<{ run_id?: string; runId?: string }>(
         `INSERT INTO ${idempotencyTableName} (idempotency_key, run_id, updated_at_ms)
@@ -1290,7 +1483,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
            ON CONFLICT(run_id) DO UPDATE SET
              state_json = EXCLUDED.state_json,
              updated_at_ms = EXCLUDED.updated_at_ms`,
-          [dbKey(normalized.runId, scope), JSON.stringify(stored), updatedAt]
+          [dbKey(normalized.runId, scope), stored, updatedAt]
         );
       } else {
         const saved = await options.client.query<{ run_id?: string; runId?: string }>(
@@ -1301,7 +1494,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
              updated_at_ms = EXCLUDED.updated_at_ms
            WHERE COALESCE((${tableName}.state_json->>'revision')::bigint, 0) = $4
            RETURNING run_id`,
-          [dbKey(normalized.runId, scope), JSON.stringify(stored), updatedAt, saveOptions.expectedRevision]
+          [dbKey(normalized.runId, scope), stored, updatedAt, saveOptions.expectedRevision]
         );
         if (getRecordField(saved.rows[0], ["run_id", "runId"]) !== dbKey(normalized.runId, scope)) {
           throw new ConflictError("AgentRunState revision conflict.");
@@ -1442,7 +1635,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
              revision = EXCLUDED.revision,
              updated_at_ms = EXCLUDED.updated_at_ms
            RETURNING revision`,
-          [key, entry.toolCallId, JSON.stringify(next), next.revision, next.updatedAt]
+          [key, entry.toolCallId, next, next.revision, next.updatedAt]
         )
         : await options.client.query<{ revision?: number | string }>(
           `UPDATE ${journalTableName}
@@ -1451,7 +1644,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
                updated_at_ms = $5
            WHERE run_key = $1 AND tool_call_id = $2 AND revision = $6
            RETURNING revision`,
-          [key, entry.toolCallId, JSON.stringify(next), next.revision, next.updatedAt, journalOptions.expectedRevision]
+          [key, entry.toolCallId, next, next.revision, next.updatedAt, journalOptions.expectedRevision]
         );
       if (getRecordField(result.rows[0], ["revision"]) === undefined) {
         throw new ConflictError("Agent tool-call journal revision conflict.");
@@ -1467,7 +1660,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
          WHERE EXISTS (SELECT 1 FROM ${tableName} WHERE run_id = $1)
          ON CONFLICT(run_key, tool_call_id) DO NOTHING
          RETURNING entry_json`,
-        [dbKey(entry.runId, entry.scope), entry.toolCallId, JSON.stringify(next), next.updatedAt]
+        [dbKey(entry.runId, entry.scope), entry.toolCallId, next, next.updatedAt]
       );
       const claimed = getRecordField(result.rows[0], ["entry_json", "entryJson"]);
       if (claimed && typeof claimed === "object") return { claimed: true, entry: next };
@@ -1513,7 +1706,7 @@ export const createPostgresAgentMemoryStore = (options: PostgresAgentMemoryStore
          ON CONFLICT(memory_key) DO UPDATE SET
            messages_json = EXCLUDED.messages_json,
            updated_at_ms = EXCLUDED.updated_at_ms`,
-        [keyFor(context), JSON.stringify(selectMessages(context.state)), Date.now()]
+        [keyFor(context), selectMessages(context.state), Date.now()]
       );
     }
   };

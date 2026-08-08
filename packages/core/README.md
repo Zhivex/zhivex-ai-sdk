@@ -41,7 +41,7 @@ Most applications should install `@zhivex-ai/sdk` and follow the main adoption g
 - `createHttpTool()` propagates caller cancellation and idempotency, rejects redirects by default, validates its timeout, and bounds response bodies. Override `maxResponseBytes` or `redirect` only for an application-owned endpoint.
 - `parseUIMessageRequest()` validates the runtime message/part shape and bounds request bytes, message count, and JSONL line size.
 - The default browser WebSocket connection rejects oversized incoming frames. Set `maxIncomingFrameBytes` only when the provider contract requires a different bound.
-- `assertTrustedEndpoint()` rejects credentials, unsafe schemes, private/loopback hosts, and allowlist boundary tricks unless a trusted server configuration explicitly opts in.
+- `assertTrustedEndpoint()` rejects credentials, unsafe schemes, private/loopback hosts, embedded private-IP DNS aliases, and allowlist boundary tricks unless a trusted server configuration explicitly opts in. Because it is synchronous, arbitrary DNS rebinding still requires an application-owned host allowlist plus resolver and egress controls.
 
 Repository and full documentation:
 

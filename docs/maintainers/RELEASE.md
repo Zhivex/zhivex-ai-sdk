@@ -70,7 +70,7 @@ bun run smoke:packages
 git status --short
 ```
 
-Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The workflow checks out immutable committed source, installs dependencies without lifecycle scripts, repeats audit/typecheck/test/build and the packed Node consumer smoke, publishes through npm trusted publishing, and only then pushes package tags whose immutable npm `gitHead` matches the release commit.
+Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The `validate` job has no OIDC permission: it checks out immutable committed source, installs dependencies without lifecycle scripts, scans for recognized secret signatures, repeats audit/typecheck/test/build and the packed Node consumer smoke, then produces the exact release batch as commit-bound SHA-512 tarballs. The separate `publish` job is the only OIDC trust boundary; it installs no dependencies and publishes only those downloaded, checksum-verified tarballs. Package tags are pushed only after immutable npm `gitHead`, provenance, integrity, and dist-tags match the release commit.
 
 Tag discovery comes from npm metadata rather than only from tags created inside the current runner. This lets a safe rerun recover every tag from a partially successful publish while excluding unchanged packages from older commits.
 
@@ -84,7 +84,7 @@ Before the first OIDC release, configure every `@zhivex-ai/*` package on npm wit
 - allowed action: `npm publish`
 - environment: `npm`
 
-The workflow uses Node 24 and verifies npm is at least 11.5.1. GitHub Actions receives `id-token: write`; npm then generates provenance automatically for public packages.
+The workflow uses Node 24 and verifies npm is at least 11.5.1. Only the minimal publish job receives `id-token: write`; npm then generates provenance automatically for public packages.
 
 Before publishing, verify that no package version contains a prerelease suffix such as `-next.0`, `-alpha.0`, `-beta.0`, or `-rc.0`.
 

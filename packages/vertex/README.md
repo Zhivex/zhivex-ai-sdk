@@ -117,6 +117,8 @@ await predictRaw({
 
 Authentication follows the current Google guidance for Gemini on Vertex AI: API keys are supported for testing with `apiKey`, `VERTEX_API_KEY`, or `GOOGLE_API_KEY`, while production can use automatic ADC with `createVertex({ projectId, location })` or explicit service-account integrations through `authClient`, `getAccessToken`, or `accessToken`. See Google's guides for [API keys](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys), the [Vertex AI quickstart](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start?usertype=apikey), and [Vertex AI authentication](https://docs.cloud.google.com/vertex-ai/docs/authentication).
 
+Diagnostic response-size errors strip query strings, fragments, and embedded credentials from endpoint URLs before they are exposed, so API-key query parameters are never copied into error messages.
+
 Use `location: "global"` for the broadest current Gemini 3 availability. The global REST host is `aiplatform.googleapis.com`; regional hosts use `<location>-aiplatform.googleapis.com`. Because Veo 3.1 is not served from the global endpoint, `videoGenerationModel("veo-...")` automatically routes a global Vertex provider to `us-central1`; explicit non-global locations and custom `baseURL` values remain unchanged. Gemini 3.6 Flash is currently served only from `global`; Gemini 3.5 Flash-Lite supports `global` plus the `us` and `eu` jurisdictional multi-regions. The adapter rejects unsupported configured locations for these two stable IDs unless a custom `baseURL` is supplied. Model features, pricing, data residency, and Provisioned Throughput differ by location, so choose a non-global location only after checking the selected model's location table.
 
 Current model guidance:

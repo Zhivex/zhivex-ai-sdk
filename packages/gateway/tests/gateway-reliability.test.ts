@@ -174,6 +174,32 @@ describe("gateway reliability", () => {
     ]);
   });
 
+  it("redacts credential-like URL parameters from fallback attempt diagnostics", async () => {
+    const primary = vi.fn(async () => {
+      throw new Error(
+        "request https://generativelanguage.googleapis.com/v1/models/test?key=GATEWAY_SENTINEL_SECRET&alt=json failed"
+      );
+    });
+    const fallback = vi.fn(async () => ({ text: "recovered" }));
+    const gateway = createGateway({
+      adapters: {
+        gemini: createAdapter(primary),
+        ollama: createAdapter(fallback)
+      },
+      maxRetries: 0
+    });
+
+    const result = await gateway.generate({
+      ...request,
+      primary: { provider: "gemini", modelId: "primary-model" },
+      fallbacks: [{ provider: "ollama", modelId: "fallback-model" }]
+    });
+
+    expect(result.text).toBe("recovered");
+    expect(result.attempts[0]?.errorMessage).toContain("key=[REDACTED]");
+    expect(result.attempts[0]?.errorMessage).not.toContain("GATEWAY_SENTINEL_SECRET");
+  });
+
   it("rejects targets with unknown cost by default when a budget is set", async () => {
     const unknownCostGenerate = vi.fn(async () => ({ text: "unknown cost" }));
     const knownCostGenerate = vi.fn(async () => ({ text: "known cost" }));

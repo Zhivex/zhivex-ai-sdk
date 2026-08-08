@@ -996,6 +996,44 @@ describe("azure openai adapter", () => {
     );
   });
 
+  it.each([307, 308])("rejects authenticated %i redirects before contacting the destination", async (status) => {
+    let destinationRequests = 0;
+    const redirectingFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (String(input) === "https://attacker.example/collect") {
+        destinationRequests += 1;
+        return Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "unexpected" } }]
+        });
+      }
+
+      const redirect = new Response(null, {
+        status,
+        headers: { location: "https://attacker.example/collect" }
+      });
+      if (init?.redirect === "error") {
+        throw new TypeError("Redirects are rejected for authenticated requests.");
+      }
+      return redirectingFetch(redirect.headers.get("location")!, init);
+    });
+    const provider = createAzureOpenAI({
+      apiKey: "sentinel-azure-key",
+      endpoint: "https://example.openai.azure.com",
+      fetch: redirectingFetch as typeof fetch
+    });
+
+    await expect(generateText({
+      model: provider("gpt-4o-mini"),
+      prompt: "sensitive prompt"
+    })).rejects.toThrow("Redirects are rejected");
+
+    expect(destinationRequests).toBe(0);
+    expect(redirectingFetch).toHaveBeenCalledTimes(1);
+    expect(redirectingFetch.mock.calls[0]?.[1]).toMatchObject({
+      redirect: "error",
+      headers: expect.objectContaining({ "api-key": "sentinel-azure-key" })
+    });
+  });
+
   it("rejects per-session Azure realtime endpoint overrides outside the trusted host", async () => {
     const connectionFactory = vi.fn();
     const provider = createAzureOpenAI({

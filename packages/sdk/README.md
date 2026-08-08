@@ -34,6 +34,8 @@ console.log(result.text);
 
 Use provider-backed models from Bun, Node.js, route handlers, workers, or other server runtimes. Keep provider credentials and effectful tools out of browser bundles.
 
+The local `zhivex-ai agents ledger` command omits full output text by default; use `--include-output-text` only for a reviewed local export. `zhivex-ai init agent` creates a private `.env` with mode `0600` on POSIX systems, and `doctor` reports unsafe environment-file permissions.
+
 ## Start Here
 
 - Quickstart: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/QUICKSTART.md>

@@ -146,16 +146,26 @@ describe("gemini adapter", () => {
 
   it("rejects oversized Gemini JSON responses before buffering them", async () => {
     const contentLength = 129 * 1024 * 1024;
-    fetchMock.mockResolvedValueOnce(
-      new Response("{}", { status: 200, headers: { "content-length": String(contentLength) } })
-    );
+    const response = new Response("{}", {
+      status: 200,
+      headers: { "content-length": String(contentLength) }
+    });
+    Object.defineProperty(response, "url", {
+      value: "https://generativelanguage.googleapis.com/v1beta/models/test:generateContent?key=GEMINI_SENTINEL_SECRET#fragment"
+    });
+    fetchMock.mockResolvedValueOnce(response);
 
     const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
-    await expect(generateText({ model: provider("gemini-3.5-flash"), prompt: "hello" })).rejects.toMatchObject({
+    const error = await generateText({ model: provider("gemini-3.5-flash"), prompt: "hello" }).catch(
+      (caught: unknown) => caught
+    );
+    expect(error).toMatchObject({
       name: "ProviderResponseTooLargeError",
       maxBytes: 128 * 1024 * 1024,
-      contentLength
+      contentLength,
+      endpoint: "https://generativelanguage.googleapis.com/v1beta/models/test:generateContent"
     });
+    expect(String((error as Error).message)).not.toContain("GEMINI_SENTINEL_SECRET");
   });
 
   it("truncates Gemini error response bodies", async () => {

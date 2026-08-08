@@ -11,6 +11,10 @@ coverage/
 .env
 .env.*
 !.env.example
+.npmrc
+
+.release/
+*.tgz
 
 packages/*/src/*.js
 packages/*/src/*.js.map

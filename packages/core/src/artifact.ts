@@ -272,6 +272,15 @@ const bytesFromBinaryInput = (data: string | ArrayBuffer | Uint8Array): Uint8Arr
 
 const sha256Digest = (data: Uint8Array): string => createHash("sha256").update(data).digest("hex");
 
+const resolveBinarySha256 = (data: Uint8Array, expectedSha256: string | undefined): string => {
+  validateArtifactMetadata({ sha256: expectedSha256 });
+  const actualSha256 = sha256Digest(data);
+  if (expectedSha256 !== undefined && expectedSha256.toLowerCase() !== actualSha256) {
+    throw new ValidationError('The "sha256" artifact option does not match the binary data.');
+  }
+  return actualSha256;
+};
+
 const assertExpectedRevision = (
   current: { revision: number } | undefined,
   expectedRevision: number | undefined,
@@ -329,7 +338,7 @@ const enrichArtifactMetadata = (input: ArtifactSaveInput): Pick<ArtifactSaveInpu
 
   return {
     size: input.size ?? bytes.byteLength,
-    sha256: input.sha256 ?? actualSha256
+    sha256: actualSha256
   };
 };
 
@@ -803,7 +812,7 @@ export const createInMemoryArtifactService = (): ArtifactService => {
         id
       };
       const bytes = bytesFromBinaryInput(input.data);
-      const sha256 = input.sha256 ?? sha256Digest(bytes);
+      const sha256 = resolveBinarySha256(bytes, input.sha256);
       const existing = artifacts.get(artifactKey(lookup));
       assertExpectedRevision(existing, input.expectedRevision, "ArtifactRecord");
       const artifact = createArtifact({
@@ -931,7 +940,7 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         id
       };
       const bytes = bytesFromBinaryInput(input.data);
-      const sha256 = input.sha256 ?? sha256Digest(bytes);
+      const sha256 = resolveBinarySha256(bytes, input.sha256);
       const blobPath = blobPathForArtifact(lookup);
       const existing = await load(lookup);
       assertExpectedRevision(existing, input.expectedRevision, "ArtifactRecord");

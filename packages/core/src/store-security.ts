@@ -52,12 +52,9 @@ export const writePrivateFile = async (
     return;
   }
 
-  const flags =
-    constants.O_WRONLY |
-    constants.O_CREAT |
-    constants.O_NOFOLLOW |
-    constants.O_EXCL;
-  const handle = await fs.open(filePath, flags, 0o600);
+  const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW;
+  const handle = await fs.open(temporaryPath, flags, 0o600);
   try {
     await handle.chmod(0o600);
     await handle.writeFile(
@@ -65,7 +62,10 @@ export const writePrivateFile = async (
       typeof data === "string" ? { encoding: "utf8" } : undefined
     );
     await handle.sync();
-  } finally {
     await handle.close();
+    await fs.link(temporaryPath, filePath);
+  } finally {
+    await handle.close().catch(() => undefined);
+    await fs.unlink(temporaryPath).catch(() => undefined);
   }
 };

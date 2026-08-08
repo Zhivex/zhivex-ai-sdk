@@ -678,6 +678,19 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
         childMetadata.parentAgentId = options.parentAgentId;
       }
       const toolCallId = executionContext?.toolCall.id;
+      const childIdempotencyKey =
+        options.parentRunId &&
+        toolCallId &&
+        executionContext &&
+        options.agent.store?.claimIdempotencyKey
+          ? `subagent:${durableToolCallId(
+              options.parentRunId,
+              executionContext.step,
+              toolCallId,
+              toolName,
+              serializeJsonValue(input)
+            )}`
+          : undefined;
       const checkpoint = runtimeState?.childRuns?.find(
         (childRun) => childRun.toolCallId === toolCallId && childRun.resumeState
       );
@@ -709,6 +722,7 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
             prompt: input.prompt,
             system: joinInstructions(options.system, input.system),
             parentRunId: options.parentRunId,
+            idempotencyKey: childIdempotencyKey,
             scope: options.scope,
             context: executionContext?.context,
             maxSteps: options.maxSteps,

@@ -220,20 +220,30 @@ describe("vertex adapter", () => {
 
   it("rejects oversized Vertex JSON responses before buffering them", async () => {
     const contentLength = 129 * 1024 * 1024;
-    fetchMock.mockResolvedValueOnce(
-      new Response("{}", { status: 200, headers: { "content-length": String(contentLength) } })
-    );
+    const response = new Response("{}", {
+      status: 200,
+      headers: { "content-length": String(contentLength) }
+    });
+    Object.defineProperty(response, "url", {
+      value: "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models/test:generateContent?key=VERTEX_SENTINEL_SECRET#fragment"
+    });
+    fetchMock.mockResolvedValueOnce(response);
 
     const provider = createVertex({
       accessToken: "test",
       projectId: "demo-project",
       fetch: fetchMock as typeof fetch
     });
-    await expect(generateText({ model: provider("gemini-3.5-flash"), prompt: "hello" })).rejects.toMatchObject({
+    const error = await generateText({ model: provider("gemini-3.5-flash"), prompt: "hello" }).catch(
+      (caught: unknown) => caught
+    );
+    expect(error).toMatchObject({
       name: "ProviderResponseTooLargeError",
       maxBytes: 128 * 1024 * 1024,
-      contentLength
+      contentLength,
+      endpoint: "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models/test:generateContent"
     });
+    expect(String((error as Error).message)).not.toContain("VERTEX_SENTINEL_SECRET");
   });
 
   it("truncates Vertex error response bodies", async () => {

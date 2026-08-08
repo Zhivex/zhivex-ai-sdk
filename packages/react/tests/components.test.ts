@@ -103,6 +103,11 @@ describe("@zhivex-ai/react components", () => {
         },
         {
           type: "image",
+          image: "https://127.0.0.1.nip.io/aliased-private.png",
+          mediaType: "image/png"
+        },
+        {
+          type: "image",
           image: "https://user:secret@cdn.example.com/credentialed.png",
           mediaType: "image/png"
         }
@@ -121,19 +126,31 @@ describe("@zhivex-ai/react components", () => {
         mediaUrlPolicy: { allowRemote: true }
       })
     );
-    expect(publicOptIn).toContain(
+    expect(publicOptIn).not.toContain("cdn.example.com");
+
+    const allowlistedPublicOptIn = renderToStaticMarkup(
+      createElement(Message, {
+        message: mediaMessage,
+        mediaUrlPolicy: {
+          allowRemote: true,
+          allowUrl: (url) => url.hostname === "cdn.example.com"
+        }
+      })
+    );
+    expect(allowlistedPublicOptIn).toContain(
       'src="https://cdn.example.com/image.png"'
     );
-    expect(publicOptIn).toContain('referrerPolicy="no-referrer"');
-    expect(publicOptIn).not.toContain("127.0.0.1");
-    expect(publicOptIn).not.toContain("credentialed.png");
+    expect(allowlistedPublicOptIn).toContain('referrerPolicy="no-referrer"');
+    expect(allowlistedPublicOptIn).not.toContain("127.0.0.1");
+    expect(allowlistedPublicOptIn).not.toContain("credentialed.png");
 
     const privateOptIn = renderToStaticMarkup(
       createElement(Message, {
         message: mediaMessage,
         mediaUrlPolicy: {
           allowRemote: true,
-          allowPrivateNetwork: true
+          allowPrivateNetwork: true,
+          allowUrl: (url) => url.hostname === "127.0.0.1"
         }
       })
     );

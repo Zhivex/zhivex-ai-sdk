@@ -178,6 +178,8 @@ await predictRaw({
 
 For new Gemini projects, Google recommends the generally available Interactions API. `createInteraction()` and `streamInteraction()` expose that API, including typed `steps`, convenience outputs such as `outputText` / `outputImage` / `outputAudio` / `outputVideo`, server-side continuation with `previousInteractionId`, background execution, and model or managed-agent calls. Request controls use the portable camel-case fields `systemInstruction`, `responseFormat`, `generationConfig`, `agentConfig`, `environment`, and `labels`; `resumeInteraction()` reconnects to background SSE and accepts `lastEventId` for event-safe continuation, while `getInteraction()`, `cancelInteraction()`, and `deleteInteraction()` manage stored or background work. `generateText()` remains the portable Zhivex path and uses Google's still-supported `generateContent` API; Batch API, explicit Context Caching, video metadata, and custom safety settings are not currently available through Interactions upstream.
 
+Diagnostic response-size errors strip query strings, fragments, and embedded credentials from endpoint URLs before they are exposed, so the Gemini `key` query parameter is never copied into error messages.
+
 Gemini 3.1 TTS supports buffered audio through `generateSpeech()` and incremental audio through `streamSpeech()`. Each streamed value is a `SpeechOutput` chunk; consume or forward `chunk.audio` as it arrives instead of waiting for the complete recording.
 
 Current model guidance:

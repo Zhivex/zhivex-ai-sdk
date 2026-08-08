@@ -3,6 +3,11 @@ import { ConfigurationError } from "./errors.js";
 export interface TrustedEndpointOptions {
   label?: string;
   protocols: readonly string[];
+  /**
+   * Exact application-controlled DNS names. This synchronous validation cannot
+   * pin DNS answers; server runtimes still need resolver/egress controls when a
+   * trusted hostname itself could be rebound.
+   */
   allowedHosts?: readonly string[];
   allowedHostSuffixes?: readonly string[];
   allowLoopback?: boolean;
@@ -41,17 +46,32 @@ const isPrivateIPv4 = (hostname: string) => {
 const normalizedHostname = (hostname: string) =>
   hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "").replace(/\.$/, "");
 
+const hasEmbeddedPrivateIPv4 = (hostname: string) => {
+  const labels = hostname.split(".");
+  for (let index = 0; index <= labels.length - 4; index += 1) {
+    if (isPrivateIPv4(labels.slice(index, index + 4).join("."))) {
+      return true;
+    }
+  }
+  return false;
+};
+
 export const isPrivateNetworkHostname = (hostname: string): boolean => {
   const normalized = normalizedHostname(hostname);
   if (
     normalized === "localhost" ||
     normalized.endsWith(".localhost") ||
+    normalized === "localtest.me" ||
+    normalized.endsWith(".localtest.me") ||
     normalized === "::" ||
     normalized === "::1"
   ) {
     return true;
   }
-  if (isPrivateIPv4(normalized)) {
+  // Reject DNS alias services such as 127.0.0.1.nip.io without performing a
+  // racy preflight lookup. Arbitrary DNS rebinding still requires host
+  // allowlists plus resolver/egress enforcement by the server runtime.
+  if (isPrivateIPv4(normalized) || hasEmbeddedPrivateIPv4(normalized)) {
     return true;
   }
   if (!normalized.includes(":")) {
