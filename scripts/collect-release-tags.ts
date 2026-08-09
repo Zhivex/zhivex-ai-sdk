@@ -2,13 +2,23 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  fetchNpmProvenanceEvidence,
+  releaseCommitEvidenceMatches,
+  type NpmProvenanceManifest
+} from "./npm-provenance.js";
+
 export interface ReleaseTagPackage {
   name: string;
   version: string;
 }
 
 export interface ReleaseTagRegistryDocument {
-  versions?: Record<string, { gitHead?: string }>;
+  versions?: Record<string, {
+    gitHead?: string;
+    provenanceGitHead?: string;
+    dist?: NpmProvenanceManifest;
+  }>;
 }
 
 const packageNamePattern = /^@zhivex-ai\/[a-z0-9][a-z0-9-]*$/;
@@ -30,7 +40,11 @@ export const collectReleaseTags = (
         throw new Error(`Invalid workspace package identity: ${manifest.name}@${manifest.version}`);
       }
       const publishedVersion = registryByName[manifest.name]?.versions?.[manifest.version];
-      return publishedVersion?.gitHead === expectedGitHead
+      return publishedVersion && releaseCommitEvidenceMatches(
+        expectedGitHead,
+        publishedVersion.gitHead,
+        publishedVersion.provenanceGitHead
+      )
         ? `${manifest.name}@${manifest.version}`
         : undefined;
     })
@@ -51,16 +65,33 @@ const loadWorkspacePackages = (): ReleaseTagPackage[] =>
     )
     .sort((left, right) => left.name.localeCompare(right.name));
 
-const loadRegistryDocument = async (name: string): Promise<ReleaseTagRegistryDocument> => {
+const loadRegistryDocument = async (
+  manifest: ReleaseTagPackage,
+  expectedGitHead: string
+): Promise<ReleaseTagRegistryDocument> => {
   const registry = (process.env.NPM_CONFIG_REGISTRY ?? "https://registry.npmjs.org").replace(/\/$/, "");
-  const response = await fetch(`${registry}/${encodeURIComponent(name)}?cacheBust=${Date.now()}`, {
+  const response = await fetch(`${registry}/${encodeURIComponent(manifest.name)}?cacheBust=${Date.now()}`, {
     cache: "no-store",
     headers: { accept: "application/json" }
   });
   if (!response.ok) {
-    throw new Error(`${name}: registry request failed with HTTP ${response.status}.`);
+    throw new Error(`${manifest.name}: registry request failed with HTTP ${response.status}.`);
   }
-  return response.json() as Promise<ReleaseTagRegistryDocument>;
+  const document = await response.json() as ReleaseTagRegistryDocument;
+  const publishedVersion = document.versions?.[manifest.version];
+  const shouldVerifyProvenance = publishedVersion?.dist?.attestations?.url && (
+    !publishedVersion.gitHead || publishedVersion.gitHead === expectedGitHead
+  );
+  if (publishedVersion?.dist && shouldVerifyProvenance) {
+    publishedVersion.provenanceGitHead = (
+      await fetchNpmProvenanceEvidence({
+        packageName: manifest.name,
+        version: manifest.version,
+        manifest: publishedVersion.dist
+      })
+    ).gitCommit;
+  }
+  return document;
 };
 
 const run = async () => {
@@ -71,7 +102,10 @@ const run = async () => {
 
   const packages = loadWorkspacePackages();
   const registryEntries = await Promise.all(
-    packages.map(async (manifest) => [manifest.name, await loadRegistryDocument(manifest.name)] as const)
+    packages.map(async (manifest) => [
+      manifest.name,
+      await loadRegistryDocument(manifest, gitHead)
+    ] as const)
   );
   const tags = collectReleaseTags(packages, Object.fromEntries(registryEntries), gitHead);
   process.stdout.write(JSON.stringify(tags));

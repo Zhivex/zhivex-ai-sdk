@@ -21,10 +21,14 @@ const packages: PackageManifest[] = [
 
 const releaseGitHead = "0123456789abcdef0123456789abcdef01234567";
 const publishedVersion = (
-  value: Omit<NonNullable<RegistryDocument["versions"]>[string], "gitHead" | "dist"> = {}
+  value: Omit<
+    NonNullable<RegistryDocument["versions"]>[string],
+    "gitHead" | "provenanceGitHead" | "provenanceError" | "dist"
+  > = {}
 ) => ({
   ...value,
   gitHead: releaseGitHead,
+  provenanceGitHead: releaseGitHead,
   dist: {
     integrity: `sha512-${"A".repeat(86)}==`,
     attestations: {
@@ -137,6 +141,32 @@ describe("release readiness", () => {
     expect(audit.errors).toContain(
       "@zhivex-ai/sdk@0.15.1: npm dist-tag latest points to 0.15.0."
     );
+  });
+
+  it("accepts verified SLSA provenance when npm omits gitHead for a published tarball", () => {
+    const coreVersion = { ...publishedVersion(), gitHead: undefined };
+    const sdkVersion = { ...publishedVersion({
+      dependencies: { "@zhivex-ai/core": "^0.16.1" }
+    }), gitHead: undefined };
+    const publishedRegistry: Record<string, RegistryDocument> = {
+      "@zhivex-ai/core": {
+        versions: { "0.16.1": coreVersion },
+        "dist-tags": { latest: "0.16.1" }
+      },
+      "@zhivex-ai/sdk": {
+        versions: { "0.15.1": sdkVersion },
+        "dist-tags": { latest: "0.15.1" }
+      }
+    };
+
+    expect(auditRelease(
+      "main",
+      packages,
+      publishedRegistry,
+      "postpublish",
+      "latest",
+      releaseGitHead
+    ).errors).toEqual([]);
   });
 
   it("retries postpublish verification while npm registry propagation is incomplete", async () => {
@@ -270,7 +300,7 @@ describe("release readiness", () => {
       "@zhivex-ai/core@0.16.1: npm metadata is missing a trusted publishing provenance attestation."
     );
     expect(audit.errors).toContain(
-      "@zhivex-ai/core@0.16.1: npm gitHead ffffffffffffffffffffffffffffffffffffffff; expected 0123456789abcdef0123456789abcdef01234567."
+      "@zhivex-ai/core@0.16.1: npm release commit evidence gitHead=ffffffffffffffffffffffffffffffffffffffff, provenance=missing; expected 0123456789abcdef0123456789abcdef01234567."
     );
   });
 
