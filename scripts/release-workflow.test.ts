@@ -74,6 +74,9 @@ describe("release workflow", () => {
   it("publishes only commit-bound tarballs verified with SHA-512", () => {
     expect(workflow).toContain('release-artifacts.ts prepare --git-head="$GITHUB_SHA"');
     expect(workflow).toContain(".release/tarballs/*.tgz");
+    expect(jobSection("publish", "push_tags")).toContain(
+      "name: release-source-${{ github.sha }}\n          path: .release"
+    );
     expect(workflow).toContain("shasum -a 512 -c .release/SHA512SUMS");
     expect(workflow).toContain('release-artifacts.ts publish --tag=latest --git-head="$GITHUB_SHA"');
     expect(workflow).toContain('release-artifacts.ts publish --tag=next --git-head="$GITHUB_SHA"');
