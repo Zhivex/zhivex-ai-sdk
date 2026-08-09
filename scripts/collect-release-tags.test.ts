@@ -40,6 +40,32 @@ describe("release tag collection", () => {
     )).toEqual(["@zhivex-ai/core@1.0.3"]);
   });
 
+  it("recovers tags from provenance when npm omits gitHead", () => {
+    expect(collectReleaseTags(
+      [{ name: "@zhivex-ai/core", version: "1.0.3" }],
+      {
+        "@zhivex-ai/core": {
+          versions: { "1.0.3": { provenanceGitHead: releaseHead } }
+        }
+      },
+      releaseHead
+    )).toEqual(["@zhivex-ai/core@1.0.3"]);
+  });
+
+  it("rejects contradictory gitHead and provenance evidence", () => {
+    expect(collectReleaseTags(
+      [{ name: "@zhivex-ai/core", version: "1.0.3" }],
+      {
+        "@zhivex-ai/core": {
+          versions: {
+            "1.0.3": { gitHead: previousHead, provenanceGitHead: releaseHead }
+          }
+        }
+      },
+      releaseHead
+    )).toEqual([]);
+  });
+
   it("rejects untrusted package identities and git heads", () => {
     expect(() => collectReleaseTags([], {}, "main")).toThrow("Invalid release git head");
     expect(() => collectReleaseTags(

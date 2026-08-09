@@ -1,6 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
+import {
+  fetchNpmProvenanceEvidence,
+  releaseCommitEvidenceMatches,
+  type NpmProvenanceManifest
+} from "./npm-provenance.js";
+
 type DependencyMap = Record<string, string>;
 
 export interface PackageManifest {
@@ -16,15 +22,9 @@ export interface RegistryVersion {
   peerDependencies?: DependencyMap;
   optionalDependencies?: DependencyMap;
   gitHead?: string;
-  dist?: {
-    integrity?: string;
-    attestations?: {
-      url?: string;
-      provenance?: {
-        predicateType?: string;
-      };
-    };
-  };
+  provenanceGitHead?: string;
+  provenanceError?: string;
+  dist?: NpmProvenanceManifest;
 }
 
 export interface RegistryDocument {
@@ -269,12 +269,21 @@ export const auditRelease = (
       }
       if (
         expectedGitHead &&
-        packageIsInReleaseBatch &&
-        publishedManifest.gitHead !== expectedGitHead
+        packageIsInReleaseBatch
       ) {
-        errors.push(
-          `${manifest.name}@${manifest.version}: npm gitHead ${publishedManifest.gitHead ?? "is missing"}; expected ${expectedGitHead}.`
-        );
+        if (publishedManifest.provenanceError) {
+          errors.push(
+            `${manifest.name}@${manifest.version}: npm provenance verification failed: ${publishedManifest.provenanceError}.`
+          );
+        } else if (!releaseCommitEvidenceMatches(
+          expectedGitHead,
+          publishedManifest.gitHead,
+          publishedManifest.provenanceGitHead
+        )) {
+          errors.push(
+            `${manifest.name}@${manifest.version}: npm release commit evidence gitHead=${publishedManifest.gitHead ?? "missing"}, provenance=${publishedManifest.provenanceGitHead ?? "missing"}; expected ${expectedGitHead}.`
+          );
+        }
       }
     }
     if (
@@ -323,7 +332,8 @@ const retryablePostpublishAudit = (audit: ReleaseAudit) =>
   audit.errors.some((error) =>
     error.includes("npm dist-tag") ||
     error.includes("npm metadata") ||
-    error.includes("npm gitHead")
+    error.includes("npm release commit evidence") ||
+    error.includes("npm provenance verification")
   );
 
 const wait = (delayMs: number) =>
@@ -399,7 +409,10 @@ const loadWorkspacePackages = async (): Promise<PackageManifest[]> => {
   return packages.sort((left, right) => left.name.localeCompare(right.name));
 };
 
-const loadRegistryDocument = async (name: string): Promise<RegistryDocument> => {
+const loadRegistryDocument = async (
+  name: string,
+  provenanceVersion?: string
+): Promise<RegistryDocument> => {
   const registry = (process.env.NPM_CONFIG_REGISTRY ?? "https://registry.npmjs.org").replace(/\/$/, "");
   const response = await fetch(`${registry}/${encodeURIComponent(name)}?cacheBust=${Date.now()}`, {
     cache: "no-store",
@@ -413,7 +426,24 @@ const loadRegistryDocument = async (name: string): Promise<RegistryDocument> => 
   if (!response.ok) {
     throw new Error(`${name}: registry request failed with HTTP ${response.status}.`);
   }
-  return response.json() as Promise<RegistryDocument>;
+  const document = await response.json() as RegistryDocument;
+  const publishedManifest = provenanceVersion
+    ? document.versions?.[provenanceVersion]
+    : undefined;
+  if (publishedManifest?.dist && provenanceVersion) {
+    try {
+      publishedManifest.provenanceGitHead = (
+        await fetchNpmProvenanceEvidence({
+          packageName: name,
+          version: provenanceVersion,
+          manifest: publishedManifest.dist
+        })
+      ).gitCommit;
+    } catch (error) {
+      publishedManifest.provenanceError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  return document;
 };
 
 const run = async () => {
@@ -447,7 +477,16 @@ const run = async () => {
     expectedGitHeadPackages,
     loadRegistry: async () => {
       const registryEntries = await Promise.all(
-        packages.map(async (manifest) => [manifest.name, await loadRegistryDocument(manifest.name)] as const)
+        packages.map(async (manifest) => {
+          const packageVersion = `${manifest.name}@${manifest.version}`;
+          const verifyProvenance = mode === "postpublish" && (
+            !expectedGitHeadPackages || expectedGitHeadPackages.has(packageVersion)
+          );
+          return [
+            manifest.name,
+            await loadRegistryDocument(manifest.name, verifyProvenance ? manifest.version : undefined)
+          ] as const;
+        })
       );
       return Object.fromEntries(registryEntries);
     },

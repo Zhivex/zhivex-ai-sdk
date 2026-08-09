@@ -70,7 +70,7 @@ bun run smoke:packages
 git status --short
 ```
 
-Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The `validate` job has no OIDC permission: it checks out immutable committed source, installs dependencies without lifecycle scripts, scans for recognized secret signatures, repeats audit/typecheck/test/build and the packed Node consumer smoke, then produces the exact release batch as commit-bound SHA-512 tarballs. The separate `publish` job is the only OIDC trust boundary; it installs no dependencies and publishes only those downloaded, checksum-verified tarballs. Package tags are pushed only after immutable npm `gitHead`, provenance, integrity, and dist-tags match the release commit.
+Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The `validate` job has no OIDC permission: it checks out immutable committed source, installs dependencies without lifecycle scripts, scans for recognized secret signatures, repeats audit/typecheck/test/build and the packed Node consumer smoke, then produces the exact release batch as commit-bound SHA-512 tarballs. The separate `publish` job is the only OIDC trust boundary; it installs no dependencies and publishes only those downloaded, checksum-verified tarballs. Package tags are pushed only after npm integrity, dist-tags, and the signed SLSA provenance subject and source commit match the release. `gitHead` is also checked when npm provides it.
 
 Tag discovery comes from npm metadata rather than only from tags created inside the current runner. This lets a safe rerun recover every tag from a partially successful publish while excluding unchanged packages from older commits.
 
@@ -102,8 +102,12 @@ published versions and dist-tags can become visible at slightly different times.
 If Changesets reports `packages published successfully` but the postpublish gate still expires,
 do not run `version-packages` again and do not try to republish immutable versions. Check every
 reported package and dist-tag with `npm view`, then rerun the release verification after registry
-propagation. A failed `publish` job also skips the tag-push job, so recover package tags only after
-all versions and dist-tags are confirmed, and point them to the exact release source SHA.
+propagation. npm can omit `gitHead` when publishing prebuilt tarballs, so the verifier reads the
+official registry attestation and binds its signed SLSA subject digest to npm integrity, the
+protected `release.yml` workflow, and the exact source commit. Contradictory `gitHead` and
+provenance evidence is rejected. A failed `publish` job also skips the tag-push job, so recover
+package tags only after all versions, dist-tags, integrity, and provenance are confirmed, and point
+them to that exact release source SHA.
 
 ## Prerelease To `next`
 
