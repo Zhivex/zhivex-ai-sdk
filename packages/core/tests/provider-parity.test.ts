@@ -186,7 +186,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       structuredOutputSummary: "native",
       hostedToolSummary: "no",
-      reasoningSummary: "no"
+      reasoningSummary: "model-dependent"
     }
   }
 ];

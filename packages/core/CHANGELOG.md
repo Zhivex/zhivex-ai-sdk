@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.2.0
+
+### Minor Changes
+
+- Bring the Ollama adapter up to date with the native REST contract: use object-shaped tool arguments and correlated tool results, surface mid-stream NDJSON errors, preserve thinking through streamed and non-streamed tool loops, expose shared reasoning controls, and add first-class authenticated Ollama Cloud access. Refresh the default Ollama catalog with current Gemma 4, Qwen 3.5, Qwen 3, GPT-OSS, and EmbeddingGemma entries.
+
 ## 1.1.2
 
 ### Patch Changes

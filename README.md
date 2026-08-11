@@ -368,7 +368,7 @@ Status shorthand:
 | Kimi | yes | yes | yes | native | no | no | no | no | no | K3 `max`; K2.x model-dependent | Formula tool | Formula tools via Chat Completions | Tier C |
 | DeepSeek | yes | yes | yes | JSON object | no | no | no | no | no | `none` / `high` / `max` | no | no | Tier B |
 | Bedrock | yes | yes | endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C / A by runtime |
-| Ollama | yes | yes | no | native | yes | no | no | no | no | no | no | no | Tier C |
+| Ollama | yes | yes | no | native | yes | no | no | no | no | model-dependent | no | no | Tier C |
 <!-- provider-matrix:end -->
 
 Compatibility notes:
@@ -383,6 +383,7 @@ Compatibility notes:
 - xAI uses Responses by default. Grok 4.5 supports `low`, `medium`, and `high` reasoning effort, with `high` as the provider default. Use `providerOptions.conversationId` to route Responses requests through `prompt_cache_key`; Chat compatibility mode sends the same value through `x-grok-conv-id`.
 - Bedrock native Converse supports common `toolChoice` values by mapping specific tools and required tools to AWS-native `toolConfig`, and by omitting tool configuration for `toolChoice: "none"`. Bedrock native Converse uses the AWS SDK credential chain by default; it also supports Amazon Bedrock API keys through `AWS_BEARER_TOKEN_BEDROCK` or `createBedrock({ region, apiKey })` for development and exploration. Bedrock OpenAI-compatible mode uses a Mantle/OpenAI-compatible base URL and sends Requests to `/responses`; pass AWS's `OPENAI_API_KEY` / `OPENAI_BASE_URL` values explicitly as `apiKey` / `baseURL` if you use that naming. In the SDK's agent matrix, Bedrock Tier A applies to `createBedrock({ runtime: "openai" })`, which exposes Responses hosted tools, remote MCP, and approval requests. AWS-native AgentCore MCP is exposed separately as SDK-managed MCP tools for Converse or any shared agent loop; it does not promote Converse itself to a provider-emitted approval runtime.
 - Kimi K3 always reasons and accepts `toolChoice: "auto"`, `"none"`, or `"required"`; selecting a specific function is incompatible with thinking. K2.6 and K2.7 Code do not accept `"required"`, and specific tools remain unavailable while thinking is enabled.
+- Ollama uses the native `/api/chat` contract. Recognized Qwen 3/3.5, DeepSeek R1/v3.1, and Gemma 4 models preserve native `low`, `medium`, `high`, and `max` reasoning levels; GPT-OSS accepts only `low`, `medium`, and `high` and cannot disable thinking. Returned thinking is preserved through streamed and non-streamed tool loops. Direct `ollama.com` access accepts `apiKey`/`OLLAMA_API_KEY`, while authenticated custom fetchers remain supported. Direct Cloud disables embedding and structured-output capability metadata; `cloud`/`*-cloud` model IDs reached through a local daemon also disable structured output. Exact tools, vision, thinking, and embedding support still depend on the installed or selected model.
 - DeepSeek is Tier B for portable tool loops plus documented thinking mode on `deepseek-v4-flash` and `deepseek-v4-pro`. Both models have a 1M-token context window, up to 384K output tokens, JSON output, function tools, and automatic upstream context caching. The adapter reports cached-input and reasoning-token usage and preserves streaming chat/FIM logprobs when DeepSeek returns those details. DeepSeek documents account-level concurrency limits of 2,500 for Flash and 500 for Pro; `user_id` must not contain private information. This OpenAI Chat Completions adapter does not expose hosted tools, remote MCP, provider-hosted web search, embeddings, audio, vision, files, or realtime sessions; DeepSeek separately exposes web search through its Anthropic-compatible endpoint for supported agent integrations.
 - Use the V4 model IDs directly. DeepSeek retired the compatibility aliases `deepseek-chat` and `deepseek-reasoner` on July 24, 2026 at 15:59 UTC, so they are intentionally not catalog aliases.
 - Strict function schemas are an opt-in DeepSeek Beta feature. Set `providerOptions.strictTools: true`; the adapter routes that request through DeepSeek's Beta endpoint automatically, marks every callable function as strict, and validates DeepSeek's restricted JSON Schema subset locally before network I/O.
@@ -1774,7 +1775,12 @@ Provider compatibility for the common `reasoning` option:
   - for compatibility with the shared contract, `low` and `medium` map to DeepSeek `high`, while `xhigh` maps to `max`
   - leave `toolChoice` unset while thinking is enabled; explicit choices require non-thinking mode
   - `budgetTokens` is not supported in the common mapping
-- Ollama and Bedrock: not supported
+- Ollama:
+  - shared reasoning is enabled for recognized Qwen 3/3.5, GPT-OSS, DeepSeek R1/v3.1, and Gemma 4 model IDs; custom models can use `providerOptions.think`
+  - most recognized families preserve `low`, `medium`, `high`, and `max`; `none` maps to `think: false`
+  - GPT-OSS accepts only `low`, `medium`, or `high` and cannot disable thinking
+  - returned thinking is preserved as provider data and replayed through multi-step tool loops
+- Bedrock: not supported through the shared reasoning option
 
 Claude Opus 5 production controls:
 
