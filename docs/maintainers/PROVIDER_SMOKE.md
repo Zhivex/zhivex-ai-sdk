@@ -49,7 +49,7 @@ Postgres gate, run `bun run test:integration:agents` as documented in
 | `kimi` | `KIMI_API_KEY` or `MOONSHOT_API_KEY`; optional `KIMI_BASE_URL` or `MOONSHOT_BASE_URL`, plus `KIMI_INTEGRATION_MODEL` (defaults to `kimi-k3`) |
 | `bedrock-converse` | `AWS_REGION`; AWS credentials are also required by the default provider chain |
 | `bedrock-openai` | `BEDROCK_OPENAI_BASE_URL`, plus `BEDROCK_API_KEY` or `AWS_BEARER_TOKEN_BEDROCK` |
-| `ollama` | `OLLAMA_INTEGRATION=1`; a reachable local service is required, with optional `OLLAMA_HOST`, `OLLAMA_INTEGRATION_MODEL`, and `OLLAMA_INTEGRATION_EMBEDDING_MODEL` |
+| `ollama` | `OLLAMA_INTEGRATION=1`; a reachable service is required, with optional `OLLAMA_HOST`, `OLLAMA_INTEGRATION_MODEL`, and `OLLAMA_INTEGRATION_EMBEDDING_MODEL`. Direct `ollama.com` also requires `OLLAMA_API_KEY` and skips structured-output and embedding smoke. Thinking smoke is enabled for recognized Qwen 3/3.5, GPT-OSS, DeepSeek R1/v3.1, and Gemma 4 model IDs. |
 | `vertex` | `VERTEX_API_KEY` or `GOOGLE_API_KEY`; alternatively `VERTEX_ACCESS_TOKEN` or `GOOGLE_ACCESS_TOKEN` plus `GOOGLE_CLOUD_PROJECT`, `GCLOUD_PROJECT`, or `VERTEX_BASE_URL` |
 
 Optional variables such as provider base URLs, model overrides, API versions, and embedding model overrides are read by `packages/core/tests/integration-registry.ts`.

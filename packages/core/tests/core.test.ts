@@ -3311,6 +3311,26 @@ describe("core helpers", () => {
     expect(defaultModelCatalog.find("deepseek", "deepseek-reasoner")).toBeUndefined();
   });
 
+  it("includes current Ollama catalog entries", () => {
+    expect(defaultModelCatalog.find("ollama", "gemma4")).toMatchObject({
+      costPer1kTokens: 0,
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
+    });
+    expect(defaultModelCatalog.find("ollama", "qwen3.5")).toMatchObject({
+      costPer1kTokens: 0,
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
+    });
+    expect(defaultModelCatalog.find("ollama", "qwen3")).toMatchObject({
+      costPer1kTokens: 0,
+      recommendedFor: expect.arrayContaining(["reasoning", "tools"])
+    });
+    expect(defaultModelCatalog.find("ollama", "gpt-oss")).toMatchObject({
+      costPer1kTokens: 0,
+      recommendedFor: expect.arrayContaining(["reasoning", "tools"])
+    });
+    expect(defaultModelCatalog.find("ollama", "embeddinggemma")?.costPer1kTokens).toBe(0);
+  });
+
   it("creates beta production audit records with redaction", async () => {
     const state: AgentRunState = {
       schemaVersion: 1,

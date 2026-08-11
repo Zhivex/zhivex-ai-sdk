@@ -147,6 +147,18 @@ const ollamaIntegrationEnabled = process.env.OLLAMA_INTEGRATION === "1";
 const ollamaBaseURL = process.env.OLLAMA_HOST;
 const ollamaTextModelId = process.env.OLLAMA_INTEGRATION_MODEL ?? "llama3.2";
 const ollamaEmbeddingModelId = process.env.OLLAMA_INTEGRATION_EMBEDDING_MODEL ?? "embeddinggemma";
+const ollamaReasoningEnabled = /(?:^|[/:-])(?:qwen3(?:\.5)?|gpt-oss|deepseek-(?:r1|v3\.1)|gemma4)(?=$|[/:-])/i.test(ollamaTextModelId);
+const ollamaCloudModel = /(?:^|:)(?:cloud|[^:]+-cloud)$/i.test(ollamaTextModelId);
+const ollamaDirectCloud = (() => {
+  if (!ollamaBaseURL) {
+    return false;
+  }
+  try {
+    return new URL(ollamaBaseURL).hostname === "ollama.com";
+  } catch {
+    return false;
+  }
+})();
 
 const vertexAccessToken = process.env.VERTEX_ACCESS_TOKEN ?? process.env.GOOGLE_ACCESS_TOKEN;
 const vertexApiKey = process.env.VERTEX_API_KEY ?? process.env.GOOGLE_API_KEY;
@@ -264,8 +276,9 @@ const bedrockOpenAISupports: IntegrationLanguageProvider["supports"] = {
 const ollamaSupports: IntegrationLanguageProvider["supports"] = {
   streaming: true,
   tools: true,
-  structuredOutputMode: "native",
-  embeddings: true
+  embeddings: !ollamaDirectCloud,
+  ...(ollamaDirectCloud || ollamaCloudModel ? {} : { structuredOutputMode: "native" as const }),
+  ...(ollamaReasoningEnabled ? { reasoning: { effort: "low" } } : {})
 };
 const vertexSupports: IntegrationLanguageProvider["supports"] = createGeminiSupports(vertexTextModelId);
 
@@ -296,7 +309,10 @@ const ollamaRequirements: CredentialRequirement[] = [
   {
     label: "OLLAMA_INTEGRATION=1 (a reachable Ollama service is also required)",
     satisfied: ollamaIntegrationEnabled
-  }
+  },
+  ...(ollamaDirectCloud
+    ? [{ label: "OLLAMA_API_KEY for direct ollama.com access", satisfied: Boolean(process.env.OLLAMA_API_KEY) }]
+    : [])
 ];
 const vertexRequirements: CredentialRequirement[] = [
   {
@@ -655,7 +671,10 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
             createOllama({
               baseURL: ollamaBaseURL
             }).embeddingModel(ollamaEmbeddingModelId),
-          supports: ollamaSupports
+          supports: ollamaSupports,
+          textMaxTokens: 256,
+          toolMaxTokens: 512,
+          reasoningMaxTokens: 256
         } satisfies IntegrationLanguageProvider
       ]
     : []),

@@ -410,5 +410,10 @@ export const defaultModelCatalog = createModelCatalog([
   },
   { provider: "openrouter", modelId: "openai/gpt-4o-mini", costPer1kTokens: 0.0007, recommendedFor: ["chat", "tools"] },
   { provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet", costPer1kTokens: 0.003, recommendedFor: ["reasoning"] },
+  { provider: "ollama", modelId: "gemma4", costPer1kTokens: 0, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
+  { provider: "ollama", modelId: "qwen3.5", costPer1kTokens: 0, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
+  { provider: "ollama", modelId: "qwen3", costPer1kTokens: 0, recommendedFor: ["chat", "reasoning", "tools"] },
+  { provider: "ollama", modelId: "gpt-oss", costPer1kTokens: 0, recommendedFor: ["chat", "reasoning", "tools"] },
+  { provider: "ollama", modelId: "embeddinggemma", costPer1kTokens: 0 },
   { provider: "ollama", modelId: "llama3.2", costPer1kTokens: 0, recommendedFor: ["chat", "speed"] }
 ]);
