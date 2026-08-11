@@ -671,7 +671,10 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
             createOllama({
               baseURL: ollamaBaseURL
             }).embeddingModel(ollamaEmbeddingModelId),
-          supports: ollamaSupports
+          supports: ollamaSupports,
+          textMaxTokens: 256,
+          toolMaxTokens: 512,
+          reasoningMaxTokens: 256
         } satisfies IntegrationLanguageProvider
       ]
     : []),
