@@ -105,7 +105,17 @@ export const withRetry = async <T>(operation: () => Promise<T>, options: RetryOp
       if (attempt >= maxRetries || !isRetryableError(error)) {
         throw error;
       }
-      await sleep(Math.min(retryBackoffMs * (attempt + 1), 60_000), options.abortSignal);
+      const retryAfterMs =
+        error instanceof ProviderHTTPError &&
+        typeof error.retryAfterMs === "number" &&
+        Number.isFinite(error.retryAfterMs) &&
+        error.retryAfterMs >= 0
+          ? error.retryAfterMs
+          : 0;
+      await sleep(
+        Math.min(Math.max(retryBackoffMs * (attempt + 1), retryAfterMs), 60_000),
+        options.abortSignal
+      );
     }
   }
 

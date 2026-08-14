@@ -36,7 +36,7 @@ bun run build
 - Capability-first integration suites pick up `KIMI_API_KEY` or `MOONSHOT_API_KEY`; they optionally accept `KIMI_BASE_URL` or `MOONSHOT_BASE_URL` and `KIMI_INTEGRATION_MODEL`, which defaults to `kimi-k3`.
 - Capability-first integration suites also pick up `OPENROUTER_API_KEY` and optionally `OPENROUTER_BASE_URL` plus `OPENROUTER_INTEGRATION_MODEL` when OpenRouter credentials are present.
 - `bun run test:integration:vertex` requires `VERTEX_ACCESS_TOKEN` or `GOOGLE_ACCESS_TOKEN`, plus `GOOGLE_CLOUD_PROJECT` or `GCLOUD_PROJECT` unless `VERTEX_BASE_URL` is set. It optionally accepts `VERTEX_LOCATION`, `VERTEX_INTEGRATION_MODEL`, and `VERTEX_INTEGRATION_EMBEDDING_MODEL`.
-- `bun run test:integration:deepseek` and `bun run test:integration:qwen` filter the shared capability suites to the named provider, even when other provider credentials are present.
+- `bun run test:integration:deepseek`, `bun run test:integration:zai`, and `bun run test:integration:qwen` filter the shared capability suites to the named provider, even when other provider credentials are present. Z.ai defaults to GLM-5.2 on the general endpoint; use `ZAI_ENDPOINT=coding ZAI_INTEGRATION_MODEL=glm-5.3` for deliberate GLM-5.3 Coding Plan validation.
 - If a documented behavior changes, update `README.md`, especially the provider compatibility matrix.
 - Run `bun run docs:check` when package inventories, package README installation commands, local documentation links, or repository layout change.
 

@@ -5,6 +5,7 @@ export const workspaceAliases = {
   "@zhivex-ai/core": resolve(__dirname, "packages/core/src/index.ts"),
   "@zhivex-ai/openai": resolve(__dirname, "packages/openai/src/index.ts"),
   "@zhivex-ai/deepseek": resolve(__dirname, "packages/deepseek/src/index.ts"),
+  "@zhivex-ai/zai": resolve(__dirname, "packages/zai/src/index.ts"),
   "@zhivex-ai/anthropic": resolve(__dirname, "packages/anthropic/src/index.ts"),
   "@zhivex-ai/gemini": resolve(__dirname, "packages/gemini/src/index.ts"),
   "@zhivex-ai/react": resolve(__dirname, "packages/react/src/index.ts"),

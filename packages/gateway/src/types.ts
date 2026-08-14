@@ -38,6 +38,7 @@ export type GatewayProviderId =
   | "qwen"
   | "kimi"
   | "deepseek"
+  | "zai"
   | "bedrock"
   | "ollama"
   | "azure-openai"

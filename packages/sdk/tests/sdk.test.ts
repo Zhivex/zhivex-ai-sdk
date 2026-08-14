@@ -155,6 +155,7 @@ describe("sdk public surface", () => {
   it("does not re-export provider factories", () => {
     expect("createOpenAI" in sdk).toBe(false);
     expect("createDeepSeek" in sdk).toBe(false);
+    expect("createZAI" in sdk).toBe(false);
     expect("createAzureOpenAI" in sdk).toBe(false);
     expect("createAnthropic" in sdk).toBe(false);
     expect("createGemini" in sdk).toBe(false);

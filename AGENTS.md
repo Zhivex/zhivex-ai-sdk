@@ -23,6 +23,7 @@
 - `packages/qwen`: Qwen provider.
 - `packages/kimi`: Kimi provider.
 - `packages/deepseek`: DeepSeek provider.
+- `packages/zai`: Z.ai GLM provider.
 - `packages/gateway`: gateway / routing layer.
 - `.changeset/`: versioning and release configuration.
 - `README.md`: main source of usage examples and public-facing expectations.
@@ -46,6 +47,7 @@ Packages currently publishable to npm:
 - `@zhivex-ai/qwen`
 - `@zhivex-ai/kimi`
 - `@zhivex-ai/deepseek`
+- `@zhivex-ai/zai`
 - `@zhivex-ai/gateway`
 
 ## Stack and Commands

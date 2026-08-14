@@ -53,7 +53,7 @@
     },
     "packages/core": {
       "name": "@zhivex-ai/core",
-      "version": "1.1.2",
+      "version": "1.2.0",
       "dependencies": {
         "zod": "^4.4.3",
       },
@@ -100,7 +100,7 @@
     },
     "packages/ollama": {
       "name": "@zhivex-ai/ollama",
-      "version": "0.3.15",
+      "version": "0.4.0",
       "dependencies": {
         "@zhivex-ai/core": "^1.0.2",
         "zod": "^4.4.3",
@@ -144,7 +144,7 @@
     },
     "packages/sdk": {
       "name": "@zhivex-ai/sdk",
-      "version": "1.1.2",
+      "version": "1.2.0",
       "bin": {
         "zhivex-ai": "dist/cli.js",
       },
@@ -167,6 +167,14 @@
       "dependencies": {
         "@zhivex-ai/core": "^1.0.2",
         "@zhivex-ai/openai": "^0.9.4",
+      },
+    },
+    "packages/zai": {
+      "name": "@zhivex-ai/zai",
+      "version": "0.0.0",
+      "dependencies": {
+        "@zhivex-ai/core": "^1.2.0",
+        "zod": "^4.4.3",
       },
     },
   },
@@ -495,6 +503,8 @@
     "@zhivex-ai/vertex": ["@zhivex-ai/vertex@workspace:packages/vertex"],
 
     "@zhivex-ai/xai": ["@zhivex-ai/xai@workspace:packages/xai"],
+
+    "@zhivex-ai/zai": ["@zhivex-ai/zai@workspace:packages/zai"],
 
     "agent-base": ["agent-base@7.1.4", "", {}, "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ=="],
 

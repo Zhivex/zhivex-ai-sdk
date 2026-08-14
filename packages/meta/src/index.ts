@@ -30,6 +30,7 @@ import {
   type ModelGenerateInput,
   type ModelMessage,
   type ProviderAdapter,
+  type RetryOptions,
   type StreamEvent,
   type UploadedFile
 } from "@zhivex-ai/core";
@@ -58,6 +59,10 @@ export interface MetaLanguageModelOptions {
   include?: string[];
   store?: boolean;
   parallel_tool_calls?: boolean;
+  /** Stable prefix used by Meta's automatic prompt cache. Supported by Chat Completions and Responses. */
+  prompt_cache_key?: string;
+  /** Cache retention hint. Meta may still evict cached prefixes before this window. */
+  prompt_cache_retention?: "in_memory" | "24h";
   [key: string]: unknown;
 }
 
@@ -92,7 +97,7 @@ const capabilities: ModelCapabilities = {
   parallelToolCalls: true,
   vision: true,
   files: true,
-  audioInput: false,
+  audioInput: true,
   audioOutput: false,
   embeddings: false,
   reasoning: true,
@@ -100,7 +105,7 @@ const capabilities: ModelCapabilities = {
   contextCaching: true,
   agentCapabilities: {
     supportTier: "tier-b",
-    toolChoiceNone: true,
+    toolChoiceNone: false,
     approvalRequests: false,
     hostedWebSearch: true,
     hostedFileSearch: false,
@@ -125,13 +130,28 @@ const stripProviderOptions = (options: Record<string, unknown> | undefined) => {
   return rest;
 };
 
-const parseJson = async (response: Response) => {
+const assertMetaResponseOk = async (response: Response) => {
   if (!response.ok) {
     const body = await readErrorBodyWithLimit(response);
     throw new ProviderHTTPError(`Meta request failed with status ${response.status}.`, response.status, {
       responseBody: body
     });
   }
+  return response;
+};
+
+const fetchMetaWithRetry = (
+  fetcher: typeof globalThis.fetch,
+  url: string,
+  init: RequestInit,
+  retryOptions: RetryOptions
+) =>
+  withRetry(async () => {
+    const response = await fetcher(url, init);
+    return assertMetaResponseOk(response);
+  }, retryOptions);
+
+const parseJson = async (response: Response) => {
   return readJsonWithLimit<any>(response, {
     maxBytes: 128 * 1024 * 1024,
     provider: "meta",
@@ -154,11 +174,91 @@ const isFileId = (value: string) => /^file-[A-Za-z0-9_-]+/.test(value);
 const isImage = (mediaType: string | undefined) => mediaType?.toLowerCase().startsWith("image/");
 const isVideo = (mediaType: string | undefined) => mediaType?.toLowerCase().startsWith("video/");
 
+const metaAudioFormat = (part: Extract<ModelMessage["parts"][number], { type: "audio" }>) => {
+  const explicitFormat = part.format?.toLowerCase();
+  if (explicitFormat === "mp3" || explicitFormat === "wav") {
+    return explicitFormat;
+  }
+
+  const mediaType = part.mediaType.toLowerCase().split(";", 1)[0]?.trim();
+  if (mediaType === "audio/mpeg" || mediaType === "audio/mp3") {
+    return "mp3";
+  }
+  if (mediaType === "audio/wav" || mediaType === "audio/x-wav" || mediaType === "audio/wave") {
+    return "wav";
+  }
+
+  throw new UnsupportedFeatureError(
+    `Provider "meta" supports AudioPart input only as MP3 or WAV, received "${part.mediaType}".`
+  );
+};
+
+const audioDataToBase64 = (part: Extract<ModelMessage["parts"][number], { type: "audio" }>) => {
+  if (part.data instanceof Uint8Array) {
+    return Buffer.from(part.data).toString("base64");
+  }
+  if (part.data instanceof ArrayBuffer) {
+    return Buffer.from(new Uint8Array(part.data)).toString("base64");
+  }
+  if (/^data:/i.test(part.data)) {
+    const separator = part.data.indexOf(",");
+    if (separator < 0 || !/;base64(?:;|,)/i.test(part.data.slice(0, separator + 1))) {
+      throw new ConfigurationError("Meta audio data URLs must use base64 encoding.");
+    }
+    return part.data.slice(separator + 1);
+  }
+  return part.data;
+};
+
+const mapChatAudioPart = (part: Extract<ModelMessage["parts"][number], { type: "audio" }>) => {
+  if (typeof part.data === "string" && (isFileId(part.data) || /^https?:\/\//i.test(part.data))) {
+    throw new UnsupportedFeatureError(
+      'Provider "meta" Chat Completions requires inline AudioPart data. Use providerOptions.apiMode="responses" for file IDs.'
+    );
+  }
+  return {
+    type: "input_audio",
+    input_audio: {
+      data: audioDataToBase64(part),
+      format: metaAudioFormat(part)
+    }
+  };
+};
+
+const mapResponsesAudioPart = (part: Extract<ModelMessage["parts"][number], { type: "audio" }>) => {
+  const format = metaAudioFormat(part);
+  if (typeof part.data === "string" && isFileId(part.data)) {
+    return {
+      type: "input_audio",
+      file_id: part.data
+    };
+  }
+  if (typeof part.data === "string" && /^data:/i.test(part.data)) {
+    return {
+      type: "input_audio",
+      audio_url: part.data
+    };
+  }
+  if (typeof part.data === "string" && /^https?:\/\//i.test(part.data)) {
+    throw new UnsupportedFeatureError(
+      'Provider "meta" Responses audio URLs must be base64 data URLs. Use a data URL or uploaded file ID.'
+    );
+  }
+  return {
+    type: "input_audio",
+    input_audio: {
+      data: audioDataToBase64(part),
+      format
+    }
+  };
+};
+
 const mapChatContentParts = (message: ModelMessage) => {
   const textParts = message.parts.filter((part) => part.type === "text");
   const imageParts = message.parts.filter((part) => part.type === "image");
+  const audioParts = message.parts.filter((part) => part.type === "audio");
 
-  if (!imageParts.length) {
+  if (!imageParts.length && !audioParts.length) {
     return textParts.map((part) => part.text).join("");
   }
 
@@ -172,7 +272,8 @@ const mapChatContentParts = (message: ModelMessage) => {
       image_url: {
         url: part.image
       }
-    }))
+    })),
+    ...audioParts.map(mapChatAudioPart)
   ];
 };
 
@@ -267,16 +368,13 @@ const mapToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
     return undefined;
   }
 
-  if (typeof toolChoice === "string") {
-    return toolChoice;
+  if (toolChoice === "auto") {
+    return "auto";
   }
 
-  return {
-    type: "function",
-    function: {
-      name: toolChoice.toolName
-    }
-  };
+  throw new UnsupportedFeatureError(
+    'Provider "meta" supports only toolChoice "auto"; "none", "required", and named tool choices are rejected by Meta Model API.'
+  );
 };
 
 const mapStructuredOutput = (input: ModelGenerateInput) => {
@@ -433,6 +531,9 @@ const toResponsesInput = (messages: ModelMessage[]) => {
           break;
         case "image":
           content.push({ type: "input_image", image_url: part.image });
+          break;
+        case "audio":
+          content.push(mapResponsesAudioPart(part));
           break;
         case "file":
           content.push(mapFilePartToResponsesContent(part));
@@ -663,6 +764,13 @@ const streamResponses = async function* (response: Response): AsyncGenerator<Str
 
     if (type === "response.completed" || type === "response.failed" || type === "response.incomplete") {
       const responseData = json.response ?? {};
+      if (typeof responseData.id === "string") {
+        yield {
+          type: "provider-data",
+          provider: "meta",
+          data: { responseId: responseData.id }
+        } satisfies StreamEvent;
+      }
       yield {
         type: "finish",
         finishReason: normalizeResponsesFinishReason(responseData.status, sawToolCalls),
@@ -732,25 +840,26 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
       previousResponse && previousResponse.index < input.messages.length - 1
         ? input.messages.slice(previousResponse.index + 1)
         : input.messages;
-    const response = await withRetry(
-      () =>
-        this.fetcher(`${this.baseURL}/responses`, {
-          method: "POST",
-          headers: jsonHeaders(this.apiKey),
-          signal,
-          body: JSON.stringify({
-            ...stripProviderOptions(input.providerOptions),
-            model: this.modelId,
-            ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-            ...(messages.length ? { input: toResponsesInput(messages) } : {}),
-            tools: mapResponsesTools(input.tools),
-            tool_choice: mapToolChoice(input.toolChoice),
-            text: mapResponsesStructuredOutput(input),
-            temperature: input.temperature,
-            max_output_tokens: input.maxTokens,
-            ...mapResponsesReasoning(input)
-          })
-        }),
+    const response = await fetchMetaWithRetry(
+      this.fetcher,
+      `${this.baseURL}/responses`,
+      {
+        method: "POST",
+        headers: jsonHeaders(this.apiKey),
+        signal,
+        body: JSON.stringify({
+          ...stripProviderOptions(input.providerOptions),
+          model: this.modelId,
+          ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
+          ...(messages.length ? { input: toResponsesInput(messages) } : {}),
+          tools: mapResponsesTools(input.tools),
+          tool_choice: mapToolChoice(input.toolChoice),
+          text: mapResponsesStructuredOutput(input),
+          temperature: input.temperature,
+          max_output_tokens: input.maxTokens,
+          ...mapResponsesReasoning(input)
+        })
+      },
       input
     );
 
@@ -780,25 +889,26 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
         return await this.generateViaResponses(input, signal);
       }
 
-      const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/chat/completions`, {
-            method: "POST",
-            headers: jsonHeaders(this.apiKey),
-            signal,
-            body: JSON.stringify({
-              ...stripProviderOptions(input.providerOptions),
-              model: this.modelId,
-              messages: mapChatMessages(input.messages),
-              tools: mapChatTools(input.tools),
-              tool_choice: mapToolChoice(input.toolChoice),
-              response_format: mapStructuredOutput(input),
-              temperature: input.temperature,
-              max_tokens: input.maxTokens,
-              ...mapChatReasoning(input),
-              stream: false
-            })
-          }),
+      const response = await fetchMetaWithRetry(
+        this.fetcher,
+        `${this.baseURL}/chat/completions`,
+        {
+          method: "POST",
+          headers: jsonHeaders(this.apiKey),
+          signal,
+          body: JSON.stringify({
+            ...stripProviderOptions(input.providerOptions),
+            model: this.modelId,
+            messages: mapChatMessages(input.messages),
+            tools: mapChatTools(input.tools),
+            tool_choice: mapToolChoice(input.toolChoice),
+            response_format: mapStructuredOutput(input),
+            temperature: input.temperature,
+            max_tokens: input.maxTokens,
+            ...mapChatReasoning(input),
+            stream: false
+          })
+        },
         input
       );
 
@@ -827,25 +937,32 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     if (this.usesResponsesAPI(input)) {
-      const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/responses`, {
-            method: "POST",
-            headers: jsonHeaders(this.apiKey),
-            signal,
-            body: JSON.stringify({
-              ...stripProviderOptions(input.providerOptions),
-              model: this.modelId,
-              input: toResponsesInput(input.messages),
-              tools: mapResponsesTools(input.tools),
-              tool_choice: mapToolChoice(input.toolChoice),
-              text: mapResponsesStructuredOutput(input),
-              temperature: input.temperature,
-              max_output_tokens: input.maxTokens,
-              ...mapResponsesReasoning(input),
-              stream: true
-            })
-          }),
+      const previousResponse = getProviderResponseId(input.messages);
+      const messages =
+        previousResponse && previousResponse.index < input.messages.length - 1
+          ? input.messages.slice(previousResponse.index + 1)
+          : input.messages;
+      const response = await fetchMetaWithRetry(
+        this.fetcher,
+        `${this.baseURL}/responses`,
+        {
+          method: "POST",
+          headers: jsonHeaders(this.apiKey),
+          signal,
+          body: JSON.stringify({
+            ...stripProviderOptions(input.providerOptions),
+            model: this.modelId,
+            ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
+            ...(messages.length ? { input: toResponsesInput(messages) } : {}),
+            tools: mapResponsesTools(input.tools),
+            tool_choice: mapToolChoice(input.toolChoice),
+            text: mapResponsesStructuredOutput(input),
+            temperature: input.temperature,
+            max_output_tokens: input.maxTokens,
+            ...mapResponsesReasoning(input),
+            stream: true
+          })
+        },
         input
       );
 
@@ -858,26 +975,27 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
       })();
     }
 
-    const response = await withRetry(
-      () =>
-        this.fetcher(`${this.baseURL}/chat/completions`, {
-          method: "POST",
-          headers: jsonHeaders(this.apiKey),
-          signal,
-          body: JSON.stringify({
-            ...stripProviderOptions(input.providerOptions),
-            model: this.modelId,
-            messages: mapChatMessages(input.messages),
-            tools: mapChatTools(input.tools),
-            tool_choice: mapToolChoice(input.toolChoice),
-            response_format: mapStructuredOutput(input),
-            temperature: input.temperature,
-            max_tokens: input.maxTokens,
-            ...mapChatReasoning(input),
-            stream: true,
-            stream_options: { include_usage: true }
-          })
-        }),
+    const response = await fetchMetaWithRetry(
+      this.fetcher,
+      `${this.baseURL}/chat/completions`,
+      {
+        method: "POST",
+        headers: jsonHeaders(this.apiKey),
+        signal,
+        body: JSON.stringify({
+          ...stripProviderOptions(input.providerOptions),
+          model: this.modelId,
+          messages: mapChatMessages(input.messages),
+          tools: mapChatTools(input.tools),
+          tool_choice: mapToolChoice(input.toolChoice),
+          response_format: mapStructuredOutput(input),
+          temperature: input.temperature,
+          max_tokens: input.maxTokens,
+          ...mapChatReasoning(input),
+          stream: true,
+          stream_options: { include_usage: true }
+        })
+      },
       input
     );
 
@@ -963,26 +1081,27 @@ class MetaGroundedLanguageModel implements GroundedLanguageModel<MetaLanguageMod
     ];
 
     try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/responses`, {
-            method: "POST",
-            headers: jsonHeaders(this.apiKey),
-            signal,
-            body: JSON.stringify({
-              ...stripProviderOptions(input.providerOptions),
-              model: this.modelId,
-              input: toResponsesInput(messages),
-              tools: [{ type: "web_search" }],
-              include: ["web_search_call.results"],
-              temperature: input.temperature,
-              max_output_tokens: input.maxTokens,
-              ...mapResponsesReasoning({
-                messages,
-                reasoning: input.reasoning
-              })
+      const response = await fetchMetaWithRetry(
+        this.fetcher,
+        `${this.baseURL}/responses`,
+        {
+          method: "POST",
+          headers: jsonHeaders(this.apiKey),
+          signal,
+          body: JSON.stringify({
+            ...stripProviderOptions(input.providerOptions),
+            model: this.modelId,
+            input: toResponsesInput(messages),
+            tools: [{ type: "web_search" }],
+            include: ["web_search_call.results"],
+            temperature: input.temperature,
+            max_output_tokens: input.maxTokens,
+            ...mapResponsesReasoning({
+              messages,
+              reasoning: input.reasoning
             })
-          }),
+          })
+        },
         input
       );
       const json = await parseJson(response);
@@ -1045,15 +1164,16 @@ class MetaFilesClient implements FilesClient<MetaFileOptions> {
     }
 
     try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/files`, {
-            method: "POST",
-            redirect: "error",
-            headers: { authorization: `Bearer ${this.apiKey}` },
-            signal,
-            body: form
-          }),
+      const response = await fetchMetaWithRetry(
+        this.fetcher,
+        `${this.baseURL}/files`,
+        {
+          method: "POST",
+          redirect: "error",
+          headers: { authorization: `Bearer ${this.apiKey}` },
+          signal,
+          body: form
+        },
         input
       );
       return normalizeUploadedFile(await parseJson(response));
@@ -1065,13 +1185,14 @@ class MetaFilesClient implements FilesClient<MetaFileOptions> {
   async get(input: FileGetInput<MetaFileOptions>): Promise<UploadedFile> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/files/${encodeMetaResourceId(input.name)}`, {
-            method: "GET",
-            headers: jsonHeaders(this.apiKey),
-            signal
-          }),
+      const response = await fetchMetaWithRetry(
+        this.fetcher,
+        `${this.baseURL}/files/${encodeMetaResourceId(input.name)}`,
+        {
+          method: "GET",
+          headers: jsonHeaders(this.apiKey),
+          signal
+        },
         input
       );
       return normalizeUploadedFile(await parseJson(response));
@@ -1083,13 +1204,14 @@ class MetaFilesClient implements FilesClient<MetaFileOptions> {
   async list(input: FileListInput<MetaFileOptions> = {}) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(appendQuery(`${this.baseURL}/files`, { limit: input.pageSize, after: input.pageToken }), {
-            method: "GET",
-            headers: jsonHeaders(this.apiKey),
-            signal
-          }),
+      const response = await fetchMetaWithRetry(
+        this.fetcher,
+        appendQuery(`${this.baseURL}/files`, { limit: input.pageSize, after: input.pageToken }),
+        {
+          method: "GET",
+          headers: jsonHeaders(this.apiKey),
+          signal
+        },
         input
       );
       const json = await parseJson(response);
@@ -1106,13 +1228,14 @@ class MetaFilesClient implements FilesClient<MetaFileOptions> {
   async delete(input: FileDeleteInput<MetaFileOptions>) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/files/${encodeMetaResourceId(input.name)}`, {
-            method: "DELETE",
-            headers: jsonHeaders(this.apiKey),
-            signal
-          }),
+      const response = await fetchMetaWithRetry(
+        this.fetcher,
+        `${this.baseURL}/files/${encodeMetaResourceId(input.name)}`,
+        {
+          method: "DELETE",
+          headers: jsonHeaders(this.apiKey),
+          signal
+        },
         input
       );
       return {

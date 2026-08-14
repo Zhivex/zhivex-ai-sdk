@@ -8,7 +8,7 @@ const meta = createMeta({
 });
 
 const result = await generateText({
-  model: meta("muse-spark-1.1"),
+  model: meta("muse-spark-1.2"),
   prompt: "Say hello from the Meta Model API adapter."
 });
 

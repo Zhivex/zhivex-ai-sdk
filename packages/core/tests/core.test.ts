@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import os from "node:os";
 import path from "node:path";
@@ -3100,6 +3100,28 @@ describe("core helpers", () => {
     }
   });
 
+  it("honors bounded provider Retry-After delays", async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const retrying = withRetry(async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new ProviderHTTPError("rate limited", 429, { retryAfterMs: 1_000 });
+        }
+        return "ok";
+      }, { maxRetries: 1, retryBackoffMs: 10 });
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(attempts).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(retrying).resolves.toBe("ok");
+      expect(attempts).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("creates a searchable model catalog", () => {
     const catalog = createModelCatalog([
       { provider: "openai", modelId: "gpt-4o-mini", aliases: ["fast-openai"], costPer1kTokens: 0.6 }
@@ -3311,6 +3333,50 @@ describe("core helpers", () => {
     expect(defaultModelCatalog.find("deepseek", "deepseek-reasoner")).toBeUndefined();
   });
 
+  it("includes Z.ai GLM-5.3 and GLM-5.2 without inventing 5.3 pricing", () => {
+    expect(defaultModelCatalog.find("zai", "glm-5.3")).toEqual({
+      provider: "zai",
+      modelId: "glm-5.3",
+      recommendedFor: ["chat", "tools", "reasoning"]
+    });
+    expect(defaultModelCatalog.find("zai", "glm-5.2")).toMatchObject({
+      inputCostPer1kTokens: 0.0014,
+      cachedInputCostPer1kTokens: 0.00026,
+      outputCostPer1kTokens: 0.0044,
+      recommendedFor: expect.arrayContaining(["chat", "reasoning", "tools"])
+    });
+  });
+
+  it("tracks current Meta Muse models across direct and routed providers", () => {
+    expect(defaultModelCatalog.find("meta", "muse-spark-1.2")).toMatchObject({
+      inputCostPer1kTokens: 0.00125,
+      cachedInputCostPer1kTokens: 0.00015,
+      outputCostPer1kTokens: 0.00425,
+      recommendedFor: expect.arrayContaining(["chat", "reasoning", "tools", "vision"])
+    });
+    expect(defaultModelCatalog.find("meta", "muse-spark-1.2-contributor")).toEqual({
+      provider: "meta",
+      modelId: "muse-spark-1.2-contributor",
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    });
+    expect(defaultModelCatalog.find("meta", "muse-spark-1.1")).toMatchObject({
+      inputCostPer1kTokens: 0.00125,
+      cachedInputCostPer1kTokens: 0.00015,
+      outputCostPer1kTokens: 0.00425
+    });
+    expect(defaultModelCatalog.find("openrouter", "meta/muse-spark-1.2")).toMatchObject({
+      inputCostPer1kTokens: 0.00125,
+      cachedInputCostPer1kTokens: 0.00015,
+      outputCostPer1kTokens: 0.00425
+    });
+    expect(defaultModelCatalog.find("openrouter", "meta/muse-glimmer-30b")).toMatchObject({
+      inputCostPer1kTokens: 0.00035,
+      cachedInputCostPer1kTokens: 0.00004,
+      outputCostPer1kTokens: 0.0015,
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
+    });
+  });
+
   it("includes current Ollama catalog entries", () => {
     expect(defaultModelCatalog.find("ollama", "gemma4")).toMatchObject({
       costPer1kTokens: 0,
@@ -3327,6 +3393,14 @@ describe("core helpers", () => {
     expect(defaultModelCatalog.find("ollama", "gpt-oss")).toMatchObject({
       costPer1kTokens: 0,
       recommendedFor: expect.arrayContaining(["reasoning", "tools"])
+    });
+    expect(defaultModelCatalog.find("ollama", "muse-glimmer:30b")).toMatchObject({
+      costPer1kTokens: 0,
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
+    });
+    expect(defaultModelCatalog.find("ollama", "muse-glimmer:30b-mlx")).toMatchObject({
+      costPer1kTokens: 0,
+      recommendedFor: expect.arrayContaining(["reasoning", "tools", "vision"])
     });
     expect(defaultModelCatalog.find("ollama", "embeddinggemma")?.costPer1kTokens).toBe(0);
   });

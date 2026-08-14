@@ -94,7 +94,29 @@ export const defaultModelCatalog = createModelCatalog([
     costPer1kTokens: 0.002,
     recommendedFor: ["chat", "reasoning", "tools", "vision"]
   },
-  { provider: "meta", modelId: "muse-spark-1.1", costPer1kTokens: 0.00275, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
+  {
+    provider: "meta",
+    modelId: "muse-spark-1.2",
+    inputCostPer1kTokens: 0.00125,
+    cachedInputCostPer1kTokens: 0.00015,
+    outputCostPer1kTokens: 0.00425,
+    costPer1kTokens: 0.00125,
+    recommendedFor: ["chat", "reasoning", "tools", "vision"]
+  },
+  {
+    provider: "meta",
+    modelId: "muse-spark-1.2-contributor",
+    recommendedFor: ["chat", "reasoning", "tools", "vision"]
+  },
+  {
+    provider: "meta",
+    modelId: "muse-spark-1.1",
+    inputCostPer1kTokens: 0.00125,
+    cachedInputCostPer1kTokens: 0.00015,
+    outputCostPer1kTokens: 0.00425,
+    costPer1kTokens: 0.00125,
+    recommendedFor: ["chat", "reasoning", "tools", "vision"]
+  },
   { provider: "azure-openai", modelId: "gpt-4o-mini", costPer1kTokens: 0.0006, recommendedFor: ["chat", "tools"] },
   {
     provider: "anthropic",
@@ -408,12 +430,46 @@ export const defaultModelCatalog = createModelCatalog([
     costPer1kTokens: 0.000435,
     recommendedFor: ["chat", "tools", "reasoning"]
   },
+  {
+    provider: "zai",
+    modelId: "glm-5.3",
+    recommendedFor: ["chat", "tools", "reasoning"]
+  },
+  {
+    provider: "zai",
+    modelId: "glm-5.2",
+    inputCostPer1kTokens: 0.0014,
+    cachedInputCostPer1kTokens: 0.00026,
+    outputCostPer1kTokens: 0.0044,
+    costPer1kTokens: 0.0014,
+    recommendedFor: ["chat", "tools", "reasoning"]
+  },
+  {
+    provider: "openrouter",
+    modelId: "meta/muse-spark-1.2",
+    inputCostPer1kTokens: 0.00125,
+    cachedInputCostPer1kTokens: 0.00015,
+    outputCostPer1kTokens: 0.00425,
+    costPer1kTokens: 0.00125,
+    recommendedFor: ["chat", "reasoning", "tools", "vision"]
+  },
+  {
+    provider: "openrouter",
+    modelId: "meta/muse-glimmer-30b",
+    inputCostPer1kTokens: 0.00035,
+    cachedInputCostPer1kTokens: 0.00004,
+    outputCostPer1kTokens: 0.0015,
+    costPer1kTokens: 0.00035,
+    recommendedFor: ["chat", "reasoning", "tools", "vision"]
+  },
   { provider: "openrouter", modelId: "openai/gpt-4o-mini", costPer1kTokens: 0.0007, recommendedFor: ["chat", "tools"] },
   { provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet", costPer1kTokens: 0.003, recommendedFor: ["reasoning"] },
   { provider: "ollama", modelId: "gemma4", costPer1kTokens: 0, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
   { provider: "ollama", modelId: "qwen3.5", costPer1kTokens: 0, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
   { provider: "ollama", modelId: "qwen3", costPer1kTokens: 0, recommendedFor: ["chat", "reasoning", "tools"] },
   { provider: "ollama", modelId: "gpt-oss", costPer1kTokens: 0, recommendedFor: ["chat", "reasoning", "tools"] },
+  { provider: "ollama", modelId: "muse-glimmer:30b", costPer1kTokens: 0, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
+  { provider: "ollama", modelId: "muse-glimmer:30b-mlx", costPer1kTokens: 0, recommendedFor: ["chat", "reasoning", "tools", "vision"] },
   { provider: "ollama", modelId: "embeddinggemma", costPer1kTokens: 0 },
   { provider: "ollama", modelId: "llama3.2", costPer1kTokens: 0, recommendedFor: ["chat", "speed"] }
 ]);

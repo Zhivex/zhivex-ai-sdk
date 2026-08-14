@@ -37,6 +37,7 @@ The following packages are intended for npm consumers:
 - `@zhivex-ai/qwen`
 - `@zhivex-ai/kimi`
 - `@zhivex-ai/deepseek`
+- `@zhivex-ai/zai`
 - `@zhivex-ai/gateway`
 
 ## Provider Tiers

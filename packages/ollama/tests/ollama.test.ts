@@ -519,6 +519,47 @@ describe("ollama adapter", () => {
     expect(body.think).toBe("max");
   });
 
+  it("recognizes both Muse Glimmer distributions and maps their reasoning strength", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ message: { content: "answer" }, done_reason: "stop" }));
+
+    const provider = createOllama({ fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("muse-glimmer:30b"),
+      prompt: "answer",
+      reasoning: { effort: "medium" }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as { think: string };
+    expect(body.think).toBe("medium");
+    expect(provider("muse-glimmer:30b").capabilities).toMatchObject({
+      reasoning: true,
+      reasoningEfforts: ["none", "low", "medium", "high"]
+    });
+    expect(provider("muse-glimmer:30b-mlx").capabilities).toMatchObject({
+      reasoning: true,
+      reasoningEfforts: ["none", "low", "medium", "high"]
+    });
+  });
+
+  it("rejects unsupported max reasoning for Muse Glimmer", async () => {
+    const provider = createOllama({ fetch: fetchMock as typeof fetch });
+
+    await expect(
+      provider("muse-glimmer:30b").generate({
+        messages: [createTextMessage("user", "hello")],
+        reasoning: { effort: "max" }
+      })
+    ).rejects.toThrow('support reasoning effort "none", "low", "medium", or "high"');
+
+    await expect(
+      provider("muse-glimmer:30b-mlx").generate({
+        messages: [createTextMessage("user", "hello")],
+        providerOptions: { think: "max" }
+      })
+    ).rejects.toThrow('support "think" as a boolean or "low", "medium", or "high"');
+  });
+
   it("maps shared reasoning disablement to think=false", async () => {
     fetchMock.mockResolvedValueOnce(Response.json({ message: { content: "plain" }, done_reason: "stop" }));
 
