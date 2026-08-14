@@ -141,6 +141,7 @@ const GATEWAY_PROVIDERS = new Set<GatewayProviderId>([
   "qwen",
   "kimi",
   "deepseek",
+  "zai",
   "bedrock",
   "ollama",
   "azure-openai",

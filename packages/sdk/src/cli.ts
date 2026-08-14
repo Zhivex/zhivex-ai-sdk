@@ -242,10 +242,10 @@ const providerTemplates = {
   },
   meta: {
     packageName: "@zhivex-ai/meta",
-    packageVersion: "0.1.6",
+    packageVersion: "0.2.0",
     factoryName: "createMeta",
     envName: "MODEL_API_KEY",
-    defaultModel: "muse-spark-1.1"
+    defaultModel: "muse-spark-1.2"
   },
   anthropic: {
     packageName: "@zhivex-ai/anthropic",
@@ -274,6 +274,13 @@ const providerTemplates = {
     factoryName: "createDeepSeek",
     envName: "DEEPSEEK_API_KEY",
     defaultModel: "deepseek-v4-flash"
+  },
+  zai: {
+    packageName: "@zhivex-ai/zai",
+    packageVersion: "0.1.0",
+    factoryName: "createZAI",
+    envName: "ZAI_API_KEY",
+    defaultModel: "glm-5.3"
   }
 } as const;
 
@@ -309,7 +316,7 @@ import { ${provider.factoryName} } from "${provider.packageName}";
 import { z } from "zod";
 
 const provider = ${provider.factoryName}({
-  apiKey: process.env.${provider.envName}
+  apiKey: process.env.${provider.envName}${options.provider === "zai" ? ',\n  endpoint: "coding"' : ""}
 });
 
 const baseAgent = createAgent({

@@ -39,12 +39,13 @@ Postgres gate, run `bun run test:integration:agents` as documented in
 | --- | --- |
 | `openai` | `OPENAI_API_KEY` |
 | `xai` | `XAI_API_KEY` |
-| `meta` | `MODEL_API_KEY`; optional `META_BASE_URL` and `META_INTEGRATION_MODEL` |
+| `meta` | `MODEL_API_KEY`; optional `META_BASE_URL` and `META_INTEGRATION_MODEL`. Smoke defaults to the reduced-cost `muse-spark-1.2-contributor`; production examples continue to use `muse-spark-1.2`. |
 | `azure-openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
 | `anthropic` | `ANTHROPIC_API_KEY` |
 | `gemini` | `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` |
 | `openrouter` | `OPENROUTER_API_KEY` |
 | `deepseek` | `DEEPSEEK_API_KEY` |
+| `zai` | `ZAI_API_KEY`; optional `ZAI_BASE_URL`, `ZAI_ENDPOINT=general|coding`, and `ZAI_INTEGRATION_MODEL`. The default is `glm-5.2` on the general endpoint or `glm-5.3` when Coding Plan is selected. |
 | `qwen` | `QWEN_API_KEY` or `DASHSCOPE_API_KEY`; optional `QWEN_WORKSPACE_ID`, `QWEN_REGION`, endpoint overrides, and model overrides for extended multimodal/realtime coverage |
 | `kimi` | `KIMI_API_KEY` or `MOONSHOT_API_KEY`; optional `KIMI_BASE_URL` or `MOONSHOT_BASE_URL`, plus `KIMI_INTEGRATION_MODEL` (defaults to `kimi-k3`) |
 | `bedrock-converse` | `AWS_REGION`; AWS credentials are also required by the default provider chain |
@@ -63,6 +64,18 @@ bun run test:integration:deepseek
 ```
 
 This covers the common capability suites plus live `models.list()`, `balance.get()`, FIM generate/stream, and chat prefix completion. `DEEPSEEK_BASE_URL` and `DEEPSEEK_BETA_BASE_URL` are optional overrides for compatible gateways or test environments. The extended suite is skipped unless both `DEEPSEEK_API_KEY` and `DEEPSEEK_EXTENDED_INTEGRATION=1` are present; a skip is not live validation.
+
+For an authenticated Z.ai GLM-5.3 Coding Plan smoke, opt in explicitly:
+
+```bash
+ZAI_API_KEY=... \
+ZAI_ENDPOINT=coding \
+ZAI_INTEGRATION_MODEL=glm-5.3 \
+ZAI_EXTENDED_INTEGRATION=1 \
+bun run test:integration:zai
+```
+
+The standard general API and pay-as-you-go catalog currently document GLM-5.2, while GLM-5.3 is announced for Coding Plan. The shared registry therefore defaults to GLM-5.2/general unless `ZAI_ENDPOINT=coding` is selected. Coding Plan may route GLM-5.2/5.1 identifiers to GLM-5.3, so it does not certify exact GLM-5.2 behavior. A skipped or fixture-only run is not live validation.
 
 The Kimi K3 smoke path uses `temperature: 1`, `reasoning.effort: "max"`, and `toolChoice: "required"` to match the upstream K3 contract. Override `KIMI_INTEGRATION_MODEL` only when intentionally validating an older K2.x family.
 
@@ -88,8 +101,8 @@ On a machine with no provider credentials configured, the report will look like 
 
 Generated: 2026-05-06T00:00:00.000Z
 
-Ready providers: 0/14
-Skipped providers: 14/14
+Ready providers: 0/15
+Skipped providers: 15/15
 
 | Provider | Status | Text model | Capabilities | Missing requirements |
 | --- | --- | --- | --- | --- |

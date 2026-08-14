@@ -21,6 +21,7 @@ Supported public imports should come from published package entrypoints such as:
 - `@zhivex-ai/qwen`
 - `@zhivex-ai/kimi`
 - `@zhivex-ai/deepseek`
+- `@zhivex-ai/zai`
 - `@zhivex-ai/gateway`
 
 Deep imports from internal files are not part of the stable contract unless this document names an explicit exception.

@@ -138,6 +138,35 @@ describe("zhivex-ai CLI", () => {
     await expect(fs.readFile(path.join(directory, ".env.example"), "utf8")).resolves.toContain("KIMI_API_KEY=");
   });
 
+  it("scaffolds Meta agents with Muse Spark 1.2", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-meta-init-"), "meta-agent");
+    const capture = createCapture();
+
+    const code = await runCli([
+      "init",
+      "agent",
+      "--dir",
+      directory,
+      "--provider",
+      "meta"
+    ], capture.io);
+
+    expect(code).toBe(0);
+    expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+      ok: true,
+      provider: "meta",
+      model: "muse-spark-1.2"
+    });
+    await expect(readJson(path.join(directory, "package.json"))).resolves.toMatchObject({
+      dependencies: {
+        "@zhivex-ai/meta": "^0.2.0"
+      }
+    });
+    const agentSource = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
+    expect(agentSource).toContain('model: provider("muse-spark-1.2")');
+    await expect(fs.readFile(path.join(directory, ".env.example"), "utf8")).resolves.toContain("MODEL_API_KEY=");
+  });
+
   it("scaffolds Gemini agents with the current stable Flash model", async () => {
     const directory = path.join(await tempDir("zhivex-cli-gemini-init-"), "gemini-agent");
     const capture = createCapture();
@@ -204,6 +233,54 @@ describe("zhivex-ai CLI", () => {
       checks: expect.arrayContaining([
         expect.objectContaining({ name: "deepseek-dependency", status: "pass" }),
         expect.objectContaining({ name: "deepseek-env", detail: expect.stringContaining("DEEPSEEK_API_KEY") })
+      ])
+    });
+  });
+
+  it("scaffolds a Z.ai GLM-5.3 Coding Plan agent project", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-zai-init-"), "zai-agent");
+    const capture = createCapture();
+
+    const code = await runCli([
+      "init",
+      "agent",
+      "--dir",
+      directory,
+      "--provider",
+      "zai"
+    ], capture.io);
+
+    expect(code).toBe(0);
+    expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+      ok: true,
+      provider: "zai",
+      model: "glm-5.3"
+    });
+    await expect(readJson(path.join(directory, "package.json"))).resolves.toMatchObject({
+      dependencies: {
+        "@zhivex-ai/sdk": "^1.0.1",
+        "@zhivex-ai/zai": "^0.1.0"
+      }
+    });
+    const agentSource = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
+    expect(agentSource).toContain('import { createZAI } from "@zhivex-ai/zai"');
+    expect(agentSource).toContain('endpoint: "coding"');
+    expect(agentSource).toContain('model: provider("glm-5.3")');
+    await expect(fs.readFile(path.join(directory, ".env.example"), "utf8")).resolves.toContain("ZAI_API_KEY=");
+
+    const doctorCapture = createCapture();
+    await expect(runCli([
+      "doctor",
+      "--dir",
+      directory,
+      "--provider",
+      "zai"
+    ], doctorCapture.io)).resolves.toBe(0);
+    expect(JSON.parse(doctorCapture.stdout[0]!)).toMatchObject({
+      ok: true,
+      checks: expect.arrayContaining([
+        expect.objectContaining({ name: "zai-dependency", status: "pass" }),
+        expect.objectContaining({ name: "zai-env", detail: expect.stringContaining("ZAI_API_KEY") })
       ])
     });
   });

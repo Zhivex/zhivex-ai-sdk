@@ -7,6 +7,7 @@
     { "path": "./packages/xai" },
     { "path": "./packages/meta" },
     { "path": "./packages/deepseek" },
+    { "path": "./packages/zai" },
     { "path": "./packages/qwen" },
     { "path": "./packages/kimi" },
     { "path": "./packages/anthropic" },

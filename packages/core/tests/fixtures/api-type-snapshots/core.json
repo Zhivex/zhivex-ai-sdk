@@ -15,7 +15,7 @@
   "bounded-broadcast.d.ts": "27fe48a4327ae7db7929e23b9e0100fc1b4fb8f8f85ff4232606021840de228e",
   "catalog.d.ts": "f981d7d5a1de29f7052f7c42b4dc08fce9934b551d341146872c30aa39c5387a",
   "embed.d.ts": "f030840c766b5c6386e91e6d219790f87baf1e4610c9ba973e3b0c8dc74d9d0e",
-  "errors.d.ts": "1ef1d9d8e0af6ea72585c7e54167cc00d1ec470773da6f3e47cd79cd2ecca32a",
+  "errors.d.ts": "2f245a7f302f3db983d634d26e2a525a3f5f2e518adbb63da9ac10b95cab1779",
   "fetch.d.ts": "ae781ed35c5ac1ca01c4083f09ff53d3c1e7b034eb2d270110ad23d8f0710e07",
   "generate-object.d.ts": "07cdaa2381b501af6bb25a7f946f109a881f9f256b59d53e54ef5846d7462667",
   "generate-text.d.ts": "ff49695676ba7f491bedb359b18d541da0da4a79dd0edac6e36b6763eee15dc6",

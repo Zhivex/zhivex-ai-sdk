@@ -34,13 +34,15 @@ export class ProviderHTTPError extends ZhivexAIError {
   constructor(
     message: string,
     readonly status: number,
-    options?: { cause?: unknown; responseBody?: unknown; responseBodyMaxChars?: number }
+    options?: { cause?: unknown; responseBody?: unknown; responseBodyMaxChars?: number; retryAfterMs?: number }
   ) {
     super(message, options);
     this.responseBody = sanitizeProviderResponseBody(options?.responseBody, options?.responseBodyMaxChars);
+    this.retryAfterMs = options?.retryAfterMs;
   }
 
   readonly responseBody?: unknown;
+  readonly retryAfterMs?: number;
 }
 
 export class ProviderResponseTooLargeError extends ZhivexAIError {

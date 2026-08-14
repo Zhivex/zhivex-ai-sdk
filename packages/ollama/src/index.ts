@@ -134,8 +134,13 @@ const thinkingFromMessage = (message: ModelMessage) =>
 
 const isGptOssModel = (modelId: string) => /(?:^|[/:-])gpt-oss(?=$|[/:-])/i.test(modelId);
 
+const isMuseGlimmerModel = (modelId: string) =>
+  /(?:^|[/:-])muse-glimmer(?=$|[/:-])/i.test(modelId);
+
 const isKnownThinkingModel = (modelId: string) =>
-  /(?:^|[/:-])(?:qwen3(?:\.5)?|gpt-oss|deepseek-(?:r1|v3\.1)|gemma4)(?=$|[/:-])/i.test(modelId);
+  /(?:^|[/:-])(?:qwen3(?:\.5)?|gpt-oss|deepseek-(?:r1|v3\.1)|gemma4|muse-glimmer)(?=$|[/:-])/i.test(
+    modelId
+  );
 
 const isCloudModel = (modelId: string) => /(?:^|:)(?:cloud|[^:]+-cloud)$/i.test(modelId);
 
@@ -148,6 +153,8 @@ const capabilitiesForModel = (modelId: string, directCloud: boolean): ModelCapab
   reasoningEfforts: isKnownThinkingModel(modelId)
     ? isGptOssModel(modelId)
       ? ["low", "medium", "high"]
+      : isMuseGlimmerModel(modelId)
+        ? ["none", "low", "medium", "high"]
       : ["none", "low", "medium", "high", "max"]
     : undefined
 });
@@ -208,6 +215,11 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
         'Ollama GPT-OSS models require "think" to be "low", "medium", or "high".'
       );
     }
+    if (isMuseGlimmerModel(modelId) && nativeThink === "max") {
+      throw new UnsupportedFeatureError(
+        'Ollama Muse Glimmer models support "think" as a boolean or "low", "medium", or "high".'
+      );
+    }
     return nativeThink as boolean | "low" | "medium" | "high" | "max" | undefined;
   }
   if (nativeThink !== undefined) {
@@ -252,6 +264,11 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
   if (isGptOssModel(modelId) && (typeof think === "boolean" || think === "max")) {
     throw new UnsupportedFeatureError(
       'Ollama GPT-OSS models require reasoning effort "low", "medium", or "high".'
+    );
+  }
+  if (isMuseGlimmerModel(modelId) && think === "max") {
+    throw new UnsupportedFeatureError(
+      'Ollama Muse Glimmer models support reasoning effort "none", "low", "medium", or "high".'
     );
   }
   return think;

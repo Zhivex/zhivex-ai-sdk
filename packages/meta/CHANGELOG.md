@@ -1,5 +1,17 @@
 # @zhivex-ai/meta
 
+## 0.2.0
+
+### Minor Changes
+
+- Add first-class Muse Spark 1.2 support, align tool choice with the authenticated Meta contract, repair retry and Responses streaming behavior in the direct Meta Model API adapter, and add current Muse Glimmer 30B routes for Ollama and OpenRouter with catalog, documentation, and regression coverage.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.3.0
+
 ## 0.1.7
 
 ### Patch Changes

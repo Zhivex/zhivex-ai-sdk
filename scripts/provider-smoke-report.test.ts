@@ -14,6 +14,7 @@ describe("provider smoke registry", () => {
       "gemini",
       "openrouter",
       "deepseek",
+      "zai",
       "qwen",
       "kimi",
       "bedrock-converse",

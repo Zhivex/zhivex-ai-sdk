@@ -14,6 +14,7 @@ import { createAnthropic } from "../../anthropic/src/index.js";
 import { createAzureOpenAI } from "../../azure-openai/src/index.js";
 import { createBedrock } from "../../bedrock/src/index.js";
 import { createDeepSeek } from "../../deepseek/src/index.js";
+import { createZAI } from "../../zai/src/index.js";
 import { createGemini } from "../../gemini/src/index.js";
 import { createKimi } from "../../kimi/src/index.js";
 import { createMeta } from "../../meta/src/index.js";
@@ -63,6 +64,7 @@ const openrouter = createOpenRouter({ apiKey: "test", fetch: fetchMock as typeof
 const qwen = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
 const kimi = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
 const deepseek = createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch });
+const zai = createZAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
 const bedrockConverse = createBedrock({ region: "us-east-1" });
 const bedrockOpenAI = createBedrock({
   runtime: "openai",
@@ -91,7 +93,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
   },
   {
     provider: "Meta",
-    model: meta("muse-spark-1.1"),
+    model: meta("muse-spark-1.2"),
     summary: {
       reasoningSummary: "`effort`",
       hostedToolSummary: "Responses web search, tool search, Files API, prompt caching"
@@ -169,6 +171,15 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     }
   },
   {
+    provider: "Z.ai",
+    model: zai("glm-5.3"),
+    summary: {
+      structuredOutputSummary: "JSON object + schema prompt",
+      reasoningSummary: "5.3 `low` / `high` / `max`; 5.2 mapped",
+      hostedToolSummary: "no"
+    }
+  },
+  {
     provider: "Bedrock",
     model: bedrockConverse("anthropic.claude-3-5-sonnet"),
     summary: {
@@ -202,6 +213,7 @@ const expectedDrift: ProviderSupportDriftExpectedMatrix = {
     { provider: "vertex", agentTier: "tier-b", structuredOutput: true, embeddings: true, webSearch: true },
     { provider: "qwen", agentTier: "tier-b", portableToolLoop: true, webSearch: true },
     { provider: "deepseek", agentTier: "tier-b", portableToolLoop: true, webSearch: false },
+    { provider: "zai", agentTier: "tier-b", portableToolLoop: true, toolChoice: false, webSearch: false },
     { provider: "openrouter", agentTier: "tier-c", portableToolLoop: true, hostedTools: true },
     { provider: "kimi", agentTier: "tier-c", portableToolLoop: true, embeddings: false },
     { provider: "ollama", agentTier: "tier-c", toolChoice: false, embeddings: true },
@@ -253,13 +265,14 @@ describe("provider parity documentation", () => {
     const matrix = createProviderSupportMatrix([
       openai("gpt-4o-mini"),
       xai("grok-4.5"),
-      meta("muse-spark-1.1"),
+      meta("muse-spark-1.2"),
       azure("gpt-4o-mini"),
       anthropic("claude-opus-5"),
       gemini("gemini-3.5-flash"),
       vertex("gemini-3.5-flash"),
       qwen("qwen-plus"),
       deepseek("deepseek-v4-flash"),
+      zai("glm-5.3"),
       openrouter("openai/gpt-4o-mini"),
       kimi("kimi-k3"),
       ollama("llama3.2"),

@@ -3,6 +3,7 @@ import { createAnthropic } from "../../anthropic/src/index.js";
 import { createAzureOpenAI } from "../../azure-openai/src/index.js";
 import { createBedrock } from "../../bedrock/src/index.js";
 import { createDeepSeek } from "../../deepseek/src/index.js";
+import { createZAI, type ZAIEndpoint } from "../../zai/src/index.js";
 import { createGemini } from "../../gemini/src/index.js";
 import { createKimi } from "../../kimi/src/index.js";
 import { createMeta } from "../../meta/src/index.js";
@@ -88,7 +89,7 @@ const xaiTextModelId = process.env.XAI_INTEGRATION_MODEL ?? "grok-4.5";
 
 const metaApiKey = process.env.MODEL_API_KEY;
 const metaBaseURL = process.env.META_BASE_URL;
-const metaTextModelId = process.env.META_INTEGRATION_MODEL ?? "muse-spark-1.1";
+const metaTextModelId = process.env.META_INTEGRATION_MODEL ?? "muse-spark-1.2-contributor";
 
 const azureOpenAIApiKey = process.env.AZURE_OPENAI_API_KEY;
 const azureOpenAIEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
@@ -123,6 +124,11 @@ const openRouterTextModelId = process.env.OPENROUTER_INTEGRATION_MODEL ?? "opena
 const deepSeekApiKey = process.env.DEEPSEEK_API_KEY;
 const deepSeekBaseURL = process.env.DEEPSEEK_BASE_URL;
 const deepSeekTextModelId = process.env.DEEPSEEK_INTEGRATION_MODEL ?? "deepseek-v4-flash";
+
+const zaiApiKey = process.env.ZAI_API_KEY;
+const zaiBaseURL = process.env.ZAI_BASE_URL;
+const zaiEndpoint: ZAIEndpoint = process.env.ZAI_ENDPOINT === "coding" ? "coding" : "general";
+const zaiTextModelId = process.env.ZAI_INTEGRATION_MODEL ?? (zaiEndpoint === "coding" ? "glm-5.3" : "glm-5.2");
 
 const qwenApiKey = process.env.QWEN_API_KEY ?? process.env.DASHSCOPE_API_KEY;
 const qwenBaseURL = process.env.QWEN_BASE_URL;
@@ -240,6 +246,15 @@ const deepSeekSupports: IntegrationLanguageProvider["supports"] = {
     effort: "high"
   }
 };
+const zaiSupports: IntegrationLanguageProvider["supports"] = {
+  streaming: true,
+  tools: true,
+  structuredOutputMode: "native",
+  embeddings: false,
+  reasoning: {
+    effort: zaiTextModelId === "glm-5.3" ? "low" : "high"
+  }
+};
 const qwenSupports: IntegrationLanguageProvider["supports"] = {
   streaming: true,
   tools: true,
@@ -293,6 +308,7 @@ const anthropicRequirements = [envRequirement(["ANTHROPIC_API_KEY"])];
 const geminiRequirements = [envRequirement(["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"])];
 const openRouterRequirements = [envRequirement(["OPENROUTER_API_KEY"])];
 const deepSeekRequirements = [envRequirement(["DEEPSEEK_API_KEY"])];
+const zaiRequirements = [envRequirement(["ZAI_API_KEY"])];
 const qwenRequirements = [envRequirement(["QWEN_API_KEY", "DASHSCOPE_API_KEY"])];
 const kimiRequirements = [envRequirement(["KIMI_API_KEY", "MOONSHOT_API_KEY"])];
 const bedrockConverseRequirements: CredentialRequirement[] = [
@@ -373,6 +389,12 @@ export const integrationProviderStatuses: IntegrationProviderStatus[] = [
     requirements: deepSeekRequirements,
     textModelId: deepSeekTextModelId,
     supports: deepSeekSupports
+  }),
+  createProviderStatus({
+    name: "zai",
+    requirements: zaiRequirements,
+    textModelId: zaiTextModelId,
+    supports: zaiSupports
   }),
   createProviderStatus({
     name: "qwen",
@@ -465,10 +487,9 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               baseURL: metaBaseURL
             })(metaTextModelId),
           supports: metaSupports,
-          toolChoiceForTool: (toolName) => ({
-            type: "tool",
-            toolName
-          })
+          textMaxTokens: 256,
+          toolMaxTokens: 512,
+          reasoningMaxTokens: 512
         } satisfies IntegrationLanguageProvider
       ]
     : []),
@@ -576,6 +597,23 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
           omitTemperature: true,
           toolMaxTokens: 256,
           supports: deepSeekSupports
+        } satisfies IntegrationLanguageProvider
+      ]
+    : []),
+  ...(zaiApiKey
+    ? [
+        {
+          name: "zai",
+          createModel: () =>
+            createZAI({
+              apiKey: zaiApiKey,
+              baseURL: zaiBaseURL,
+              endpoint: zaiEndpoint
+            })(zaiTextModelId),
+          supports: zaiSupports,
+          textMaxTokens: 256,
+          toolMaxTokens: 512,
+          reasoningMaxTokens: 512
         } satisfies IntegrationLanguageProvider
       ]
     : []),

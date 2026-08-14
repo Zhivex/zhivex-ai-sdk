@@ -1,7 +1,7 @@
 {
-  "name": "@zhivex-ai/meta",
-  "version": "0.2.0",
-  "description": "Meta Model API adapter for Zhivex AI SDK.",
+  "name": "@zhivex-ai/zai",
+  "version": "0.1.0",
+  "description": "Z.ai GLM adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,7 +24,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Zhivex/zhivex-ai-sdk.git",
-    "directory": "packages/meta"
+    "directory": "packages/zai"
   },
   "homepage": "https://github.com/Zhivex/zhivex-ai-sdk#readme",
   "bugs": {
@@ -33,8 +33,8 @@
   "keywords": [
     "ai",
     "sdk",
-    "meta",
-    "muse",
+    "zai",
+    "glm",
     "llm",
     "typescript"
   ],
