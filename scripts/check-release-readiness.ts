@@ -49,6 +49,7 @@ export interface VerifyReleaseOptions {
   loadRegistry: () => Promise<Record<string, RegistryDocument>>;
   maxAttempts?: number;
   retryDelayMs?: number;
+  maxRetryDelayMs?: number;
   sleep?: (delayMs: number) => Promise<void>;
   onRetry?: (message: string) => void;
   expectedGitHead?: string;
@@ -56,8 +57,9 @@ export interface VerifyReleaseOptions {
 }
 
 const internalPrefix = "@zhivex-ai/";
-const postpublishRegistryAttempts = 12;
+const postpublishRegistryAttempts = 14;
 const postpublishRegistryRetryDelayMs = 5_000;
+const postpublishRegistryMaxRetryDelayMs = 30_000;
 
 interface ParsedVersion {
   major: number;
@@ -349,6 +351,7 @@ export const verifyReleaseWithRetry = async ({
   loadRegistry,
   maxAttempts = postpublishRegistryAttempts,
   retryDelayMs = postpublishRegistryRetryDelayMs,
+  maxRetryDelayMs = postpublishRegistryMaxRetryDelayMs,
   sleep = wait,
   onRetry,
   expectedGitHead,
@@ -357,6 +360,10 @@ export const verifyReleaseWithRetry = async ({
   const attempts = mode === "postpublish" ? Math.max(1, maxAttempts) : 1;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const nextRetryDelayMs = Math.min(
+      retryDelayMs * (2 ** (attempt - 1)),
+      maxRetryDelayMs
+    );
     try {
       const audit = auditRelease(
         branch,
@@ -371,7 +378,7 @@ export const verifyReleaseWithRetry = async ({
         return audit;
       }
       onRetry?.(
-        `npm registry propagation is incomplete; retrying postpublish verification ${attempt + 1}/${attempts} in ${retryDelayMs}ms.`
+        `npm registry propagation is incomplete; retrying postpublish verification ${attempt + 1}/${attempts} in ${nextRetryDelayMs}ms.`
       );
     } catch (error) {
       if (mode !== "postpublish" || attempt === attempts) {
@@ -379,11 +386,11 @@ export const verifyReleaseWithRetry = async ({
       }
       const message = error instanceof Error ? error.message : String(error);
       onRetry?.(
-        `npm registry request failed (${message}); retrying postpublish verification ${attempt + 1}/${attempts} in ${retryDelayMs}ms.`
+        `npm registry request failed (${message}); retrying postpublish verification ${attempt + 1}/${attempts} in ${nextRetryDelayMs}ms.`
       );
     }
 
-    await sleep(retryDelayMs);
+    await sleep(nextRetryDelayMs);
   }
 
   throw new Error("Postpublish verification exhausted all retry attempts.");
