@@ -208,6 +208,122 @@ describe("release readiness", () => {
     expect(audit).toEqual({ errors: [], pending: [], warnings: [] });
   });
 
+  it("uses capped exponential backoff for prolonged npm provenance propagation", async () => {
+    const readyRegistry: Record<string, RegistryDocument> = {
+      "@zhivex-ai/core": {
+        versions: { "0.16.1": publishedVersion() },
+        "dist-tags": { latest: "0.16.1" }
+      },
+      "@zhivex-ai/sdk": {
+        versions: {
+          "0.15.1": publishedVersion({
+            dependencies: { "@zhivex-ai/core": "^0.16.1" }
+          })
+        },
+        "dist-tags": { latest: "0.15.1" }
+      }
+    };
+    const propagatingRegistry: Record<string, RegistryDocument> = {
+      ...readyRegistry,
+      "@zhivex-ai/sdk": {
+        versions: {
+          "0.15.1": {
+            ...publishedVersion({ dependencies: { "@zhivex-ai/core": "^0.16.1" } }),
+            provenanceGitHead: undefined,
+            provenanceError: "@zhivex-ai/sdk@0.15.1: attestation request failed with HTTP 404"
+          }
+        },
+        "dist-tags": { latest: "0.15.1" }
+      }
+    };
+    let registryReads = 0;
+    const retryDelays: number[] = [];
+
+    const audit = await verifyReleaseWithRetry({
+      branch: "main",
+      packages,
+      mode: "postpublish",
+      distTag: "latest",
+      loadRegistry: async () => {
+        registryReads += 1;
+        return registryReads < 14 ? propagatingRegistry : readyRegistry;
+      },
+      maxAttempts: 14,
+      retryDelayMs: 5_000,
+      maxRetryDelayMs: 30_000,
+      sleep: async (delayMs) => {
+        retryDelays.push(delayMs);
+      },
+      expectedGitHead: releaseGitHead
+    });
+
+    expect(registryReads).toBe(14);
+    expect(retryDelays).toEqual([
+      5_000,
+      10_000,
+      20_000,
+      30_000,
+      30_000,
+      30_000,
+      30_000,
+      30_000,
+      30_000,
+      30_000,
+      30_000,
+      30_000,
+      30_000
+    ]);
+    expect(retryDelays.reduce((total, delayMs) => total + delayMs, 0)).toBe(335_000);
+    expect(audit).toEqual({ errors: [], pending: [], warnings: [] });
+  });
+
+  it("fails closed after exhausting provenance propagation retries", async () => {
+    const provenanceError =
+      "@zhivex-ai/sdk@0.15.1: attestation request failed with HTTP 404";
+    const propagatingRegistry: Record<string, RegistryDocument> = {
+      "@zhivex-ai/core": {
+        versions: { "0.16.1": publishedVersion() },
+        "dist-tags": { latest: "0.16.1" }
+      },
+      "@zhivex-ai/sdk": {
+        versions: {
+          "0.15.1": {
+            ...publishedVersion({ dependencies: { "@zhivex-ai/core": "^0.16.1" } }),
+            provenanceGitHead: undefined,
+            provenanceError
+          }
+        },
+        "dist-tags": { latest: "0.15.1" }
+      }
+    };
+    let registryReads = 0;
+    const retryDelays: number[] = [];
+
+    const audit = await verifyReleaseWithRetry({
+      branch: "main",
+      packages,
+      mode: "postpublish",
+      distTag: "latest",
+      loadRegistry: async () => {
+        registryReads += 1;
+        return propagatingRegistry;
+      },
+      maxAttempts: 4,
+      retryDelayMs: 5_000,
+      maxRetryDelayMs: 30_000,
+      sleep: async (delayMs) => {
+        retryDelays.push(delayMs);
+      },
+      expectedGitHead: releaseGitHead
+    });
+
+    expect(registryReads).toBe(4);
+    expect(retryDelays).toEqual([5_000, 10_000, 20_000]);
+    expect(audit.errors).toContain(
+      `@zhivex-ai/sdk@0.15.1: npm provenance verification failed: ${provenanceError}.`
+    );
+  });
+
   it("rejects prerelease versions on latest and stable versions on next", () => {
     const prereleasePackages = packages.map((manifest) => ({ ...manifest, version: `${manifest.version}-next.0` }));
 
