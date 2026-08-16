@@ -59,6 +59,7 @@ describe("zhivex-ai CLI", () => {
     expect(capture.stdout[0]).toContain("doctor");
     expect(capture.stdout[0]).toContain("agents ledger|inspect|diff|golden|eval");
     expect(capture.stdout[0]).toContain("sessions list|show|workflow-state|prune");
+    expect(capture.stdout[0]).toContain("workflow replay|report|compare|baseline|gate|run|eval");
     expect(capture.stdout[0]).toContain("--include-output-text");
   });
 
@@ -307,20 +308,29 @@ describe("zhivex-ai CLI", () => {
     const directory = path.join(await tempDir("zhivex-cli-doctor-"), "support-agent");
     await runCli(["init", "agent", "--dir", directory], createCapture().io);
     const capture = createCapture();
+    const ambientOpenAiApiKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const code = await runCli(["doctor", "--dir", directory, "--provider", "openai"], capture.io);
 
-    const code = await runCli(["doctor", "--dir", directory, "--provider", "openai"], capture.io);
-
-    expect(code).toBe(0);
-    expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
-      ok: true,
-      type: "doctor_report",
-      checks: expect.arrayContaining([
-        expect.objectContaining({ name: "sdk-dependency", status: "pass" }),
-        expect.objectContaining({ name: "openai-dependency", status: "pass" }),
-        expect.objectContaining({ name: "openai-env", status: "warn" }),
-        expect.objectContaining({ name: "env-file-permissions", status: "pass" })
-      ])
-    });
+      expect(code).toBe(0);
+      expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+        ok: true,
+        type: "doctor_report",
+        checks: expect.arrayContaining([
+          expect.objectContaining({ name: "sdk-dependency", status: "pass" }),
+          expect.objectContaining({ name: "openai-dependency", status: "pass" }),
+          expect.objectContaining({ name: "openai-env", status: "warn" }),
+          expect.objectContaining({ name: "env-file-permissions", status: "pass" })
+        ])
+      });
+    } finally {
+      if (ambientOpenAiApiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = ambientOpenAiApiKey;
+      }
+    }
   });
 
   if (process.platform !== "win32") {
@@ -1033,6 +1043,210 @@ describe("zhivex-ai CLI", () => {
         newFailures: 1
       }
     });
+  });
+
+  it("creates versioned baselines and returns CI exit codes from workflow gates", async () => {
+    const directory = await tempDir("zhivex-cli-workflow-gate-");
+    const reviewedReportPath = path.join(directory, "reviewed-report.json");
+    const candidateReportPath = path.join(directory, "candidate-report.json");
+    const baselinePath = path.join(directory, "baseline.json");
+    const gatePath = path.join(directory, "gate.json");
+    const reviewedReport = {
+      ok: true,
+      total: 1,
+      passed: 1,
+      failed: 0,
+      passRate: 1,
+      statusCounts: { completed: 1 },
+      stepCount: 0,
+      stepStatusCounts: {},
+      timelineEventCounts: {},
+      failures: [],
+      cases: [{
+        name: "case",
+        ok: true,
+        status: "completed",
+        failures: [],
+        outputPreview: "volatile baseline output",
+        outputKeys: [],
+        stepCount: 0,
+        stepStatusCounts: {},
+        timelineEventCounts: {},
+        durationMs: 99
+      }]
+    };
+    await fs.writeFile(reviewedReportPath, JSON.stringify(reviewedReport), "utf8");
+    await fs.writeFile(candidateReportPath, JSON.stringify(reviewedReport), "utf8");
+
+    const baselineCapture = createCapture();
+    await expect(runCli([
+      "workflow",
+      "baseline",
+      "--report",
+      reviewedReportPath,
+      "--name",
+      "ci-v1",
+      "--out",
+      baselinePath
+    ], baselineCapture.io)).resolves.toBe(0);
+    expect(JSON.parse(baselineCapture.stdout[0]!)).toMatchObject({
+      schemaVersion: 1,
+      name: "ci-v1",
+      passRate: 1
+    });
+    expect(await fs.readFile(baselinePath, "utf8")).not.toContain("durationMs");
+    expect(await fs.readFile(baselinePath, "utf8")).not.toContain("volatile baseline output");
+
+    const passingCapture = createCapture();
+    await expect(runCli([
+      "workflow",
+      "gate",
+      "--baseline",
+      baselinePath,
+      "--candidate",
+      candidateReportPath,
+      "--out",
+      gatePath
+    ], passingCapture.io)).resolves.toBe(0);
+    expect(JSON.parse(passingCapture.stdout[0]!)).toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      baseline: { name: "ci-v1" },
+      issues: []
+    });
+    await expect(readJson(gatePath)).resolves.toMatchObject({ ok: true });
+
+    const regressedReport = {
+      ...reviewedReport,
+      ok: false,
+      passed: 0,
+      failed: 1,
+      passRate: 0,
+      statusCounts: { failed: 1 },
+      failures: [{ name: "case", failures: ["regression"] }],
+      cases: [{
+        ...reviewedReport.cases[0],
+        ok: false,
+        status: "failed",
+        failures: ["regression"]
+      }]
+    };
+    await fs.writeFile(candidateReportPath, JSON.stringify(regressedReport), "utf8");
+    const failingCapture = createCapture();
+    await expect(runCli([
+      "workflow",
+      "gate",
+      "--baseline",
+      baselinePath,
+      "--candidate",
+      candidateReportPath,
+      "--out",
+      gatePath
+    ], failingCapture.io)).resolves.toBe(1);
+    expect(JSON.parse(failingCapture.stdout[0]!)).toMatchObject({
+      ok: false,
+      summary: { regressedCases: 1, newFailures: 1 },
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: "max_pass_rate_drop" }),
+        expect.objectContaining({ code: "max_regressed_cases" })
+      ])
+    });
+    await expect(readJson(gatePath)).resolves.toMatchObject({ ok: false });
+
+    const toleratedCapture = createCapture();
+    await expect(runCli([
+      "workflow",
+      "gate",
+      "--baseline",
+      baselinePath,
+      "--candidate",
+      candidateReportPath,
+      "--min-pass-rate",
+      "0",
+      "--max-pass-rate-drop",
+      "1",
+      "--max-failed-cases",
+      "1",
+      "--max-regressed-cases",
+      "1",
+      "--max-new-failures",
+      "1",
+      "--allow-failing-candidate"
+    ], toleratedCapture.io)).resolves.toBe(0);
+    expect(JSON.parse(toleratedCapture.stdout[0]!)).toMatchObject({ ok: true, issues: [] });
+  });
+
+  it("rejects malformed workflow baselines and invalid gate thresholds", async () => {
+    const directory = await tempDir("zhivex-cli-workflow-gate-invalid-");
+    const baselinePath = path.join(directory, "baseline.json");
+    const candidatePath = path.join(directory, "candidate.json");
+    await fs.writeFile(baselinePath, JSON.stringify({ schemaVersion: 99 }), "utf8");
+    await fs.writeFile(candidatePath, JSON.stringify({}), "utf8");
+    const malformed = createCapture();
+
+    await expect(runCli([
+      "workflow",
+      "gate",
+      "--baseline",
+      baselinePath,
+      "--candidate",
+      candidatePath
+    ], malformed.io)).resolves.toBe(1);
+    expect(malformed.stderr[0]).toBe("Unsupported workflow evaluation baseline schema version 99.");
+
+    const report = {
+      ok: true,
+      total: 0,
+      passed: 0,
+      failed: 0,
+      passRate: 1,
+      statusCounts: {},
+      stepCount: 0,
+      stepStatusCounts: {},
+      timelineEventCounts: {},
+      failures: [],
+      cases: []
+    };
+    await fs.writeFile(candidatePath, JSON.stringify(report), "utf8");
+    const validBaseline = createCapture();
+    await runCli([
+      "workflow",
+      "baseline",
+      "--report",
+      candidatePath,
+      "--name",
+      "empty",
+      "--out",
+      baselinePath
+    ], validBaseline.io);
+    await fs.writeFile(candidatePath, JSON.stringify({}), "utf8");
+    const malformedCandidate = createCapture();
+    await expect(runCli([
+      "workflow",
+      "gate",
+      "--baseline",
+      baselinePath,
+      "--candidate",
+      candidatePath
+    ], malformedCandidate.io)).resolves.toBe(1);
+    expect(malformedCandidate.stderr[0]).toBe("candidate.total must be a non-negative integer.");
+
+    await fs.writeFile(candidatePath, JSON.stringify(report), "utf8");
+    const invalidThreshold = createCapture();
+
+    await expect(runCli([
+      "workflow",
+      "gate",
+      "--baseline",
+      baselinePath,
+      "--candidate",
+      candidatePath,
+      "--max-failed-cases",
+      "0.5"
+    ], invalidThreshold.io)).resolves.toBe(1);
+    expect(invalidThreshold.stderr[0]).toBe(
+      "thresholds.maxFailedCases must be a non-negative integer."
+    );
   });
 
   it("runs workflow modules locally and writes state and output files", async () => {

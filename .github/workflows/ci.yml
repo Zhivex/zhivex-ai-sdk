@@ -53,8 +53,57 @@ jobs:
       - name: Test
         run: bun run test
 
+      - name: Certify workflow state with SQLite
+        run: bun run test:integration:workflows-sqlite
+
+      - name: Enforce workflow evaluation baseline
+        run: bun run test:workflow-evaluation-gate
+
       - name: Build
         run: bun run build
 
       - name: Verify packed packages with Node
         run: bun run scripts/package-consumer-smoke.ts
+
+  workflow-postgres:
+    name: Workflow state / Postgres certification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: zhivex_workflow_ci
+          POSTGRES_PASSWORD: zhivex_ci_password
+          POSTGRES_USER: zhivex_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zhivex_ci -d zhivex_workflow_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      ZHIVEX_POSTGRES_INTEGRATION_URL: postgres://zhivex_ci:zhivex_ci_password@127.0.0.1:5432/zhivex_workflow_ci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.7
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Run fail-closed Postgres workflow certification
+        run: bun run test:integration:workflows-postgres
+
+      - name: Certify installed SDK package against Postgres
+        run: bun run smoke:packages:workflows-postgres

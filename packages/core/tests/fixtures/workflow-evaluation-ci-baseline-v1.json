@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "repository-workflow-evaluation-v1",
+  "reportOk": true,
+  "total": 1,
+  "passed": 1,
+  "failed": 0,
+  "passRate": 1,
+  "cases": [
+    {
+      "name": "deterministic-workflow",
+      "ok": true,
+      "status": "completed",
+      "failures": []
+    }
+  ]
+}

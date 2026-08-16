@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 // Package self-references exercise package.json exports and the emitted dist
 // files without installing dependencies or contacting a registry.
 import * as beta from "@zhivex-ai/agents/beta";
+import * as controlPlane from "@zhivex-ai/agents/control-plane";
 import * as agents from "@zhivex-ai/agents";
 import * as ops from "@zhivex-ai/agents/ops";
 import * as realtime from "@zhivex-ai/agents/realtime";
@@ -18,6 +19,10 @@ assert.equal("createAgentRunLedger" in agents, false);
 assert.equal(typeof ops.createInMemoryAgentRunStore, "function");
 assert.equal(typeof ops.createAgentTraceCollector, "function");
 assert.equal(typeof ops.runAgentEvaluation, "function");
+
+assert.equal(typeof controlPlane.createAgentControlPlane, "function");
+assert.equal(typeof controlPlane.normalizeAgentApprovalQueueItem, "function");
+assert.equal("getHostedToolClass" in controlPlane, false);
 
 assert.equal(typeof beta.createAgentControlPlane, "function");
 assert.equal(typeof beta.createAgentRunLedger, "function");

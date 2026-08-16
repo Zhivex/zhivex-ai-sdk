@@ -24,7 +24,7 @@ console.log(getApiStability("createWorkflow")?.stability); // "stable"
 
 Runtime export drift is guarded by that manifest, and public declaration drift is guarded by type snapshot tests for `@zhivex-ai/core`, `@zhivex-ai/sdk`, and `@zhivex-ai/react`.
 
-The stable boundary covers the shared generation primitives, the portable agent runtime, safety and evaluation helpers, `Runner + SessionService`, the declarative workflow runtime, and in-memory/file workflow state. SQL workflow state services, workflow evaluations, artifacts, the control-plane/CLI surface, and other APIs named in the manifest remain Beta or Experimental.
+The stable boundary covers the shared generation primitives, portable agent runtime, safety and evaluation helpers, `Runner + SessionService`, declarative workflows, every built-in workflow state service, workflow evaluation baselines/gates, and the dedicated Agent Control Plane contract. Artifacts, CLI UX, OTEL integration, model-catalog metadata, provider-native resource lifecycles, and other APIs named in the manifest remain Beta or Experimental.
 
 ### Installing The Stable Package
 
@@ -535,9 +535,9 @@ For explicit migration/validation, use `migrateAgentSessionRecord(record)`. File
 
 ### Agent Control Plane
 
-`Agent Control Plane` is a Beta layer for production agent operations. It does not replace `createAgent()` or `Runner`; it packages the operational metadata around them so applications can inspect, govern, replay, and route agent runs without binding the product to a single provider.
+`Agent Control Plane` is a Stable layer for production agent operations. It does not replace `createAgent()` or `Runner`; it packages the operational metadata around them so applications can inspect, govern, replay, and route agent runs without binding the product to a single provider. The focused facade is exported from `@zhivex-ai/agents/control-plane`; `@zhivex-ai/agents/beta` remains a compatibility alias and also contains governance helpers that are still Beta.
 
-The first Beta surface includes:
+The Stable control-plane surface includes:
 
 - `createAgentCapsule()`: portable manifest for an agent, its tools, MCP servers, skills, evals, policy, provider, and agent tier. Its canonical SHA-256 fingerprint is bound to new durable runs.
 - `createAgentToolPolicy()`: permission/risk-aware tool approval policy for read-only, supervised, write-deny, or allow-all modes. Supervised mode pauses tools marked `requiresApproval`, high-risk tools, and tools with network or write-like permissions unless the application explicitly allowlists the tool or permission.
@@ -597,7 +597,7 @@ Durable subagent calls derive a stable child idempotency key when the configured
 
 The `read-only` tool policy only auto-approves tools that explicitly declare read permissions; missing permission metadata is denied. Run ledgers omit replay timelines, metadata, messages, tool payloads, approval arguments, and output text unless their corresponding opt-in is enabled. Included ledger fields, including run errors, tool errors, and cancellation reasons, are passed through the configured redaction policy.
 
-Approval queue tokens are cryptographically random opaque values. Persist them server-side, enforce the queue item's `expiresAt`, compare and consume the token before resuming a run, and never treat `resumeUrl` alone as authorization.
+Approval queue tokens are cryptographically random opaque values. Persist the queue item and token server-side, authorize the caller in the application, and use `controlPlane.resumeApproval()` to validate token, expiry, request fingerprint, and pending state before atomically consuming the approval through the durable run store. Never treat `resumeUrl` alone as authorization.
 
 ### Declarative Workflows
 
@@ -686,7 +686,7 @@ const resumed = await runWorkflow(workflow, {
 
 `WorkflowStateService` is the recommended durable workflow-state path. When `workflowStateService` is configured, the full state is stored by `appName`, `userId`, `sessionId`, and workflow key while the session keeps only a lightweight reference. Without it, the compatibility fallback stores state under `session.metadata.workflowRuns[workflow.id]`. Use `persistence.metadataKey` or `persistence.workflowKey` if your app needs a different namespace for the fallback or key.
 
-The `WorkflowStateService` contract and its in-memory and file-backed implementations are Stable. The SQLite and Postgres implementations remain Beta while their real-database certification is moved into remote CI; keep database clients and tenancy enforcement application-owned.
+The `WorkflowStateService` contract and its in-memory, file-backed, SQLite, and Postgres implementations are Stable. SQLite is certified against `bun:sqlite`; Postgres restart/resume, compare-and-swap, durability, tenant isolation, and installed-package behavior run in a dedicated fail-closed CI job. Keep database clients, migrations, credentials, and application authorization/tenancy policy application-owned.
 
 Workflow run states and dedicated workflow state records are also schema-versioned. New records use `schemaVersion: 1`, and legacy records without a version are normalized on load.
 
@@ -736,7 +736,7 @@ const workflow = createWorkflow({
 
 Loop iterations are recorded in the loop result's `children`. If an iteration pauses for approval, pass the saved workflow `state` and approval responses back to `runWorkflow()` to resume that pending iteration.
 
-The workflow evaluation/report helpers remain Beta. For local regression suites, they mirror the agent evaluation helpers:
+The workflow evaluation/report helpers are Stable. For local regression suites, they mirror the agent evaluation helpers:
 
 ```ts
 import {
@@ -2872,7 +2872,7 @@ The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives 
 - `generateGroundedText`
 - `embed`, `embedMany`
 - portable agent, runner, session, safety, evaluation, replay, and trace helpers
-- Stable declarative workflow helpers plus Beta SQL workflow state, workflow evaluation, artifact, model-catalog, and control-plane helpers, classified by `API_STABILITY_MANIFEST`
+- Stable declarative workflows, SQL workflow state, workflow evaluation gates, and Agent Control Plane helpers plus Beta artifact, model-catalog, OTEL, CLI, and provider-native resource helpers, classified by `API_STABILITY_MANIFEST`
 - message helpers such as `system`, `user`, `assistant`, `tool`, `textPart`
 - shared types such as `ReasoningConfig`, `GenerateTextOptions`, and `GenerateObjectOptions`
 - stream and HTTP helpers such as `toTextStreamResponse`, `toUIMessageStreamResponse`, `toSSEStream`, and related UI serialization utilities

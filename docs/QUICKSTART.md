@@ -128,8 +128,8 @@ See [Next.js Runner Guide](./NEXTJS.md) for a complete route-handler example.
 - `Runner + SessionService`: Stable
 - Declarative workflows: Stable
 - Artifacts: Beta
-- Workflow state contract and in-memory/file services: Stable
-- SQLite/Postgres workflow state services: Beta
+- Workflow state contract and all built-in services: Stable
+- Workflow evaluation baselines and regression gates: Stable
 - CLI: Beta
 
 Check a runtime symbol directly:

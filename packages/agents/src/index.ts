@@ -1,7 +1,7 @@
 /**
  * Stable application-facing agent runtime.
  *
- * Operational helpers, beta control-plane APIs, experimental realtime APIs,
+ * Operational helpers and stable control-plane/realtime APIs,
  * and test doubles live in explicit package subpaths.
  */
 export {

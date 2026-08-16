@@ -1,7 +1,7 @@
 {
   "advanced-tool-registry.d.ts": "c80d53abd9d62d00e9a0da63cd44aea117bdd7a93d8104671e1efde7331a1ed5",
   "agent-approval.d.ts": "9b02b3a408e78fb23d983d077ddb61ea82912db176f09cd61e5d58a98272c3ef",
-  "agent-control-plane.d.ts": "a8b8d7d6a23b5d48c628c859ee57b18386887bbe33a9ada992ec912d3c11aec0",
+  "agent-control-plane.d.ts": "b295b32574c94fac09dae7fb21b7c15f9f41debe711a6c38bcbb41af49f4312d",
   "agent-evaluation.d.ts": "45e83edd0dc76b31c4faecbb1bf39a60f3f8f6a1ed92a9e65131bf785c6c30ab",
   "agent-handoff.d.ts": "71472a4bc298001a521b03a583d3fab9b027c49725a8281b68b56bcd526535b3",
   "agent-harness.d.ts": "e9cc331521bed6af4793964329c91e6863b5f4b9bc007da369ed55aed161e681",
@@ -21,7 +21,7 @@
   "generate-text.d.ts": "ff49695676ba7f491bedb359b18d541da0da4a79dd0edac6e36b6763eee15dc6",
   "google.d.ts": "cab8c7fc390ef8c9989929b53fa72f89dda1f22b35b25c951df1840fe604930a",
   "grounded-text.d.ts": "03c1db5935feced5d58f6e0aab44fd47694622477784a2ff16cc471c0baa1144",
-  "index.d.ts": "ccff79d31a159998cde131946cee7eb1ac5e8db4a1944d4bc7ab824afd2e702a",
+  "index.d.ts": "6909fa384256878a646a266bff457967ef188a8e561beb4528442dffbf1b671b",
   "live-agent.d.ts": "b3b9fdf7bf23ecd4417f51ea6c15ec9e24fa8a16afd493c168ecaad8d358fb21",
   "mcp.d.ts": "84fc25750a0b1b5c3e42c76de0d0c67190de6efa5830a5cd20084089cb48d4fe",
   "media.d.ts": "d801c841bebed85d22a39ab18f6691bb44e8ca18d0543cc4305485d20a1c3bfc",
@@ -48,7 +48,8 @@
   "url-security.d.ts": "c8dce8eafc004977ea28992f1d154807aa46479977598dfb97442b258dfd94df",
   "workflow-artifacts.d.ts": "3a5be174acb836de8e4f5fa05f97913de1e0d9f6742d61a2068f44b4e92c65ce",
   "workflow-evaluation-diff.d.ts": "30f9da4c461aa60bfd37c7c30ba157e2edaeca561b6bdba9fc3271771a07aeb7",
-  "workflow-evaluation.d.ts": "0ea24f51a7720e925f67836b889364abaa89039ce2d924eb6c7e9539e08ffffb",
+  "workflow-evaluation-gate.d.ts": "386144964b5f4570675ee2098ebb4c536ff4be1ec942810c75ab4646cfb68d02",
+  "workflow-evaluation.d.ts": "43c0aedade3d172d324b3c94f85d5f1c8cd7caa14ab0ab30818df3335a7f9b4a",
   "workflow-state-service.d.ts": "556ed77052090a27a07ac68b0b49e7dd97b29cef94bce4d19d2ed3dc9b14a179",
   "workflow.d.ts": "94669c066344df5f2dcb85996bbfc2615bfeaa4877773e92cf5b314d09a95566"
 }

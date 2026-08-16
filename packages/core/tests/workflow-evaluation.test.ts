@@ -135,7 +135,39 @@ describe("workflow evaluations", () => {
     const result = await runWorkflowEvaluationFixture(fixture, { workflow });
 
     expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ actualOk: true, expectedOk: true });
     expect(fixture.createdAt).toEqual(expect.any(Number));
+  });
+
+  it("applies fixture expectedOk while preserving the raw aggregate verdict", async () => {
+    const runner = createTestRunner(createLanguageModel("actual"));
+    const workflow = createWorkflow({
+      steps: [{ id: "answer", runner, prompt: "Answer", outputKey: "answer" }]
+    });
+    const matchingFixture = createWorkflowEvaluationFixture({
+      name: "expected-regression",
+      expectedOk: false,
+      dataset: [{
+        name: "negative-case",
+        input: { userId: "user_1", sessionId: "session_1" },
+        expectations: { outputs: { answer: "different" } }
+      }]
+    });
+    const mismatchingFixture = { ...matchingFixture, expectedOk: true };
+
+    const matching = await runWorkflowEvaluationFixture(matchingFixture, { workflow });
+    const mismatching = await runWorkflowEvaluationFixture(mismatchingFixture, { workflow });
+
+    expect(matching).toMatchObject({ ok: true, actualOk: false, expectedOk: false });
+    expect(matching.cases[0]).toMatchObject({ ok: false });
+    expect(mismatching).toMatchObject({ ok: false, actualOk: false, expectedOk: true });
+    expect(createWorkflowEvaluationReport(matching)).toMatchObject({
+      ok: true,
+      actualOk: false,
+      expectedOk: false,
+      passed: 0,
+      failed: 1
+    });
   });
 
   it("creates workflow evaluation reports with counts and failures", async () => {

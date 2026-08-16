@@ -1,67 +1,28 @@
 /**
- * Beta control-plane and governance APIs.
+ * Compatibility alias for the stable control-plane entry point plus the
+ * remaining beta governance helpers.
  *
- * These exports may change between minor releases until promoted to stable.
+ * @deprecated Import stable control-plane contracts from "./control-plane".
  */
+export * from "./control-plane.js";
+
 export {
-  AGENT_CONTROL_PLANE_SCHEMA_VERSION,
   PRODUCTION_AGENT_KIT_SCHEMA_VERSION,
   createAgentExecutionEnvironmentBinding,
   createAgentHarnessBinding,
-  createAgentApprovalQueue,
   createAgentAuditRecord,
-  createAgentCapabilityRouter,
-  createAgentCapsule,
-  createAgentControlPlane,
-  createAgentControlPlaneRunRecord,
-  createAgentRunLedger,
-  createAgentToolPolicy,
   createReadOnlyToolApprovalPolicy,
   createSensitiveDataPolicy,
   createToolAuditRecords,
-  diffAgentRunLedgers,
   fingerprintAgentHarness,
   getAgentCapabilities,
   getAgentSupportTier,
-  getHostedToolClass,
-  inspectAgentCapsule,
-  inspectAgentControlPlane,
-  promoteAgentGoldenTrace,
-  selectAgentModel
+  getHostedToolClass
 } from "@zhivex-ai/core";
 
 export type {
-  AgentApprovalQueueItem,
-  AgentApprovalQueueOptions,
   AgentAuditRecord,
   AgentAuditRecordOptions,
-  AgentCapabilityRequirements,
-  AgentCapabilityRouter,
-  AgentCapsule,
-  AgentCapsuleEvaluationManifest,
-  AgentCapsuleInspection,
-  AgentCapsuleManifest,
-  AgentCapsuleMcpServerManifest,
-  AgentCapsulePolicyManifest,
-  AgentCapsuleSkillManifest,
-  AgentCapsuleToolManifest,
-  AgentControlPlane,
-  AgentControlPlaneInspection,
-  AgentControlPlaneOptions,
-  AgentControlPlaneRunInput,
-  AgentControlPlaneRunRecord,
-  AgentGoldenTrace,
-  AgentModelCandidate,
-  AgentModelSelection,
-  AgentRunLedger,
-  AgentRunLedgerDiff,
-  AgentRunLedgerDiffChange,
-  AgentRunLedgerOptions,
-  AgentToolPermission,
-  AgentToolPolicyMode,
-  AgentToolPolicyOptions,
-  AgentToolRiskLevel,
-  CreateAgentCapsuleOptions,
   ReadOnlyToolApprovalPolicyOptions,
   SensitiveDataPolicyOptions,
   ToolAuditRecord,

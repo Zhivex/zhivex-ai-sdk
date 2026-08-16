@@ -32,9 +32,9 @@ describe("api stability manifest", () => {
       symbol: "createAgentAuditRecord",
       stability: "beta"
     });
-    expect(api.listApiStability("beta")).toContainEqual({
+    expect(api.listApiStability("stable")).toContainEqual({
       symbol: "createAgentControlPlane",
-      stability: "beta"
+      stability: "stable"
     });
     expect(api.listApiStability("beta")).toContainEqual({
       symbol: "createAgentHarnessBinding",
@@ -83,20 +83,24 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("createFileArtifactService")?.stability).toBe("beta");
     expect(api.getApiStability("createFileWorkflowStateService")?.stability).toBe("stable");
     expect(api.getApiStability("createInMemoryWorkflowStateService")?.stability).toBe("stable");
-    expect(api.getApiStability("createPostgresWorkflowStateService")?.stability).toBe("beta");
-    expect(api.getApiStability("createSqliteWorkflowStateService")?.stability).toBe("beta");
-    expect(api.getApiStability("createWorkflowEvaluationFixture")?.stability).toBe("beta");
+    expect(api.getApiStability("createPostgresWorkflowStateService")?.stability).toBe("stable");
+    expect(api.getApiStability("createSqliteWorkflowStateService")?.stability).toBe("stable");
+    expect(api.getApiStability("createWorkflowEvaluationFixture")?.stability).toBe("stable");
+    expect(api.getApiStability("createWorkflowEvaluationBaseline")?.stability).toBe("stable");
+    expect(api.getApiStability("evaluateWorkflowEvaluationGate")?.stability).toBe("stable");
     expect(api.getApiStability("verifyArtifactIntegrity")?.stability).toBe("beta");
     expect(api.getApiStability("createAgentAuditRecord")?.stability).toBe("beta");
     expect(api.getApiStability("createToolAuditRecords")?.stability).toBe("beta");
     expect(api.getApiStability("createReadOnlyToolApprovalPolicy")?.stability).toBe("beta");
-    expect(api.getApiStability("createAgentControlPlane")?.stability).toBe("beta");
-    expect(api.getApiStability("createAgentCapsule")?.stability).toBe("beta");
+    expect(api.getApiStability("createAgentControlPlane")?.stability).toBe("stable");
+    expect(api.getApiStability("createAgentCapsule")?.stability).toBe("stable");
     expect(api.getApiStability("createAgentExecutionEnvironmentBinding")?.stability).toBe("beta");
     expect(api.getApiStability("createAgentHarnessBinding")?.stability).toBe("beta");
     expect(api.getApiStability("fingerprintAgentHarness")?.stability).toBe("beta");
-    expect(api.getApiStability("createAgentRunLedger")?.stability).toBe("beta");
-    expect(api.getApiStability("selectAgentModel")?.stability).toBe("beta");
+    expect(api.getApiStability("createAgentRunLedger")?.stability).toBe("stable");
+    expect(api.getApiStability("normalizeAgentRunLedger")?.stability).toBe("stable");
+    expect(api.getApiStability("migrateAgentApprovalQueueItem")?.stability).toBe("stable");
+    expect(api.getApiStability("selectAgentModel")?.stability).toBe("stable");
 
     expect(api.getApiStability("createAdvancedToolRegistry")?.stability).toBe("experimental");
     expect(api.getApiStability("missingSymbol")).toBeUndefined();

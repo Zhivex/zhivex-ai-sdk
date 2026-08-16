@@ -1,4 +1,4 @@
-/** Experimental live/realtime agent APIs. */
+/** Stable live/realtime agent APIs. */
 export { streamLiveAgent } from "@zhivex-ai/core";
 
 export type {

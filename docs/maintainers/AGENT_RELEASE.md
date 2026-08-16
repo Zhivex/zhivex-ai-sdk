@@ -37,7 +37,7 @@ Beta entry points from `@zhivex-ai/agents/beta` may remain beta if their docs sa
 
 `streamLiveAgent` is Stable and remains isolated under the dedicated `@zhivex-ai/agents/realtime` entry point so the agent root stays narrow. Deterministic mocks belong under the stable `@zhivex-ai/agents/testing` entry point; neither belongs in the root.
 
-Declarative workflows and the in-memory/file workflow state services are stable surfaces in `@zhivex-ai/sdk`; they are intentionally not re-exported by `@zhivex-ai/agents/beta`. SQL workflow state services, workflow evaluations, artifact helpers, and CLI workflow commands remain Beta.
+Declarative workflows, every built-in workflow state service, workflow evaluation baselines/gates, and the dedicated `@zhivex-ai/agents/control-plane` entry point are Stable. Artifact services/helpers and the CLI command surface remain Beta; installed Postgres and control-plane entrypoint smokes are required release evidence for changes to those Stable cohorts.
 
 ## Focused Test Gate
 
@@ -162,9 +162,34 @@ ZHIVEX_POSTGRES_INTEGRATION_URL=postgres://user:password@127.0.0.1:5432/database
 bun run test:integration:workflows
 ```
 
-The Postgres suite creates uniquely named `zhivex_it_*` tables, validates
-restart/resume, compare-and-swap conflicts, artifact durability, and tenant
-isolation, then drops those tables. Keep the database URL opt-in so normal test
+The dedicated database-only certification does not need provider credentials:
+
+```bash
+ZHIVEX_POSTGRES_INTEGRATION_URL=postgres://user:password@127.0.0.1:5432/database \
+bun run test:integration:workflows-postgres
+
+ZHIVEX_POSTGRES_INTEGRATION_URL=postgres://user:password@127.0.0.1:5432/database \
+bun run smoke:packages:workflows-postgres
+
+bun run test:integration:workflows-sqlite
+```
+
+`test:integration:workflows-postgres` is fail-closed: it sets
+`ZHIVEX_WORKFLOW_POSTGRES_CERTIFICATION=1`, and the suite throws before test
+discovery if the database URL is missing. The `Workflow state / Postgres
+certification` CI job provisions an isolated Postgres service and runs this
+gate on every pull request and push to `main`; configure that job as a required
+branch-protection check when promoting the SQL services.
+
+`smoke:packages:workflows-postgres` builds and packs `@zhivex-ai/core` and
+`@zhivex-ai/sdk`, installs the tarballs into an isolated consumer, and certifies
+the SDK's public Postgres workflow-state export against the same real database.
+
+The SQL suites validate restart/reopen durability, resume after approval,
+compare-and-swap conflicts, and workflow-state tenant isolation. The Postgres
+suite also retains coverage for the still-Beta artifact service and creates
+uniquely named `zhivex_it_*` tables that it drops during cleanup. Keep the
+database URL opt-in for the broader integration command so normal local test
 runs cannot target an application database accidentally.
 
 Run the deterministic public workflow example as a credential-free smoke:

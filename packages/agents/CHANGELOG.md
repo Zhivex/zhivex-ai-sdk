@@ -1,5 +1,16 @@
 # @zhivex-ai/agents
 
+## 1.2.0
+
+### Minor Changes
+
+- Promote SQLite/Postgres workflow state, workflow evaluation baselines and regression gates, and the focused Agent Control Plane contract to Stable. Add fail-closed real-database CI and installed-package certification, versioned workflow evaluation baseline/gate APIs with CLI support, and schema-validated durable single-consumer approval resume through `@zhivex-ai/agents/control-plane`.
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.5.0
+
 ## 1.1.0
 
 ### Minor Changes

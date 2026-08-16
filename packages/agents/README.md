@@ -40,13 +40,14 @@ console.log(result.state);
 
 ## Entry Points
 
-The package uses explicit entry points so production applications can keep operational, realtime, beta, and testing dependencies intentional:
+The package uses explicit entry points so production applications can keep operational, control-plane, realtime, beta, and testing dependencies intentional:
 
 | Import | Stability | Purpose |
 | --- | --- | --- |
 | `@zhivex-ai/agents` | Stable | Agent execution, tools, HITL, safety, streaming, handoffs, and subagents |
 | `@zhivex-ai/agents/ops` | Stable | Stores, memory, tracing, evaluation, replay, costs, and provider-support reports |
-| `@zhivex-ai/agents/beta` | Beta | Control plane, capsules, approval queues, ledgers, governance, and capability routing |
+| `@zhivex-ai/agents/control-plane` | Stable | Capsules, approval queues, ledgers, governance policy, durable approval resume, and capability routing |
+| `@zhivex-ai/agents/beta` | Mixed compatibility | Stable control-plane alias plus remaining Beta harness, audit, and hosted-tool helpers |
 | `@zhivex-ai/agents/realtime` | Stable | Live/realtime agent streaming |
 | `@zhivex-ai/agents/testing` | Stable | Deterministic model and tool test doubles |
 
@@ -143,7 +144,7 @@ If a subagent pauses for approval, the parent exposes a `kind: "subagent"` reque
 Use `createAgentApprovalQueue()` when the application needs queue items with approval tokens and resume URLs.
 
 ```ts
-import { createAgentApprovalQueue } from "@zhivex-ai/agents/beta";
+import { createAgentApprovalQueue } from "@zhivex-ai/agents/control-plane";
 ```
 
 ## Production State
@@ -188,7 +189,7 @@ Capsules created through `createAgentCapsule()` bind a canonical harness fingerp
 Use provider support helpers before routing important agent workloads:
 
 ```ts
-import { createAgentCapabilityRouter } from "@zhivex-ai/agents/beta";
+import { createAgentCapabilityRouter } from "@zhivex-ai/agents/control-plane";
 
 const router = createAgentCapabilityRouter([openai("gpt-5"), anthropic("claude-sonnet-5")]);
 const selected = router.select({
@@ -229,7 +230,7 @@ import {
 
 // After
 import { createInMemoryAgentRunStore } from "@zhivex-ai/agents/ops";
-import { createAgentControlPlane } from "@zhivex-ai/agents/beta";
+import { createAgentControlPlane } from "@zhivex-ai/agents/control-plane";
 import { streamLiveAgent } from "@zhivex-ai/agents/realtime";
 import { createMockLanguageModel } from "@zhivex-ai/agents/testing";
 ```

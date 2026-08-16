@@ -90,6 +90,10 @@ describe("package metadata", () => {
         types: "./dist/beta.d.ts",
         import: "./dist/beta.js"
       },
+      "./control-plane": {
+        types: "./dist/control-plane.d.ts",
+        import: "./dist/control-plane.js"
+      },
       "./realtime": {
         types: "./dist/realtime.d.ts",
         import: "./dist/realtime.js"
@@ -102,6 +106,7 @@ describe("package metadata", () => {
     expect(Object.keys(pkg.exports ?? {}).sort()).toEqual([
       ".",
       "./beta",
+      "./control-plane",
       "./ops",
       "./realtime",
       "./testing"
