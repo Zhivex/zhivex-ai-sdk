@@ -1124,13 +1124,24 @@ describe("realtime helpers", () => {
         return (async function* () {
           try {
             yield { type: "realtime-response-complete", reason: "turn-complete" } as const;
-            yield { type: "realtime-text-delta", textDelta: "spoken answer" } as const;
-          yield {
-            type: "realtime-transcript",
-            role: "assistant",
-            text: "spoken answer",
-            isFinal: false
-          } as const;
+            yield {
+              type: "realtime-transcript",
+              role: "assistant",
+              text: "spoken ",
+              isFinal: false
+            } as const;
+            yield {
+              type: "realtime-transcript",
+              role: "assistant",
+              text: "answer",
+              isFinal: false
+            } as const;
+            yield {
+              type: "realtime-transcript",
+              role: "assistant",
+              text: "",
+              isFinal: true
+            } as const;
             throw new Error("event stream was consumed after both terminal signals");
           } finally {
             iteratorReturned = true;
@@ -1159,6 +1170,44 @@ describe("realtime helpers", () => {
     expect(result.outputText).toBe("spoken answer");
     expect(result.status).toBe("completed");
     expect(iteratorReturned).toBe(true);
+  });
+
+  it("bounds failure persistence and finish telemetry after a lifetime timeout", async () => {
+    const never = new Promise<never>(() => {});
+    const finishTelemetry = vi.fn((event: { type: string }) =>
+      event.type === "run-finish" ? never : undefined
+    );
+    const connect = vi.fn(async (): Promise<RealtimeSession> => {
+      throw new Error("connect should not run while the initial checkpoint is pending");
+    });
+    const model: RealtimeModel = {
+      provider: "test",
+      modelId: "live-model",
+      capabilities: liveCapabilities,
+      connect
+    };
+    const stream = streamLiveAgent(
+      {
+        model,
+        store: {
+          load: () => undefined,
+          save: () => never
+        },
+        onTelemetryEvent: finishTelemetry
+      },
+      { runId: "bounded-failure-cleanup", prompt: "wait", timeoutMs: 20 }
+    );
+    const events = collectAsync(stream.eventStream);
+    const startedAt = Date.now();
+
+    await expect(stream.collect()).rejects.toThrow("timed out after 20ms");
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    await expect(events).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "error" }),
+      expect.objectContaining({ type: "agent-run-finish", status: "timed_out" })
+    ]));
+    expect(finishTelemetry).toHaveBeenCalledWith(expect.objectContaining({ type: "run-finish" }));
+    expect(connect).not.toHaveBeenCalled();
   });
 
   it("marks the run failed when closing the realtime session fails", async () => {

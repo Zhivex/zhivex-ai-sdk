@@ -64,6 +64,7 @@ import {
   type ProviderAdapter,
   type RealtimeConnectOptions,
   type RealtimeConnectionFactory,
+  type RealtimeEvent,
   type RealtimeModel,
   type RealtimeSessionConfig,
   type SpeechModel,
@@ -1091,7 +1092,7 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
         type: "realtime-transcript" as const,
         text: inputTranscription.text,
         role: "user" as const,
-        isFinal: Boolean(serverContent.turnComplete ?? serverContent.turn_complete),
+        isFinal: Boolean(inputTranscription.finished ?? serverContent.turnComplete ?? serverContent.turn_complete),
         providerMetadata
       });
     }
@@ -1102,12 +1103,12 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
         : typeof serverContent.output_transcription === "object" && serverContent.output_transcription
           ? (serverContent.output_transcription as Record<string, unknown>)
           : undefined;
-    if (outputTranscription && typeof outputTranscription.text === "string" && outputTranscription.text) {
+    if (outputTranscription && typeof outputTranscription.text === "string") {
       events.push({
         type: "realtime-transcript" as const,
         text: outputTranscription.text,
         role: "assistant" as const,
-        isFinal: Boolean(serverContent.turnComplete ?? serverContent.turn_complete),
+        isFinal: Boolean(outputTranscription.finished ?? serverContent.turnComplete ?? serverContent.turn_complete),
         providerMetadata
       });
     }
@@ -1184,6 +1185,45 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
   }
 
   return [];
+};
+
+const createVertexRealtimeEventParser = () => {
+  let outputTranscript = "";
+
+  return (payload: Record<string, unknown>): RealtimeEvent[] => {
+    const events: RealtimeEvent[] = [];
+    for (const event of parseVertexRealtimeEvent(payload)) {
+      if (event.type === "realtime-transcript" && event.role === "assistant") {
+        if (event.isFinal) {
+          const completeText = event.text.startsWith(outputTranscript)
+            ? event.text
+            : `${outputTranscript}${event.text}`;
+          outputTranscript = "";
+          events.push({ ...event, text: completeText });
+        } else {
+          outputTranscript += event.text;
+          events.push(event);
+        }
+        continue;
+      }
+      if (
+        event.type === "realtime-response-complete" &&
+        event.reason === "turn-complete" &&
+        outputTranscript
+      ) {
+        events.push({
+          type: "realtime-transcript",
+          text: outputTranscript,
+          role: "assistant",
+          isFinal: true,
+          providerMetadata: event.providerMetadata
+        });
+        outputTranscript = "";
+      }
+      events.push(event);
+    }
+    return events;
+  };
 };
 
 const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
@@ -2576,7 +2616,7 @@ class VertexRealtimeModel implements RealtimeModel {
       connection,
       initializationTimeoutMs: options?.timeoutMs,
       callbacks: {
-        parseEvent: parseVertexRealtimeEvent,
+        parseEvent: createVertexRealtimeEventParser(),
         isReadyPayload: (payload) => "setupComplete" in payload || "setup_complete" in payload,
         buildAudioPayloads: (frame) => [
           {

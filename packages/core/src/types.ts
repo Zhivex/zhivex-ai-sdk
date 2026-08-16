@@ -1061,8 +1061,10 @@ export interface RealtimeAudioOutputEvent {
 
 export interface RealtimeTranscriptEvent {
   type: "realtime-transcript";
+  /** Complete transcript when `isFinal` is true; otherwise an incremental chunk. */
   text: string;
   role: "user" | "assistant";
+  /** Explicit provider signal that no more transcript chunks remain for this item. */
   isFinal: boolean;
   itemId?: string;
   responseId?: string;

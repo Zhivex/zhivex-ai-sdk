@@ -372,6 +372,27 @@ const raceWithAbort = async <T>(operation: Promise<T>, signal: AbortSignal): Pro
   });
 };
 
+const TERMINAL_FAILURE_CLEANUP_TIMEOUT_MS = 1_000;
+
+const runTerminalFailureCleanup = async (
+  operations: Array<(signal: AbortSignal) => void | Promise<void>>
+) => {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException("Terminal live-agent cleanup timed out.", "TimeoutError")),
+    TERMINAL_FAILURE_CLEANUP_TIMEOUT_MS
+  );
+  try {
+    await Promise.allSettled(
+      operations.map((operation) =>
+        raceWithAbort(Promise.resolve().then(() => operation(controller.signal)), controller.signal)
+      )
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const nextWithAbort = <T>(iterator: AsyncIterator<T>, signal: AbortSignal) =>
   raceWithAbort(Promise.resolve(iterator.next()), signal);
 
@@ -504,6 +525,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
     let session: RealtimeSession | undefined;
     let closePromise: Promise<void> | undefined;
     let runError: unknown;
+    let failureCleanupRan = false;
     let transcript: ModelMessage[] = [];
     const toolResults: ToolExecutionResult[] = [];
     const assistantBuffer: string[] = [];
@@ -832,7 +854,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
 
       let waitingForPostToolResponse = false;
       let postToolResponseObserved = false;
-      let outputTranscriptObserved = false;
+      let finalOutputTranscriptObserved = false;
       let terminalResponseCompletionObserved = false;
       const requiresFinalOutputTranscript = Boolean(realtimeConfig.outputAudioTranscription);
       const iterator = session.eventStream()[Symbol.asyncIterator]();
@@ -858,20 +880,24 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
           if (event.role === "user" && event.isFinal && event.text) {
             transcript.push(createTextMessage("user", event.text));
           }
-          if (event.role === "assistant" && event.text) {
-            outputTranscriptObserved = true;
-            if (waitingForPostToolResponse) postToolResponseObserved = true;
+          if (event.role === "assistant") {
+            if (event.text && waitingForPostToolResponse) postToolResponseObserved = true;
             if (event.isFinal) {
-              finalText = event.text;
-              transcript.push(createTextMessage("assistant", event.text));
+              finalOutputTranscriptObserved = true;
+              const bufferedTranscript = outputTranscriptBuffer.join("");
+              finalText = event.text.startsWith(bufferedTranscript)
+                ? event.text
+                : `${bufferedTranscript}${event.text}`;
+              if (finalText) transcript.push(createTextMessage("assistant", finalText));
               assistantBuffer.length = 0;
               outputTranscriptBuffer.length = 0;
-            } else if (requiresFinalOutputTranscript) {
+            } else if (requiresFinalOutputTranscript && event.text) {
               outputTranscriptBuffer.push(event.text);
             }
             if (
               requiresFinalOutputTranscript &&
               terminalResponseCompletionObserved &&
+              finalOutputTranscriptObserved &&
               (!waitingForPostToolResponse || postToolResponseObserved)
             ) {
               break;
@@ -893,7 +919,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
           await publish({ type: "tool-call", toolCall: event.toolCall });
           waitingForPostToolResponse = true;
           postToolResponseObserved = false;
-          outputTranscriptObserved = false;
+          finalOutputTranscriptObserved = false;
           terminalResponseCompletionObserved = false;
 
           const definition = resolvedTools[event.toolCall.name];
@@ -986,7 +1012,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
           if (event.reason === "generation-complete") continue;
           if (waitingForPostToolResponse && !postToolResponseObserved) continue;
           terminalResponseCompletionObserved = true;
-          if (requiresFinalOutputTranscript && !outputTranscriptObserved) continue;
+          if (requiresFinalOutputTranscript && !finalOutputTranscriptObserved) continue;
           break;
         }
 
@@ -1010,7 +1036,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
       }
       if (
         requiresFinalOutputTranscript &&
-        (!terminalResponseCompletionObserved || !outputTranscriptObserved)
+        (!terminalResponseCompletionObserved || !finalOutputTranscriptObserved)
       ) {
         throw new ValidationError(
           "Realtime session ended before both response completion and final output transcription were observed."
@@ -1070,6 +1096,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
       return createResult(finalState);
     } catch (error) {
       runError = error;
+      failureCleanupRan = true;
       rejectNoSession(error);
       const normalizedError = error instanceof Error ? error : new Error(String(error));
       if (state) {
@@ -1089,12 +1116,11 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
             : {}),
           updatedAt: Date.now()
         };
-        try {
-          await persistState(agent, state);
-          await emitRunFinishTelemetry(agent, state);
-        } catch (persistError) {
-          runError = persistError;
-        }
+        await runTerminalFailureCleanup([
+          (cleanupSignal) => persistState(agent, state!, cleanupSignal),
+          (cleanupSignal) => emitRunFinishTelemetry(agent, state!, cleanupSignal),
+          () => closeSession()
+        ]);
         try {
           await publish({ type: "error", error: normalizedError });
           await publish({ type: "agent-run-finish", status: state.status, state: cloneState(state) });
@@ -1102,6 +1128,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
           // The original failure remains authoritative if the event broadcast also failed.
         }
       } else {
+        await runTerminalFailureCleanup([() => closeSession()]);
         try {
           await publish({ type: "error", error: normalizedError });
         } catch {
@@ -1112,10 +1139,12 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
     } finally {
       lifetime.signal.removeEventListener("abort", abortSession);
       lifetime.cleanup();
-      try {
-        await closeSession();
-      } catch (closeError) {
-        if (!runError) runError = closeError;
+      if (!failureCleanupRan) {
+        try {
+          await closeSession();
+        } catch (closeError) {
+          if (!runError) runError = closeError;
+        }
       }
       if (!sessionSettled) {
         rejectNoSession(runError ?? new ValidationError(`Live agent run "${runId}" ended without a realtime session.`));

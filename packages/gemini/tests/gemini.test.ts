@@ -1959,8 +1959,14 @@ describe("gemini adapter", () => {
           if (reads === 1) {
             return { setupComplete: {} };
           }
-          if (reads > 2) {
+          if (reads > 4) {
             return undefined;
+          }
+          if (reads === 4) {
+            return { serverContent: { turnComplete: true } };
+          }
+          if (reads === 3) {
+            return { serverContent: { outputTranscription: { text: "sc" } } };
           }
           return {
             serverContent: {
@@ -1974,8 +1980,7 @@ describe("gemini adapter", () => {
                   }
                 ]
               },
-              outputTranscription: { text: "czesc" },
-              turnComplete: true
+              outputTranscription: { text: "cze" }
             }
           };
         },
@@ -2014,7 +2019,6 @@ describe("gemini adapter", () => {
     });
 
     await session.sendAudio({ data: "audio-bytes", mediaType: "audio/pcm" });
-    await session.close();
 
     expect(connectionFactory).toHaveBeenCalledOnce();
     expect(sent[0]).toMatchObject({
@@ -2046,6 +2050,7 @@ describe("gemini adapter", () => {
     for await (const event of session.eventStream()) {
       events.push(event);
     }
+    await session.close();
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "realtime-audio-output",

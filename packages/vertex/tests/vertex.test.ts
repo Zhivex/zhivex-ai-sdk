@@ -2014,11 +2014,26 @@ describe("vertex adapter", () => {
       expect(headers).toMatchObject({
         authorization: "Bearer test"
       });
+      let reads = 0;
       return {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
         },
-        ...createPendingRealtimeReceiver()
+        async recvJson() {
+          reads += 1;
+          if (reads === 1) return { setupComplete: {} };
+          if (reads === 2) {
+            return {
+              serverContent: {
+                outputTranscription: { text: "cze" }
+              }
+            };
+          }
+          if (reads === 3) return { serverContent: { outputTranscription: { text: "sc" } } };
+          if (reads === 4) return { serverContent: { turnComplete: true } };
+          return undefined;
+        },
+        async close() {}
       };
     });
 
@@ -2054,6 +2069,8 @@ describe("vertex adapter", () => {
     });
 
     await session.sendAudio({ data: "vertex-audio", mediaType: "audio/pcm" });
+    const events = [];
+    for await (const event of session.eventStream()) events.push(event);
     await session.close();
 
     expect(connectionFactory).toHaveBeenCalledOnce();
@@ -2080,6 +2097,12 @@ describe("vertex adapter", () => {
         }
       }
     });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "realtime-transcript",
+      role: "assistant",
+      text: "czesc",
+      isFinal: true
+    }));
   });
 
   it("rejects unsupported Vertex Gemini 3.5 Live Translate setup and inputs", async () => {
