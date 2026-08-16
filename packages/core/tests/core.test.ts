@@ -2778,7 +2778,7 @@ describe("core helpers", () => {
       // drain stream
     }
 
-    expect(events).toEqual(["stream-start", "stream-finish"]);
+    expect(events).toEqual(["stream-start", "stream-chunk", "stream-chunk", "stream-finish"]);
   });
 
   it("includes finish metadata in stream telemetry", async () => {
@@ -2854,7 +2854,7 @@ describe("core helpers", () => {
       })()
     ).rejects.toThrow("stream failed");
 
-    expect(events).toEqual(["stream-start", "stream-error"]);
+    expect(events).toEqual(["stream-start", "stream-chunk", "stream-error"]);
   });
 
   it("emits stream error telemetry when the provider stream setup fails", async () => {
@@ -2874,10 +2874,16 @@ describe("core helpers", () => {
       ]
     );
 
+    const stream = await wrapped.stream!({
+      messages: [user("hello")]
+    });
+
     await expect(
-      wrapped.stream!({
-        messages: [user("hello")]
-      })
+      (async () => {
+        for await (const _event of stream) {
+          // drain stream
+        }
+      })()
     ).rejects.toThrow("setup failed");
 
     expect(events).toEqual(["stream-start", "stream-error"]);
@@ -2928,10 +2934,12 @@ describe("core helpers", () => {
     expect((await result.collect()).text).toBe("Madrid is sunny.");
     expect(events).toEqual([
       "stream-start",
+      "stream-chunk",
       "stream-finish",
       "tool-execution-start",
       "tool-execution-finish",
       "stream-start",
+      "stream-chunk",
       "stream-finish"
     ]);
   });
@@ -2979,6 +2987,7 @@ describe("core helpers", () => {
     ]);
     expect(events.map((event) => event.type)).toEqual([
       "stream-start",
+      "stream-chunk",
       "stream-finish",
       "tool-execution-start",
       "tool-execution-error"

@@ -56,6 +56,93 @@ interface ParsedArgs {
   flags: Record<string, string | true>;
 }
 
+interface CliCommandContract {
+  flags: readonly string[];
+  booleanFlags?: readonly string[];
+  positionals?: number;
+  positionalValues?: readonly string[];
+}
+
+const cliCommandContracts: Record<string, CliCommandContract> = {
+  "init:agent": {
+    flags: ["dir", "force", "model", "name", "package-name", "provider"],
+    booleanFlags: ["force"],
+    positionals: 1
+  },
+  "doctor:": { flags: ["dir", "provider"] },
+  "sessions:list": { flags: ["dir"] },
+  "sessions:show": { flags: ["app", "dir", "session", "user"] },
+  "sessions:workflow-state": {
+    flags: ["app", "dir", "session", "user", "workflow"],
+    positionalValues: ["show"]
+  },
+  "sessions:prune": {
+    flags: ["dir", "execute", "keep-last", "older-than-ms"],
+    booleanFlags: ["execute"]
+  },
+  "artifacts:list": {
+    flags: ["agent-run", "app", "dir", "session", "user", "workflow-run", "workflow-step"]
+  },
+  "artifacts:show": { flags: ["app", "dir", "id", "session", "user"] },
+  "artifacts:verify": { flags: ["app", "dir", "id", "session", "user"] },
+  "artifacts:inspect": { flags: ["dir"] },
+  "artifacts:cleanup": { flags: ["dir", "dry-run"], booleanFlags: ["dry-run"] },
+  "artifacts:prune": {
+    flags: ["dir", "execute", "keep-last", "older-than-ms"],
+    booleanFlags: ["execute"]
+  },
+  "agents:ledger": {
+    flags: ["include-output-text", "ledger", "no-timeline", "out", "state"],
+    booleanFlags: ["include-output-text", "no-timeline"]
+  },
+  "agents:inspect": {
+    flags: ["include-output-text", "ledger", "no-timeline", "out", "state"],
+    booleanFlags: ["include-output-text", "no-timeline"]
+  },
+  "agents:diff": { flags: ["base", "out", "target"] },
+  "agents:golden": { flags: ["ledger", "metadata", "name", "out", "output"] },
+  "agents:eval": {
+    flags: ["golden", "include-output-text", "ledger", "no-timeline", "out", "state"],
+    booleanFlags: ["include-output-text", "no-timeline"]
+  },
+  "workflow-states:list": { flags: ["app", "dir", "session", "user"] },
+  "workflow-states:show": { flags: ["app", "dir", "session", "user", "workflow"] },
+  "workflow-states:prune": {
+    flags: ["dir", "execute", "keep-last", "older-than-ms"],
+    booleanFlags: ["execute"]
+  },
+  "workflow:run": { flags: ["export", "input", "module", "output-out", "state-out"] },
+  "workflow:eval": { flags: ["fixture", "module", "report-out", "workflow-export"] },
+  "workflow:replay": {
+    flags: ["app", "artifacts-dir", "name", "save-artifact", "session", "state", "user"],
+    booleanFlags: ["save-artifact"]
+  },
+  "workflow:report": {
+    flags: ["app", "artifacts-dir", "evaluation", "name", "save-artifact", "session", "user", "workflow-run"],
+    booleanFlags: ["save-artifact"]
+  },
+  "workflow:compare": { flags: ["base", "target"] },
+  "workflow:baseline": { flags: ["name", "out", "report"] },
+  "workflow:gate": {
+    flags: [
+      "allow-failing-candidate",
+      "baseline",
+      "candidate",
+      "max-failed-cases",
+      "max-judge-score-drop",
+      "max-new-failures",
+      "max-pass-rate-drop",
+      "max-regressed-cases",
+      "max-removed-cases",
+      "min-judge-score",
+      "min-pass-rate",
+      "out",
+      "require-candidate-ok"
+    ],
+    booleanFlags: ["allow-failing-candidate", "require-candidate-ok"]
+  }
+};
+
 const printJson = (io: CliIO, value: unknown) => {
   (io.stdout ?? console.log)(JSON.stringify(value, null, 2));
 };
@@ -77,7 +164,23 @@ const parseArgs = (args: string[]): ParsedArgs => {
       positionals.push(arg);
       continue;
     }
-    const key = arg.slice(2);
+    const flag = arg.slice(2);
+    const equalsIndex = flag.indexOf("=");
+    const key = equalsIndex === -1 ? flag : flag.slice(0, equalsIndex);
+    if (!key) {
+      throw new Error('Invalid flag "--".');
+    }
+    if (key in flags) {
+      throw new Error(`Duplicate flag --${key}.`);
+    }
+    if (equalsIndex !== -1) {
+      const value = flag.slice(equalsIndex + 1);
+      if (!value) {
+        throw new Error(`Flag --${key} requires a value after "=".`);
+      }
+      flags[key] = value;
+      continue;
+    }
     const next = rest[index + 1];
     if (!next || next.startsWith("--")) {
       flags[key] = true;
@@ -87,6 +190,47 @@ const parseArgs = (args: string[]): ParsedArgs => {
     index += 1;
   }
   return { command, subcommand, positionals, flags };
+};
+
+const validateCommandArguments = (parsed: ParsedArgs): void => {
+  if (parsed.command === "doctor" && parsed.subcommand !== undefined) {
+    throw new Error(`Unexpected positional argument "${parsed.subcommand}".`);
+  }
+
+  const key = `${parsed.command ?? ""}:${parsed.subcommand ?? ""}`;
+  const contract = cliCommandContracts[key];
+  if (!contract) {
+    return;
+  }
+
+  const unknownFlags = Object.keys(parsed.flags).filter((flag) => !contract.flags.includes(flag));
+  if (unknownFlags.length) {
+    const command = `${parsed.command}${parsed.subcommand ? ` ${parsed.subcommand}` : ""}`;
+    throw new Error(
+      `Unknown flag${unknownFlags.length === 1 ? "" : "s"} for ${command}: ${unknownFlags.map((flag) => `--${flag}`).join(", ")}.`
+    );
+  }
+
+  for (const flag of contract.booleanFlags ?? []) {
+    if (flag in parsed.flags && parsed.flags[flag] !== true) {
+      throw new Error(`Flag --${flag} does not accept a value.`);
+    }
+  }
+
+  if (contract.positionalValues) {
+    if (
+      parsed.positionals.length !== contract.positionalValues.length ||
+      parsed.positionals.some((value, index) => value !== contract.positionalValues?.[index])
+    ) {
+      throw new Error(`Expected positional arguments: ${contract.positionalValues.join(" ")}.`);
+    }
+    return;
+  }
+
+  const maxPositionals = contract.positionals ?? 0;
+  if (parsed.positionals.length > maxPositionals) {
+    throw new Error(`Unexpected positional argument "${parsed.positionals[maxPositionals]}".`);
+  }
 };
 
 const stringFlag = (flags: Record<string, string | true>, name: string): string | undefined => {
@@ -118,6 +262,7 @@ const numberFlag = (flags: Record<string, string | true>, name: string): number 
 const helpText = `zhivex-ai
 
 Commands:
+  version
   init agent
   doctor
   agents ledger|inspect|diff|golden|eval
@@ -126,11 +271,23 @@ Commands:
   workflow replay|report|compare|baseline|gate|run|eval
   workflow-states list|show|prune
 
+Use --version or version to print package metadata.
 Use --dir for local file-backed stores. Output is JSON unless --help is used.
 Agent ledgers omit full output text unless --include-output-text is explicitly set.`;
 
 const printHelp = (io: CliIO) => {
   (io.stdout ?? console.log)(helpText);
+};
+
+const readCliPackageMetadata = async (): Promise<{ name: string; version: string }> => {
+  const value = JSON.parse(await fs.readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+    name?: unknown;
+    version?: unknown;
+  };
+  if (typeof value.name !== "string" || typeof value.version !== "string") {
+    throw new Error("Invalid @zhivex-ai/sdk package metadata.");
+  }
+  return { name: value.name, version: value.version };
 };
 
 const readJsonFile = async <T>(filePath: string): Promise<T> =>
@@ -1188,12 +1345,22 @@ const runWorkflowCommand = async (subcommand: string | undefined, flags: Record<
 };
 
 export const runCli = async (args: string[], io: CliIO = {}): Promise<number> => {
-  const parsed = parseArgs(args);
   try {
+    if (args.length === 1 && (args[0] === "--version" || args[0] === "version")) {
+      printJson(io, {
+        schemaVersion: 1,
+        type: "cli_version",
+        ...(await readCliPackageMetadata())
+      });
+      return 0;
+    }
+
+    const parsed = parseArgs(args);
     if (args.includes("--help") || parsed.command === "help" || !parsed.command) {
       printHelp(io);
       return 0;
     }
+    validateCommandArguments(parsed);
     if (parsed.command === "init") {
       return await runInitCommand(parsed.subcommand, parsed.flags, io, parsed.positionals);
     }

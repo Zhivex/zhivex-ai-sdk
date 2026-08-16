@@ -51,6 +51,9 @@ check runtime symbols with `getApiStability()` and review
 - Next.js guide: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/NEXTJS.md>
 - Production guide: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/PRODUCTION.md>
 - Workflows guide: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/WORKFLOWS.md>
+- Artifact Service: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/ARTIFACTS.md>
+- Model Catalog: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/MODEL_CATALOG.md>
+- CLI contract: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/CLI.md>
 - Observability guide: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/OBSERVABILITY.md>
 
 Repository and full documentation:

@@ -6,7 +6,12 @@ import { fileURLToPath } from "node:url";
 
 interface PackageManifest {
   name: string;
+  version?: string;
   exports?: Record<string, unknown> | string;
+}
+
+interface WorkspaceManifest {
+  devDependencies?: Record<string, string>;
 }
 
 interface NpmPackResult {
@@ -16,6 +21,14 @@ interface NpmPackResult {
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const workspaceDirectory = resolve(scriptDirectory, "..");
 const packagesDirectory = join(workspaceDirectory, "packages");
+const workspaceManifest = JSON.parse(
+  readFileSync(join(workspaceDirectory, "package.json"), "utf8")
+) as WorkspaceManifest;
+const exactDependencyVersion = (version: string) => version.replace(/^[~^]/, "");
+const otelApiVersion = process.env.ZHIVEX_OTEL_API_VERSION
+  ?? exactDependencyVersion(workspaceManifest.devDependencies?.["@opentelemetry/api"] ?? "1.9.0");
+const otelSdkVersion = process.env.ZHIVEX_OTEL_SDK_VERSION
+  ?? exactDependencyVersion(workspaceManifest.devDependencies?.["@opentelemetry/sdk-trace-base"] ?? "2.10.0");
 
 const hasJavaScriptExport = (target: unknown): boolean => {
   if (typeof target === "string") {
@@ -48,9 +61,11 @@ const manifests = readdirSync(packagesDirectory, { withFileTypes: true })
 const temporaryDirectory = mkdtempSync(join(tmpdir(), "zhivex-package-smoke-"));
 const packDirectory = join(temporaryDirectory, "packs");
 const consumerDirectory = join(temporaryDirectory, "consumer");
+const optionalPeerConsumerDirectory = join(temporaryDirectory, "consumer-without-otel-api");
 const npmCacheDirectory = join(temporaryDirectory, "npm-cache");
 mkdirSync(packDirectory);
 mkdirSync(consumerDirectory);
+mkdirSync(optionalPeerConsumerDirectory);
 
 const commandEnvironment = {
   ...process.env,
@@ -61,7 +76,8 @@ const commandEnvironment = {
 };
 
 try {
-  const tarballs = manifests.map(({ directory }) => {
+  const packedPackages = manifests.map(({ directory, manifest }) => {
+    console.log(`Packing ${manifest.name} for installed-consumer smoke...`);
     const output = execFileSync(
       "npm",
       ["pack", "--json", "--pack-destination", packDirectory, directory],
@@ -76,27 +92,291 @@ try {
     if (result.length !== 1 || !result[0]?.filename) {
       throw new Error(`npm pack returned an unexpected result for ${directory}.`);
     }
-    return join(packDirectory, result[0].filename);
+    return {
+      manifest,
+      tarball: join(packDirectory, result[0].filename)
+    };
+  });
+  const tarballs = packedPackages.map(({ tarball }) => tarball);
+  const coreTarball = packedPackages.find(({ manifest }) => manifest.name === "@zhivex-ai/core")?.tarball;
+  if (!coreTarball) {
+    throw new Error("@zhivex-ai/core tarball was not created.");
+  }
+
+  writeFileSync(
+    join(optionalPeerConsumerDirectory, "package.json"),
+    `${JSON.stringify({ name: "zhivex-optional-otel-peer-smoke", private: true, type: "module" }, null, 2)}\n`
+  );
+  console.log("Installing @zhivex-ai/core without optional OpenTelemetry peers...");
+  execFileSync(
+    "npm",
+    [
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--package-lock=false",
+      "--omit=optional",
+      coreTarball
+    ],
+    { cwd: optionalPeerConsumerDirectory, env: commandEnvironment, stdio: "inherit" }
+  );
+  const optionalPeerSmokePath = join(optionalPeerConsumerDirectory, "smoke.mjs");
+  writeFileSync(optionalPeerSmokePath, `
+import assert from "node:assert/strict";
+
+await assert.rejects(import("@opentelemetry/api"), /Cannot find package|module not found/i);
+const { createOtelObserver } = await import("@zhivex-ai/core");
+const spans = [];
+const observer = await createOtelObserver({
+  tracer: {
+    startSpan(name) {
+      const span = { name, ended: false, end() { this.ended = true; } };
+      spans.push(span);
+      return span;
+    }
+  }
+});
+const handle = observer.startSpan("optional-peer-smoke");
+await handle.end();
+assert.equal(spans.length, 1);
+assert.equal(spans[0]?.ended, true);
+await assert.rejects(createOtelObserver(), /OpenTelemetry is not installed/);
+console.log("INSTALLED_OTEL_OPTIONAL_PEER_SMOKE_OK");
+`);
+  execFileSync("node", [optionalPeerSmokePath], {
+    cwd: optionalPeerConsumerDirectory,
+    env: commandEnvironment,
+    stdio: "inherit"
   });
 
   writeFileSync(
     join(consumerDirectory, "package.json"),
     `${JSON.stringify({ name: "zhivex-package-consumer-smoke", private: true, type: "module" }, null, 2)}\n`
   );
+  console.log(`Installing packed packages with OpenTelemetry SDK ${otelSdkVersion}...`);
   execFileSync(
     "npm",
-    ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", ...tarballs],
+    [
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--package-lock=false",
+      `@opentelemetry/api@${otelApiVersion}`,
+      `@opentelemetry/context-async-hooks@${otelSdkVersion}`,
+      `@opentelemetry/sdk-metrics@${otelSdkVersion}`,
+      `@opentelemetry/sdk-trace-base@${otelSdkVersion}`,
+      ...tarballs
+    ],
     { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" }
   );
+
+  const sdkManifest = manifests.find(({ manifest }) => manifest.name === "@zhivex-ai/sdk")?.manifest;
+  if (!sdkManifest?.version) {
+    throw new Error("@zhivex-ai/sdk package metadata is missing a version.");
+  }
+  const installedCliPath = join(
+    consumerDirectory,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "zhivex-ai.cmd" : "zhivex-ai"
+  );
+  const runInstalledCli = (args: string[]) =>
+    execFileSync(installedCliPath, args, {
+      cwd: consumerDirectory,
+      encoding: "utf8",
+      env: commandEnvironment,
+      shell: process.platform === "win32"
+    });
+  const installedCliVersion = JSON.parse(runInstalledCli(["--version"])) as {
+    schemaVersion?: number;
+    type?: string;
+    name?: string;
+    version?: string;
+  };
+  if (
+    installedCliVersion.schemaVersion !== 1 ||
+    installedCliVersion.type !== "cli_version" ||
+    installedCliVersion.name !== "@zhivex-ai/sdk" ||
+    installedCliVersion.version !== sdkManifest.version
+  ) {
+    throw new Error("Installed zhivex-ai CLI version output does not match its package metadata.");
+  }
+  if (!runInstalledCli(["--help"]).includes("workflow replay|report|compare|baseline|gate|run|eval")) {
+    throw new Error("Installed zhivex-ai CLI help output is incomplete.");
+  }
+  console.log(`INSTALLED_CLI_SMOKE_OK ${installedCliVersion.version}`);
 
   const specifiers = manifests.flatMap(({ manifest }) => importSpecifiers(manifest));
   const smokeSource = `
 import assert from "node:assert/strict";
+import { context, SpanKind } from "@opentelemetry/api";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
+import {
+  AggregationTemporality,
+  InMemoryMetricExporter,
+  MeterProvider,
+  PeriodicExportingMetricReader
+} from "@opentelemetry/sdk-metrics";
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor
+} from "@opentelemetry/sdk-trace-base";
 
 const specifiers = ${JSON.stringify(specifiers)};
 for (const specifier of specifiers) {
   const exports = await import(specifier);
   assert.ok(Object.keys(exports).length > 0, \`\${specifier} has no runtime exports\`);
+}
+
+const {
+  createAgent,
+  createInMemorySessionService,
+  createOtelAgentObserver,
+  createOtelObserver,
+  createOtelTelemetryMiddleware,
+  createOtelWorkflowObserver,
+  createRunner,
+  createTextMessage,
+  createWorkflow,
+  OTEL_GENAI_CONTRACT_VERSION,
+  OTEL_GENAI_SEMCONV_REVISION,
+  runWorkflow,
+  wrapLanguageModel
+} = await import("@zhivex-ai/core");
+assert.equal(OTEL_GENAI_CONTRACT_VERSION, 1);
+assert.equal(OTEL_GENAI_SEMCONV_REVISION, "a685613a207a580163353b8e48a7ad88967e7b42");
+
+const spanExporter = new InMemorySpanExporter();
+const spanProcessor = new SimpleSpanProcessor(spanExporter);
+const tracerProvider = typeof BasicTracerProvider.prototype.addSpanProcessor === "function"
+  ? new BasicTracerProvider()
+  : new BasicTracerProvider({ spanProcessors: [spanProcessor] });
+if (typeof tracerProvider.addSpanProcessor === "function") {
+  tracerProvider.addSpanProcessor(spanProcessor);
+}
+const metricExporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+const meterProvider = new MeterProvider({
+  readers: [new PeriodicExportingMetricReader({
+    exporter: metricExporter,
+    exportIntervalMillis: 60_000
+  })]
+});
+const contextManager = new AsyncLocalStorageContextManager().enable();
+context.disable();
+assert.equal(context.setGlobalContextManager(contextManager), true);
+
+try {
+  const observer = await createOtelObserver({
+    tracerProvider,
+    tracerName: "installed-package-smoke"
+  });
+  const meter = meterProvider.getMeter("installed-package-smoke");
+  const workflowObserver = await createOtelWorkflowObserver({ observer, meter });
+  const agentObserver = await createOtelAgentObserver({ observer, meter });
+  const modelMiddleware = await createOtelTelemetryMiddleware({ observer, meter });
+  let modelCalls = 0;
+  let releaseConcurrentCalls;
+  const concurrentCallsReady = new Promise((resolve) => {
+    releaseConcurrentCalls = resolve;
+  });
+  const instrumentedModel = wrapLanguageModel({
+    provider: "openai",
+    modelId: "installed-otel-model",
+    capabilities: {
+      streaming: true,
+      tools: true,
+      structuredOutput: true,
+      jsonMode: true,
+      toolChoice: true,
+      parallelToolCalls: false,
+      vision: false,
+      files: false,
+      audioInput: false,
+      audioOutput: false,
+      embeddings: false,
+      reasoning: false,
+      webSearch: false
+    },
+    async generate() {
+      modelCalls += 1;
+      if (modelCalls === 2) releaseConcurrentCalls();
+      await concurrentCallsReady;
+      return {
+        messages: [createTextMessage("assistant", "installed otel ok")],
+        text: "installed otel ok",
+        finishReason: "stop",
+        usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 }
+      };
+    }
+  }, [modelMiddleware]);
+  const runner = createRunner({
+    appName: "installed-otel-smoke",
+    agent: createAgent({
+      name: "Installed OTEL Agent",
+      model: instrumentedModel,
+      maxSteps: 2,
+      onTelemetryEvent: agentObserver
+    }),
+    sessionService: createInMemorySessionService()
+  });
+  const workflow = createWorkflow({
+    name: "installed_otel_workflow",
+    onTelemetryEvent: workflowObserver,
+    steps: [{ id: "installed-model-step", runner, prompt: "Generate" }]
+  });
+
+  const results = await Promise.all([
+    runWorkflow(workflow, { userId: "installed-user-1", sessionId: "installed-session-1" }),
+    runWorkflow(workflow, { userId: "installed-user-2", sessionId: "installed-session-2" })
+  ]);
+  assert.ok(results.every((result) => result.status === "completed"));
+  assert.equal(modelCalls, 2);
+  await Promise.all([tracerProvider.forceFlush(), meterProvider.forceFlush()]);
+
+  const spans = spanExporter.getFinishedSpans();
+  const workflowSpans = spans.filter((span) => span.name === "invoke_workflow installed_otel_workflow");
+  const stepSpans = spans.filter((span) => span.name === "workflow_step installed-model-step");
+  const agentSpans = spans.filter((span) => span.name === "invoke_agent Installed OTEL Agent");
+  const modelSpans = spans.filter((span) => span.name === "chat installed-otel-model");
+  const parentSpanId = (span) => span.parentSpanContext?.spanId ?? span.parentSpanId;
+  assert.equal(workflowSpans.length, 2);
+  assert.equal(stepSpans.length, 2);
+  assert.equal(agentSpans.length, 2);
+  assert.equal(modelSpans.length, 2);
+  for (const workflowSpan of workflowSpans) {
+    assert.equal(workflowSpan.kind, SpanKind.INTERNAL);
+    const stepSpan = stepSpans.find((span) => parentSpanId(span) === workflowSpan.spanContext().spanId);
+    assert.ok(stepSpan, "workflow step did not inherit the workflow context");
+    const agentSpan = agentSpans.find((span) => parentSpanId(span) === stepSpan.spanContext().spanId);
+    assert.ok(agentSpan, "agent did not inherit the workflow-step context");
+    const modelSpan = modelSpans.find((span) => parentSpanId(span) === agentSpan.spanContext().spanId);
+    assert.ok(modelSpan, "model did not inherit the agent context");
+    assert.equal(modelSpan.kind, SpanKind.CLIENT);
+    assert.equal(modelSpan.spanContext().traceId, workflowSpan.spanContext().traceId);
+  }
+
+  const metrics = metricExporter.getMetrics()
+    .flatMap((resource) => resource.scopeMetrics)
+    .flatMap((scope) => scope.metrics);
+  const histogramCount = (name) => metrics
+    .filter((metric) => metric.descriptor.name === name)
+    .flatMap((metric) => metric.dataPoints)
+    .reduce((count, point) => count + (point.value?.count ?? 0), 0);
+  const metricByName = (name) => metrics.find((metric) => metric.descriptor.name === name);
+  assert.equal(histogramCount("gen_ai.invoke_workflow.duration"), 2);
+  assert.equal(histogramCount("gen_ai.invoke_agent.duration"), 2);
+  assert.equal(histogramCount("gen_ai.invoke_agent.inference_calls"), 2);
+  assert.equal(histogramCount("gen_ai.client.operation.duration"), 2);
+  assert.equal(histogramCount("gen_ai.client.token.usage"), 4);
+  assert.equal(metricByName("gen_ai.invoke_workflow.duration")?.descriptor.unit, "s");
+  assert.equal(metricByName("gen_ai.client.token.usage")?.descriptor.unit, "{token}");
+  console.log("INSTALLED_OTEL_REAL_SDK_SMOKE_OK workflows=2");
+} finally {
+  context.disable();
+  await Promise.all([tracerProvider.shutdown(), meterProvider.shutdown()]);
 }
 
 const { createHttpTool } = await import("@zhivex-ai/core");

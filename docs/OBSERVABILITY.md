@@ -146,18 +146,91 @@ For non-deterministic quality checks, add a judge function or model-based judge,
 
 Attach telemetry observers when you need live lifecycle events:
 
-```ts
-import { Agent, createOtelAgentObserver } from "@zhivex-ai/sdk";
+```bash
+bun add @opentelemetry/api
+```
 
-const observer = await createOtelAgentObserver();
+`@opentelemetry/api` is an optional peer of `@zhivex-ai/core`. Applications that do not create OTEL observers do not need to install it. The SDK and exporter remain app-owned; use your existing tracer provider, processors, exporters, context manager, and resource configuration.
+
+```ts
+import { metrics, trace } from "@opentelemetry/api";
+import {
+  Agent,
+  createOtelAgentObserver,
+  createOtelObserver,
+  createOtelTelemetryMiddleware,
+  createOtelWorkflowObserver,
+  runWorkflow,
+  wrapLanguageModel
+} from "@zhivex-ai/sdk";
+
+const tracer = trace.getTracer("my-app");
+const meter = metrics.getMeter("my-app");
+const otel = await createOtelObserver({ tracer });
+const agentObserver = await createOtelAgentObserver({ observer: otel, meter });
+const workflowObserver = await createOtelWorkflowObserver({ observer: otel, meter });
 
 const agent = new Agent({
-  model,
-  onTelemetryEvent: observer
+  id: "support-agent-v3",
+  name: "Support Agent",
+  model: wrapLanguageModel(model, [await createOtelTelemetryMiddleware({ observer: otel, meter })]),
+  onTelemetryEvent: agentObserver
 });
+
+await runWorkflow({
+  id: "support-pipeline-v2",
+  name: "support_pipeline",
+  steps,
+  onTelemetryEvent: workflowObserver
+}, { userId: "user_123" });
 ```
 
 Agent telemetry events include run start/finish, step start/finish, provider and local-tool approval requests/resolutions, memory loads, agent/tool guardrails, state saves, handoffs, subagent starts, subagent finishes, and tool approval decisions. Local approval payloads are persisted in agent state rather than provider messages; keep full arguments and outputs redacted unless an approved sink explicitly needs them.
+
+### OTEL GenAI v1 contract
+
+`OTEL_GENAI_CONTRACT_VERSION` is `1`. `OTEL_GENAI_SEMCONV_REVISION` pins the exact upstream Development revision used to audit the mapping. The dedicated OpenTelemetry GenAI repository does not currently publish a usable schema URL, so Zhivex deliberately omits `schemaUrl` instead of attaching an unresolvable value. Upstream changes do not silently change this contract.
+
+The default span names follow the OpenTelemetry GenAI semantic conventions where a standard operation exists:
+
+| Operation | Default span name | Kind |
+| --- | --- | --- |
+| Agent run | `invoke_agent {agentName}` or `invoke_agent` | `INTERNAL` |
+| Agent step | `agent_step` | `INTERNAL` |
+| Model generation or stream | `chat {modelId}` | `CLIENT` |
+| Local tool execution | `execute_tool {toolName}` | `INTERNAL` |
+| Workflow invocation | `invoke_workflow {workflowName}` or `invoke_workflow` | `INTERNAL` |
+| Workflow step | `workflow_step {stepId}` | `INTERNAL` |
+
+Set `spanNamePrefix` to retain an application-specific naming scheme. Prefixed agent spans use `{prefix}.run` and `{prefix}.step`; model spans use `{prefix}.generate`, `{prefix}.stream`, and `{prefix}.tool`.
+
+Zhivex emits the standard `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.*`, `gen_ai.response.*`, `gen_ai.usage.*`, `gen_ai.agent.name`, `gen_ai.tool.*`, `gen_ai.workflow.name`, and `gen_ai.conversation.id` attributes only where the corresponding convention applies. `AgentDefinition.id` remains `zhivex.agent_id`; it is not mislabeled as `gen_ai.agent.id`, which upstream reserves for provider-assigned hosted-agent identifiers. Provider names normalize known values such as `xai` → `x_ai` and `kimi` → `moonshot_ai`.
+
+The adapters create the recommended histograms when a meter or registered global meter provider is available:
+
+| Metric | Unit | Emission boundary |
+| --- | --- | --- |
+| `gen_ai.client.token.usage` | `{token}` | Input and output usage returned by model calls |
+| `gen_ai.client.operation.duration` | `s` | Generate and stream completion/error |
+| `gen_ai.client.operation.time_to_first_chunk` | `s` | First non-terminal streaming chunk only |
+| `gen_ai.client.operation.time_per_output_chunk` | `s` | Every streaming chunk after the first |
+| `gen_ai.invoke_agent.duration` | `s` | One in-process agent invocation |
+| `gen_ai.invoke_agent.inference_calls` | `{inference_call}` | Inference calls attributed to that invocation |
+| `gen_ai.invoke_agent.tool_calls` | `{tool_call}` | Client-side tool calls attributed to that invocation |
+| `gen_ai.execute_tool.duration` | `s` | One local tool execution |
+| `gen_ai.invoke_workflow.duration` | `s` | One end-to-end workflow invocation |
+
+All histograms use the explicit bucket boundaries recommended by the pinned upstream revision. Stream chunk telemetry is timing-only and emitted incrementally; it never accumulates an unbounded chunk array.
+
+Telemetry delivery is fail-open. Exceptions from tracers, spans, meters, or exporters do not replace a model, tool, agent, or workflow result, and the wrapped business operation is never retried by the telemetry layer.
+
+Agent and workflow invocation spans begin before context or persisted-state resolution, so setup, store, lease, validation, and preflight failures still produce an error span and duration sample while preserving the original application error.
+
+Workflow step execution activates its span context, and agent execution activates the agent-run context. When the factories share the same OpenTelemetry context manager, the resulting tree is `workflow → workflow step → agent → model/tool`; agent lifecycle step spans remain explicit children of the agent span. Explicit start/end timestamps keep span durations aligned with their duration metrics, including persisted-state reads and approval resumes.
+
+Failed spans record the exception, set `error.type`, and use OTEL `ERROR` status. Normal cancellation and approval suspension close deterministically without being mislabeled as failures. A terminal event closes orphaned child spans, span handles are idempotent, and per-run queues prevent duplicate or out-of-order lifecycle events from double-ending spans.
+
+Prompt text, messages, system instructions, tool arguments, tool results, and model output are never attached by these helpers. Guardrail event metadata is restricted to a bounded scalar allowlist under `zhivex.guardrail.metadata.*`; arbitrary keys, nested objects, and `gen_ai.*` injection are discarded. Upstream's `gen_ai.client.inference.operation.details` content event is opt-in and is not emitted. `gen_ai.evaluation.result` is also not synthesized automatically; evaluation reports remain app-owned and can be exported explicitly by the application's event/log pipeline.
 
 ## Recommended Pipeline
 

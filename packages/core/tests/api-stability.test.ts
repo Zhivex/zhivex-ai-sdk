@@ -80,7 +80,7 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("replayWorkflowRun")?.stability).toBe("stable");
     expect(api.getApiStability("WORKFLOW_RUN_STATE_SCHEMA_VERSION")?.stability).toBe("stable");
     expect(api.getApiStability("WORKFLOW_STATE_RECORD_SCHEMA_VERSION")?.stability).toBe("stable");
-    expect(api.getApiStability("createFileArtifactService")?.stability).toBe("beta");
+    expect(api.getApiStability("createFileArtifactService")?.stability).toBe("stable");
     expect(api.getApiStability("createFileWorkflowStateService")?.stability).toBe("stable");
     expect(api.getApiStability("createInMemoryWorkflowStateService")?.stability).toBe("stable");
     expect(api.getApiStability("createPostgresWorkflowStateService")?.stability).toBe("stable");
@@ -88,7 +88,12 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("createWorkflowEvaluationFixture")?.stability).toBe("stable");
     expect(api.getApiStability("createWorkflowEvaluationBaseline")?.stability).toBe("stable");
     expect(api.getApiStability("evaluateWorkflowEvaluationGate")?.stability).toBe("stable");
-    expect(api.getApiStability("verifyArtifactIntegrity")?.stability).toBe("beta");
+    expect(api.getApiStability("verifyArtifactIntegrity")?.stability).toBe("stable");
+    expect(api.getApiStability("createModelCatalog")?.stability).toBe("stable");
+    expect(api.getApiStability("createOtelObserver")?.stability).toBe("stable");
+    expect(api.getApiStability("createOtelWorkflowObserver")?.stability).toBe("stable");
+    expect(api.getApiStability("OTEL_GENAI_CONTRACT_VERSION")?.stability).toBe("stable");
+    expect(api.getApiStability("OTEL_GENAI_SEMCONV_REVISION")?.stability).toBe("stable");
     expect(api.getApiStability("createAgentAuditRecord")?.stability).toBe("beta");
     expect(api.getApiStability("createToolAuditRecords")?.stability).toBe("beta");
     expect(api.getApiStability("createReadOnlyToolApprovalPolicy")?.stability).toBe("beta");

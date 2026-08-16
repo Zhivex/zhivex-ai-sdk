@@ -34,6 +34,9 @@ Most applications should install `@zhivex-ai/sdk` and follow the main adoption g
 
 - Quickstart: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/QUICKSTART.md>
 - Production guide: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/PRODUCTION.md>
+- Artifact Service: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/ARTIFACTS.md>
+- Model Catalog: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/MODEL_CATALOG.md>
+- Observability: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/OBSERVABILITY.md>
 
 ## Stability
 

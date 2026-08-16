@@ -47,7 +47,7 @@ listApiStability("beta");
 
 The manifest classifies runtime exports as `stable`, `beta`, or `experimental`. Contract tests fail if `packages/core/src/index.ts` adds a runtime export that is not classified. Type-only exports are guarded separately by declaration snapshots for `@zhivex-ai/core` and `@zhivex-ai/sdk`; intentional public type changes should update those snapshots and the relevant docs together.
 
-The stable boundary includes shared generation, media, agent runtime, realtime sessions and live agents, safety, evaluation, replay, trace, Runner/session APIs, declarative workflows, every built-in workflow state service, workflow evaluation gates, and the dedicated Agent Control Plane contract listed by the manifest. Artifacts, CLI UX, OTEL integration, model-catalog metadata, and provider-native resource helpers remain Beta. Advanced tool registry helpers remain Experimental.
+The stable boundary includes shared generation, media, agent runtime, realtime sessions and live agents, safety, evaluation, replay, trace, Runner/session APIs, declarative workflows, every built-in workflow state service, workflow evaluation gates, the Artifact Service, Model Catalog, OpenTelemetry adapters, the `zhivex-ai` CLI, and the dedicated Agent Control Plane contract listed by the manifest. Provider-native resource helpers remain Beta. Advanced tool registry helpers remain Experimental.
 
 The current stable npm package is published under the `latest` dist-tag. Install it with `@zhivex-ai/sdk`. Use `@next` only for prerelease validation.
 
@@ -67,6 +67,10 @@ These APIs are the supported public contract for application code and production
 - Declarative workflows: `createWorkflow`, `runWorkflow`, `replayWorkflowRun`, sequential/parallel/loop step contracts, approval resume, schema-versioned `WorkflowRunState`, and its normalization/migration helpers
 - Workflow state: the `WorkflowStateService` contract, `loadWorkflowState`, `saveWorkflowState`, schema-versioned records and migration helpers, plus the in-memory, file-backed, SQLite, and Postgres implementations
 - Workflow evaluation: datasets, fixtures, reports, deterministic/model judges, report diffs, versioned deterministic baselines, and fail-closed regression gates
+- Artifact Service: schema-versioned JSON and binary records, in-memory/file/SQLite/Postgres services, bounded payload policies, integrity verification, external references, local inspection/cleanup/pruning, and explicit workflow artifact helpers
+- Model Catalog: immutable provider-scoped snapshots, aliases, recommendations, versioned pricing metadata, and explicit pinned/rolling data policy
+- OpenTelemetry adapters: the versioned GenAI mapping, `createOtelObserver`, `createOtelAgentObserver`, `createOtelTelemetryMiddleware`, `createOtelWorkflowObserver`, trace-context hierarchy, recommended runtime metrics, streaming timing, and documented privacy defaults
+- CLI / Dev UX: the installed `zhivex-ai` command grammar, schema-backed JSON output, fail-closed argument validation, local workflow execution and inspection commands, and dry-run-by-default pruning
 - Agent Control Plane: capsules, approval queues, ledgers, capability routing, tool policy, control-plane run/resume/stream operations, schema normalization/migration, and durable single-consumer approval resume exported from `@zhivex-ai/agents/control-plane`
 - Agent persistence contracts: `AgentRunStore`, `AgentMemoryStore`
 - Durable agent helpers: `cancelAgentRun`, schema-versioned `AgentRunState`, and `idempotencyKey` support on built-in run stores
@@ -90,13 +94,7 @@ The stable surface is intentionally narrower than the total number of exported s
 These APIs are supported and documented, but they may still change between minor releases as the SDK matures:
 
 - Agent telemetry event details and observer patterns
-- Workflow artifact helpers and file workflow-state pruning
-- Artifact service APIs: `createInMemoryArtifactService`, `createFileArtifactService`, `createSqliteArtifactService`, `createPostgresArtifactService`, `createBase64ArtifactData`, schema-versioned artifact records, binary artifact helpers, `ArtifactService`, and `ArtifactRecord`
-- Schema/versioning and migration helpers for Beta artifact records
-- Artifact integrity verification, external artifact references, file artifact cleanup/pruning helpers, and workflow state pruning helpers
-- CLI / Dev UX: the `zhivex-ai` local inspection and local workflow execution CLI, including workflow artifact save, workflow state inspection, and evaluation report compare commands
-- OTEL observability helpers
-- Model catalog helpers
+- File workflow-state pruning
 - Hosted-tool classification helpers
 - Gateway route metadata and policy selection ergonomics
 

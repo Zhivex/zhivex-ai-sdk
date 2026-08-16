@@ -25,6 +25,10 @@ import {
   type ArtifactRecord,
   type PostgresClientLike
 } from "../src/index.js";
+import {
+  DEFAULT_ARTIFACT_SERVICE_LIMITS,
+  resolveArtifactServiceLimits
+} from "../src/artifact.js";
 
 class FakeSqliteArtifactStatement<TResult extends Record<string, unknown> = Record<string, unknown>> {
   constructor(
@@ -83,6 +87,13 @@ class FakeSqliteArtifactStatement<TResult extends Record<string, unknown> = Reco
         updatedAt
       ] = params as [string, string, string, string, string, string | null, string | null, string | null, string, number, number];
       const artifact = JSON.parse(artifactJson) as ArtifactRecord;
+      if (this.sql.includes("DO NOTHING") && this.db.insertBeforeCas) {
+        this.db.artifacts.set(key, artifact);
+        this.db.insertBeforeCas = false;
+      }
+      if (this.sql.includes("DO NOTHING") && this.db.artifacts.has(key)) {
+        return { changes: 0 };
+      }
       this.db.artifacts.set(key, {
         ...artifact,
         appName,
@@ -144,6 +155,7 @@ class FakeSqliteArtifactDatabase {
   artifacts = new Map<string, ArtifactRecord>();
   execCalls: string[] = [];
   mutateBeforeCas = false;
+  insertBeforeCas = false;
 
   exec(sql: string) {
     this.execCalls.push(sql);
@@ -158,6 +170,7 @@ class FakePostgresArtifactClient {
   artifacts = new Map<string, ArtifactRecord>();
   queries: Array<{ sql: string; params: unknown[] }> = [];
   mutateBeforeCas = false;
+  insertBeforeCas = false;
 
   async query<TResult extends Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<{ rows: TResult[] }> {
     this.queries.push({ sql, params });
@@ -201,6 +214,13 @@ class FakePostgresArtifactClient {
         updatedAt
       ] = params as [string, string, string, string, string, string | null, string | null, string | null, string, number, number];
       const artifact = JSON.parse(artifactJson) as ArtifactRecord;
+      if (sql.includes("DO NOTHING") && this.insertBeforeCas) {
+        this.artifacts.set(key, artifact);
+        this.insertBeforeCas = false;
+      }
+      if (sql.includes("DO NOTHING") && this.artifacts.has(key)) {
+        return { rows: [] };
+      }
       this.artifacts.set(key, {
         ...artifact,
         appName,
@@ -213,6 +233,9 @@ class FakePostgresArtifactClient {
         createdAt,
         updatedAt
       });
+      if (sql.includes("RETURNING artifact_json")) {
+        return { rows: [{ artifact_json: artifact }] as TResult[] };
+      }
     }
 
     if (sql.includes("UPDATE")) {
@@ -262,6 +285,18 @@ class FakePostgresArtifactClient {
 }
 
 describe("artifact services", () => {
+  it("exposes safe configurable artifact service limits", () => {
+    expect(resolveArtifactServiceLimits()).toEqual(DEFAULT_ARTIFACT_SERVICE_LIMITS);
+    expect(resolveArtifactServiceLimits({ maxJsonBytes: 7 })).toMatchObject({
+      ...DEFAULT_ARTIFACT_SERVICE_LIMITS,
+      maxJsonBytes: 7
+    });
+    expect(() => resolveArtifactServiceLimits({ maxBinaryBytes: 0 })).toThrow(
+      'The "maxBinaryBytes" artifact limit must be a positive safe integer.'
+    );
+    expect(() => resolveArtifactServiceLimits({ maxRecordBytes: Number.MAX_VALUE })).toThrow(ValidationError);
+  });
+
   it("creates base64 artifact data with explicit metadata", () => {
     expect(createBase64ArtifactData("hello")).toEqual({
       data: "aGVsbG8=",
@@ -273,6 +308,114 @@ describe("artifact services", () => {
       encoding: "base64",
       size: 3
     });
+    expect(() => createBase64ArtifactData(new Uint8Array([1, 2]), { maxBase64Bytes: 1 })).toThrow(
+      "Artifact binary data is 2 bytes and exceeds the 1-byte limit."
+    );
+  });
+
+  it("enforces text, JSON, base64, binary, metadata, and record limits consistently", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-artifacts-limits-"));
+    const services = [
+      createInMemoryArtifactService({
+        limits: { maxTextBytes: 1, maxJsonBytes: 8, maxBase64Bytes: 1, maxBinaryBytes: 1, maxMetadataBytes: 8 }
+      }),
+      createFileArtifactService({
+        directory,
+        limits: { maxTextBytes: 1, maxJsonBytes: 8, maxBase64Bytes: 1, maxBinaryBytes: 1, maxMetadataBytes: 8 }
+      }),
+      createSqliteArtifactService({
+        db: new FakeSqliteArtifactDatabase(),
+        limits: { maxTextBytes: 1, maxJsonBytes: 8, maxBase64Bytes: 1, maxBinaryBytes: 1, maxMetadataBytes: 8 }
+      }),
+      createPostgresArtifactService({
+        client: new FakePostgresArtifactClient(),
+        limits: { maxTextBytes: 1, maxJsonBytes: 8, maxBase64Bytes: 1, maxBinaryBytes: 1, maxMetadataBytes: 8 }
+      })
+    ];
+
+    for (const [index, service] of services.entries()) {
+      const base = {
+        appName: "app",
+        userId: "user",
+        sessionId: "session",
+        name: "limited.bin",
+        contentType: "application/octet-stream"
+      };
+      await expect(Promise.resolve().then(() => service.saveArtifact({
+        ...base,
+        id: `text-${index}`,
+        data: "ab",
+        encoding: "text"
+      }))).rejects.toThrow("Artifact text data is 2 bytes and exceeds the 1-byte limit.");
+      await expect(Promise.resolve().then(() => service.saveArtifact({
+        ...base,
+        id: `json-${index}`,
+        data: { value: "too-large" },
+        encoding: "json"
+      }))).rejects.toThrow(/Artifact JSON data .* exceeds the 8-byte limit/);
+      await expect(Promise.resolve().then(() => service.saveArtifact({
+        ...base,
+        id: `base64-${index}`,
+        data: "AQI=",
+        encoding: "base64"
+      }))).rejects.toThrow(/exceeds the 1-byte limit/);
+      await expect(Promise.resolve().then(() => service.saveBinaryArtifact({
+        ...base,
+        id: `binary-${index}`,
+        data: new Uint8Array([1, 2])
+      }))).rejects.toThrow("Artifact binary data is 2 bytes and exceeds the 1-byte limit.");
+      await expect(Promise.resolve().then(() => service.saveArtifact({
+        ...base,
+        id: `metadata-${index}`,
+        data: "a",
+        metadata: { value: "too-large" }
+      }))).rejects.toThrow(/Artifact metadata .* exceeds the 8-byte limit/);
+    }
+
+    const recordLimited = createInMemoryArtifactService({ limits: { maxRecordBytes: 64 } });
+    expect(() => recordLimited.saveArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "record",
+      name: "record.txt",
+      contentType: "text/plain",
+      data: "ok"
+    })).toThrow(/Artifact record .* exceeds the 64-byte limit/);
+  });
+
+  it("rejects malformed encodings and invalid external binary records", () => {
+    const service = createInMemoryArtifactService();
+    expect(() => service.saveArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "bad-base64",
+      name: "bad.bin",
+      contentType: "application/octet-stream",
+      data: "not-base64",
+      encoding: "base64"
+    })).toThrow('Artifact data must be valid base64 when "encoding" is "base64".');
+    expect(() => service.saveArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "bad-text",
+      name: "bad.txt",
+      contentType: "text/plain",
+      data: { invalid: true },
+      encoding: "text"
+    } as never)).toThrow('Artifact data must be a string when "encoding" is "text".');
+    expect(() => service.saveArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "missing-external-reference",
+      name: "external.bin",
+      contentType: "application/octet-stream",
+      data: null,
+      storageMode: "binary"
+    })).toThrow("application-managed externalBlob reference");
   });
 
   it("saves and loads artifacts in memory", async () => {
@@ -449,11 +592,13 @@ describe("artifact services", () => {
     ).toThrow('The "sha256" artifact option does not match the decoded base64 data.');
   });
 
-  it("rejects mismatched sha256 metadata for memory and file binary artifacts", async () => {
+  it("rejects mismatched sha256 metadata for every binary artifact store", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-artifacts-binary-sha-"));
     const services = [
       createInMemoryArtifactService(),
-      createFileArtifactService({ directory })
+      createFileArtifactService({ directory }),
+      createSqliteArtifactService({ db: new FakeSqliteArtifactDatabase() }),
+      createPostgresArtifactService({ client: new FakePostgresArtifactClient() })
     ];
 
     for (const [index, service] of services.entries()) {
@@ -617,6 +762,36 @@ describe("artifact services", () => {
       contentType: "application/json",
       data: { value: 2 },
       expectedRevision: postgresArtifact.revision
+    })).rejects.toThrow(ConflictError);
+  });
+
+  it("uses atomic SQL create-only semantics for expectedRevision zero", async () => {
+    const sqliteDb = new FakeSqliteArtifactDatabase();
+    sqliteDb.insertBeforeCas = true;
+    const sqlite = createSqliteArtifactService({ db: sqliteDb });
+    expect(() => sqlite.saveArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "sqlite-create-only",
+      name: "create.json",
+      contentType: "application/json",
+      data: { writer: "local" },
+      expectedRevision: 0
+    })).toThrow(ConflictError);
+
+    const postgresClient = new FakePostgresArtifactClient();
+    postgresClient.insertBeforeCas = true;
+    const postgres = createPostgresArtifactService({ client: postgresClient });
+    await expect(postgres.saveArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "postgres-create-only",
+      name: "create.json",
+      contentType: "application/json",
+      data: { writer: "local" },
+      expectedRevision: 0
     })).rejects.toThrow(ConflictError);
   });
 
@@ -1011,7 +1186,6 @@ describe("artifact services", () => {
       name: "injected.json",
       contentType: "application/json",
       data: null,
-      storageMode: "binary",
       blobPath: "../victim.txt"
     } as never);
     expect(injected.blobPath).toBeUndefined();
@@ -1330,9 +1504,11 @@ describe("artifact services", () => {
 
     expect(api.createFileArtifactService).toBeTypeOf("function");
     expect(api.createBase64ArtifactData).toBeTypeOf("function");
+    expect(api.DEFAULT_ARTIFACT_SERVICE_LIMITS).toEqual(DEFAULT_ARTIFACT_SERVICE_LIMITS);
     expect(api.normalizeArtifactRecord).toBeTypeOf("function");
     expect(api.createInMemoryArtifactService).toBeTypeOf("function");
     expect(api.createPostgresArtifactService).toBeTypeOf("function");
+    expect(api.resolveArtifactServiceLimits).toBeTypeOf("function");
     expect(api.createSqliteArtifactService).toBeTypeOf("function");
   });
 
@@ -1356,15 +1532,20 @@ describe("artifact services", () => {
     expect(() => migrateArtifactRecord(normalized, 999 as 1)).toThrow(ValidationError);
   });
 
-  it("creates external artifact references for app-owned blob storage", () => {
-    expect(createExternalArtifactReference({
+  it("persists external references without treating them as SQL inline binaries", async () => {
+    const data = new Uint8Array([1, 2, 3]);
+    const sha256 = createHash("sha256").update(data).digest("hex");
+    const reference = createExternalArtifactReference({
       uri: "s3://bucket/resume.pdf",
-      size: 12,
+      size: data.byteLength,
+      sha256,
       metadata: { owner: "app" }
-    })).toMatchObject({
+    });
+    expect(reference).toMatchObject({
       data: null,
       storageMode: "binary",
-      size: 12,
+      size: data.byteLength,
+      sha256,
       metadata: {
         owner: "app",
         externalBlob: {
@@ -1373,7 +1554,40 @@ describe("artifact services", () => {
         }
       }
     });
+
+    const service = createPostgresArtifactService({ client: new FakePostgresArtifactClient() });
+    const artifact = await service.saveArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "external",
+      name: "resume.pdf",
+      contentType: "application/pdf",
+      ...reference
+    });
+    expect(artifact).toMatchObject({ storageMode: "binary", data: null, size: 3, sha256 });
+    await expect(service.loadBinaryArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "external"
+    })).resolves.toBeUndefined();
+    await expect(verifyArtifactIntegrity(service, {
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "external"
+    })).resolves.toMatchObject({
+      ok: false,
+      issues: [expect.objectContaining({ type: "external-data-unavailable" })]
+    });
+    expect(verifyArtifactRecordIntegrity(artifact, data)).toMatchObject({ ok: true, issues: [] });
+
     expect(() => createExternalArtifactReference({ uri: "" })).toThrow(ValidationError);
+    expect(() => createExternalArtifactReference({ uri: "s3://bucket/\u0000secret" })).toThrow(ValidationError);
+    expect(() => createExternalArtifactReference({ uri: "s3://bucket/object", metadata: { value: "large" } }, {
+      maxMetadataBytes: 8
+    })).toThrow(/Artifact metadata .* exceeds the 8-byte limit/);
   });
 
   it("prunes file-backed artifacts by retention policy and deletes blobs", async () => {
@@ -1403,7 +1617,7 @@ describe("artifact services", () => {
       const artifact = JSON.parse(await fs.readFile(metadataPath, "utf8")) as typeof old;
       await fs.writeFile(
         metadataPath,
-        JSON.stringify({ ...artifact, updatedAt: artifact.id === "old" ? 10 : 100 }),
+        JSON.stringify({ ...artifact, createdAt: artifact.id === "old" ? 5 : 50, updatedAt: artifact.id === "old" ? 10 : 100 }),
         "utf8"
       );
     }
@@ -1414,5 +1628,35 @@ describe("artifact services", () => {
     expect(result.deletedArtifactKeys[0]).not.toBe(result.keptArtifactKeys[0]);
     expect(result.deletedBlobPaths).toEqual([old.blobPath]);
     await expect(service.loadArtifact({ appName: "app", userId: "user", sessionId: "session", id: "old" })).resolves.toBeUndefined();
+  });
+
+  it("uses custom artifact limits while inspecting records for pruning", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-artifact-prune-limits-"));
+    const limits = {
+      maxMetadataBytes: DEFAULT_ARTIFACT_SERVICE_LIMITS.maxMetadataBytes + 4096
+    };
+    const service = createFileArtifactService({ directory, limits });
+    await service.saveArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "custom-limit",
+      name: "custom-limit.json",
+      contentType: "application/json",
+      data: { ok: true },
+      metadata: {
+        note: "x".repeat(DEFAULT_ARTIFACT_SERVICE_LIMITS.maxMetadataBytes + 1)
+      }
+    });
+
+    const result = await pruneFileArtifactStore({
+      directory,
+      limits,
+      keepLast: 1,
+      dryRun: true
+    });
+
+    expect(result.deletedArtifactKeys).toEqual([]);
+    expect(result.keptArtifactKeys).toHaveLength(1);
   });
 });

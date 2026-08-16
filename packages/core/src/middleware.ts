@@ -133,15 +133,27 @@ export const wrapLanguageModel = <TProviderOptions extends ProviderOptions>(
 export const createTelemetryMiddleware = <TProviderOptions extends ProviderOptions>(options: {
   onEvent: (event: LanguageModelTelemetryEvent<TProviderOptions>) => void | Promise<void>;
 }): LanguageModelMiddleware<TProviderOptions> => {
+  let nextGenerateId = 1;
+  let nextStreamId = 1;
+  const reportTelemetry = async (event: LanguageModelTelemetryEvent<TProviderOptions>) => {
+    try {
+      await options.onEvent(event);
+    } catch {
+      // Telemetry is best-effort and never owns the model operation outcome.
+    }
+  };
   const middleware: LanguageModelMiddleware<TProviderOptions> & {
     onTelemetryEvent?: TelemetryObserver<TProviderOptions>;
   } = {
     name: "telemetry",
-    onTelemetryEvent: options.onEvent,
+    onTelemetryEvent: reportTelemetry,
     async wrapGenerate(context, next) {
+    const generateId = nextGenerateId;
+    nextGenerateId += 1;
     const startedAt = Date.now();
-    await options.onEvent({
+    await reportTelemetry({
       type: "generate-start",
+      generateId,
       model: context.model,
       input: context.input,
       startedAt
@@ -150,8 +162,9 @@ export const createTelemetryMiddleware = <TProviderOptions extends ProviderOptio
     try {
       const output = await next();
       const finishedAt = Date.now();
-      await options.onEvent({
+      await reportTelemetry({
         type: "generate-finish",
+        generateId,
         model: context.model,
         input: context.input,
         output,
@@ -163,8 +176,9 @@ export const createTelemetryMiddleware = <TProviderOptions extends ProviderOptio
     } catch (error) {
       const finishedAt = Date.now();
       const err = error instanceof Error ? error : new Error(String(error));
-      await options.onEvent({
+      await reportTelemetry({
         type: "generate-error",
+        generateId,
         model: context.model,
         input: context.input,
         error: err,
@@ -176,74 +190,144 @@ export const createTelemetryMiddleware = <TProviderOptions extends ProviderOptio
     }
   },
   async wrapStream(context, next) {
-    const startedAt = Date.now();
-    await options.onEvent({
-      type: "stream-start",
-      model: context.model,
-      input: context.input,
-      startedAt
-    });
+    const streamId = nextStreamId;
+    nextStreamId += 1;
 
-    try {
-      const stream = await next();
-
-      return (async function* () {
+    return (async function* () {
+        const operationStartedAt = Date.now();
         let finishReason: FinishReason | undefined;
         let providerFinishReason: string | undefined;
         let usage: Extract<StreamEvent, { type: "finish" }>["usage"];
+        let firstChunkAt: number | undefined;
+        let previousChunkAt: number | undefined;
+        let outputChunkCount = 0;
+        let terminalEventEmitted = false;
 
         try {
+          await reportTelemetry({
+            type: "stream-start",
+            streamId,
+            model: context.model,
+            input: context.input,
+            startedAt: operationStartedAt
+          });
+          const stream = await next();
           for await (const event of stream) {
             if (event.type === "finish") {
               finishReason = event.finishReason;
               providerFinishReason = event.providerFinishReason;
               usage = event.usage;
+              const finishedAt = Date.now();
+              terminalEventEmitted = true;
+              await reportTelemetry({
+                type: "stream-finish",
+                streamId,
+                model: context.model,
+                input: context.input,
+                startedAt: operationStartedAt,
+                finishedAt,
+                latencyMs: finishedAt - operationStartedAt,
+                finishReason,
+                providerFinishReason,
+                usage,
+                outputChunkCount
+              });
+            } else if (event.type === "error") {
+              const finishedAt = Date.now();
+              terminalEventEmitted = true;
+              await reportTelemetry({
+                type: "stream-error",
+                streamId,
+                model: context.model,
+                input: context.input,
+                error: event.error,
+                startedAt: operationStartedAt,
+                finishedAt,
+                latencyMs: finishedAt - operationStartedAt,
+                outputChunkCount
+              });
+            } else {
+              const chunkAt = Date.now();
+              firstChunkAt ??= chunkAt;
+              const timeSincePreviousChunkMs = previousChunkAt === undefined
+                ? undefined
+                : chunkAt - previousChunkAt;
+              previousChunkAt = chunkAt;
+              outputChunkCount += 1;
+              await reportTelemetry({
+                type: "stream-chunk",
+                streamId,
+                model: context.model,
+                input: context.input,
+                startedAt: operationStartedAt,
+                chunkAt,
+                chunkIndex: outputChunkCount,
+                timeToFirstChunkMs: outputChunkCount === 1 ? chunkAt - operationStartedAt : undefined,
+                timeSincePreviousChunkMs
+              });
             }
 
             yield event;
+            if (terminalEventEmitted) return;
           }
 
-          const finishedAt = Date.now();
-          await options.onEvent({
-            type: "stream-finish",
-            model: context.model,
-            input: context.input,
-            startedAt,
-            finishedAt,
-            latencyMs: finishedAt - startedAt,
-            finishReason,
-            providerFinishReason,
-            usage
-          });
+          if (!terminalEventEmitted) {
+            const finishedAt = Date.now();
+            terminalEventEmitted = true;
+            await reportTelemetry({
+              type: "stream-finish",
+              streamId,
+              model: context.model,
+              input: context.input,
+              startedAt: operationStartedAt,
+              finishedAt,
+              latencyMs: finishedAt - operationStartedAt,
+              finishReason,
+              providerFinishReason,
+              usage,
+              outputChunkCount
+            });
+          }
         } catch (error) {
           const finishedAt = Date.now();
           const err = error instanceof Error ? error : new Error(String(error));
-          await options.onEvent({
-            type: "stream-error",
-            model: context.model,
-            input: context.input,
-            error: err,
-            startedAt,
-            finishedAt,
-            latencyMs: finishedAt - startedAt
-          });
+          if (!terminalEventEmitted) {
+            terminalEventEmitted = true;
+            await reportTelemetry({
+              type: "stream-error",
+              streamId,
+              model: context.model,
+              input: context.input,
+              error: err,
+              startedAt: operationStartedAt,
+              finishedAt,
+              latencyMs: finishedAt - operationStartedAt,
+              outputChunkCount
+            });
+          }
           throw error;
+        } finally {
+          if (!terminalEventEmitted) {
+            terminalEventEmitted = true;
+            const finishedAt = Date.now();
+            const error = Object.assign(
+              new Error("Stream consumption ended before the provider stream completed."),
+              { name: "AbortError" }
+            );
+            await reportTelemetry({
+              type: "stream-error",
+              streamId,
+              model: context.model,
+              input: context.input,
+              error,
+              startedAt: operationStartedAt,
+              finishedAt,
+              latencyMs: finishedAt - operationStartedAt,
+              outputChunkCount
+            });
+          }
         }
       })();
-    } catch (error) {
-      const finishedAt = Date.now();
-      const err = error instanceof Error ? error : new Error(String(error));
-      await options.onEvent({
-        type: "stream-error",
-        model: context.model,
-        input: context.input,
-        error: err,
-        startedAt,
-        finishedAt,
-        latencyMs: finishedAt - startedAt
-      });
-      throw error;
-    }
   }
   };
 

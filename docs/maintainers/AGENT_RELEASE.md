@@ -37,7 +37,7 @@ Beta entry points from `@zhivex-ai/agents/beta` may remain beta if their docs sa
 
 `streamLiveAgent` is Stable and remains isolated under the dedicated `@zhivex-ai/agents/realtime` entry point so the agent root stays narrow. Deterministic mocks belong under the stable `@zhivex-ai/agents/testing` entry point; neither belongs in the root.
 
-Declarative workflows, every built-in workflow state service, workflow evaluation baselines/gates, and the dedicated `@zhivex-ai/agents/control-plane` entry point are Stable. Artifact services/helpers and the CLI command surface remain Beta; installed Postgres and control-plane entrypoint smokes are required release evidence for changes to those Stable cohorts.
+Declarative workflows, every built-in workflow state service, workflow evaluation baselines/gates, Artifact Service, Model Catalog, OTEL adapters, the CLI command surface, and the dedicated `@zhivex-ai/agents/control-plane` entry point are Stable. Installed package, CLI, Postgres, OTEL, and control-plane entrypoint smokes are required release evidence for changes to those Stable cohorts.
 
 ## Focused Test Gate
 
@@ -186,8 +186,8 @@ branch-protection check when promoting the SQL services.
 the SDK's public Postgres workflow-state export against the same real database.
 
 The SQL suites validate restart/reopen durability, resume after approval,
-compare-and-swap conflicts, and workflow-state tenant isolation. The Postgres
-suite also retains coverage for the still-Beta artifact service and creates
+compare-and-swap conflicts, workflow-state tenant isolation, and the Stable
+artifact-service SQL contract. The Postgres suite creates
 uniquely named `zhivex_it_*` tables that it drops during cleanup. Keep the
 database URL opt-in for the broader integration command so normal local test
 runs cannot target an application database accidentally.
