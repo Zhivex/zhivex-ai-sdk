@@ -36,6 +36,26 @@ import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-c
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createGemini, geminiMcpTools } from "../src/index.js";
 
+const createPendingRealtimeReceiver = () => {
+  let finishReceive: (() => void) | undefined;
+  let setupAcknowledged = false;
+  const receive = new Promise<undefined>((resolve) => {
+    finishReceive = () => resolve(undefined);
+  });
+  return {
+    async recvJson() {
+      if (!setupAcknowledged) {
+        setupAcknowledged = true;
+        return { setupComplete: {} };
+      }
+      return receive;
+    },
+    async close() {
+      finishReceive?.();
+    }
+  };
+};
+
 describe("gemini adapter", () => {
   const fetchMock = vi.fn();
 
@@ -1806,10 +1826,7 @@ describe("gemini adapter", () => {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
         },
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       };
     });
 
@@ -1818,7 +1835,17 @@ describe("gemini adapter", () => {
       fetch: fetchMock as typeof fetch,
       realtimeConnectionFactory: connectionFactory
     });
-    const session = await provider.realtimeModel!("gemini-3.1-flash-live-preview").connect({
+    const model = provider.realtimeModel!("gemini-3.1-flash-live-preview");
+    expect(model.capabilities).toMatchObject({
+      streaming: false,
+      structuredOutput: false,
+      jsonMode: false,
+      toolChoice: false,
+      parallelToolCalls: false,
+      embeddings: false,
+      files: false
+    });
+    const session = await model.connect({
       instructions: "Be brief.",
       reasoning: { effort: "low", includeThoughts: true },
       inputAudioTranscription: true,
@@ -1862,8 +1889,9 @@ describe("gemini adapter", () => {
       }
     });
     expect(sent[2]).toMatchObject({
-      realtimeInput: {
-        text: "hello gemini"
+      clientContent: {
+        turns: [{ role: "user", parts: [{ text: "hello gemini" }] }],
+        turnComplete: true
       }
     });
   });
@@ -1879,7 +1907,41 @@ describe("gemini adapter", () => {
 
     await expect(model.connect({ affectiveDialog: true })).rejects.toThrow(/affectiveDialog/);
     await expect(model.connect({ proactiveAudio: true })).rejects.toThrow(/proactiveAudio/);
+    await expect(model.connect({ toolChoice: "required" })).rejects.toThrow(
+      "not required or named tool choice"
+    );
     expect(connectionFactory).not.toHaveBeenCalled();
+  });
+
+  it("omits Gemini Live tools when tool choice is none", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async () => ({
+      async sendJson(payload: Record<string, unknown>) {
+        sent.push(payload);
+      },
+      ...createPendingRealtimeReceiver()
+    }));
+    const provider = createGemini({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gemini-3.1-flash-live-preview").connect({
+      toolChoice: "none",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: () => ({ ok: true })
+        })
+      }
+    });
+
+    expect(sent[0]).toMatchObject({
+      setup: { generationConfig: { responseModalities: ["AUDIO"] } }
+    });
+    expect(sent[0]?.setup).not.toHaveProperty("tools");
+    await session.close();
   });
 
   it("connects Gemini 3.5 Live Translate sessions with typed translation config", async () => {
@@ -1887,16 +1949,19 @@ describe("gemini adapter", () => {
     const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
       expect(url).toContain("/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent");
       expect(headers).toEqual({});
-      let read = false;
+      let reads = 0;
       return {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
         },
         async recvJson() {
-          if (read) {
+          reads += 1;
+          if (reads === 1) {
+            return { setupComplete: {} };
+          }
+          if (reads > 2) {
             return undefined;
           }
-          read = true;
           return {
             serverContent: {
               modelTurn: {
@@ -1923,7 +1988,15 @@ describe("gemini adapter", () => {
       fetch: fetchMock as typeof fetch,
       realtimeConnectionFactory: connectionFactory
     });
-    const session = await provider.realtimeModel!("gemini-3.5-live-translate-preview").connect({
+    const model = provider.realtimeModel!("gemini-3.5-live-translate-preview");
+    expect(model.capabilities).toMatchObject({
+      tools: false,
+      vision: false,
+      reasoning: false,
+      webSearch: false,
+      realtime: { tools: false, imageInput: false }
+    });
+    const session = await model.connect({
       mode: "translation",
       translation: {
         sourceLanguage: "en",
@@ -1996,10 +2069,7 @@ describe("gemini adapter", () => {
       async sendJson(payload: Record<string, unknown>) {
         sent.push(payload);
       },
-      async recvJson() {
-        return undefined;
-      },
-      async close() {}
+      ...createPendingRealtimeReceiver()
     }));
     const provider = createGemini({
       apiKey: "test",

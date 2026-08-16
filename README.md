@@ -945,6 +945,11 @@ Output is JSON pretty-printed by default. JSON output files are written with mod
 
 ### Realtime Sessions
 
+The shared realtime session and live-agent lifecycle contracts are **Stable**.
+Individual provider model IDs and upstream preview availability remain
+provider-scoped, so keep the provider matrix and
+[`STABILITY.md`](./STABILITY.md) in the release review.
+
 The shared realtime contract lets provider adapters expose low-latency audio/text sessions without changing the rest of your app architecture.
 
 ```ts
@@ -1036,6 +1041,7 @@ Current shared provider coverage for realtime sessions:
 - Azure OpenAI
 - Gemini
 - Vertex
+- Qwen
 
 Notes:
 
@@ -1048,8 +1054,9 @@ Notes:
 - OpenAI supports `sendMedia()` for image inputs on `gpt-realtime`, `gpt-realtime-2`, `gpt-realtime-2.1`, `gpt-realtime-mini`, and `gpt-realtime-2.1-mini`, but not on the older `gpt-4o-*-realtime-preview`, `gpt-realtime-translate`, or `gpt-realtime-whisper` models.
 - OpenAI Realtime sends `providerOptions.safety_identifier` as the `OpenAI-Safety-Identifier` header. Provider-executed MCP lifecycle and approval requests are emitted as `realtime-provider-data`; use `openAIRealtimeMcpApprovalResult()` with `session.sendToolResult()` to answer an approval request.
 - OpenAI `gpt-realtime-translate` uses realtime translation mode and requires `translation.targetLanguage`; OpenAI `gpt-realtime-whisper` uses realtime transcription mode and emits transcript events without model audio output.
-- Gemini and Vertex Live sessions can opt into typed `inputAudioTranscription`, `outputAudioTranscription`, `mediaResolution`, `affectiveDialog`, `proactiveAudio`, and `reasoning` setup fields where the selected model supports them. Gemini `gemini-3.1-flash-live-preview` rejects `affectiveDialog` and `proactiveAudio` before opening a WebSocket. For Gemini API preview-only Live features, pass `providerOptions: { apiVersion: "v1alpha" }`.
+- Gemini and Vertex Live sessions request the audio output modality required by the current Google Live models. Enable `outputAudioTranscription` when application code also needs text output. Sessions can opt into typed `inputAudioTranscription`, `mediaResolution`, `affectiveDialog`, `proactiveAudio`, and `reasoning` setup fields where the selected model supports them. Gemini `gemini-3.1-flash-live-preview` rejects `affectiveDialog` and `proactiveAudio` before opening a WebSocket. For Gemini API preview-only Live features, pass `providerOptions: { apiVersion: "v1alpha" }`.
 - Gemini and Vertex `gemini-3.5-live-translate-preview` sessions map `translation.targetLanguage` to Google Live `translationConfig.targetLanguageCode`, emit translated audio plus assistant transcript events, and reject tools, text input, image input, reasoning, and system instructions before the request is sent. Vertex availability still depends on the selected project, region, and model access.
+- Qwen Realtime accepts callable tools with automatic selection; `toolChoice: "none"` is enforced locally by omitting tools. It rejects `"required"`, named-tool selection, and `providerOptions.enable_search: true` combined with tools before opening the WebSocket. Output defaults to `modalities: ["text"]`; configure `voice` or `outputAudioMediaType` to request `modalities: ["text", "audio"]`. These validations intentionally fail closed against Qwen's current realtime contract.
 - Advanced provider-specific session fields can still be passed through `RealtimeSessionConfig.providerOptions`.
 
 For browser-driven interview-style flows, you can send camera frames through the shared contract on providers that support realtime image input:
@@ -1105,7 +1112,11 @@ const live = streamLiveAgent(
     }
   },
   {
-    prompt: "How is Madrid today?"
+    prompt: "How is Madrid today?",
+    realtime: {
+      outputAudioMediaType: "audio/pcm",
+      outputAudioTranscription: true
+    }
   }
 );
 
@@ -1116,6 +1127,11 @@ for await (const chunk of live.textStream) {
 const result = await live.collect();
 console.log(result.outputText);
 ```
+
+Maintainers certify `streamLiveAgent()` separately from ordinary provider smoke.
+The opt-in gate uses real Gemini, Qwen, and OpenAI realtime sessions, requires one
+local tool execution, a non-empty post-tool response, and a closed session. See
+the [realtime/live certification guide](./docs/maintainers/AGENT_REALTIME_CERTIFICATION.md).
 
 ### Agent Persistence And Memory
 

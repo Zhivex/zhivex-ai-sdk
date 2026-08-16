@@ -35,7 +35,7 @@ Beta entry points from `@zhivex-ai/agents/beta` may remain beta if their docs sa
 - golden traces
 - capability router
 
-`streamLiveAgent` must remain isolated under the experimental `@zhivex-ai/agents/realtime` entry point. Deterministic mocks belong under `@zhivex-ai/agents/testing`; neither belongs in the stable root.
+`streamLiveAgent` is Stable and remains isolated under the dedicated `@zhivex-ai/agents/realtime` entry point so the agent root stays narrow. Deterministic mocks belong under the stable `@zhivex-ai/agents/testing` entry point; neither belongs in the root.
 
 Declarative workflows and the in-memory/file workflow state services are stable surfaces in `@zhivex-ai/sdk`; they are intentionally not re-exported by `@zhivex-ai/agents/beta`. SQL workflow state services, workflow evaluations, artifact helpers, and CLI workflow commands remain Beta.
 
@@ -106,6 +106,22 @@ journal ownership with separate database connections.
 The latest recorded matrix and scope are in
 [`AGENT_LIVE_CERTIFICATION.md`](./AGENT_LIVE_CERTIFICATION.md).
 
+Realtime/live-agent certification is a separate fail-closed gate. With the three
+provider credentials in `.env`, run:
+
+```bash
+bun --env-file=.env run test:integration:agents-realtime
+```
+
+The dedicated command sets `ZHIVEX_LIVE_AGENT_CERTIFICATION=1`; when active, the
+suite fails rather than skipping if Gemini, Qwen, or OpenAI credentials are
+missing. It exercises `streamLiveAgent()` through all three real realtime
+providers, requires one local tool execution, requires a non-empty response after
+the tool result, and verifies session closure within 45 seconds. Model overrides
+are optional and documented in
+[`AGENT_REALTIME_CERTIFICATION.md`](./AGENT_REALTIME_CERTIFICATION.md). A green
+gate is required release evidence for the Stable realtime/live contract.
+
 Before publishing, repeat the approval/restart/journal path from tarballs
 installed in an isolated Bun consumer:
 
@@ -117,6 +133,20 @@ bun run smoke:packages:agents-live
 This second gate packs `core`, `agents`, Gemini, DeepSeek, and Qwen, installs
 those tarballs through `file:` dependencies, and executes only their public npm
 entrypoints. It is also fail-closed for the database and provider credentials.
+
+The general installed-package gate also runs an offline deterministic realtime
+consumer through the packed `@zhivex-ai/core`, `@zhivex-ai/sdk`, and
+`@zhivex-ai/agents/realtime` entrypoints:
+
+```bash
+bun run smoke:packages
+```
+
+It constructs `CallbackRealtimeSession`, executes `streamLiveAgent`, emits an
+initial tool-call response, returns one tool result, waits for the non-empty
+post-tool response, observes both response-complete events, and proves the
+connection closes. This detects packaging, entrypoint, and tool-continuation
+regressions without claiming live provider certification.
 
 Before releasing workflow changes or promoting a remaining SQL persistence
 service, run the opt-in live workflow certification with Gemini or Qwen and a

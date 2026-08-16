@@ -25,6 +25,7 @@
     "test:integration:zai": "ZHIVEX_INTEGRATION_PROVIDER=zai vitest run --config vitest.integration.config.ts packages/zai/tests/zai.integration.test.ts packages/core/tests/*.integration.test.ts",
     "test:integration:qwen": "ZHIVEX_INTEGRATION_PROVIDER=qwen vitest run --config vitest.integration.config.ts packages/qwen/tests/qwen.integration.test.ts packages/core/tests/*.integration.test.ts",
     "test:integration:agents": "ZHIVEX_AGENT_LIVE_CERTIFICATION=1 vitest run --config vitest.integration.config.ts packages/core/tests/agent-live.integration.test.ts",
+    "test:integration:agents-realtime": "ZHIVEX_LIVE_AGENT_CERTIFICATION=1 vitest run --config vitest.integration.config.ts packages/core/tests/agent-realtime-live.integration.test.ts",
     "test:integration:workflows": "vitest run --config vitest.integration.config.ts packages/core/tests/workflow-providers.integration.test.ts packages/core/tests/workflow-postgres.integration.test.ts",
     "test:integration:ollama": "OLLAMA_INTEGRATION=1 ZHIVEX_INTEGRATION_PROVIDER=ollama vitest run --config vitest.integration.config.ts packages/core/tests/*.integration.test.ts",
     "test:integration:vertex": "vitest run --config vitest.integration.config.ts packages/vertex/tests/vertex.integration.test.ts",
@@ -52,6 +53,7 @@
     "react-dom": "^19.2.8",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10",
+    "ws": "^8.21.1",
     "zod": "^4.4.3"
   },
   "overrides": {

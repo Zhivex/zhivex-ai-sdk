@@ -32,7 +32,7 @@ export interface BoundedReplayBroadcastOptions {
 
 export interface PublishOptions {
   replay?: boolean;
-  /** Allows a bounded number of lifecycle/finish events beyond replay capacity. */
+  /** Allows a bounded number of lifecycle/finish events beyond replay and subscriber capacity. */
   terminal?: boolean;
 }
 
@@ -110,8 +110,10 @@ export class BoundedReplayBroadcast<T> {
           return;
         }
 
-        while (subscriber.queue.length >= this.maxSubscriberQueue && this.subscribers.has(subscriber)) {
-          await new Promise<void>((resolve) => subscriber.spaceWaiters.add(resolve));
+        if (!options.terminal) {
+          while (subscriber.queue.length >= this.maxSubscriberQueue && this.subscribers.has(subscriber)) {
+            await new Promise<void>((resolve) => subscriber.spaceWaiters.add(resolve));
+          }
         }
 
         if (!this.subscribers.has(subscriber)) {

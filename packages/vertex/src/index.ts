@@ -277,19 +277,48 @@ const musicGenerationCapabilities: ModelCapabilities = {
   }
 };
 
-const realtimeCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  audioInput: true,
-  audioOutput: true,
-  realtime: {
-    sessions: true,
+const realtimeCapabilities = (modelId: string): ModelCapabilities => {
+  const translation = isGeminiLiveTranslateModel(modelId);
+  return {
+    ...capabilities,
+    streaming: false,
+    tools: !translation,
+    structuredOutput: false,
+    jsonMode: false,
+    toolChoice: false,
+    parallelToolCalls: false,
+    vision: !translation,
+    files: false,
     audioInput: true,
     audioOutput: true,
-    imageInput: true,
-    tools: true,
-    browserTokens: false
-  }
+    embeddings: false,
+    fileSearch: false,
+    urlContext: false,
+    contextCaching: false,
+    batch: false,
+    interactions: false,
+    rawPrediction: false,
+    computerUse: false,
+    reasoning: !translation,
+    webSearch: !translation,
+    agentCapabilities: {
+      ...capabilities.agentCapabilities!,
+      toolChoiceNone: !translation,
+      hostedWebSearch: !translation,
+      hostedFileSearch: false,
+      remoteMcp: false,
+      computerUse: false,
+      codeExecution: false
+    },
+    realtime: {
+      sessions: true,
+      audioInput: true,
+      audioOutput: true,
+      imageInput: !translation,
+      tools: !translation,
+      browserTokens: false
+    }
+  };
 };
 
 const MIB = 1024 * 1024;
@@ -935,6 +964,15 @@ const assertVertexRealtimeTranslateConfig = (config: RealtimeSessionConfig, mode
   }
 };
 
+const assertVertexRealtimeConfig = (config: RealtimeSessionConfig, modelId: string) => {
+  assertVertexRealtimeTranslateConfig(config, modelId);
+  if (config.toolChoice !== undefined && !["auto", "none"].includes(String(config.toolChoice))) {
+    throw new UnsupportedFeatureError(
+      "Vertex Live supports automatic tool selection or tool disabling, but not required or named tool choice."
+    );
+  }
+};
+
 const vertexRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => ({
   setup: {
     model: `models/${modelId}`,
@@ -950,7 +988,7 @@ const vertexRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
             }
           }
         : {}),
-      responseModalities: isGeminiLiveTranslateModel(modelId) || config.outputAudioMediaType || config.voice ? ["AUDIO"] : ["TEXT"],
+      responseModalities: ["AUDIO"],
       ...(mapRealtimeThinkingConfig(config) ? { thinkingConfig: mapRealtimeThinkingConfig(config) } : {})
     },
     ...(mapRealtimeTranslationConfig(config) ? { translationConfig: mapRealtimeTranslationConfig(config) } : {}),
@@ -974,7 +1012,9 @@ const vertexRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
           }
         }
       : {}),
-    ...(mapTools(toToolSet(config.tools)) ? { tools: mapTools(toToolSet(config.tools)) } : {}),
+    ...(config.toolChoice !== "none" && mapTools(toToolSet(config.tools))
+      ? { tools: mapTools(toToolSet(config.tools)) }
+      : {}),
     ...mapRealtimeProviderOptions(config.providerOptions as Record<string, unknown> | undefined)
   }
 });
@@ -2486,7 +2526,7 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
 
 class VertexRealtimeModel implements RealtimeModel {
   readonly provider = "vertex";
-  readonly capabilities = realtimeCapabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
@@ -2496,10 +2536,12 @@ class VertexRealtimeModel implements RealtimeModel {
     private readonly connectionFactory?: RealtimeConnectionFactory,
     private readonly realtimeURL?: string,
     private readonly allowUnsafeEndpoints = false
-  ) {}
+  ) {
+    this.capabilities = realtimeCapabilities(modelId);
+  }
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
-    assertVertexRealtimeTranslateConfig(config, this.modelId);
+    assertVertexRealtimeConfig(config, this.modelId);
 
     if (this.auth.type === "api-key") {
       throw new UnsupportedFeatureError('Provider "vertex" realtime sessions require accessToken or getAccessToken auth.');
@@ -2532,8 +2574,10 @@ class VertexRealtimeModel implements RealtimeModel {
       capabilities: this.capabilities,
       config,
       connection,
+      initializationTimeoutMs: options?.timeoutMs,
       callbacks: {
         parseEvent: parseVertexRealtimeEvent,
+        isReadyPayload: (payload) => "setupComplete" in payload || "setup_complete" in payload,
         buildAudioPayloads: (frame) => [
           {
             realtimeInput: {
@@ -2597,11 +2641,11 @@ class VertexRealtimeModel implements RealtimeModel {
           }
         ],
         buildUpdatePayloads: (sessionConfig) => {
-          assertVertexRealtimeTranslateConfig(sessionConfig, this.modelId);
+          assertVertexRealtimeConfig(sessionConfig, this.modelId);
           return [vertexRealtimeSetup(sessionConfig, this.modelId)];
         },
         buildInitialPayloads: (sessionConfig) => {
-          assertVertexRealtimeTranslateConfig(sessionConfig, this.modelId);
+          assertVertexRealtimeConfig(sessionConfig, this.modelId);
           return [vertexRealtimeSetup(sessionConfig, this.modelId)];
         }
       }

@@ -8,6 +8,7 @@ export interface ApiStabilityEntry {
 const stableSymbols = [
   "AGENT_RUN_STATE_SCHEMA_VERSION",
   "Agent",
+  "CallbackRealtimeSession",
   "ConfigurationError",
   "ConflictError",
   "GuardrailTriggeredError",
@@ -85,6 +86,8 @@ const stableSymbols = [
   "embed",
   "embedMany",
   "embedRetrievalDocuments",
+  "encodeAudioFrame",
+  "encodeMediaFrame",
   "estimateAgentRunCost",
   "estimateTokenCost",
   "formatRetrievedContext",
@@ -126,6 +129,7 @@ const stableSymbols = [
   "normalizeMessages",
   "normalizeWorkflowRunState",
   "normalizeWorkflowStateRecord",
+  "openWebSocketConnection",
   "parseUIMessageRequest",
   "prepareSubagentsForAgent",
   "providerDataPart",
@@ -147,6 +151,7 @@ const stableSymbols = [
   "serializeJsonValue",
   "serializeUIMessage",
   "streamAgent",
+  "streamLiveAgent",
   "streamObject",
   "streamSpeech",
   "streamSSE",
@@ -171,6 +176,7 @@ const stableSymbols = [
   "toolResultPayload",
   "transcribeAudio",
   "user",
+  "unsupportedBrowserToken",
   "validateMessageParts",
   "withRetry",
   "withTimeoutSignal",
@@ -277,13 +283,10 @@ const betaSymbols = [
 
 const experimentalSymbols = [
   "AdvancedToolRegistry",
-  "CallbackRealtimeSession",
   "createAdvancedToolRegistry",
   "createHttpTool",
   "createToolPermissionPreset",
   "createToolTestFixture",
-  "encodeAudioFrame",
-  "encodeMediaFrame",
   "googleCodeExecutionTool",
   "googleComputerUseTool",
   "googleFileSearchTool",
@@ -291,13 +294,10 @@ const experimentalSymbols = [
   "googleSearchTool",
   "googleUrlContextTool",
   "inspectToolRegistry",
-  "openWebSocketConnection",
   "recordToolTestFixture",
   "runToolTestFixture",
-  "streamLiveAgent",
   "testToolDefinition",
-  "testToolRegistry",
-  "unsupportedBrowserToken"
+  "testToolRegistry"
 ] as const;
 
 const createManifest = () => {

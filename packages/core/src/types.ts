@@ -981,9 +981,12 @@ export interface MediaFrame {
 }
 
 export interface RealtimeConnectOptions {
+  /** Maximum time allowed to establish the provider transport. */
   timeoutMs?: number;
+  /** Cancels connection establishment and is passed to the transport for session-lifetime cancellation. */
   signal?: AbortSignal;
   subprotocols?: string[];
+  /** Maximum accepted inbound WebSocket frame size. */
   maxIncomingFrameBytes?: number;
 }
 
@@ -1002,6 +1005,7 @@ export interface RealtimeSessionConfig {
     delay?: "minimal" | "low" | "medium" | "high" | "xhigh";
   };
   inputAudioTranscription?: boolean | Record<string, unknown>;
+  /** Enable this when an audio-output model must also produce `outputText`. */
   outputAudioTranscription?: boolean | Record<string, unknown>;
   translation?: {
     targetLanguage: string;
@@ -2217,10 +2221,22 @@ export interface PrepareSubagentsForAgentOptions {
 export type LiveAgentRunInput = GenerateInputSource &
   RetryOptions & {
     runId?: string;
+    /** Tenant/user isolation boundary propagated to durable state, memory, and tool journals. */
+    scope?: AgentStoreScope;
+    /**
+     * Atomically reserves this invocation when a durable store is configured.
+     * A terminal reservation is replayed without opening another realtime session.
+     */
+    idempotencyKey?: string;
     system?: string;
     tools?: ToolCollection;
     toolChoice?: ToolChoice;
     toolExecution?: ToolExecutionOptions;
+    /**
+     * Live sessions support immediate allow/deny decisions. Returning
+     * `approvalRequired: true` fails closed because live runs do not expose a
+     * resumable approval handle.
+     */
     toolApprovalPolicy?: ToolApprovalPolicy;
     providerOptions?: ProviderOptions;
     metadata?: Record<string, JsonValue>;

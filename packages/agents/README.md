@@ -40,17 +40,17 @@ console.log(result.state);
 
 ## Entry Points
 
-The package uses explicit entry points so production applications do not accidentally couple themselves to beta or experimental APIs:
+The package uses explicit entry points so production applications can keep operational, realtime, beta, and testing dependencies intentional:
 
 | Import | Stability | Purpose |
 | --- | --- | --- |
 | `@zhivex-ai/agents` | Stable | Agent execution, tools, HITL, safety, streaming, handoffs, and subagents |
 | `@zhivex-ai/agents/ops` | Stable | Stores, memory, tracing, evaluation, replay, costs, and provider-support reports |
 | `@zhivex-ai/agents/beta` | Beta | Control plane, capsules, approval queues, ledgers, governance, and capability routing |
-| `@zhivex-ai/agents/realtime` | Experimental | Live/realtime agent streaming |
+| `@zhivex-ai/agents/realtime` | Stable | Live/realtime agent streaming |
 | `@zhivex-ai/agents/testing` | Stable | Deterministic model and tool test doubles |
 
-Beta APIs may change between minor releases. Experimental APIs may change more frequently and should be isolated behind an application-owned adapter.
+Beta APIs may change between minor releases. Provider-specific realtime options and upstream preview model availability are not promoted by the stable shared realtime contract.
 
 ## What This Package Covers
 
@@ -202,7 +202,7 @@ Tier A means native agent building blocks such as approval-capable remote MCP or
 
 ## Realtime And Testing
 
-Keep experimental realtime use explicit:
+Keep realtime dependencies explicit through the dedicated stable entry point:
 
 ```ts
 import { streamLiveAgent } from "@zhivex-ai/agents/realtime";

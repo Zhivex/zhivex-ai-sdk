@@ -39,6 +39,21 @@ import {
   openAIWebSearchTool
 } from "../src/index.js";
 
+const createPendingRealtimeReceiver = () => {
+  let finishReceive: (() => void) | undefined;
+  const receive = new Promise<undefined>((resolve) => {
+    finishReceive = () => resolve(undefined);
+  });
+  return {
+    async recvJson() {
+      return receive;
+    },
+    async close() {
+      finishReceive?.();
+    }
+  };
+};
+
 describe("openai adapter", () => {
   const fetchMock = vi.fn();
 
@@ -2113,10 +2128,7 @@ describe("openai adapter", () => {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
         },
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       };
     });
 
@@ -2187,10 +2199,7 @@ describe("openai adapter", () => {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
         },
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       };
     });
 
@@ -2305,10 +2314,7 @@ describe("openai adapter", () => {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
         },
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       };
     });
 
@@ -2349,10 +2355,7 @@ describe("openai adapter", () => {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
         },
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       }));
       const provider = createOpenAI({
         apiKey: "test",
@@ -2401,7 +2404,7 @@ describe("openai adapter", () => {
 
   it("normalizes provider-executed Realtime MCP lifecycle events and sends explicit approval responses", async () => {
     const sent: Record<string, unknown>[] = [];
-    const incoming: Array<Record<string, unknown> | undefined> = [
+    const incoming: Array<Record<string, unknown>> = [
       { type: "mcp_list_tools.in_progress", item_id: "list_1" },
       { type: "mcp_list_tools.completed", item_id: "list_1" },
       {
@@ -2451,20 +2454,33 @@ describe("openai adapter", () => {
         type: "response.mcp_call.failed",
         item_id: "call_2",
         error: { message: "MCP server unavailable" }
-      },
-      undefined
+      }
     ];
     let incomingIndex = 0;
+    let finishReceive: (() => void) | undefined;
+    const receive = new Promise<undefined>((resolve) => {
+      finishReceive = () => resolve(undefined);
+    });
+    let markEventsRead: (() => void) | undefined;
+    const eventsRead = new Promise<void>((resolve) => {
+      markEventsRead = resolve;
+    });
     const connectionFactory = vi.fn(async () => ({
       async sendJson(payload: Record<string, unknown>) {
         sent.push(payload);
       },
       async recvJson() {
         const event = incoming[incomingIndex];
-        incomingIndex += 1;
-        return event;
+        if (event) {
+          incomingIndex += 1;
+          return event;
+        }
+        markEventsRead?.();
+        return receive;
       },
-      async close() {}
+      async close() {
+        finishReceive?.();
+      }
     }));
     const provider = createOpenAI({
       apiKey: "test",
@@ -2481,10 +2497,25 @@ describe("openai adapter", () => {
       }
     });
 
-    const events = [];
-    for await (const event of session.eventStream()) {
-      events.push(event);
-    }
+    const eventsPromise = (async () => {
+      const events = [];
+      for await (const event of session.eventStream()) {
+        events.push(event);
+      }
+      return events;
+    })();
+    await eventsRead;
+
+    await session.sendToolResult(
+      openAIRealtimeMcpApprovalResult({
+        approvalRequestId: "approval_1",
+        itemId: "approval_response_1",
+        name: "fetch_docs",
+        approve: true
+      })
+    );
+    await session.close();
+    const events = await eventsPromise;
 
     expect(events).not.toContainEqual(expect.objectContaining({ type: "realtime-tool-call" }));
     expect(events).toContainEqual({
@@ -2546,16 +2577,6 @@ describe("openai adapter", () => {
       })
     });
 
-    await session.sendToolResult(
-      openAIRealtimeMcpApprovalResult({
-        approvalRequestId: "approval_1",
-        itemId: "approval_response_1",
-        name: "fetch_docs",
-        approve: true
-      })
-    );
-    await session.close();
-
     expect(sent).toContainEqual({
       type: "conversation.item.create",
       item: {
@@ -2577,10 +2598,7 @@ describe("openai adapter", () => {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
         },
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       };
     });
 
@@ -2703,10 +2721,7 @@ describe("openai adapter", () => {
   it("rejects realtime image input for OpenAI preview models that do not support it", async () => {
     const connectionFactory = vi.fn(async () => ({
       async sendJson() {},
-      async recvJson() {
-        return undefined;
-      },
-      async close() {}
+      ...createPendingRealtimeReceiver()
     }));
 
     const provider = createOpenAI({
@@ -2719,6 +2734,7 @@ describe("openai adapter", () => {
     await expect(session.sendMedia({ data: "image", mediaType: "image/jpeg" })).rejects.toThrow(
       'Provider "openai" model "gpt-4o-realtime-preview" does not support realtime image input.'
     );
+    await session.close();
   });
 
   it("creates browser tokens for realtime client sessions", async () => {

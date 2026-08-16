@@ -75,12 +75,12 @@ describe("agents package public surface", () => {
     expectStability(beta, "beta");
   });
 
-  it("isolates experimental realtime and deterministic testing helpers", () => {
+  it("keeps stable realtime and deterministic testing helpers on dedicated entry points", () => {
     expect(sortedKeys(realtime)).toEqual(["streamLiveAgent"]);
     expect(sortedKeys(testing)).toEqual(["createMockLanguageModel", "createMockTool"]);
     expect("streamLiveAgent" in agents).toBe(false);
     expect("createMockLanguageModel" in agents).toBe(false);
-    expectStability(realtime, "experimental");
+    expectStability(realtime, "stable");
     expectStability(testing, "stable");
   });
 

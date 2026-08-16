@@ -35,6 +35,14 @@ Most applications should install `@zhivex-ai/sdk` and follow the main adoption g
 - Quickstart: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/QUICKSTART.md>
 - Production guide: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/PRODUCTION.md>
 
+## Stability
+
+The shared realtime session and live-agent lifecycle is Stable, including
+`CallbackRealtimeSession`, frame encoders, WebSocket helpers, and
+`streamLiveAgent`. Provider-specific options and upstream preview model
+availability remain provider-scoped. Review the machine-enforced manifest and
+policy in <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/STABILITY.md>.
+
 ## Security Defaults
 
 - File-backed session, workflow, artifact, run, and memory stores create private directories and files (`0700`/`0600`) and use canonical opaque identity keys. Matching legacy delimiter-based records are read for compatibility and migrated on the next write.

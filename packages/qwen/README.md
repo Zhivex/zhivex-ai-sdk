@@ -255,6 +255,10 @@ await session.sendMedia({ data: jpegBytes, mediaType: "image/jpeg" });
 
 The realtime adapter maps text, audio, transcripts, function calls, response completion, and session completion into the shared `RealtimeEvent` contract. JPEG image frames are supported by Qwen Omni realtime; browser-token minting is not exposed.
 
+Qwen Realtime supports callable tools with automatic selection. `toolChoice: "none"` is enforced locally by omitting tools from the upstream session; `"required"` and named-tool selection are rejected before the WebSocket opens because the upstream realtime contract does not support them. The adapter also rejects `providerOptions.enable_search: true` when callable tools are present because Qwen Realtime does not allow both in one session.
+
+Sessions request text output by default with `modalities: ["text"]`. Audio output is enabled only when `voice` or `outputAudioMediaType` is configured, in which case the adapter sends `modalities: ["text", "audio"]`. These checks are fail-closed and reflect the provider's current realtime contract.
+
 Authenticated realtime connections use the package's Node/Bun `ws` transport by default. `realtimeConnectionFactory` remains available for custom runtimes. Do not expose a Model Studio API key in browser code.
 
 ## Current catalog coverage

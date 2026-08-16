@@ -52,6 +52,26 @@ import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-c
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createVertex, vertexMcpTools } from "../src/index.js";
 
+const createPendingRealtimeReceiver = () => {
+  let finishReceive: (() => void) | undefined;
+  let setupAcknowledged = false;
+  const receive = new Promise<undefined>((resolve) => {
+    finishReceive = () => resolve(undefined);
+  });
+  return {
+    async recvJson() {
+      if (!setupAcknowledged) {
+        setupAcknowledged = true;
+        return { setupComplete: {} };
+      }
+      return receive;
+    },
+    async close() {
+      finishReceive?.();
+    }
+  };
+};
+
 const vertexEnvKeys = [
   "VERTEX_ACCESS_TOKEN",
   "GOOGLE_ACCESS_TOKEN",
@@ -1808,10 +1828,7 @@ describe("vertex adapter", () => {
       );
       return {
         async sendJson() {},
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       };
     });
     const provider = createVertex({
@@ -1832,10 +1849,7 @@ describe("vertex adapter", () => {
       expect(url).toBe("wss://vertex-proxy.example.test/live");
       return {
         async sendJson() {},
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       };
     });
     const provider = createVertex({
@@ -1886,10 +1900,7 @@ describe("vertex adapter", () => {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
         },
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       };
     });
 
@@ -1901,7 +1912,17 @@ describe("vertex adapter", () => {
       fetch: fetchMock as typeof fetch,
       realtimeConnectionFactory: connectionFactory
     });
-    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({
+    const model = provider.realtimeModel!("gemini-live-2.5-flash-native-audio");
+    expect(model.capabilities).toMatchObject({
+      streaming: false,
+      structuredOutput: false,
+      jsonMode: false,
+      toolChoice: false,
+      parallelToolCalls: false,
+      embeddings: false,
+      files: false
+    });
+    const session = await model.connect({
       instructions: "Be brief.",
       reasoning: { budgetTokens: 256, includeThoughts: true },
       inputAudioTranscription: true,
@@ -1945,6 +1966,45 @@ describe("vertex adapter", () => {
     });
   });
 
+  it("fails closed for unsupported Vertex Live tool choice and omits disabled tools", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async () => ({
+      async sendJson(payload: Record<string, unknown>) {
+        sent.push(payload);
+      },
+      ...createPendingRealtimeReceiver()
+    }));
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      apiVersion: "v1alpha",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const model = provider.realtimeModel!("gemini-live-2.5-flash-native-audio");
+
+    await expect(model.connect({ toolChoice: "required" })).rejects.toThrow(
+      "not required or named tool choice"
+    );
+    const session = await model.connect({
+      toolChoice: "none",
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: () => ({ ok: true })
+        })
+      }
+    });
+
+    expect(sent[0]).toMatchObject({
+      setup: { generationConfig: { responseModalities: ["AUDIO"] } }
+    });
+    expect(sent[0]?.setup).not.toHaveProperty("tools");
+    await session.close();
+  });
+
   it("connects Vertex Gemini 3.5 Live Translate sessions with typed translation config", async () => {
     const sent: Record<string, unknown>[] = [];
     const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
@@ -1958,10 +2018,7 @@ describe("vertex adapter", () => {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
         },
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       };
     });
 
@@ -1973,7 +2030,15 @@ describe("vertex adapter", () => {
       fetch: fetchMock as typeof fetch,
       realtimeConnectionFactory: connectionFactory
     });
-    const session = await provider.realtimeModel!("gemini-3.5-live-translate-preview").connect({
+    const model = provider.realtimeModel!("gemini-3.5-live-translate-preview");
+    expect(model.capabilities).toMatchObject({
+      tools: false,
+      vision: false,
+      reasoning: false,
+      webSearch: false,
+      realtime: { tools: false, imageInput: false }
+    });
+    const session = await model.connect({
       mode: "translation",
       translation: {
         sourceLanguage: "en",
@@ -2023,10 +2088,7 @@ describe("vertex adapter", () => {
       async sendJson(payload: Record<string, unknown>) {
         sent.push(payload);
       },
-      async recvJson() {
-        return undefined;
-      },
-      async close() {}
+      ...createPendingRealtimeReceiver()
     }));
     const provider = createVertex({
       accessToken: "test",
@@ -2091,10 +2153,7 @@ describe("vertex adapter", () => {
       });
       return {
         async sendJson() {},
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       };
     });
     const authClient = {

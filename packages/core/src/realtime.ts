@@ -1,5 +1,5 @@
 import { BoundedReplayBroadcast, StreamBufferOverflowError } from "./bounded-broadcast.js";
-import { ConfigurationError, UnsupportedFeatureError, ValidationError } from "./errors.js";
+import { ConfigurationError, ConflictError, UnsupportedFeatureError, ValidationError } from "./errors.js";
 import type {
   AudioFrame,
   MediaFrame,
@@ -33,6 +33,8 @@ export type RealtimeConnectionFactory = (
 
 export interface RealtimeSessionCallbacks {
   parseEvent: RealtimeEventParser;
+  /** When provided, initialization waits for this provider acknowledgement before the session becomes usable. */
+  isReadyPayload?: (payload: Record<string, unknown>) => boolean;
   buildAudioPayloads: RealtimePayloadBuilder<AudioFrame>;
   buildMediaPayloads?: RealtimePayloadBuilder<MediaFrame>;
   buildTextPayloads: RealtimePayloadBuilder<string>;
@@ -42,6 +44,32 @@ export interface RealtimeSessionCallbacks {
   buildClosePayloads?: RealtimePayloadBuilder<RealtimeSessionConfig>;
 }
 
+type CallbackRealtimeSessionState = "new" | "initializing" | "handshaking" | "open" | "closing" | "closed";
+
+interface RealtimeTerminationOptions {
+  reason: string;
+  error?: unknown;
+  errorEvent?: RealtimeErrorEvent;
+  endEvent?: RealtimeSessionEndedEvent;
+  sendClosePayloads?: boolean;
+}
+
+const asError = (error: unknown): Error =>
+  error instanceof Error ? error : new Error(String(error));
+
+const canonicalRealtimeValue = (value: unknown): string => {
+  if (value === undefined) return "undefined";
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? String(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalRealtimeValue).join(",")}]`;
+  return `{${Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalRealtimeValue((value as Record<string, unknown>)[key])}`)
+    .join(",")}}`;
+};
+
+const realtimeToolCallFingerprint = (event: Extract<RealtimeEvent, { type: "realtime-tool-call" }>) =>
+  `${JSON.stringify(event.toolCall.name)}:${canonicalRealtimeValue(event.toolCall.input)}`;
+
 export class CallbackRealtimeSession implements RealtimeSession {
   readonly provider: string;
   readonly modelId: string;
@@ -50,9 +78,17 @@ export class CallbackRealtimeSession implements RealtimeSession {
 
   private readonly connection: RealtimeConnection;
   private readonly callbacks: RealtimeSessionCallbacks;
+  private readonly initializationTimeoutMs?: number;
   private readonly broadcast = new BoundedReplayBroadcast<RealtimeEvent>();
-  private receiverPromise?: Promise<void>;
-  private closed = false;
+  private readonly seenToolCalls = new Map<string, string>();
+  private state: CallbackRealtimeSessionState = "new";
+  private initializationPromise?: Promise<void>;
+  private terminationPromise?: Promise<void>;
+  private terminationError?: Error;
+  private readyPromise?: Promise<void>;
+  private resolveReady?: () => void;
+  private rejectReady?: (error: Error) => void;
+  private ready = false;
   private ended = false;
 
   constructor(options: {
@@ -62,6 +98,8 @@ export class CallbackRealtimeSession implements RealtimeSession {
     config: RealtimeSessionConfig;
     connection: RealtimeConnection;
     callbacks: RealtimeSessionCallbacks;
+    /** Optional deadline for a provider setup acknowledgement after the transport opens. */
+    initializationTimeoutMs?: number;
   }) {
     this.provider = options.provider;
     this.modelId = options.modelId;
@@ -69,28 +107,46 @@ export class CallbackRealtimeSession implements RealtimeSession {
     this.config = options.config;
     this.connection = options.connection;
     this.callbacks = options.callbacks;
+    if (
+      options.initializationTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.initializationTimeoutMs) || options.initializationTimeoutMs <= 0)
+    ) {
+      throw new ConfigurationError("Realtime initialization timeout must be a positive safe integer.");
+    }
+    this.initializationTimeoutMs = options.initializationTimeoutMs;
+    if (this.callbacks.isReadyPayload) {
+      this.readyPromise = new Promise<void>((resolve, reject) => {
+        this.resolveReady = resolve;
+        this.rejectReady = reject;
+      });
+    }
   }
 
-  async initialize() {
-    if (this.callbacks.buildInitialPayloads) {
-      await this.sendPayloads(this.callbacks.buildInitialPayloads(this.config, this.config));
+  initialize(): Promise<void> {
+    if (this.state === "open") {
+      return Promise.resolve();
     }
-    const event: RealtimeSessionStartedEvent = {
-      type: "realtime-start"
-    };
-    await this.broadcast.publish(event);
-    if (!this.receiverPromise) {
-      this.receiverPromise = this.receiveLoop();
+    if (this.initializationPromise) {
+      return this.initializationPromise;
     }
+    if (this.state !== "new") {
+      return Promise.reject(new ConfigurationError("Realtime session is already closing or closed."));
+    }
+
+    this.state = "initializing";
+    this.initializationPromise = this.start();
+    return this.initializationPromise;
   }
 
   async sendAudio(frame: AudioFrame) {
-    await this.sendPayloads(this.callbacks.buildAudioPayloads(frame, this.config));
+    this.assertOpen();
+    await this.sendBuiltPayloads(() => this.callbacks.buildAudioPayloads(frame, this.config));
   }
 
   async sendMedia(frame: MediaFrame) {
+    this.assertOpen();
     if (frame.mediaType.startsWith("audio/")) {
-      await this.sendAudio(frame);
+      await this.sendBuiltPayloads(() => this.callbacks.buildAudioPayloads(frame, this.config));
       return;
     }
 
@@ -100,29 +156,37 @@ export class CallbackRealtimeSession implements RealtimeSession {
       );
     }
 
-    await this.sendPayloads(this.callbacks.buildMediaPayloads(frame, this.config));
+    await this.sendBuiltPayloads(() => this.callbacks.buildMediaPayloads!(frame, this.config));
   }
 
   async sendText(text: string) {
-    await this.sendPayloads(this.callbacks.buildTextPayloads(text, this.config));
+    this.assertOpen();
+    await this.sendBuiltPayloads(() => this.callbacks.buildTextPayloads(text, this.config));
   }
 
   async sendToolResult(result: ToolExecutionResult) {
-    await this.sendPayloads(this.callbacks.buildToolResultPayloads(result, this.config));
-    if (!this.broadcast.isClosed) {
+    this.assertOpen();
+    const payloads = this.callbacks.buildToolResultPayloads(result, this.config);
+    try {
+      await this.sendPayloads(payloads);
       await this.broadcast.publish({
         type: "realtime-tool-result",
         toolResult: result
       });
+    } catch (error) {
+      await this.terminate({ reason: "error", error });
+      throw error;
     }
   }
 
   async update(config: Partial<RealtimeSessionConfig>) {
-    this.config = {
+    this.assertOpen();
+    const nextConfig = {
       ...this.config,
       ...config
     };
-    await this.sendPayloads(this.callbacks.buildUpdatePayloads(this.config, this.config));
+    await this.sendBuiltPayloads(() => this.callbacks.buildUpdatePayloads(nextConfig, nextConfig));
+    this.config = nextConfig;
   }
 
   eventStream() {
@@ -130,29 +194,88 @@ export class CallbackRealtimeSession implements RealtimeSession {
   }
 
   async close() {
-    if (this.closed) {
+    if (this.state === "closed") {
       return;
     }
-    this.closed = true;
+    const initiatedTermination = !this.terminationPromise;
+    const sendClosePayloads = this.state === "open";
+    await this.terminate({
+      reason: "client-close",
+      sendClosePayloads
+    });
+    if (initiatedTermination && this.terminationError) {
+      throw this.terminationError;
+    }
+  }
+
+  private async start() {
     try {
-      if (this.callbacks.buildClosePayloads) {
-        await this.sendPayloads(this.callbacks.buildClosePayloads(this.config, this.config));
+      if (this.callbacks.buildInitialPayloads) {
+        await this.sendPayloads(this.callbacks.buildInitialPayloads(this.config, this.config));
       }
-    } finally {
-      await this.connection.close();
-      try {
-        await this.receiverPromise;
-      } catch {
-        // ignore connection shutdown errors
+      if (this.state !== "initializing") {
+        throw new ConfigurationError("Realtime session was closed during initialization.");
       }
-      if (!this.ended) {
-        this.ended = true;
-        await this.broadcast.publish({
-          type: "realtime-end",
-          reason: "client-close"
-        }, { terminal: true });
+      if (this.readyPromise) {
+        this.state = "handshaking";
+        void this.receiveLoop();
+        if (this.initializationTimeoutMs === undefined) {
+          await this.readyPromise;
+        } else {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              this.readyPromise,
+              new Promise<never>((_, reject) => {
+                timer = setTimeout(
+                  () => reject(new Error(
+                    `Realtime provider setup timed out after ${this.initializationTimeoutMs}ms.`
+                  )),
+                  this.initializationTimeoutMs
+                );
+              })
+            ]);
+          } finally {
+            if (timer) clearTimeout(timer);
+          }
+        }
+        if (this.state !== "handshaking") {
+          throw this.terminationError ?? new ConfigurationError("Realtime session was closed during initialization.");
+        }
+        this.state = "open";
       }
-      await this.broadcast.close();
+      const event: RealtimeSessionStartedEvent = {
+        type: "realtime-start"
+      };
+      await this.broadcast.publish(event);
+      if (!this.readyPromise) {
+        if (this.state !== "initializing") {
+          throw new ConfigurationError("Realtime session was closed during initialization.");
+        }
+        this.state = "open";
+        void this.receiveLoop();
+      }
+    } catch (error) {
+      if (this.state !== "closing" && this.state !== "closed") {
+        await this.terminate({ reason: "error", error });
+      }
+      throw error;
+    }
+  }
+
+  private assertOpen() {
+    if (this.state !== "open") {
+      throw new ConfigurationError("Realtime session is not open.");
+    }
+  }
+
+  private async sendBuiltPayloads(build: () => Array<Record<string, unknown>>) {
+    const payloads = build();
+    try {
+      await this.sendPayloads(payloads);
+    } catch (error) {
+      await this.terminate({ reason: "error", error });
+      throw error;
     }
   }
 
@@ -164,57 +287,143 @@ export class CallbackRealtimeSession implements RealtimeSession {
 
   private async receiveLoop() {
     try {
-      while (true) {
+      while (this.state === "open" || this.state === "handshaking") {
         const payload = await this.connection.recvJson();
-        if (payload == null) {
-          break;
+        if (this.state !== "open" && this.state !== "handshaking") {
+          return;
         }
-        for (const event of this.callbacks.parseEvent((payload ?? {}) as Record<string, unknown>)) {
-          if (event.type === "realtime-end") {
-            this.ended = true;
+        if (payload == null) {
+          await this.terminate({ reason: "connection-closed" });
+          return;
+        }
+        const record = (payload ?? {}) as Record<string, unknown>;
+        if (!this.ready && this.callbacks.isReadyPayload?.(record)) {
+          this.ready = true;
+          this.resolveReady?.();
+        }
+        for (const event of this.callbacks.parseEvent(record)) {
+          if (event.type === "realtime-tool-call") {
+            const fingerprint = realtimeToolCallFingerprint(event);
+            const previous = this.seenToolCalls.get(event.toolCall.id);
+            if (previous !== undefined) {
+              if (previous !== fingerprint) {
+                await this.terminate({
+                  reason: "error",
+                  error: new ConflictError(
+                    `Realtime tool call id "${event.toolCall.id}" was reused with a different payload.`
+                  )
+                });
+                return;
+              }
+              continue;
+            }
+            this.seenToolCalls.set(event.toolCall.id, fingerprint);
           }
-          await this.broadcast.publish(event, { terminal: event.type === "realtime-end" });
-          if (event.type === "realtime-end") {
-            await this.broadcast.close();
+          if (event.type === "realtime-error") {
+            await this.terminate({
+              reason: "error",
+              errorEvent: event
+            });
             return;
           }
+          if (event.type === "realtime-end") {
+            await this.terminate({
+              reason: event.reason ?? "connection-closed",
+              endEvent: event
+            });
+            return;
+          }
+          if (this.state !== "open" && this.state !== "handshaking") {
+            return;
+          }
+          await this.broadcast.publish(event);
         }
       }
-      if (!this.ended) {
-        this.ended = true;
-        await this.broadcast.publish({
-          type: "realtime-end",
-          reason: "connection-closed"
-        }, { terminal: true });
-      }
     } catch (error) {
-      if (error instanceof StreamBufferOverflowError) {
-        this.closed = true;
-        this.ended = true;
-        this.broadcast.fail(error);
-        await this.connection.close();
+      if (this.state === "closing" || this.state === "closed") {
         return;
       }
-      const event: RealtimeErrorEvent = {
+      await this.terminate({ reason: "error", error });
+    }
+  }
+
+  private terminate(options: RealtimeTerminationOptions): Promise<void> {
+    if (this.terminationPromise) {
+      return this.terminationPromise;
+    }
+    this.state = "closing";
+    this.terminationPromise = this.finishTermination(options);
+    return this.terminationPromise;
+  }
+
+  private async finishTermination(options: RealtimeTerminationOptions) {
+    let errorEvent = options.errorEvent;
+    let failure = options.error === undefined ? undefined : asError(options.error);
+
+    if (options.sendClosePayloads && this.callbacks.buildClosePayloads) {
+      try {
+        await this.sendPayloads(this.callbacks.buildClosePayloads(this.config, this.config));
+      } catch (error) {
+        failure = asError(error);
+      }
+    }
+
+    try {
+      await this.connection.close();
+    } catch (error) {
+      failure ??= asError(error);
+    }
+
+    if (!errorEvent && failure) {
+      errorEvent = {
         type: "realtime-error",
-        error: error instanceof Error ? error : new Error(String(error)),
-        message: error instanceof Error ? error.message : String(error)
+        error: failure,
+        message: failure.message
       };
-      await this.broadcast.publish(event, { terminal: true });
-      if (!this.ended) {
-        this.ended = true;
-        const ended: RealtimeSessionEndedEvent = {
-          type: "realtime-end",
-          reason: "error",
-          providerMetadata: {
-            message: event.message ?? ""
-          }
-        };
-        await this.broadcast.publish(ended, { terminal: true });
+    }
+
+    if (!this.ready && this.readyPromise) {
+      const readinessError = failure ?? errorEvent?.error ?? new ConfigurationError(
+        `Realtime session ended before provider "${this.provider}" acknowledged setup.`
+      );
+      this.rejectReady?.(asError(readinessError));
+    }
+
+    const terminalEvents: RealtimeEvent[] = [];
+    if (errorEvent) {
+      terminalEvents.push(errorEvent);
+    }
+    if (!this.ended) {
+      this.ended = true;
+      terminalEvents.push(options.endEvent ?? {
+        type: "realtime-end",
+        reason: errorEvent ? "error" : options.reason,
+        ...(errorEvent
+          ? {
+              providerMetadata: {
+                message: errorEvent.message ?? errorEvent.error?.message ?? ""
+              }
+            }
+          : {})
+      });
+    }
+
+    try {
+      for (const event of terminalEvents) {
+        await this.broadcast.publish(event, { terminal: true });
+      }
+    } catch (error) {
+      const publishFailure = asError(error);
+      failure ??= publishFailure;
+      if (!this.broadcast.isClosed) {
+        this.broadcast.fail(publishFailure);
       }
     } finally {
-      await this.broadcast.close();
+      this.broadcast.close();
+      this.state = "closed";
     }
+
+    this.terminationError = failure;
   }
 }
 
@@ -224,7 +433,7 @@ interface WebSocketLike {
   onopen: ((event: unknown) => void) | null;
   onmessage: ((event: { data: string | ArrayBuffer | Blob }) => void) | null;
   onerror: ((event: unknown) => void) | null;
-  onclose: ((event: unknown) => void) | null;
+  onclose: ((event: { code?: number; reason?: string; wasClean?: boolean }) => void) | null;
 }
 
 type WebSocketCtor = new (url: string, protocols?: string | string[]) => WebSocketLike;
@@ -232,55 +441,86 @@ type WebSocketCtor = new (url: string, protocols?: string | string[]) => WebSock
 class BrowserRealtimeConnection implements RealtimeConnection {
   private readonly socket: WebSocketLike;
   private readonly queue: unknown[] = [];
-  private readonly resolvers: Array<(value: unknown) => void> = [];
+  private readonly waiters: Array<{
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+  }> = [];
   private closed = false;
   private queueFailure?: Error;
   private readonly maxIncomingFrameBytes: number;
+  private readonly signal?: AbortSignal;
+  private readonly onAbort: () => void;
 
-  constructor(socket: WebSocketLike, maxIncomingFrameBytes: number) {
+  constructor(socket: WebSocketLike, maxIncomingFrameBytes: number, signal?: AbortSignal) {
     this.socket = socket;
     this.maxIncomingFrameBytes = maxIncomingFrameBytes;
+    this.signal = signal;
+    this.onAbort = () => {
+      this.fail(
+        signal?.reason instanceof Error
+          ? signal.reason
+          : new DOMException("The realtime connection was aborted.", "AbortError")
+      );
+    };
     socket.onmessage = (event) => {
-      const value = event.data;
-      if (incomingFrameBytes(value) > this.maxIncomingFrameBytes) {
-        this.queueFailure = new ValidationError(
-          `Realtime frame exceeds the ${this.maxIncomingFrameBytes}-byte limit.`
-        );
-        this.closed = true;
-        while (this.resolvers.length > 0) {
-          this.resolvers.shift()!(undefined);
-        }
-        this.socket.close();
+      if (this.closed) {
         return;
       }
-      if (this.resolvers.length > 0) {
-        this.resolvers.shift()!(value);
+      const value = event.data;
+      if (incomingFrameBytes(value) > this.maxIncomingFrameBytes) {
+        this.fail(new ValidationError(
+          `Realtime frame exceeds the ${this.maxIncomingFrameBytes}-byte limit.`
+        ));
+        return;
+      }
+      if (this.waiters.length > 0) {
+        this.waiters.shift()!.resolve(value);
       } else {
         if (this.queue.length >= 256) {
-          this.queueFailure = new StreamBufferOverflowError(256);
-          this.closed = true;
-          this.socket.close();
+          this.fail(new StreamBufferOverflowError(256));
           return;
         }
         this.queue.push(value);
       }
     };
-    socket.onclose = () => {
-      this.closed = true;
-      while (this.resolvers.length > 0) {
-        this.resolvers.shift()!(undefined);
+    socket.onclose = (event) => {
+      if (
+        !this.closed &&
+        ((typeof event.code === "number" && event.code !== 1_000) || event.wasClean === false)
+      ) {
+        const details = [
+          typeof event.code === "number" ? `code ${event.code}` : undefined,
+          event.reason?.trim() || undefined
+        ].filter(Boolean).join(": ");
+        this.fail(new Error(`Realtime WebSocket closed unexpectedly${details ? ` (${details})` : ""}.`));
+        return;
       }
+      this.finish();
     };
     socket.onerror = () => {
-      this.closed = true;
-      while (this.resolvers.length > 0) {
-        this.resolvers.shift()!(undefined);
-      }
+      this.fail(new Error("Realtime WebSocket connection failed."));
     };
+    if (signal?.aborted) {
+      this.onAbort();
+    } else {
+      signal?.addEventListener("abort", this.onAbort, { once: true });
+    }
   }
 
   async sendJson(payload: Record<string, unknown>) {
-    this.socket.send(JSON.stringify(payload));
+    if (this.queueFailure) {
+      throw this.queueFailure;
+    }
+    if (this.closed) {
+      throw new Error("Realtime connection is closed.");
+    }
+    try {
+      this.socket.send(JSON.stringify(payload));
+    } catch (error) {
+      const failure = asError(error);
+      this.fail(failure);
+      throw failure;
+    }
   }
 
   async recvJson() {
@@ -288,24 +528,77 @@ class BrowserRealtimeConnection implements RealtimeConnection {
       throw this.queueFailure;
     }
     if (this.queue.length > 0) {
-      return parseIncoming(this.queue.shift(), this.maxIncomingFrameBytes);
+      return this.parseFrame(this.queue.shift());
     }
 
     if (this.closed) {
       return undefined;
     }
 
-    const next = await new Promise<unknown>((resolve) => {
-      this.resolvers.push(resolve);
+    const next = await new Promise<unknown>((resolve, reject) => {
+      this.waiters.push({ resolve, reject });
     });
     if (this.queueFailure) {
       throw this.queueFailure;
     }
-    return parseIncoming(next, this.maxIncomingFrameBytes);
+    return this.parseFrame(next);
   }
 
   async close() {
-    this.socket.close();
+    if (this.closed) {
+      return;
+    }
+    this.finish();
+    try {
+      this.socket.close();
+    } catch (error) {
+      const failure = asError(error);
+      this.queueFailure = failure;
+      throw failure;
+    }
+  }
+
+  private async parseFrame(value: unknown) {
+    try {
+      return await parseIncoming(value, this.maxIncomingFrameBytes);
+    } catch (error) {
+      const failure = asError(error);
+      this.fail(failure);
+      throw failure;
+    }
+  }
+
+  private finish() {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+    this.cleanupSignal();
+    while (this.waiters.length > 0) {
+      this.waiters.shift()!.resolve(undefined);
+    }
+  }
+
+  private fail(error: Error) {
+    if (this.queueFailure || this.closed) {
+      return;
+    }
+    this.queueFailure = error;
+    this.closed = true;
+    this.queue.length = 0;
+    this.cleanupSignal();
+    while (this.waiters.length > 0) {
+      this.waiters.shift()!.reject(error);
+    }
+    try {
+      this.socket.close();
+    } catch {
+      // The original transport error remains the actionable failure.
+    }
+  }
+
+  private cleanupSignal() {
+    this.signal?.removeEventListener("abort", this.onAbort);
   }
 }
 
@@ -381,6 +674,9 @@ const waitForOpen = (socket: WebSocketLike, signal?: AbortSignal, timeoutMs?: nu
     socket.onerror = () => {
       fail("Realtime connection failed.");
     };
+    socket.onclose = () => {
+      fail("Realtime connection closed before opening.");
+    };
     if (signal?.aborted) {
       onAbort();
     } else {
@@ -408,9 +704,17 @@ export const openWebSocketConnection: RealtimeConnectionFactory = async (url, he
       'The realtime "maxIncomingFrameBytes" option must be a positive safe integer.'
     );
   }
+  if (
+    options?.timeoutMs !== undefined &&
+    (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0)
+  ) {
+    throw new ConfigurationError(
+      'The realtime "timeoutMs" option must be a positive safe integer.'
+    );
+  }
   const socket = new WebSocketCtor(url, options?.subprotocols);
   await waitForOpen(socket, options?.signal, options?.timeoutMs);
-  return new BrowserRealtimeConnection(socket, maxIncomingFrameBytes);
+  return new BrowserRealtimeConnection(socket, maxIncomingFrameBytes, options?.signal);
 };
 
 export const unsupportedBrowserToken = async (): Promise<never> => {
@@ -422,7 +726,25 @@ const encodeRealtimeFrameData = (data: string | Uint8Array | ArrayBuffer): strin
     return data;
   }
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-  return Buffer.from(bytes).toString("base64");
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const chunks: string[] = [];
+  const inputChunkBytes = 12 * 1024;
+  for (let chunkStart = 0; chunkStart < bytes.length; chunkStart += inputChunkBytes) {
+    const chunkEnd = Math.min(chunkStart + inputChunkBytes, bytes.length);
+    let encodedChunk = "";
+    for (let index = chunkStart; index < chunkEnd; index += 3) {
+      const first = bytes[index] ?? 0;
+      const second = bytes[index + 1];
+      const third = bytes[index + 2];
+      const value = (first << 16) | ((second ?? 0) << 8) | (third ?? 0);
+      encodedChunk += alphabet[(value >>> 18) & 0x3f]!;
+      encodedChunk += alphabet[(value >>> 12) & 0x3f]!;
+      encodedChunk += second === undefined ? "=" : alphabet[(value >>> 6) & 0x3f]!;
+      encodedChunk += third === undefined ? "=" : alphabet[value & 0x3f]!;
+    }
+    chunks.push(encodedChunk);
+  }
+  return chunks.join("");
 };
 
 export const encodeAudioFrame = (frame: AudioFrame): string => encodeRealtimeFrameData(frame.data);

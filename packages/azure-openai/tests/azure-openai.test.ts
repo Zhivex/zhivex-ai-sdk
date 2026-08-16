@@ -15,6 +15,21 @@ import {
   createAzureOpenAI
 } from "../src/index.js";
 
+const createPendingRealtimeReceiver = () => {
+  let finishReceive: (() => void) | undefined;
+  const receive = new Promise<undefined>((resolve) => {
+    finishReceive = () => resolve(undefined);
+  });
+  return {
+    async recvJson() {
+      return receive;
+    },
+    async close() {
+      finishReceive?.();
+    }
+  };
+};
+
 describe("azure openai adapter", () => {
   const fetchMock = vi.fn();
 
@@ -861,10 +876,7 @@ describe("azure openai adapter", () => {
         async sendJson(payload: Record<string, unknown>) {
           sent.push(payload);
         },
-        async recvJson() {
-          return undefined;
-        },
-        async close() {}
+        ...createPendingRealtimeReceiver()
       };
     });
 
@@ -875,7 +887,23 @@ describe("azure openai adapter", () => {
       fetch: fetchMock as typeof fetch,
       realtimeConnectionFactory: connectionFactory
     });
-    const session = await provider.realtimeModel!("gpt-4o-realtime-preview").connect({
+    const model = provider.realtimeModel!("gpt-4o-realtime-preview");
+    expect(model.capabilities).toMatchObject({
+      streaming: false,
+      structuredOutput: false,
+      jsonMode: false,
+      files: false,
+      embeddings: false,
+      reasoning: false,
+      webSearch: false
+    });
+    expect(model.capabilities.agentCapabilities).toMatchObject({
+      hostedWebSearch: false,
+      hostedFileSearch: false,
+      computerUse: false,
+      codeExecution: false
+    });
+    const session = await model.connect({
       instructions: "Be brief."
     });
 
@@ -923,10 +951,7 @@ describe("azure openai adapter", () => {
   it("rejects non-image realtime media input for Azure sessions", async () => {
     const connectionFactory = vi.fn(async () => ({
       async sendJson() {},
-      async recvJson() {
-        return undefined;
-      },
-      async close() {}
+      ...createPendingRealtimeReceiver()
     }));
 
     const provider = createAzureOpenAI({
@@ -940,6 +965,7 @@ describe("azure openai adapter", () => {
     await expect(session.sendMedia({ data: "video", mediaType: "video/mp4" })).rejects.toThrow(
       'Provider "azure-openai" only supports realtime image media input, but received "video/mp4".'
     );
+    await session.close();
   });
 
   it("never puts the Azure API key in a realtime URL", async () => {

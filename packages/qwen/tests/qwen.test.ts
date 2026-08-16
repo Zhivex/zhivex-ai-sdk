@@ -1994,6 +1994,94 @@ describe("qwen adapter", () => {
         { maxIncomingFrameBytes: 0 }
       )
     ).rejects.toThrow("positive safe integer");
+    await expect(
+      provider.realtimeModel!("qwen3.5-omni-plus-realtime").connect(
+        {},
+        { timeoutMs: 0 }
+      )
+    ).rejects.toThrow("positive safe integer");
+  });
+
+  it("fails closed for unsupported realtime tool selection and search combinations", async () => {
+    const connectionFactory = vi.fn(async () => ({
+      async sendJson() {},
+      async recvJson() { return undefined; },
+      async close() {}
+    }));
+    const model = createQwen({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    }).realtimeModel!("qwen3.5-omni-plus-realtime");
+
+    expect(model.capabilities).toMatchObject({
+      streaming: false,
+      structuredOutput: false,
+      jsonMode: false,
+      toolChoice: false,
+      parallelToolCalls: false,
+      embeddings: false,
+      reasoning: false
+    });
+    await expect(model.connect({ toolChoice: "required" })).rejects.toThrow(
+      "not required or named tool choice"
+    );
+    await expect(
+      model.connect({
+        tools: {
+          weather: tool({
+            name: "weather",
+            schema: z.object({ city: z.string() }),
+            execute: () => ({ ok: true })
+          })
+        },
+        providerOptions: { enable_search: true }
+      })
+    ).rejects.toThrow("cannot be enabled together");
+    expect(connectionFactory).not.toHaveBeenCalled();
+  });
+
+  it("honors manual response control for realtime text, audio, and tool results", async () => {
+    const sent: Record<string, unknown>[] = [];
+    let releaseReceive: ((value: undefined) => void) | undefined;
+    const connection: RealtimeConnection = {
+      async sendJson(payload) { sent.push(payload); },
+      async recvJson() {
+        return new Promise<undefined>((resolve) => {
+          releaseReceive = resolve;
+        });
+      },
+      async close() { releaseReceive?.(undefined); }
+    };
+    const provider = createQwen({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: async () => connection
+    });
+    const session = await provider.realtimeModel!("qwen3.5-omni-plus-realtime").connect({
+      autoResponse: false
+    });
+
+    await session.sendText("hello");
+    await session.sendAudio({
+      data: new Uint8Array([1, 2]),
+      mediaType: "audio/pcm",
+      isFinal: true
+    });
+    await session.sendToolResult({
+      toolCallId: "call_1",
+      toolName: "weather",
+      output: { ok: true },
+      isError: false
+    });
+    await session.close();
+
+    expect(sent[0]).toMatchObject({
+      type: "session.update",
+      session: { modalities: ["text"] }
+    });
+    expect(sent).toContainEqual({ type: "input_audio_buffer.commit" });
+    expect(sent).not.toContainEqual({ type: "response.create" });
   });
 
   it("rejects unsafe Qwen realtime endpoints unless explicitly opted in", () => {
@@ -2064,14 +2152,20 @@ describe("qwen adapter", () => {
 
   it("exposes Qwen realtime and package-specific rerank helpers", async () => {
     const sent: Record<string, unknown>[] = [];
+    let finishReceive: ((value: undefined) => void) | undefined;
+    const receive = new Promise<undefined>((resolve) => {
+      finishReceive = resolve;
+    });
     const connection: RealtimeConnection = {
       async sendJson(payload) {
         sent.push(payload);
       },
       async recvJson() {
-        return undefined;
+        return receive;
       },
-      async close() {}
+      async close() {
+        finishReceive?.(undefined);
+      }
     };
     const connectionFactory = vi.fn(async () => connection);
     fetchMock.mockResolvedValueOnce(Response.json({ results: [{ index: 0, relevance_score: 0.9 }] }));

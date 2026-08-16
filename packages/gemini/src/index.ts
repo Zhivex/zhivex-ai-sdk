@@ -293,19 +293,48 @@ const musicGenerationCapabilities: ModelCapabilities = {
   }
 };
 
-const realtimeCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  audioInput: true,
-  audioOutput: true,
-  realtime: {
-    sessions: true,
+const realtimeCapabilities = (modelId: string): ModelCapabilities => {
+  const translation = isGeminiLiveTranslateModel(modelId);
+  return {
+    ...capabilities,
+    streaming: false,
+    tools: !translation,
+    structuredOutput: false,
+    jsonMode: false,
+    toolChoice: false,
+    parallelToolCalls: false,
+    vision: !translation,
+    files: false,
     audioInput: true,
     audioOutput: true,
-    imageInput: true,
-    tools: true,
-    browserTokens: true
-  }
+    embeddings: false,
+    fileSearch: false,
+    urlContext: false,
+    contextCaching: false,
+    batch: false,
+    interactions: false,
+    rawPrediction: false,
+    computerUse: false,
+    reasoning: !translation,
+    webSearch: !translation,
+    agentCapabilities: {
+      ...capabilities.agentCapabilities!,
+      toolChoiceNone: !translation,
+      hostedWebSearch: !translation,
+      hostedFileSearch: false,
+      remoteMcp: false,
+      computerUse: false,
+      codeExecution: false
+    },
+    realtime: {
+      sessions: true,
+      audioInput: true,
+      audioOutput: true,
+      imageInput: !translation,
+      tools: !translation,
+      browserTokens: true
+    }
+  };
 };
 
 const MIB = 1024 * 1024;
@@ -1086,6 +1115,12 @@ const assertGeminiRealtimeTranslateConfig = (config: RealtimeSessionConfig, mode
 const assertGeminiRealtimeConfig = (config: RealtimeSessionConfig, modelId: string) => {
   assertGeminiRealtimeTranslateConfig(config, modelId);
 
+  if (config.toolChoice !== undefined && !["auto", "none"].includes(String(config.toolChoice))) {
+    throw new UnsupportedFeatureError(
+      "Gemini Live supports automatic tool selection or tool disabling, but not required or named tool choice."
+    );
+  }
+
   if (!isGemini31FlashLiveModel(modelId)) {
     return;
   }
@@ -1107,7 +1142,7 @@ const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
   setup: {
     model: `models/${modelId}`,
     generationConfig: {
-      responseModalities: isGeminiLiveTranslateModel(modelId) || config.outputAudioMediaType || config.voice ? ["AUDIO"] : ["TEXT"],
+      responseModalities: ["AUDIO"],
       ...(config.voice
         ? {
             speechConfig: {
@@ -1142,7 +1177,9 @@ const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
           }
         }
       : {}),
-    ...(mapTools(toToolSet(config.tools)) ? { tools: mapTools(toToolSet(config.tools)) } : {}),
+    ...(config.toolChoice !== "none" && mapTools(toToolSet(config.tools))
+      ? { tools: mapTools(toToolSet(config.tools)) }
+      : {}),
     ...mapRealtimeProviderOptions(config.providerOptions as Record<string, unknown> | undefined)
   }
 });
@@ -3111,7 +3148,7 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
 
 class GeminiRealtimeModel implements RealtimeModel {
   readonly provider = "gemini";
-  readonly capabilities = realtimeCapabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
@@ -3122,7 +3159,9 @@ class GeminiRealtimeModel implements RealtimeModel {
     private readonly realtimeURL?: string,
     private readonly browserTokenURL?: string,
     private readonly allowUnsafeEndpoints = false
-  ) {}
+  ) {
+    this.capabilities = realtimeCapabilities(modelId);
+  }
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
     assertGeminiRealtimeConfig(config, this.modelId);
@@ -3149,8 +3188,10 @@ class GeminiRealtimeModel implements RealtimeModel {
       capabilities: this.capabilities,
       config,
       connection,
+      initializationTimeoutMs: options?.timeoutMs,
       callbacks: {
         parseEvent: parseGeminiRealtimeEvent,
+        isReadyPayload: (payload) => "setupComplete" in payload || "setup_complete" in payload,
         buildAudioPayloads: (frame) => [
           {
             realtimeInput: {
@@ -3188,8 +3229,14 @@ class GeminiRealtimeModel implements RealtimeModel {
 
           return [
             {
-              realtimeInput: {
-                text
+              clientContent: {
+                turns: [
+                  {
+                    role: "user",
+                    parts: [{ text }]
+                  }
+                ],
+                turnComplete: true
               }
             }
           ];
