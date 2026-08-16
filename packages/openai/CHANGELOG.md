@@ -1,5 +1,11 @@
 # @zhivex-ai/openai
 
+## 0.9.5
+
+### Patch Changes
+
+- Assemble fragmented Chat Completions tool calls by stream index, preserve their provider call IDs, and emit one terminal event with late usage metadata.
+
 ## 0.9.4
 
 ### Patch Changes
