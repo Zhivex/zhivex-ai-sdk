@@ -24,7 +24,7 @@ console.log(getApiStability("createWorkflow")?.stability); // "stable"
 
 Runtime export drift is guarded by that manifest, and public declaration drift is guarded by type snapshot tests for `@zhivex-ai/core`, `@zhivex-ai/sdk`, and `@zhivex-ai/react`.
 
-The stable boundary covers the shared generation primitives, portable agent runtime, safety and evaluation helpers, `Runner + SessionService`, declarative workflows, every built-in workflow state service, workflow evaluation baselines/gates, and the dedicated Agent Control Plane contract. Artifacts, CLI UX, OTEL integration, model-catalog metadata, provider-native resource lifecycles, and other APIs named in the manifest remain Beta or Experimental.
+The stable boundary covers the shared generation primitives, portable agent runtime, safety and evaluation helpers, `Runner + SessionService`, declarative workflows, every built-in workflow state service, workflow evaluation baselines/gates, Artifact Service, Model Catalog, OpenTelemetry adapters, the `zhivex-ai` CLI, and the dedicated Agent Control Plane contract. Provider-native resource lifecycles and other APIs named in the manifest remain Beta or Experimental.
 
 ### Installing The Stable Package
 
@@ -53,6 +53,9 @@ Use these guides when adopting the SDK in a real app:
 - [Next.js Runner Guide](./docs/NEXTJS.md): route handler plus React client shape.
 - [Production Guide](./docs/PRODUCTION.md): store choices, server-only boundaries, identity mapping, safety, observability, workflows, and artifacts.
 - [Workflows Guide](./docs/WORKFLOWS.md): deterministic multi-step agent workflows, durable state, replay, and workflow evaluations.
+- [Artifact Service Contract](./docs/ARTIFACTS.md): bounded payloads, integrity, backend semantics, maintenance, and release evidence.
+- [Model Catalog Contract](./docs/MODEL_CATALOG.md): immutable snapshots, data-update policy, pricing metadata, and capability boundaries.
+- [CLI Contract](./docs/CLI.md): command compatibility, JSON and exit behavior, local execution, and safety boundaries.
 - [Agent Observability Guide](./docs/OBSERVABILITY.md): traces, audit records, ledgers, golden traces, evaluations, and local inspection.
 - [Workspace Agents Guide](./docs/WORKSPACE_AGENTS.md): shell/apply-patch harnesses, app-owned execution boundaries, approvals, and safety requirements.
 - [Migration Guide](./docs/MIGRATION.md): move from direct provider SDKs, Vercel AI SDK core usage, or simple tool loops.
@@ -775,7 +778,7 @@ const diff = createWorkflowEvaluationDiffReport(
 
 ### Artifacts
 
-`ArtifactService` stores JSON-serializable artifacts for a session, workflow run, workflow step, or agent run. The first Beta service implementations are in-memory and file-backed:
+`ArtifactService` is a Stable, schema-versioned contract for JSON and binary artifacts associated with a session, workflow run, workflow step, or agent run. Built-in implementations cover in-memory, file-backed, SQLite, and Postgres storage:
 
 ```ts
 import { createFileArtifactService } from "@zhivex-ai/sdk";
@@ -849,7 +852,7 @@ const loaded = await artifacts.loadBinaryArtifact({
 });
 ```
 
-The file store writes blobs under a path-safe `blobs/` subdirectory and calculates `size` and `sha256` for `saveBinaryArtifact()`. If the caller supplies `sha256`, every built-in store verifies it against the bytes before persisting and stores the canonical lowercase digest. Blob paths are SDK-managed: callers cannot set them, and file-store metadata that points outside the expected blob location is rejected before any read, prune, or delete. SQLite and Postgres stores keep binary payloads as base64 JSON compatibility records in this Beta cut. For heavy production binaries, prefer app-owned blob/object storage with durable artifact metadata in SQL until native SQL/blob streaming is introduced; `createExternalArtifactReference()` creates the standard metadata shape for that pattern.
+The file store writes blobs under a path-safe `blobs/` subdirectory and calculates `size` and `sha256` for `saveBinaryArtifact()`. If the caller supplies `sha256`, every built-in store verifies it against the bytes before persisting and stores the canonical lowercase digest. Blob paths are SDK-managed: callers cannot set them, and file-store metadata that points outside the expected blob location is rejected before any read, prune, or delete. SQLite and Postgres stores keep binary payloads as base64 JSON compatibility records. For heavy production binaries, prefer app-owned blob/object storage with durable artifact metadata in SQL until native SQL/blob streaming is introduced; `createExternalArtifactReference()` creates the standard metadata shape for that pattern.
 
 Artifact records are schema-versioned as well. New artifacts use `schemaVersion: 1`; old JSON artifacts without a version are accepted and normalized, but future versions are rejected until the SDK has an explicit migration path.
 
@@ -898,9 +901,11 @@ await saveWorkflowEvaluationReportAsArtifact(evaluation, {
 
 These helpers do not change `runWorkflow()` behavior. They are explicit persistence calls, so applications can choose which outputs or reports become durable artifacts.
 
+Every built-in service applies configurable byte limits to JSON, text, base64, binary, metadata, and complete records. See the [Stable Artifact Service contract](./docs/ARTIFACTS.md) for default limits, integrity semantics, backend guarantees, and external-storage boundaries.
+
 ### CLI / Dev UX
 
-`@zhivex-ai/sdk` includes a Beta `zhivex-ai` CLI for local SDK state. Inspection commands are dry: they read JSON files, replay workflow state, and build reports without executing models or tools. Execution commands import an app-owned local module, so the app remains responsible for constructing runners, models, tools, and credentials.
+`@zhivex-ai/sdk` includes a Stable `zhivex-ai` CLI for local SDK state. Inspection commands are dry: they read JSON files, replay workflow state, and build reports without executing models or tools. Execution commands import an app-owned local module, so the app remains responsible for constructing runners, models, tools, and credentials.
 
 ```bash
 zhivex-ai init agent --dir support-agent --provider openai --model gpt-5
@@ -942,6 +947,8 @@ zhivex-ai agents eval --golden golden-trace.json --ledger run-ledger.json --out 
 ```
 
 Output is JSON pretty-printed by default. JSON output files are written with mode `0600`, and `init agent` creates its new project directory with mode `0700` on POSIX systems. The scaffold creates both `.env.example` and a private `.env` with mode `0600`, preserves an existing `.env`, and adds the local secret paths to `.gitignore`; `doctor` warns when `.env` permissions are unsafe. `init agent` scaffolds a Bun-first agent project with file-backed local sessions, a production safety policy, a provider package, a smoke-test tool, and scripts for doctor/inspect/ledger. Generated source safely quotes provider and model values. Use `workflow-states list/show` for first-class durable workflow state inspection; `sessions workflow-state show` remains available for legacy session-metadata fallback state. The `agents` inspection and evaluation commands are dry local control-plane utilities over saved run states and ledgers; they never execute models or tools. The CLI ledger command omits full output text and previews by default; pass `--include-output-text` only for an approved local destination. Prune commands are dry-run by default; pass `--execute` to delete. The CLI is intentionally local-only and does not introduce auth, workspaces, or Gateway calls.
+
+The CLI rejects unknown or duplicate flags and unexpected positionals, supports `--name value` and `--name=value`, and exposes schema-versioned package metadata through `zhivex-ai version` or `zhivex-ai --version`. The [Stable CLI contract](./docs/CLI.md) defines command compatibility, output and exit behavior, and safety boundaries.
 
 ### Realtime Sessions
 
@@ -1452,8 +1459,11 @@ For OpenTelemetry-oriented setups, the SDK now also exposes explicit OTEL helper
 - `createOtelObserver()`
 - `createOtelAgentObserver()`
 - `createOtelTelemetryMiddleware()`
+- `createOtelWorkflowObserver()`
 
 Those helpers are optional and do not add a required dependency to `@zhivex-ai/core`. Install `@opentelemetry/api` in your application if you want the SDK to create tracers for you automatically, or inject your own tracer-compatible object.
+
+The helpers form a Stable, versioned GenAI adapter contract. They preserve workflow → agent → model/tool context, emit the recommended client/agent/tool/workflow histograms when a meter is available, end outstanding spans on terminal events, map failures to error status, apply conservative attribute filtering, and fail open if a tracer, meter, or exporter throws. The upstream Development mapping is pinned by `OTEL_GENAI_SEMCONV_REVISION`; content-bearing GenAI events remain disabled. See the [observability guide](./docs/OBSERVABILITY.md) for lifecycle, metrics, and data-handling details.
 
 ```ts
 import { createAgent, createOtelAgentObserver, createOtelTelemetryMiddleware, wrapLanguageModel } from "@zhivex-ai/sdk";
@@ -1464,6 +1474,7 @@ const otelModelMiddleware = await createOtelTelemetryMiddleware();
 const model = wrapLanguageModel(openai("gpt-5"), [otelModelMiddleware]);
 
 const agent = createAgent({
+  name: "Deployment Agent",
   model,
   onTelemetryEvent: otelAgentObserver
 });
@@ -2872,7 +2883,7 @@ The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives 
 - `generateGroundedText`
 - `embed`, `embedMany`
 - portable agent, runner, session, safety, evaluation, replay, and trace helpers
-- Stable declarative workflows, SQL workflow state, workflow evaluation gates, and Agent Control Plane helpers plus Beta artifact, model-catalog, OTEL, CLI, and provider-native resource helpers, classified by `API_STABILITY_MANIFEST`
+- Stable declarative workflows, SQL workflow state, workflow evaluation gates, Artifact Service, Model Catalog, OTEL adapters, CLI, and Agent Control Plane helpers plus Beta provider-native resource helpers, classified by `API_STABILITY_MANIFEST`
 - message helpers such as `system`, `user`, `assistant`, `tool`, `textPart`
 - shared types such as `ReasoningConfig`, `GenerateTextOptions`, and `GenerateObjectOptions`
 - stream and HTTP helpers such as `toTextStreamResponse`, `toUIMessageStreamResponse`, `toSSEStream`, and related UI serialization utilities

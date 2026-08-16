@@ -1,5 +1,16 @@
 # @zhivex-ai/sdk
 
+## 1.6.0
+
+### Minor Changes
+
+- Promote Artifact Service, Model Catalog, OpenTelemetry adapters, and the `zhivex-ai` CLI to Stable contracts. Add bounded artifact policies, immutable versioned catalog snapshots, a commit-pinned privacy-first GenAI telemetry contract with model/agent/tool/workflow spans and metrics, official OpenTelemetry SDK lifecycle coverage, strict CLI argument validation, and installed-package CLI/Postgres smoke evidence.
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.6.0
+
 ## 1.5.0
 
 ### Minor Changes

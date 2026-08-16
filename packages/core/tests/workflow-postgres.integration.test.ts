@@ -12,6 +12,7 @@ import {
   createTextMessage,
   createWorkflow,
   runWorkflow,
+  verifyArtifactIntegrity,
   type LanguageModel,
   type PersistedWorkflowRunState,
   type StreamEvent
@@ -423,6 +424,52 @@ describePostgres("workflow and artifact Postgres integration", () => {
       expect(tenantB[0]?.data).toEqual({ tenant: "b" });
     } finally {
       await client.close();
+    }
+  });
+
+  it("round-trips and verifies the Postgres inline-base64 binary contract", async () => {
+    const firstClient = createPostgresIntegrationClient(postgresUrl!);
+    const lookup = {
+      appName: "postgres-artifact-binary",
+      userId: "binary-user",
+      sessionId: `binary-session-${Date.now()}`,
+      id: "binary"
+    };
+    const data = new Uint8Array([0, 1, 2, 253, 254, 255]);
+    let savedSha256 = "";
+    try {
+      const artifacts = createPostgresArtifactService({ client: firstClient, tableName: artifactTable });
+      const saved = await artifacts.saveBinaryArtifact({
+        ...lookup,
+        name: "binary.bin",
+        contentType: "application/octet-stream",
+        data,
+        expectedRevision: 0
+      });
+      expect(saved).toMatchObject({
+        schemaVersion: ARTIFACT_SCHEMA_VERSION,
+        revision: 1,
+        storageMode: "json",
+        encoding: "base64",
+        size: data.byteLength,
+        data: Buffer.from(data).toString("base64")
+      });
+      savedSha256 = saved.sha256!;
+    } finally {
+      await firstClient.close();
+    }
+
+    const restartedClient = createPostgresIntegrationClient(postgresUrl!);
+    try {
+      const artifacts = createPostgresArtifactService({ client: restartedClient, tableName: artifactTable });
+      const loaded = await artifacts.loadBinaryArtifact(lookup);
+      expect(loaded).toMatchObject({
+        artifact: { storageMode: "json", encoding: "base64", sha256: savedSha256 },
+        data
+      });
+      await expect(verifyArtifactIntegrity(artifacts, lookup)).resolves.toMatchObject({ ok: true, issues: [] });
+    } finally {
+      await restartedClient.close();
     }
   });
 });

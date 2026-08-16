@@ -147,6 +147,7 @@ export type {
   RunAgentEvaluationOptions
 } from "./agent-evaluation.js";
 export {
+  DEFAULT_ARTIFACT_SERVICE_LIMITS,
   createFileArtifactService,
   createBase64ArtifactData,
   cleanupFileArtifactStore,
@@ -157,12 +158,17 @@ export {
   migrateArtifactRecord,
   normalizeArtifactRecord,
   pruneFileArtifactStore,
+  resolveArtifactServiceLimits,
   createPostgresArtifactService,
   createSqliteArtifactService,
   verifyArtifactIntegrity,
   verifyArtifactRecordIntegrity
 } from "./artifact.js";
 export type {
+  ArtifactServiceLimits,
+  ResolvedArtifactServiceLimits,
+  ArtifactServiceOptions,
+  InMemoryArtifactServiceOptions,
   ArtifactBinaryLoadOutput,
   ArtifactBinarySaveInput,
   ArtifactEncoding,
@@ -361,8 +367,19 @@ export type {
   WorkflowStepResult,
   WorkflowStepStatus,
   WorkflowStateLookup,
-  WorkflowTaskStep
+  WorkflowTaskStep,
+  WorkflowTelemetryContext,
+  WorkflowTelemetryEvent,
+  WorkflowTelemetryFinishEvent,
+  WorkflowTelemetryObserver,
+  WorkflowTelemetryStartEvent,
+  WorkflowTelemetryStepFinishEvent,
+  WorkflowTelemetryStepKind,
+  WorkflowTelemetryStepStartEvent,
+  WorkflowTelemetryTerminalStatus
 } from "./workflow.js";
+export { createOtelWorkflowObserver } from "./workflow-observability.js";
+export type { CreateOtelWorkflowObserverOptions } from "./workflow-observability.js";
 export {
   agentApprovalResponsePart,
   createAgentApprovalMessage,
@@ -437,8 +454,23 @@ export type {
 } from "./mcp.js";
 export { generateImage, generateMusic, generateVideo } from "./media.js";
 export { generateText, normalizeMessages, streamText } from "./generate-text.js";
-export { createOtelAgentObserver, createOtelObserver, createOtelTelemetryMiddleware, OTelObserver, OTelSpanHandle } from "./observability.js";
-export type { OTelSpanLike, OTelTracerLike } from "./observability.js";
+export {
+  createOtelAgentObserver,
+  createOtelObserver,
+  createOtelTelemetryMiddleware,
+  OTEL_GENAI_CONTRACT_VERSION,
+  OTEL_GENAI_SEMCONV_REVISION,
+  OTelObserver,
+  OTelSpanHandle
+} from "./observability.js";
+export type {
+  OTelHistogramLike,
+  OTelMeterLike,
+  OTelMeterProviderLike,
+  OTelSpanLike,
+  OTelTracerLike,
+  OTelTracerProviderLike
+} from "./observability.js";
 export {
   createProviderSupportDriftReport,
   createProviderSupportMatrix,

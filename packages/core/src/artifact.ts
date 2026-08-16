@@ -15,8 +15,40 @@ import type { JsonValue, PostgresClientLike, SqliteDatabaseLike, SqliteStatement
 
 const randomId = createSecureId;
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const MIB = 1024 * 1024;
 
 export const ARTIFACT_SCHEMA_VERSION = 1 as const;
+
+export interface ArtifactServiceLimits {
+  maxJsonBytes?: number;
+  maxTextBytes?: number;
+  maxBase64Bytes?: number;
+  maxBinaryBytes?: number;
+  maxMetadataBytes?: number;
+  maxRecordBytes?: number;
+}
+
+export interface ResolvedArtifactServiceLimits {
+  maxJsonBytes: number;
+  maxTextBytes: number;
+  maxBase64Bytes: number;
+  maxBinaryBytes: number;
+  maxMetadataBytes: number;
+  maxRecordBytes: number;
+}
+
+export const DEFAULT_ARTIFACT_SERVICE_LIMITS: Readonly<ResolvedArtifactServiceLimits> = Object.freeze({
+  maxJsonBytes: MIB,
+  maxTextBytes: MIB,
+  maxBase64Bytes: 16 * MIB,
+  maxBinaryBytes: 16 * MIB,
+  maxMetadataBytes: 64 * 1024,
+  maxRecordBytes: 24 * MIB
+});
+
+export interface ArtifactServiceOptions {
+  limits?: ArtifactServiceLimits;
+}
 
 export interface ArtifactLookup {
   appName: string;
@@ -109,22 +141,31 @@ export interface ArtifactService {
   deleteArtifact(input: ArtifactLookup): Promise<void> | void;
 }
 
-export interface FileArtifactServiceOptions {
+export interface InMemoryArtifactServiceOptions extends ArtifactServiceOptions {}
+
+export interface FileArtifactServiceOptions extends ArtifactServiceOptions {
   directory: string;
 }
 
-export interface SqliteArtifactServiceOptions {
+export interface SqliteArtifactServiceOptions extends ArtifactServiceOptions {
   db: SqliteDatabaseLike;
   tableName?: string;
 }
 
-export interface PostgresArtifactServiceOptions {
+export interface PostgresArtifactServiceOptions extends ArtifactServiceOptions {
   client: PostgresClientLike;
   tableName?: string;
 }
 
 export interface ArtifactIntegrityIssue {
-  type: "missing-artifact" | "missing-blob" | "size-mismatch" | "sha256-mismatch" | "invalid-base64" | "metadata-invalid";
+  type:
+    | "missing-artifact"
+    | "missing-blob"
+    | "external-data-unavailable"
+    | "size-mismatch"
+    | "sha256-mismatch"
+    | "invalid-base64"
+    | "metadata-invalid";
   message: string;
   expected?: JsonValue;
   actual?: JsonValue;
@@ -202,40 +243,194 @@ const matchesArtifactLookup = (artifact: ArtifactRecord, input: ArtifactLookup):
   artifact.sessionId === input.sessionId &&
   artifact.id === input.id;
 const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const artifactEncodings = new Set<ArtifactEncoding>(["json", "text", "base64"]);
+const artifactStorageModes = new Set<ArtifactStorageMode>(["json", "binary"]);
+
+const positiveSafeIntegerLimit = (value: number | undefined, fallback: number, name: string): number => {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
+    throw new ValidationError(`The "${name}" artifact limit must be a positive safe integer.`);
+  }
+  return resolved;
+};
+
+export const resolveArtifactServiceLimits = (
+  limits: ArtifactServiceLimits = {}
+): ResolvedArtifactServiceLimits => ({
+  maxJsonBytes: positiveSafeIntegerLimit(
+    limits.maxJsonBytes,
+    DEFAULT_ARTIFACT_SERVICE_LIMITS.maxJsonBytes,
+    "maxJsonBytes"
+  ),
+  maxTextBytes: positiveSafeIntegerLimit(
+    limits.maxTextBytes,
+    DEFAULT_ARTIFACT_SERVICE_LIMITS.maxTextBytes,
+    "maxTextBytes"
+  ),
+  maxBase64Bytes: positiveSafeIntegerLimit(
+    limits.maxBase64Bytes,
+    DEFAULT_ARTIFACT_SERVICE_LIMITS.maxBase64Bytes,
+    "maxBase64Bytes"
+  ),
+  maxBinaryBytes: positiveSafeIntegerLimit(
+    limits.maxBinaryBytes,
+    DEFAULT_ARTIFACT_SERVICE_LIMITS.maxBinaryBytes,
+    "maxBinaryBytes"
+  ),
+  maxMetadataBytes: positiveSafeIntegerLimit(
+    limits.maxMetadataBytes,
+    DEFAULT_ARTIFACT_SERVICE_LIMITS.maxMetadataBytes,
+    "maxMetadataBytes"
+  ),
+  maxRecordBytes: positiveSafeIntegerLimit(
+    limits.maxRecordBytes,
+    DEFAULT_ARTIFACT_SERVICE_LIMITS.maxRecordBytes,
+    "maxRecordBytes"
+  )
+});
+
+const jsonText = (value: unknown, fieldName: string): string => {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) {
+      throw new ValidationError(`Artifact ${fieldName} must be JSON-serializable.`);
+    }
+    return serialized;
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      throw error;
+    }
+    throw new ValidationError(`Artifact ${fieldName} must be JSON-serializable.`, { cause: error });
+  }
+};
+
+const utf8Bytes = (value: string): number => Buffer.byteLength(value, "utf8");
+
+const assertByteLimit = (actual: number, maximum: number, fieldName: string) => {
+  if (actual > maximum) {
+    throw new ValidationError(`Artifact ${fieldName} is ${actual} bytes and exceeds the ${maximum}-byte limit.`);
+  }
+};
+
+const validateRequiredString = (value: unknown, fieldName: string) => {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ValidationError(`Artifact "${fieldName}" must be a non-empty string.`);
+  }
+};
+
+const validateOptionalString = (value: unknown, fieldName: string) => {
+  if (value !== undefined) {
+    validateRequiredString(value, fieldName);
+  }
+};
+
+const validateArtifactLookup = (input: ArtifactLookup) => {
+  validateRequiredString(input.appName, "appName");
+  validateRequiredString(input.userId, "userId");
+  validateRequiredString(input.sessionId, "sessionId");
+  validateRequiredString(input.id, "id");
+};
+
+const validateArtifactListInput = (input: ArtifactListInput) => {
+  validateRequiredString(input.appName, "appName");
+  validateRequiredString(input.userId, "userId");
+  validateRequiredString(input.sessionId, "sessionId");
+  validateOptionalString(input.workflowRunId, "workflowRunId");
+  validateOptionalString(input.workflowStepId, "workflowStepId");
+  validateOptionalString(input.agentRunId, "agentRunId");
+};
+
+const validateRevision = (revision: number | undefined, fieldName = "revision") => {
+  if (revision !== undefined && (!Number.isSafeInteger(revision) || revision < 0)) {
+    throw new ValidationError(`Artifact "${fieldName}" must be a non-negative safe integer.`);
+  }
+};
+
+const externalBlobReference = (metadata: Record<string, JsonValue> | undefined) => {
+  const externalBlob = metadata?.externalBlob;
+  if (!externalBlob || typeof externalBlob !== "object" || Array.isArray(externalBlob)) {
+    return undefined;
+  }
+  const reference = externalBlob as Record<string, JsonValue>;
+  return reference.managedBy === "application" &&
+    typeof reference.uri === "string" &&
+    reference.uri.length > 0 &&
+    !/[\u0000-\u001f\u007f]/.test(reference.uri)
+    ? { uri: reference.uri }
+    : undefined;
+};
 
 export const normalizeArtifactRecord = (value: unknown): ArtifactRecord => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new ValidationError("ArtifactRecord must be an object.");
   }
   const artifact = value as Partial<ArtifactRecord> & { schemaVersion?: number };
-  if (artifact.schemaVersion !== undefined && artifact.schemaVersion > ARTIFACT_SCHEMA_VERSION) {
+  if (
+    artifact.schemaVersion !== undefined &&
+    (!Number.isSafeInteger(artifact.schemaVersion) || artifact.schemaVersion < 0 || artifact.schemaVersion > ARTIFACT_SCHEMA_VERSION)
+  ) {
     throw new ValidationError(`Unsupported ArtifactRecord schemaVersion ${artifact.schemaVersion}.`);
   }
-  if (
-    typeof artifact.id !== "string" ||
-    typeof artifact.appName !== "string" ||
-    typeof artifact.userId !== "string" ||
-    typeof artifact.sessionId !== "string" ||
-    typeof artifact.name !== "string" ||
-    typeof artifact.contentType !== "string" ||
-    typeof artifact.createdAt !== "number" ||
-    typeof artifact.updatedAt !== "number" ||
-    !("data" in artifact)
-  ) {
+  if (!("data" in artifact)) {
     throw new ValidationError("ArtifactRecord is missing required fields.");
+  }
+  validateRequiredString(artifact.id, "id");
+  validateRequiredString(artifact.appName, "appName");
+  validateRequiredString(artifact.userId, "userId");
+  validateRequiredString(artifact.sessionId, "sessionId");
+  validateRequiredString(artifact.name, "name");
+  validateRequiredString(artifact.contentType, "contentType");
+  validateOptionalString(artifact.workflowRunId, "workflowRunId");
+  validateOptionalString(artifact.workflowStepId, "workflowStepId");
+  validateOptionalString(artifact.agentRunId, "agentRunId");
+  if (artifact.revision !== undefined && (!Number.isSafeInteger(artifact.revision) || artifact.revision < 1)) {
+    throw new ValidationError('Artifact "revision" must be a positive safe integer.');
+  }
+  if (!Number.isSafeInteger(artifact.createdAt) || artifact.createdAt! < 0) {
+    throw new ValidationError('Artifact "createdAt" must be a non-negative safe integer.');
+  }
+  if (!Number.isSafeInteger(artifact.updatedAt) || artifact.updatedAt! < artifact.createdAt!) {
+    throw new ValidationError('Artifact "updatedAt" must be a safe integer greater than or equal to "createdAt".');
+  }
+  if (artifact.encoding !== undefined && !artifactEncodings.has(artifact.encoding)) {
+    throw new ValidationError('Artifact "encoding" must be "json", "text", or "base64".');
+  }
+  if (artifact.storageMode !== undefined && !artifactStorageModes.has(artifact.storageMode)) {
+    throw new ValidationError('Artifact "storageMode" must be "json" or "binary".');
+  }
+  if (artifact.metadata !== undefined && (!artifact.metadata || typeof artifact.metadata !== "object" || Array.isArray(artifact.metadata))) {
+    throw new ValidationError('Artifact "metadata" must be a JSON object.');
+  }
+  if (
+    (artifact.storageMode ?? "json") !== "binary" &&
+    (artifact.encoding === "base64" || artifact.encoding === "text") &&
+    typeof artifact.data !== "string"
+  ) {
+    throw new ValidationError(`Artifact data must be a string when "encoding" is "${artifact.encoding}".`);
+  }
+  if ((artifact.storageMode ?? "json") === "binary" && artifact.data !== null) {
+    throw new ValidationError('Artifact data must be null when "storageMode" is "binary".');
+  }
+  if (artifact.blobPath !== undefined && (artifact.storageMode !== "binary" || artifact.data !== null)) {
+    throw new ValidationError('Artifact "blobPath" is only valid for separate binary storage.');
+  }
+  validateArtifactMetadata({ size: artifact.size, sha256: artifact.sha256 });
+  jsonText(artifact.data, "data");
+  if (artifact.metadata !== undefined) {
+    jsonText(artifact.metadata, "metadata");
   }
   return {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
     revision: typeof artifact.revision === "number" ? artifact.revision : 1,
-    id: artifact.id,
-    appName: artifact.appName,
-    userId: artifact.userId,
-    sessionId: artifact.sessionId,
+    id: artifact.id!,
+    appName: artifact.appName!,
+    userId: artifact.userId!,
+    sessionId: artifact.sessionId!,
     workflowRunId: artifact.workflowRunId,
     workflowStepId: artifact.workflowStepId,
     agentRunId: artifact.agentRunId,
-    name: artifact.name,
-    contentType: artifact.contentType,
+    name: artifact.name!,
+    contentType: artifact.contentType!,
     data: cloneJson(artifact.data as JsonValue | string),
     encoding: artifact.encoding,
     size: artifact.size,
@@ -243,8 +438,8 @@ export const normalizeArtifactRecord = (value: unknown): ArtifactRecord => {
     storageMode: artifact.storageMode ?? "json",
     blobPath: artifact.blobPath,
     metadata: artifact.metadata ? cloneJson(artifact.metadata) : undefined,
-    createdAt: artifact.createdAt,
-    updatedAt: artifact.updatedAt
+    createdAt: artifact.createdAt!,
+    updatedAt: artifact.updatedAt!
   };
 };
 
@@ -260,7 +455,14 @@ export const migrateArtifactRecord = (
 
 const cloneArtifact = (artifact: ArtifactRecord): ArtifactRecord => cloneJson(normalizeArtifactRecord(artifact));
 
-const bytesFromBinaryInput = (data: string | ArrayBuffer | Uint8Array): Uint8Array => {
+const binaryInputByteLength = (data: string | ArrayBuffer | Uint8Array): number =>
+  typeof data === "string" ? utf8Bytes(data) : data.byteLength;
+
+const bytesFromBinaryInput = (
+  data: string | ArrayBuffer | Uint8Array,
+  maxBytes: number
+): Uint8Array => {
+  assertByteLimit(binaryInputByteLength(data), maxBytes, "binary data");
   const buffer =
     typeof data === "string"
       ? Buffer.from(data, "utf8")
@@ -286,6 +488,7 @@ const assertExpectedRevision = (
   expectedRevision: number | undefined,
   resource: string
 ) => {
+  validateRevision(expectedRevision, "expectedRevision");
   if (expectedRevision !== undefined && (current?.revision ?? 0) !== expectedRevision) {
     throw new ConflictError(`${resource} revision conflict.`);
   }
@@ -309,15 +512,89 @@ const validateArtifactMetadata = (input: Pick<ArtifactSaveInput, "size" | "sha25
   }
 };
 
-const base64Bytes = (value: string): Uint8Array => {
+const encodedBase64Length = (decodedBytes: number): number => 4 * Math.ceil(decodedBytes / 3);
+
+const base64Bytes = (value: string, maxBytes: number): Uint8Array => {
+  assertByteLimit(utf8Bytes(value), encodedBase64Length(maxBytes), "base64 data");
   const normalized = value.replace(/\s/g, "");
   if (normalized.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) {
     throw new ValidationError('Artifact data must be valid base64 when "encoding" is "base64".');
   }
-  return new Uint8Array(Buffer.from(normalized, "base64"));
+  const padding = normalized.endsWith("==") ? 2 : normalized.endsWith("=") ? 1 : 0;
+  const decodedBytes = normalized.length === 0 ? 0 : (normalized.length / 4) * 3 - padding;
+  assertByteLimit(decodedBytes, maxBytes, "decoded base64 data");
+  const bytes = new Uint8Array(Buffer.from(normalized, "base64"));
+  if (bytes.byteLength !== decodedBytes) {
+    throw new ValidationError('Artifact data must be valid base64 when "encoding" is "base64".');
+  }
+  return bytes;
 };
 
-const enrichArtifactMetadata = (input: ArtifactSaveInput): Pick<ArtifactSaveInput, "size" | "sha256"> => {
+const validateArtifactSaveInput = (
+  input: ArtifactSaveInput,
+  limits: ResolvedArtifactServiceLimits,
+  internal: { managedBinary?: boolean } = {}
+) => {
+  validateRequiredString(input.appName, "appName");
+  validateRequiredString(input.userId, "userId");
+  validateRequiredString(input.sessionId, "sessionId");
+  if (input.id !== undefined) {
+    validateRequiredString(input.id, "id");
+  }
+  validateOptionalString(input.workflowRunId, "workflowRunId");
+  validateOptionalString(input.workflowStepId, "workflowStepId");
+  validateOptionalString(input.agentRunId, "agentRunId");
+  validateRequiredString(input.name, "name");
+  validateRequiredString(input.contentType, "contentType");
+  validateRevision(input.expectedRevision, "expectedRevision");
+  if (input.encoding !== undefined && !artifactEncodings.has(input.encoding)) {
+    throw new ValidationError('Artifact "encoding" must be "json", "text", or "base64".');
+  }
+  if (input.storageMode !== undefined && !artifactStorageModes.has(input.storageMode)) {
+    throw new ValidationError('Artifact "storageMode" must be "json" or "binary".');
+  }
+  if (input.metadata !== undefined && (!input.metadata || typeof input.metadata !== "object" || Array.isArray(input.metadata))) {
+    throw new ValidationError('Artifact "metadata" must be a JSON object.');
+  }
+
+  if (input.metadata !== undefined) {
+    assertByteLimit(utf8Bytes(jsonText(input.metadata, "metadata")), limits.maxMetadataBytes, "metadata");
+  }
+
+  if ((input.storageMode ?? "json") === "binary") {
+    if (input.data !== null) {
+      throw new ValidationError('Artifact data must be null when "storageMode" is "binary".');
+    }
+    if (!internal.managedBinary && !externalBlobReference(input.metadata)) {
+      throw new ValidationError(
+        'Binary artifact metadata must contain an application-managed externalBlob reference.'
+      );
+    }
+    return;
+  }
+
+  if (input.encoding === "base64") {
+    if (typeof input.data !== "string") {
+      throw new ValidationError('Artifact data must be a string when "encoding" is "base64".');
+    }
+    base64Bytes(input.data, limits.maxBase64Bytes);
+    return;
+  }
+  if (input.encoding === "text" && typeof input.data !== "string") {
+    throw new ValidationError('Artifact data must be a string when "encoding" is "text".');
+  }
+
+  if (typeof input.data === "string") {
+    assertByteLimit(utf8Bytes(input.data), limits.maxTextBytes, "text data");
+  } else {
+    assertByteLimit(utf8Bytes(jsonText(input.data, "data")), limits.maxJsonBytes, "JSON data");
+  }
+};
+
+const enrichArtifactMetadata = (
+  input: ArtifactSaveInput,
+  limits: ResolvedArtifactServiceLimits
+): Pick<ArtifactSaveInput, "size" | "sha256"> => {
   validateArtifactMetadata(input);
   if (input.encoding !== "base64" || typeof input.data !== "string") {
     return {
@@ -326,7 +603,7 @@ const enrichArtifactMetadata = (input: ArtifactSaveInput): Pick<ArtifactSaveInpu
     };
   }
 
-  const bytes = base64Bytes(input.data);
+  const bytes = base64Bytes(input.data, limits.maxBase64Bytes);
   const actualSha256 = sha256Digest(bytes);
 
   if (input.size !== undefined && input.size !== bytes.byteLength) {
@@ -340,6 +617,29 @@ const enrichArtifactMetadata = (input: ArtifactSaveInput): Pick<ArtifactSaveInpu
     size: input.size ?? bytes.byteLength,
     sha256: actualSha256
   };
+};
+
+const validateArtifactRecordLimits = (
+  artifact: ArtifactRecord,
+  limits: ResolvedArtifactServiceLimits
+): ArtifactRecord => {
+  assertByteLimit(utf8Bytes(jsonText(artifact, "record")), limits.maxRecordBytes, "record");
+  if (artifact.metadata !== undefined) {
+    assertByteLimit(utf8Bytes(jsonText(artifact.metadata, "metadata")), limits.maxMetadataBytes, "metadata");
+  }
+  if (artifact.storageMode !== "binary") {
+    if (artifact.encoding === "base64") {
+      if (typeof artifact.data !== "string") {
+        throw new ValidationError('Artifact data must be a string when "encoding" is "base64".');
+      }
+      base64Bytes(artifact.data, limits.maxBase64Bytes);
+    } else if (typeof artifact.data === "string") {
+      assertByteLimit(utf8Bytes(artifact.data), limits.maxTextBytes, "text data");
+    } else {
+      assertByteLimit(utf8Bytes(jsonText(artifact.data, "data")), limits.maxJsonBytes, "JSON data");
+    }
+  }
+  return artifact;
 };
 
 const validateIdentifier = (value: string, fieldName: string): string => {
@@ -364,16 +664,20 @@ const getRecordField = (value: unknown, candidates: string[]): unknown => {
   return undefined;
 };
 
-const parseArtifactJson = (value: unknown): ArtifactRecord | undefined => {
+const parseArtifactJson = (
+  value: unknown,
+  limits: ResolvedArtifactServiceLimits
+): ArtifactRecord | undefined => {
   if (!value) {
     return undefined;
   }
 
   if (typeof value === "string") {
-    return normalizeArtifactRecord(JSON.parse(value) as ArtifactRecord);
+    assertByteLimit(utf8Bytes(value), limits.maxRecordBytes, "record");
+    return validateArtifactRecordLimits(normalizeArtifactRecord(JSON.parse(value) as ArtifactRecord), limits);
   }
 
-  return normalizeArtifactRecord(value);
+  return validateArtifactRecordLimits(normalizeArtifactRecord(value), limits);
 };
 
 const prepareSqliteStatement = <TResult extends Record<string, unknown>>(
@@ -413,12 +717,14 @@ const ensurePostgresTable = (() => {
 
 const createArtifact = (
   input: ArtifactSaveInput,
+  limits: ResolvedArtifactServiceLimits,
   existing?: ArtifactRecord,
-  internal?: { blobPath?: string }
+  internal?: { blobPath?: string; managedBinary?: boolean }
 ): ArtifactRecord => {
-  const integrity = enrichArtifactMetadata(input);
+  validateArtifactSaveInput(input, limits, internal);
+  const integrity = enrichArtifactMetadata(input, limits);
   const now = Date.now();
-  return {
+  const artifact: ArtifactRecord = {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
     revision: existing ? existing.revision + 1 : 1,
     id: input.id ?? existing?.id ?? randomId("art"),
@@ -438,8 +744,10 @@ const createArtifact = (
     blobPath: internal?.blobPath,
     metadata: input.metadata ? cloneJson(input.metadata) : undefined,
     createdAt: existing?.createdAt ?? now,
-    updatedAt: now
+    updatedAt: existing ? Math.max(now, existing.updatedAt + 1) : now
   };
+  assertByteLimit(utf8Bytes(jsonText(artifact, "record")), limits.maxRecordBytes, "record");
+  return artifact;
 };
 
 const matchesListInput = (artifact: ArtifactRecord, input: ArtifactListInput): boolean =>
@@ -493,15 +801,12 @@ const lookupFromArtifact = (artifact: ArtifactRecord): ArtifactLookup => ({
 });
 
 export const createBase64ArtifactData = (
-  input: Base64ArtifactDataInput | string | ArrayBuffer | Uint8Array
+  input: Base64ArtifactDataInput | string | ArrayBuffer | Uint8Array,
+  limits: ArtifactServiceLimits = {}
 ): Base64ArtifactData => {
   const data = typeof input === "object" && "data" in input ? input.data : input;
-  const buffer =
-    typeof data === "string"
-      ? Buffer.from(data, "utf8")
-      : data instanceof Uint8Array
-        ? Buffer.from(data)
-        : Buffer.from(data);
+  const resolvedLimits = resolveArtifactServiceLimits(limits);
+  const buffer = Buffer.from(bytesFromBinaryInput(data, resolvedLimits.maxBase64Bytes));
   return {
     data: buffer.toString("base64"),
     encoding: "base64",
@@ -510,13 +815,18 @@ export const createBase64ArtifactData = (
 };
 
 export const createExternalArtifactReference = (
-  input: ExternalArtifactReferenceInput
+  input: ExternalArtifactReferenceInput,
+  limits: ArtifactServiceLimits = {}
 ): ExternalArtifactReference => {
+  const resolvedLimits = resolveArtifactServiceLimits(limits);
   validateArtifactMetadata(input);
-  if (!input.uri) {
+  if (!input.uri || /[\u0000-\u001f\u007f]/.test(input.uri)) {
     throw new ValidationError('The "uri" external artifact reference option is required.');
   }
-  return {
+  if (input.metadata !== undefined && (!input.metadata || typeof input.metadata !== "object" || Array.isArray(input.metadata))) {
+    throw new ValidationError('Artifact "metadata" must be a JSON object.');
+  }
+  const reference: ExternalArtifactReference = {
     data: null,
     storageMode: "binary",
     size: input.size,
@@ -529,24 +839,46 @@ export const createExternalArtifactReference = (
       }
     }
   };
+  assertByteLimit(
+    utf8Bytes(jsonText(reference.metadata, "metadata")),
+    resolvedLimits.maxMetadataBytes,
+    "metadata"
+  );
+  return reference;
 };
 
 export const verifyArtifactRecordIntegrity = (
   record: ArtifactRecord,
-  data?: Uint8Array
+  data?: Uint8Array,
+  limits: ArtifactServiceLimits = {}
 ): ArtifactIntegrityResult => {
   const artifact = normalizeArtifactRecord(record);
+  const resolvedLimits = resolveArtifactServiceLimits(limits);
   const issues: ArtifactIntegrityIssue[] = [];
   let bytes = data;
+  let decodedInlineBase64 = false;
 
   if (!bytes && artifact.encoding === "base64" && typeof artifact.data === "string") {
     try {
-      bytes = new Uint8Array(Buffer.from(artifact.data, "base64"));
+      bytes = base64Bytes(artifact.data, resolvedLimits.maxBase64Bytes);
+      decodedInlineBase64 = true;
     } catch {
       issues.push({
         type: "invalid-base64",
         message: `Artifact "${artifact.id}" contains invalid base64 data.`
       });
+    }
+  }
+
+  if (bytes && !decodedInlineBase64) {
+    try {
+      assertByteLimit(bytes.byteLength, resolvedLimits.maxBinaryBytes, "binary data");
+    } catch (error) {
+      issues.push({
+        type: "metadata-invalid",
+        message: error instanceof Error ? error.message : `Artifact "${artifact.id}" binary data exceeds its limit.`
+      });
+      bytes = undefined;
     }
   }
 
@@ -581,7 +913,8 @@ export const verifyArtifactRecordIntegrity = (
 
 export const verifyArtifactIntegrity = async (
   service: ArtifactService,
-  lookup: ArtifactLookup
+  lookup: ArtifactLookup,
+  limits: ArtifactServiceLimits = {}
 ): Promise<ArtifactIntegrityResult> => {
   const artifact = await service.loadArtifact(lookup);
   if (!artifact) {
@@ -597,19 +930,22 @@ export const verifyArtifactIntegrity = async (
   if (artifact.storageMode === "binary") {
     const binary = await service.loadBinaryArtifact(lookup);
     if (!binary) {
+      const external = externalBlobReference(artifact.metadata);
       return {
         ok: false,
         artifact,
         issues: [{
-          type: "missing-blob",
-          message: `Artifact "${lookup.id}" binary blob was not found.`
+          type: external ? "external-data-unavailable" : "missing-blob",
+          message: external
+            ? `Artifact "${lookup.id}" uses application-managed external data at "${external.uri}".`
+            : `Artifact "${lookup.id}" binary blob was not found.`
         }]
       };
     }
-    return verifyArtifactRecordIntegrity(binary.artifact, binary.data);
+    return verifyArtifactRecordIntegrity(binary.artifact, binary.data, limits);
   }
 
-  return verifyArtifactRecordIntegrity(artifact);
+  return verifyArtifactRecordIntegrity(artifact, undefined, limits);
 };
 
 const listFilesRecursive = async (directory: string): Promise<string[]> => {
@@ -634,6 +970,7 @@ const listFilesRecursive = async (directory: string): Promise<string[]> => {
 export const inspectFileArtifactStore = async (
   options: FileArtifactServiceOptions
 ): Promise<FileArtifactStoreInspection> => {
+  const limits = resolveArtifactServiceLimits(options.limits);
   const artifacts = new Map<string, ArtifactRecord>();
   const issues: FileArtifactStoreInspectionIssue[] = [];
   const referencedBlobPaths = new Set<string>();
@@ -652,7 +989,12 @@ export const inspectFileArtifactStore = async (
     }
     const metadataPath = path.join(options.directory, entry);
     try {
-      const artifact = normalizeArtifactRecord(JSON.parse(await fs.readFile(metadataPath, "utf8")) as ArtifactRecord);
+      const stat = await fs.stat(metadataPath);
+      assertByteLimit(stat.size, limits.maxRecordBytes, "record");
+      const artifact = validateArtifactRecordLimits(
+        normalizeArtifactRecord(JSON.parse(await fs.readFile(metadataPath, "utf8")) as ArtifactRecord),
+        limits
+      );
       const fullBlobPath = resolveFileArtifactBlobPath(options.directory, artifact);
       const key = artifactKey(artifact);
       if (!artifacts.has(key) || entry === fileNameForArtifact(artifact)) {
@@ -663,12 +1005,14 @@ export const inspectFileArtifactStore = async (
       }
       if (artifact.storageMode === "binary") {
         if (!artifact.blobPath) {
-          issues.push({
-            type: "missing-blob",
-            path: metadataPath,
-            artifact,
-            message: `Artifact "${artifact.id}" has no blobPath.`
-          });
+          if (!externalBlobReference(artifact.metadata)) {
+            issues.push({
+              type: "missing-blob",
+              path: metadataPath,
+              artifact,
+              message: `Artifact "${artifact.id}" has no blobPath.`
+            });
+          }
         } else {
           try {
             await fs.stat(fullBlobPath!);
@@ -782,7 +1126,10 @@ export const pruneFileArtifactStore = async (
   };
 };
 
-export const createInMemoryArtifactService = (): ArtifactService => {
+export const createInMemoryArtifactService = (
+  options: InMemoryArtifactServiceOptions = {}
+): ArtifactService => {
+  const limits = resolveArtifactServiceLimits(options.limits);
   const artifacts = new Map<string, ArtifactRecord>();
   const binaryData = new Map<string, Uint8Array>();
 
@@ -795,9 +1142,10 @@ export const createInMemoryArtifactService = (): ArtifactService => {
         sessionId: input.sessionId,
         id
       };
+      validateArtifactLookup(lookup);
       const existing = artifacts.get(artifactKey(lookup));
       assertExpectedRevision(existing, input.expectedRevision, "ArtifactRecord");
-      const artifact = createArtifact({ ...input, id }, existing);
+      const artifact = createArtifact({ ...input, id }, limits, existing);
       artifacts.set(artifactKey(lookup), cloneArtifact(artifact));
       binaryData.delete(artifactKey(lookup));
       return cloneArtifact(artifact);
@@ -811,7 +1159,8 @@ export const createInMemoryArtifactService = (): ArtifactService => {
         sessionId: input.sessionId,
         id
       };
-      const bytes = bytesFromBinaryInput(input.data);
+      validateArtifactLookup(lookup);
+      const bytes = bytesFromBinaryInput(input.data, limits.maxBinaryBytes);
       const sha256 = resolveBinarySha256(bytes, input.sha256);
       const existing = artifacts.get(artifactKey(lookup));
       assertExpectedRevision(existing, input.expectedRevision, "ArtifactRecord");
@@ -823,18 +1172,20 @@ export const createInMemoryArtifactService = (): ArtifactService => {
         size: bytes.byteLength,
         sha256,
         storageMode: "binary"
-      }, existing);
+      }, limits, existing, { managedBinary: true });
       artifacts.set(artifactKey(lookup), cloneArtifact(artifact));
       binaryData.set(artifactKey(lookup), new Uint8Array(bytes));
       return cloneArtifact(artifact);
     },
 
     loadArtifact(input) {
+      validateArtifactLookup(input);
       const artifact = artifacts.get(artifactKey(input));
       return artifact ? cloneArtifact(artifact) : undefined;
     },
 
     loadBinaryArtifact(input) {
+      validateArtifactLookup(input);
       const artifact = artifacts.get(artifactKey(input));
       const data = binaryData.get(artifactKey(input));
       if (!artifact || !data) {
@@ -847,6 +1198,7 @@ export const createInMemoryArtifactService = (): ArtifactService => {
     },
 
     listArtifacts(input) {
+      validateArtifactListInput(input);
       return [...artifacts.values()]
         .filter((artifact) => matchesListInput(artifact, input))
         .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
@@ -854,6 +1206,7 @@ export const createInMemoryArtifactService = (): ArtifactService => {
     },
 
     deleteArtifact(input) {
+      validateArtifactLookup(input);
       artifacts.delete(artifactKey(input));
       binaryData.delete(artifactKey(input));
     }
@@ -861,15 +1214,22 @@ export const createInMemoryArtifactService = (): ArtifactService => {
 };
 
 export const createFileArtifactService = (options: FileArtifactServiceOptions): ArtifactService => {
+  const limits = resolveArtifactServiceLimits(options.limits);
   const filePath = (input: ArtifactLookup) => path.join(options.directory, fileNameForArtifact(input));
   const binaryPath = (input: ArtifactLookup) => path.join(options.directory, blobPathForArtifact(input));
   const legacyFilePath = (input: ArtifactLookup) => path.join(options.directory, legacyFileNameForArtifact(input));
 
   const load = async (input: ArtifactLookup): Promise<ArtifactRecord | undefined> => {
+    validateArtifactLookup(input);
     for (const candidate of [filePath(input), legacyFilePath(input)]) {
       try {
+        const stat = await fs.stat(candidate);
+        assertByteLimit(stat.size, limits.maxRecordBytes, "record");
         const content = await fs.readFile(candidate, "utf8");
-        const artifact = normalizeArtifactRecord(JSON.parse(content) as ArtifactRecord);
+        const artifact = validateArtifactRecordLimits(
+          normalizeArtifactRecord(JSON.parse(content) as ArtifactRecord),
+          limits
+        );
         if (!matchesArtifactLookup(artifact, input)) {
           continue;
         }
@@ -886,7 +1246,7 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
 
   const save = async (artifact: ArtifactRecord): Promise<void> => {
     await ensurePrivateDirectory(options.directory);
-    await writePrivateFile(filePath(artifact), JSON.stringify(cloneArtifact(artifact), null, 2));
+    await writePrivateFile(filePath(artifact), JSON.stringify(cloneArtifact(artifact)));
     try {
       const legacyArtifact = normalizeArtifactRecord(
         JSON.parse(await fs.readFile(legacyFilePath(artifact), "utf8")) as ArtifactRecord
@@ -918,9 +1278,10 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         sessionId: input.sessionId,
         id
       };
+      validateArtifactLookup(lookup);
       const existing = await load(lookup);
       assertExpectedRevision(existing, input.expectedRevision, "ArtifactRecord");
-      const artifact = createArtifact({ ...input, id }, existing);
+      const artifact = createArtifact({ ...input, id }, limits, existing);
       await save(artifact);
       const existingBlob = binaryPath(lookup);
       await fs.unlink(existingBlob).catch((error: NodeJS.ErrnoException) => {
@@ -939,7 +1300,8 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         sessionId: input.sessionId,
         id
       };
-      const bytes = bytesFromBinaryInput(input.data);
+      validateArtifactLookup(lookup);
+      const bytes = bytesFromBinaryInput(input.data, limits.maxBinaryBytes);
       const sha256 = resolveBinarySha256(bytes, input.sha256);
       const blobPath = blobPathForArtifact(lookup);
       const existing = await load(lookup);
@@ -952,7 +1314,7 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         size: bytes.byteLength,
         sha256,
         storageMode: "binary"
-      }, existing, { blobPath });
+      }, limits, existing, { blobPath, managedBinary: true });
       await ensurePrivateDirectory(path.dirname(binaryPath(lookup)));
       await writePrivateFile(binaryPath(lookup), bytes);
       await save(artifact);
@@ -969,7 +1331,11 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         return undefined;
       }
       try {
-        const data = await fs.readFile(resolveFileArtifactBlobPath(options.directory, artifact)!);
+        const resolvedBlobPath = resolveFileArtifactBlobPath(options.directory, artifact)!;
+        const stat = await fs.stat(resolvedBlobPath);
+        assertByteLimit(stat.size, limits.maxBinaryBytes, "binary data");
+        const data = await fs.readFile(resolvedBlobPath);
+        assertByteLimit(data.byteLength, limits.maxBinaryBytes, "binary data");
         return {
           artifact,
           data: new Uint8Array(data)
@@ -983,6 +1349,7 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
     },
 
     async listArtifacts(input) {
+      validateArtifactListInput(input);
       let entries: string[];
       try {
         entries = await fs.readdir(options.directory);
@@ -998,8 +1365,14 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
         if (!entry.endsWith(".json")) {
           continue;
         }
-        const content = await fs.readFile(path.join(options.directory, entry), "utf8");
-        const artifact = normalizeArtifactRecord(JSON.parse(content) as ArtifactRecord);
+        const metadataPath = path.join(options.directory, entry);
+        const stat = await fs.stat(metadataPath);
+        assertByteLimit(stat.size, limits.maxRecordBytes, "record");
+        const content = await fs.readFile(metadataPath, "utf8");
+        const artifact = validateArtifactRecordLimits(
+          normalizeArtifactRecord(JSON.parse(content) as ArtifactRecord),
+          limits
+        );
         resolveFileArtifactBlobPath(options.directory, artifact);
         if (matchesListInput(artifact, input)) {
           const key = artifactKey(artifact);
@@ -1015,6 +1388,7 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
     },
 
     async deleteArtifact(input) {
+      validateArtifactLookup(input);
       const artifact = await load(input);
       await fs.unlink(filePath(input)).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") {
@@ -1047,6 +1421,7 @@ export const createFileArtifactService = (options: FileArtifactServiceOptions): 
 };
 
 export const createSqliteArtifactService = (options: SqliteArtifactServiceOptions): ArtifactService => {
+  const limits = resolveArtifactServiceLimits(options.limits);
   const tableName = validateIdentifier(options.tableName ?? "zhivex_artifacts", "tableName");
 
   options.db.exec(`
@@ -1106,6 +1481,23 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
       artifact_json = excluded.artifact_json,
       updated_at_ms = excluded.updated_at_ms
   `);
+  const insertCasStatement = prepareSqliteStatement(options.db, `
+    INSERT INTO ${tableName} (
+      artifact_key,
+      app_name,
+      user_id,
+      session_id,
+      artifact_id,
+      workflow_run_id,
+      workflow_step_id,
+      agent_run_id,
+      artifact_json,
+      created_at_ms,
+      updated_at_ms
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(artifact_key) DO NOTHING
+  `);
   const updateCasStatement = prepareSqliteStatement(options.db, `
     UPDATE ${tableName}
     SET app_name = ?,
@@ -1123,9 +1515,10 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
   const deleteStatement = prepareSqliteStatement(options.db, `DELETE FROM ${tableName} WHERE artifact_key = ?`);
 
   const load = (input: ArtifactLookup): ArtifactRecord | undefined => {
+    validateArtifactLookup(input);
     for (const key of [artifactKey(input), legacyArtifactKey(input)]) {
       const row = loadStatement.get([key]);
-      const artifact = parseArtifactJson(getRecordField(row, ["artifact_json", "artifactJson"]));
+      const artifact = parseArtifactJson(getRecordField(row, ["artifact_json", "artifactJson"]), limits);
       if (artifact && matchesArtifactLookup(artifact, input)) {
         return artifact;
       }
@@ -1137,9 +1530,27 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
     artifact: ArtifactRecord,
     options?: { existing?: ArtifactRecord; expectedRevision?: number }
   ): ArtifactRecord => {
-    if (options?.expectedRevision !== undefined && options.existing) {
+    if (options?.expectedRevision === 0 && !options.existing) {
+      const result = insertCasStatement.run([
+        artifactKey(lookupFromArtifact(artifact)),
+        artifact.appName,
+        artifact.userId,
+        artifact.sessionId,
+        artifact.id,
+        artifact.workflowRunId ?? null,
+        artifact.workflowStepId ?? null,
+        artifact.agentRunId ?? null,
+        JSON.stringify(artifact),
+        artifact.createdAt,
+        artifact.updatedAt
+      ]);
+      if (sqliteMutationCount(result) !== 1) {
+        throw new ConflictError("ArtifactRecord revision conflict.");
+      }
+    } else if (options?.expectedRevision !== undefined && options.existing) {
       const canonicalExisting = parseArtifactJson(
-        getRecordField(loadStatement.get([artifactKey(artifact)]), ["artifact_json", "artifactJson"])
+        getRecordField(loadStatement.get([artifactKey(artifact)]), ["artifact_json", "artifactJson"]),
+        limits
       );
       if (canonicalExisting && matchesArtifactLookup(canonicalExisting, artifact)) {
         const result = updateCasStatement.run([
@@ -1155,12 +1566,13 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
           artifactKey(lookupFromArtifact(artifact)),
           options.existing.updatedAt
         ]);
-        if (sqliteMutationCount(result) === 0) {
+        if (sqliteMutationCount(result) !== 1) {
           throw new ConflictError("ArtifactRecord revision conflict.");
         }
       } else {
         const legacy = parseArtifactJson(
-          getRecordField(loadStatement.get([legacyArtifactKey(artifact)]), ["artifact_json", "artifactJson"])
+          getRecordField(loadStatement.get([legacyArtifactKey(artifact)]), ["artifact_json", "artifactJson"]),
+          limits
         );
         if (!legacy || !matchesArtifactLookup(legacy, artifact) || legacy.updatedAt !== options.existing.updatedAt) {
           throw new ConflictError("ArtifactRecord revision conflict.");
@@ -1195,7 +1607,8 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
       ]);
     }
     const legacy = parseArtifactJson(
-      getRecordField(loadStatement.get([legacyArtifactKey(artifact)]), ["artifact_json", "artifactJson"])
+      getRecordField(loadStatement.get([legacyArtifactKey(artifact)]), ["artifact_json", "artifactJson"]),
+      limits
     );
     if (legacy && matchesArtifactLookup(legacy, artifact)) {
       deleteStatement.run([legacyArtifactKey(artifact)]);
@@ -1206,6 +1619,7 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
   return {
     saveArtifact(input) {
       const id = input.id ?? randomId("art");
+      validateArtifactLookup({ appName: input.appName, userId: input.userId, sessionId: input.sessionId, id });
       const existing = load({
         appName: input.appName,
         userId: input.userId,
@@ -1213,7 +1627,7 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
         id
       });
       assertExpectedRevision(existing, input.expectedRevision, "ArtifactRecord");
-      return save(createArtifact({ ...input, id }, existing), {
+      return save(createArtifact({ ...input, id }, limits, existing), {
         existing,
         expectedRevision: input.expectedRevision
       });
@@ -1221,7 +1635,9 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
 
     saveBinaryArtifact(input) {
       const id = input.id ?? randomId("art");
-      const bytes = bytesFromBinaryInput(input.data);
+      validateArtifactLookup({ appName: input.appName, userId: input.userId, sessionId: input.sessionId, id });
+      const bytes = bytesFromBinaryInput(input.data, limits.maxBinaryBytes);
+      const sha256 = resolveBinarySha256(bytes, input.sha256);
       const existing = load({
         appName: input.appName,
         userId: input.userId,
@@ -1235,9 +1651,9 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
         data: Buffer.from(bytes).toString("base64"),
         encoding: "base64",
         size: bytes.byteLength,
-        sha256: input.sha256 ?? sha256Digest(bytes),
+        sha256,
         storageMode: "json"
-      }, existing), {
+      }, limits, existing), {
         existing,
         expectedRevision: input.expectedRevision
       });
@@ -1254,11 +1670,12 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
       }
       return {
         artifact,
-        data: new Uint8Array(Buffer.from(artifact.data, "base64"))
+        data: base64Bytes(artifact.data, limits.maxBase64Bytes)
       };
     },
 
     listArtifacts(input) {
+      validateArtifactListInput(input);
       const params = [
         input.appName,
         input.userId,
@@ -1273,7 +1690,7 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
       const rows = listStatement.all?.(params) ?? [];
       const artifacts = new Map<string, ArtifactRecord>();
       for (const row of rows) {
-        const artifact = parseArtifactJson(getRecordField(row, ["artifact_json", "artifactJson"]));
+        const artifact = parseArtifactJson(getRecordField(row, ["artifact_json", "artifactJson"]), limits);
         if (artifact) {
           artifacts.set(artifactKey(artifact), artifact);
         }
@@ -1282,9 +1699,11 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
     },
 
     deleteArtifact(input) {
+      validateArtifactLookup(input);
       deleteStatement.run([artifactKey(input)]);
       const legacy = parseArtifactJson(
-        getRecordField(loadStatement.get([legacyArtifactKey(input)]), ["artifact_json", "artifactJson"])
+        getRecordField(loadStatement.get([legacyArtifactKey(input)]), ["artifact_json", "artifactJson"]),
+        limits
       );
       if (legacy && matchesArtifactLookup(legacy, input)) {
         deleteStatement.run([legacyArtifactKey(input)]);
@@ -1295,6 +1714,7 @@ export const createSqliteArtifactService = (options: SqliteArtifactServiceOption
 
 export const createPostgresArtifactService = (options: PostgresArtifactServiceOptions): ArtifactService => {
   assertPostgresClient(options.client);
+  const limits = resolveArtifactServiceLimits(options.limits);
   const tableName = validateIdentifier(options.tableName ?? "zhivex_artifacts", "tableName");
   const createSql = `
     CREATE TABLE IF NOT EXISTS ${tableName} (
@@ -1313,13 +1733,14 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
   `;
 
   const load = async (input: ArtifactLookup): Promise<ArtifactRecord | undefined> => {
+    validateArtifactLookup(input);
     await ensurePostgresTable(options.client, tableName, createSql);
     for (const key of [artifactKey(input), legacyArtifactKey(input)]) {
       const result = await options.client.query<{ artifact_json?: ArtifactRecord; artifactJson?: ArtifactRecord }>(
         `SELECT artifact_json FROM ${tableName} WHERE artifact_key = $1`,
         [key]
       );
-      const artifact = parseArtifactJson(getRecordField(result.rows[0], ["artifact_json", "artifactJson"]));
+      const artifact = parseArtifactJson(getRecordField(result.rows[0], ["artifact_json", "artifactJson"]), limits);
       if (artifact && matchesArtifactLookup(artifact, input)) {
         return artifact;
       }
@@ -1332,7 +1753,42 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
     saveOptions?: { existing?: ArtifactRecord; expectedRevision?: number }
   ): Promise<ArtifactRecord> => {
     await ensurePostgresTable(options.client, tableName, createSql);
-    if (saveOptions?.expectedRevision !== undefined && saveOptions.existing) {
+    if (saveOptions?.expectedRevision === 0 && !saveOptions.existing) {
+      const result = await options.client.query(
+        `INSERT INTO ${tableName} (
+           artifact_key,
+           app_name,
+           user_id,
+           session_id,
+           artifact_id,
+           workflow_run_id,
+           workflow_step_id,
+           agent_run_id,
+           artifact_json,
+           created_at_ms,
+           updated_at_ms
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
+         ON CONFLICT(artifact_key) DO NOTHING
+         RETURNING artifact_json`,
+        [
+          artifactKey(lookupFromArtifact(artifact)),
+          artifact.appName,
+          artifact.userId,
+          artifact.sessionId,
+          artifact.id,
+          artifact.workflowRunId ?? null,
+          artifact.workflowStepId ?? null,
+          artifact.agentRunId ?? null,
+          JSON.stringify(artifact),
+          artifact.createdAt,
+          artifact.updatedAt
+        ]
+      );
+      if (result.rows.length === 0) {
+        throw new ConflictError("ArtifactRecord revision conflict.");
+      }
+    } else if (saveOptions?.expectedRevision !== undefined && saveOptions.existing) {
       const result = await options.client.query(
         `UPDATE ${tableName}
          SET app_name = $2,
@@ -1441,7 +1897,10 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
       `SELECT artifact_json FROM ${tableName} WHERE artifact_key = $1`,
       [legacyArtifactKey(artifact)]
     );
-    const legacy = parseArtifactJson(getRecordField(legacyResult.rows[0], ["artifact_json", "artifactJson"]));
+    const legacy = parseArtifactJson(
+      getRecordField(legacyResult.rows[0], ["artifact_json", "artifactJson"]),
+      limits
+    );
     if (legacy && matchesArtifactLookup(legacy, artifact)) {
       await options.client.query(`DELETE FROM ${tableName} WHERE artifact_key = $1`, [legacyArtifactKey(artifact)]);
     }
@@ -1451,6 +1910,7 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
   return {
     async saveArtifact(input) {
       const id = input.id ?? randomId("art");
+      validateArtifactLookup({ appName: input.appName, userId: input.userId, sessionId: input.sessionId, id });
       const existing = await load({
         appName: input.appName,
         userId: input.userId,
@@ -1458,7 +1918,7 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
         id
       });
       assertExpectedRevision(existing, input.expectedRevision, "ArtifactRecord");
-      return save(createArtifact({ ...input, id }, existing), {
+      return save(createArtifact({ ...input, id }, limits, existing), {
         existing,
         expectedRevision: input.expectedRevision
       });
@@ -1466,7 +1926,9 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
 
     async saveBinaryArtifact(input) {
       const id = input.id ?? randomId("art");
-      const bytes = bytesFromBinaryInput(input.data);
+      validateArtifactLookup({ appName: input.appName, userId: input.userId, sessionId: input.sessionId, id });
+      const bytes = bytesFromBinaryInput(input.data, limits.maxBinaryBytes);
+      const sha256 = resolveBinarySha256(bytes, input.sha256);
       const existing = await load({
         appName: input.appName,
         userId: input.userId,
@@ -1480,9 +1942,9 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
         data: Buffer.from(bytes).toString("base64"),
         encoding: "base64",
         size: bytes.byteLength,
-        sha256: input.sha256 ?? sha256Digest(bytes),
+        sha256,
         storageMode: "json"
-      }, existing), {
+      }, limits, existing), {
         existing,
         expectedRevision: input.expectedRevision
       });
@@ -1499,11 +1961,12 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
       }
       return {
         artifact,
-        data: new Uint8Array(Buffer.from(artifact.data, "base64"))
+        data: base64Bytes(artifact.data, limits.maxBase64Bytes)
       };
     },
 
     async listArtifacts(input) {
+      validateArtifactListInput(input);
       await ensurePostgresTable(options.client, tableName, createSql);
       const result = await options.client.query<{ artifact_json?: ArtifactRecord; artifactJson?: ArtifactRecord }>(
         `SELECT artifact_json FROM ${tableName}
@@ -1525,7 +1988,7 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
       );
       const artifacts = new Map<string, ArtifactRecord>();
       for (const row of result.rows) {
-        const artifact = parseArtifactJson(getRecordField(row, ["artifact_json", "artifactJson"]));
+        const artifact = parseArtifactJson(getRecordField(row, ["artifact_json", "artifactJson"]), limits);
         if (artifact) {
           artifacts.set(artifactKey(artifact), artifact);
         }
@@ -1534,13 +1997,17 @@ export const createPostgresArtifactService = (options: PostgresArtifactServiceOp
     },
 
     async deleteArtifact(input) {
+      validateArtifactLookup(input);
       await ensurePostgresTable(options.client, tableName, createSql);
       await options.client.query(`DELETE FROM ${tableName} WHERE artifact_key = $1`, [artifactKey(input)]);
       const legacyResult = await options.client.query<{ artifact_json?: ArtifactRecord; artifactJson?: ArtifactRecord }>(
         `SELECT artifact_json FROM ${tableName} WHERE artifact_key = $1`,
         [legacyArtifactKey(input)]
       );
-      const legacy = parseArtifactJson(getRecordField(legacyResult.rows[0], ["artifact_json", "artifactJson"]));
+      const legacy = parseArtifactJson(
+        getRecordField(legacyResult.rows[0], ["artifact_json", "artifactJson"]),
+        limits
+      );
       if (legacy && matchesArtifactLookup(legacy, input)) {
         await options.client.query(`DELETE FROM ${tableName} WHERE artifact_key = $1`, [legacyArtifactKey(input)]);
       }

@@ -196,6 +196,8 @@ export interface ToolRuntimeContext<TContext = any> {
   /** Durable run that owns this execution, when invoked by the agent runtime. */
   runId?: string;
   agentId?: string;
+  /** Human-readable, low-cardinality agent name used for telemetry. */
+  agentName?: string;
   scope?: AgentStoreScope;
   metadata?: Record<string, JsonValue>;
   /** Acquired execution boundary for this run. Callbacks and secrets are never persisted. */
@@ -1847,16 +1849,20 @@ export interface AgentTelemetryRunStartEvent {
   type: "run-start";
   runId: string;
   agentId?: string;
+  agentName?: string;
   provider: string;
   modelId: string;
   maxSteps: number;
+  startedAt?: number;
 }
 
 export interface AgentTelemetryStepStartEvent {
   type: "step-start";
   runId: string;
   agentId?: string;
+  agentName?: string;
   stepIndex: number;
+  startedAt?: number;
 }
 
 export interface AgentTelemetryStepFinishEvent {
@@ -1864,6 +1870,16 @@ export interface AgentTelemetryStepFinishEvent {
   runId: string;
   agentId?: string;
   step: AgentStep;
+}
+
+export interface AgentTelemetryToolStartEvent {
+  type: "tool-start";
+  runId: string;
+  agentId?: string;
+  agentName?: string;
+  stepIndex: number;
+  toolCall: ToolCall;
+  startedAt?: number;
 }
 
 export interface AgentTelemetryApprovalRequestEvent {
@@ -1971,14 +1987,17 @@ export interface AgentTelemetryRunFinishEvent {
   type: "run-finish";
   runId: string;
   agentId?: string;
+  agentName?: string;
   status: AgentStatus;
   state: AgentRunState;
+  finishedAt?: number;
 }
 
 export type AgentTelemetryEvent =
   | AgentTelemetryRunStartEvent
   | AgentTelemetryStepStartEvent
   | AgentTelemetryStepFinishEvent
+  | AgentTelemetryToolStartEvent
   | AgentTelemetryApprovalRequestEvent
   | AgentTelemetryApprovalResolvedEvent
   | AgentTelemetryToolApprovalEvent
@@ -1990,9 +2009,37 @@ export type AgentTelemetryEvent =
   | AgentTelemetrySubAgentFinishEvent
   | AgentTelemetryRunFinishEvent;
 
-export type AgentTelemetryObserver = (
+export interface AgentTelemetryInvocationStart {
+  runId: string;
+  agentId?: string;
+  agentName?: string;
+  provider: string;
+  modelId: string;
+  maxSteps: number;
+  startedAt: number;
+}
+
+export interface AgentTelemetryInvocationFinish {
+  runId: string;
+  agentId?: string;
+  agentName?: string;
+  status: AgentStatus;
+  error?: Error;
+  finishedAt: number;
+}
+
+export type AgentTelemetryObserver = ((
   event: AgentTelemetryEvent
-) => void | Promise<void>;
+) => void | Promise<void>) & {
+  /** Starts an invocation boundary before context, store, lease, and preflight work. */
+  startInvocation?(event: AgentTelemetryInvocationStart): void | Promise<void>;
+  /** Closes that boundary even when setup fails before the normal run lifecycle starts. */
+  finishInvocation?(event: AgentTelemetryInvocationFinish): void | Promise<void>;
+  /** Runs work with the matching agent invocation span active when supported. */
+  withRunContext?<T>(runId: string, callback: () => T | Promise<T>): Promise<T>;
+  /** Runs work with the matching agent step span active when supported. */
+  withStepContext?<T>(runId: string, stepIndex: number, callback: () => T | Promise<T>): Promise<T>;
+};
 
 export type AgentHookFailureMode = "ignore" | "fail";
 
@@ -2017,6 +2064,8 @@ export interface AgentDefinition<
   TOutput = any
 > {
   id?: string;
+  /** Human-readable, low-cardinality name. `id` remains the stable definition identifier. */
+  name?: string;
   model: TModel;
   instructions?: string;
   contextSchema?: z.ZodType<TContext>;
@@ -2050,6 +2099,8 @@ export interface AgentDefinition<
 
 export interface LiveAgentDefinition<TModel extends RealtimeModel = RealtimeModel> {
   id?: string;
+  /** Human-readable, low-cardinality name. `id` remains the stable definition identifier. */
+  name?: string;
   model: TModel;
   instructions?: string;
   tools?: ToolCollection;
@@ -2589,6 +2640,7 @@ export interface CircuitBreakerState {
 
 export interface TelemetryGenerateStartEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
   type: "generate-start";
+  generateId?: number;
   model: LanguageModel<TProviderOptions>;
   input: ModelGenerateInput<TProviderOptions>;
   startedAt: number;
@@ -2596,6 +2648,7 @@ export interface TelemetryGenerateStartEvent<TProviderOptions extends ProviderOp
 
 export interface TelemetryGenerateFinishEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
   type: "generate-finish";
+  generateId?: number;
   model: LanguageModel<TProviderOptions>;
   input: ModelGenerateInput<TProviderOptions>;
   output: GenerateResult;
@@ -2606,6 +2659,7 @@ export interface TelemetryGenerateFinishEvent<TProviderOptions extends ProviderO
 
 export interface TelemetryGenerateErrorEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
   type: "generate-error";
+  generateId?: number;
   model: LanguageModel<TProviderOptions>;
   input: ModelGenerateInput<TProviderOptions>;
   error: Error;
@@ -2616,13 +2670,28 @@ export interface TelemetryGenerateErrorEvent<TProviderOptions extends ProviderOp
 
 export interface TelemetryStreamStartEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
   type: "stream-start";
+  streamId?: number;
   model: LanguageModel<TProviderOptions>;
   input: ModelGenerateInput<TProviderOptions>;
   startedAt: number;
 }
 
+/** Timing-only signal for one logical non-terminal stream chunk; never includes model output content. */
+export interface TelemetryStreamChunkEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  type: "stream-chunk";
+  streamId?: number;
+  model: LanguageModel<TProviderOptions>;
+  input: ModelGenerateInput<TProviderOptions>;
+  startedAt: number;
+  chunkAt: number;
+  chunkIndex: number;
+  timeToFirstChunkMs?: number;
+  timeSincePreviousChunkMs?: number;
+}
+
 export interface TelemetryStreamFinishEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
   type: "stream-finish";
+  streamId?: number;
   model: LanguageModel<TProviderOptions>;
   input: ModelGenerateInput<TProviderOptions>;
   startedAt: number;
@@ -2631,16 +2700,20 @@ export interface TelemetryStreamFinishEvent<TProviderOptions extends ProviderOpt
   finishReason?: FinishReason;
   providerFinishReason?: string;
   usage?: TokenUsage;
+  /** Number of non-terminal output chunks observed. */
+  outputChunkCount?: number;
 }
 
 export interface TelemetryStreamErrorEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
   type: "stream-error";
+  streamId?: number;
   model: LanguageModel<TProviderOptions>;
   input: ModelGenerateInput<TProviderOptions>;
   error: Error;
   startedAt: number;
   finishedAt: number;
   latencyMs: number;
+  outputChunkCount?: number;
 }
 
 export interface TelemetryToolExecutionStartEvent<TProviderOptions extends ProviderOptions = ProviderOptions> {
@@ -2681,6 +2754,7 @@ export type LanguageModelTelemetryEvent<TProviderOptions extends ProviderOptions
   | TelemetryGenerateFinishEvent<TProviderOptions>
   | TelemetryGenerateErrorEvent<TProviderOptions>
   | TelemetryStreamStartEvent<TProviderOptions>
+  | TelemetryStreamChunkEvent<TProviderOptions>
   | TelemetryStreamFinishEvent<TProviderOptions>
   | TelemetryStreamErrorEvent<TProviderOptions>
   | TelemetryToolExecutionStartEvent<TProviderOptions>

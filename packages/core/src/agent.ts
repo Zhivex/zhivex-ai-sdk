@@ -618,6 +618,85 @@ const emitTelemetryEvent = async <TModel extends LanguageModel>(
   );
 };
 
+const emitInvocationStartTelemetry = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  runId: string,
+  startedAt: number,
+  maxSteps: number
+) => {
+  try {
+    await agent.onTelemetryEvent?.startInvocation?.({
+      runId,
+      agentId: agent.id,
+      agentName: agent.name,
+      provider: agent.model.provider,
+      modelId: agent.model.modelId,
+      maxSteps,
+      startedAt
+    });
+  } catch {
+    // Invocation telemetry is best-effort and cannot replace setup/business errors.
+  }
+};
+
+const emitInvocationFinishTelemetry = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>,
+  runId: string,
+  status: AgentStatus,
+  error: Error | undefined
+) => {
+  try {
+    await agent.onTelemetryEvent?.finishInvocation?.({
+      runId,
+      agentId: agent.id,
+      agentName: agent.name,
+      status,
+      error,
+      finishedAt: Date.now()
+    });
+  } catch {
+    // Invocation telemetry is best-effort and cannot replace setup/business errors.
+  }
+};
+
+const withAgentTelemetryRunContext = <TModel extends LanguageModel, TResult>(
+  agent: AgentDefinition<TModel>,
+  runId: string,
+  callback: () => TResult | Promise<TResult>
+): Promise<TResult> => {
+  const telemetryObserver = agent.onTelemetryEvent;
+  const wrapper = telemetryObserver?.withRunContext;
+  if (!wrapper) return Promise.resolve().then(callback);
+
+  let execution: Promise<TResult> | undefined;
+  let callbackError: unknown;
+  let callbackFailed = false;
+  const executeOnce = () => {
+    execution ??= Promise.resolve()
+      .then(callback)
+      .catch((error) => {
+        callbackFailed = true;
+        callbackError = error;
+        throw error;
+      });
+    return execution;
+  };
+
+  return Promise.resolve()
+    .then(async () => {
+      await wrapper.call(telemetryObserver, runId, executeOnce);
+      return executeOnce();
+    })
+    .catch(async (wrapperError) => {
+      if (callbackFailed) throw callbackError;
+      try {
+        return await executeOnce();
+      } catch (executionError) {
+        throw callbackFailed ? callbackError : executionError ?? wrapperError;
+      }
+    });
+};
+
 const subAgentToolInputSchema = z.object({
   prompt: z.string().min(1),
   system: z.string().optional()
@@ -1615,6 +1694,7 @@ const createGenerateOptions = <
       context,
       runId: state.runId,
       agentId: state.agentId,
+      agentName: agent.name,
       scope: state.scope,
       metadata: state.metadata,
       executionEnvironment: executionEnvironmentSession
@@ -1659,18 +1739,28 @@ const createGenerateOptions = <
           return compacted.messages;
         }
       : undefined,
-    onBeforeModelStep: ({ step }) => {
-      if (!budget) return;
-      const trigger = evaluateAgentBudgetPreflight(state, budget, {
-        operation: "model",
-        requiredSteps: Math.max(1, step - state.currentStep),
-        requestedOutputTokens: maxTokens
-      });
-      if (trigger) {
-        throw new GuardrailTriggeredError("input", trigger.reason ?? "Agent model budget preflight failed.", {
-          metadata: trigger.metadata
+    onBeforeModelStep: async ({ step }) => {
+      if (budget) {
+        const trigger = evaluateAgentBudgetPreflight(state, budget, {
+          operation: "model",
+          requiredSteps: Math.max(1, step - state.currentStep),
+          requestedOutputTokens: maxTokens
         });
+        if (trigger) {
+          throw new GuardrailTriggeredError("input", trigger.reason ?? "Agent model budget preflight failed.", {
+            metadata: trigger.metadata
+          });
+        }
       }
+
+      await emitTelemetryEvent(agent, {
+        type: "step-start",
+        runId: state.runId,
+        agentId: state.agentId,
+        agentName: agent.name,
+        stepIndex: step,
+        startedAt: Date.now()
+      });
     },
     onModelStep: async ({ request, response, step, toolCalls, approvalRequests }) => {
       if (!agent.store) return;
@@ -1738,16 +1828,29 @@ const createGenerateOptions = <
       state.revision = checkpointState.revision;
     },
     stepOffset: state.currentStep,
-    onBeforeToolExecution: ({ toolCalls }) => {
-      if (!budget) return;
-      reservedToolCalls += toolCalls.length;
-      const trigger = evaluateAgentBudgetPreflight(state, budget, {
-        operation: "tool",
-        requiredToolCalls: reservedToolCalls
-      });
-      if (trigger) {
-        throw new GuardrailTriggeredError("input", trigger.reason ?? "Agent tool budget preflight failed.", {
-          metadata: trigger.metadata
+    onBeforeToolExecution: async ({ step, toolCalls }) => {
+      if (budget) {
+        reservedToolCalls += toolCalls.length;
+        const trigger = evaluateAgentBudgetPreflight(state, budget, {
+          operation: "tool",
+          requiredToolCalls: reservedToolCalls
+        });
+        if (trigger) {
+          throw new GuardrailTriggeredError("input", trigger.reason ?? "Agent tool budget preflight failed.", {
+            metadata: trigger.metadata
+          });
+        }
+      }
+
+      for (const toolCall of toolCalls) {
+        await emitTelemetryEvent(agent, {
+          type: "tool-start",
+          runId: state.runId,
+          agentId: state.agentId,
+          agentName: agent.name,
+          stepIndex: step,
+          toolCall,
+          startedAt: Date.now()
         });
       }
     },
@@ -2006,15 +2109,18 @@ const emitRunStartTelemetry = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   state: AgentRunState,
   memoryMessages: ModelMessage[],
-  approvals: AgentApprovalResponse[] | undefined
+  approvals: AgentApprovalResponse[] | undefined,
+  invocationStartedAt: number
 ) => {
-  await emitTelemetryEvent(agent, {
-    type: "run-start",
-    runId: state.runId,
-    agentId: state.agentId,
-    provider: state.provider,
-    modelId: state.modelId,
-    maxSteps: state.maxSteps
+    await emitTelemetryEvent(agent, {
+      type: "run-start",
+      runId: state.runId,
+      agentId: state.agentId,
+      agentName: agent.name,
+      provider: state.provider,
+      modelId: state.modelId,
+      maxSteps: state.maxSteps,
+      startedAt: invocationStartedAt
   });
 
   if (state.handoff) {
@@ -2053,8 +2159,10 @@ const emitRunFinishTelemetry = async <TModel extends LanguageModel>(
     type: "run-finish",
     runId: state.runId,
     agentId: state.agentId,
+    agentName: agent.name,
     status: state.status,
-    state: cloneState(state)
+    state: cloneState(state),
+    finishedAt: Date.now()
   });
 };
 
@@ -2075,6 +2183,7 @@ export class Agent<
   TOutput = unknown
 > implements AgentDefinition<TModel, TContext, TOutput> {
   id?: string;
+  name?: string;
   model: TModel;
   instructions?: string;
   contextSchema?: z.ZodType<TContext>;
@@ -2112,6 +2221,7 @@ export class Agent<
   toDefinition(): AgentDefinition<TModel, TContext, TOutput> {
     return createAgent<TModel, TContext, TOutput>({
       id: this.id,
+      name: this.name,
       model: this.model,
       instructions: this.instructions,
       contextSchema: this.contextSchema,
@@ -2361,7 +2471,22 @@ export const runAgent = async <
   agent: AgentDefinition<TModel, TContext, TOutput>,
   input: AgentRunInput<TModel, TContext> = {}
 ): Promise<AgentRunOutput<TOutput>> => {
-  const context = await resolveContext(agent, input);
+  const invocationStartedAt = Date.now();
+  const telemetryRunId = input.runId ?? input.state?.runId ?? randomId("run");
+  const invocationInput = input.runId || input.state
+    ? input
+    : { ...input, runId: telemetryRunId };
+  let invocationStatus: AgentStatus = "completed";
+  let invocationError: Error | undefined;
+  await emitInvocationStartTelemetry(
+    agent,
+    telemetryRunId,
+    invocationStartedAt,
+    Math.max(1, input.maxSteps ?? input.state?.maxSteps ?? agent.maxSteps ?? 1)
+  );
+
+  try {
+  const context = await resolveContext(agent, invocationInput);
   const currentStatus = normalizeApprovalStatus(context.state.status);
   const policy = resolveRunPolicy(agent, input);
 
@@ -2372,11 +2497,13 @@ export const runAgent = async <
     currentStatus === "timed_out"
   ) {
     context.state.status = currentStatus;
+    invocationStatus = currentStatus;
     return toOutput(context.state);
   }
 
   if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0) {
     context.state.status = currentStatus;
+    invocationStatus = currentStatus;
     return toOutput(context.state);
   }
 
@@ -2384,6 +2511,7 @@ export const runAgent = async <
     agent.store?.acquireLease && agent.store.renewLease && agent.store.releaseLease
   );
   if (!context.fresh && currentStatus === "running" && !supportsLeases) {
+    invocationStatus = currentStatus;
     return toOutput(context.state);
   }
 
@@ -2397,13 +2525,15 @@ export const runAgent = async <
       throw new ConflictError(`Agent run "${context.state.runId}" is already owned by another worker.`);
     }
     const activeState = await agent.store?.load(context.state.runId, context.state.scope);
-    return toOutput(activeState ? normalizeAgentRunState(activeState) : context.state);
+    const outputState = activeState ? normalizeAgentRunState(activeState) : context.state;
+    invocationStatus = outputState.status;
+    return toOutput(outputState);
   }
   try {
     if (!context.fresh || freshRequiresExistingClaim) {
       await claimAgentExecution(agent, context.state);
     }
-    await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
+    await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals, invocationStartedAt);
   } catch (error) {
     await executionLease.release();
     throw error;
@@ -2439,18 +2569,6 @@ export const runAgent = async <
     return toOutput(failedState);
   }
 
-  try {
-    await emitTelemetryEvent(agent, {
-      type: "step-start",
-      runId: context.state.runId,
-      agentId: context.state.agentId,
-      stepIndex: context.state.currentStep + 1
-    });
-  } catch (error) {
-    await executionLease.release();
-    throw error;
-  }
-
   const abortContext = createAgentAbortContext(
     mergeAbortSignals(input.abortSignal, executionLease.signal),
     policy
@@ -2471,20 +2589,24 @@ export const runAgent = async <
   }
 
   try {
-    const result = await withAgentPolicyTimeout(
-      generateText(
-        createGenerateOptions(
-          agent,
-          context.state,
-          input,
-          context.messages,
-          context.remainingSteps,
-          context.context,
-          executionEnvironmentSession,
-          abortContext.signal
-        )
-      ),
-      abortContext
+    const result = await withAgentTelemetryRunContext(
+      agent,
+      context.state.runId,
+      () => withAgentPolicyTimeout(
+        generateText(
+          createGenerateOptions(
+            agent,
+            context.state,
+            input,
+            context.messages,
+            context.remainingSteps,
+            context.context,
+            executionEnvironmentSession,
+            abortContext.signal
+          )
+        ),
+        abortContext
+      )
     );
     const cancelled = executionLease.cancelledState();
     if (cancelled) {
@@ -2564,6 +2686,13 @@ export const runAgent = async <
     });
     await executionLease.release();
   }
+  } catch (error) {
+    invocationStatus = "failed";
+    invocationError = error instanceof Error ? error : new Error(String(error));
+    throw error;
+  } finally {
+    await emitInvocationFinishTelemetry(agent, telemetryRunId, invocationStatus, invocationError);
+  }
 };
 
 export const streamAgent = <
@@ -2574,6 +2703,11 @@ export const streamAgent = <
   agent: AgentDefinition<TModel, TContext, TOutput>,
   input: AgentRunInput<TModel, TContext> = {}
 ): AgentStreamResult<TOutput> => {
+  const invocationStartedAt = Date.now();
+  const telemetryRunId = input.runId ?? input.state?.runId ?? randomId("run");
+  const invocationInput = input.runId || input.state
+    ? input
+    : { ...input, runId: telemetryRunId };
   const policy = resolveRunPolicy(agent, input);
   const broadcast = new BoundedReplayBroadcast<AgentStreamEvent>({
     maxHistory: policy?.maxStreamEvents ?? 4096
@@ -2582,9 +2716,20 @@ export const streamAgent = <
     broadcast.publish(event, { terminal });
   let activeLease: AgentExecutionLeaseContext | undefined;
   let activeExecutionEnvironment: AgentExecutionEnvironmentSession<TContext> | undefined;
+  let invocationFinishPromise: Promise<void> | undefined;
+  const finishInvocation = (status: AgentStatus, error?: Error) => {
+    invocationFinishPromise ??= emitInvocationFinishTelemetry(agent, telemetryRunId, status, error);
+    return invocationFinishPromise;
+  };
 
   const runner = (async () => {
-    const context = await resolveContext(agent, input);
+    await emitInvocationStartTelemetry(
+      agent,
+      telemetryRunId,
+      invocationStartedAt,
+      Math.max(1, input.maxSteps ?? input.state?.maxSteps ?? agent.maxSteps ?? 1)
+    );
+    const context = await resolveContext(agent, invocationInput);
     const currentStatus = normalizeApprovalStatus(context.state.status);
 
     const supportsLeases = Boolean(
@@ -2592,6 +2737,7 @@ export const streamAgent = <
     );
     if (!context.fresh && currentStatus === "running" && !supportsLeases) {
       broadcast.close();
+      await finishInvocation(currentStatus);
       return {
         output: toOutput(context.state),
         textStream: emptyAsyncIterable()
@@ -2606,6 +2752,7 @@ export const streamAgent = <
     ) {
       context.state.status = currentStatus;
       broadcast.close();
+      await finishInvocation(currentStatus);
       return {
         output: toOutput(context.state),
         textStream: emptyAsyncIterable()
@@ -2615,6 +2762,7 @@ export const streamAgent = <
     if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0) {
       context.state.status = currentStatus;
       broadcast.close();
+      await finishInvocation(currentStatus);
       return {
         output: toOutput(context.state),
         textStream: emptyAsyncIterable()
@@ -2632,8 +2780,10 @@ export const streamAgent = <
       }
       const activeState = await agent.store?.load(context.state.runId, context.state.scope);
       broadcast.close();
+      const outputState = activeState ? normalizeAgentRunState(activeState) : context.state;
+      await finishInvocation(outputState.status);
       return {
-        output: toOutput(activeState ? normalizeAgentRunState(activeState) : context.state),
+        output: toOutput(outputState),
         textStream: emptyAsyncIterable()
       };
     }
@@ -2642,7 +2792,7 @@ export const streamAgent = <
       if (!context.fresh || freshRequiresExistingClaim) {
         await claimAgentExecution(agent, context.state);
       }
-      await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals);
+      await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals, invocationStartedAt);
     } catch (error) {
       await executionLease.release();
       throw error;
@@ -2654,6 +2804,7 @@ export const streamAgent = <
       await emitRunFinishTelemetry(agent, state);
       await executionLease.release();
       broadcast.close();
+      await finishInvocation(state.status);
       return {
         output: toOutput(state),
         textStream: emptyAsyncIterable()
@@ -2691,6 +2842,7 @@ export const streamAgent = <
       }, true);
       broadcast.close();
       await executionLease.release();
+      await finishInvocation(failedState.status);
       return {
         output: toOutput(failedState),
         textStream: emptyAsyncIterable()
@@ -2712,13 +2864,6 @@ export const streamAgent = <
 
     await publish({
       type: "agent-step-start",
-      stepIndex: context.state.currentStep + 1
-    });
-
-    await emitTelemetryEvent(agent, {
-      type: "step-start",
-      runId: context.state.runId,
-      agentId: context.state.agentId,
       stepIndex: context.state.currentStep + 1
     });
 
@@ -2769,7 +2914,7 @@ export const streamAgent = <
     }
     const approvalRequests: AgentApprovalRequest[] = [];
 
-    const eventRelay = (async () => {
+    const eventRelay = withAgentTelemetryRunContext(agent, context.state.runId, async () => {
       for await (const event of streamResult.eventStream) {
         await publish(event);
 
@@ -2818,7 +2963,7 @@ export const streamAgent = <
           });
         }
       }
-    })();
+    });
 
     const output = (async () => {
       try {
@@ -2958,13 +3103,17 @@ export const streamAgent = <
         activeExecutionEnvironment = undefined;
         await executionLease.release();
       }
-    })();
+    })().finally(() => finishInvocation(
+      executionEnvironmentStatus,
+      executionEnvironmentError ? new Error(executionEnvironmentError.message) : undefined
+    ));
 
     return {
       output,
       textStream: streamResult.textStream
     };
   })().catch(async (error) => {
+    await finishInvocation("failed", error instanceof Error ? error : new Error(String(error)));
     await activeExecutionEnvironment?.release?.({
       status: "failed",
       error: { message: error instanceof Error ? error.message : String(error) }

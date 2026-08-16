@@ -60,7 +60,22 @@ describe("zhivex-ai CLI", () => {
     expect(capture.stdout[0]).toContain("agents ledger|inspect|diff|golden|eval");
     expect(capture.stdout[0]).toContain("sessions list|show|workflow-state|prune");
     expect(capture.stdout[0]).toContain("workflow replay|report|compare|baseline|gate|run|eval");
+    expect(capture.stdout[0]).toContain("version");
     expect(capture.stdout[0]).toContain("--include-output-text");
+  });
+
+  it("prints schema-versioned CLI package metadata", async () => {
+    for (const args of [["--version"], ["version"]]) {
+      const capture = createCapture();
+      await expect(runCli(args, capture.io)).resolves.toBe(0);
+      expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+        schemaVersion: 1,
+        type: "cli_version",
+        name: "@zhivex-ai/sdk",
+        version: expect.stringMatching(/^\d+\.\d+\.\d+/)
+      });
+      expect(capture.stderr).toEqual([]);
+    }
   });
 
   it("scaffolds a production agent project", async () => {
@@ -1507,5 +1522,23 @@ export const workflow = {
       inputPath
     ], missingExport.io)).resolves.toBe(1);
     expect(missingExport.stderr[0]).toBe('Module export "missing" not found.');
+  });
+
+  it("rejects unknown duplicate and malformed Stable CLI arguments", async () => {
+    const unknown = createCapture();
+    await expect(runCli(["doctor", "--unknown"], unknown.io)).resolves.toBe(1);
+    expect(unknown.stderr[0]).toBe("Unknown flag for doctor: --unknown.");
+
+    const duplicate = createCapture();
+    await expect(runCli(["doctor", "--dir", "/tmp", "--dir=/tmp"], duplicate.io)).resolves.toBe(1);
+    expect(duplicate.stderr[0]).toBe("Duplicate flag --dir.");
+
+    const booleanValue = createCapture();
+    await expect(runCli(["init", "agent", "--force=true"], booleanValue.io)).resolves.toBe(1);
+    expect(booleanValue.stderr[0]).toBe("Flag --force does not accept a value.");
+
+    const positional = createCapture();
+    await expect(runCli(["doctor", "unexpected"], positional.io)).resolves.toBe(1);
+    expect(positional.stderr[0]).toBe('Unexpected positional argument "unexpected".');
   });
 });

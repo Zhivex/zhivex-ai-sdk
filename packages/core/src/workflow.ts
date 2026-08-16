@@ -83,9 +83,12 @@ export type WorkflowStep<TModel extends LanguageModel = LanguageModel> =
 
 export interface WorkflowDefinition {
   id?: string;
+  name?: string;
   steps: WorkflowStep[];
   metadata?: Record<string, JsonValue>;
   persistence?: WorkflowPersistenceOptions;
+  /** Best-effort operational telemetry. Observer failures never fail workflow execution. */
+  onTelemetryEvent?: WorkflowTelemetryObserver;
 }
 
 export interface WorkflowPersistenceOptions {
@@ -99,6 +102,7 @@ export interface WorkflowPersistenceOptions {
 export interface WorkflowRunInput {
   userId: string;
   sessionId?: string;
+  abortSignal?: AbortSignal;
   input?: JsonValue;
   state?: WorkflowRunState;
   approvals?: AgentApprovalResponse[];
@@ -106,6 +110,8 @@ export interface WorkflowRunInput {
   eventMetadata?: Record<string, JsonValue>;
   metadata?: Record<string, JsonValue>;
   resumeFromPersistedState?: boolean;
+  /** Overrides the definition observer for this invocation. Fail-open by contract. */
+  onTelemetryEvent?: WorkflowTelemetryObserver;
 }
 
 export interface WorkflowStepResult {
@@ -157,6 +163,61 @@ export interface WorkflowRunOutput {
   outputs: Record<string, JsonValue>;
   steps: WorkflowStepResult[];
   session?: AgentSession;
+}
+
+export type WorkflowTelemetryTerminalStatus = "completed" | "waiting_approval" | "failed" | "cancelled";
+export type WorkflowTelemetryStepKind = "task" | "parallel" | "loop";
+
+export interface WorkflowTelemetryContext {
+  runId: string;
+  workflowId?: string;
+  workflowName?: string;
+  userId: string;
+  sessionId?: string;
+}
+
+export interface WorkflowTelemetryStartEvent extends WorkflowTelemetryContext {
+  type: "workflow-start";
+  startedAt: number;
+}
+
+export interface WorkflowTelemetryStepStartEvent extends WorkflowTelemetryContext {
+  type: "workflow-step-start";
+  stepId: string;
+  stepIndex: number;
+  stepKind: WorkflowTelemetryStepKind;
+  startedAt: number;
+}
+
+export interface WorkflowTelemetryStepFinishEvent extends WorkflowTelemetryContext {
+  type: "workflow-step-finish";
+  stepId: string;
+  stepIndex: number;
+  stepKind: WorkflowTelemetryStepKind;
+  status: WorkflowTelemetryTerminalStatus;
+  startedAt: number;
+  finishedAt: number;
+  error?: Error;
+}
+
+export interface WorkflowTelemetryFinishEvent extends WorkflowTelemetryContext {
+  type: "workflow-finish";
+  status: WorkflowTelemetryTerminalStatus;
+  startedAt: number;
+  finishedAt: number;
+  error?: Error;
+}
+
+export type WorkflowTelemetryEvent =
+  | WorkflowTelemetryStartEvent
+  | WorkflowTelemetryStepStartEvent
+  | WorkflowTelemetryStepFinishEvent
+  | WorkflowTelemetryFinishEvent;
+
+export interface WorkflowTelemetryObserver {
+  (event: WorkflowTelemetryEvent): void | Promise<void>;
+  /** Runs a step while an observer-specific context is active. Implementations must invoke callback once. */
+  withStepContext?<T>(runId: string, stepIndex: number, callback: () => Promise<T>): Promise<T>;
 }
 
 export type WorkflowReplayTimelineEvent =
@@ -667,6 +728,12 @@ const validateWorkflow = (definition: WorkflowDefinition): WorkflowDefinition =>
 
 export const createWorkflow = (definition: WorkflowDefinition): WorkflowDefinition => validateWorkflow(definition);
 
+interface WorkflowStepExecution {
+  result: WorkflowStepResult;
+  output?: RunnerRunOutput;
+  session?: AgentSession;
+}
+
 const runTaskStep = async (
   workflow: WorkflowDefinition,
   state: WorkflowRunState,
@@ -676,12 +743,13 @@ const runTaskStep = async (
     startedAt: number;
     isApprovalResume?: boolean;
   }
-): Promise<{ result: WorkflowStepResult; output?: RunnerRunOutput }> => {
+): Promise<WorkflowStepExecution> => {
   const runnerInput: RunnerRunInput = options.isApprovalResume
     ? {
         userId: state.userId,
         sessionId: state.sessionId,
         approvals: input.approvals,
+        abortSignal: input.abortSignal,
         sessionMetadata: input.sessionMetadata,
         eventMetadata: input.eventMetadata
       }
@@ -690,6 +758,7 @@ const runTaskStep = async (
         sessionId: state.sessionId,
         prompt: await resolveTaskPrompt(workflow, state, step, input),
         system: step.system,
+        abortSignal: input.abortSignal,
         sessionMetadata: input.sessionMetadata,
         eventMetadata: {
           ...(input.eventMetadata ?? {}),
@@ -723,7 +792,7 @@ const runParallelStep = async (
   input: WorkflowRunInput,
   existingResult: WorkflowStepResult | undefined,
   startedAt: number
-): Promise<{ result: WorkflowStepResult; session?: AgentSession }> => {
+): Promise<WorkflowStepExecution> => {
   const previousChildren = existingResult?.children ?? [];
   const hasWaitingChild = previousChildren.some((child) => child.status === "waiting_approval");
   const runnableSteps = step.steps.map((child, childIndex) => {
@@ -840,7 +909,7 @@ const runLoopStep = async (
   input: WorkflowRunInput,
   existingResult: WorkflowStepResult | undefined,
   startedAt: number
-): Promise<{ result: WorkflowStepResult; session?: AgentSession }> => {
+): Promise<WorkflowStepExecution> => {
   const previousChildren = existingResult?.children ?? [];
   const waitingIndex = previousChildren.findIndex((child) => child.status === "waiting_approval");
   const children = waitingIndex >= 0
@@ -893,99 +962,297 @@ const runLoopStep = async (
   };
 };
 
+const workflowTelemetryContext = (
+  workflow: WorkflowDefinition,
+  state: WorkflowRunState
+): WorkflowTelemetryContext => ({
+  runId: state.runId,
+  workflowId: workflow.id,
+  workflowName: workflow.name,
+  userId: state.userId,
+  sessionId: state.sessionId
+});
+
+const preStartWorkflowTelemetryContext = (
+  workflow: WorkflowDefinition,
+  input: WorkflowRunInput
+): WorkflowTelemetryContext => ({
+  runId:
+    input.state && typeof input.state.runId === "string" && input.state.runId
+      ? input.state.runId
+      : randomId("wfr"),
+  workflowId: workflow.id,
+  workflowName: workflow.name,
+  userId: input.userId,
+  sessionId:
+    input.state && typeof input.state.sessionId === "string" && input.state.sessionId
+      ? input.state.sessionId
+      : input.sessionId
+});
+
+const emitWorkflowTelemetry = async (
+  observer: WorkflowTelemetryObserver | undefined,
+  event: WorkflowTelemetryEvent
+) => {
+  if (!observer) {
+    return;
+  }
+  try {
+    await observer(event);
+  } catch {
+    // Workflow telemetry is operational and fail-open by contract.
+  }
+};
+
+const runWithWorkflowStepContext = async <T>(
+  observer: WorkflowTelemetryObserver | undefined,
+  runId: string,
+  stepIndex: number,
+  callback: () => Promise<T>
+): Promise<T> => {
+  if (!observer?.withStepContext) {
+    return callback();
+  }
+
+  let execution: Promise<T> | undefined;
+  const executeOnce = () => {
+    execution ??= callback();
+    return execution;
+  };
+
+  try {
+    await observer.withStepContext(runId, stepIndex, executeOnce);
+  } catch {
+    // Ignore context/exporter failures; the business callback result remains authoritative.
+  }
+  return execution ? await execution : callback();
+};
+
+const workflowStepKind = (step: WorkflowStep): WorkflowTelemetryStepKind =>
+  isParallelStep(step) ? "parallel" : isLoopStep(step) ? "loop" : "task";
+
+const toWorkflowError = (error: unknown, fallback: string): Error =>
+  error instanceof Error ? error : new Error(error === undefined ? fallback : String(error));
+
+const isCancellationError = (error: unknown): boolean =>
+  error instanceof Error && (error.name === "AbortError" || error.name === "CancellationError");
+
+const hasCancelledAgentResult = (result: WorkflowStepResult): boolean =>
+  result.agentStatus === "cancelled" || (result.children?.some(hasCancelledAgentResult) ?? false);
+
+const workflowStepTelemetryStatus = (
+  result: WorkflowStepResult,
+  input: WorkflowRunInput,
+  error?: unknown
+): WorkflowTelemetryTerminalStatus => {
+  if (
+    hasCancelledAgentResult(result) ||
+    isCancellationError(error) ||
+    (result.status === "failed" && input.abortSignal?.aborted)
+  ) {
+    return "cancelled";
+  }
+  if (result.status === "completed" || result.status === "waiting_approval" || result.status === "failed") {
+    return result.status;
+  }
+  return "failed";
+};
+
+const workflowStepTelemetryError = (
+  result: WorkflowStepResult,
+  status: WorkflowTelemetryTerminalStatus,
+  input: WorkflowRunInput,
+  error?: unknown
+): Error | undefined => {
+  if (status === "cancelled") {
+    const cancellation = toWorkflowError(error ?? input.abortSignal?.reason, "Workflow execution was cancelled.");
+    cancellation.name = "AbortError";
+    return cancellation;
+  }
+  if (status === "failed") {
+    return toWorkflowError(error ?? result.error?.message, "Workflow step failed.");
+  }
+  return undefined;
+};
+
 export const runWorkflow = async (
   workflow: WorkflowDefinition,
   input: WorkflowRunInput
 ): Promise<WorkflowRunOutput> => {
-  const definition = validateWorkflow(workflow);
-  const state = await resolveInitialState(definition, input);
+  const invocationStartedAt = Date.now();
+  const observer = input.onTelemetryEvent ?? workflow.onTelemetryEvent;
+  let definition: WorkflowDefinition;
+  let state: WorkflowRunState;
+  try {
+    definition = validateWorkflow(workflow);
+    state = await resolveInitialState(definition, input);
+  } catch (error) {
+    const telemetryContext = preStartWorkflowTelemetryContext(workflow, input);
+    const telemetryError = toWorkflowError(error, "Workflow initialization failed.");
+    await emitWorkflowTelemetry(observer, {
+      ...telemetryContext,
+      type: "workflow-start",
+      startedAt: invocationStartedAt
+    });
+    await emitWorkflowTelemetry(observer, {
+      ...telemetryContext,
+      type: "workflow-finish",
+      status: "failed",
+      startedAt: invocationStartedAt,
+      finishedAt: Date.now(),
+      error: telemetryError
+    });
+    throw error;
+  }
   state.status = "running";
   state.updatedAt = Date.now();
+  const telemetryContext = workflowTelemetryContext(definition, state);
+  let terminalEventEmitted = false;
 
-  const waitingIndex = state.steps.findIndex((step) => step.status === "waiting_approval");
-  if (waitingIndex >= 0 && !input.approvals?.length) {
-    state.status = "waiting_approval";
-    state.currentStepIndex = waitingIndex;
-    state.updatedAt = Date.now();
-    return finalizeWorkflowOutput(definition, state);
-  }
+  await emitWorkflowTelemetry(observer, {
+    ...telemetryContext,
+    type: "workflow-start",
+    startedAt: invocationStartedAt
+  });
 
-  const startIndex = waitingIndex >= 0 ? waitingIndex : state.currentStepIndex;
+  const emitWorkflowFinish = async (
+    status: WorkflowTelemetryTerminalStatus,
+    error?: Error
+  ) => {
+    if (terminalEventEmitted) {
+      return;
+    }
+    terminalEventEmitted = true;
+    await emitWorkflowTelemetry(observer, {
+      ...telemetryContext,
+      type: "workflow-finish",
+      status,
+      startedAt: invocationStartedAt,
+      finishedAt: Date.now(),
+      error
+    });
+  };
 
-  for (let index = startIndex; index < definition.steps.length; index += 1) {
-    const step = definition.steps[index]!;
-    const startedAt = Date.now();
-    state.currentStepIndex = index;
-    const existingResult = state.steps[index];
-    setStepResult(
-      state,
-      index,
-      isParallelStep(step)
-        ? {
-            id: step.id,
-            kind: "parallel",
-            status: "running",
-            children: existingResult?.children,
-            metadata: step.metadata ? cloneJson(step.metadata) : undefined,
-            startedAt
-          }
-        : isLoopStep(step)
+  const finalizeInvocation = async (
+    status: WorkflowTelemetryTerminalStatus,
+    error?: Error
+  ): Promise<WorkflowRunOutput> => {
+    const output = await finalizeWorkflowOutput(definition, state);
+    await emitWorkflowFinish(status, error);
+    return output;
+  };
+
+  try {
+    const waitingIndex = state.steps.findIndex((step) => step.status === "waiting_approval");
+    if (waitingIndex >= 0 && !input.approvals?.length) {
+      state.status = "waiting_approval";
+      state.currentStepIndex = waitingIndex;
+      state.updatedAt = Date.now();
+      return await finalizeInvocation("waiting_approval");
+    }
+
+    const startIndex = waitingIndex >= 0 ? waitingIndex : state.currentStepIndex;
+
+    for (let index = startIndex; index < definition.steps.length; index += 1) {
+      const step = definition.steps[index]!;
+      const stepKind = workflowStepKind(step);
+      const startedAt = Date.now();
+      state.currentStepIndex = index;
+      const existingResult = state.steps[index];
+      setStepResult(
+        state,
+        index,
+        isParallelStep(step)
           ? {
               id: step.id,
-              kind: "loop",
+              kind: "parallel",
               status: "running",
               children: existingResult?.children,
               metadata: step.metadata ? cloneJson(step.metadata) : undefined,
               startedAt
             }
-        : {
-            id: step.id,
-            kind: "task",
-            status: "running",
-            outputKey: step.outputKey,
-            metadata: step.metadata ? cloneJson(step.metadata) : undefined,
-            startedAt
-          }
-    );
+          : isLoopStep(step)
+            ? {
+                id: step.id,
+                kind: "loop",
+                status: "running",
+                children: existingResult?.children,
+                metadata: step.metadata ? cloneJson(step.metadata) : undefined,
+                startedAt
+              }
+            : {
+                id: step.id,
+                kind: "task",
+                status: "running",
+                outputKey: step.outputKey,
+                metadata: step.metadata ? cloneJson(step.metadata) : undefined,
+                startedAt
+              }
+      );
+      await emitWorkflowTelemetry(observer, {
+        ...telemetryContext,
+        type: "workflow-step-start",
+        stepId: step.id,
+        stepIndex: index,
+        stepKind,
+        startedAt
+      });
 
-    try {
-      const stepRun = isParallelStep(step)
-        ? await runParallelStep(definition, state, step, input, existingResult, startedAt)
-        : isLoopStep(step)
-          ? await runLoopStep(definition, state, step, input, existingResult, startedAt)
-        : await runTaskStep(definition, state, step, input, {
-            startedAt,
-            isApprovalResume: index === waitingIndex && Boolean(input.approvals?.length)
-          });
-      const { result } = stepRun;
-      const output = "output" in stepRun ? stepRun.output : undefined;
-      const session = "session" in stepRun ? stepRun.session : undefined;
-      if (output?.session) {
-        state.session = output.session;
-      } else if (session) {
-        state.session = session;
-      }
-      const status = result.status;
-      setStepResult(state, index, result);
-
-      if (status === "completed") {
-        if (!isParallelStep(step) && !isLoopStep(step)) {
-          collectStepOutputs(state.outputs, step, result, output);
+      let stepTerminalEventEmitted = false;
+      try {
+        const stepRun = await runWithWorkflowStepContext(observer, state.runId, index, () =>
+          isParallelStep(step)
+            ? runParallelStep(definition, state, step, input, existingResult, startedAt)
+            : isLoopStep(step)
+              ? runLoopStep(definition, state, step, input, existingResult, startedAt)
+              : runTaskStep(definition, state, step, input, {
+                  startedAt,
+                  isApprovalResume: index === waitingIndex && Boolean(input.approvals?.length)
+                })
+        );
+        const { result } = stepRun;
+        const output = stepRun.output;
+        const session = stepRun.session;
+        if (output?.session) {
+          state.session = output.session;
+        } else if (session) {
+          state.session = session;
         }
-        state.currentStepIndex = index + 1;
-        state.updatedAt = Date.now();
-        continue;
-      }
+        const status = result.status;
+        setStepResult(state, index, result);
+        const telemetryStatus = workflowStepTelemetryStatus(result, input);
+        const telemetryError = workflowStepTelemetryError(result, telemetryStatus, input);
+        await emitWorkflowTelemetry(observer, {
+          ...telemetryContext,
+          type: "workflow-step-finish",
+          stepId: step.id,
+          stepIndex: index,
+          stepKind,
+          status: telemetryStatus,
+          startedAt,
+          finishedAt: result.finishedAt ?? Date.now(),
+          error: telemetryError
+        });
+        stepTerminalEventEmitted = true;
 
-      state.status = status === "waiting_approval" ? "waiting_approval" : "failed";
-      state.currentStepIndex = index;
-      state.updatedAt = Date.now();
-      return finalizeWorkflowOutput(definition, state);
-    } catch (error) {
-      setStepResult(
-        state,
-        index,
-        isParallelStep(step)
+        if (status === "completed") {
+          if (!isParallelStep(step) && !isLoopStep(step)) {
+            collectStepOutputs(state.outputs, step, result, output);
+          }
+          state.currentStepIndex = index + 1;
+          state.updatedAt = Date.now();
+          continue;
+        }
+
+        state.status = status === "waiting_approval" ? "waiting_approval" : "failed";
+        state.currentStepIndex = index;
+        state.updatedAt = Date.now();
+        return await finalizeInvocation(telemetryStatus, telemetryError);
+      } catch (error) {
+        if (stepTerminalEventEmitted) {
+          throw error;
+        }
+        const result = isParallelStep(step)
           ? createParallelResult(step, "failed", startedAt, existingResult?.children ?? [], {
               message: error instanceof Error ? error.message : String(error)
             })
@@ -993,19 +1260,45 @@ export const runWorkflow = async (
             ? createLoopResult(step, "failed", startedAt, existingResult?.children ?? [], {
                 message: error instanceof Error ? error.message : String(error)
               })
-          : createStepResult(step, "failed", startedAt, undefined, error)
-      );
-      state.status = "failed";
-      state.currentStepIndex = index;
-      state.updatedAt = Date.now();
-      return finalizeWorkflowOutput(definition, state);
+            : createStepResult(step, "failed", startedAt, undefined, error);
+        setStepResult(state, index, result);
+        const telemetryStatus = workflowStepTelemetryStatus(result, input, error);
+        const telemetryError = workflowStepTelemetryError(result, telemetryStatus, input, error);
+        await emitWorkflowTelemetry(observer, {
+          ...telemetryContext,
+          type: "workflow-step-finish",
+          stepId: step.id,
+          stepIndex: index,
+          stepKind,
+          status: telemetryStatus,
+          startedAt,
+          finishedAt: result.finishedAt ?? Date.now(),
+          error: telemetryError
+        });
+        stepTerminalEventEmitted = true;
+        state.status = "failed";
+        state.currentStepIndex = index;
+        state.updatedAt = Date.now();
+        return await finalizeInvocation(telemetryStatus, telemetryError);
+      }
     }
-  }
 
-  state.status = "completed";
-  state.currentStepIndex = definition.steps.length;
-  state.updatedAt = Date.now();
-  return finalizeWorkflowOutput(definition, state);
+    state.status = "completed";
+    state.currentStepIndex = definition.steps.length;
+    state.updatedAt = Date.now();
+    return await finalizeInvocation("completed");
+  } catch (error) {
+    const terminalStatus = isCancellationError(error) || input.abortSignal?.aborted ? "cancelled" : "failed";
+    const terminalError = toWorkflowError(
+      error ?? input.abortSignal?.reason,
+      terminalStatus === "cancelled" ? "Workflow execution was cancelled." : "Workflow execution failed."
+    );
+    if (terminalStatus === "cancelled") {
+      terminalError.name = "AbortError";
+    }
+    await emitWorkflowFinish(terminalStatus, terminalError);
+    throw error;
+  }
 };
 
 export const replayWorkflowRun = (state: WorkflowRunState): WorkflowReplayResult => {
