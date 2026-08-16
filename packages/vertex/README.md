@@ -64,6 +64,14 @@ for await (const chunk of await streamSpeech({
   console.log(chunk.mediaType, chunk.audio.byteLength);
 }
 
+const live = await productionVertex
+  .realtimeModel!("gemini-live-2.5-flash-native-audio")
+  .connect({
+    outputAudioMediaType: "audio/pcm",
+    outputAudioTranscription: true
+  });
+await live.close();
+
 await generateImage({
   model: productionVertex.imageGenerationModel!("gemini-3.1-flash-lite-image"),
   prompt: "Create a product photo"

@@ -58,6 +58,12 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("AGENT_RUN_STATE_SCHEMA_VERSION")?.stability).toBe("stable");
     expect(api.getApiStability("migrateAgentRunState")?.stability).toBe("stable");
     expect(api.getApiStability("normalizeAgentRunState")?.stability).toBe("stable");
+    expect(api.getApiStability("CallbackRealtimeSession")?.stability).toBe("stable");
+    expect(api.getApiStability("encodeAudioFrame")?.stability).toBe("stable");
+    expect(api.getApiStability("encodeMediaFrame")?.stability).toBe("stable");
+    expect(api.getApiStability("openWebSocketConnection")?.stability).toBe("stable");
+    expect(api.getApiStability("streamLiveAgent")?.stability).toBe("stable");
+    expect(api.getApiStability("unsupportedBrowserToken")?.stability).toBe("stable");
 
     expect(api.getApiStability("createRunner")?.stability).toBe("stable");
     expect(api.getApiStability("toUIRunnerStreamResponse")?.stability).toBe("stable");

@@ -117,7 +117,152 @@ try {
   globalThis.fetch = originalFetch;
 }
 
+const { CallbackRealtimeSession } = await import("@zhivex-ai/core");
+const { streamLiveAgent } = await import("@zhivex-ai/agents/realtime");
+const sdk = await import("@zhivex-ai/sdk");
+assert.equal(typeof CallbackRealtimeSession, "function");
+assert.equal(typeof streamLiveAgent, "function");
+assert.equal(sdk.streamLiveAgent, streamLiveAgent);
+
+let realtimeConnectionClosed = false;
+let deterministicToolExecutions = 0;
+let deterministicToolResultsSent = 0;
+const deterministicRealtimeModel = {
+  provider: "installed-smoke",
+  modelId: "deterministic-realtime",
+  capabilities: {
+    streaming: false,
+    tools: true,
+    structuredOutput: false,
+    jsonMode: false,
+    toolChoice: true,
+    parallelToolCalls: false,
+    vision: false,
+    files: false,
+    audioInput: true,
+    audioOutput: false,
+    embeddings: false,
+    reasoning: false,
+    webSearch: false
+  },
+  async connect(config = {}) {
+    const frames = [];
+    const receivers = [];
+    let connectionClosed = false;
+    const push = (frame) => {
+      const receiver = receivers.shift();
+      if (receiver) receiver(frame);
+      else frames.push(frame);
+    };
+    const connection = {
+      async sendJson(payload) {
+        if (payload.type === "text") {
+          push({
+            type: "realtime-tool-call",
+            toolCall: {
+              id: "installed-call-1",
+              name: "certify_installed_live",
+              input: { value: 2 }
+            }
+          });
+          push({ type: "realtime-response-complete", reason: "tool-call" });
+          return;
+        }
+        if (payload.type === "tool-result") {
+          deterministicToolResultsSent += 1;
+          push({ type: "realtime-text-delta", textDelta: "installed-realtime-ok" });
+          push({
+            type: "realtime-transcript",
+            text: "installed-realtime-ok",
+            role: "assistant",
+            isFinal: true
+          });
+          push({ type: "realtime-response-complete", reason: "turn-complete" });
+        }
+      },
+      async recvJson() {
+        if (frames.length) return frames.shift();
+        if (connectionClosed) return undefined;
+        return new Promise((resolve) => receivers.push(resolve));
+      },
+      async close() {
+        connectionClosed = true;
+        realtimeConnectionClosed = true;
+        while (receivers.length) receivers.shift()(undefined);
+      }
+    };
+    const session = new CallbackRealtimeSession({
+      provider: "installed-smoke",
+      modelId: "deterministic-realtime",
+      capabilities: this.capabilities,
+      config,
+      connection,
+      callbacks: {
+        parseEvent: (payload) => [payload],
+        buildAudioPayloads: () => [],
+        buildTextPayloads: (text) => [{ type: "text", text }],
+        buildToolResultPayloads: (result) => [{ type: "tool-result", result }],
+        buildUpdatePayloads: (value) => [{ type: "update", value }]
+      }
+    });
+    await session.initialize();
+    return session;
+  }
+};
+
+const installedLive = streamLiveAgent(
+  {
+    id: "installed-realtime-agent",
+    model: deterministicRealtimeModel,
+    instructions: "Call the certification tool once, then reply with the deterministic smoke token.",
+    tools: {
+      certify_installed_live: {
+        name: "certify_installed_live",
+        schema: {
+          safeParse(input) {
+            return input?.value === 2
+              ? { success: true, data: input }
+              : { success: false, error: new Error("Expected value 2") };
+          }
+        },
+        execute({ value }) {
+          deterministicToolExecutions += 1;
+          return { certified: true, value };
+        }
+      }
+    }
+  },
+  { prompt: "Call certify_installed_live with value 2, then reply exactly: installed-realtime-ok" }
+);
+const installedEventTypes = [];
+const installedTextChunks = [];
+const [, , installedFinal] = await Promise.all([
+  (async () => {
+    for await (const event of installedLive.eventStream) installedEventTypes.push(event.type);
+  })(),
+  (async () => {
+    for await (const chunk of installedLive.textStream) installedTextChunks.push(chunk);
+  })(),
+  installedLive.collect()
+]);
+assert.equal(installedFinal.status, "completed");
+assert.equal(deterministicToolExecutions, 1);
+assert.equal(deterministicToolResultsSent, 1);
+assert.equal(installedFinal.toolResults.length, 1);
+assert.deepEqual(installedFinal.toolResults[0]?.output, { certified: true, value: 2 });
+assert.equal(installedFinal.outputText, "installed-realtime-ok");
+assert.equal(installedTextChunks.join(""), "installed-realtime-ok");
+assert.ok(installedEventTypes.includes("realtime-start"));
+assert.equal(
+  installedEventTypes.filter((type) => type === "realtime-response-complete").length,
+  2
+);
+assert.ok(installedEventTypes.includes("realtime-tool-call"));
+assert.ok(installedEventTypes.includes("realtime-tool-result"));
+assert.ok(realtimeConnectionClosed, "installed realtime connection was not closed");
+
 console.log(\`Node package consumer smoke: \${specifiers.length} entrypoints imported\`);
+console.log("INSTALLED_REALTIME_LIVE_SMOKE_OK");
 `;
   const smokePath = join(consumerDirectory, "smoke.mjs");
   writeFileSync(smokePath, smokeSource);

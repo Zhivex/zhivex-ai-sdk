@@ -149,6 +149,8 @@ describe("sdk public surface", () => {
     expect(sdk.getApiStability("createAgentControlPlane")?.stability).toBe("beta");
     expect(sdk.getApiStability("createAgentCapsule")?.stability).toBe("beta");
     expect(sdk.getApiStability("createAgentRunLedger")?.stability).toBe("beta");
+    expect(sdk.getApiStability("CallbackRealtimeSession")?.stability).toBe("stable");
+    expect(sdk.getApiStability("streamLiveAgent")?.stability).toBe("stable");
     expect(sdk.getApiStability("createAdvancedToolRegistry")?.stability).toBe("experimental");
   });
 

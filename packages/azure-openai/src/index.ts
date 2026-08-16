@@ -377,8 +377,25 @@ const groundedCapabilities: ModelCapabilities = {
 const realtimeCapabilities: ModelCapabilities = {
   ...capabilities,
   streaming: false,
+  structuredOutput: false,
+  jsonMode: false,
+  files: false,
   audioInput: true,
   audioOutput: true,
+  embeddings: false,
+  reasoning: false,
+  webSearch: false,
+  agentCapabilities: {
+    ...capabilities.agentCapabilities!,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    computerUse: false,
+    codeExecution: false,
+    shell: false,
+    applyPatch: false,
+    toolSearch: false,
+    skills: false
+  },
   realtime: {
     sessions: true,
     audioInput: true,

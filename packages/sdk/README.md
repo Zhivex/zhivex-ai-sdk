@@ -36,6 +36,14 @@ Use provider-backed models from Bun, Node.js, route handlers, workers, or other 
 
 The local `zhivex-ai agents ledger` command omits full output text by default; use `--include-output-text` only for a reviewed local export. `zhivex-ai init agent` creates a private `.env` with mode `0600` on POSIX systems, and `doctor` reports unsafe environment-file permissions.
 
+## Stability
+
+The shared realtime session and `streamLiveAgent` lifecycle is Stable. Provider
+model IDs, provider-specific options, and upstream preview availability remain
+provider-scoped. The root export also contains Beta and Experimental surfaces;
+check runtime symbols with `getApiStability()` and review
+<https://github.com/Zhivex/zhivex-ai-sdk/blob/main/STABILITY.md> before upgrading.
+
 ## Start Here
 
 - Quickstart: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/QUICKSTART.md>

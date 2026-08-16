@@ -59,4 +59,26 @@ describe("BoundedReplayBroadcast", () => {
     }
     expect(replayed).toEqual(["delta", "finish"]);
   });
+
+  it("does not let an abandoned saturated subscriber block bounded terminal events", async () => {
+    const broadcast = new BoundedReplayBroadcast<string>({
+      maxHistory: 4,
+      maxSubscriberQueue: 1,
+      maxTerminalHistory: 2
+    });
+    const iterator = broadcast.stream()[Symbol.asyncIterator]();
+    const first = iterator.next();
+
+    await broadcast.publish("first");
+    await first;
+    await broadcast.publish("queued");
+    await expect(broadcast.publish("error", { terminal: true })).resolves.toBeUndefined();
+    await expect(broadcast.publish("end", { terminal: true })).resolves.toBeUndefined();
+    broadcast.close();
+
+    expect(await iterator.next()).toEqual({ done: false, value: "queued" });
+    expect(await iterator.next()).toEqual({ done: false, value: "error" });
+    expect(await iterator.next()).toEqual({ done: false, value: "end" });
+    expect(await iterator.next()).toEqual({ done: true, value: undefined });
+  });
 });

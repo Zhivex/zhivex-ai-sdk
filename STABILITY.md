@@ -47,7 +47,7 @@ listApiStability("beta");
 
 The manifest classifies runtime exports as `stable`, `beta`, or `experimental`. Contract tests fail if `packages/core/src/index.ts` adds a runtime export that is not classified. Type-only exports are guarded separately by declaration snapshots for `@zhivex-ai/core` and `@zhivex-ai/sdk`; intentional public type changes should update those snapshots and the relevant docs together.
 
-The stable boundary includes shared generation, media, agent runtime, safety, evaluation, replay, trace, Runner/session APIs, declarative workflows, and in-memory/file workflow state services listed by the manifest. SQL workflow state services, workflow evaluations, artifacts, control-plane, and CLI UX remain Beta. Advanced tool registry helpers remain Experimental.
+The stable boundary includes shared generation, media, agent runtime, realtime sessions and live agents, safety, evaluation, replay, trace, Runner/session APIs, declarative workflows, and in-memory/file workflow state services listed by the manifest. SQL workflow state services, workflow evaluations, artifacts, control-plane, and CLI UX remain Beta. Advanced tool registry helpers remain Experimental.
 
 The current stable npm package is published under the `latest` dist-tag. Install it with `@zhivex-ai/sdk`. Use `@next` only for prerelease validation.
 
@@ -62,6 +62,7 @@ These APIs are the supported public contract for application code and production
 - Audio: `transcribeAudio`, `generateSpeech`, `streamSpeech`
 - Generative media: `generateImage`, `generateVideo`, `generateMusic`
 - Agent runtime: `createAgent`, `runAgent`, `resumeAgent`, `streamAgent`
+- Realtime/live runtime: `CallbackRealtimeSession`, `streamLiveAgent`, browser-safe frame encoders, and the default WebSocket transport helpers
 - Runner/session APIs: `createRunner`, in-memory/file/SQLite/Postgres `SessionService` implementations, `AgentSession`, `SessionEvent`, session schema v1 normalization/migration helpers, and file-backed session pruning helpers
 - Declarative workflows: `createWorkflow`, `runWorkflow`, `replayWorkflowRun`, sequential/parallel/loop step contracts, approval resume, schema-versioned `WorkflowRunState`, and its normalization/migration helpers
 - Workflow state: the `WorkflowStateService` contract, `loadWorkflowState`, `saveWorkflowState`, schema-versioned records and migration helpers, plus the in-memory and file-backed implementations
@@ -108,7 +109,6 @@ These areas are available for evaluation, but they should not be treated as long
 - Advanced tool registry helpers: `createAdvancedToolRegistry`, `AdvancedToolRegistry`, `createHttpTool`, `testToolDefinition`, `testToolRegistry`, `createToolTestFixture`, `recordToolTestFixture`, `runToolTestFixture`, `createToolPermissionPreset`, and `inspectToolRegistry`
 - Provider-specific `providerOptions` shapes beyond the documented shared behavior
 - Agent/provider features currently described as support-tier dependent
-- Future realtime or live-agent surfaces until they are explicitly promoted
 
 Experimental areas may change faster than the rest of the SDK. Production adopters should isolate them behind an application-owned service layer.
 
@@ -123,3 +123,5 @@ For production work, prefer:
 - Tier C providers when basic loops are enough and expectations are narrower
 
 Provider support tiers are documented in [SUPPORT.md](./SUPPORT.md) and summarized in the repository README.
+
+The shared realtime/live contract is Stable, while individual provider model IDs and upstream preview availability remain provider-scoped. Production releases must rerun the fail-closed Gemini/Qwen/OpenAI live gate and the installed-tarball smoke described in [the maintainer certification guide](./docs/maintainers/AGENT_REALTIME_CERTIFICATION.md).

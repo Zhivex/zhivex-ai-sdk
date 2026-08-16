@@ -276,6 +276,12 @@ const openQwenRealtimeConnection: RealtimeConnectionFactory = async (url, header
       'The realtime "maxIncomingFrameBytes" option must be a positive safe integer.'
     );
   }
+  if (
+    options?.timeoutMs !== undefined &&
+    (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0)
+  ) {
+    throw new ValidationError('The realtime "timeoutMs" option must be a positive safe integer.');
+  }
 
   const { default: WebSocket } = await import("ws");
   const socket = options?.subprotocols?.length
@@ -336,6 +342,21 @@ const openQwenRealtimeConnection: RealtimeConnectionFactory = async (url, header
       reader.resolve(undefined);
     }
   };
+  const onSessionAbort = () => {
+    if (closed || connectionError) {
+      return;
+    }
+    connectionError = options?.signal?.reason instanceof Error
+      ? options.signal.reason
+      : new DOMException("The Qwen realtime session was aborted.", "AbortError");
+    rejectReaders(connectionError);
+    socket.close();
+  };
+  if (options?.signal?.aborted) {
+    onSessionAbort();
+  } else {
+    options?.signal?.addEventListener("abort", onSessionAbort, { once: true });
+  }
 
   socket.on("message", (data) => {
     const text = nodeWebSocketDataToText(data);
@@ -365,6 +386,7 @@ const openQwenRealtimeConnection: RealtimeConnectionFactory = async (url, header
   });
   socket.on("close", () => {
     closed = true;
+    options?.signal?.removeEventListener("abort", onSessionAbort);
     if (connectionError) {
       rejectReaders(connectionError);
     } else {
@@ -406,6 +428,7 @@ const openQwenRealtimeConnection: RealtimeConnectionFactory = async (url, header
       if (closed) {
         return;
       }
+      options?.signal?.removeEventListener("abort", onSessionAbort);
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
           socket.terminate();
@@ -711,8 +734,26 @@ const videoGenerationCapabilities: ModelCapabilities = {
 
 const realtimeCapabilities: ModelCapabilities = {
   ...capabilities,
+  streaming: false,
+  structuredOutput: false,
+  jsonMode: false,
+  toolChoice: false,
+  parallelToolCalls: false,
+  files: false,
   audioInput: true,
   audioOutput: true,
+  embeddings: false,
+  reasoning: false,
+  webSearch: false,
+  agentCapabilities: {
+    ...capabilities.agentCapabilities!,
+    toolChoiceNone: true,
+    hostedWebSearch: false,
+    hostedFileSearch: false,
+    remoteMcp: false,
+    codeExecution: false,
+    webExtraction: false
+  },
   realtime: {
     sessions: true,
     audioInput: true,
@@ -2761,6 +2802,9 @@ const parseRealtimeEvent = (payload: Record<string, unknown>): RealtimeEvent[] =
 };
 
 const mapRealtimeTools = (config: RealtimeSessionConfig) => {
+  if (config.toolChoice === "none") {
+    return undefined;
+  }
   const tools = toToolSet(config.tools);
   if (!tools) {
     return undefined;
@@ -2780,21 +2824,36 @@ const mapRealtimeTools = (config: RealtimeSessionConfig) => {
   });
 };
 
-const mapRealtimeSession = (config: RealtimeSessionConfig) => ({
-  ...(config.providerOptions ?? {}),
-  instructions: config.instructions,
-  voice: config.voice,
-  input_audio_format: "pcm",
-  output_audio_format: "pcm",
-  turn_detection: config.turnDetection,
-  input_audio_transcription:
-    typeof config.inputAudioTranscription === "object"
-      ? config.inputAudioTranscription
-      : config.inputAudioTranscription
-        ? {}
-        : undefined,
-  tools: mapRealtimeTools(config)
-});
+const assertQwenRealtimeConfig = (config: RealtimeSessionConfig) => {
+  if (config.toolChoice !== undefined && !["auto", "none"].includes(String(config.toolChoice))) {
+    throw new UnsupportedFeatureError(
+      "Qwen realtime supports automatic tool selection or tool disabling, but not required or named tool choice."
+    );
+  }
+  if (config.tools && config.providerOptions?.enable_search === true) {
+    throw new UnsupportedFeatureError("Qwen realtime tools and providerOptions.enable_search cannot be enabled together.");
+  }
+};
+
+const mapRealtimeSession = (config: RealtimeSessionConfig) => {
+  assertQwenRealtimeConfig(config);
+  return {
+    ...(config.providerOptions ?? {}),
+    modalities: config.outputAudioMediaType || config.voice ? ["text", "audio"] : ["text"],
+    instructions: config.instructions,
+    voice: config.voice,
+    input_audio_format: "pcm",
+    output_audio_format: "pcm",
+    turn_detection: config.turnDetection,
+    input_audio_transcription:
+      typeof config.inputAudioTranscription === "object"
+        ? config.inputAudioTranscription
+        : config.inputAudioTranscription
+          ? {}
+          : undefined,
+    tools: mapRealtimeTools(config)
+  };
+};
 
 const encodeRealtimeData = (data: string | Uint8Array | ArrayBuffer) => {
   if (typeof data === "string") {
@@ -2815,6 +2874,7 @@ class QwenRealtimeModel implements RealtimeModel {
   ) {}
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
+    assertQwenRealtimeConfig(config);
     const url = appendQuery(this.realtimeURL, { model: this.modelId });
     const connection = await (this.connectionFactory ?? openQwenRealtimeConnection)(
       url,
@@ -2830,17 +2890,24 @@ class QwenRealtimeModel implements RealtimeModel {
       callbacks: {
         parseEvent: parseRealtimeEvent,
         buildInitialPayloads: (value) => [{ type: "session.update", session: mapRealtimeSession(value) }],
-        buildAudioPayloads: (frame: AudioFrame) => [{ type: "input_audio_buffer.append", audio: encodeRealtimeData(frame.data) }],
+        buildAudioPayloads: (frame: AudioFrame, sessionConfig) => [
+          { type: "input_audio_buffer.append", audio: encodeRealtimeData(frame.data) },
+          ...(frame.isFinal ? [{ type: "input_audio_buffer.commit" }] : []),
+          ...(frame.isFinal && (sessionConfig.autoResponse ?? true) ? [{ type: "response.create" }] : [])
+        ],
         buildMediaPayloads: (frame: MediaFrame) => {
           if (!/^image\/(jpeg|jpg)$/i.test(frame.mediaType)) {
             throw new UnsupportedFeatureError("Qwen realtime media frames must be JPEG images.");
           }
           return [{ type: "input_image_buffer.append", image: encodeRealtimeData(frame.data) }];
         },
-        buildTextPayloads: (text) => [{ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text }] } }, { type: "response.create" }],
-        buildToolResultPayloads: (result: ToolExecutionResult) => [
+        buildTextPayloads: (text, sessionConfig) => [
+          { type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text }] } },
+          ...((sessionConfig.autoResponse ?? true) ? [{ type: "response.create" }] : [])
+        ],
+        buildToolResultPayloads: (result: ToolExecutionResult, sessionConfig) => [
           { type: "conversation.item.create", item: { type: "function_call_output", call_id: result.toolCallId, output: JSON.stringify(result.isError ? result.error : result.output ?? null) } },
-          { type: "response.create" }
+          ...((sessionConfig.autoResponse ?? true) ? [{ type: "response.create" }] : [])
         ],
         buildUpdatePayloads: (value) => [{ type: "session.update", session: mapRealtimeSession(value) }],
         buildClosePayloads: () => []

@@ -1,5 +1,21 @@
 # @zhivex-ai/sdk
 
+## 1.4.0
+
+### Minor Changes
+
+- fc64a26: Promote the shared realtime and live-agent contract to Stable. Harden session
+  lifecycle, browser transport and frame encoding, tool-call deduplication,
+  post-tool continuation, cancellation, durable idempotency, memory context, and
+  fail-closed approvals. Correct provider capability claims and Google/Qwen Live
+  protocol handling, and add deterministic installed-package plus live
+  Gemini/Qwen/OpenAI certification gates.
+
+### Patch Changes
+
+- Updated dependencies [fc64a26]
+  - @zhivex-ai/core@1.4.0
+
 ## 1.3.0
 
 ### Minor Changes
