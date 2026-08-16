@@ -646,6 +646,17 @@ const extractMessageText = (message: ModelMessage) =>
     .map((part) => part.text)
     .join("");
 
+const mapChatUsage = (usage: any) =>
+  usage
+    ? {
+        inputTokens: usage.prompt_tokens,
+        cachedInputTokens: usage.prompt_tokens_details?.cached_tokens,
+        outputTokens: usage.completion_tokens,
+        reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
+        totalTokens: usage.total_tokens
+      }
+    : undefined;
+
 const normalizeResponsesFinishReason = (status: string | undefined, hasToolCalls: boolean) => {
   if (hasToolCalls) {
     return "tool-calls" as const;
@@ -921,11 +932,7 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
         text: extractMessageText(assistantMessage),
         finishReason: normalizeFinishReason(choice?.finish_reason),
         providerFinishReason: choice?.finish_reason,
-        usage: {
-          inputTokens: json.usage?.prompt_tokens,
-          outputTokens: json.usage?.completion_tokens,
-          totalTokens: json.usage?.total_tokens
-        },
+        usage: mapChatUsage(json.usage),
         rawResponse: json
       };
     } finally {
@@ -1001,11 +1008,13 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
 
     return (async function* () {
       try {
-        const toolBuffers = new Map<string, { name: string; args: string }>();
+        const toolBuffers = new Map<number, { id: string; name: string; args: string }>();
+        let lastFinishReason: string | undefined;
+        let lastUsage: any;
 
         for await (const event of streamSSE(response)) {
           if (event.data === "[DONE]") {
-            return;
+            break;
           }
 
           const json = JSON.parse(event.data);
@@ -1017,43 +1026,50 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
           }
 
           for (const toolCall of delta?.tool_calls ?? []) {
-            const id = toolCall.id ?? `${toolCall.index}`;
-            const existing = toolBuffers.get(id) ?? {
+            const index =
+              typeof toolCall.index === "number" && Number.isSafeInteger(toolCall.index) && toolCall.index >= 0
+                ? toolCall.index
+                : 0;
+            const existing = toolBuffers.get(index) ?? {
+              id: toolCall.id ?? `${index}`,
               name: toolCall.function?.name ?? "",
               args: ""
             };
+            existing.id = toolCall.id ?? existing.id;
             existing.name ||= toolCall.function?.name ?? "";
             existing.args += toolCall.function?.arguments ?? "";
-            toolBuffers.set(id, existing);
+            toolBuffers.set(index, existing);
           }
 
           if (choice?.finish_reason === "tool_calls") {
-            for (const [id, toolCall] of toolBuffers) {
+            for (const [, toolCall] of [...toolBuffers.entries()].sort(([left], [right]) => left - right)) {
               yield {
                 type: "tool-call",
                 toolCall: {
-                  id,
+                  id: toolCall.id,
                   name: toolCall.name,
                   input: JSON.parse(toolCall.args || "{}")
                 }
               } satisfies StreamEvent;
             }
+            toolBuffers.clear();
           }
 
-          if (choice?.finish_reason || json.usage) {
-            yield {
-              type: "finish",
-              finishReason: normalizeFinishReason(choice?.finish_reason),
-              providerFinishReason: choice?.finish_reason,
-              usage: json.usage
-                ? {
-                    inputTokens: json.usage.prompt_tokens,
-                    outputTokens: json.usage.completion_tokens,
-                    totalTokens: json.usage.total_tokens
-                  }
-                : undefined
-            } satisfies StreamEvent;
+          if (choice?.finish_reason) {
+            lastFinishReason = choice.finish_reason;
           }
+          if (json.usage) {
+            lastUsage = json.usage;
+          }
+        }
+
+        if (lastFinishReason || lastUsage) {
+          yield {
+            type: "finish",
+            finishReason: normalizeFinishReason(lastFinishReason),
+            providerFinishReason: lastFinishReason,
+            usage: mapChatUsage(lastUsage)
+          } satisfies StreamEvent;
         }
       } finally {
         cleanup();

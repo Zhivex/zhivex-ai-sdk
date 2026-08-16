@@ -255,6 +255,115 @@ describe("meta adapter", () => {
     expect((await result.collect()).text).toBe("hello spark");
   });
 
+  it("assembles fragmented Chat tool calls by index and emits one finish per step", async () => {
+    const firstBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_sum","function":{"name":"sum","arguments":""}}]}}]}\n\n' +
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"a\\":2,\\"b\\":3}"}}]}}]}\n\n' +
+              'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
+              'data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7,"prompt_tokens_details":{"cached_tokens":1},"completion_tokens_details":{"reasoning_tokens":2}}}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    const secondBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"5"}}]}\n\n' +
+              'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n' +
+              'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(firstBody, { status: 200, headers: { "content-type": "text/event-stream" } })
+    );
+    fetchMock.mockResolvedValueOnce(
+      new Response(secondBody, { status: 200, headers: { "content-type": "text/event-stream" } })
+    );
+
+    const provider = createMeta({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("muse-spark-1.2"),
+      prompt: "Add 2 and 3.",
+      maxSteps: 2,
+      tools: {
+        sum: tool({
+          name: "sum",
+          schema: z.object({ a: z.number(), b: z.number() }),
+          execute: ({ a, b }) => ({ total: a + b })
+        })
+      }
+    });
+    const eventsPromise = (async () => {
+      const events = [];
+      for await (const event of result.eventStream) events.push(event);
+      return events;
+    })();
+    const [final, events] = await Promise.all([result.collect(), eventsPromise]);
+
+    expect(final.text).toBe("5");
+    expect(final.finishReason).toBe("stop");
+    expect(final.toolResults).toMatchObject([
+      { toolCallId: "call_sum", toolName: "sum", output: { total: 5 }, isError: false }
+    ]);
+    expect(final.usage).toMatchObject({
+      inputTokens: 7,
+      cachedInputTokens: 1,
+      outputTokens: 5,
+      reasoningTokens: 2,
+      totalTokens: 12
+    });
+    expect(events.filter((event) => event.type === "finish")).toMatchObject([
+      { finishReason: "tool-calls", usage: { totalTokens: 7 } },
+      { finishReason: "stop", usage: { totalTokens: 5 } },
+      { finishReason: "stop", usage: { totalTokens: 12 } }
+    ]);
+  });
+
+  it("keeps interleaved parallel Chat tool calls separate and ordered by index", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_second","function":{"name":"second","arguments":"{\\"n\\":"}}]}}]}\n\n' +
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_first","function":{"name":"first","arguments":"{\\"n\\":"}}]}}]}\n\n' +
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}},{"index":0,"function":{"arguments":"1}"}}]}}]}\n\n' +
+              'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } })
+    );
+
+    const model = createMeta({ apiKey: "test", fetch: fetchMock as typeof fetch })("muse-spark-1.2");
+    const events = [];
+    for await (const event of await model.stream!({
+      messages: [{ role: "user", parts: [{ type: "text", text: "Call both." }] }]
+    })) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "tool-call")).toEqual([
+      { type: "tool-call", toolCall: { id: "call_first", name: "first", input: { n: 1 } } },
+      { type: "tool-call", toolCall: { id: "call_second", name: "second", input: { n: 2 } } }
+    ]);
+    expect(events.filter((event) => event.type === "finish")).toHaveLength(1);
+  });
+
   it("retries retryable HTTP responses before parsing JSON", async () => {
     fetchMock.mockResolvedValueOnce(new Response("rate limited", { status: 429 }));
     fetchMock.mockResolvedValueOnce(

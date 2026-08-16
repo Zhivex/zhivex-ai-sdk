@@ -2802,11 +2802,13 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
 
     return (async function* () {
       try {
-        const toolBuffers = new Map<string, { name: string; args: string }>();
+        const toolBuffers = new Map<number, { id: string; name: string; args: string }>();
+        let lastFinishReason: string | undefined;
+        let lastUsage: any;
 
         for await (const event of streamSSE(response)) {
           if (event.data === "[DONE]") {
-            return;
+            break;
           }
 
           const json = JSON.parse(event.data);
@@ -2818,35 +2820,50 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
           }
 
           for (const toolCall of delta?.tool_calls ?? []) {
-            const id = toolCall.id ?? `${toolCall.index}`;
-            const existing = toolBuffers.get(id) ?? {
+            const index =
+              typeof toolCall.index === "number" && Number.isSafeInteger(toolCall.index) && toolCall.index >= 0
+                ? toolCall.index
+                : 0;
+            const existing = toolBuffers.get(index) ?? {
+              id: toolCall.id ?? `${index}`,
               name: toolCall.function?.name ?? "",
               args: ""
             };
+            existing.id = toolCall.id ?? existing.id;
             existing.name ||= toolCall.function?.name ?? "";
             existing.args += toolCall.function?.arguments ?? "";
-            toolBuffers.set(id, existing);
+            toolBuffers.set(index, existing);
+          }
 
-            if (choice?.finish_reason === "tool_calls") {
+          if (choice?.finish_reason === "tool_calls") {
+            for (const [, toolCall] of [...toolBuffers.entries()].sort(([left], [right]) => left - right)) {
               yield {
                 type: "tool-call",
                 toolCall: {
-                  id,
-                  name: existing.name,
-                  input: JSON.parse(existing.args || "{}")
+                  id: toolCall.id,
+                  name: toolCall.name,
+                  input: JSON.parse(toolCall.args || "{}")
                 }
               } satisfies StreamEvent;
             }
+            toolBuffers.clear();
           }
 
           if (choice?.finish_reason) {
-            yield {
-              type: "finish",
-              finishReason: normalizeFinishReason(choice.finish_reason),
-              providerFinishReason: choice.finish_reason,
-              usage: mapChatUsage(json.usage)
-            } satisfies StreamEvent;
+            lastFinishReason = choice.finish_reason;
           }
+          if (json.usage) {
+            lastUsage = json.usage;
+          }
+        }
+
+        if (lastFinishReason || lastUsage) {
+          yield {
+            type: "finish",
+            finishReason: normalizeFinishReason(lastFinishReason),
+            providerFinishReason: lastFinishReason,
+            usage: mapChatUsage(lastUsage)
+          } satisfies StreamEvent;
         }
       } finally {
         cleanup();

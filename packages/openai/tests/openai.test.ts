@@ -240,6 +240,60 @@ describe("openai adapter", () => {
     expect((await result.collect()).text).toBe("hello world");
   });
 
+  it("assembles fragmented Chat tool calls by index when finish and usage arrive separately", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_sum","function":{"name":"sum","arguments":""}}]}}]}\n\n' +
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"a\\":2,\\"b\\":3}"}}]}}]}\n\n' +
+              'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
+              'data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7,"prompt_tokens_details":{"cached_tokens":1},"completion_tokens_details":{"reasoning_tokens":2}}}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } })
+    );
+
+    const model = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("gpt-4o-mini");
+    const events = [];
+    for await (const event of await model.stream!({
+      messages: [{ role: "user", parts: [{ type: "text", text: "Add 2 and 3." }] }],
+      tools: {
+        sum: tool({
+          name: "sum",
+          schema: z.object({ a: z.number(), b: z.number() }),
+          execute: ({ a, b }) => ({ total: a + b })
+        })
+      }
+    })) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "tool-call")).toEqual([
+      { type: "tool-call", toolCall: { id: "call_sum", name: "sum", input: { a: 2, b: 3 } } }
+    ]);
+    expect(events.filter((event) => event.type === "finish")).toEqual([
+      {
+        type: "finish",
+        finishReason: "tool-calls",
+        providerFinishReason: "tool_calls",
+        usage: {
+          inputTokens: 4,
+          cachedInputTokens: 1,
+          cacheWriteTokens: undefined,
+          outputTokens: 3,
+          reasoningTokens: 2,
+          totalTokens: 7
+        }
+      }
+    ]);
+  });
+
   it("streams Responses API events for hosted tools", async () => {
     const firstBody = new ReadableStream({
       start(controller) {
