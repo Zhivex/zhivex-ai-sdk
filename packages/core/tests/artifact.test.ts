@@ -1629,4 +1629,34 @@ describe("artifact services", () => {
     expect(result.deletedBlobPaths).toEqual([old.blobPath]);
     await expect(service.loadArtifact({ appName: "app", userId: "user", sessionId: "session", id: "old" })).resolves.toBeUndefined();
   });
+
+  it("uses custom artifact limits while inspecting records for pruning", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "zhivex-artifact-prune-limits-"));
+    const limits = {
+      maxMetadataBytes: DEFAULT_ARTIFACT_SERVICE_LIMITS.maxMetadataBytes + 4096
+    };
+    const service = createFileArtifactService({ directory, limits });
+    await service.saveArtifact({
+      appName: "app",
+      userId: "user",
+      sessionId: "session",
+      id: "custom-limit",
+      name: "custom-limit.json",
+      contentType: "application/json",
+      data: { ok: true },
+      metadata: {
+        note: "x".repeat(DEFAULT_ARTIFACT_SERVICE_LIMITS.maxMetadataBytes + 1)
+      }
+    });
+
+    const result = await pruneFileArtifactStore({
+      directory,
+      limits,
+      keepLast: 1,
+      dryRun: true
+    });
+
+    expect(result.deletedArtifactKeys).toEqual([]);
+    expect(result.keptArtifactKeys).toHaveLength(1);
+  });
 });

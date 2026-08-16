@@ -1532,6 +1532,84 @@ describe("otel observability", () => {
     }
   });
 
+  it("reports the returned runAgent status through invocation telemetry", async () => {
+    const finishes: Array<{ runId: string; status: string; error?: Error }> = [];
+    const observer = (async () => undefined) as AgentTelemetryObserver;
+    observer.startInvocation = () => undefined;
+    observer.finishInvocation = (event) => {
+      finishes.push({ runId: event.runId, status: event.status, error: event.error });
+    };
+
+    const exhausted = await runAgent(createAgent({
+      model: createLanguageModel({
+        async generate() {
+          return {
+            messages: [{
+              role: "assistant",
+              parts: [{
+                type: "tool-call",
+                toolCall: { id: "lookup_1", name: "lookup", input: { id: "42" } }
+              }]
+            }],
+            finishReason: "tool-calls"
+          };
+        }
+      }),
+      tools: {
+        lookup: tool({
+          name: "lookup",
+          schema: z.object({ id: z.string() }),
+          execute: ({ id }) => ({ id })
+        })
+      },
+      maxSteps: 1,
+      onTelemetryEvent: observer
+    }), { prompt: "Lookup", runId: "exhausted_run" });
+
+    const waiting = await runAgent(createAgent({
+      model: createLanguageModel({
+        async generate() {
+          return {
+            messages: [{
+              role: "assistant",
+              parts: [{
+                type: "tool-call",
+                toolCall: { id: "publish_1", name: "publish", input: { channel: "next" } }
+              }]
+            }],
+            finishReason: "tool-calls"
+          };
+        }
+      }),
+      tools: {
+        publish: tool({
+          name: "publish",
+          schema: z.object({ channel: z.string() }),
+          requiresApproval: true,
+          approvalMode: "interrupt",
+          execute: ({ channel }) => ({ channel })
+        })
+      },
+      maxSteps: 2,
+      onTelemetryEvent: observer
+    }), { prompt: "Publish", runId: "approval_run" });
+
+    expect(exhausted.status).toBe("failed");
+    expect(waiting.status).toBe("waiting_approval");
+    expect(finishes).toEqual([
+      expect.objectContaining({
+        runId: "exhausted_run",
+        status: "failed",
+        error: expect.objectContaining({ message: expect.stringContaining("maxSteps") })
+      }),
+      expect.objectContaining({
+        runId: "approval_run",
+        status: "waiting_approval",
+        error: undefined
+      })
+    ]);
+  });
+
   it("allowlists bounded scalar guardrail metadata before adding OTEL event attributes", async () => {
     const exporter = new InMemorySpanExporter();
     const provider = new BasicTracerProvider({

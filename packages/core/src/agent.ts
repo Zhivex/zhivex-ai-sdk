@@ -2478,6 +2478,16 @@ export const runAgent = async <
     : { ...input, runId: telemetryRunId };
   let invocationStatus: AgentStatus = "completed";
   let invocationError: Error | undefined;
+  const returnInvocationOutput = (output: AgentRunOutput<TOutput>): AgentRunOutput<TOutput> => {
+    invocationStatus = output.status;
+    if (output.status === "failed" || output.status === "timed_out") {
+      invocationError = new Error(output.error?.message ?? `Agent invocation ${output.status}.`);
+      if (output.status === "timed_out") invocationError.name = "TimeoutError";
+    } else {
+      invocationError = undefined;
+    }
+    return output;
+  };
   await emitInvocationStartTelemetry(
     agent,
     telemetryRunId,
@@ -2498,13 +2508,13 @@ export const runAgent = async <
   ) {
     context.state.status = currentStatus;
     invocationStatus = currentStatus;
-    return toOutput(context.state);
+    return returnInvocationOutput(toOutput(context.state));
   }
 
   if (currentStatus === "waiting_approval" && context.state.pendingApprovals.length > 0) {
     context.state.status = currentStatus;
     invocationStatus = currentStatus;
-    return toOutput(context.state);
+    return returnInvocationOutput(toOutput(context.state));
   }
 
   const supportsLeases = Boolean(
@@ -2512,7 +2522,7 @@ export const runAgent = async <
   );
   if (!context.fresh && currentStatus === "running" && !supportsLeases) {
     invocationStatus = currentStatus;
-    return toOutput(context.state);
+    return returnInvocationOutput(toOutput(context.state));
   }
 
   const freshRequiresExistingClaim = context.fresh && Boolean(context.state.idempotencyKey);
@@ -2527,7 +2537,7 @@ export const runAgent = async <
     const activeState = await agent.store?.load(context.state.runId, context.state.scope);
     const outputState = activeState ? normalizeAgentRunState(activeState) : context.state;
     invocationStatus = outputState.status;
-    return toOutput(outputState);
+    return returnInvocationOutput(toOutput(outputState));
   }
   try {
     if (!context.fresh || freshRequiresExistingClaim) {
@@ -2544,7 +2554,7 @@ export const runAgent = async <
     await persistState(agent, state, policy);
     await emitRunFinishTelemetry(agent, state);
     await executionLease.release();
-    return toOutput(state);
+    return returnInvocationOutput(toOutput(state));
   }
 
   let inputGuardrail: AgentGuardrailTrigger | undefined;
@@ -2566,7 +2576,7 @@ export const runAgent = async <
     await persistState(agent, failedState, policy);
     await emitRunFinishTelemetry(agent, failedState);
     await executionLease.release();
-    return toOutput(failedState);
+    return returnInvocationOutput(toOutput(failedState));
   }
 
   const abortContext = createAgentAbortContext(
@@ -2612,7 +2622,7 @@ export const runAgent = async <
     if (cancelled) {
       executionEnvironmentStatus = cancelled.status;
       await emitRunFinishTelemetry(agent, cancelled);
-      return toOutput(cancelled);
+      return returnInvocationOutput(toOutput(cancelled));
     }
     if (executionLease.leaseLost()) {
       throw new ConflictError(`Agent run "${context.state.runId}" lost its worker lease.`);
@@ -2641,7 +2651,7 @@ export const runAgent = async <
     await emitRunFinishTelemetry(agent, output.state);
 
     executionEnvironmentStatus = output.status;
-    return output;
+    return returnInvocationOutput(output);
   } catch (error) {
     executionEnvironmentError = {
       message: error instanceof Error ? error.message : String(error)
@@ -2650,7 +2660,7 @@ export const runAgent = async <
     if (cancelled) {
       executionEnvironmentStatus = cancelled.status;
       await emitRunFinishTelemetry(agent, cancelled);
-      return toOutput(cancelled);
+      return returnInvocationOutput(toOutput(cancelled));
     }
     if (executionLease.leaseLost()) {
       throw new ConflictError(`Agent run "${context.state.runId}" lost its worker lease.`);
@@ -2665,7 +2675,7 @@ export const runAgent = async <
       await persistState(agent, timedOutState, policy);
       await emitRunFinishTelemetry(agent, timedOutState);
       executionEnvironmentStatus = timedOutState.status;
-      return toOutput(timedOutState);
+      return returnInvocationOutput(toOutput(timedOutState));
     }
 
     const durableState = agent.store

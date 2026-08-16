@@ -1087,7 +1087,10 @@ export const pruneFileArtifactStore = async (
 ): Promise<FileArtifactStorePruneResult> => {
   const now = options.now ?? Date.now();
   const dryRun = options.dryRun ?? true;
-  const inspection = await inspectFileArtifactStore({ directory: options.directory });
+  const inspection = await inspectFileArtifactStore({
+    directory: options.directory,
+    limits: options.limits
+  });
   const sorted = inspection.artifacts.sort((left, right) =>
     right.updatedAt - left.updatedAt || artifactKey(left).localeCompare(artifactKey(right))
   );
