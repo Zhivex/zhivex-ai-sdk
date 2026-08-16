@@ -10,9 +10,12 @@ import {
   createFileArtifactService,
   createFileWorkflowStateService,
   createWorkflowEvaluationDiffReport,
+  createWorkflowEvaluationBaseline,
   createWorkflowEvaluationReport,
   diffAgentRunLedgers,
+  evaluateWorkflowEvaluationGate,
   normalizeAgentSession,
+  normalizeWorkflowEvaluationBaseline,
   normalizeWorkflowRunState,
   promoteAgentGoldenTrace,
   pruneFileArtifactStore,
@@ -31,9 +34,11 @@ import {
   type AgentSession,
   type JsonValue,
   type WorkflowDefinition,
+  type WorkflowEvaluationBaseline,
   type WorkflowEvaluationCase,
   type WorkflowEvaluationFixture,
   type WorkflowEvaluationReport,
+  type WorkflowEvaluationGateThresholds,
   type WorkflowEvaluationResult,
   type WorkflowRunInput,
   type WorkflowRunState
@@ -118,7 +123,7 @@ Commands:
   agents ledger|inspect|diff|golden|eval
   sessions list|show|workflow-state|prune
   artifacts list|show|verify|inspect|cleanup|prune
-  workflow replay|report|compare|run|eval
+  workflow replay|report|compare|baseline|gate|run|eval
   workflow-states list|show|prune
 
 Use --dir for local file-backed stores. Output is JSON unless --help is used.
@@ -1132,6 +1137,51 @@ const runWorkflowCommand = async (subcommand: string | undefined, flags: Record<
     const target = await readJsonFile<WorkflowEvaluationReport>(requiredFlag(flags, "target"));
     printJson(io, createWorkflowEvaluationDiffReport(compareWorkflowEvaluationReports(base, target)));
     return 0;
+  }
+
+  if (subcommand === "baseline") {
+    const report = await readJsonFile<WorkflowEvaluationReport>(requiredFlag(flags, "report"));
+    const baseline = createWorkflowEvaluationBaseline(report, {
+      name: requiredFlag(flags, "name")
+    });
+    const out = stringFlag(flags, "out");
+    if (out) {
+      await writeJsonFile(out, baseline);
+    }
+    printJson(io, baseline);
+    return 0;
+  }
+
+  if (subcommand === "gate") {
+    const baseline = normalizeWorkflowEvaluationBaseline(
+      await readJsonFile<WorkflowEvaluationBaseline>(requiredFlag(flags, "baseline"))
+    );
+    const candidate = await readJsonFile<WorkflowEvaluationReport>(requiredFlag(flags, "candidate"));
+    if (booleanFlag(flags, "require-candidate-ok") && booleanFlag(flags, "allow-failing-candidate")) {
+      throw new Error("Use only one of --require-candidate-ok or --allow-failing-candidate.");
+    }
+    const thresholds: WorkflowEvaluationGateThresholds = {
+      minPassRate: numberFlag(flags, "min-pass-rate"),
+      maxPassRateDrop: numberFlag(flags, "max-pass-rate-drop"),
+      maxFailedCases: numberFlag(flags, "max-failed-cases"),
+      maxRegressedCases: numberFlag(flags, "max-regressed-cases"),
+      maxNewFailures: numberFlag(flags, "max-new-failures"),
+      maxRemovedCases: numberFlag(flags, "max-removed-cases"),
+      minJudgeScore: numberFlag(flags, "min-judge-score"),
+      maxJudgeScoreDrop: numberFlag(flags, "max-judge-score-drop"),
+      requireCandidateOk: booleanFlag(flags, "require-candidate-ok")
+        ? true
+        : booleanFlag(flags, "allow-failing-candidate")
+          ? false
+          : undefined
+    };
+    const gate = evaluateWorkflowEvaluationGate(baseline, candidate, { thresholds });
+    const out = stringFlag(flags, "out");
+    if (out) {
+      await writeJsonFile(out, gate);
+    }
+    printJson(io, gate);
+    return gate.ok ? 0 : 1;
   }
 
   return fail(io, "Unknown workflow command.");

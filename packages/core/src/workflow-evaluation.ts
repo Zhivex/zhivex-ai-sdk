@@ -41,6 +41,10 @@ export interface WorkflowEvaluationCaseResult {
 export interface WorkflowEvaluationResult {
   ok: boolean;
   cases: WorkflowEvaluationCaseResult[];
+  /** Raw aggregate case verdict when a fixture declares expectedOk. */
+  actualOk?: boolean;
+  /** Declared fixture verdict, when provided by the fixture. */
+  expectedOk?: boolean;
 }
 
 export interface WorkflowEvaluationJudgeResult {
@@ -86,6 +90,10 @@ export interface WorkflowEvaluationReportCase {
 
 export interface WorkflowEvaluationReport {
   ok: boolean;
+  /** Raw aggregate case verdict when a fixture declares expectedOk. */
+  actualOk?: boolean;
+  /** Declared fixture verdict, when provided by the fixture. */
+  expectedOk?: boolean;
   total: number;
   passed: number;
   failed: number;
@@ -248,7 +256,18 @@ export const createWorkflowEvaluationFixture = (options: {
 export const runWorkflowEvaluationFixture = async (
   fixture: WorkflowEvaluationFixture,
   options: RunWorkflowEvaluationOptions
-): Promise<WorkflowEvaluationResult> => runWorkflowEvaluation(fixture.dataset, options);
+): Promise<WorkflowEvaluationResult> => {
+  const result = await runWorkflowEvaluation(fixture.dataset, options);
+  if (fixture.expectedOk === undefined) {
+    return result;
+  }
+  return {
+    ...result,
+    ok: result.ok === fixture.expectedOk,
+    actualOk: result.ok,
+    expectedOk: fixture.expectedOk
+  };
+};
 
 const workflowDuration = (output: WorkflowRunOutput): number | undefined =>
   output.state.createdAt !== undefined && output.state.updatedAt !== undefined
@@ -311,6 +330,8 @@ export const createWorkflowEvaluationReport = (
 
   return {
     ok: result.ok,
+    actualOk: result.actualOk,
+    expectedOk: result.expectedOk,
     total: cases.length,
     passed,
     failed,

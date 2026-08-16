@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import * as beta from "../src/beta.js";
+import * as controlPlane from "../src/control-plane.js";
 import * as agents from "../src/index.js";
 import * as ops from "../src/ops.js";
 import * as realtime from "../src/realtime.js";
@@ -61,9 +62,23 @@ describe("agents package public surface", () => {
     expectStability(ops, "stable");
   });
 
-  it("isolates beta control-plane and governance APIs", () => {
-    expect(beta.createAgentCapsule).toBeTypeOf("function");
-    expect(beta.createAgentControlPlane).toBeTypeOf("function");
+  it("exposes stable control-plane contracts from a dedicated entry point", () => {
+    expect(controlPlane.createAgentCapsule).toBeTypeOf("function");
+    expect(controlPlane.createAgentControlPlane).toBeTypeOf("function");
+    expect(controlPlane.normalizeAgentCapsuleManifest).toBeTypeOf("function");
+    expect(controlPlane.normalizeAgentApprovalQueueItem).toBeTypeOf("function");
+    expect(controlPlane.normalizeAgentRunLedger).toBeTypeOf("function");
+    expect(controlPlane.migrateAgentCapsuleManifest).toBeTypeOf("function");
+    expect(controlPlane.migrateAgentApprovalQueueItem).toBeTypeOf("function");
+    expect(controlPlane.migrateAgentRunLedger).toBeTypeOf("function");
+    expect("getHostedToolClass" in controlPlane).toBe(false);
+    expect("createAgentControlPlane" in agents).toBe(false);
+    expectStability(controlPlane, "stable");
+  });
+
+  it("keeps beta as a compatible alias with beta-only governance helpers", () => {
+    expect(beta.createAgentCapsule).toBe(controlPlane.createAgentCapsule);
+    expect(beta.createAgentControlPlane).toBe(controlPlane.createAgentControlPlane);
     expect(beta.createAgentExecutionEnvironmentBinding).toBeTypeOf("function");
     expect(beta.createAgentHarnessBinding).toBeTypeOf("function");
     expect(beta.fingerprintAgentHarness).toBeTypeOf("function");
@@ -71,8 +86,9 @@ describe("agents package public surface", () => {
     expect(beta.createAgentRunLedger).toBeTypeOf("function");
     expect(beta.createAgentCapabilityRouter).toBeTypeOf("function");
     expect(beta.createAgentAuditRecord).toBeTypeOf("function");
-    expect("createAgentControlPlane" in agents).toBe(false);
-    expectStability(beta, "beta");
+    expect(getApiStability("createAgentControlPlane")).toMatchObject({ stability: "stable" });
+    expect(getApiStability("createAgentAuditRecord")).toMatchObject({ stability: "beta" });
+    expect(getApiStability("getHostedToolClass")).toMatchObject({ stability: "beta" });
   });
 
   it("keeps stable realtime and deterministic testing helpers on dedicated entry points", () => {

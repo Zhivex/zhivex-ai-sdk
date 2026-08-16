@@ -24,7 +24,15 @@ import {
 } from "./postgres-integration-client.js";
 
 const postgresUrl = process.env.ZHIVEX_POSTGRES_INTEGRATION_URL;
-const describePostgres = postgresUrl ? (describe.sequential ?? describe.skip) : describe.skip;
+const postgresCertificationRequired = process.env.ZHIVEX_WORKFLOW_POSTGRES_CERTIFICATION === "1";
+
+if (postgresCertificationRequired && !postgresUrl) {
+  throw new Error(
+    "ZHIVEX_POSTGRES_INTEGRATION_URL is required when ZHIVEX_WORKFLOW_POSTGRES_CERTIFICATION=1."
+  );
+}
+
+const describePostgres = postgresUrl ? describe.sequential : describe.skip;
 
 const sessionTable = integrationTableName("workflow_sessions");
 const workflowTable = integrationTableName("workflow_states");
@@ -327,6 +335,59 @@ describePostgres("workflow and artifact Postgres integration", () => {
       expect((await artifactsA.loadArtifact(artifactLookup))?.revision).toBe(2);
     } finally {
       await Promise.all([firstClient.close(), secondClient.close()]);
+    }
+  });
+
+  it("keeps workflow state durable and isolated across Postgres tenant scopes", async () => {
+    const appName = "postgres-workflow-tenancy";
+    const sessionId = `shared-session-${Date.now()}`;
+    const workflowKey = "shared-workflow";
+    const firstClient = createPostgresIntegrationClient(postgresUrl!);
+
+    try {
+      const states = createPostgresWorkflowStateService({ client: firstClient, tableName: workflowTable });
+      for (const tenant of ["tenant-a", "tenant-b"] as const) {
+        const state = createPersistedState(`${tenant}-${Date.now()}`, tenant, "completed");
+        state.userId = tenant;
+        state.sessionId = sessionId;
+        await expect(states.saveWorkflowState({
+          appName,
+          userId: tenant,
+          sessionId,
+          workflowKey,
+          state
+        })).resolves.toMatchObject({ revision: 1, userId: tenant, state: { outputs: { result: tenant } } });
+      }
+    } finally {
+      await firstClient.close();
+    }
+
+    const restartedClient = createPostgresIntegrationClient(postgresUrl!);
+    try {
+      const states = createPostgresWorkflowStateService({ client: restartedClient, tableName: workflowTable });
+      const tenantA = await states.loadWorkflowState({
+        appName,
+        userId: "tenant-a",
+        sessionId,
+        workflowKey
+      });
+      const tenantB = await states.loadWorkflowState({
+        appName,
+        userId: "tenant-b",
+        sessionId,
+        workflowKey
+      });
+      const tenantAList = await states.listWorkflowStates({ appName, userId: "tenant-a", sessionId });
+      const tenantBList = await states.listWorkflowStates({ appName, userId: "tenant-b", sessionId });
+
+      expect(tenantA).toMatchObject({ userId: "tenant-a", state: { outputs: { result: "tenant-a" } } });
+      expect(tenantB).toMatchObject({ userId: "tenant-b", state: { outputs: { result: "tenant-b" } } });
+      expect(tenantAList).toHaveLength(1);
+      expect(tenantAList[0]).toEqual(tenantA);
+      expect(tenantBList).toHaveLength(1);
+      expect(tenantBList[0]).toEqual(tenantB);
+    } finally {
+      await restartedClient.close();
     }
   });
 

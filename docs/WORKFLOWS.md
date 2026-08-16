@@ -217,6 +217,83 @@ const evaluation = await runWorkflowEvaluationFixture(fixture, { workflow });
 const report = createWorkflowEvaluationReport(evaluation);
 ```
 
+`expectedOk` on a fixture declares the expected aggregate verdict. When it is present,
+`evaluation.ok` reports whether the actual verdict matched it, while
+`evaluation.actualOk` preserves the raw aggregate case verdict. Fixtures without
+`expectedOk` keep the original aggregate behavior.
+
+### Versioned CI baselines
+
+Create a deterministic baseline from a reviewed report, then evaluate candidate reports
+against it:
+
+```ts
+import {
+  createWorkflowEvaluationBaseline,
+  evaluateWorkflowEvaluationGate
+} from "@zhivex-ai/sdk";
+
+const baseline = createWorkflowEvaluationBaseline(reviewedReport, {
+  name: "candidate-review-v1"
+});
+
+const gate = evaluateWorkflowEvaluationGate(baseline, candidateReport, {
+  thresholds: {
+    minPassRate: 0.95,
+    maxPassRateDrop: 0,
+    maxFailedCases: 1,
+    maxRegressedCases: 0,
+    maxNewFailures: 0,
+    maxRemovedCases: 0
+  }
+});
+
+if (!gate.ok) {
+  throw new Error(JSON.stringify(gate.issues));
+}
+```
+
+The baseline schema is versioned and stores only deterministic evaluation evidence:
+case names, statuses, verdicts, failure messages, aggregate counts, pass rate, and an
+optional judge score. Runtime durations, timestamps, and output previews are excluded.
+Cases and failure messages are sorted, so a baseline created from the same report has
+stable JSON output.
+
+The default gate is intentionally regression-oriented: no pass-rate or judge-score
+drop, no regressed or removed cases, no new failure messages, and no increase over the
+baseline failed-case count. `minPassRate` defaults to `0`; set it when the suite needs
+an absolute quality floor. If the baseline passed, the candidate must also pass by
+default.
+
+The same flow is available from the CLI. `workflow gate` prints a serializable decision
+and exits with status `1` when any threshold fails, making it directly usable in CI:
+
+```bash
+zhivex-ai workflow baseline \
+  --report workflow-report.json \
+  --name candidate-review-v1 \
+  --out workflow-baseline.json
+
+zhivex-ai workflow gate \
+  --baseline workflow-baseline.json \
+  --candidate workflow-report.json \
+  --min-pass-rate 0.95 \
+  --max-pass-rate-drop 0 \
+  --max-regressed-cases 0 \
+  --out workflow-gate.json
+```
+
+Additional CLI thresholds are `--max-failed-cases`, `--max-new-failures`,
+`--max-removed-cases`, `--min-judge-score`, and `--max-judge-score-drop`.
+Use `--require-candidate-ok` or `--allow-failing-candidate` to override the baseline
+verdict requirement explicitly.
+
+The repository CI executes `bun run test:workflow-evaluation-gate`. That command runs
+a deterministic workflow through the real evaluation/report path and compares the
+candidate report with the reviewed schema-v1 baseline in
+`packages/core/tests/fixtures/workflow-evaluation-ci-baseline-v1.json`; any regression
+makes the command and CI job fail.
+
 ## Operational Guidance
 
 - Keep prompts and step IDs stable; they become part of replay and evaluation evidence.

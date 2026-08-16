@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/agents",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Agent-first facade for the Zhivex AI SDK runtime.",
   "license": "MIT",
   "type": "module",
@@ -18,6 +18,10 @@
     "./ops": {
       "types": "./dist/ops.d.ts",
       "import": "./dist/ops.js"
+    },
+    "./control-plane": {
+      "types": "./dist/control-plane.d.ts",
+      "import": "./dist/control-plane.js"
     },
     "./beta": {
       "types": "./dist/beta.d.ts",
@@ -57,6 +61,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^1.4.0"
+    "@zhivex-ai/core": "^1.5.0"
   }
 }

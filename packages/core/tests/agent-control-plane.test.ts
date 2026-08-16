@@ -24,6 +24,14 @@ import {
   type AgentRunState,
   type ToolApprovalRequest
 } from "../src/index.js";
+import {
+  migrateAgentApprovalQueueItem,
+  migrateAgentCapsuleManifest,
+  migrateAgentRunLedger,
+  normalizeAgentApprovalQueueItem,
+  normalizeAgentCapsuleManifest,
+  normalizeAgentRunLedger
+} from "../src/agent-control-plane.js";
 
 const createTierAModel = () =>
   createMockLanguageModel({
@@ -199,6 +207,21 @@ describe("agent control plane", () => {
         'MCP server "ledger" is high risk but has no declared permissions.'
       ])
     );
+
+    const legacyManifest = structuredClone(capsule.manifest) as Record<string, unknown>;
+    delete legacyManifest.schemaVersion;
+    expect(migrateAgentCapsuleManifest(legacyManifest)).toEqual(capsule.manifest);
+    expect(normalizeAgentCapsuleManifest(capsule.manifest)).toEqual(capsule.manifest);
+
+    const futureManifest = structuredClone(capsule.manifest) as Record<string, unknown>;
+    futureManifest.schemaVersion = 2;
+    expect(() => normalizeAgentCapsuleManifest(futureManifest)).toThrow(
+      "Unsupported AgentCapsuleManifest schemaVersion 2"
+    );
+
+    const tamperedManifest = structuredClone(capsule.manifest);
+    tamperedManifest.modelId = "different-model";
+    expect(() => normalizeAgentCapsuleManifest(tamperedManifest)).toThrow("fingerprint does not match");
   });
 
   it("applies tool policy decisions from advanced registry metadata", () => {
@@ -366,13 +389,21 @@ describe("agent control plane", () => {
           }
         ]
       }),
-      { tokenPrefix: "token", resumeUrl: "/runs/run_1/resume", expiresAt: 123 }
+      {
+        tokenPrefix: "token",
+        resumeUrl: "/runs/run_1/resume",
+        expiresAt: 123,
+        includeArguments: true,
+        includeRawData: true,
+        redaction: false
+      }
     );
 
     expect(queue).toEqual([
       expect.objectContaining({
         type: "agent_approval_queue_item",
         runId: "run_1",
+        kind: "provider",
         approvalRequestId: "approval_1",
         resumeUrl: "/runs/run_1/resume",
         expiresAt: 123
@@ -390,6 +421,51 @@ describe("agent control plane", () => {
       })) }),
       { tokenPrefix: "token" }
     )[0]?.approvalToken).not.toBe(queue[0]?.approvalToken);
+
+    const previousV1 = structuredClone(queue[0]!) as Record<string, unknown>;
+    delete previousV1.kind;
+    delete previousV1.requestFingerprint;
+    expect(migrateAgentApprovalQueueItem(previousV1)).toMatchObject({
+      schemaVersion: 1,
+      type: "agent_approval_queue_item",
+      kind: "provider",
+      requestFingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/)
+    });
+    expect(normalizeAgentApprovalQueueItem(queue[0])).toEqual(queue[0]);
+
+    expect(() => normalizeAgentApprovalQueueItem({ ...queue[0], schemaVersion: 2 })).toThrow(
+      "Unsupported AgentApprovalQueueItem schemaVersion 2"
+    );
+    expect(() => normalizeAgentApprovalQueueItem({ ...queue[0], type: "different" })).toThrow(
+      'type must be "agent_approval_queue_item"'
+    );
+  });
+
+  it("keeps approval queue payloads redacted unless explicitly requested", () => {
+    const state = baseState({
+      status: "waiting_approval",
+      pendingApprovals: [{
+        provider: "openai",
+        id: "approval_secret",
+        name: "remote_mcp",
+        arguments: JSON.stringify({ token: "approval-secret" }),
+        rawData: { token: "raw-secret" }
+      }]
+    });
+
+    const safe = createAgentApprovalQueue(state)[0]!;
+    expect(safe.arguments).toBeUndefined();
+    expect(safe.rawData).toBeUndefined();
+    expect(JSON.stringify(safe)).not.toContain("approval-secret");
+    expect(JSON.stringify(safe)).not.toContain("raw-secret");
+
+    const explicit = createAgentApprovalQueue(state, {
+      includeArguments: true,
+      includeRawData: true,
+      redaction: false
+    })[0]!;
+    expect(explicit.arguments).toContain("approval-secret");
+    expect(explicit.rawData).toEqual({ token: "raw-secret" });
   });
 
   it("returns an empty approval queue when a run has no pending approvals", () => {
@@ -457,6 +533,18 @@ describe("agent control plane", () => {
       toolCalls: ["lookup"],
       approvals: 0
     });
+
+    const legacyLedger = structuredClone(ledger) as Record<string, unknown>;
+    delete legacyLedger.schemaVersion;
+    expect(migrateAgentRunLedger(legacyLedger)).toEqual(ledger);
+    expect(normalizeAgentRunLedger(ledger)).toEqual(ledger);
+    expect(() => normalizeAgentRunLedger({ ...ledger, schemaVersion: 2 })).toThrow(
+      "Unsupported AgentRunLedger schemaVersion 2"
+    );
+    expect(() => normalizeAgentRunLedger({
+      ...ledger,
+      summary: { ...ledger.summary, runId: "different-run" }
+    })).toThrow("summary identity does not match");
   });
 
   it("keeps the complete run ledger fail-closed for sensitive payloads", () => {
@@ -546,6 +634,122 @@ describe("agent control plane", () => {
     expect(loaded?.harness).toEqual(record.state.harness);
     expect(trace?.runId).toBe(record.state.runId);
     expect(controlPlane.inspect().provider.agentTier).toBe("tier-a");
+  });
+
+  it("consumes a durable approval exactly once after a control-plane restart", async () => {
+    let sideEffects = 0;
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({
+      id: "deploy-control-plane",
+      store,
+      maxSteps: 3,
+      model: createMockLanguageModel({
+        capabilities: { tools: true },
+        responses: [
+          {
+            messages: [{
+              role: "assistant",
+              parts: [{
+                type: "tool-call",
+                toolCall: { id: "deploy-call-1", name: "deploy", input: { target: "staging" } }
+              }]
+            }],
+            finishReason: "tool-calls"
+          },
+          {
+            messages: [createTextMessage("assistant", "deployed")],
+            text: "deployed",
+            finishReason: "stop"
+          }
+        ]
+      }),
+      tools: {
+        deploy: tool({
+          name: "deploy",
+          schema: z.object({ target: z.string() }),
+          requiresApproval: true,
+          approvalMode: "interrupt",
+          approvalVersion: "1",
+          metadata: {
+            advancedRegistry: {
+              permissions: ["external-side-effect"],
+              audit: { riskLevel: "high" }
+            }
+          },
+          execute: () => {
+            sideEffects += 1;
+            return { deployed: true };
+          }
+        })
+      }
+    });
+
+    const waiting = await createAgentControlPlane({ agent }).run({ prompt: "deploy" });
+    expect(waiting.state.status).toBe("waiting_approval");
+    expect(sideEffects).toBe(0);
+    const queueItem = createAgentApprovalQueue(waiting.state, { expiresAt: 1_000 })[0]!;
+    const restartedA = createAgentControlPlane({ agent });
+    const restartedB = createAgentControlPlane({ agent });
+
+    await expect(restartedA.resumeApproval({
+      queueItem,
+      approvalToken: "wrong-token",
+      approve: true,
+      now: 999
+    })).rejects.toThrow("approval token is invalid");
+    await expect(restartedA.resumeApproval({
+      queueItem,
+      approvalToken: queueItem.approvalToken,
+      approve: true,
+      now: 1_000
+    })).rejects.toThrow("approval has expired");
+    const tamperedQueueItem = { ...queueItem, requestFingerprint: `sha256:${"f".repeat(64)}` };
+    await expect(restartedA.resumeApproval({
+      queueItem: tamperedQueueItem,
+      approvalToken: queueItem.approvalToken,
+      approve: true,
+      now: 999
+    })).rejects.toThrow("fingerprint does not match");
+
+    const results = await Promise.allSettled([
+      restartedA.resumeApproval({
+        queueItem,
+        approvalToken: queueItem.approvalToken,
+        approve: true,
+        reason: "reviewed",
+        now: 999
+      }),
+      restartedB.resumeApproval({
+        queueItem,
+        approvalToken: queueItem.approvalToken,
+        approve: true,
+        reason: "reviewed",
+        now: 999
+      })
+    ]);
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    expect(fulfilled).toHaveLength(1);
+    expect(fulfilled[0]?.status === "fulfilled" ? fulfilled[0].value.state : undefined).toMatchObject({
+      status: "completed",
+      outputText: "deployed",
+      pendingApprovals: [],
+      approvalHistory: [expect.objectContaining({
+        requestId: queueItem.approvalRequestId,
+        approve: true,
+        reason: "reviewed"
+      })]
+    });
+    expect(sideEffects).toBe(1);
+
+    const persisted = await store.load(queueItem.runId);
+    expect(persisted).toMatchObject({ status: "completed", pendingApprovals: [] });
+    await expect(restartedA.resumeApproval({
+      queueItem,
+      approvalToken: queueItem.approvalToken,
+      approve: true,
+      now: 999
+    })).rejects.toThrow("no longer pending or was already consumed");
+    expect(sideEffects).toBe(1);
   });
 
   it("streams through the control-plane facade", async () => {

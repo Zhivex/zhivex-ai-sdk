@@ -10,6 +10,12 @@ export {
   diffAgentRunLedgers,
   inspectAgentCapsule,
   inspectAgentControlPlane,
+  migrateAgentApprovalQueueItem,
+  migrateAgentCapsuleManifest,
+  migrateAgentRunLedger,
+  normalizeAgentApprovalQueueItem,
+  normalizeAgentCapsuleManifest,
+  normalizeAgentRunLedger,
   promoteAgentGoldenTrace,
   selectAgentModel
 } from "./agent-control-plane.js";
@@ -27,7 +33,9 @@ export type {
   AgentCapsuleSkillManifest,
   AgentCapsuleToolManifest,
   AgentControlPlane,
+  AgentControlPlaneApprovalResumeInput,
   AgentControlPlaneInspection,
+  AgentControlPlaneMigrationTarget,
   AgentControlPlaneOptions,
   AgentControlPlaneRunInput,
   AgentControlPlaneRunRecord,
@@ -191,6 +199,23 @@ export type {
   WorkflowEvaluationDiffReport,
   WorkflowEvaluationDiffSummary
 } from "./workflow-evaluation-diff.js";
+export {
+  WORKFLOW_EVALUATION_BASELINE_SCHEMA_VERSION,
+  WORKFLOW_EVALUATION_GATE_SCHEMA_VERSION,
+  createWorkflowEvaluationBaseline,
+  evaluateWorkflowEvaluationGate,
+  normalizeWorkflowEvaluationBaseline
+} from "./workflow-evaluation-gate.js";
+export type {
+  WorkflowEvaluationBaseline,
+  WorkflowEvaluationBaselineCase,
+  WorkflowEvaluationGateCaseDiff,
+  WorkflowEvaluationGateCheck,
+  WorkflowEvaluationGateCheckCode,
+  WorkflowEvaluationGateResolvedThresholds,
+  WorkflowEvaluationGateResult,
+  WorkflowEvaluationGateThresholds
+} from "./workflow-evaluation-gate.js";
 export {
   createWorkflowEvaluationFixture,
   createWorkflowEvaluationReport,

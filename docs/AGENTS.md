@@ -43,12 +43,12 @@ const agent = createAgent({ model, instructions: "Keep answers short." });
 const result = await runAgent(agent, { prompt: "Summarize this case." });
 ```
 
-Use `@zhivex-ai/agents` instead of `@zhivex-ai/sdk` when you want the smaller agent-only facade. Its root contains only the stable application runtime. Import stable persistence, tracing, and evaluation helpers from `@zhivex-ai/agents/ops`; beta control-plane APIs from `@zhivex-ai/agents/beta`; experimental live agents from `@zhivex-ai/agents/realtime`; and deterministic doubles from `@zhivex-ai/agents/testing`.
+Use `@zhivex-ai/agents` instead of `@zhivex-ai/sdk` when you want the smaller agent-only facade. Its root contains only the stable application runtime. Import stable persistence, tracing, and evaluation helpers from `@zhivex-ai/agents/ops`; stable control-plane contracts from `@zhivex-ai/agents/control-plane`; stable live agents from `@zhivex-ai/agents/realtime`; and deterministic doubles from `@zhivex-ai/agents/testing`. The legacy `@zhivex-ai/agents/beta` path remains a compatibility alias and also exposes governance helpers that have not been promoted.
 
 ```ts
 import { Agent } from "@zhivex-ai/agents";
 import { createPostgresAgentRunStore } from "@zhivex-ai/agents/ops";
-import { createAgentApprovalQueue } from "@zhivex-ai/agents/beta";
+import { createAgentApprovalQueue } from "@zhivex-ai/agents/control-plane";
 ```
 
 Use `@zhivex-ai/sdk` when the app also needs `Runner`, workflows, artifacts, embeddings, media generation, or the CLI.
@@ -169,7 +169,7 @@ A tool policy has three outcomes: `{ approved: true }` allows execution, `{ appr
 
 Context is ephemeral and must be supplied again on resume. Use `contextSchema` to validate it and access it from policies, tool guardrails, and `tool.execute` through `executionContext.context` or `context.context`. Use `outputSchema` with `outputMode: "auto" | "native" | "prompted"` for a validated `result.finalOutput`.
 
-For app-facing queues, import `createAgentApprovalQueue()` from `@zhivex-ai/agents/beta` to turn pending requests into items with cryptographically random approval tokens, reasons, expiration, and resume URLs. Persist the opaque token server-side, compare it before accepting an approval, enforce `expiresAt` in the application, and consume it once; the SDK does not provide an HTTP authorization boundary.
+For app-facing queues, import `createAgentApprovalQueue()` from `@zhivex-ai/agents/control-plane` to turn pending requests into redacted items with cryptographically random approval tokens, fingerprints, expiration, and resume URLs. Persist the queue item and token server-side, authorize the caller in the application, then call `controlPlane.resumeApproval()`; it validates the token, expiry, request fingerprint, and durable pending state before using store CAS to consume the approval exactly once. The SDK does not provide an HTTP authorization boundary.
 
 Tool execution timeouts abort the `AbortSignal` passed as the second argument to `tool.execute(input, context)`. Tools that perform I/O should forward `context.abortSignal` to their client so cancellation stops the underlying work; timeout cancellation is cooperative for tools that ignore the signal.
 
@@ -231,7 +231,7 @@ Production agent work should produce inspectable artifacts:
 - `createAgentEvaluationFixture()` and `runAgentEvaluationFixture()` for regression suites.
 - `promoteAgentGoldenTrace()` for turning a successful run into a regression baseline.
 
-With the focused package, stable trace, replay, cost, provider-support, and evaluation helpers come from `@zhivex-ai/agents/ops`. Ledgers, golden traces, and audit/governance helpers remain beta and come from `@zhivex-ai/agents/beta`.
+With the focused package, stable trace, replay, cost, provider-support, and evaluation helpers come from `@zhivex-ai/agents/ops`. Stable capsules, approval queues, ledgers, golden traces, capability routing, and the durable control-plane facade come from `@zhivex-ai/agents/control-plane`. Generic audit/governance and hosted-tool classification helpers remain Beta under `@zhivex-ai/agents/beta`.
 
 The CLI in `@zhivex-ai/sdk` can inspect saved states and ledgers locally:
 

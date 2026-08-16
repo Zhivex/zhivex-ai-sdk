@@ -1,7 +1,11 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 
 import { cancelAgentRun, cancelAgentRunTree, resumeAgent, runAgent, streamAgent } from "./agent.js";
-import { createAgentHarnessBinding } from "./agent-harness.js";
+import {
+  createAgentExecutionEnvironmentBinding,
+  createAgentHarnessBinding,
+  fingerprintAgentHarness
+} from "./agent-harness.js";
 import { createAgentRunSnapshot, replayAgentRun, type AgentReplayResult, type AgentRunSnapshot } from "./agent-evaluation.js";
 import {
   createAgentTraceArtifact,
@@ -42,6 +46,7 @@ import type {
 } from "./types.js";
 
 export const AGENT_CONTROL_PLANE_SCHEMA_VERSION = 1 as const;
+export type AgentControlPlaneMigrationTarget = typeof AGENT_CONTROL_PLANE_SCHEMA_VERSION;
 
 export type AgentToolRiskLevel = "low" | "medium" | "high" | "critical";
 export type AgentToolPermission =
@@ -170,6 +175,12 @@ export interface AgentApprovalQueueOptions {
   tokenPrefix?: string;
   expiresAt?: number | ((request: AgentApprovalRequest, state: AgentRunState) => number | undefined);
   reason?: string | ((request: AgentApprovalRequest, state: AgentRunState) => string | undefined);
+  /** Approval arguments are omitted unless explicitly requested. */
+  includeArguments?: boolean;
+  /** Provider payloads are omitted unless explicitly requested. */
+  includeRawData?: boolean;
+  /** Explicitly pass false only for a trusted, non-production boundary. */
+  redaction?: RedactionPolicy | RedactionPolicyOptions | false;
 }
 
 export interface AgentApprovalQueueItem {
@@ -177,15 +188,18 @@ export interface AgentApprovalQueueItem {
   type: "agent_approval_queue_item";
   runId: string;
   agentId?: string;
+  kind: NonNullable<AgentApprovalRequest["kind"]>;
   provider: string;
   approvalRequestId: string;
   name: string;
-  arguments: string;
+  /** Digest of the complete pending request, including fields omitted from this projection. */
+  requestFingerprint: string;
+  arguments?: string;
   approvalToken: string;
   resumeUrl?: string;
   reason?: string;
   expiresAt?: number;
-  rawData: JsonValue;
+  rawData?: JsonValue;
 }
 
 export interface AgentRunLedgerOptions extends AgentAuditRecordOptions, ToolAuditRecordOptions {
@@ -362,6 +376,21 @@ export interface AgentControlPlaneRunRecord {
   session?: RunnerRunOutput["session"];
 }
 
+export type AgentControlPlaneApprovalResumeInput<TModel extends LanguageModel = LanguageModel> =
+  Omit<
+    AgentRunInput<TModel>,
+    "state" | "approvals" | "runId" | "idempotencyKey" | "prompt" | "messages" | "system" | "handoff" | "parentRunId"
+  > & {
+    /** Trusted server-side queue record; do not accept this object from the token presenter. */
+    queueItem: AgentApprovalQueueItem;
+    /** Bearer token presented by the approver and compared against the trusted queue record. */
+    approvalToken: string;
+    approve: boolean;
+    reason?: string;
+    /** Injectable clock for deterministic expiry enforcement. */
+    now?: number;
+  };
+
 export interface AgentControlPlaneInspection {
   provider: ProviderAgentSupport;
   capsule: AgentCapsuleInspection;
@@ -370,6 +399,8 @@ export interface AgentControlPlaneInspection {
 export interface AgentControlPlane<TModel extends LanguageModel = LanguageModel> {
   run(input?: AgentControlPlaneRunInput<TModel>): Promise<AgentControlPlaneRunRecord>;
   resume(input: AgentControlPlaneRunInput<TModel> & { state: AgentRunState }): Promise<AgentControlPlaneRunRecord>;
+  /** Atomically consumes a persisted pending approval and resumes its durable run. */
+  resumeApproval(input: AgentControlPlaneApprovalResumeInput<TModel>): Promise<AgentControlPlaneRunRecord>;
   stream(input?: AgentControlPlaneRunInput<TModel>): AgentStreamResult | RunnerStreamResult;
   getRun(runId: string): Promise<AgentRunState | undefined>;
   getTrace(runId: string): Promise<AgentTraceArtifact | undefined>;
@@ -396,6 +427,146 @@ const supervisedPermissions = new Set<AgentToolPermission>([
   ...writePermissions,
   "network"
 ]);
+const allToolPermissions = new Set<AgentToolPermission>([
+  "read",
+  "write",
+  "network",
+  "filesystem",
+  "code-execution",
+  "shell",
+  "external-side-effect"
+]);
+const allToolRiskLevels = new Set<AgentToolRiskLevel>(["low", "medium", "high", "critical"]);
+const allToolPolicyModes = new Set<AgentToolPolicyMode>(["allow-all", "read-only", "deny-write", "supervised"]);
+const allAgentTiers = new Set<ProviderAgentSupport["agentTier"]>(["tier-a", "tier-b", "tier-c"]);
+const allAgentStatuses = new Set<AgentRunState["status"]>([
+  "queued",
+  "running",
+  "completed",
+  "suspended",
+  "waiting_approval",
+  "cancel_requested",
+  "failed",
+  "cancelled",
+  "timed_out"
+]);
+const allApprovalKinds = new Set<NonNullable<AgentApprovalRequest["kind"]>>([
+  "provider",
+  "local-tool",
+  "subagent"
+]);
+
+const controlPlaneRecord = (value: unknown, name: string): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ValidationError(`${name} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+};
+
+const controlPlaneString = (value: unknown, name: string, allowEmpty = false): string => {
+  if (typeof value !== "string" || (!allowEmpty && !value.trim())) {
+    throw new ValidationError(`${name} must be a${allowEmpty ? "" : " non-empty"} string.`);
+  }
+  return value;
+};
+
+const controlPlaneOptionalString = (value: unknown, name: string, allowEmpty = false): string | undefined =>
+  value === undefined ? undefined : controlPlaneString(value, name, allowEmpty);
+
+const controlPlaneFiniteNumber = (value: unknown, name: string, minimum = 0): number => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < minimum) {
+    throw new ValidationError(`${name} must be a finite number greater than or equal to ${minimum}.`);
+  }
+  return value;
+};
+
+const cloneControlPlaneJson = <T>(value: T, name: string): T => {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) {
+      throw new Error("undefined is not JSON");
+    }
+    return JSON.parse(serialized) as T;
+  } catch (error) {
+    throw new ValidationError(`${name} must be finite JSON.`, { cause: error });
+  }
+};
+
+const cloneControlPlaneMetadata = (
+  value: unknown,
+  name: string
+): Record<string, JsonValue> | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  controlPlaneRecord(value, name);
+  return cloneControlPlaneJson(value as Record<string, JsonValue>, name);
+};
+
+const normalizeControlPlaneSchemaVersion = (value: unknown, name: string): void => {
+  if (value === undefined) {
+    return;
+  }
+  if (value !== AGENT_CONTROL_PLANE_SCHEMA_VERSION) {
+    if (typeof value === "number" && value > AGENT_CONTROL_PLANE_SCHEMA_VERSION) {
+      throw new ValidationError(`Unsupported ${name} schemaVersion ${value}.`);
+    }
+    throw new ValidationError(
+      `${name} schemaVersion must be ${AGENT_CONTROL_PLANE_SCHEMA_VERSION}; only records without schemaVersion are treated as legacy.`
+    );
+  }
+};
+
+const normalizeStringList = (value: unknown, name: string): string[] => {
+  if (!Array.isArray(value)) {
+    throw new ValidationError(`${name} must be an array.`);
+  }
+  return value.map((entry, index) => controlPlaneString(entry, `${name}[${index}]`));
+};
+
+const normalizePermissionList = (value: unknown, name: string): AgentToolPermission[] => {
+  const permissions = normalizeStringList(value, name);
+  for (const permission of permissions) {
+    if (!allToolPermissions.has(permission as AgentToolPermission)) {
+      throw new ValidationError(`${name} contains unsupported permission "${permission}".`);
+    }
+  }
+  return [...new Set(permissions as AgentToolPermission[])].sort();
+};
+
+const approvalRequestFingerprint = (approval: AgentApprovalRequest): string =>
+  fingerprintAgentHarness({
+    kind: approval.kind ?? "provider",
+    provider: approval.provider,
+    id: approval.id,
+    name: approval.name,
+    arguments: approval.arguments,
+    serverLabel: approval.serverLabel,
+    toolCallId: approval.toolCallId,
+    step: approval.step,
+    inputDigest: approval.inputDigest,
+    toolVersion: approval.toolVersion,
+    signature: approval.signature,
+    childRunId: approval.childRunId,
+    childAgentId: approval.childAgentId,
+    childApprovalRequestId: approval.childApprovalRequestId,
+    rawData: approval.rawData
+  });
+
+const legacyApprovalRequestFingerprint = (approval: AgentApprovalRequest): string =>
+  fingerprintAgentHarness({
+    provider: approval.provider,
+    id: approval.id,
+    name: approval.name,
+    arguments: approval.arguments,
+    rawData: approval.rawData
+  });
+
+const assertControlPlaneMigrationTarget = (targetVersion: AgentControlPlaneMigrationTarget, name: string) => {
+  if (targetVersion !== AGENT_CONTROL_PLANE_SCHEMA_VERSION) {
+    throw new ValidationError(`Unsupported ${name} migration target ${targetVersion}.`);
+  }
+};
 
 const normalizeNames = (names: string[] | undefined) => new Set((names ?? []).map((name) => name.toLowerCase()));
 const normalizePermissions = (permissions: AgentToolPermission[] | undefined) => new Set(permissions ?? []);
@@ -410,9 +581,9 @@ const readAdvancedMetadata = (tool: AnyToolDefinition): Record<string, JsonValue
 
 const toolPermissions = (tool: AnyToolDefinition): AgentToolPermission[] => {
   const permissions = readAdvancedMetadata(tool).permissions;
-  return Array.isArray(permissions)
-    ? permissions.filter((permission): permission is AgentToolPermission => typeof permission === "string")
-    : [];
+  return permissions === undefined
+    ? []
+    : normalizePermissionList(permissions, `Tool "${tool.name}" permissions`);
 };
 
 const toolAudit = (tool: AnyToolDefinition): Record<string, JsonValue> => {
@@ -448,6 +619,168 @@ const validateCapsuleId = (id: string) => {
   if (!/^[a-zA-Z0-9._:-]+$/.test(id)) {
     throw new ValidationError('Agent capsule "id" may only contain letters, numbers, dots, colons, underscores, and hyphens.');
   }
+};
+
+const normalizeCapsuleSkill = (value: unknown, index: number): AgentCapsuleSkillManifest => {
+  const name = `AgentCapsuleManifest.skills[${index}]`;
+  const skill = controlPlaneRecord(value, name);
+  return {
+    id: controlPlaneString(skill.id, `${name}.id`),
+    name: controlPlaneOptionalString(skill.name, `${name}.name`),
+    version: controlPlaneOptionalString(skill.version, `${name}.version`),
+    description: controlPlaneOptionalString(skill.description, `${name}.description`, true),
+    path: controlPlaneOptionalString(skill.path, `${name}.path`),
+    metadata: cloneControlPlaneMetadata(skill.metadata, `${name}.metadata`)
+  };
+};
+
+const normalizeCapsuleMcpServer = (value: unknown, index: number): AgentCapsuleMcpServerManifest => {
+  const name = `AgentCapsuleManifest.mcpServers[${index}]`;
+  const server = controlPlaneRecord(value, name);
+  if (server.transport !== "stdio" && server.transport !== "http" && server.transport !== "sse" && server.transport !== "custom") {
+    throw new ValidationError(`${name}.transport is not supported.`);
+  }
+  if (server.riskLevel !== undefined && !allToolRiskLevels.has(server.riskLevel as AgentToolRiskLevel)) {
+    throw new ValidationError(`${name}.riskLevel is not supported.`);
+  }
+  return {
+    name: controlPlaneString(server.name, `${name}.name`),
+    transport: server.transport,
+    command: controlPlaneOptionalString(server.command, `${name}.command`),
+    url: controlPlaneOptionalString(server.url, `${name}.url`),
+    permissions: server.permissions === undefined
+      ? undefined
+      : normalizePermissionList(server.permissions, `${name}.permissions`),
+    riskLevel: server.riskLevel as AgentToolRiskLevel | undefined,
+    metadata: cloneControlPlaneMetadata(server.metadata, `${name}.metadata`)
+  };
+};
+
+const normalizeCapsuleEvaluation = (value: unknown, index: number): AgentCapsuleEvaluationManifest => {
+  const name = `AgentCapsuleManifest.evaluations[${index}]`;
+  const evaluation = controlPlaneRecord(value, name);
+  const datasetSize = evaluation.datasetSize === undefined
+    ? undefined
+    : controlPlaneFiniteNumber(evaluation.datasetSize, `${name}.datasetSize`);
+  if (datasetSize !== undefined && !Number.isSafeInteger(datasetSize)) {
+    throw new ValidationError(`${name}.datasetSize must be a safe integer.`);
+  }
+  return {
+    name: controlPlaneString(evaluation.name, `${name}.name`),
+    path: controlPlaneOptionalString(evaluation.path, `${name}.path`),
+    datasetSize,
+    metadata: cloneControlPlaneMetadata(evaluation.metadata, `${name}.metadata`)
+  };
+};
+
+const normalizeCapsulePolicy = (value: unknown): AgentCapsulePolicyManifest | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  const policy = controlPlaneRecord(value, "AgentCapsuleManifest.policy");
+  if (policy.toolPolicyMode !== undefined && !allToolPolicyModes.has(policy.toolPolicyMode as AgentToolPolicyMode)) {
+    throw new ValidationError("AgentCapsuleManifest.policy.toolPolicyMode is not supported.");
+  }
+  if (policy.defaultRequiresApproval !== undefined && typeof policy.defaultRequiresApproval !== "boolean") {
+    throw new ValidationError("AgentCapsuleManifest.policy.defaultRequiresApproval must be a boolean.");
+  }
+  if (policy.redaction !== undefined && typeof policy.redaction !== "boolean") {
+    throw new ValidationError("AgentCapsuleManifest.policy.redaction must be a boolean.");
+  }
+  return {
+    toolPolicyMode: policy.toolPolicyMode as AgentToolPolicyMode | undefined,
+    defaultRequiresApproval: policy.defaultRequiresApproval as boolean | undefined,
+    redaction: policy.redaction as boolean | undefined,
+    metadata: cloneControlPlaneMetadata(policy.metadata, "AgentCapsuleManifest.policy.metadata")
+  };
+};
+
+const normalizeCapsuleTool = (value: unknown, index: number): AgentCapsuleToolManifest => {
+  const name = `AgentCapsuleManifest.tools[${index}]`;
+  const toolManifest = controlPlaneRecord(value, name);
+  if (toolManifest.kind !== "callable" && toolManifest.kind !== "hosted") {
+    throw new ValidationError(`${name}.kind is not supported.`);
+  }
+  if (toolManifest.riskLevel !== undefined && !allToolRiskLevels.has(toolManifest.riskLevel as AgentToolRiskLevel)) {
+    throw new ValidationError(`${name}.riskLevel is not supported.`);
+  }
+  if (typeof toolManifest.requiresApproval !== "boolean") {
+    throw new ValidationError(`${name}.requiresApproval must be a boolean.`);
+  }
+  return {
+    name: controlPlaneString(toolManifest.name, `${name}.name`),
+    kind: toolManifest.kind,
+    provider: controlPlaneOptionalString(toolManifest.provider, `${name}.provider`),
+    hostedType: controlPlaneOptionalString(toolManifest.hostedType, `${name}.hostedType`),
+    source: controlPlaneString(toolManifest.source, `${name}.source`),
+    permissions: normalizePermissionList(toolManifest.permissions, `${name}.permissions`),
+    riskLevel: toolManifest.riskLevel as AgentToolRiskLevel | undefined,
+    owner: controlPlaneOptionalString(toolManifest.owner, `${name}.owner`),
+    labels: [...new Set(normalizeStringList(toolManifest.labels, `${name}.labels`))].sort(),
+    requiresApproval: toolManifest.requiresApproval,
+    approvalVersion: controlPlaneOptionalString(toolManifest.approvalVersion, `${name}.approvalVersion`),
+    description: controlPlaneOptionalString(toolManifest.description, `${name}.description`, true)
+  };
+};
+
+export const normalizeAgentCapsuleManifest = (value: unknown): AgentCapsuleManifest => {
+  const input = controlPlaneRecord(value, "AgentCapsuleManifest");
+  normalizeControlPlaneSchemaVersion(input.schemaVersion, "AgentCapsuleManifest");
+  const id = controlPlaneString(input.id, "AgentCapsuleManifest.id");
+  validateCapsuleId(id);
+  if (!allAgentTiers.has(input.agentTier as ProviderAgentSupport["agentTier"])) {
+    throw new ValidationError("AgentCapsuleManifest.agentTier is not supported.");
+  }
+  if (!Array.isArray(input.tools) || !Array.isArray(input.skills) || !Array.isArray(input.mcpServers) || !Array.isArray(input.evaluations)) {
+    throw new ValidationError("AgentCapsuleManifest tool, skill, MCP server, and evaluation collections must be arrays.");
+  }
+  const executionEnvironment = input.executionEnvironment === undefined
+    ? undefined
+    : cloneControlPlaneJson(
+        controlPlaneRecord(input.executionEnvironment, "AgentCapsuleManifest.executionEnvironment") as unknown as AgentExecutionEnvironmentManifest,
+        "AgentCapsuleManifest.executionEnvironment"
+      );
+  if (executionEnvironment) {
+    createAgentExecutionEnvironmentBinding(executionEnvironment);
+  }
+  const manifestWithoutFingerprint = {
+    schemaVersion: AGENT_CONTROL_PLANE_SCHEMA_VERSION,
+    id,
+    name: controlPlaneString(input.name, "AgentCapsuleManifest.name"),
+    version: controlPlaneString(input.version, "AgentCapsuleManifest.version"),
+    description: controlPlaneOptionalString(input.description, "AgentCapsuleManifest.description", true),
+    provider: controlPlaneString(input.provider, "AgentCapsuleManifest.provider"),
+    modelId: controlPlaneString(input.modelId, "AgentCapsuleManifest.modelId"),
+    agentTier: input.agentTier as ProviderAgentSupport["agentTier"],
+    tools: input.tools.map(normalizeCapsuleTool).sort((left, right) => left.name.localeCompare(right.name)),
+    skills: input.skills.map(normalizeCapsuleSkill).sort((left, right) => left.id.localeCompare(right.id)),
+    mcpServers: input.mcpServers.map(normalizeCapsuleMcpServer).sort((left, right) => left.name.localeCompare(right.name)),
+    evaluations: input.evaluations.map(normalizeCapsuleEvaluation).sort((left, right) => left.name.localeCompare(right.name)),
+    policy: normalizeCapsulePolicy(input.policy),
+    executionEnvironment,
+    metadata: cloneControlPlaneMetadata(input.metadata, "AgentCapsuleManifest.metadata")
+  } satisfies Omit<AgentCapsuleManifest, "fingerprint">;
+  const fingerprint = controlPlaneString(input.fingerprint, "AgentCapsuleManifest.fingerprint");
+  const expectedFingerprint = createAgentHarnessBinding({
+    id,
+    version: manifestWithoutFingerprint.version,
+    manifest: manifestWithoutFingerprint
+  }).fingerprint;
+  if (fingerprint !== expectedFingerprint) {
+    throw new ValidationError("AgentCapsuleManifest fingerprint does not match its normalized contract.");
+  }
+  return {
+    ...manifestWithoutFingerprint,
+    fingerprint
+  };
+};
+
+export const migrateAgentCapsuleManifest = (
+  value: unknown,
+  targetVersion: AgentControlPlaneMigrationTarget = AGENT_CONTROL_PLANE_SCHEMA_VERSION
+): AgentCapsuleManifest => {
+  assertControlPlaneMigrationTarget(targetVersion, "AgentCapsuleManifest");
+  return normalizeAgentCapsuleManifest(value);
 };
 
 const inspectTools = (tools: ToolCollection | undefined): AgentCapsuleToolManifest[] => {
@@ -514,10 +847,10 @@ export const createAgentCapsule = <TAgent extends AgentDefinition>(
     version: manifestWithoutFingerprint.version,
     manifest: manifestWithoutFingerprint
   });
-  const manifest = {
+  const manifest = normalizeAgentCapsuleManifest({
     ...manifestWithoutFingerprint,
     fingerprint: harness.fingerprint
-  } satisfies AgentCapsuleManifest;
+  } satisfies AgentCapsuleManifest);
 
   return {
     manifest,
@@ -538,6 +871,9 @@ export const inspectAgentCapsule = (capsule: AgentCapsule): AgentCapsuleInspecti
   for (const toolManifest of tools) {
     if ((hasWritePermission(toolManifest.permissions) || toolManifest.riskLevel === "critical") && !toolManifest.requiresApproval) {
       warnings.push(`Tool "${toolManifest.name}" has write or critical risk without approval.`);
+    }
+    if (!toolManifest.permissions.length && !toolManifest.requiresApproval) {
+      warnings.push(`Tool "${toolManifest.name}" does not declare permissions and has no approval requirement.`);
     }
   }
 
@@ -571,9 +907,9 @@ const requestPermissions = (request: ToolApprovalRequest): AgentToolPermission[]
   const value = permissions && typeof permissions === "object" && !Array.isArray(permissions)
     ? (permissions as Record<string, JsonValue>).permissions
     : undefined;
-  return Array.isArray(value)
-    ? value.filter((permission): permission is AgentToolPermission => typeof permission === "string")
-    : [];
+  return value === undefined
+    ? []
+    : normalizePermissionList(value, `Tool "${request.tool.name}" permissions`);
 };
 
 const requestRiskLevel = (request: ToolApprovalRequest): AgentToolRiskLevel | undefined => {
@@ -667,31 +1003,237 @@ export const createAgentToolPolicy = (options: AgentToolPolicyOptions = {}): Too
       if (permissions.some((permission) => supervisedPermissions.has(permission) && !allowPermissions.has(permission))) {
         return approvalRequiredDecision(`Tool "${request.tool.name}" requests sensitive permissions.`, mode);
       }
+      if (permissions.length === 0) {
+        return approvalRequiredDecision(
+          `Tool "${request.tool.name}" does not declare permissions and requires approval under supervised policy.`,
+          mode
+        );
+      }
     }
 
     return { approved: true, metadata: { policy: "agent-control-plane", mode } };
   };
 };
 
+export const normalizeAgentApprovalQueueItem = (value: unknown): AgentApprovalQueueItem => {
+  const input = controlPlaneRecord(value, "AgentApprovalQueueItem");
+  const legacy = input.schemaVersion === undefined;
+  const legacyShape = input.kind === undefined && input.requestFingerprint === undefined;
+  normalizeControlPlaneSchemaVersion(input.schemaVersion, "AgentApprovalQueueItem");
+  if (input.type !== "agent_approval_queue_item" && !(legacy && input.type === undefined)) {
+    throw new ValidationError('AgentApprovalQueueItem.type must be "agent_approval_queue_item".');
+  }
+  const kind = input.kind === undefined && legacyShape ? "provider" : input.kind;
+  if (!allApprovalKinds.has(kind as NonNullable<AgentApprovalRequest["kind"]>)) {
+    throw new ValidationError("AgentApprovalQueueItem.kind is not supported.");
+  }
+  const provider = controlPlaneString(input.provider, "AgentApprovalQueueItem.provider");
+  const approvalRequestId = controlPlaneString(
+    input.approvalRequestId,
+    "AgentApprovalQueueItem.approvalRequestId"
+  );
+  const name = controlPlaneString(input.name, "AgentApprovalQueueItem.name");
+  const approvalToken = controlPlaneString(input.approvalToken, "AgentApprovalQueueItem.approvalToken");
+  if (approvalToken.length > 8_192) {
+    throw new ValidationError("AgentApprovalQueueItem.approvalToken exceeds the 8192-character limit.");
+  }
+  const argumentsValue = controlPlaneOptionalString(
+    input.arguments,
+    "AgentApprovalQueueItem.arguments",
+    true
+  );
+  const rawData = input.rawData === undefined
+    ? undefined
+    : cloneControlPlaneJson(input.rawData as JsonValue, "AgentApprovalQueueItem.rawData");
+  const requestFingerprint = input.requestFingerprint === undefined && legacyShape
+    ? legacyApprovalRequestFingerprint({
+        kind: "provider",
+        provider,
+        id: approvalRequestId,
+        name,
+        arguments: argumentsValue ?? "",
+        rawData: rawData ?? null
+      })
+    : controlPlaneString(input.requestFingerprint, "AgentApprovalQueueItem.requestFingerprint");
+  if (!/^sha256:[a-f0-9]{64}$/.test(requestFingerprint)) {
+    throw new ValidationError("AgentApprovalQueueItem.requestFingerprint must be a sha256 fingerprint.");
+  }
+  return {
+    schemaVersion: AGENT_CONTROL_PLANE_SCHEMA_VERSION,
+    type: "agent_approval_queue_item",
+    runId: controlPlaneString(input.runId, "AgentApprovalQueueItem.runId"),
+    agentId: controlPlaneOptionalString(input.agentId, "AgentApprovalQueueItem.agentId"),
+    kind: kind as NonNullable<AgentApprovalRequest["kind"]>,
+    provider,
+    approvalRequestId,
+    name,
+    requestFingerprint,
+    arguments: argumentsValue,
+    approvalToken,
+    resumeUrl: controlPlaneOptionalString(input.resumeUrl, "AgentApprovalQueueItem.resumeUrl"),
+    reason: controlPlaneOptionalString(input.reason, "AgentApprovalQueueItem.reason", true),
+    expiresAt: input.expiresAt === undefined
+      ? undefined
+      : controlPlaneFiniteNumber(input.expiresAt, "AgentApprovalQueueItem.expiresAt"),
+    rawData
+  };
+};
+
+export const migrateAgentApprovalQueueItem = (
+  value: unknown,
+  targetVersion: AgentControlPlaneMigrationTarget = AGENT_CONTROL_PLANE_SCHEMA_VERSION
+): AgentApprovalQueueItem => {
+  assertControlPlaneMigrationTarget(targetVersion, "AgentApprovalQueueItem");
+  return normalizeAgentApprovalQueueItem(value);
+};
+
 export const createAgentApprovalQueue = (
   state: AgentRunState,
   options: AgentApprovalQueueOptions = {}
-): AgentApprovalQueueItem[] =>
-  state.pendingApprovals.map((approval) => ({
+): AgentApprovalQueueItem[] => {
+  const redaction = resolveLedgerRedaction(options.redaction);
+  return state.pendingApprovals.map((approval) => {
+    const reason = typeof options.reason === "function" ? options.reason(approval, state) : options.reason;
+    return normalizeAgentApprovalQueueItem({
+      schemaVersion: AGENT_CONTROL_PLANE_SCHEMA_VERSION,
+      type: "agent_approval_queue_item",
+      runId: state.runId,
+      agentId: state.agentId,
+      kind: approval.kind ?? "provider",
+      provider: approval.provider,
+      approvalRequestId: approval.id,
+      name: approval.name,
+      requestFingerprint: approvalRequestFingerprint(approval),
+      arguments: options.includeArguments
+        ? (redaction ? redaction.redactText(approval.arguments) : approval.arguments)
+        : undefined,
+      approvalToken: `${options.tokenPrefix ?? "appr"}_${randomBytes(32).toString("base64url")}`,
+      resumeUrl: typeof options.resumeUrl === "function" ? options.resumeUrl(approval, state) : options.resumeUrl,
+      reason: reason === undefined ? undefined : (redaction ? redaction.redactText(reason) : reason),
+      expiresAt: typeof options.expiresAt === "function" ? options.expiresAt(approval, state) : options.expiresAt,
+      rawData: options.includeRawData
+        ? (redaction ? redaction.redactJson(approval.rawData) : approval.rawData)
+        : undefined
+    });
+  });
+};
+
+const assertLedgerIdentity = (
+  value: Record<string, unknown>,
+  name: string,
+  identity: { runId: string; provider: string; modelId: string; status: AgentRunState["status"] }
+) => {
+  if (
+    value.runId !== identity.runId ||
+    value.provider !== identity.provider ||
+    value.modelId !== identity.modelId ||
+    value.status !== identity.status
+  ) {
+    throw new ValidationError(`${name} identity does not match its AgentRunLedger.`);
+  }
+};
+
+export const normalizeAgentRunLedger = (value: unknown): AgentRunLedger => {
+  const input = controlPlaneRecord(value, "AgentRunLedger");
+  const legacy = input.schemaVersion === undefined;
+  normalizeControlPlaneSchemaVersion(input.schemaVersion, "AgentRunLedger");
+  if (input.type !== "agent_run_ledger" && !(legacy && input.type === undefined)) {
+    throw new ValidationError('AgentRunLedger.type must be "agent_run_ledger".');
+  }
+  const runId = controlPlaneString(input.runId, "AgentRunLedger.runId");
+  const provider = controlPlaneString(input.provider, "AgentRunLedger.provider");
+  const modelId = controlPlaneString(input.modelId, "AgentRunLedger.modelId");
+  if (!allAgentStatuses.has(input.status as AgentRunState["status"])) {
+    throw new ValidationError("AgentRunLedger.status is not supported.");
+  }
+  const status = input.status as AgentRunState["status"];
+  const identity = { runId, provider, modelId, status };
+  const snapshotRecord = controlPlaneRecord(input.snapshot, "AgentRunLedger.snapshot");
+  assertLedgerIdentity(snapshotRecord, "AgentRunLedger.snapshot", identity);
+  for (const field of ["toolCalls", "childRuns", "compactions", "pendingApprovals"] as const) {
+    if (!Array.isArray(snapshotRecord[field])) {
+      throw new ValidationError(`AgentRunLedger.snapshot.${field} must be an array.`);
+    }
+  }
+  controlPlaneFiniteNumber(snapshotRecord.steps, "AgentRunLedger.snapshot.steps");
+  controlPlaneString(snapshotRecord.outputText, "AgentRunLedger.snapshot.outputText", true);
+
+  const auditRecord = controlPlaneRecord(input.audit, "AgentRunLedger.audit");
+  assertLedgerIdentity(auditRecord, "AgentRunLedger.audit", identity);
+  if (auditRecord.type !== "agent_run_audit") {
+    throw new ValidationError('AgentRunLedger.audit.type must be "agent_run_audit".');
+  }
+  for (const field of ["steps", "toolCalls", "toolErrors", "approvals", "childRuns"] as const) {
+    controlPlaneFiniteNumber(auditRecord[field], `AgentRunLedger.audit.${field}`);
+  }
+
+  if (!Array.isArray(input.toolAudit)) {
+    throw new ValidationError("AgentRunLedger.toolAudit must be an array.");
+  }
+  for (const [index, entry] of input.toolAudit.entries()) {
+    const toolAuditRecord = controlPlaneRecord(entry, `AgentRunLedger.toolAudit[${index}]`);
+    if (
+      toolAuditRecord.type !== "agent_tool_audit" ||
+      toolAuditRecord.runId !== runId ||
+      toolAuditRecord.provider !== provider ||
+      toolAuditRecord.modelId !== modelId
+    ) {
+      throw new ValidationError(`AgentRunLedger.toolAudit[${index}] identity does not match its ledger.`);
+    }
+  }
+
+  const traceRecord = controlPlaneRecord(input.trace, "AgentRunLedger.trace");
+  assertLedgerIdentity(traceRecord, "AgentRunLedger.trace", identity);
+  for (const field of ["steps", "events", "approvals"] as const) {
+    if (!Array.isArray(traceRecord[field])) {
+      throw new ValidationError(`AgentRunLedger.trace.${field} must be an array.`);
+    }
+  }
+
+  const summaryRecord = controlPlaneRecord(input.summary, "AgentRunLedger.summary");
+  assertLedgerIdentity(summaryRecord, "AgentRunLedger.summary", identity);
+  controlPlaneRecord(summaryRecord.latency, "AgentRunLedger.summary.latency");
+  for (const field of ["steps", "childRuns", "toolCalls", "toolErrors", "approvals"] as const) {
+    controlPlaneFiniteNumber(summaryRecord[field], `AgentRunLedger.summary.${field}`);
+  }
+
+  if (input.timeline !== undefined && !Array.isArray(input.timeline)) {
+    throw new ValidationError("AgentRunLedger.timeline must be an array.");
+  }
+  if (input.cost !== undefined) {
+    controlPlaneRecord(input.cost, "AgentRunLedger.cost");
+  }
+
+  return {
     schemaVersion: AGENT_CONTROL_PLANE_SCHEMA_VERSION,
-    type: "agent_approval_queue_item",
-    runId: state.runId,
-    agentId: state.agentId,
-    provider: approval.provider,
-    approvalRequestId: approval.id,
-    name: approval.name,
-    arguments: approval.arguments,
-    approvalToken: `${options.tokenPrefix ?? "appr"}_${randomBytes(32).toString("base64url")}`,
-    resumeUrl: typeof options.resumeUrl === "function" ? options.resumeUrl(approval, state) : options.resumeUrl,
-    reason: typeof options.reason === "function" ? options.reason(approval, state) : options.reason,
-    expiresAt: typeof options.expiresAt === "function" ? options.expiresAt(approval, state) : options.expiresAt,
-    rawData: approval.rawData
-  }));
+    type: "agent_run_ledger",
+    runId,
+    agentId: controlPlaneOptionalString(input.agentId, "AgentRunLedger.agentId"),
+    provider,
+    modelId,
+    status,
+    snapshot: cloneControlPlaneJson(input.snapshot as AgentRunSnapshot, "AgentRunLedger.snapshot"),
+    audit: cloneControlPlaneJson(input.audit as AgentAuditRecord, "AgentRunLedger.audit"),
+    toolAudit: cloneControlPlaneJson(input.toolAudit as ToolAuditRecord[], "AgentRunLedger.toolAudit"),
+    timeline: input.timeline === undefined
+      ? undefined
+      : cloneControlPlaneJson(input.timeline as AgentReplayResult["timeline"], "AgentRunLedger.timeline"),
+    trace: cloneControlPlaneJson(input.trace as AgentTraceArtifact, "AgentRunLedger.trace"),
+    summary: cloneControlPlaneJson(input.summary as AgentTraceSummary, "AgentRunLedger.summary"),
+    cost: input.cost === undefined
+      ? undefined
+      : cloneControlPlaneJson(input.cost as CostEstimate, "AgentRunLedger.cost"),
+    metadata: cloneControlPlaneMetadata(input.metadata, "AgentRunLedger.metadata")
+  };
+};
+
+export const migrateAgentRunLedger = (
+  value: unknown,
+  targetVersion: AgentControlPlaneMigrationTarget = AGENT_CONTROL_PLANE_SCHEMA_VERSION
+): AgentRunLedger => {
+  assertControlPlaneMigrationTarget(targetVersion, "AgentRunLedger");
+  return normalizeAgentRunLedger(value);
+};
 
 export const createAgentRunLedger = (
   state: AgentRunState,
@@ -722,7 +1264,7 @@ export const createAgentRunLedger = (
   const auditOptions = { ...options, redaction: traceOptions.redaction };
   const audit = createAgentAuditRecord(state, auditOptions);
 
-  return {
+  return normalizeAgentRunLedger({
     schemaVersion: AGENT_CONTROL_PLANE_SCHEMA_VERSION,
     type: "agent_run_ledger",
     runId: state.runId,
@@ -742,7 +1284,7 @@ export const createAgentRunLedger = (
     metadata: options.includeMetadata && audit.metadata
       ? audit.metadata
       : undefined
-  };
+  });
 };
 
 const addDiff = (
@@ -925,6 +1467,12 @@ const toRunnerInput = <TModel extends LanguageModel>(
   return runnerInput as RunnerRunInput<TModel>;
 };
 
+const approvalTokensMatch = (expected: string, actual: string): boolean => {
+  const expectedBytes = Buffer.from(expected);
+  const actualBytes = Buffer.from(actual);
+  return expectedBytes.length === actualBytes.length && timingSafeEqual(expectedBytes, actualBytes);
+};
+
 export const createAgentControlPlane = <TModel extends LanguageModel>(
   options: AgentControlPlaneOptions<TModel>
 ): AgentControlPlane<TModel> => {
@@ -959,6 +1507,70 @@ export const createAgentControlPlane = <TModel extends LanguageModel>(
     },
     async resume(input) {
       const output = await resumeAgent(runtimeAgent, input);
+      return record(output.state);
+    },
+    async resumeApproval(input) {
+      const {
+        queueItem: rawQueueItem,
+        approvalToken,
+        approve,
+        reason,
+        now = Date.now(),
+        ...resumeInput
+      } = input;
+      const queueItem = normalizeAgentApprovalQueueItem(rawQueueItem);
+      const presentedToken = controlPlaneString(approvalToken, "Agent approval token");
+      if (!approvalTokensMatch(queueItem.approvalToken, presentedToken)) {
+        throw new ValidationError("Agent approval token is invalid.");
+      }
+      if (typeof approve !== "boolean") {
+        throw new ValidationError("Agent approval decision must be a boolean.");
+      }
+      const decisionReason = controlPlaneOptionalString(reason, "Agent approval reason", true);
+      controlPlaneFiniteNumber(now, "Agent approval clock");
+      if (queueItem.expiresAt !== undefined && now >= queueItem.expiresAt) {
+        throw new ValidationError("Agent approval has expired.");
+      }
+      if (!runtimeAgent.store) {
+        throw new ValidationError("Durable approval resume requires an AgentRunStore.");
+      }
+      const state = await runtimeAgent.store.load(queueItem.runId, resumeInput.scope);
+      if (!state) {
+        throw new ValidationError(`Agent run "${queueItem.runId}" was not found.`);
+      }
+      if (queueItem.agentId !== undefined && state.agentId !== queueItem.agentId) {
+        throw new ValidationError("Agent approval queue item does not match the persisted agent.");
+      }
+      const pending = state.pendingApprovals.find(
+        (approval) =>
+          approval.provider === queueItem.provider &&
+          approval.id === queueItem.approvalRequestId
+      );
+      if (!pending) {
+        throw new ValidationError("Agent approval is no longer pending or was already consumed.");
+      }
+      if (pending.name !== queueItem.name) {
+        throw new ValidationError("Agent approval queue item does not match the pending request.");
+      }
+      const currentFingerprint = approvalRequestFingerprint(pending);
+      const legacyFingerprint = legacyApprovalRequestFingerprint(pending);
+      const isLegacyProjection = queueItem.requestFingerprint === legacyFingerprint;
+      if (queueItem.requestFingerprint !== currentFingerprint && !isLegacyProjection) {
+        throw new ValidationError("Agent approval request fingerprint does not match the persisted request.");
+      }
+      if (!isLegacyProjection && queueItem.kind !== (pending.kind ?? "provider")) {
+        throw new ValidationError("Agent approval queue item kind does not match the persisted request.");
+      }
+      const output = await resumeAgent(runtimeAgent, {
+        ...resumeInput,
+        state,
+        approvals: [{
+          provider: pending.provider,
+          approvalRequestId: pending.id,
+          approve,
+          reason: decisionReason
+        }]
+      });
       return record(output.state);
     },
     stream(input = {}) {
