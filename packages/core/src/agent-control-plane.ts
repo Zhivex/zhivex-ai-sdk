@@ -723,7 +723,9 @@ const normalizeCapsuleTool = (value: unknown, index: number): AgentCapsuleToolMa
   };
 };
 
-export const normalizeAgentCapsuleManifest = (value: unknown): AgentCapsuleManifest => {
+const normalizeAgentCapsuleManifestFields = (
+  value: unknown
+): Omit<AgentCapsuleManifest, "fingerprint"> => {
   const input = controlPlaneRecord(value, "AgentCapsuleManifest");
   normalizeControlPlaneSchemaVersion(input.schemaVersion, "AgentCapsuleManifest");
   const id = controlPlaneString(input.id, "AgentCapsuleManifest.id");
@@ -743,7 +745,7 @@ export const normalizeAgentCapsuleManifest = (value: unknown): AgentCapsuleManif
   if (executionEnvironment) {
     createAgentExecutionEnvironmentBinding(executionEnvironment);
   }
-  const manifestWithoutFingerprint = {
+  return {
     schemaVersion: AGENT_CONTROL_PLANE_SCHEMA_VERSION,
     id,
     name: controlPlaneString(input.name, "AgentCapsuleManifest.name"),
@@ -760,9 +762,14 @@ export const normalizeAgentCapsuleManifest = (value: unknown): AgentCapsuleManif
     executionEnvironment,
     metadata: cloneControlPlaneMetadata(input.metadata, "AgentCapsuleManifest.metadata")
   } satisfies Omit<AgentCapsuleManifest, "fingerprint">;
+};
+
+export const normalizeAgentCapsuleManifest = (value: unknown): AgentCapsuleManifest => {
+  const input = controlPlaneRecord(value, "AgentCapsuleManifest");
+  const manifestWithoutFingerprint = normalizeAgentCapsuleManifestFields(input);
   const fingerprint = controlPlaneString(input.fingerprint, "AgentCapsuleManifest.fingerprint");
   const expectedFingerprint = createAgentHarnessBinding({
-    id,
+    id: manifestWithoutFingerprint.id,
     version: manifestWithoutFingerprint.version,
     manifest: manifestWithoutFingerprint
   }).fingerprint;
@@ -820,28 +827,28 @@ export const createAgentCapsule = <TAgent extends AgentDefinition>(
   const providerSupport = inspectProviderAgentSupport(options.agent.model);
   const tools = inspectTools(options.tools ?? options.agent.tools);
 
-  const manifestWithoutFingerprint = {
-      schemaVersion: AGENT_CONTROL_PLANE_SCHEMA_VERSION,
-      id,
-      name: options.name ?? id,
-      version: options.version ?? "0.0.0",
-      description: options.description,
-      provider: options.agent.model.provider,
-      modelId: options.agent.model.modelId,
-      agentTier: providerSupport.agentTier,
-      tools,
-      skills: [...(options.skills ?? [])].sort((left, right) => left.id.localeCompare(right.id)),
-      mcpServers: [...(options.mcpServers ?? [])]
-        .map((server) => ({
-          ...server,
-          permissions: server.permissions ? [...server.permissions].sort() : undefined
-        }))
-        .sort((left, right) => left.name.localeCompare(right.name)),
-      evaluations: [...(options.evaluations ?? [])].sort((left, right) => left.name.localeCompare(right.name)),
-      policy: options.policy,
-      executionEnvironment: options.agent.executionEnvironment?.manifest,
-      metadata: options.metadata
-    } satisfies Omit<AgentCapsuleManifest, "fingerprint">;
+  const manifestWithoutFingerprint = normalizeAgentCapsuleManifestFields({
+    schemaVersion: AGENT_CONTROL_PLANE_SCHEMA_VERSION,
+    id,
+    name: options.name ?? id,
+    version: options.version ?? "0.0.0",
+    description: options.description,
+    provider: options.agent.model.provider,
+    modelId: options.agent.model.modelId,
+    agentTier: providerSupport.agentTier,
+    tools,
+    skills: [...(options.skills ?? [])].sort((left, right) => left.id.localeCompare(right.id)),
+    mcpServers: [...(options.mcpServers ?? [])]
+      .map((server) => ({
+        ...server,
+        permissions: server.permissions ? [...server.permissions].sort() : undefined
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    evaluations: [...(options.evaluations ?? [])].sort((left, right) => left.name.localeCompare(right.name)),
+    policy: options.policy,
+    executionEnvironment: options.agent.executionEnvironment?.manifest,
+    metadata: options.metadata
+  } satisfies Omit<AgentCapsuleManifest, "fingerprint">);
   const harness = createAgentHarnessBinding({
     id,
     version: manifestWithoutFingerprint.version,
@@ -1253,11 +1260,18 @@ export const createAgentRunLedger = (
     includeOutputText: traceOptions.includeOutputText ?? false
   };
   const redaction = resolveLedgerRedaction(traceOptions.redaction);
-  const snapshot = sanitizeLedgerValue(
-    createAgentRunSnapshot(state),
-    sanitizationOptions,
-    redaction
-  ) as unknown as AgentRunSnapshot;
+  const snapshot = {
+    ...sanitizeLedgerValue(
+      createAgentRunSnapshot(state),
+      sanitizationOptions,
+      redaction
+    ) as unknown as AgentRunSnapshot,
+    runId: state.runId,
+    agentId: state.agentId,
+    provider: state.provider,
+    modelId: state.modelId,
+    status: state.status
+  };
   const replay = replayAgentRun(state);
   const trace = createAgentTraceArtifact(state, traceOptions);
   const summary = summarizeAgentTrace(trace, { pricing: options.pricing });

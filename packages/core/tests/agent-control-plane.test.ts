@@ -224,6 +224,26 @@ describe("agent control plane", () => {
     expect(() => normalizeAgentCapsuleManifest(tamperedManifest)).toThrow("fingerprint does not match");
   });
 
+  it("fingerprints the canonical capsule manifest", () => {
+    const agent = createAgent({
+      id: "canonical-capsule",
+      model: createTierAModel()
+    });
+
+    const capsule = createAgentCapsule({
+      agent,
+      mcpServers: [{
+        name: "canonical-server",
+        transport: "http",
+        url: "https://mcp.example.test",
+        permissions: ["read", "read"]
+      }]
+    });
+
+    expect(capsule.manifest.mcpServers[0]?.permissions).toEqual(["read"]);
+    expect(normalizeAgentCapsuleManifest(capsule.manifest)).toEqual(capsule.manifest);
+  });
+
   it("applies tool policy decisions from advanced registry metadata", () => {
     const writeTool = createAdvancedToolRegistry([
       {
@@ -545,6 +565,33 @@ describe("agent control plane", () => {
       ...ledger,
       summary: { ...ledger.summary, runId: "different-run" }
     })).toThrow("summary identity does not match");
+  });
+
+  it("preserves ledger identity fields when redaction rules match them", () => {
+    const state = baseState({
+      runId: "user@example.com",
+      provider: "tenant-provider",
+      modelId: "tenant-model"
+    });
+    const ledger = createAgentRunLedger(state, {
+      redaction: {
+        includeEmails: true,
+        rules: [{ pattern: /tenant-(?:provider|model)/g }]
+      }
+    });
+
+    expect(ledger).toMatchObject({
+      runId: state.runId,
+      provider: state.provider,
+      modelId: state.modelId,
+      status: state.status,
+      snapshot: {
+        runId: state.runId,
+        provider: state.provider,
+        modelId: state.modelId,
+        status: state.status
+      }
+    });
   });
 
   it("keeps the complete run ledger fail-closed for sensitive payloads", () => {
