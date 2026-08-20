@@ -139,7 +139,7 @@ describe("@zhivex-ai/react browser components", () => {
     );
 
     expect(liveRegion()?.textContent).toBe(
-      "Assistant response: Fresh response"
+      "Assistant response"
     );
 
     const firstRepeatedAnnouncement =
@@ -165,7 +165,7 @@ describe("@zhivex-ai/react browser components", () => {
     );
 
     expect(liveRegion()?.textContent).toBe(
-      "Assistant response: Fresh response"
+      "Assistant response"
     );
     expect(liveRegion()?.querySelector("span")).not.toBe(
       firstRepeatedAnnouncement
@@ -278,5 +278,167 @@ describe("@zhivex-ai/react browser components", () => {
     await act(async () => {
       root.unmount();
     });
+  });
+
+  it("collects and validates an approval rejection reason", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    containers.push(container);
+    const root = createRoot(container);
+    const onDecision = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        createElement(ApprovalCard, {
+          approval: {
+            provider: "test",
+            id: "approval-reason",
+            name: "delete-record",
+            arguments: "{}",
+            rawData: {}
+          },
+          onDecision,
+          reasonRequired: true
+        })
+      );
+    });
+
+    const reject = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Reject"
+    );
+    await act(async () => reject?.click());
+    expect(onDecision).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(
+      "Add a reason before rejecting this action."
+    );
+
+    const reason = container.querySelector("textarea");
+    await act(async () => {
+      if (!reason) throw new Error("Reason input did not render.");
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value"
+      )?.set;
+      setter?.call(reason, "The destination is incorrect.");
+      reason.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      reject?.click();
+      await Promise.resolve();
+    });
+
+    expect(onDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "approval-reason" }),
+      false,
+      "The destination is incorrect."
+    );
+    await act(async () => root.unmount());
+  });
+
+  it("adds bounded file attachments and sends them through sendMessage", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    containers.push(container);
+    const root = createRoot(container);
+    const sendMessage = vi.fn(async () => undefined);
+    const controller: ChatController = {
+      state: {
+        messages: [],
+        status: "ready",
+        pendingApprovals: [],
+        activity: []
+      },
+      input: "",
+      setInput: vi.fn(),
+      send: vi.fn(async () => undefined),
+      sendMessage,
+      stop: vi.fn(),
+      reload: vi.fn(async () => undefined),
+      resolveApproval: vi.fn(async () => undefined)
+    };
+
+    await act(async () => {
+      root.render(createElement(ZhivexChat, { controller }));
+    });
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    const file = new File(["hello"], "memo.txt", { type: "text/plain" });
+    if (!input) throw new Error("Attachment input did not render.");
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [file]
+    });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(container.textContent).toContain("memo.txt");
+    const send = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Send"
+    );
+    expect(send?.disabled).toBe(false);
+    await act(async () => {
+      send?.click();
+      await Promise.resolve();
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith([
+      expect.objectContaining({
+        type: "file",
+        filename: "memo.txt",
+        mediaType: "text/plain"
+      })
+    ]);
+    await act(async () => root.unmount());
+  });
+
+  it("fills the composer from a starter prompt and retries only when supported", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    containers.push(container);
+    const root = createRoot(container);
+    const setInput = vi.fn();
+    const reload = vi.fn(async () => undefined);
+    const controller: ChatController = {
+      state: {
+        messages: [],
+        status: "error",
+        error: new Error("internal"),
+        pendingApprovals: [],
+        activity: []
+      },
+      input: "",
+      setInput,
+      send: vi.fn(async () => undefined),
+      stop: vi.fn(),
+      canReload: true,
+      reload,
+      resolveApproval: vi.fn(async () => undefined)
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(ZhivexChat, {
+          controller,
+          starterPrompts: ["Plan a release"]
+        })
+      );
+    });
+    const starter = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Plan a release"
+    );
+    const retry = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Retry"
+    );
+    await act(async () => starter?.click());
+    await act(async () => {
+      retry?.click();
+      await Promise.resolve();
+    });
+
+    expect(setInput).toHaveBeenCalledWith("Plan a release");
+    expect(reload).toHaveBeenCalledOnce();
+    expect(container.textContent).not.toContain("internal");
+    await act(async () => root.unmount());
   });
 });

@@ -34,12 +34,27 @@ export function SupportChat() {
     <ZhivexChat
       controller={chat}
       header={<strong>Support assistant</strong>}
+      starterPrompts={[
+        "Summarize the latest updates",
+        "Help me plan a rollout"
+      ]}
     />
   );
 }
 ```
 
 `useZhivexChat()` performs a `POST` request and consumes the SDK UI stream over SSE. The default request body contains the latest `UIMessage`, current `sessionId`, and approval decisions. A `Runner` remains the source of truth for durable conversation history.
+
+The ready-made chat uses the controller's richer capabilities when available:
+
+- `activity` becomes an expandable step/run progress indicator.
+- `sendMessage()` enables bounded file, image, and audio attachments.
+- `canReload` enables the built-in retry action only for transports that explicitly support idempotent regeneration.
+- assistant messages include copy, status, and optional retry actions.
+
+Transport and server error details are hidden from users by default. Use
+`formatError` to return an application-safe message, or enable
+`showErrorDetails` only in a trusted diagnostic surface.
 
 The default fetch transport rejects redirects, limits HTTP diagnostic bodies to 8 KiB, limits each SSE response to 16 MiB and 10,000 events, aborts the whole request after 120 seconds, and aborts a stream after 30 seconds without response bytes. Configure the bounds or explicitly disable only the timeouts for longer agent workloads:
 
@@ -139,6 +154,19 @@ Use CSS variables for visual changes:
 <ZhivexChat className="brand-chat" controller={chat} />
 ```
 
+Force a theme or use the compact density without replacing the stylesheet:
+
+```tsx
+<ZhivexChat
+  controller={chat}
+  density="compact"
+  theme="dark"
+/>
+```
+
+`theme` accepts `"system"` (default), `"light"`, or `"dark"`. Every primitive
+also exposes a stable `data-slot` attribute for application-owned styling.
+
 For structural changes, compose `ChatRoot`, `MessageList`, `Composer`, `Message`, and `MessagePart`, or provide a renderer for individual content parts:
 
 ```tsx
@@ -176,6 +204,25 @@ await chat.sendMessage([
   { type: "image", image: uploadedImageUrl, mediaType: "image/png" },
   { type: "text", text: "Describe this image." }
 ]);
+```
+
+When `ZhivexChat` receives the complete `useZhivexChat()` controller, its
+composer automatically exposes file selection, paste, and drag-and-drop. The
+defaults allow four attachments of up to 5 MiB each. Keep these limits narrow
+or move larger files through an application-owned upload flow:
+
+```tsx
+<ZhivexChat
+  controller={chat}
+  composerProps={{
+    accept: "image/*,application/pdf",
+    maxAttachments: 3,
+    maxAttachmentBytes: 2 * 1024 * 1024,
+    onAttachmentError: (error, file) => {
+      reportSafeAttachmentError(error, file?.name);
+    }
+  }}
+/>
 ```
 
 `sendMessage()` rejects with `ChatBusyError` when another request is active;
@@ -235,3 +282,24 @@ Unknown stream events are ignored so newer servers can interoperate with older c
 `reload()` is disabled by default because replaying the last user message can duplicate durable Runner history. Enable `supportsReload` only for an endpoint that implements idempotent regeneration, and pass `onRetry={() => chat.reload()}` to `ZhivexChat` when that guarantee exists.
 
 Approval identity is the pair `provider + approvalRequestId`. The ready-made `ZhivexChat` forwards both values and keeps equal provider-scoped IDs distinct. The legacy three-argument `resolveApproval(id, approved, reason)` form remains available only when the ID has one unambiguous pending match; custom approval UIs should call `resolveApproval(id, approved, reason, provider)`.
+
+The default approval card collects an optional rejection reason and forwards it
+to `resolveApproval`. Require it for governed actions through the message-list
+configuration:
+
+```tsx
+<ZhivexChat
+  controller={chat}
+  messageListProps={{
+    approvalCardProps: {
+      reasonRequired: true,
+      description: "This action publishes data outside the current workspace."
+    }
+  }}
+/>
+```
+
+Completed responses announce a short localized completion message to assistive
+technology instead of replaying the entire response. Set
+`messageListProps.announceResponseText` only when full-response announcements
+are appropriate for the application.

@@ -26,6 +26,10 @@ export default function Page() {
             </div>
           </div>
         }
+        starterPrompts={[
+          "Summarize this session",
+          "Help me plan the next task"
+        ]}
       />
     </main>
   );

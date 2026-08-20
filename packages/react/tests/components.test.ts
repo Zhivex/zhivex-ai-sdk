@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  ActivityPanel,
+  ChatRoot,
   Message,
   ZhivexChat,
   type ChatController,
@@ -63,6 +65,62 @@ describe("@zhivex-ai/react components", () => {
     expect(html).toContain("Hello");
     expect(html).toContain("weather");
     expect(html).toContain('aria-label="Message"');
+    expect(html).toContain('data-slot="message-actions"');
+  });
+
+  it("supports explicit themes and density modes", () => {
+    const html = renderToStaticMarkup(
+      createElement(ChatRoot, {
+        density: "compact",
+        theme: "dark",
+        children: "Chat"
+      })
+    );
+
+    expect(html).toContain('data-theme="dark"');
+    expect(html).toContain('data-density="compact"');
+  });
+
+  it("renders structured run progress instead of only a busy indicator", () => {
+    const html = renderToStaticMarkup(
+      createElement(ActivityPanel, {
+        status: "streaming",
+        activity: [
+          { type: "run-start", currentStep: 1, maxSteps: 4 },
+          { type: "step-start", stepIndex: 2 }
+        ]
+      })
+    );
+
+    expect(html).toContain("Step 2 of 4");
+    expect(html).toContain('data-slot="activity-panel"');
+    expect(html).toContain('aria-label="Run activity"');
+  });
+
+  it("groups matching tool calls and results into one execution card", () => {
+    const html = renderToStaticMarkup(
+      createElement(Message, {
+        message: {
+          ...message,
+          parts: [
+            message.parts[1]!,
+            {
+              type: "tool-result",
+              toolResult: {
+                toolCallId: "call-1",
+                toolName: "weather",
+                output: { temperature: 22 },
+                isError: false
+              }
+            }
+          ]
+        }
+      })
+    );
+
+    expect(html.match(/data-slot="tool-execution"/g)).toHaveLength(1);
+    expect(html).toContain("Completed");
+    expect(html).toContain("temperature");
   });
 
   it("supports custom content-part renderers", () => {
@@ -158,5 +216,67 @@ describe("@zhivex-ai/react components", () => {
       'src="http://127.0.0.1:8080/private.png"'
     );
     expect(privateOptIn).not.toContain("credentialed.png");
+  });
+
+  it("uses application-provided image alt text and contextual file link labels", () => {
+    const html = renderToStaticMarkup(
+      createElement(Message, {
+        getImageAlt: () => "Quarterly revenue chart",
+        message: {
+          id: "assistant-media-labels",
+          role: "assistant",
+          createdAt: 1,
+          status: "complete",
+          parts: [
+            {
+              type: "image",
+              image:
+                "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==",
+              mediaType: "image/gif"
+            },
+            {
+              type: "file",
+              data: "data:text/plain;base64,aGVsbG8=",
+              filename: "memo.txt",
+              mediaType: "text/plain"
+            }
+          ]
+        }
+      })
+    );
+
+    expect(html).toContain('alt="Quarterly revenue chart"');
+    expect(html).toContain('aria-label="Open file: memo.txt"');
+  });
+
+  it("hides technical errors by default and reveals them only when requested", () => {
+    const controller: ChatController = {
+      state: {
+        messages: [],
+        status: "error",
+        error: new Error("internal trace id 123"),
+        pendingApprovals: [],
+        activity: []
+      },
+      input: "",
+      setInput: vi.fn(),
+      send: vi.fn(async () => undefined),
+      stop: vi.fn(),
+      reload: vi.fn(async () => undefined),
+      resolveApproval: vi.fn(async () => undefined)
+    };
+
+    const safeHtml = renderToStaticMarkup(
+      createElement(ZhivexChat, { controller })
+    );
+    expect(safeHtml).toContain(
+      "Something went wrong while generating the response."
+    );
+    expect(safeHtml).not.toContain("internal trace id 123");
+
+    const detailedHtml = renderToStaticMarkup(
+      createElement(ZhivexChat, { controller, showErrorDetails: true })
+    );
+    expect(detailedHtml).toContain("internal trace id 123");
   });
 });
