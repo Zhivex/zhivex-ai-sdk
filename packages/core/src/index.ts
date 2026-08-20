@@ -57,6 +57,7 @@ export {
   getApiStability,
   listApiStability
 } from "./api-stability.js";
+export type { LongContextPricing } from "./pricing.js";
 export type {
   ApiStabilityEntry,
   ApiStabilityLevel
@@ -421,12 +422,6 @@ export {
   getFile,
   getFileSearchStore,
   getInteraction,
-  googleCodeExecutionTool,
-  googleComputerUseTool,
-  googleFileSearchTool,
-  googleMapsTool,
-  googleSearchTool,
-  googleUrlContextTool,
   importFileToFileSearchStore,
   listBatches,
   listContextCaches,
@@ -438,6 +433,14 @@ export {
   streamInteraction,
   uploadFile,
   uploadToFileSearchStore
+} from "./provider-resources.js";
+export {
+  googleCodeExecutionTool,
+  googleComputerUseTool,
+  googleFileSearchTool,
+  googleMapsTool,
+  googleSearchTool,
+  googleUrlContextTool
 } from "./google.js";
 export { generateGroundedText } from "./grounded-text.js";
 export { createMcpToolRegistry, createMcpToolSet } from "./mcp.js";
@@ -595,7 +598,19 @@ export type {
   VectorStore,
   VectorStoreQueryInput
 } from "./retrieval.js";
-export { createProviderAdapter, mergeAbortSignals, withRetry, withTimeoutSignal } from "./runtime.js";
+export {
+  createMergedAbortSignal,
+  createProviderAdapter,
+  mergeAbortSignals,
+  withRetry,
+  withTimeoutSignal
+} from "./runtime.js";
+export {
+  deriveLegacyModelCapabilities,
+  isModelCapabilitySupported,
+  MODEL_CAPABILITY_SUPPORT_LEVELS
+} from "./model-capabilities.js";
+export type * from "./model-capabilities.js";
 export * from "./response.js";
 export * from "./stream.js";
 export { createToolRegistry, isToolRegistry, toToolSet, ToolRegistry } from "./tool-registry.js";

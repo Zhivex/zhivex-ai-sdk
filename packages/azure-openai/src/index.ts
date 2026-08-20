@@ -28,7 +28,7 @@ import {
   type AudioFrame,
   type AudioInput,
   type AudioResponseLimits,
-  type CallableProviderAdapter,
+  type ProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
@@ -40,7 +40,6 @@ import {
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
-  type ProviderAdapter,
   type RealtimeConnectOptions,
   type RealtimeConnectionFactory,
   type RealtimeModel,
@@ -53,6 +52,14 @@ import {
   type TranscriptionModel,
   type TranscriptionResult
 } from "@zhivex-ai/core";
+
+type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
+  ProviderAdapter,
+  "languageModel"
+> &
+  ((modelId: string) => TLanguageModel) & {
+    languageModel(modelId: string): TLanguageModel;
+  };
 
 export interface AzureOpenAIProviderOptions {
   apiKey?: string;
@@ -1866,7 +1873,9 @@ const encodeAzureDeployment = (value: string) => {
 
 export const createAzureOpenAI = (
   options: AzureOpenAIProviderOptions = {}
-): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
+): TypedCallableProviderAdapter<LanguageModel<AzureOpenAILanguageModelOptions>> & {
+  rawFetch: typeof globalThis.fetch;
+} => {
   const apiKey = options.apiKey ?? process.env.AZURE_OPENAI_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing Azure OpenAI API key.");

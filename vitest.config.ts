@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 
 export const workspaceAliases = {
+  "#secure-id": resolve(__dirname, "packages/core/src/secure-id-node.ts"),
   "@zhivex-ai/core": resolve(__dirname, "packages/core/src/index.ts"),
   "@zhivex-ai/openai": resolve(__dirname, "packages/openai/src/index.ts"),
   "@zhivex-ai/deepseek": resolve(__dirname, "packages/deepseek/src/index.ts"),

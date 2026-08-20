@@ -1,16 +1,16 @@
 import { createHash } from "node:crypto";
 
 import { createAgentApprovalMessage, getAgentApprovalRequests } from "./agent-approval.js";
-import { createAgentHandoffMessage } from "./agent-handoff.js";
+import { createAgentHandoffMessage } from "./agent-handoff-contracts.js";
 import { createAgentExecutionEnvironmentBinding, fingerprintAgentHarness } from "./agent-harness.js";
 import { AGENT_RUN_STATE_SCHEMA_VERSION, normalizeAgentRunState } from "./agent-state.js";
 import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
 import { ConflictError, GuardrailTriggeredError, UnsupportedFeatureError, ValidationError } from "./errors.js";
 import { aggregateTokenUsage, generateText, getGenerateTextStepTiming, normalizeMessages, streamText } from "./generate-text.js";
 import { createTextMessage, isCallableToolDefinition, serializeJsonValue } from "./messages.js";
-import { mergeAbortSignals } from "./runtime.js";
+import { createMergedAbortSignal } from "./runtime.js";
 import { evaluateAgentBudgetPreflight, getAgentBudgetStatus } from "./safety-policy.js";
-import { createSecureId } from "./secure-id.js";
+import { createSecureId } from "#secure-id";
 import { createStructuredOutputPrompt } from "./structured-output-prompt.js";
 import { ToolExecutionSuspendedError } from "./tool-execution-suspension.js";
 import { toToolSet } from "./tool-registry.js";
@@ -1923,12 +1923,10 @@ const withAgentPolicyTimeout = async <T>(
     isTimedOut: () => boolean;
   }
 ): Promise<T> => {
-  if (!timeout.timeoutPromise) {
-    return operation;
-  }
-
   try {
-    return await Promise.race([operation, timeout.timeoutPromise]);
+    return timeout.timeoutPromise
+      ? await Promise.race([operation, timeout.timeoutPromise])
+      : await operation;
   } finally {
     timeout.cleanup();
   }
@@ -1936,13 +1934,15 @@ const withAgentPolicyTimeout = async <T>(
 
 const createAgentAbortContext = (
   inputAbortSignal: AbortSignal | undefined,
-  policy: AgentRunPolicy | undefined
+  policy: AgentRunPolicy | undefined,
+  ...additionalSignals: Array<AbortSignal | undefined>
 ) => {
   if (!policy?.timeoutMs) {
+    const merged = createMergedAbortSignal(inputAbortSignal, ...additionalSignals);
     return {
-      signal: inputAbortSignal,
+      signal: merged.signal,
       timeoutPromise: undefined,
-      cleanup: () => undefined,
+      cleanup: merged.cleanup,
       isTimedOut: () => false
     };
   }
@@ -1958,10 +1958,12 @@ const createAgentAbortContext = (
     }, policy.timeoutMs);
   });
 
+  const merged = createMergedAbortSignal(inputAbortSignal, ...additionalSignals, controller.signal);
   return {
-    signal: mergeAbortSignals(inputAbortSignal, controller.signal),
+    signal: merged.signal,
     timeoutPromise,
     cleanup: () => {
+      merged.cleanup();
       if (timeout) {
         clearTimeout(timeout);
       }
@@ -2324,16 +2326,21 @@ export const runAgentGroup = async (
   };
 
   const runs = agents.map(async (member, index) => {
-    const runInput = {
-      ...sharedInput,
-      ...(member.input ?? {}),
-      parentRunId: member.input?.parentRunId ?? parentRunId,
-      abortSignal: mergeAbortSignals(input.abortSignal, member.input?.abortSignal, controllers[index]!.signal),
-      metadata: cloneMetadata(input.metadata, member.input?.metadata, {
-        ...(member.name ? { agentGroupMember: member.name } : {})
-      })
-    } as AgentRunInput;
+    const merged = createMergedAbortSignal(
+      input.abortSignal,
+      member.input?.abortSignal,
+      controllers[index]!.signal
+    );
     try {
+      const runInput = {
+        ...sharedInput,
+        ...(member.input ?? {}),
+        parentRunId: member.input?.parentRunId ?? parentRunId,
+        abortSignal: merged.signal,
+        metadata: cloneMetadata(input.metadata, member.input?.metadata, {
+          ...(member.name ? { agentGroupMember: member.name } : {})
+        })
+      } as AgentRunInput;
       const output = await runAgent(member.agent, runInput);
       if (isFailingOutput(output)) {
         abortPending(index);
@@ -2342,6 +2349,8 @@ export const runAgentGroup = async (
     } catch (error) {
       abortPending(index);
       throw error;
+    } finally {
+      merged.cleanup();
     }
   });
   const settled = await Promise.allSettled(runs);
@@ -2579,10 +2588,7 @@ export const runAgent = async <
     return returnInvocationOutput(toOutput(failedState));
   }
 
-  const abortContext = createAgentAbortContext(
-    mergeAbortSignals(input.abortSignal, executionLease.signal),
-    policy
-  );
+  const abortContext = createAgentAbortContext(input.abortSignal, policy, executionLease.signal);
   let executionEnvironmentSession: AgentExecutionEnvironmentSession<TContext> | undefined;
   let executionEnvironmentStatus: AgentStatus = "failed";
   let executionEnvironmentError: { message: string } | undefined;
@@ -2594,6 +2600,7 @@ export const runAgent = async <
       abortContext.signal
     );
   } catch (error) {
+    abortContext.cleanup();
     await executionLease.release();
     throw error;
   }
@@ -2877,16 +2884,20 @@ export const streamAgent = <
       stepIndex: context.state.currentStep + 1
     });
 
-    const abortContext = createAgentAbortContext(
-      mergeAbortSignals(input.abortSignal, executionLease.signal),
-      policy
-    );
-    const executionEnvironmentSession = await acquireExecutionEnvironment(
-      context.executionEnvironment,
-      context.state,
-      context.context,
-      abortContext.signal
-    );
+    const abortContext = createAgentAbortContext(input.abortSignal, policy, executionLease.signal);
+    let executionEnvironmentSession: AgentExecutionEnvironmentSession<TContext> | undefined;
+    try {
+      executionEnvironmentSession = await acquireExecutionEnvironment(
+        context.executionEnvironment,
+        context.state,
+        context.context,
+        abortContext.signal
+      );
+    } catch (error) {
+      abortContext.cleanup();
+      await executionLease.release();
+      throw error;
+    }
     activeExecutionEnvironment = executionEnvironmentSession;
     let executionEnvironmentStatus: AgentStatus = "failed";
     let executionEnvironmentError: { message: string } | undefined;
@@ -2911,6 +2922,7 @@ export const streamAgent = <
         )
       );
     } catch (error) {
+      abortContext.cleanup();
       executionEnvironmentError = {
         message: error instanceof Error ? error.message : String(error)
       };

@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/azure-openai",
-  "version": "0.6.11",
+  "version": "0.6.12",
   "description": "Azure OpenAI adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",

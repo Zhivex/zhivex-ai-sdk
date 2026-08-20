@@ -11,7 +11,7 @@ import {
   readJsonWithLimit,
   withRetry,
   withTimeoutSignal,
-  type CallableProviderAdapter,
+  type ProviderAdapter,
   type FileDeleteInput,
   type FileGetInput,
   type FileListInput,
@@ -25,11 +25,18 @@ import {
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
-  type ProviderAdapter,
   type StreamEvent,
   type ToolSet,
   type UploadedFile
 } from "@zhivex-ai/core";
+
+type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
+  ProviderAdapter,
+  "languageModel"
+> &
+  ((modelId: string) => TLanguageModel) & {
+    languageModel(modelId: string): TLanguageModel;
+  };
 import { createOpenAI } from "@zhivex-ai/openai";
 
 export interface XAIProviderOptions {
@@ -588,11 +595,10 @@ export const xAIFilePart = (fileId: string, mediaType = "application/octet-strea
 
 export const createXAI = (
   options: XAIProviderOptions = {}
-): CallableProviderAdapter &
-  ProviderAdapter & {
-    files: FilesClient<XAIFileOptions>;
-    rawFetch: typeof globalThis.fetch;
-  } => {
+): TypedCallableProviderAdapter<LanguageModel<XAILanguageModelOptions>> & {
+  files: FilesClient<XAIFileOptions>;
+  rawFetch: typeof globalThis.fetch;
+} => {
   const apiKey = options.apiKey ?? process.env.XAI_API_KEY;
   if (!apiKey) throw new ConfigurationError("Missing xAI API key.");
 

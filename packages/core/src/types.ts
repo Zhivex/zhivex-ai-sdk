@@ -1171,9 +1171,9 @@ export interface EmbeddingModel {
   embed(input: EmbedInput & RetryOptions): Promise<EmbedResult>;
 }
 
-export interface ProviderAdapter {
+export interface ProviderAdapter<TLanguageModel extends LanguageModel = LanguageModel> {
   readonly name: string;
-  languageModel(modelId: string): LanguageModel;
+  languageModel(modelId: string): TLanguageModel;
   embeddingModel?: (modelId: string) => EmbeddingModel;
   transcriptionModel?: (modelId: string) => TranscriptionModel;
   speechModel?: (modelId: string) => SpeechModel;
@@ -1190,7 +1190,8 @@ export interface ProviderAdapter {
   predictionModel?: (modelId: string) => PredictionModel;
 }
 
-export type CallableProviderAdapter = ProviderAdapter & ((modelId: string) => LanguageModel);
+export type CallableProviderAdapter<TLanguageModel extends LanguageModel = LanguageModel> =
+  ProviderAdapter<TLanguageModel> & ((modelId: string) => TLanguageModel);
 
 export interface ToolDefinition<
   TSchema extends ZodTypeAny = any,

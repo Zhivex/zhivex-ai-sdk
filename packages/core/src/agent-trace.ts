@@ -1,6 +1,7 @@
 import type { ModelCatalog } from "./catalog.js";
 import { ValidationError } from "./errors.js";
 import { createAgentRunSnapshot, replayAgentRun, type AgentRunSnapshot } from "./agent-evaluation.js";
+import type { LongContextPricing } from "./pricing.js";
 import { createRedactionPolicy, type RedactionPolicy, type RedactionPolicyOptions } from "./safety-policy.js";
 import type {
   AgentRunStore,
@@ -25,12 +26,6 @@ export interface TokenPricing {
   costPer1kTokens?: number;
   longContextPricing?: LongContextPricing;
   currency?: string;
-}
-
-export interface LongContextPricing {
-  inputTokenThreshold: number;
-  inputMultiplier: number;
-  outputMultiplier: number;
 }
 
 export interface CostEstimate {

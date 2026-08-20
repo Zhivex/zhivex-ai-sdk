@@ -80,8 +80,9 @@ const createProviderStatus = (input: {
 
 const openAIApiKey = process.env.OPENAI_API_KEY;
 const openAIBaseURL = process.env.OPENAI_BASE_URL;
-const openAITextModelId = process.env.OPENAI_INTEGRATION_MODEL ?? "gpt-5.4-nano";
+const openAITextModelId = process.env.OPENAI_INTEGRATION_MODEL ?? "gpt-5.6-luna";
 const openAIEmbeddingModelId = process.env.OPENAI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-3-small";
+const usesOpenAIGpt56Controls = /^gpt-5\.6(?:$|-)/i.test(openAITextModelId);
 
 const xaiApiKey = process.env.XAI_API_KEY;
 const xaiBaseURL = process.env.XAI_BASE_URL;
@@ -452,11 +453,12 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: openAIApiKey,
               baseURL: openAIBaseURL
             }).embeddingModel(openAIEmbeddingModelId),
+          omitTemperature: usesOpenAIGpt56Controls,
+          textMaxTokens: usesOpenAIGpt56Controls ? 128 : 32,
+          toolMaxTokens: usesOpenAIGpt56Controls ? 256 : 128,
+          reasoningMaxTokens: usesOpenAIGpt56Controls ? 256 : 128,
           supports: openAISupports,
-          toolChoiceForTool: (toolName) => ({
-            type: "tool",
-            toolName
-          })
+          toolChoiceForTool: () => "auto"
         } satisfies IntegrationLanguageProvider
       ]
     : []),

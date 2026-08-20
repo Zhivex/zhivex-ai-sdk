@@ -33,7 +33,7 @@ import {
   type BatchListInput,
   type BatchesClient,
   type CachedContent,
-  type CallableProviderAdapter,
+  type ProviderAdapter,
   type ContextCacheCreateInput,
   type ContextCacheDeleteInput,
   type ContextCacheGetInput,
@@ -61,7 +61,6 @@ import {
   type PredictionOperation,
   type PredictionOperationInput,
   type PredictionResult,
-  type ProviderAdapter,
   type RealtimeConnectOptions,
   type RealtimeConnectionFactory,
   type RealtimeEvent,
@@ -75,6 +74,14 @@ import {
   type VideoGenerationModel,
   type VideoGenerationResult
 } from "@zhivex-ai/core";
+
+type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
+  ProviderAdapter,
+  "languageModel"
+> &
+  ((modelId: string) => TLanguageModel) & {
+    languageModel(modelId: string): TLanguageModel;
+  };
 
 export interface VertexAuthClient {
   getAccessToken: () => string | null | undefined | Promise<string | null | undefined>;
@@ -2701,7 +2708,9 @@ class VertexRealtimeModel implements RealtimeModel {
 
 export const createVertex = (
   options: VertexProviderOptions = {}
-): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
+): TypedCallableProviderAdapter<LanguageModel<VertexLanguageModelOptions>> & {
+  rawFetch: typeof globalThis.fetch;
+} => {
   const auth = resolveVertexAuth(options);
   const projectId = options.projectId ?? process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
   if (auth.type === "bearer" && !projectId && !options.baseURL) {

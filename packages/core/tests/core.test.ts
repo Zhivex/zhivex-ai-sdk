@@ -3009,7 +3009,7 @@ describe("core helpers", () => {
           return { messages: [createTextMessage("assistant", "disk hello")], text: "disk hello" };
         }
       }),
-      [createCachedGenerateMiddleware({ cache: createFileGenerateCache({ dir }) })]
+      [createCachedGenerateMiddleware({ cache: createFileGenerateCache({ dir }), scope: "core-test" })]
     );
 
     const first = await generateText({ model: wrapped, prompt: "hello" });

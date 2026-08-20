@@ -10,7 +10,7 @@ import type {
   UIMessageGeneratedMedia
 } from "./types.js";
 import { serializeJsonValue } from "./messages.js";
-import { createSecureId } from "./secure-id.js";
+import { createSecureId } from "#secure-id";
 
 const randomId = () => createSecureId("msg");
 

@@ -37,7 +37,7 @@ import {
   type AudioFrame,
   type AudioInput,
   type AudioResponseLimits,
-  type CallableProviderAdapter,
+  type ProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
@@ -50,7 +50,6 @@ import {
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
-  type ProviderAdapter,
   type RealtimeConnectOptions,
   type RealtimeConnectionFactory,
   type RealtimeModel,
@@ -64,6 +63,14 @@ import {
   type TranscriptionModel,
   type TranscriptionResult
 } from "@zhivex-ai/core";
+
+type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
+  ProviderAdapter,
+  "languageModel"
+> &
+  ((modelId: string) => TLanguageModel) & {
+    languageModel(modelId: string): TLanguageModel;
+  };
 
 const MIB = 1024 * 1024;
 const DEFAULT_HOSTED_IMAGE_EVENT_BYTES = 32 * MIB;
@@ -3364,7 +3371,9 @@ class OpenAIRealtimeModel implements RealtimeModel {
 
 export const createOpenAI = (
   options: OpenAIProviderOptions = {}
-): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
+): TypedCallableProviderAdapter<LanguageModel<OpenAILanguageModelOptions>> & {
+  rawFetch: typeof globalThis.fetch;
+} => {
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing OpenAI API key.");

@@ -34,6 +34,14 @@ console.log(result.text);
 
 Use provider-backed models from Bun, Node.js, route handlers, workers, or other server runtimes. Keep provider credentials and effectful tools out of browser bundles.
 
+The release-managed default model inventory is available from the SDK root or
+`@zhivex-ai/sdk/catalog`. `@zhivex-ai/core` keeps catalog contracts and the
+`createModelCatalog` mechanism plus a deprecated, frozen compatibility snapshot
+until the next major. Later inventory updates are shipped only by the SDK, so
+new applications should not import the core compatibility copy. Inject an
+application-owned catalog when model availability or pricing must be pinned
+independently from SDK releases.
+
 The local `zhivex-ai agents ledger` command omits full output text by default; use `--include-output-text` only for a reviewed local export. `zhivex-ai init agent` creates a private `.env` with mode `0600` on POSIX systems, and `doctor` reports unsafe environment-file permissions.
 
 ## Stability
@@ -41,7 +49,9 @@ The local `zhivex-ai agents ledger` command omits full output text by default; u
 The shared realtime session and `streamLiveAgent` lifecycle is Stable. Provider
 model IDs, provider-specific options, and upstream preview availability remain
 provider-scoped. The root export also contains Beta and Experimental surfaces;
-check runtime symbols with `getApiStability()` and review
+new code can make that risk explicit with `@zhivex-ai/sdk/beta` and
+`@zhivex-ai/sdk/experimental`. Existing root imports remain compatible. Check
+runtime symbols with `getApiStability()` and review
 <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/STABILITY.md> before upgrading.
 
 ## Start Here

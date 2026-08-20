@@ -6,7 +6,7 @@ import { ConflictError, ValidationError } from "./errors.js";
 import { normalizeMessages } from "./generate-text.js";
 import { createTextMessage, serializeJsonValue } from "./messages.js";
 import { assertPostgresClient } from "./postgres-client.js";
-import { createSecureId } from "./secure-id.js";
+import { createSecureId } from "#secure-id";
 import {
   canonicalStoreFileStem,
   canonicalStoreKey,

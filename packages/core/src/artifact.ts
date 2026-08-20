@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { ConflictError, ValidationError } from "./errors.js";
 import { assertPostgresClient } from "./postgres-client.js";
-import { createSecureId } from "./secure-id.js";
+import { createSecureId } from "#secure-id";
 import {
   canonicalStoreFileStem,
   canonicalStoreKey,

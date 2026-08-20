@@ -17,16 +17,23 @@ import {
   streamSSE,
   withRetry,
   withTimeoutSignal,
-  type CallableProviderAdapter,
+  type ProviderAdapter,
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
-  type ProviderAdapter,
   type StreamEvent
 } from "@zhivex-ai/core";
+
+type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
+  ProviderAdapter,
+  "languageModel"
+> &
+  ((modelId: string) => TLanguageModel) & {
+    languageModel(modelId: string): TLanguageModel;
+  };
 
 export const ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4";
 export const ZAI_CODING_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
@@ -836,7 +843,10 @@ class ZAILanguageModel implements LanguageModel<ZAILanguageModelOptions> {
 
 export const createZAI = (
   options: ZAIProviderOptions = {}
-): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch; endpoint: ZAIEndpoint } => {
+): TypedCallableProviderAdapter<LanguageModel<ZAILanguageModelOptions>> & {
+  rawFetch: typeof globalThis.fetch;
+  endpoint: ZAIEndpoint;
+} => {
   const apiKey = options.apiKey ?? process.env.ZAI_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing Z.ai API key.");

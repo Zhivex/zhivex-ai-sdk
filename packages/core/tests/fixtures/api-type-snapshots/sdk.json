@@ -1,4 +1,7 @@
 {
+  "beta.d.ts": "c4c012b036f01564eb2eb8e0ebb2df794acff94e08c39a9845c441dcdb0b8236",
+  "catalog.d.ts": "8d75dc8d717339f09bad97f48f619ecc9db6849439c59458d599b31c84816d52",
   "cli.d.ts": "fc31d996538a1b3071e3a17c47daadfec60f6aaaca49b15425a87f807064b6e1",
-  "index.d.ts": "d1134b456ee4229af2b479aac9ad1fe538452adc8656241fef47778b455f2572"
+  "experimental.d.ts": "50083c61c0e5af65ea45fbf635b788845d03db126bce80eb70287726d9f598ae",
+  "index.d.ts": "30cb17c122ebeeb61b1a97ac4d305391c226f26bdfdcb6ea859f0b9cec43ecba"
 }

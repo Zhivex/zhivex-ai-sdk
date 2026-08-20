@@ -15,16 +15,23 @@ import {
   streamSSE,
   withRetry,
   withTimeoutSignal,
-  type CallableProviderAdapter,
+  type ProviderAdapter,
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
-  type ProviderAdapter,
   type StreamEvent
 } from "@zhivex-ai/core";
+
+type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
+  ProviderAdapter,
+  "languageModel"
+> &
+  ((modelId: string) => TLanguageModel) & {
+    languageModel(modelId: string): TLanguageModel;
+  };
 
 import { createDeepSeekClients, type DeepSeekClients } from "./clients.js";
 
@@ -871,7 +878,8 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
 
 export const createDeepSeek = (
   options: DeepSeekProviderOptions = {}
-): CallableProviderAdapter & ProviderAdapter & DeepSeekClients & { rawFetch: typeof globalThis.fetch } => {
+): TypedCallableProviderAdapter<LanguageModel<DeepSeekLanguageModelOptions>> &
+  DeepSeekClients & { rawFetch: typeof globalThis.fetch } => {
   const apiKey = options.apiKey ?? process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing DeepSeek API key.");

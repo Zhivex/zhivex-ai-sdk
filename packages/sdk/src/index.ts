@@ -1,5 +1,6 @@
 export {
   AGENT_CONTROL_PLANE_SCHEMA_VERSION,
+  AGENT_RUN_STATE_SCHEMA_VERSION,
   API_STABILITY_MANIFEST,
   MODEL_CATALOG_CONTRACT_VERSION,
   MODEL_CATALOG_SCHEMA_VERSION,
@@ -7,6 +8,16 @@ export {
   OTEL_GENAI_SEMCONV_REVISION,
   DEFAULT_ARTIFACT_SERVICE_LIMITS,
   Agent,
+  CallbackRealtimeSession,
+  ConfigurationError,
+  ConflictError,
+  GuardrailTriggeredError,
+  ParseError,
+  ProviderHTTPError,
+  ProviderResponseTooLargeError,
+  UnsupportedFeatureError,
+  ValidationError,
+  ZhivexAIError,
   assistant,
   agentApprovalResponsePart,
   AdvancedToolRegistry,
@@ -171,7 +182,6 @@ export {
   audioPart,
   textPart,
   deserializeUIMessage,
-  defaultModelCatalog,
   diffAgentRunLedgers,
   fromUIMessage,
   fromUIMessages,
@@ -245,6 +255,8 @@ export {
   selectAgentModel,
   user
 } from "@zhivex-ai/core";
+
+export { defaultModelCatalog } from "./catalog.js";
 export type {
   AdvancedToolRegistryEntry,
   AdvancedToolSource,

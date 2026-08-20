@@ -15,7 +15,7 @@ import {
   toolResultPart,
   validateMessageParts
 } from "./messages.js";
-import { mergeAbortSignals } from "./runtime.js";
+import { createMergedAbortSignal } from "./runtime.js";
 import { toToolSet } from "./tool-registry.js";
 import { ToolExecutionSuspendedError } from "./tool-execution-suspension.js";
 import type {
@@ -49,20 +49,23 @@ const withToolTimeout = async <T>(
   }
 
   const controller = new AbortController();
-  const signal = mergeAbortSignals(abortSignal, controller.signal);
+  const mergedSignal = createMergedAbortSignal(abortSignal, controller.signal);
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       controller.abort();
+      mergedSignal.cleanup();
       reject(new Error(`Tool execution timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
     Promise.resolve()
-      .then(() => operation(signal))
+      .then(() => operation(mergedSignal.signal))
       .then((value) => {
         clearTimeout(timer);
+        mergedSignal.cleanup();
         resolve(value);
       })
       .catch((error) => {
         clearTimeout(timer);
+        mergedSignal.cleanup();
         reject(error);
       });
   });

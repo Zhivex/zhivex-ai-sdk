@@ -15,16 +15,23 @@ import {
   streamSSE,
   withRetry,
   withTimeoutSignal,
-  type CallableProviderAdapter,
+  type ProviderAdapter,
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
-  type ProviderAdapter,
   type StreamEvent
 } from "@zhivex-ai/core";
+
+type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
+  ProviderAdapter,
+  "languageModel"
+> &
+  ((modelId: string) => TLanguageModel) & {
+    languageModel(modelId: string): TLanguageModel;
+  };
 
 export interface OpenRouterProviderOptions {
   apiKey?: string;
@@ -414,7 +421,9 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
 
 export const createOpenRouter = (
   options: OpenRouterProviderOptions = {}
-): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
+): TypedCallableProviderAdapter<LanguageModel<OpenRouterLanguageModelOptions>> & {
+  rawFetch: typeof globalThis.fetch;
+} => {
   const apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing OpenRouter API key.");

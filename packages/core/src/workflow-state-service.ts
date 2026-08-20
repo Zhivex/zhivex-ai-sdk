@@ -10,49 +10,29 @@ import {
   writePrivateFile
 } from "./store-security.js";
 import type { JsonValue, PostgresClientLike, SqliteDatabaseLike, SqliteStatementLike } from "./types.js";
-import { normalizeWorkflowRunState, WORKFLOW_RUN_STATE_SCHEMA_VERSION, type PersistedWorkflowRunState, type WorkflowStatus } from "./workflow.js";
+import {
+  normalizeWorkflowRunState,
+  WORKFLOW_RUN_STATE_SCHEMA_VERSION,
+  WORKFLOW_STATE_RECORD_SCHEMA_VERSION,
+  type WorkflowStateListInput,
+  type WorkflowStateRecord,
+  type WorkflowStateSaveInput,
+  type WorkflowStateService,
+  type WorkflowStateServiceLookup,
+  type WorkflowStatus
+} from "./workflow-state-contracts.js";
+
+export { WORKFLOW_STATE_RECORD_SCHEMA_VERSION } from "./workflow-state-contracts.js";
+export type {
+  WorkflowStateListInput,
+  WorkflowStateRecord,
+  WorkflowStateSaveInput,
+  WorkflowStateService,
+  WorkflowStateServiceLookup as WorkflowStateLookup
+} from "./workflow-state-contracts.js";
 
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-export const WORKFLOW_STATE_RECORD_SCHEMA_VERSION = 1 as const;
-
-export interface WorkflowStateLookup {
-  appName: string;
-  userId: string;
-  sessionId: string;
-  workflowKey: string;
-}
-
-export interface WorkflowStateListInput {
-  appName: string;
-  userId: string;
-  sessionId?: string;
-  workflowKey?: string;
-  status?: WorkflowStatus;
-}
-
-export interface WorkflowStateSaveInput extends WorkflowStateLookup {
-  state: PersistedWorkflowRunState;
-  expectedRevision?: number;
-}
-
-export interface WorkflowStateRecord extends WorkflowStateLookup {
-  schemaVersion: typeof WORKFLOW_STATE_RECORD_SCHEMA_VERSION;
-  revision: number;
-  state: PersistedWorkflowRunState;
-  status: WorkflowStatus;
-  runId: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface WorkflowStateService {
-  saveWorkflowState(input: WorkflowStateSaveInput): Promise<WorkflowStateRecord> | WorkflowStateRecord;
-  loadWorkflowState(input: WorkflowStateLookup): Promise<WorkflowStateRecord | undefined> | WorkflowStateRecord | undefined;
-  listWorkflowStates(input: WorkflowStateListInput): Promise<WorkflowStateRecord[]> | WorkflowStateRecord[];
-  deleteWorkflowState(input: WorkflowStateLookup): Promise<void> | void;
-}
 
 export interface FileWorkflowStateServiceOptions {
   directory: string;
@@ -83,6 +63,8 @@ export interface PostgresWorkflowStateServiceOptions {
 }
 
 export type WorkflowStateRecordMigrationTarget = typeof WORKFLOW_STATE_RECORD_SCHEMA_VERSION;
+
+type WorkflowStateLookup = WorkflowStateServiceLookup;
 
 const workflowStateParts = (input: WorkflowStateLookup) =>
   [input.appName, input.userId, input.sessionId, input.workflowKey] as const;

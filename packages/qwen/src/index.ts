@@ -33,7 +33,7 @@ import {
   type BatchJob,
   type BatchListInput,
   type BatchesClient,
-  type CallableProviderAdapter,
+  type ProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
@@ -54,7 +54,6 @@ import {
   type ModelGenerateInput,
   type ModelMessage,
   type PredictionOperation,
-  type ProviderAdapter,
   type RealtimeConnectOptions,
   type RealtimeConnection,
   type RealtimeConnectionFactory,
@@ -71,6 +70,14 @@ import {
   type VideoGenerationModel,
   type VideoGenerationResult
 } from "@zhivex-ai/core";
+
+type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
+  ProviderAdapter,
+  "languageModel"
+> &
+  ((modelId: string) => TLanguageModel) & {
+    languageModel(modelId: string): TLanguageModel;
+  };
 
 export interface QwenProviderOptions {
   apiKey?: string;
@@ -159,13 +166,12 @@ export interface QwenTasksClient {
   cancel(input: { name: string; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<PredictionOperation>;
 }
 
-export type QwenProvider = CallableProviderAdapter &
-  ProviderAdapter & {
-    rawFetch: typeof globalThis.fetch;
-    rerankModel(modelId: string): QwenRerankModel;
-    multimodalEmbeddingModel(modelId: string): QwenMultimodalEmbeddingModel;
-    tasks: QwenTasksClient;
-  };
+export type QwenProvider = TypedCallableProviderAdapter<LanguageModel<QwenLanguageModelOptions>> & {
+  rawFetch: typeof globalThis.fetch;
+  rerankModel(modelId: string): QwenRerankModel;
+  multimodalEmbeddingModel(modelId: string): QwenMultimodalEmbeddingModel;
+  tasks: QwenTasksClient;
+};
 
 const capabilities: ModelCapabilities = {
   streaming: true,

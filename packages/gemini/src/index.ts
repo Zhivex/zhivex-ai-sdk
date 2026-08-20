@@ -33,7 +33,7 @@ import {
   type BatchDeleteInput,
   type BatchesClient,
   type CachedContent,
-  type CallableProviderAdapter,
+  type ProviderAdapter,
   type ContextCacheCreateInput,
   type ContextCacheDeleteInput,
   type ContextCacheGetInput,
@@ -84,7 +84,6 @@ import {
   type PredictionOperation,
   type PredictionOperationInput,
   type PredictionResult,
-  type ProviderAdapter,
   type RealtimeConnectOptions,
   type RealtimeConnectionFactory,
   type RealtimeEvent,
@@ -101,6 +100,14 @@ import {
   type VideoGenerationModel,
   type VideoGenerationResult
 } from "@zhivex-ai/core";
+
+type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
+  ProviderAdapter,
+  "languageModel"
+> &
+  ((modelId: string) => TLanguageModel) & {
+    languageModel(modelId: string): TLanguageModel;
+  };
 
 export interface GeminiProviderOptions {
   apiKey?: string;
@@ -3366,7 +3373,9 @@ class GeminiRealtimeModel implements RealtimeModel {
 
 export const createGemini = (
   options: GeminiProviderOptions = {}
-): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
+): TypedCallableProviderAdapter<LanguageModel<GeminiLanguageModelOptions>> & {
+  rawFetch: typeof globalThis.fetch;
+} => {
   const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing Gemini API key.");

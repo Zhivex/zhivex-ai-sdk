@@ -1,6 +1,6 @@
 # Stable Model Catalog Contract
 
-`createModelCatalog()` and `defaultModelCatalog` provide a Stable lookup contract for model identity, aliases, recommendations, and optional token pricing. Stability applies to the catalog schema and lookup behavior. It does not mean that an upstream model list or price is permanent.
+`createModelCatalog()` and `defaultModelCatalog` provide a Stable lookup contract for model identity, aliases, recommendations, and optional token pricing. Stability applies to the catalog schema and lookup behavior. It does not mean that an upstream model list or price is permanent. The neutral contract and factory live in `@zhivex-ai/core`; the release-managed default inventory is owned by `@zhivex-ai/sdk` and is also available from `@zhivex-ai/sdk/catalog`.
 
 ## Immutable Snapshots
 
@@ -39,6 +39,16 @@ const catalog = createModelCatalog(entries, {
 Custom catalogs default to pinned data. A rolling catalog must state whether it changes only when the catalog is replaced or when a new package is released.
 
 The built-in `defaultModelCatalog` is an immutable rolling snapshot. Its entries, aliases, recommendations, and prices may be updated only in a package release, together with a new snapshot/pricing version and changelog entry. A mutable upstream alias is not remapped without explicit upstream evidence. Retired entries may be removed when the upstream provider removes them; reproducible routing and cost evaluation should use a recorded package version and the catalog metadata stored with the run.
+
+`@zhivex-ai/core` temporarily retains a deprecated compatibility export of its
+previous default snapshot. New applications should import the SDK-owned default
+or inject a custom catalog; the compatibility export is planned for removal in
+the next major version. The two packages contain separate physical snapshots:
+they are identical at the migration boundary, but the core copy is frozen.
+Future inventory and pricing updates must change only
+`packages/sdk/src/catalog.ts`, together with its snapshot metadata, tests,
+documentation, and release changeset. Consumers that keep importing the core
+compatibility export will therefore not receive later catalog revisions.
 
 Pricing metadata establishes currency, unit, and snapshot scope. Catalog prices are routing and cost-estimation inputs tied to that package snapshot, not an authoritative billing source; verify current upstream pricing before billing users. Entries without a snapshot estimate omit cost fields. Region-specific, batch, priority, provisioned-throughput, tool, storage, and other provider-specific charges are not implied unless the catalog metadata explicitly includes them.
 
