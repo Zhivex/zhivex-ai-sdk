@@ -1,5 +1,11 @@
 # @zhivex-ai/react
 
+## 0.3.0
+
+### Minor Changes
+
+- Upgrade the ready-made chat with multimodal attachments, starter prompts, run progress, grouped tool execution, message actions and statuses, approval reasons, safe error presentation, explicit themes, compact density, improved accessibility, and a more polished responsive visual system.
+
 ## 0.2.2
 
 ### Patch Changes
