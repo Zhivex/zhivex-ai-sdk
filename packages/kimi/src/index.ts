@@ -8,7 +8,7 @@ import {
   assertTrustedEndpoint,
   createProviderAdapter,
   isCallableToolDefinition,
-  mergeAbortSignals,
+  createMergedAbortSignal,
   normalizeFinishReason,
   providerDataPart,
   serializeJsonValue,
@@ -18,17 +18,24 @@ import {
   tool,
   withRetry,
   withTimeoutSignal,
-  type CallableProviderAdapter,
+  type ProviderAdapter,
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
-  type ProviderAdapter,
   type StreamEvent,
   type ToolSet
 } from "@zhivex-ai/core";
+
+type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
+  ProviderAdapter,
+  "languageModel"
+> &
+  ((modelId: string) => TLanguageModel) & {
+    languageModel(modelId: string): TLanguageModel;
+  };
 
 export interface KimiProviderOptions {
   apiKey?: string;
@@ -803,7 +810,9 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
 
 export const createKimi = (
   options: KimiProviderOptions = {}
-): CallableProviderAdapter & ProviderAdapter & { rawFetch: typeof globalThis.fetch } => {
+): TypedCallableProviderAdapter<LanguageModel<KimiLanguageModelOptions>> & {
+  rawFetch: typeof globalThis.fetch;
+} => {
   const apiKey = options.apiKey ?? process.env.KIMI_API_KEY ?? process.env.MOONSHOT_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing Kimi API key.");
@@ -833,16 +842,22 @@ export const kimiOfficialTool = (options: KimiOfficialToolOptions) =>
       parameters: options.parameters
     }),
     requiresApproval: options.requiresApproval ?? true,
-    execute: (input, context) =>
-      callKimiFormula(
-        {
-          ...options,
-          abortSignal: mergeAbortSignals(options.abortSignal, context?.abortSignal)
-        },
-        options.formulaUri,
-        options.name,
-        input
-      )
+    execute: async (input, context) => {
+      const merged = createMergedAbortSignal(options.abortSignal, context?.abortSignal);
+      try {
+        return await callKimiFormula(
+          {
+            ...options,
+            abortSignal: merged.signal
+          },
+          options.formulaUri,
+          options.name,
+          input
+        );
+      } finally {
+        merged.cleanup();
+      }
+    }
   });
 
 const kimiObjectSchema = (properties: Record<string, JsonValue>, required: string[] = []): JsonValue => ({

@@ -3,7 +3,7 @@ import { ConflictError, GuardrailTriggeredError, ValidationError } from "./error
 import { AGENT_RUN_STATE_SCHEMA_VERSION, normalizeAgentRunState } from "./agent-state.js";
 import { normalizeMessages } from "./generate-text.js";
 import { createTextMessage, getTextFromParts, isCallableToolDefinition, serializeJsonValue, toolResultPart } from "./messages.js";
-import { createSecureId } from "./secure-id.js";
+import { createSecureId } from "#secure-id";
 import { toToolSet } from "./tool-registry.js";
 import type {
   AgentGuardrailTrigger,

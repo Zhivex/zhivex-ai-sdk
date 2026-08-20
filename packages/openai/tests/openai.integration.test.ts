@@ -6,8 +6,11 @@ import { createOpenAI } from "../src/index.js";
 
 const apiKey = process.env.OPENAI_API_KEY;
 const baseURL = process.env.OPENAI_BASE_URL;
-const textModelId = process.env.OPENAI_INTEGRATION_MODEL ?? "gpt-5.4-nano";
+const textModelId = process.env.OPENAI_INTEGRATION_MODEL ?? "gpt-5.6-luna";
 const embeddingModelId = process.env.OPENAI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-3-small";
+const usesOpenAIGpt56Controls = /^gpt-5\.6(?:$|-)/i.test(textModelId);
+const deterministicTemperature = usesOpenAIGpt56Controls ? {} : { temperature: 0 };
+const generationMaxTokens = usesOpenAIGpt56Controls ? 128 : 32;
 
 const describeIntegration = apiKey ? (describe.sequential ?? describe.skip) : describe.skip;
 
@@ -22,8 +25,8 @@ describeIntegration("openai adapter integration", () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-openai-ok",
-      temperature: 0,
-      maxTokens: 32
+      ...deterministicTemperature,
+      maxTokens: generationMaxTokens
     });
 
     expect(result.text.toLowerCase()).toContain("integration-openai-ok");
@@ -35,8 +38,8 @@ describeIntegration("openai adapter integration", () => {
     const result = streamText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-openai-stream-ok",
-      temperature: 0,
-      maxTokens: 32
+      ...deterministicTemperature,
+      maxTokens: generationMaxTokens
     });
 
     const chunks: string[] = [];
@@ -54,8 +57,8 @@ describeIntegration("openai adapter integration", () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
-      temperature: 0,
-      maxTokens: 32,
+      ...deterministicTemperature,
+      maxTokens: usesOpenAIGpt56Controls ? 256 : 128,
       maxSteps: 2,
       tools: {
         sum: tool({
@@ -68,10 +71,7 @@ describeIntegration("openai adapter integration", () => {
           execute: ({ a, b }) => ({ total: a + b })
         })
       },
-      toolChoice: {
-        type: "tool",
-        toolName: "sum"
-      }
+      toolChoice: "auto"
     });
 
     expect(result.toolResults[0]?.toolName).toBe("sum");
@@ -82,7 +82,7 @@ describeIntegration("openai adapter integration", () => {
     const result = await generateObject({
       model: provider()(textModelId),
       prompt: "Return a city-country pair for Buenos Aires, Argentina.",
-      temperature: 0,
+      ...deterministicTemperature,
       schema: z.object({
         city: z.string(),
         country: z.string()

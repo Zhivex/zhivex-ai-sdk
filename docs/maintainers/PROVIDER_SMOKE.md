@@ -37,7 +37,7 @@ Postgres gate, run `bun run test:integration:agents` as documented in
 
 | Provider | Required environment |
 | --- | --- |
-| `openai` | `OPENAI_API_KEY` |
+| `openai` | `OPENAI_API_KEY`; optional `OPENAI_INTEGRATION_MODEL` (defaults to `gpt-5.6-luna`) and `OPENAI_INTEGRATION_EMBEDDING_MODEL` |
 | `xai` | `XAI_API_KEY` |
 | `meta` | `MODEL_API_KEY`; optional `META_BASE_URL` and `META_INTEGRATION_MODEL`. Smoke defaults to the reduced-cost `muse-spark-1.2-contributor`; production examples continue to use `muse-spark-1.2`. |
 | `azure-openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
@@ -106,7 +106,7 @@ Skipped providers: 15/15
 
 | Provider | Status | Text model | Capabilities | Missing requirements |
 | --- | --- | --- | --- | --- |
-| openai | skipped_missing_credentials | gpt-5.4-nano | generateText, streamText, tools, structured output (native), embeddings, reasoning | OPENAI_API_KEY |
+| openai | skipped_missing_credentials | gpt-5.6-luna | generateText, streamText, tools, structured output (native), embeddings, reasoning | OPENAI_API_KEY |
 | azure-openai | skipped_missing_credentials | gpt-5.4-nano | generateText, streamText, tools, structured output (native), embeddings, reasoning | AZURE_OPENAI_API_KEY; AZURE_OPENAI_ENDPOINT |
 | anthropic | skipped_missing_credentials | claude-3-5-sonnet | generateText, streamText, tools, structured output (prompted), reasoning | ANTHROPIC_API_KEY |
 ```

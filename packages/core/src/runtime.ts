@@ -33,25 +33,60 @@ const isRetryableError = (error: unknown): boolean => {
   return false;
 };
 
-export const mergeAbortSignals = (...signals: Array<AbortSignal | undefined>) => {
-  const activeSignals = signals.filter(Boolean);
+export const createMergedAbortSignal = (...signals: Array<AbortSignal | undefined>): {
+  signal: AbortSignal | undefined;
+  cleanup: () => void;
+} => {
+  const activeSignals = [...new Set(signals.filter((signal): signal is AbortSignal => signal !== undefined))];
   if (!activeSignals.length) {
-    return undefined;
+    return { signal: undefined, cleanup: () => undefined };
+  }
+  if (activeSignals.length === 1) {
+    return { signal: activeSignals[0], cleanup: () => undefined };
+  }
+
+  const abortSignalWithAny = AbortSignal as typeof AbortSignal & {
+    any?: (signals: AbortSignal[]) => AbortSignal;
+  };
+  if (typeof abortSignalWithAny.any === "function") {
+    return {
+      signal: abortSignalWithAny.any(activeSignals),
+      cleanup: () => undefined
+    };
   }
 
   const controller = new AbortController();
-  const abort = () => controller.abort();
+  const listeners = new Map<AbortSignal, () => void>();
+  const cleanup = () => {
+    for (const [signal, listener] of listeners) {
+      signal.removeEventListener("abort", listener);
+    }
+    listeners.clear();
+  };
 
   for (const signal of activeSignals) {
-    if (signal?.aborted) {
-      controller.abort();
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      cleanup();
       break;
     }
-    signal?.addEventListener("abort", abort, { once: true });
+    const abort = () => {
+      controller.abort(signal.reason);
+      cleanup();
+    };
+    listeners.set(signal, abort);
+    signal.addEventListener("abort", abort, { once: true });
   }
 
-  return controller.signal;
+  return { signal: controller.signal, cleanup };
 };
+
+/**
+ * Convenience composition for operations that end when the merged signal aborts. For operations
+ * that can complete without aborting, use createMergedAbortSignal and call cleanup in a finally block.
+ */
+export const mergeAbortSignals = (...signals: Array<AbortSignal | undefined>): AbortSignal | undefined =>
+  createMergedAbortSignal(...signals).signal;
 
 export const withTimeoutSignal = (options: RetryOptions) => {
   if (
@@ -122,8 +157,13 @@ export const withRetry = async <T>(operation: () => Promise<T>, options: RetryOp
   throw lastError;
 };
 
-export const createProviderAdapter = <TAdapter extends ProviderAdapter>(adapter: TAdapter): CallableProviderAdapter & TAdapter => {
-  const callable = ((modelId: string) => adapter.languageModel(modelId)) as CallableProviderAdapter & TAdapter;
+export const createProviderAdapter = <TAdapter extends ProviderAdapter>(
+  adapter: TAdapter
+): CallableProviderAdapter<ReturnType<NoInfer<TAdapter>["languageModel"]>> & NoInfer<TAdapter> => {
+  const callable = ((modelId: string) => adapter.languageModel(modelId)) as CallableProviderAdapter<
+    ReturnType<TAdapter["languageModel"]>
+  > &
+    TAdapter;
 
   for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(adapter))) {
     Object.defineProperty(callable, key, descriptor);

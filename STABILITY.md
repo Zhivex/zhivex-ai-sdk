@@ -24,6 +24,12 @@ Supported public imports should come from published package entrypoints such as:
 - `@zhivex-ai/zai`
 - `@zhivex-ai/gateway`
 
+Focused published entrypoints are also supported: `@zhivex-ai/core/contracts`,
+`@zhivex-ai/core/runtime`, `@zhivex-ai/core/workflows`, `@zhivex-ai/core/ui`,
+`@zhivex-ai/core/node`, `@zhivex-ai/core/testing`,
+`@zhivex-ai/sdk/catalog`, `@zhivex-ai/sdk/beta`, and
+`@zhivex-ai/sdk/experimental`. The package roots remain backward compatible.
+
 Deep imports from internal files are not part of the stable contract unless this document names an explicit exception.
 
 Related documents:
@@ -97,6 +103,11 @@ These APIs are supported and documented, but they may still change between minor
 - File workflow-state pruning
 - Hosted-tool classification helpers
 - Gateway route metadata and policy selection ergonomics
+- Callable-provider construction and explicit merged-abort cleanup
+- Discriminated model capability profiles and legacy-capability derivation
+
+New application code can import these runtime values explicitly from
+`@zhivex-ai/sdk/beta` so the compatibility risk is visible at the import site.
 
 Beta APIs still require changelog-quality release notes when they change, but they do not yet carry the same compatibility expectations as the stable surface.
 
@@ -110,6 +121,7 @@ These areas are available for evaluation, but they should not be treated as long
 - Agent/provider features currently described as support-tier dependent
 
 Experimental areas may change faster than the rest of the SDK. Production adopters should isolate them behind an application-owned service layer.
+The same runtime cohort is available from `@zhivex-ai/sdk/experimental`.
 
 ## Provider Scope
 

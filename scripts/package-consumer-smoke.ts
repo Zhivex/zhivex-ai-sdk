@@ -226,9 +226,13 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 
 const specifiers = ${JSON.stringify(specifiers)};
+const typeOnlySpecifiers = new Set(["@zhivex-ai/core/contracts"]);
 for (const specifier of specifiers) {
   const exports = await import(specifier);
-  assert.ok(Object.keys(exports).length > 0, \`\${specifier} has no runtime exports\`);
+  assert.ok(
+    Object.keys(exports).length > 0 || typeOnlySpecifiers.has(specifier),
+    \`\${specifier} has no runtime exports\`
+  );
 }
 
 const {

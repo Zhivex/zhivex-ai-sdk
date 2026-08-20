@@ -1,4 +1,4 @@
-import type { LongContextPricing } from "./agent-trace.js";
+import type { LongContextPricing } from "./pricing.js";
 
 export type CatalogProviderId = string;
 
@@ -347,6 +347,13 @@ export const createModelCatalog = (
   });
 };
 
+/**
+ * @deprecated Prefer `defaultModelCatalog` from `@zhivex-ai/sdk` for the
+ * release-managed default inventory, or inject an application-owned catalog.
+ * This compatibility snapshot remains available through the next major. It is
+ * deliberately frozen at the migration boundary and must not receive later
+ * inventory or pricing updates; only the SDK-owned snapshot advances.
+ */
 export const defaultModelCatalog = createModelCatalog([
   {
     provider: "openai",

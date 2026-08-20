@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/core",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Shared contracts and runtime helpers for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -10,14 +10,47 @@
     "node": ">=18.18.0",
     "bun": ">=1.3.7"
   },
+  "imports": {
+    "#secure-id": {
+      "types": "./secure-id-internal.d.ts",
+      "browser": "./dist/secure-id.js",
+      "node": "./dist/secure-id-node.js",
+      "default": "./dist/secure-id.js"
+    }
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime-entry.d.ts",
+      "import": "./dist/runtime-entry.js"
+    },
+    "./workflows": {
+      "types": "./dist/workflows-entry.d.ts",
+      "import": "./dist/workflows-entry.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    },
+    "./ui": {
+      "types": "./dist/ui-entry.d.ts",
+      "import": "./dist/ui-entry.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
     }
   },
   "files": [
     "dist",
+    "secure-id-internal.d.ts",
     "README.md"
   ],
   "sideEffects": false,

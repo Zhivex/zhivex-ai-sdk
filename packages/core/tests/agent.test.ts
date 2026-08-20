@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
@@ -1487,6 +1487,57 @@ describe("agent runtime", () => {
       )
     ).rejects.toThrow("different execution environment");
     expect(modelCalls).toBe(2);
+  });
+
+  it("cleans stream cancellation resources when execution-environment acquisition fails", async () => {
+    const abortSignalWithAny = AbortSignal as typeof AbortSignal & {
+      any?: (signals: AbortSignal[]) => AbortSignal;
+    };
+    const nativeAny = abortSignalWithAny.any;
+    Object.defineProperty(abortSignalWithAny, "any", {
+      value: undefined,
+      writable: true,
+      configurable: true
+    });
+    const manifest = {
+      schemaVersion: 1,
+      id: "failing-environment",
+      backend: "custom",
+      assurance: "enforced",
+      isolation: "per-run"
+    } as const;
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, "removeEventListener");
+    const clearTimer = vi.spyOn(globalThis, "clearTimeout");
+    const agent = createAgent({
+      executionEnvironment: {
+        manifest,
+        async acquire() {
+          throw new Error("environment unavailable");
+        }
+      },
+      model: createLanguageModel()
+    });
+
+    try {
+      const result = streamAgent(agent, {
+        prompt: "hello",
+        abortSignal: controller.signal,
+        policy: { timeoutMs: 60_000 }
+      });
+
+      await expect(result.collect()).rejects.toThrow("environment unavailable");
+      expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function));
+      expect(clearTimer).toHaveBeenCalled();
+    } finally {
+      removeListener.mockRestore();
+      clearTimer.mockRestore();
+      Object.defineProperty(abortSignalWithAny, "any", {
+        value: nativeAny,
+        writable: true,
+        configurable: true
+      });
+    }
   });
 
   it("denies an execution-environment batch atomically during preflight", async () => {
