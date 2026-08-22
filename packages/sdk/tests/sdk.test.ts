@@ -19,6 +19,9 @@ describe("sdk public surface", () => {
     expect(sdk.fingerprintAgentHarness).toBeTypeOf("function");
     expect(sdk.createAgentEvaluationFixture).toBeTypeOf("function");
     expect(sdk.createAgentEvaluationReport).toBeTypeOf("function");
+    expect(sdk.runModelEvaluation).toBeTypeOf("function");
+    expect(sdk.compareModelEvaluationReports).toBeTypeOf("function");
+    expect(sdk.experimentalRawProviderOptions).toBeTypeOf("function");
     expect(sdk.createAgentRunSnapshot).toBeTypeOf("function");
     expect(sdk.createAgentRunTreeSnapshot).toBeTypeOf("function");
     expect(sdk.createAgentTraceArtifact).toBeTypeOf("function");
@@ -162,6 +165,8 @@ describe("sdk public surface", () => {
     expect(sdk.getApiStability("createAgentRunLedger")?.stability).toBe("stable");
     expect(sdk.getApiStability("CallbackRealtimeSession")?.stability).toBe("stable");
     expect(sdk.getApiStability("streamLiveAgent")?.stability).toBe("stable");
+    expect(sdk.getApiStability("runModelEvaluation")?.stability).toBe("beta");
+    expect(sdk.getApiStability("experimentalRawProviderOptions")?.stability).toBe("experimental");
     expect(sdk.getApiStability("createAdvancedToolRegistry")?.stability).toBe("experimental");
   });
 

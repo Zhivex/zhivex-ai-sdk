@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/sdk",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Unified high-level SDK for multi-provider AI workflows.",
   "license": "MIT",
   "type": "module",
@@ -21,6 +21,22 @@
     "./catalog": {
       "types": "./dist/catalog.d.ts",
       "import": "./dist/catalog.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    },
+    "./workflows": {
+      "types": "./dist/workflows.d.ts",
+      "import": "./dist/workflows.js"
+    },
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "import": "./dist/ui.js"
+    },
+    "./evals": {
+      "types": "./dist/evals.d.ts",
+      "import": "./dist/evals.js"
     },
     "./beta": {
       "types": "./dist/beta.d.ts",
@@ -56,6 +72,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "~1.7.0"
+    "@zhivex-ai/core": "~1.8.0"
   }
 }

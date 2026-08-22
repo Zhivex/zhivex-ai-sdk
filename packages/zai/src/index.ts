@@ -17,7 +17,7 @@ import {
   streamSSE,
   withRetry,
   withTimeoutSignal,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
@@ -26,14 +26,6 @@ import {
   type ModelMessage,
   type StreamEvent
 } from "@zhivex-ai/core";
-
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 
 export const ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4";
 export const ZAI_CODING_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
@@ -843,7 +835,7 @@ class ZAILanguageModel implements LanguageModel<ZAILanguageModelOptions> {
 
 export const createZAI = (
   options: ZAIProviderOptions = {}
-): TypedCallableProviderAdapter<LanguageModel<ZAILanguageModelOptions>> & {
+): CallableProviderAdapter<LanguageModel<ZAILanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
   endpoint: ZAIEndpoint;
 } => {

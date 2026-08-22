@@ -1,4 +1,15 @@
 import { toJSONSchema } from "zod";
+import {
+  capabilities,
+  groundedCapabilities,
+  imageGenerationCapabilities,
+  isGeminiLiveTranslateModel,
+  musicGenerationCapabilities,
+  realtimeCapabilities,
+  speechCapabilities,
+  transcriptionCapabilities,
+  videoGenerationCapabilities,
+} from "./capabilities.js";
 
 import {
   CallbackRealtimeSession,
@@ -33,7 +44,7 @@ import {
   type BatchDeleteInput,
   type BatchesClient,
   type CachedContent,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type ContextCacheCreateInput,
   type ContextCacheDeleteInput,
   type ContextCacheGetInput,
@@ -101,14 +112,6 @@ import {
   type VideoGenerationResult
 } from "@zhivex-ai/core";
 
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
-
 export interface GeminiProviderOptions {
   apiKey?: string;
   baseURL?: string;
@@ -146,204 +149,6 @@ export interface GeminiLanguageModelOptions {
   responseMimeType?: string;
   [key: string]: unknown;
 }
-
-const capabilities: ModelCapabilities = {
-  streaming: true,
-  tools: true,
-  structuredOutput: true,
-  jsonMode: true,
-  toolChoice: true,
-  parallelToolCalls: false,
-  vision: true,
-  files: true,
-  audioInput: true,
-  audioOutput: false,
-  embeddings: true,
-  fileSearch: true,
-  urlContext: true,
-  contextCaching: true,
-  batch: true,
-  interactions: true,
-  rawPrediction: true,
-  computerUse: true,
-  reasoning: true,
-  webSearch: true,
-  agentCapabilities: {
-    supportTier: "tier-b",
-    toolChoiceNone: true,
-    approvalRequests: false,
-    hostedWebSearch: true,
-    hostedFileSearch: true,
-    remoteMcp: false,
-    computerUse: true,
-    codeExecution: true,
-    toolsets: false
-  }
-};
-
-const transcriptionCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  audioInput: true,
-  audioOutput: false,
-  embeddings: false,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: false,
-    approvalRequests: false,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
-};
-
-const speechCapabilities: ModelCapabilities = {
-  ...transcriptionCapabilities,
-  streaming: true,
-  audioInput: false,
-  audioOutput: true
-};
-
-const groundedCapabilities: ModelCapabilities = {
-  ...capabilities,
-  webSearch: true
-};
-
-const imageGenerationCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  embeddings: false,
-  imageGeneration: true,
-  videoGeneration: false,
-  musicGeneration: false,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: false,
-    approvalRequests: false,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
-};
-
-const videoGenerationCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  vision: false,
-  embeddings: false,
-  imageGeneration: false,
-  videoGeneration: true,
-  musicGeneration: false,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: false,
-    approvalRequests: false,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
-};
-
-const musicGenerationCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  embeddings: false,
-  imageGeneration: false,
-  videoGeneration: false,
-  musicGeneration: true,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: false,
-    approvalRequests: false,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
-};
-
-const realtimeCapabilities = (modelId: string): ModelCapabilities => {
-  const translation = isGeminiLiveTranslateModel(modelId);
-  return {
-    ...capabilities,
-    streaming: false,
-    tools: !translation,
-    structuredOutput: false,
-    jsonMode: false,
-    toolChoice: false,
-    parallelToolCalls: false,
-    vision: !translation,
-    files: false,
-    audioInput: true,
-    audioOutput: true,
-    embeddings: false,
-    fileSearch: false,
-    urlContext: false,
-    contextCaching: false,
-    batch: false,
-    interactions: false,
-    rawPrediction: false,
-    computerUse: false,
-    reasoning: !translation,
-    webSearch: !translation,
-    agentCapabilities: {
-      ...capabilities.agentCapabilities!,
-      toolChoiceNone: !translation,
-      hostedWebSearch: !translation,
-      hostedFileSearch: false,
-      remoteMcp: false,
-      computerUse: false,
-      codeExecution: false
-    },
-    realtime: {
-      sessions: true,
-      audioInput: true,
-      audioOutput: true,
-      imageInput: !translation,
-      tools: !translation,
-      browserTokens: true
-    }
-  };
-};
 
 const MIB = 1024 * 1024;
 const MAX_JSON_RESPONSE_BYTES = 128 * MIB;
@@ -1008,7 +813,6 @@ const mapRealtimeProviderOptions = (providerOptions: Record<string, unknown> | u
       )
     : {};
 
-const isGeminiLiveTranslateModel = (modelId: string) => /^gemini-3\.5-live-translate(?:-preview)?$/i.test(modelId.trim());
 const isGemini31FlashLiveModel = (modelId: string) => /^gemini-3\.1-flash-live(?:-preview)?$/i.test(modelId.trim());
 
 const geminiRealtimeURL = (baseURL: string, apiKey: string, providerOptions?: Record<string, unknown>) => {
@@ -3373,7 +3177,7 @@ class GeminiRealtimeModel implements RealtimeModel {
 
 export const createGemini = (
   options: GeminiProviderOptions = {}
-): TypedCallableProviderAdapter<LanguageModel<GeminiLanguageModelOptions>> & {
+): CallableProviderAdapter<LanguageModel<GeminiLanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
 } => {
   const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;

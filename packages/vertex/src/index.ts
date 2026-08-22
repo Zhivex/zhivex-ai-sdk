@@ -1,5 +1,16 @@
 import { GoogleAuth } from "google-auth-library";
 import { toJSONSchema } from "zod";
+import {
+  capabilities,
+  groundedCapabilities,
+  imageGenerationCapabilities,
+  isGeminiLiveTranslateModel,
+  musicGenerationCapabilities,
+  realtimeCapabilities,
+  speechCapabilities,
+  transcriptionCapabilities,
+  videoGenerationCapabilities,
+} from "./capabilities.js";
 
 import {
   CallbackRealtimeSession,
@@ -33,7 +44,7 @@ import {
   type BatchListInput,
   type BatchesClient,
   type CachedContent,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type ContextCacheCreateInput,
   type ContextCacheDeleteInput,
   type ContextCacheGetInput,
@@ -74,14 +85,6 @@ import {
   type VideoGenerationModel,
   type VideoGenerationResult
 } from "@zhivex-ai/core";
-
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 
 export interface VertexAuthClient {
   getAccessToken: () => string | null | undefined | Promise<string | null | undefined>;
@@ -130,204 +133,6 @@ export interface VertexLanguageModelOptions {
   responseMimeType?: string;
   [key: string]: unknown;
 }
-
-const capabilities: ModelCapabilities = {
-  streaming: true,
-  tools: true,
-  structuredOutput: true,
-  jsonMode: true,
-  toolChoice: true,
-  parallelToolCalls: false,
-  vision: true,
-  files: true,
-  audioInput: true,
-  audioOutput: false,
-  embeddings: true,
-  fileSearch: false,
-  urlContext: true,
-  contextCaching: true,
-  batch: true,
-  interactions: false,
-  rawPrediction: true,
-  computerUse: true,
-  reasoning: true,
-  webSearch: true,
-  agentCapabilities: {
-    supportTier: "tier-b",
-    toolChoiceNone: true,
-    approvalRequests: false,
-    hostedWebSearch: true,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: true,
-    codeExecution: true,
-    toolsets: false
-  }
-};
-
-const transcriptionCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  audioInput: true,
-  audioOutput: false,
-  embeddings: false,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: false,
-    approvalRequests: false,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
-};
-
-const speechCapabilities: ModelCapabilities = {
-  ...transcriptionCapabilities,
-  streaming: true,
-  audioInput: false,
-  audioOutput: true
-};
-
-const groundedCapabilities: ModelCapabilities = {
-  ...capabilities,
-  webSearch: true
-};
-
-const imageGenerationCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  embeddings: false,
-  imageGeneration: true,
-  videoGeneration: false,
-  musicGeneration: false,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: false,
-    approvalRequests: false,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
-};
-
-const videoGenerationCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  vision: false,
-  embeddings: false,
-  imageGeneration: false,
-  videoGeneration: true,
-  musicGeneration: false,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: false,
-    approvalRequests: false,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
-};
-
-const musicGenerationCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  embeddings: false,
-  imageGeneration: false,
-  videoGeneration: false,
-  musicGeneration: true,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: false,
-    approvalRequests: false,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
-};
-
-const realtimeCapabilities = (modelId: string): ModelCapabilities => {
-  const translation = isGeminiLiveTranslateModel(modelId);
-  return {
-    ...capabilities,
-    streaming: false,
-    tools: !translation,
-    structuredOutput: false,
-    jsonMode: false,
-    toolChoice: false,
-    parallelToolCalls: false,
-    vision: !translation,
-    files: false,
-    audioInput: true,
-    audioOutput: true,
-    embeddings: false,
-    fileSearch: false,
-    urlContext: false,
-    contextCaching: false,
-    batch: false,
-    interactions: false,
-    rawPrediction: false,
-    computerUse: false,
-    reasoning: !translation,
-    webSearch: !translation,
-    agentCapabilities: {
-      ...capabilities.agentCapabilities!,
-      toolChoiceNone: !translation,
-      hostedWebSearch: !translation,
-      hostedFileSearch: false,
-      remoteMcp: false,
-      computerUse: false,
-      codeExecution: false
-    },
-    realtime: {
-      sessions: true,
-      audioInput: true,
-      audioOutput: true,
-      imageInput: !translation,
-      tools: !translation,
-      browserTokens: false
-    }
-  };
-};
 
 const MIB = 1024 * 1024;
 const MAX_JSON_RESPONSE_BYTES = 128 * MIB;
@@ -873,7 +678,6 @@ const mapRealtimeProviderOptions = (providerOptions: Record<string, unknown> | u
       )
     : {};
 
-const isGeminiLiveTranslateModel = (modelId: string) => /^gemini-3\.5-live-translate(?:-preview)?$/i.test(modelId.trim());
 
 const vertexRealtimeURL = (
   location: string,
@@ -2708,7 +2512,7 @@ class VertexRealtimeModel implements RealtimeModel {
 
 export const createVertex = (
   options: VertexProviderOptions = {}
-): TypedCallableProviderAdapter<LanguageModel<VertexLanguageModelOptions>> & {
+): CallableProviderAdapter<LanguageModel<VertexLanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
 } => {
   const auth = resolveVertexAuth(options);

@@ -203,7 +203,11 @@ console.log("INSTALLED_OTEL_OPTIONAL_PEER_SMOKE_OK");
   ) {
     throw new Error("Installed zhivex-ai CLI version output does not match its package metadata.");
   }
-  if (!runInstalledCli(["--help"]).includes("workflow replay|report|compare|baseline|gate|run|eval")) {
+  const installedCliHelp = runInstalledCli(["--help"]);
+  if (
+    !installedCliHelp.includes("workflow replay|report|compare|baseline|gate|run|eval") ||
+    !installedCliHelp.includes("eval run|compare")
+  ) {
     throw new Error("Installed zhivex-ai CLI help output is incomplete.");
   }
   console.log(`INSTALLED_CLI_SMOKE_OK ${installedCliVersion.version}`);

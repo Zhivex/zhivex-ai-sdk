@@ -681,6 +681,11 @@ export type GenerateInputSource =
       messages?: undefined;
     };
 
+/**
+ * Provider-specific request fields. Known provider adapters expose narrower
+ * generic option types. Arbitrary passthrough fields are Experimental; wrap
+ * them with `experimentalRawProviderOptions()` so the dependency is explicit.
+ */
 export type ProviderOptions = Record<string, unknown>;
 
 export interface ModelGenerateInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {

@@ -40,14 +40,26 @@ Custom catalogs default to pinned data. A rolling catalog must state whether it 
 
 The built-in `defaultModelCatalog` is an immutable rolling snapshot. Its entries, aliases, recommendations, and prices may be updated only in a package release, together with a new snapshot/pricing version and changelog entry. A mutable upstream alias is not remapped without explicit upstream evidence. Retired entries may be removed when the upstream provider removes them; reproducible routing and cost evaluation should use a recorded package version and the catalog metadata stored with the run.
 
+The SDK inventory is assembled from provider-scoped fragments. Each fragment has its own revision, verification date, pricing effective date, provenance sources, and model count. Applications and release tooling can inspect that provenance without importing internal files:
+
+```ts
+import { listDefaultModelCatalogFragments } from "@zhivex-ai/sdk/catalog";
+
+const openAI = listDefaultModelCatalogFragments().find(
+  (fragment) => fragment.provider === "openai"
+);
+console.log(openAI?.verifiedAt, openAI?.modelCount);
+```
+
+The returned metadata and nested source arrays are immutable copies. Updating one provider requires changing only its fragment plus the unified snapshot version when the release inventory changes.
+
 `@zhivex-ai/core` temporarily retains a deprecated compatibility export of its
 previous default snapshot. New applications should import the SDK-owned default
 or inject a custom catalog; the compatibility export is planned for removal in
 the next major version. The two packages contain separate physical snapshots:
 they are identical at the migration boundary, but the core copy is frozen.
-Future inventory and pricing updates must change only
-`packages/sdk/src/catalog.ts`, together with its snapshot metadata, tests,
-documentation, and release changeset. Consumers that keep importing the core
+Future inventory and pricing updates must change the provider fragment under
+`packages/sdk/src/catalog/providers`, together with unified snapshot metadata when applicable, tests, documentation, and a release changeset. Consumers that keep importing the core
 compatibility export will therefore not receive later catalog revisions.
 
 Pricing metadata establishes currency, unit, and snapshot scope. Catalog prices are routing and cost-estimation inputs tied to that package snapshot, not an authoritative billing source; verify current upstream pricing before billing users. Entries without a snapshot estimate omit cost fields. Region-specific, batch, priority, provisioned-throughput, tool, storage, and other provider-specific charges are not implied unless the catalog metadata explicitly includes them.

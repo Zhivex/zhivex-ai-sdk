@@ -5,6 +5,7 @@ export {
   createHttpTool,
   createToolPermissionPreset,
   createToolTestFixture,
+  experimentalRawProviderOptions,
   googleCodeExecutionTool,
   googleComputerUseTool,
   googleFileSearchTool,
@@ -17,3 +18,5 @@ export {
   testToolDefinition,
   testToolRegistry
 } from "@zhivex-ai/core";
+
+export type { ExperimentalRawProviderOptions } from "@zhivex-ai/core";

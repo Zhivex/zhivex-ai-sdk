@@ -26,7 +26,7 @@ import {
   readJsonWithLimit,
   withRetry,
   withTimeoutSignal,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
@@ -44,14 +44,6 @@ import {
   type StreamEvent,
   type ToolSet
 } from "@zhivex-ai/core";
-
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 
 export interface BedrockProviderOptions {
   client?: BedrockRuntimeClient;
@@ -1058,7 +1050,7 @@ class BedrockAgentCoreMcpClient implements McpClient {
 
 export const createBedrock = (
   options: BedrockProviderOptions = {}
-): TypedCallableProviderAdapter<
+): CallableProviderAdapter<
   LanguageModel<BedrockLanguageModelOptions | BedrockOpenAICompatibleLanguageModelOptions>
 > => {
   if (options.runtime === "openai") {

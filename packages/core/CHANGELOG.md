@@ -1,5 +1,13 @@
 # @zhivex-ai/core
 
+## 1.8.0
+
+### Minor Changes
+
+- Add Beta comparative model evaluation suites, built-in scorers, reports, cost and latency summaries, regression thresholds, report comparison, and local CLI commands.
+
+  Add provider-scoped default catalog provenance, focused SDK runtime/workflow/UI/evaluation entrypoints, and an explicit Experimental helper for validated raw provider-option passthrough. Align the stability manifest helpers with their documented Stable contract.
+
 ## 1.7.0
 
 ### Minor Changes

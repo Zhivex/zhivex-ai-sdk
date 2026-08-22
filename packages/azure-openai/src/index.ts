@@ -1,4 +1,13 @@
 import { toJSONSchema, z } from "zod";
+import {
+  capabilities,
+  groundedCapabilities,
+  modelCapabilities,
+  realtimeCapabilities,
+  speechCapabilities,
+  supportsAzureOpenAIHostedHarnessTools,
+  transcriptionCapabilities,
+} from "./capabilities.js";
 
 import {
   CallbackRealtimeSession,
@@ -28,7 +37,7 @@ import {
   type AudioFrame,
   type AudioInput,
   type AudioResponseLimits,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
@@ -52,14 +61,6 @@ import {
   type TranscriptionModel,
   type TranscriptionResult
 } from "@zhivex-ai/core";
-
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 
 export interface AzureOpenAIProviderOptions {
   apiKey?: string;
@@ -285,133 +286,6 @@ export interface AzureOpenAILanguageModelOptions {
   tool_choice?: "none" | "auto" | "required" | { type: "function"; function: { name: string } };
   [key: string]: unknown;
 }
-
-const capabilities: ModelCapabilities = {
-  streaming: true,
-  tools: true,
-  structuredOutput: true,
-  jsonMode: true,
-  toolChoice: true,
-  parallelToolCalls: true,
-  vision: true,
-  files: false,
-  audioInput: false,
-  audioOutput: false,
-  embeddings: true,
-  reasoning: true,
-  webSearch: true,
-  agentCapabilities: {
-    supportTier: "tier-a",
-    toolChoiceNone: true,
-    approvalRequests: true,
-    hostedWebSearch: true,
-    hostedFileSearch: true,
-    remoteMcp: true,
-    computerUse: true,
-    codeExecution: true,
-    shell: true,
-    applyPatch: true,
-    toolSearch: true,
-    skills: true,
-    toolsets: false
-  }
-};
-
-const normalizeModelId = (modelId: string) => modelId.trim().toLowerCase();
-
-const supportsAzureOpenAIToolSearch = (modelId: string) => {
-  const normalized = normalizeModelId(modelId);
-  return /^gpt-5\.4(?:$|-20|-pro)/.test(normalized);
-};
-
-const supportsAzureOpenAIComputerUse = (modelId: string) => {
-  const normalized = normalizeModelId(modelId);
-  return /^gpt-5\.4(?:$|-20|-pro|-mini)/.test(normalized);
-};
-
-const supportsAzureOpenAIHostedHarnessTools = (modelId: string) => /^gpt-5\.4(?:$|-)/.test(normalizeModelId(modelId));
-
-const modelCapabilities = (modelId: string): ModelCapabilities => ({
-  ...capabilities,
-  agentCapabilities: {
-    ...capabilities.agentCapabilities!,
-    computerUse: supportsAzureOpenAIComputerUse(modelId),
-    shell: supportsAzureOpenAIHostedHarnessTools(modelId),
-    applyPatch: supportsAzureOpenAIHostedHarnessTools(modelId),
-    skills: supportsAzureOpenAIHostedHarnessTools(modelId),
-    toolSearch: supportsAzureOpenAIToolSearch(modelId)
-  }
-});
-
-const transcriptionCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  vision: false,
-  audioInput: true,
-  audioOutput: false,
-  embeddings: false,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: false,
-    approvalRequests: false,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
-};
-
-const speechCapabilities: ModelCapabilities = {
-  ...transcriptionCapabilities,
-  audioInput: false,
-  audioOutput: true
-};
-
-const groundedCapabilities: ModelCapabilities = {
-  ...capabilities,
-  webSearch: true
-};
-
-const realtimeCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  structuredOutput: false,
-  jsonMode: false,
-  files: false,
-  audioInput: true,
-  audioOutput: true,
-  embeddings: false,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    ...capabilities.agentCapabilities!,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    computerUse: false,
-    codeExecution: false,
-    shell: false,
-    applyPatch: false,
-    toolSearch: false,
-    skills: false
-  },
-  realtime: {
-    sessions: true,
-    audioInput: true,
-    audioOutput: true,
-    imageInput: true,
-    tools: true,
-    browserTokens: true
-  }
-};
 
 const jsonHeaders = (apiKey: string) => ({
   "content-type": "application/json",
@@ -1873,7 +1747,7 @@ const encodeAzureDeployment = (value: string) => {
 
 export const createAzureOpenAI = (
   options: AzureOpenAIProviderOptions = {}
-): TypedCallableProviderAdapter<LanguageModel<AzureOpenAILanguageModelOptions>> & {
+): CallableProviderAdapter<LanguageModel<AzureOpenAILanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
 } => {
   const apiKey = options.apiKey ?? process.env.AZURE_OPENAI_API_KEY;

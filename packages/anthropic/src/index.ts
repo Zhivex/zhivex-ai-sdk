@@ -16,7 +16,7 @@ import {
   streamSSE,
   withRetry,
   withTimeoutSignal,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
@@ -25,14 +25,6 @@ import {
   type ModelMessage,
   type StreamEvent
 } from "@zhivex-ai/core";
-
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 
 export interface AnthropicProviderOptions {
   apiKey?: string;
@@ -1160,7 +1152,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
 
 export const createAnthropic = (
   options: AnthropicProviderOptions = {}
-): TypedCallableProviderAdapter<LanguageModel<AnthropicLanguageModelOptions>> & {
+): CallableProviderAdapter<LanguageModel<AnthropicLanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
 } => {
   const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;

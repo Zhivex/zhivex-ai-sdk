@@ -34,6 +34,14 @@ console.log(result.text);
 
 Use provider-backed models from Bun, Node.js, route handlers, workers, or other server runtimes. Keep provider credentials and effectful tools out of browser bundles.
 
+Focused entrypoints are available for smaller and more explicit imports:
+
+- `@zhivex-ai/sdk/runtime` for generation and runtime helpers
+- `@zhivex-ai/sdk/workflows` for declarative workflows and state services
+- `@zhivex-ai/sdk/ui` for UI message and SSE contracts
+- `@zhivex-ai/sdk/evals` for agent, workflow, and Beta comparative model evaluations
+- `@zhivex-ai/agents` for the dedicated agent-first facade
+
 The release-managed default model inventory is available from the SDK root or
 `@zhivex-ai/sdk/catalog`. `@zhivex-ai/core` keeps catalog contracts and the
 `createModelCatalog` mechanism plus a deprecated, frozen compatibility snapshot
@@ -63,6 +71,7 @@ runtime symbols with `getApiStability()` and review
 - Workflows guide: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/WORKFLOWS.md>
 - Artifact Service: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/ARTIFACTS.md>
 - Model Catalog: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/MODEL_CATALOG.md>
+- Comparative model evaluations: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/MODEL_EVALUATIONS.md>
 - CLI contract: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/CLI.md>
 - Observability guide: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/OBSERVABILITY.md>
 

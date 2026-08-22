@@ -20,7 +20,7 @@ import {
   serializeJsonValue,
   withRetry,
   withTimeoutSignal,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
@@ -29,14 +29,6 @@ import {
   type ModelMessage,
   type StreamEvent
 } from "@zhivex-ai/core";
-
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 
 export interface OllamaProviderOptions {
   baseURL?: string;
@@ -705,7 +697,7 @@ class OllamaEmbeddingModel implements EmbeddingModel {
 
 export const createOllama = (
   options: OllamaProviderOptions = {}
-): TypedCallableProviderAdapter<LanguageModel<OllamaLanguageModelOptions>> => {
+): CallableProviderAdapter<LanguageModel<OllamaLanguageModelOptions>> => {
   const configuredBaseURL = options.baseURL ?? process.env.OLLAMA_HOST ?? "http://localhost:11434";
   let candidate: URL;
   try {

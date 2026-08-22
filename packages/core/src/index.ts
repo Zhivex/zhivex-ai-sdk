@@ -58,6 +58,8 @@ export {
   listApiStability
 } from "./api-stability.js";
 export type { LongContextPricing } from "./pricing.js";
+export { experimentalRawProviderOptions } from "./raw-provider-options.js";
+export type { ExperimentalRawProviderOptions } from "./raw-provider-options.js";
 export type {
   ApiStabilityEntry,
   ApiStabilityLevel
@@ -147,6 +149,39 @@ export type {
   MockToolOptions,
   RunAgentEvaluationOptions
 } from "./agent-evaluation.js";
+export {
+  MODEL_EVALUATION_REPORT_SCHEMA_VERSION,
+  compareModelEvaluationReports,
+  createContainsScorer,
+  createEmbeddingSimilarityScorer,
+  createExactMatchScorer,
+  createJsonSchemaScorer,
+  createJsonValueScorer,
+  createModelJudgeScorer,
+  createRegexScorer,
+  createToolCallScorer,
+  evaluateModelEvaluationGate,
+  runModelEvaluation
+} from "./model-evaluation.js";
+export type {
+  ModelEvaluationCandidate,
+  ModelEvaluationCandidateComparison,
+  ModelEvaluationCandidateSummary,
+  ModelEvaluationCase,
+  ModelEvaluationComparison,
+  ModelEvaluationGateCheck,
+  ModelEvaluationGateCheckCode,
+  ModelEvaluationGateResult,
+  ModelEvaluationGenerationSettings,
+  ModelEvaluationReport,
+  ModelEvaluationRunResult,
+  ModelEvaluationScore,
+  ModelEvaluationScorer,
+  ModelEvaluationScorerContext,
+  ModelEvaluationScorerResult,
+  ModelEvaluationSuite,
+  ModelEvaluationThresholds
+} from "./model-evaluation.js";
 export {
   DEFAULT_ARTIFACT_SERVICE_LIMITS,
   createFileArtifactService,

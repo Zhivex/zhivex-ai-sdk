@@ -15,7 +15,7 @@ import {
   streamSSE,
   withRetry,
   withTimeoutSignal,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
@@ -24,14 +24,6 @@ import {
   type ModelMessage,
   type StreamEvent
 } from "@zhivex-ai/core";
-
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 
 export interface OpenRouterProviderOptions {
   apiKey?: string;
@@ -421,7 +413,7 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
 
 export const createOpenRouter = (
   options: OpenRouterProviderOptions = {}
-): TypedCallableProviderAdapter<LanguageModel<OpenRouterLanguageModelOptions>> & {
+): CallableProviderAdapter<LanguageModel<OpenRouterLanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
 } => {
   const apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
