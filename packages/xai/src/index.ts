@@ -11,7 +11,7 @@ import {
   readJsonWithLimit,
   withRetry,
   withTimeoutSignal,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type FileDeleteInput,
   type FileGetInput,
   type FileListInput,
@@ -30,13 +30,6 @@ import {
   type UploadedFile
 } from "@zhivex-ai/core";
 
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 import { createOpenAI } from "@zhivex-ai/openai";
 
 export interface XAIProviderOptions {
@@ -595,7 +588,7 @@ export const xAIFilePart = (fileId: string, mediaType = "application/octet-strea
 
 export const createXAI = (
   options: XAIProviderOptions = {}
-): TypedCallableProviderAdapter<LanguageModel<XAILanguageModelOptions>> & {
+): CallableProviderAdapter<LanguageModel<XAILanguageModelOptions>> & {
   files: FilesClient<XAIFileOptions>;
   rawFetch: typeof globalThis.fetch;
 } => {

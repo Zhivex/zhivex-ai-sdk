@@ -94,6 +94,9 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("createOtelWorkflowObserver")?.stability).toBe("stable");
     expect(api.getApiStability("OTEL_GENAI_CONTRACT_VERSION")?.stability).toBe("stable");
     expect(api.getApiStability("OTEL_GENAI_SEMCONV_REVISION")?.stability).toBe("stable");
+    expect(api.getApiStability("API_STABILITY_MANIFEST")?.stability).toBe("stable");
+    expect(api.getApiStability("getApiStability")?.stability).toBe("stable");
+    expect(api.getApiStability("listApiStability")?.stability).toBe("stable");
     expect(api.getApiStability("createAgentAuditRecord")?.stability).toBe("beta");
     expect(api.getApiStability("createToolAuditRecords")?.stability).toBe("beta");
     expect(api.getApiStability("createReadOnlyToolApprovalPolicy")?.stability).toBe("beta");
@@ -106,8 +109,10 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("normalizeAgentRunLedger")?.stability).toBe("stable");
     expect(api.getApiStability("migrateAgentApprovalQueueItem")?.stability).toBe("stable");
     expect(api.getApiStability("selectAgentModel")?.stability).toBe("stable");
+    expect(api.getApiStability("runModelEvaluation")?.stability).toBe("beta");
 
     expect(api.getApiStability("createAdvancedToolRegistry")?.stability).toBe("experimental");
+    expect(api.getApiStability("experimentalRawProviderOptions")?.stability).toBe("experimental");
     expect(api.getApiStability("missingSymbol")).toBeUndefined();
   });
 });

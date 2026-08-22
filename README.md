@@ -56,6 +56,7 @@ Use these guides when adopting the SDK in a real app:
 - [Artifact Service Contract](./docs/ARTIFACTS.md): bounded payloads, integrity, backend semantics, maintenance, and release evidence.
 - [Model Catalog Contract](./docs/MODEL_CATALOG.md): immutable snapshots, data-update policy, pricing metadata, and capability boundaries.
 - [CLI Contract](./docs/CLI.md): command compatibility, JSON and exit behavior, local execution, and safety boundaries.
+- [Comparative Model Evaluations](./docs/MODEL_EVALUATIONS.md): candidate matrices, scorers, cost/latency summaries, thresholds, and CLI usage.
 - [Agent Observability Guide](./docs/OBSERVABILITY.md): traces, audit records, ledgers, golden traces, evaluations, and local inspection.
 - [Workspace Agents Guide](./docs/WORKSPACE_AGENTS.md): shell/apply-patch harnesses, app-owned execution boundaries, approvals, and safety requirements.
 - [Migration Guide](./docs/MIGRATION.md): move from direct provider SDKs, Vercel AI SDK core usage, or simple tool loops.

@@ -58,10 +58,91 @@ describe("zhivex-ai CLI", () => {
     expect(capture.stdout[0]).toContain("init agent");
     expect(capture.stdout[0]).toContain("doctor");
     expect(capture.stdout[0]).toContain("agents ledger|inspect|diff|golden|eval");
+    expect(capture.stdout[0]).toContain("eval run|compare");
     expect(capture.stdout[0]).toContain("sessions list|show|workflow-state|prune");
     expect(capture.stdout[0]).toContain("workflow replay|report|compare|baseline|gate|run|eval");
     expect(capture.stdout[0]).toContain("version");
     expect(capture.stdout[0]).toContain("--include-output-text");
+  });
+
+  it("runs and compares model evaluation suites from module exports", async () => {
+    const directory = await tempDir("zhivex-cli-model-eval-");
+    const modulePath = path.join(directory, "suite.mjs");
+    const reportPath = path.join(directory, "report.json");
+    const comparisonPath = path.join(directory, "comparison.json");
+    await fs.writeFile(modulePath, `
+const model = {
+  provider: "fixture",
+  modelId: "candidate",
+  capabilities: {
+    streaming: false, tools: false, structuredOutput: true, jsonMode: true,
+    toolChoice: false, parallelToolCalls: false, vision: false, files: false,
+    audioInput: false, audioOutput: false, embeddings: false, reasoning: false,
+    webSearch: false
+  },
+  async generate() {
+    return { text: "approved", finishReason: "stop", usage: { totalTokens: 4 } };
+  }
+};
+export const suite = {
+  cases: [{ name: "approval", prompt: "approve", reference: "approved" }],
+  candidates: [{ id: "candidate", model }],
+  scorers: [{ id: "exact", score: ({ outputText, testCase }) => outputText === testCase.reference ? 1 : 0 }],
+  thresholds: { minMeanScore: 1 }
+};
+export const failingSuite = {
+  ...suite,
+  cases: [{ name: "approval", prompt: "approve", reference: "denied" }]
+};
+`, "utf8");
+
+    const runCapture = createCapture();
+    await expect(runCli([
+      "eval",
+      "run",
+      "--module",
+      modulePath,
+      "--export",
+      "suite",
+      "--out",
+      reportPath
+    ], runCapture.io)).resolves.toBe(0);
+    expect(JSON.parse(runCapture.stdout[0]!)).toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      totalRuns: 1,
+      candidates: [{ candidateId: "candidate", meanScore: 1 }]
+    });
+    await expect(readJson(reportPath)).resolves.toMatchObject({ ok: true, totalRuns: 1 });
+
+    const failedCapture = createCapture();
+    await expect(runCli([
+      "eval",
+      "run",
+      "--module",
+      modulePath,
+      "--export",
+      "failingSuite"
+    ], failedCapture.io)).resolves.toBe(1);
+    expect(JSON.parse(failedCapture.stdout[0]!)).toMatchObject({ ok: false });
+
+    const compareCapture = createCapture();
+    await expect(runCli([
+      "eval",
+      "compare",
+      "--base",
+      reportPath,
+      "--target",
+      reportPath,
+      "--out",
+      comparisonPath
+    ], compareCapture.io)).resolves.toBe(0);
+    expect(JSON.parse(compareCapture.stdout[0]!)).toMatchObject({
+      candidates: [{ candidateId: "candidate", scoreDelta: 0 }]
+    });
+    await expect(readJson(comparisonPath)).resolves.toMatchObject({
+      candidates: [{ candidateId: "candidate" }]
+    });
   });
 
   it("prints schema-versioned CLI package metadata", async () => {

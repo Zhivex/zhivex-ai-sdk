@@ -1,4 +1,13 @@
 import { toJSONSchema } from "zod";
+import {
+  capabilities,
+  embeddingCapabilities,
+  imageGenerationCapabilities,
+  realtimeCapabilities,
+  speechCapabilities,
+  transcriptionCapabilities,
+  videoGenerationCapabilities,
+} from "./capabilities.js";
 import type { RawData } from "ws";
 
 import {
@@ -33,7 +42,7 @@ import {
   type BatchJob,
   type BatchListInput,
   type BatchesClient,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
@@ -70,14 +79,6 @@ import {
   type VideoGenerationModel,
   type VideoGenerationResult
 } from "@zhivex-ai/core";
-
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 
 export interface QwenProviderOptions {
   apiKey?: string;
@@ -166,66 +167,11 @@ export interface QwenTasksClient {
   cancel(input: { name: string; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<PredictionOperation>;
 }
 
-export type QwenProvider = TypedCallableProviderAdapter<LanguageModel<QwenLanguageModelOptions>> & {
+export type QwenProvider = CallableProviderAdapter<LanguageModel<QwenLanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
   rerankModel(modelId: string): QwenRerankModel;
   multimodalEmbeddingModel(modelId: string): QwenMultimodalEmbeddingModel;
   tasks: QwenTasksClient;
-};
-
-const capabilities: ModelCapabilities = {
-  streaming: true,
-  tools: true,
-  structuredOutput: true,
-  jsonMode: true,
-  toolChoice: true,
-  parallelToolCalls: false,
-  vision: true,
-  files: false,
-  audioInput: false,
-  audioOutput: false,
-  embeddings: true,
-  reasoning: false,
-  webSearch: true,
-  agentCapabilities: {
-    supportTier: "tier-b",
-    toolChoiceNone: true,
-    approvalRequests: false,
-    hostedWebSearch: true,
-    hostedFileSearch: true,
-    remoteMcp: true,
-    computerUse: false,
-    codeExecution: true,
-    webExtraction: true,
-    toolsets: false
-  }
-};
-
-const embeddingCapabilities: ModelCapabilities = {
-  streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  vision: false,
-  files: false,
-  audioInput: false,
-  audioOutput: false,
-  embeddings: true,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: false,
-    approvalRequests: false,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
 };
 
 const qwenTaskBaseURLFrom = (baseURL: string) => {
@@ -716,58 +662,6 @@ const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
       webExtraction: tools && !omni
     }
   };
-};
-
-const transcriptionCapabilities: ModelCapabilities = {
-  ...embeddingCapabilities,
-  audioInput: true
-};
-
-const speechCapabilities: ModelCapabilities = {
-  ...embeddingCapabilities,
-  audioOutput: true
-};
-
-const imageGenerationCapabilities: ModelCapabilities = {
-  ...embeddingCapabilities,
-  imageGeneration: true
-};
-
-const videoGenerationCapabilities: ModelCapabilities = {
-  ...embeddingCapabilities,
-  videoGeneration: true
-};
-
-const realtimeCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  files: false,
-  audioInput: true,
-  audioOutput: true,
-  embeddings: false,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    ...capabilities.agentCapabilities!,
-    toolChoiceNone: true,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    codeExecution: false,
-    webExtraction: false
-  },
-  realtime: {
-    sessions: true,
-    audioInput: true,
-    audioOutput: true,
-    imageInput: true,
-    tools: true,
-    browserTokens: false
-  }
 };
 
 const reasoningContentFromMessage = (message: ModelMessage) =>

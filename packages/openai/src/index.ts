@@ -6,6 +6,19 @@ import {
   normalizeOpenAIImageGenerationPartialImage,
   type OpenAIImageOutputFormat
 } from "./image-generation.js";
+import {
+  capabilities,
+  groundedCapabilities,
+  inferOpenAIRealtimeMode,
+  isOpenAIGpt56Model,
+  modelCapabilities,
+  openAIRealtimeSupportsImageInput,
+  realtimeCapabilities,
+  speechCapabilities,
+  supportsOpenAIApplyPatchAndSkills,
+  supportsOpenAIShell,
+  transcriptionCapabilities,
+} from "./capabilities.js";
 
 import {
   CallbackRealtimeSession,
@@ -37,7 +50,7 @@ import {
   type AudioFrame,
   type AudioInput,
   type AudioResponseLimits,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type EmbedInput,
   type EmbeddingModel,
   type EmbedResult,
@@ -63,14 +76,6 @@ import {
   type TranscriptionModel,
   type TranscriptionResult
 } from "@zhivex-ai/core";
-
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 
 const MIB = 1024 * 1024;
 const DEFAULT_HOSTED_IMAGE_EVENT_BYTES = 32 * MIB;
@@ -500,199 +505,6 @@ export interface OpenAILanguageModelOptions {
     | { type: "image_generation" };
   [key: string]: unknown;
 }
-
-const capabilities: ModelCapabilities = {
-  streaming: true,
-  tools: true,
-  structuredOutput: true,
-  jsonMode: true,
-  toolChoice: true,
-  parallelToolCalls: true,
-  vision: true,
-  files: false,
-  audioInput: false,
-  audioOutput: false,
-  embeddings: true,
-  reasoning: true,
-  webSearch: true,
-  agentCapabilities: {
-    supportTier: "tier-a",
-    toolChoiceNone: true,
-    approvalRequests: true,
-    hostedWebSearch: true,
-    hostedFileSearch: true,
-    remoteMcp: true,
-    computerUse: true,
-    codeExecution: true,
-    shell: true,
-    applyPatch: true,
-    toolSearch: true,
-    skills: true,
-    toolsets: false
-  }
-};
-
-const normalizeModelId = (modelId: string) => modelId.trim().toLowerCase();
-
-const isOpenAIGpt56Model = (modelId: string) => /^gpt-5\.6(?:$|-(?:sol|terra|luna)(?:-|$)|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
-const isOpenAIGpt55BaseModel = (modelId: string) => /^gpt-5\.5(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
-const isOpenAIGpt55ProModel = (modelId: string) => /^gpt-5\.5-pro(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
-const isOpenAIGpt54BaseModel = (modelId: string) => /^gpt-5\.4(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
-const isOpenAIGpt54MiniModel = (modelId: string) => /^gpt-5\.4-mini(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
-const isOpenAIGpt54NanoModel = (modelId: string) => /^gpt-5\.4-nano(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
-const isOpenAIGpt54ProModel = (modelId: string) => /^gpt-5\.4-pro(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
-
-const supportsOpenAIToolSearch = (modelId: string) =>
-  isOpenAIGpt56Model(modelId) || isOpenAIGpt55BaseModel(modelId) || isOpenAIGpt54BaseModel(modelId) || isOpenAIGpt54MiniModel(modelId);
-
-const supportsOpenAIComputerUse = (modelId: string) =>
-  isOpenAIGpt56Model(modelId) || isOpenAIGpt55BaseModel(modelId) || isOpenAIGpt54BaseModel(modelId) || isOpenAIGpt54MiniModel(modelId);
-
-const supportsOpenAIShell = (modelId: string) =>
-  isOpenAIGpt56Model(modelId) ||
-  isOpenAIGpt55BaseModel(modelId) ||
-  isOpenAIGpt55ProModel(modelId) ||
-  isOpenAIGpt54BaseModel(modelId) ||
-  isOpenAIGpt54MiniModel(modelId) ||
-  isOpenAIGpt54NanoModel(modelId) ||
-  isOpenAIGpt54ProModel(modelId);
-
-const supportsOpenAIApplyPatchAndSkills = (modelId: string) =>
-  isOpenAIGpt56Model(modelId) ||
-  isOpenAIGpt55BaseModel(modelId) ||
-  isOpenAIGpt54BaseModel(modelId) ||
-  isOpenAIGpt54MiniModel(modelId) ||
-  isOpenAIGpt54NanoModel(modelId);
-
-const supportsOpenAIChatAudio = (modelId: string) => {
-  const normalized = normalizeModelId(modelId);
-  return /^(?:gpt-audio(?:-|$)|gpt-4o(?:-mini)?-audio-preview(?:-|$))/.test(normalized);
-};
-
-const modelCapabilities = (modelId: string): ModelCapabilities => ({
-  ...capabilities,
-  explicitPromptCaching: isOpenAIGpt56Model(modelId),
-  files: isOpenAIGpt56Model(modelId),
-  reasoningEfforts: isOpenAIGpt56Model(modelId)
-    ? ["none", "low", "medium", "high", "xhigh", "max"]
-    : undefined,
-  reasoningModes: isOpenAIGpt56Model(modelId) ? ["standard", "pro"] : undefined,
-  reasoningContexts: isOpenAIGpt56Model(modelId) ? ["auto", "current_turn", "all_turns"] : undefined,
-  audioInput: supportsOpenAIChatAudio(modelId),
-  audioOutput: supportsOpenAIChatAudio(modelId),
-  agentCapabilities: {
-    ...capabilities.agentCapabilities!,
-    computerUse: supportsOpenAIComputerUse(modelId),
-    shell: supportsOpenAIShell(modelId),
-    applyPatch: supportsOpenAIApplyPatchAndSkills(modelId),
-    skills: supportsOpenAIApplyPatchAndSkills(modelId),
-    toolSearch: supportsOpenAIToolSearch(modelId),
-    programmaticToolCalling: isOpenAIGpt56Model(modelId),
-    multiAgent: isOpenAIGpt56Model(modelId)
-  }
-});
-
-const transcriptionCapabilities: ModelCapabilities = {
-  ...capabilities,
-  streaming: false,
-  tools: false,
-  structuredOutput: false,
-  jsonMode: false,
-  toolChoice: false,
-  parallelToolCalls: false,
-  vision: false,
-  audioInput: true,
-  audioOutput: false,
-  embeddings: false,
-  reasoning: false,
-  webSearch: false,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: false,
-    approvalRequests: false,
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
-};
-
-const speechCapabilities: ModelCapabilities = {
-  ...transcriptionCapabilities,
-  audioInput: false,
-  audioOutput: true
-};
-
-const groundedCapabilities: ModelCapabilities = {
-  ...capabilities,
-  webSearch: true
-};
-
-const isOpenAIRealtimeTranslationModel = (modelId: string) => /^gpt-realtime-translate(?:[-@]|$)/.test(modelId);
-const isOpenAIRealtimeTranscriptionModel = (modelId: string) => /^gpt-realtime-whisper(?:[-@]|$)/.test(modelId);
-const inferOpenAIRealtimeMode = (modelId: string, mode?: RealtimeSessionConfig["mode"]): NonNullable<RealtimeSessionConfig["mode"]> => {
-  if (mode) {
-    return mode;
-  }
-  if (isOpenAIRealtimeTranslationModel(modelId)) {
-    return "translation";
-  }
-  if (isOpenAIRealtimeTranscriptionModel(modelId)) {
-    return "transcription";
-  }
-  return "conversation";
-};
-
-const isOpenAIRealtimeReasoningModel = (modelId: string) =>
-  /^gpt-realtime-2(?:\.1(?:-mini)?)?(?:-\d{4}-\d{2}-\d{2}|@.*)?$/.test(modelId);
-
-const openAIRealtimeSupportsImageInput = (modelId: string) =>
-  /^(?:gpt-realtime|gpt-realtime-mini|gpt-realtime-1\.5|gpt-realtime-2(?:\.1(?:-mini)?)?)(?:-\d{4}-\d{2}-\d{2}|@.*)?$/.test(
-    modelId
-  );
-
-const realtimeCapabilities = (modelId: string): ModelCapabilities => ({
-  ...capabilities,
-  streaming: false,
-  structuredOutput: false,
-  jsonMode: false,
-  embeddings: false,
-  audioInput: true,
-  audioOutput: !isOpenAIRealtimeTranscriptionModel(modelId),
-  tools: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
-  toolChoice: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
-  parallelToolCalls: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
-  vision: openAIRealtimeSupportsImageInput(modelId),
-  reasoning: isOpenAIRealtimeReasoningModel(modelId),
-  webSearch: false,
-  agentCapabilities: {
-    ...capabilities.agentCapabilities!,
-    supportTier:
-      isOpenAIRealtimeTranslationModel(modelId) || isOpenAIRealtimeTranscriptionModel(modelId) ? "tier-c" : "tier-a",
-    toolChoiceNone: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
-    approvalRequests: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
-    hostedWebSearch: false,
-    hostedFileSearch: false,
-    remoteMcp: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
-    computerUse: false,
-    codeExecution: false,
-    shell: false,
-    applyPatch: false,
-    toolSearch: false,
-    skills: false,
-    toolsets: false
-  },
-  realtime: {
-    sessions: true,
-    audioInput: true,
-    audioOutput: !isOpenAIRealtimeTranscriptionModel(modelId),
-    imageInput: openAIRealtimeSupportsImageInput(modelId),
-    tools: !isOpenAIRealtimeTranslationModel(modelId) && !isOpenAIRealtimeTranscriptionModel(modelId),
-    browserTokens: true
-  }
-});
 
 const jsonHeaders = (apiKey: string) => ({
   "content-type": "application/json",
@@ -3371,7 +3183,7 @@ class OpenAIRealtimeModel implements RealtimeModel {
 
 export const createOpenAI = (
   options: OpenAIProviderOptions = {}
-): TypedCallableProviderAdapter<LanguageModel<OpenAILanguageModelOptions>> & {
+): CallableProviderAdapter<LanguageModel<OpenAILanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
 } => {
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;

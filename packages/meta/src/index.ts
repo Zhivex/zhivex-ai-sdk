@@ -15,7 +15,7 @@ import {
   streamSSE,
   withRetry,
   withTimeoutSignal,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type FileDeleteInput,
   type FileGetInput,
   type FileListInput,
@@ -33,14 +33,6 @@ import {
   type StreamEvent,
   type UploadedFile
 } from "@zhivex-ai/core";
-
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 
 export interface MetaProviderOptions {
   apiKey?: string;
@@ -1273,7 +1265,7 @@ class MetaFilesClient implements FilesClient<MetaFileOptions> {
 
 export const createMeta = (
   options: MetaProviderOptions = {}
-): TypedCallableProviderAdapter<LanguageModel<MetaLanguageModelOptions>> & {
+): CallableProviderAdapter<LanguageModel<MetaLanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
 } => {
   const apiKey = options.apiKey ?? process.env.MODEL_API_KEY;

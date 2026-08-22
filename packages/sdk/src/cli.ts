@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   compareWorkflowEvaluationReports,
+  compareModelEvaluationReports,
   cleanupFileArtifactStore,
   createAgentRunLedger,
   createFileArtifactService,
@@ -22,6 +23,7 @@ import {
   pruneFileSessionStore,
   pruneFileWorkflowStateStore,
   replayWorkflowRun,
+  runModelEvaluation,
   runWorkflow,
   runWorkflowEvaluationFixture,
   saveWorkflowEvaluationReportAsArtifact,
@@ -33,6 +35,8 @@ import {
   type AgentGoldenTrace,
   type AgentSession,
   type JsonValue,
+  type ModelEvaluationReport,
+  type ModelEvaluationSuite,
   type WorkflowDefinition,
   type WorkflowEvaluationBaseline,
   type WorkflowEvaluationCase,
@@ -105,6 +109,8 @@ const cliCommandContracts: Record<string, CliCommandContract> = {
     flags: ["golden", "include-output-text", "ledger", "no-timeline", "out", "state"],
     booleanFlags: ["include-output-text", "no-timeline"]
   },
+  "eval:run": { flags: ["export", "module", "out"] },
+  "eval:compare": { flags: ["base", "out", "target"] },
   "workflow-states:list": { flags: ["app", "dir", "session", "user"] },
   "workflow-states:show": { flags: ["app", "dir", "session", "user", "workflow"] },
   "workflow-states:prune": {
@@ -266,6 +272,7 @@ Commands:
   init agent
   doctor
   agents ledger|inspect|diff|golden|eval
+  eval run|compare
   sessions list|show|workflow-state|prune
   artifacts list|show|verify|inspect|cleanup|prune
   workflow replay|report|compare|baseline|gate|run|eval
@@ -1161,6 +1168,40 @@ const loadModuleExport = async <T>(
   return value as T;
 };
 
+const runEvaluationCommand = async (
+  subcommand: string | undefined,
+  flags: Record<string, string | true>,
+  io: CliIO
+) => {
+  if (subcommand === "run") {
+    const suite = await loadModuleExport<ModelEvaluationSuite>(
+      requiredFlag(flags, "module"),
+      stringFlag(flags, "export")
+    );
+    const report = await runModelEvaluation(suite);
+    const out = stringFlag(flags, "out");
+    if (out) {
+      await writeJsonFile(out, report);
+    }
+    printJson(io, report);
+    return report.ok ? 0 : 1;
+  }
+
+  if (subcommand === "compare") {
+    const baseline = await readJsonFile<ModelEvaluationReport>(requiredFlag(flags, "base"));
+    const target = await readJsonFile<ModelEvaluationReport>(requiredFlag(flags, "target"));
+    const comparison = compareModelEvaluationReports(baseline, target);
+    const out = stringFlag(flags, "out");
+    if (out) {
+      await writeJsonFile(out, comparison);
+    }
+    printJson(io, comparison);
+    return 0;
+  }
+
+  return fail(io, "Unknown eval command.");
+};
+
 const runWorkflowStatesCommand = async (
   subcommand: string | undefined,
   flags: Record<string, string | true>,
@@ -1375,6 +1416,9 @@ export const runCli = async (args: string[], io: CliIO = {}): Promise<number> =>
     }
     if (parsed.command === "agents") {
       return await runAgentsCommand(parsed.subcommand, parsed.flags, io);
+    }
+    if (parsed.command === "eval") {
+      return await runEvaluationCommand(parsed.subcommand, parsed.flags, io);
     }
     if (parsed.command === "workflow-states") {
       return await runWorkflowStatesCommand(parsed.subcommand, parsed.flags, io);

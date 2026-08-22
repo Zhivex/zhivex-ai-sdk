@@ -2,8 +2,14 @@ import { defaultModelCatalog as coreCompatibilityCatalog } from "@zhivex-ai/core
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { defaultModelCatalog } from "../src/catalog.js";
-import { defaultModelCatalog as rootDefaultModelCatalog } from "../src/index.js";
+import {
+  defaultModelCatalog,
+  listDefaultModelCatalogFragments
+} from "../src/catalog.js";
+import {
+  defaultModelCatalog as rootDefaultModelCatalog,
+  listDefaultModelCatalogFragments as listRootFragments
+} from "../src/index.js";
 
 describe("SDK model catalog ownership", () => {
   it("exports the SDK-owned snapshot from both public entrypoints", () => {
@@ -36,6 +42,21 @@ describe("SDK model catalog ownership", () => {
       "xai",
       "zai"
     ]);
+  });
+
+  it("publishes immutable provider-scoped freshness and provenance metadata", () => {
+    expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
+    const fragments = listDefaultModelCatalogFragments();
+    expect(fragments).toHaveLength(14);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(98);
+    expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
+      revision: "2026-08-16",
+      verifiedAt: "2026-08-16",
+      pricingEffectiveAt: "2026-08-16",
+      sources: ["catalog-release:2026-08-16"]
+    });
+    expect(Object.isFrozen(fragments[0])).toBe(true);
+    expect(Object.isFrozen(fragments[0]?.sources)).toBe(true);
   });
 
   it("does not derive the release-managed snapshot from the frozen core compatibility copy", () => {

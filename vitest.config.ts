@@ -17,7 +17,17 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["packages/**/tests/**/*.test.ts", "scripts/**/*.test.ts"],
-    exclude: ["**/node_modules/**", "packages/**/tests/**/*.integration.test.ts"]
+    exclude: ["**/node_modules/**", "packages/**/tests/**/*.integration.test.ts"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text-summary", "json-summary"],
+      thresholds: {
+        statements: 80,
+        branches: 70,
+        functions: 85,
+        lines: 80,
+      },
+    },
   },
   resolve: {
     alias: workspaceAliases

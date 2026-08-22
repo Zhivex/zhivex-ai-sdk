@@ -18,7 +18,7 @@ import {
   tool,
   withRetry,
   withTimeoutSignal,
-  type ProviderAdapter,
+  type CallableProviderAdapter,
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
@@ -28,14 +28,6 @@ import {
   type StreamEvent,
   type ToolSet
 } from "@zhivex-ai/core";
-
-type TypedCallableProviderAdapter<TLanguageModel extends LanguageModel> = Omit<
-  ProviderAdapter,
-  "languageModel"
-> &
-  ((modelId: string) => TLanguageModel) & {
-    languageModel(modelId: string): TLanguageModel;
-  };
 
 export interface KimiProviderOptions {
   apiKey?: string;
@@ -810,7 +802,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
 
 export const createKimi = (
   options: KimiProviderOptions = {}
-): TypedCallableProviderAdapter<LanguageModel<KimiLanguageModelOptions>> & {
+): CallableProviderAdapter<LanguageModel<KimiLanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
 } => {
   const apiKey = options.apiKey ?? process.env.KIMI_API_KEY ?? process.env.MOONSHOT_API_KEY;

@@ -27,7 +27,8 @@ Supported public imports should come from published package entrypoints such as:
 Focused published entrypoints are also supported: `@zhivex-ai/core/contracts`,
 `@zhivex-ai/core/runtime`, `@zhivex-ai/core/workflows`, `@zhivex-ai/core/ui`,
 `@zhivex-ai/core/node`, `@zhivex-ai/core/testing`,
-`@zhivex-ai/sdk/catalog`, `@zhivex-ai/sdk/beta`, and
+`@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/workflows`, `@zhivex-ai/sdk/ui`,
+`@zhivex-ai/sdk/evals`, `@zhivex-ai/sdk/catalog`, `@zhivex-ai/sdk/beta`, and
 `@zhivex-ai/sdk/experimental`. The package roots remain backward compatible.
 
 Deep imports from internal files are not part of the stable contract unless this document names an explicit exception.
@@ -105,6 +106,7 @@ These APIs are supported and documented, but they may still change between minor
 - Gateway route metadata and policy selection ergonomics
 - Callable-provider construction and explicit merged-abort cleanup
 - Discriminated model capability profiles and legacy-capability derivation
+- Comparative model evaluation suites, scorers, reports, comparisons, and gates
 
 New application code can import these runtime values explicitly from
 `@zhivex-ai/sdk/beta` so the compatibility risk is visible at the import site.
@@ -118,6 +120,7 @@ These areas are available for evaluation, but they should not be treated as long
 - Provider-native hosted tools and escape hatches that do not map cleanly to the shared contract
 - Advanced tool registry helpers: `createAdvancedToolRegistry`, `AdvancedToolRegistry`, `createHttpTool`, `testToolDefinition`, `testToolRegistry`, `createToolTestFixture`, `recordToolTestFixture`, `runToolTestFixture`, `createToolPermissionPreset`, and `inspectToolRegistry`
 - Provider-specific `providerOptions` shapes beyond the documented shared behavior
+- Explicit raw provider-option passthrough created with `experimentalRawProviderOptions()`
 - Agent/provider features currently described as support-tier dependent
 
 Experimental areas may change faster than the rest of the SDK. Production adopters should isolate them behind an application-owned service layer.
