@@ -12,11 +12,13 @@ import {
   createModelJudgeScorer,
   createRegexScorer,
   createTextMessage,
+  createToolCallScorer,
   evaluateModelEvaluationGate,
   runModelEvaluation,
   type EmbeddingModel,
   type LanguageModel,
-  type ModelCapabilities
+  type ModelCapabilities,
+  type ToolExecutionResult
 } from "../src/index.js";
 
 const capabilities: ModelCapabilities = {
@@ -173,6 +175,43 @@ describe("comparative model evaluations", () => {
     expect(report.candidates[0]).toMatchObject({ failedRuns: 1, errorRate: 1 });
   });
 
+  it("fails cost gates closed when any run cannot be priced", async () => {
+    let invocation = 0;
+    const model: LanguageModel = {
+      provider: "test",
+      modelId: "partial-usage",
+      capabilities,
+      async generate() {
+        invocation += 1;
+        return {
+          messages: [createTextMessage("assistant", "ok")],
+          text: "ok",
+          finishReason: "stop",
+          usage: invocation === 1
+            ? { inputTokens: 10, outputTokens: 5, totalTokens: 15 }
+            : undefined
+        };
+      }
+    };
+    const report = await runModelEvaluation({
+      cases: [{ name: "partial-cost", prompt: "ok", reference: "ok" }],
+      candidates: [{ id: "partial-usage", model, pricing: { costPer1kTokens: 1, currency: "USD" } }],
+      scorers: [createExactMatchScorer()],
+      repetitions: 2,
+      maxConcurrency: 1,
+      thresholds: { maxTotalCost: 1 }
+    });
+
+    expect(report.runs[0]?.cost?.totalCost).toBeCloseTo(0.015);
+    expect(report.runs[1]?.cost?.totalCost).toBeUndefined();
+    expect(report.candidates[0]).toMatchObject({ totalCost: undefined, meanCost: undefined, currency: undefined });
+    expect(report.gate).toMatchObject({
+      ok: false,
+      checks: [{ code: "max_total_cost", ok: false, actual: undefined }]
+    });
+    expect(report.ok).toBe(false);
+  });
+
   it("provides JSON, schema, regex, embedding, and model-judge scorers", async () => {
     const embeddingModel: EmbeddingModel = {
       provider: "test",
@@ -219,6 +258,62 @@ describe("comparative model evaluations", () => {
       toolResults: [],
       latencyMs: 1
     })).resolves.toMatchObject({ score: 1 });
+  });
+
+  it("compares unordered tool calls as multisets", async () => {
+    const result = (toolName: string, index: number): ToolExecutionResult => ({
+      toolCallId: `${toolName}-${index}`,
+      toolName,
+      isError: false
+    });
+    const context = (expectedToolCalls: string[], actualToolCalls: string[]) => ({
+      testCase: { name: "tools", prompt: "use tools", expectedToolCalls },
+      candidate: { id: "candidate", provider: "test", modelId: "model" },
+      repetition: 1,
+      toolResults: actualToolCalls.map(result),
+      latencyMs: 1
+    });
+    const scorer = createToolCallScorer();
+
+    await expect(Promise.resolve(scorer.score(context(["search", "search"], ["search"])))).resolves.toMatchObject({ score: 0 });
+    await expect(Promise.resolve(scorer.score(context(["search"], ["search", "search"])))).resolves.toMatchObject({ score: 0 });
+    await expect(Promise.resolve(scorer.score(
+      context(["search", "lookup", "search"], ["lookup", "search", "search"])
+    ))).resolves.toBe(1);
+  });
+
+  it("deduplicates concurrent reference embedding requests", async () => {
+    let totalRequests = 0;
+    let referenceRequests = 0;
+    const embeddingModel: EmbeddingModel = {
+      provider: "test",
+      modelId: "embedding",
+      capabilities: { ...capabilities, embeddings: true },
+      async embed(input) {
+        totalRequests += 1;
+        if (input.values[0] === "shared reference") {
+          referenceRequests += 1;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return { embeddings: input.values.map(() => [1, 0]) };
+      }
+    };
+    const scorer = createEmbeddingSimilarityScorer({ model: embeddingModel });
+    const context = (candidateId: string, outputText: string) => ({
+      testCase: { name: "concurrent", prompt: "x", reference: "shared reference" },
+      candidate: { id: candidateId, provider: "test", modelId: candidateId },
+      repetition: 1,
+      outputText,
+      toolResults: [],
+      latencyMs: 1
+    });
+
+    await expect(Promise.all([
+      scorer.score(context("first", "first output")),
+      scorer.score(context("second", "second output"))
+    ])).resolves.toHaveLength(2);
+    expect(referenceRequests).toBe(1);
+    expect(totalRequests).toBe(3);
   });
 
   it("compares reports and validates fail-closed unavailable cost thresholds", () => {

@@ -452,6 +452,7 @@ const summarizeCandidate = (
   const successfulRuns = runs.filter((run) => run.ok).length;
   const scores = runs.flatMap((run) => run.meanScore === undefined ? [] : [run.meanScore]);
   const costs = runs.flatMap((run) => run.cost?.totalCost === undefined ? [] : [run.cost.totalCost]);
+  const hasCompleteCostEstimate = runs.length > 0 && costs.length === runs.length;
   const currencies = new Set(runs.map((run) => run.cost?.currency).filter((value): value is string => value !== undefined));
   return {
     candidateId: candidate.id,
@@ -466,9 +467,9 @@ const summarizeCandidate = (
     maxScore: scores.length === 0 ? undefined : Math.max(...scores),
     p50LatencyMs: percentile(runs.map((run) => run.latencyMs), 0.5),
     p95LatencyMs: percentile(runs.map((run) => run.latencyMs), 0.95),
-    totalCost: costs.length === 0 ? undefined : costs.reduce((sum, value) => sum + value, 0),
-    meanCost: mean(costs),
-    currency: currencies.size === 1 ? [...currencies][0] : undefined,
+    totalCost: hasCompleteCostEstimate ? costs.reduce((sum, value) => sum + value, 0) : undefined,
+    meanCost: hasCompleteCostEstimate ? mean(costs) : undefined,
+    currency: hasCompleteCostEstimate && currencies.size === 1 ? [...currencies][0] : undefined,
     usage: sumUsage(runs.map((run) => run.usage)),
     metadata: candidate.metadata
   };
@@ -724,7 +725,23 @@ export const createToolCallScorer = (options: { id?: string; requireExactOrder?:
     const actual = context.toolResults.map((result) => result.toolName);
     const matches = options.requireExactOrder
       ? JSON.stringify(actual) === JSON.stringify(expected)
-      : expected.every((name) => actual.includes(name)) && actual.every((name) => expected.includes(name));
+      : (() => {
+          if (actual.length !== expected.length) {
+            return false;
+          }
+          const expectedCounts = new Map<string, number>();
+          for (const name of expected) {
+            expectedCounts.set(name, (expectedCounts.get(name) ?? 0) + 1);
+          }
+          for (const name of actual) {
+            const remaining = expectedCounts.get(name);
+            if (remaining === undefined || remaining === 0) {
+              return false;
+            }
+            expectedCounts.set(name, remaining - 1);
+          }
+          return [...expectedCounts.values()].every((count) => count === 0);
+        })();
     return matches ? 1 : { score: 0, feedback: `Expected tool calls ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}.` };
   }
 });
@@ -734,7 +751,7 @@ export const createEmbeddingSimilarityScorer = (options: {
   id?: string;
   minimumSimilarity?: number;
 }): ModelEvaluationScorer => {
-  const cache = new Map<string, number[]>();
+  const referenceCache = new Map<string, Promise<number[]>>();
   return {
     id: options.id ?? "embedding_similarity",
     async score(context) {
@@ -742,13 +759,25 @@ export const createEmbeddingSimilarityScorer = (options: {
         throw new ValidationError(`Case ${JSON.stringify(context.testCase.name)} requires a string reference for embedding similarity.`);
       }
       const referenceKey = `${options.model.provider}\u0000${options.model.modelId}\u0000${context.testCase.name}\u0000${context.testCase.reference}`;
-      let referenceEmbedding = cache.get(referenceKey);
-      if (!referenceEmbedding) {
-        referenceEmbedding = (await embed({ model: options.model, value: context.testCase.reference })).embeddings[0];
-        if (!referenceEmbedding) {
-          throw new ValidationError("Embedding model returned no reference embedding.");
+      let referenceEmbeddingPromise = referenceCache.get(referenceKey);
+      if (!referenceEmbeddingPromise) {
+        referenceEmbeddingPromise = embed({ model: options.model, value: context.testCase.reference }).then((result) => {
+          const embedding = result.embeddings[0];
+          if (!embedding) {
+            throw new ValidationError("Embedding model returned no reference embedding.");
+          }
+          return embedding;
+        });
+        referenceCache.set(referenceKey, referenceEmbeddingPromise);
+      }
+      let referenceEmbedding: number[];
+      try {
+        referenceEmbedding = await referenceEmbeddingPromise;
+      } catch (cause) {
+        if (referenceCache.get(referenceKey) === referenceEmbeddingPromise) {
+          referenceCache.delete(referenceKey);
         }
-        cache.set(referenceKey, referenceEmbedding);
+        throw cause;
       }
       const outputEmbedding = (await embed({ model: options.model, value: context.outputText ?? "" })).embeddings[0];
       if (!outputEmbedding) {
