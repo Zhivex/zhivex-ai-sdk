@@ -46,6 +46,7 @@ Zhivex Runner -> OpenAI + SessionService -> UIMessageChunk SSE
 - Request bodies are capped at 64 KiB; messages, session IDs, and approval batches have lower semantic limits.
 - Provider calls and agent runs have explicit token, step, budget, and time limits.
 - Browser cancellation reaches the runner through `request.signal`.
+- The composer hides attachments because the canonical route intentionally accepts text parts only.
 - Public failures omit provider response bodies and credentials.
 - The local demo identity fails closed when `NODE_ENV=production`.
 

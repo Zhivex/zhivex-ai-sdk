@@ -338,6 +338,11 @@ for (const relativePath of ["lib/server.ts", "scripts/first-response.ts"]) {
     canonicalModel
   );
 }
+requireIncludes(
+  "examples/next-runner/app/page.tsx",
+  starterSources.get(path.join(starterRoot, "app/page.tsx")) ?? "",
+  "allowAttachments: false"
+);
 
 for (const [filePath, content] of starterSources) {
   if (content.includes("../../packages/") || content.includes("workspace:")) {

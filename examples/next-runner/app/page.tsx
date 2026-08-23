@@ -33,6 +33,7 @@ export default function Page() {
     >
       <ZhivexChat
         controller={chat}
+        composerProps={{ allowAttachments: false }}
         header={
           <div>
             <strong>Zhivex Runner</strong>
