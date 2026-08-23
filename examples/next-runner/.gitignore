@@ -1,0 +1,4 @@
+.env
+.next/
+.zhivex/
+node_modules/

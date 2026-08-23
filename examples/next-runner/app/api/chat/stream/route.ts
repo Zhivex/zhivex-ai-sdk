@@ -1,52 +1,47 @@
 import {
-  Agent,
-  createFileSessionService,
-  createRunner,
   fromUIMessage,
   toUIRunnerStreamResponse,
-  type AgentApprovalResponse,
-  type UIMessage
+  type AgentApprovalResponse
 } from "@zhivex-ai/sdk";
-import { createOpenAI } from "@zhivex-ai/openai";
+import {
+  ChatRequestError,
+  MAX_APPROVALS,
+  MAX_SESSION_ID_CHARS,
+  noStoreHeaders,
+  optionalBoundedString,
+  optionalUserMessage,
+  readChatJson,
+  safeChatErrorResponse
+} from "../../../../lib/http";
+import { getRunner, resolveCurrentUserId } from "../../../../lib/server";
 
 export const runtime = "nodejs";
 
-const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
-
-const runner = createRunner({
-  appName: "next-runner-example",
-  agent: new Agent({
-    model: openai("gpt-4o-mini"),
-    instructions: "You are a concise support assistant."
-  }),
-  sessionService: createFileSessionService({
-    directory: ".zhivex/sessions"
-  })
-});
-
 export async function POST(request: Request) {
-  const body = (await request.json()) as {
-    message?: UIMessage;
-    sessionId?: string;
-    approvals?: AgentApprovalResponse[];
-  };
+  try {
+    const body = await readChatJson(request);
+    const message = optionalUserMessage(body.message);
+    const approvals = body.approvals as AgentApprovalResponse[] | undefined;
+    if (approvals !== undefined && (!Array.isArray(approvals) || approvals.length > MAX_APPROVALS)) {
+      throw new ChatRequestError(`approvals must contain at most ${MAX_APPROVALS} items.`);
+    }
+    if (!message && !approvals?.length) {
+      return Response.json(
+        { error: "Missing message or approval." },
+        { status: 400, headers: noStoreHeaders }
+      );
+    }
 
-  if (!body.message && !body.approvals?.length) {
-    return Response.json(
-      { error: "Missing message or approval." },
-      { status: 400 }
-    );
+    const stream = getRunner().stream({
+      userId: await resolveCurrentUserId(request),
+      sessionId: optionalBoundedString(body.sessionId, "sessionId", MAX_SESSION_ID_CHARS),
+      messages: message ? [fromUIMessage(message)] : undefined,
+      approvals,
+      abortSignal: request.signal
+    });
+
+    return toUIRunnerStreamResponse(stream, { headers: noStoreHeaders });
+  } catch (error) {
+    return safeChatErrorResponse(error, request);
   }
-
-  const stream = runner.stream({
-    userId: "demo-user",
-    sessionId: body.sessionId,
-    messages: body.message ? [fromUIMessage(body.message)] : undefined,
-    approvals: body.approvals,
-    abortSignal: request.signal
-  });
-
-  return toUIRunnerStreamResponse(stream);
 }

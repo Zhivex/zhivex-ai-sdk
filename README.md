@@ -172,24 +172,26 @@ The repository includes runnable examples under [`examples/`](./examples/README.
 
 ## Quick Start
 
+This is step 1 of the canonical [Quickstart](./docs/QUICKSTART.md). It continues with the same `gpt-4o-mini` provider setup through `Agent`, persistent `Runner` sessions, and the [Next.js React starter](./examples/next-runner/README.md).
+
 ```ts
 import { generateText } from "@zhivex-ai/sdk";
 import { createOpenAI } from "@zhivex-ai/openai";
 
-const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+const apiKey = process.env.OPENAI_API_KEY;
+if (!apiKey) throw new Error("Set OPENAI_API_KEY in the server environment.");
 
 const result = await generateText({
-  model: openai("gpt-4o-mini"),
-  prompt: "Describe Zhivex AI SDK in one sentence."
+  model: createOpenAI({ apiKey })("gpt-4o-mini"),
+  prompt: "Describe Zhivex AI SDK in one sentence.",
+  maxTokens: 64,
+  timeoutMs: 30_000
 });
 
 console.log(result.text);
-console.log(result.usage);
 ```
 
-The high-level API accepts either a `prompt` or explicit `messages`, and returns normalized output including text, messages, finish reason, usage, tool results, and execution steps.
+Keep the credential server-side. The high-level API accepts either a `prompt` or explicit `messages`, and returns normalized output including text, messages, finish reason, usage, tool results, and execution steps.
 
 ## React Chat UI
 

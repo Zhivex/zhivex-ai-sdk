@@ -5,16 +5,26 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["node", "react", "react-dom"],
+    "allowJs": true,
+    "esModuleInterop": true,
+    "incremental": true,
+    "isolatedModules": true,
+    "plugins": [{ "name": "next" }],
+    "resolveJsonModule": true,
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "paths": {
-      "@zhivex-ai/core": ["../../packages/core/src/index.ts"],
-      "@zhivex-ai/openai": ["../../packages/openai/src/index.ts"],
-      "@zhivex-ai/react": ["../../packages/react/src/index.ts"],
-      "@zhivex-ai/sdk": ["../../packages/sdk/src/index.ts"]
-    }
+    "tsBuildInfoFile": ".next/cache/tsconfig.tsbuildinfo"
   },
-  "include": ["env.d.ts", "app/**/*.ts", "app/**/*.tsx"]
+  "include": [
+    "env.d.ts",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "lib/**/*.ts",
+    "scripts/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
 }
