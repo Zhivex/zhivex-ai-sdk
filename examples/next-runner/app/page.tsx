@@ -1,10 +1,25 @@
 "use client";
 
-import { ZhivexChat, useZhivexChat } from "@zhivex-ai/react";
+import { useMemo } from "react";
+import {
+  ZhivexChat,
+  createFetchChatTransport,
+  useZhivexChat
+} from "@zhivex-ai/react";
 
 export default function Page() {
+  const transport = useMemo(
+    () => createFetchChatTransport({
+      endpoint: "/api/chat/stream",
+      requestTimeoutMs: 90_000,
+      streamIdleTimeoutMs: 30_000,
+      maxEventChars: 256 * 1024,
+      maxStreamChars: 4 * 1024 * 1024
+    }),
+    []
+  );
   const chat = useZhivexChat({
-    endpoint: "/api/chat/stream"
+    transport
   });
 
   return (

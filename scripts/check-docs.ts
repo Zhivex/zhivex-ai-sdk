@@ -277,6 +277,114 @@ for (const [packageDirectory, packageName] of publishedPackages) {
   }
 }
 
+const requireIncludes = (label: string, content: string, expected: string) => {
+  if (!content.includes(expected)) {
+    reportError(`${label}: missing canonical golden-path text ${JSON.stringify(expected)}`);
+  }
+};
+
+const quickstartDoc = markdownByPath.get(path.join(repoRoot, "docs", "QUICKSTART.md")) ?? "";
+const nextjsDoc = markdownByPath.get(path.join(repoRoot, "docs", "NEXTJS.md")) ?? "";
+const starterRoot = path.join(repoRoot, "examples", "next-runner");
+const starterReadme = markdownByPath.get(path.join(starterRoot, "README.md")) ?? "";
+const starterManifestPath = path.join(starterRoot, "package.json");
+const starterManifest = JSON.parse(await readFile(starterManifestPath, "utf8")) as {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+};
+const starterDependencies = new Set([
+  ...Object.keys(starterManifest.dependencies ?? {}),
+  ...Object.keys(starterManifest.devDependencies ?? {})
+]);
+const starterSourcePaths = [
+  "app/api/chat/route.ts",
+  "app/api/chat/stream/route.ts",
+  "app/layout.tsx",
+  "app/page.tsx",
+  "lib/http.ts",
+  "lib/server.ts",
+  "scripts/first-response.ts"
+].map((relativePath) => path.join(starterRoot, relativePath));
+const starterSources = new Map(
+  await Promise.all(
+    starterSourcePaths.map(async (filePath) => [filePath, await readFile(filePath, "utf8")] as const)
+  )
+);
+
+const canonicalSdkInstall = "bun add @zhivex-ai/sdk @zhivex-ai/openai";
+const canonicalReactInstall =
+  "bun add @zhivex-ai/react @zhivex-ai/sdk @zhivex-ai/openai react react-dom";
+const canonicalModel = "gpt-4o-mini";
+const canonicalEndpoint = "/api/chat/stream";
+
+for (const [label, content] of [
+  ["README.md", rootReadme],
+  ["docs/QUICKSTART.md", quickstartDoc]
+] as const) {
+  requireIncludes(label, content, canonicalSdkInstall);
+  requireIncludes(label, content, canonicalModel);
+}
+for (const [label, content] of [
+  ["docs/NEXTJS.md", nextjsDoc],
+  ["examples/next-runner/README.md", starterReadme]
+] as const) {
+  requireIncludes(label, content, canonicalReactInstall);
+  requireIncludes(label, content, canonicalEndpoint);
+}
+for (const relativePath of ["lib/server.ts", "scripts/first-response.ts"]) {
+  requireIncludes(
+    `examples/next-runner/${relativePath}`,
+    starterSources.get(path.join(starterRoot, relativePath)) ?? "",
+    canonicalModel
+  );
+}
+
+for (const [filePath, content] of starterSources) {
+  if (content.includes("../../packages/") || content.includes("workspace:")) {
+    reportError(`${toRepoPath(filePath)}: standalone starter must not import workspace source`);
+  }
+  for (const match of content.matchAll(/from\s+["']([^"']+)["']/g)) {
+    const specifier = match[1];
+    if (specifier.startsWith(".") || specifier.startsWith("node:")) {
+      continue;
+    }
+    const packageName = normalizeImportedPackage(specifier);
+    if (!starterDependencies.has(packageName)) {
+      reportError(`${toRepoPath(filePath)}: imports ${packageName}, but the starter manifest does not declare it`);
+    }
+  }
+}
+
+const standaloneTsconfig = await readFile(path.join(starterRoot, "tsconfig.json"), "utf8");
+if (standaloneTsconfig.includes('"paths"') || standaloneTsconfig.includes("../../packages/")) {
+  reportError("examples/next-runner/tsconfig.json: standalone typecheck must resolve installed packages");
+}
+
+for (const [packageDirectory, dependencyName] of [
+  ["sdk", "@zhivex-ai/sdk"],
+  ["openai", "@zhivex-ai/openai"],
+  ["react", "@zhivex-ai/react"]
+] as const) {
+  const manifest = JSON.parse(
+    await readFile(path.join(packagesRoot, packageDirectory, "package.json"), "utf8")
+  ) as { version?: string };
+  if (!manifest.version || starterManifest.dependencies?.[dependencyName] !== manifest.version) {
+    reportError(`examples/next-runner/package.json: ${dependencyName} must pin the checkout package version`);
+  }
+}
+
+const installedSmoke = await readFile(path.join(repoRoot, "scripts", "package-consumer-smoke.ts"), "utf8");
+const goldenPathFixture = await readFile(
+  path.join(repoRoot, "scripts", "fixtures", "golden-path-installed-smoke.mjs"),
+  "utf8"
+);
+requireIncludes("scripts/package-consumer-smoke.ts", installedSmoke, "golden-path-installed-smoke.mjs");
+requireIncludes("scripts/package-consumer-smoke.ts", installedSmoke, 'execFileSync("bun"');
+requireIncludes("scripts/fixtures/golden-path-installed-smoke.mjs", goldenPathFixture, "golden_path_installed_smoke");
+for (const entrypoint of ["@zhivex-ai/sdk", "@zhivex-ai/openai", "@zhivex-ai/react"]) {
+  requireIncludes("scripts/fixtures/golden-path-installed-smoke.mjs", goldenPathFixture, entrypoint);
+}
+
 const changesetConfig = JSON.parse(await readFile(path.join(repoRoot, ".changeset/config.json"), "utf8")) as {
   changelog?: false | string;
 };
@@ -300,5 +408,5 @@ if (errors.length) {
 }
 
 console.log(
-  `Documentation check passed: ${markdownFiles.length} Markdown files, ${publishedPackages.size} published packages, local links and installation examples verified.`
+  `Documentation check passed: ${markdownFiles.length} Markdown files, ${publishedPackages.size} published packages, local links, installation examples, and golden-path alignment verified.`
 );

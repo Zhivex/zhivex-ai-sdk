@@ -559,6 +559,18 @@ console.log("INSTALLED_REALTIME_LIVE_SMOKE_OK");
     env: commandEnvironment,
     stdio: "inherit"
   });
+
+  const goldenPathSmokePath = join(consumerDirectory, "golden-path-smoke.mjs");
+  writeFileSync(
+    goldenPathSmokePath,
+    readFileSync(join(scriptDirectory, "fixtures", "golden-path-installed-smoke.mjs"), "utf8")
+  );
+  console.log("Running the canonical installed-package golden path with Bun...");
+  execFileSync("bun", [goldenPathSmokePath], {
+    cwd: consumerDirectory,
+    env: commandEnvironment,
+    stdio: "inherit"
+  });
 } catch (error) {
   console.error(`Package consumer smoke failed in ${temporaryDirectory}.`);
   throw error;

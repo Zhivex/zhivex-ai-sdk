@@ -40,7 +40,7 @@
     "smoke:packages:workflows-postgres": "bun run build && bun run scripts/workflow-package-postgres-smoke.ts",
     "snapshots:update:api": "bun run scripts/update-api-type-snapshots.ts",
     "typecheck": "tsc -b --force --pretty false && bun run typecheck:examples",
-    "typecheck:examples": "tsc -p examples/next-runner/tsconfig.json --pretty false",
+    "typecheck:examples": "tsc -p examples/next-runner/tsconfig.repo.json --pretty false",
     "version-packages": "changeset version",
     "release:check": "bun run scripts/check-release-readiness.ts",
     "release:check:next": "bun run scripts/check-release-readiness.ts --tag=next",
