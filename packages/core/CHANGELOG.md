@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.9.1
+
+### Patch Changes
+
+- 0ed1991: Keep delayed worker heartbeats fail-closed after lease expiry, and use bounded release coordination with late cleanup so stalled monitors cannot hang or recreate worker ownership.
+
 ## 1.9.0
 
 ### Minor Changes

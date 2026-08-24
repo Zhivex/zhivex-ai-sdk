@@ -72,6 +72,7 @@ const randomId = createSecureId;
 const AGENT_GROUP_FAIL_FAST_ABORT_MESSAGE = "Agent group member aborted after fail-fast.";
 const DEFAULT_AGENT_LEASE_TTL_MS = 30_000;
 const DEFAULT_AGENT_CANCELLATION_POLL_MS = 1_000;
+const DEFAULT_AGENT_MONITOR_SHUTDOWN_TIMEOUT_MS = 1_000;
 const DEFAULT_AGENT_MAX_STATE_BYTES = 4 * 1024 * 1024;
 
 class AgentPolicyTimeoutError extends Error {
@@ -2018,6 +2019,18 @@ interface AgentExecutionLeaseContext {
   release: () => Promise<void>;
 }
 
+const waitForAgentMonitorShutdown = async (monitor: Promise<void>, timeoutMs: number) => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timeout = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([monitor, deadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+};
+
 const acquireAgentExecutionLease = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   state: AgentRunState,
@@ -2059,17 +2072,27 @@ const acquireAgentExecutionLease = async <TModel extends LanguageModel>(
   let cancelled: AgentRunState | undefined;
   let lost = false;
   let stopped = false;
-  let monitoring = false;
+  let activeMonitor: Promise<void> | undefined;
   let lastHeartbeat = Date.now();
   let lastCancellationPoll = 0;
   const intervalMs = Math.max(25, Math.min(heartbeatMs, cancellationPollMs));
-  const timer = setInterval(async () => {
-    if (stopped || monitoring) return;
-    monitoring = true;
+  const monitorShutdownTimeoutMs = Math.min(ttlMs, DEFAULT_AGENT_MONITOR_SHUTDOWN_TIMEOUT_MS);
+  const cleanupStoppedMonitorLease = async () => {
+    try {
+      await store.releaseLease?.(state.runId, ownerId, state.scope);
+    } catch {
+      // The foreground release remains authoritative; late monitor cleanup is best effort.
+    }
+  };
+  const monitorLease = async () => {
     const now = Date.now();
     try {
       if (now - lastHeartbeat >= heartbeatMs) {
         const renewed = await store.renewLease?.(state.runId, { ownerId, ttlMs }, state.scope);
+        if (stopped) {
+          await cleanupStoppedMonitorLease();
+          return;
+        }
         if (!renewed) {
           lost = true;
           controller.abort(new ConflictError(`Agent run "${state.runId}" lost its worker lease.`));
@@ -2079,6 +2102,7 @@ const acquireAgentExecutionLease = async <TModel extends LanguageModel>(
       }
       if (now - lastCancellationPoll >= cancellationPollMs) {
         const latest = await store.load(state.runId, state.scope);
+        if (stopped) return;
         lastCancellationPoll = now;
         if (latest?.status === "cancel_requested" || latest?.status === "cancelled") {
           cancelled = normalizeAgentRunState(latest);
@@ -2086,11 +2110,19 @@ const acquireAgentExecutionLease = async <TModel extends LanguageModel>(
         }
       }
     } catch (error) {
+      if (stopped) {
+        await cleanupStoppedMonitorLease();
+        return;
+      }
       lost = true;
       controller.abort(error);
-    } finally {
-      monitoring = false;
     }
+  };
+  const timer = setInterval(() => {
+    if (stopped || activeMonitor) return;
+    activeMonitor = monitorLease().finally(() => {
+      activeMonitor = undefined;
+    });
   }, intervalMs);
   timer.unref?.();
 
@@ -2102,6 +2134,10 @@ const acquireAgentExecutionLease = async <TModel extends LanguageModel>(
     release: async () => {
       stopped = true;
       clearInterval(timer);
+      const monitor = activeMonitor;
+      if (monitor) {
+        await waitForAgentMonitorShutdown(monitor, monitorShutdownTimeoutMs);
+      }
       await store.releaseLease?.(state.runId, ownerId, state.scope);
     }
   };
