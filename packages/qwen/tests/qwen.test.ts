@@ -1397,6 +1397,58 @@ describe("qwen adapter", () => {
     expect(secondId).not.toBe(firstId);
   });
 
+  it("advances fallback Chat tool-call ids when compacted history length stays constant", async () => {
+    const missingIdResponse = () => Response.json({
+      choices: [{
+        finish_reason: "tool_calls",
+        message: {
+          tool_calls: [{
+            function: { name: "weather", arguments: JSON.stringify({ city: "Madrid" }) }
+          }]
+        }
+      }]
+    });
+    fetchMock
+      .mockResolvedValueOnce(missingIdResponse())
+      .mockResolvedValueOnce(missingIdResponse());
+    const compactedMessages = (toolCallId: string) => [
+      createTextMessage("user", "weather"),
+      {
+        role: "assistant" as const,
+        parts: [{
+          type: "tool-call" as const,
+          toolCall: { id: toolCallId, name: "weather", input: { city: "Lisbon" } }
+        }]
+      },
+      {
+        role: "tool" as const,
+        parts: [{
+          type: "tool-result" as const,
+          toolResult: { toolCallId, isError: false, output: { temperatureC: 26 } }
+        }]
+      }
+    ];
+    const model = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch })("qwen-plus");
+
+    const first = await model.generate({
+      messages: compactedMessages("qwen-chat-tool-2-0"),
+      providerOptions: { apiMode: "chat" }
+    });
+    const firstCall = first.messages?.[0]?.parts.find((part) => part.type === "tool-call");
+    const firstId = firstCall?.type === "tool-call" ? firstCall.toolCall.id : undefined;
+    const second = await model.generate({
+      messages: compactedMessages(firstId ?? "missing"),
+      providerOptions: { apiMode: "chat" }
+    });
+    const secondCall = second.messages?.[0]?.parts.find((part) => part.type === "tool-call");
+
+    expect(firstId).toBe("qwen-chat-tool-3-0");
+    expect(secondCall).toMatchObject({
+      type: "tool-call",
+      toolCall: { id: "qwen-chat-tool-4-0" }
+    });
+  });
+
   it("synthesizes non-empty Responses tool-call ids", async () => {
     fetchMock.mockResolvedValueOnce(Response.json({
       id: "resp_missing_call_id",

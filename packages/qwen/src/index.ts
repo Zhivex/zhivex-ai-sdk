@@ -1223,11 +1223,32 @@ const existingToolCallIds = (messages: readonly ModelMessage[]) => new Set(messa
   message.parts.flatMap((part) => part.type === "tool-call" ? [part.toolCall.id] : [])
 ));
 
-const fallbackToolCallId = (
+const nextFallbackToolCallGeneration = (
   surface: "chat" | "responses",
   input: ModelGenerateInput<QwenLanguageModelOptions>,
+  seenIds: ReadonlySet<string>
+) => {
+  const prefix = `qwen-${surface}-tool-`;
+  let generation = input.messages.length;
+  for (const id of seenIds) {
+    if (!id.startsWith(prefix)) continue;
+    const separator = id.indexOf("-", prefix.length);
+    if (separator < 0) continue;
+    const generationText = id.slice(prefix.length, separator);
+    if (!generationText) continue;
+    const retainedGeneration = Number(generationText);
+    if (Number.isSafeInteger(retainedGeneration) && retainedGeneration >= generation) {
+      generation = retainedGeneration + 1;
+    }
+  }
+  return generation;
+};
+
+const fallbackToolCallId = (
+  surface: "chat" | "responses",
+  generation: number,
   index: number | string
-) => `qwen-${surface}-tool-${input.messages.length}-${index}`;
+) => `qwen-${surface}-tool-${generation}-${index}`;
 
 class QwenToolCallIdError extends ValidationError {
   readonly diagnosticCode = "QWEN_DUPLICATE_TOOL_CALL_ID" as const;
@@ -1257,6 +1278,7 @@ const parseAssistantMessage = (
   input: ModelGenerateInput<QwenLanguageModelOptions>
 ): ModelMessage => {
   const seenIds = existingToolCallIds(input.messages);
+  const fallbackGeneration = nextFallbackToolCallGeneration("chat", input, seenIds);
   return {
     role: "assistant",
     parts: [
@@ -1271,7 +1293,7 @@ const parseAssistantMessage = (
         toolCall: {
           id: resolveToolCallId(
             [call.id],
-            fallbackToolCallId("chat", input, index),
+            fallbackToolCallId("chat", fallbackGeneration, index),
             seenIds
           ),
           name: call.function.name,
@@ -1402,6 +1424,7 @@ const parseResponsesAssistantMessage = (
 ): ModelMessage => {
   const parts: ModelMessage["parts"] = [];
   const seenIds = existingToolCallIds(input.messages);
+  const fallbackGeneration = nextFallbackToolCallGeneration("responses", input, seenIds);
 
   for (const [index, item] of (json.output ?? []).entries()) {
     if (item?.type === "message") {
@@ -1419,7 +1442,7 @@ const parseResponsesAssistantMessage = (
         toolCall: {
           id: resolveToolCallId(
             [item.call_id, item.id],
-            fallbackToolCallId("responses", input, index),
+            fallbackToolCallId("responses", fallbackGeneration, index),
             seenIds
           ),
           name: item.name,
@@ -1477,6 +1500,7 @@ const streamResponses = async function* (
     emitted: boolean;
   }>();
   const seenIds = existingToolCallIds(input.messages);
+  const fallbackGeneration = nextFallbackToolCallGeneration("responses", input, seenIds);
   let sawToolCalls = false;
 
   const emitToolCall = (key: string) => {
@@ -1529,7 +1553,7 @@ const streamResponses = async function* (
       const item = json.item;
       if (item?.type === "function_call") {
         const outputIndex = json.output_index ?? toolBuffers.size;
-        const fallbackId = fallbackToolCallId("responses", input, outputIndex);
+        const fallbackId = fallbackToolCallId("responses", fallbackGeneration, outputIndex);
         const key = usableToolCallId(item.id) ?? usableToolCallId(json.item_id) ?? fallbackId;
         const existing = toolBuffers.get(key) ?? {
           callId: usableToolCallId(item.call_id) ?? usableToolCallId(item.id) ?? usableToolCallId(json.item_id),
@@ -1566,7 +1590,7 @@ const streamResponses = async function* (
 
     if (type === "response.function_call_arguments.delta") {
       const outputIndex = json.output_index ?? toolBuffers.size;
-      const fallbackId = fallbackToolCallId("responses", input, outputIndex);
+      const fallbackId = fallbackToolCallId("responses", fallbackGeneration, outputIndex);
       const key = usableToolCallId(json.item_id) ?? fallbackId;
       const existing = toolBuffers.get(key) ?? {
         callId: usableToolCallId(json.call_id) ?? usableToolCallId(json.item_id),
@@ -1582,7 +1606,7 @@ const streamResponses = async function* (
 
     if (type === "response.function_call_arguments.done") {
       const outputIndex = json.output_index ?? toolBuffers.size;
-      const fallbackId = fallbackToolCallId("responses", input, outputIndex);
+      const fallbackId = fallbackToolCallId("responses", fallbackGeneration, outputIndex);
       const key = usableToolCallId(json.item_id) ?? fallbackId;
       const existing = toolBuffers.get(key) ?? {
         callId: usableToolCallId(json.call_id) ?? usableToolCallId(json.item_id),
@@ -1847,6 +1871,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           emitted: boolean;
         }>();
         const seenIds = existingToolCallIds(input.messages);
+        const fallbackGeneration = nextFallbackToolCallGeneration("chat", input, seenIds);
 
         for await (const event of streamSSE(response)) {
           if (event.data === "[DONE]") {
@@ -1876,7 +1901,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             const index = Number(toolCall.index ?? 0);
             const existing = toolBuffers.get(index) ?? {
               id: usableToolCallId(toolCall.id),
-              fallbackId: fallbackToolCallId("chat", input, index),
+              fallbackId: fallbackToolCallId("chat", fallbackGeneration, index),
               name: toolCall.function?.name ?? "",
               args: "",
               emitted: false

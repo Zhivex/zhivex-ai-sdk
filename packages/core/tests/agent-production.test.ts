@@ -198,6 +198,53 @@ describe("production agent runtime", () => {
     expect(renewals).toBeGreaterThan(0);
   });
 
+  it("schedules the next heartbeat from the renewal start time", async () => {
+    const baseStore = createInMemoryAgentRunStore();
+    let leaseOwnerId: string | undefined;
+    let leaseExpiresAt = 0;
+    let renewals = 0;
+    const store: AgentRunStore = {
+      ...baseStore,
+      async acquireLease(runId, options, scope) {
+        const lease = await baseStore.acquireLease!(runId, options, scope);
+        if (lease) {
+          leaseOwnerId = lease.ownerId;
+          leaseExpiresAt = lease.expiresAt;
+        }
+        return lease;
+      },
+      async renewLease(runId, options) {
+        const startedAt = Date.now();
+        renewals += 1;
+        if (renewals === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 85));
+        }
+        if (leaseOwnerId !== options.ownerId || leaseExpiresAt <= startedAt) {
+          return undefined;
+        }
+        leaseExpiresAt = startedAt + options.ttlMs;
+        return { runId, ownerId: options.ownerId, expiresAt: leaseExpiresAt };
+      }
+    };
+    const agent = createAgent({
+      store,
+      policy: { leaseTtlMs: 120, heartbeatMs: 20, cancellationPollMs: 1_000 },
+      model: model(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 260));
+        return {
+          messages: [createTextMessage("assistant", "completed")],
+          text: "completed",
+          finishReason: "stop"
+        };
+      })
+    });
+
+    const result = await runAgent(agent, { runId: "slow-renewal", prompt: "wait" });
+
+    expect(result.status).toBe("completed");
+    expect(renewals).toBeGreaterThan(1);
+  });
+
   it("does not reclaim an expired lease after another worker acquires and releases it", async () => {
     const baseStore = createInMemoryAgentRunStore();
     let firstRenewal = true;
@@ -238,7 +285,7 @@ describe("production agent runtime", () => {
     expect(replacementAcquired).toBe(true);
   });
 
-  it("waits for an in-flight heartbeat before releasing the worker lease", async () => {
+  it("bounds heartbeat shutdown and cleans up a renewal that completes after release", async () => {
     const baseStore = createInMemoryAgentRunStore();
     let signalRenewalStarted: (() => void) | undefined;
     const renewalStarted = new Promise<void>((resolve) => {
@@ -248,7 +295,12 @@ describe("production agent runtime", () => {
     const renewalGate = new Promise<void>((resolve) => {
       finishRenewal = resolve;
     });
+    let signalLateCleanup: (() => void) | undefined;
+    const lateCleanup = new Promise<void>((resolve) => {
+      signalLateCleanup = resolve;
+    });
     let firstRenewal = true;
+    let releaseCalls = 0;
     const store: AgentRunStore = {
       ...baseStore,
       async renewLease(runId, options, scope) {
@@ -257,7 +309,13 @@ describe("production agent runtime", () => {
           signalRenewalStarted?.();
           await renewalGate;
         }
-        return await baseStore.renewLease!(runId, options, scope);
+        return await baseStore.acquireLease!(runId, options, scope);
+      },
+      async releaseLease(runId, ownerId, scope) {
+        releaseCalls += 1;
+        const released = await baseStore.releaseLease!(runId, ownerId, scope);
+        if (releaseCalls === 2) signalLateCleanup?.();
+        return released;
       }
     };
     const agent = createAgent({
@@ -273,24 +331,26 @@ describe("production agent runtime", () => {
       })
     });
 
-    let runSettled = false;
     const running = runAgent(agent, { runId: "release-heartbeat", prompt: "wait" });
-    void running.then(
-      () => { runSettled = true; },
-      () => { runSettled = true; }
-    );
     await renewalStarted;
-    await new Promise((resolve) => setTimeout(resolve, 75));
+    let completionTimer: ReturnType<typeof setTimeout> | undefined;
+    const completionDeadline = new Promise<never>((_, reject) => {
+      completionTimer = setTimeout(() => reject(new Error("agent release exceeded its bounded deadline")), 250);
+    });
+    const result = await Promise.race([running, completionDeadline]).finally(() => {
+      if (completionTimer) clearTimeout(completionTimer);
+    });
 
-    expect(runSettled).toBe(false);
+    expect(result.status).toBe("completed");
+    expect(releaseCalls).toBe(1);
     finishRenewal?.();
-    const result = await running;
+    await lateCleanup;
     const replacement = await baseStore.acquireLease!("release-heartbeat", {
       ownerId: "replacement-worker",
       ttlMs: 1_000
     });
 
-    expect(result.status).toBe("completed");
+    expect(releaseCalls).toBe(2);
     expect(replacement).toMatchObject({ ownerId: "replacement-worker" });
   });
 
