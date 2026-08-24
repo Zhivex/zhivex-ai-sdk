@@ -71,6 +71,7 @@ runtime symbols with `getApiStability()` and review
 - Workflows guide: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/WORKFLOWS.md>
 - Artifact Service: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/ARTIFACTS.md>
 - Model Catalog: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/MODEL_CATALOG.md>
+- Optional Model Resolver: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/MODEL_RESOLVER.md>
 - Comparative model evaluations: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/MODEL_EVALUATIONS.md>
 - CLI contract: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/CLI.md>
 - Observability guide: <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/docs/OBSERVABILITY.md>

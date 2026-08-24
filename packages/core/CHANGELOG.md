@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.9.0
+
+### Minor Changes
+
+- 4b3a4ec: Add a Beta, instance-local model resolver for explicit `provider/model` identifiers, application aliases, typed preflight failures, and immutable trace/budget metadata while preserving direct provider factories as the canonical path.
+
 ## 1.8.0
 
 ### Minor Changes

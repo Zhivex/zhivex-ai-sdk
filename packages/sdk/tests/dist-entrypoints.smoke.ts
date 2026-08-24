@@ -11,6 +11,8 @@ import * as workflows from "@zhivex-ai/sdk/workflows";
 
 assert.equal(typeof sdk.generateText, "function");
 assert.equal(typeof beta.createMergedAbortSignal, "function");
+assert.equal(typeof beta.createModelResolver, "function");
+assert.equal(typeof beta.ModelResolutionError, "function");
 assert.equal(typeof beta.deriveLegacyModelCapabilities, "function");
 assert.equal(typeof experimental.createAdvancedToolRegistry, "function");
 assert.equal(typeof experimental.experimentalRawProviderOptions, "function");
