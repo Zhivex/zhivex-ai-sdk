@@ -181,6 +181,20 @@ describe("explicit model resolver Beta contract", () => {
     }
   });
 
+  it("rejects catalog providers inherited by the adapter snapshot prototype", () => {
+    const inheritedProviderCatalog = createModelCatalog([
+      { provider: "constructor", modelId: "prototype-model" }
+    ]);
+    const resolver = createModelResolver({
+      adapters: { openai: createTestAdapter() },
+      catalog: inheritedProviderCatalog
+    });
+
+    expect(() => resolver.resolve("constructor/prototype-model")).toThrowError(
+      expect.objectContaining({ code: "unknown_provider" })
+    );
+  });
+
   it("supports an explicitly named backend without changing canonical catalog identity", () => {
     const references: Array<{ provider: string; modelId: string }> = [];
     const resolver = createModelResolver({
@@ -272,7 +286,19 @@ describe("explicit model resolver Beta contract", () => {
             return {
               provider: "openai",
               modelId,
-              capabilities: { ...capabilities, apiKey: secret } as LanguageModel["capabilities"],
+              capabilities: {
+                ...capabilities,
+                apiKey: secret,
+                realtime: {
+                  sessions: true,
+                  audioInput: true,
+                  audioOutput: true,
+                  imageInput: true,
+                  tools: true,
+                  browserTokens: true,
+                  apiKey: secret
+                }
+              } as LanguageModel["capabilities"],
               async generate() {
                 return { text: "ok" };
               }
@@ -286,5 +312,14 @@ describe("explicit model resolver Beta contract", () => {
     const metadata = resolver.resolve("openai/gpt-test").metadata;
     expect(JSON.stringify(metadata)).not.toContain(secret);
     expect("apiKey" in metadata.capabilities).toBe(false);
+    expect(metadata.capabilities.realtime).toEqual({
+      sessions: true,
+      audioInput: true,
+      audioOutput: true,
+      imageInput: true,
+      tools: true,
+      browserTokens: true
+    });
+    expect("apiKey" in (metadata.capabilities.realtime ?? {})).toBe(false);
   });
 });

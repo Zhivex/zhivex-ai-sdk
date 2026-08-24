@@ -361,7 +361,18 @@ const cloneCapabilities = (capabilities: ModelCapabilities): ModelResolutionCapa
     ...(capabilities.reasoningContexts === undefined
       ? {}
       : { reasoningContexts: Object.freeze([...capabilities.reasoningContexts]) as ModelCapabilities["reasoningContexts"] }),
-    ...(capabilities.realtime === undefined ? {} : { realtime: Object.freeze({ ...capabilities.realtime }) }),
+    ...(capabilities.realtime === undefined
+      ? {}
+      : {
+          realtime: Object.freeze({
+            sessions: capabilities.realtime.sessions,
+            audioInput: capabilities.realtime.audioInput,
+            audioOutput: capabilities.realtime.audioOutput,
+            imageInput: capabilities.realtime.imageInput,
+            tools: capabilities.realtime.tools,
+            browserTokens: capabilities.realtime.browserTokens
+          })
+        }),
     ...(capabilities.agentCapabilities === undefined
       ? {}
       : {
@@ -504,7 +515,7 @@ export const createModelResolver = <TLanguageModel extends LanguageModel = Langu
         "The requested model provider is not present in the configured catalog."
       );
     }
-    if (adapters !== undefined && adapters[reference.provider] === undefined) {
+    if (adapters !== undefined && !Object.prototype.hasOwnProperty.call(adapters, reference.provider)) {
       throw new ModelResolutionError(
         "unknown_provider",
         "The requested model provider is not configured in this resolver."
