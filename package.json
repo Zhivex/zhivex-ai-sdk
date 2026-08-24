@@ -49,7 +49,7 @@
     "release:next": "bun run scripts/check-release-readiness.ts --tag=next --require-oidc --release-batch-file=$RUNNER_TEMP/zhivex-release-batch.json && bun run build && changeset publish --tag next && bun run scripts/check-release-readiness.ts --postpublish --tag=next --release-batch-file=$RUNNER_TEMP/zhivex-release-batch.json"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.1",
+    "@changesets/cli": "^3.0.1",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/sdk-metrics": "^2.10.0",
     "@opentelemetry/sdk-trace-base": "^2.10.0",
