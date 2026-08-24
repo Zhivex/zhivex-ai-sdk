@@ -242,6 +242,7 @@ for (const specifier of specifiers) {
 const {
   createAgent,
   createInMemorySessionService,
+  createModelCatalog,
   createOtelAgentObserver,
   createOtelObserver,
   createOtelTelemetryMiddleware,
@@ -256,6 +257,51 @@ const {
 } = await import("@zhivex-ai/core");
 assert.equal(OTEL_GENAI_CONTRACT_VERSION, 1);
 assert.equal(OTEL_GENAI_SEMCONV_REVISION, "a685613a207a580163353b8e48a7ad88967e7b42");
+
+const { createModelResolver, ModelResolutionError } = await import("@zhivex-ai/sdk/beta");
+const installedResolverCatalog = createModelCatalog([
+  { provider: "installed", modelId: "resolver-model", aliases: ["current"], costPer1kTokens: 0.01 }
+]);
+const installedResolver = createModelResolver({
+  catalog: installedResolverCatalog,
+  adapters: {
+    installed: {
+      name: "installed",
+      languageModel(modelId) {
+        return {
+          provider: "installed",
+          modelId,
+          capabilities: {
+            streaming: false,
+            tools: false,
+            structuredOutput: false,
+            jsonMode: false,
+            toolChoice: false,
+            parallelToolCalls: false,
+            vision: false,
+            files: false,
+            audioInput: false,
+            audioOutput: false,
+            embeddings: false,
+            reasoning: false,
+            webSearch: false
+          },
+          async generate() {
+            return { text: "installed-resolver-ok", finishReason: "stop" };
+          }
+        };
+      }
+    }
+  }
+});
+const installedResolution = installedResolver.resolve("installed/current");
+assert.equal(installedResolution.model.modelId, "resolver-model");
+assert.equal(installedResolution.metadata.catalogEntry.costPer1kTokens, 0.01);
+assert.throws(
+  () => installedResolver.resolve("installed/missing"),
+  (error) => error instanceof ModelResolutionError && error.code === "unknown_model"
+);
+console.log("INSTALLED_MODEL_RESOLVER_SMOKE_OK");
 
 const spanExporter = new InMemorySpanExporter();
 const spanProcessor = new SimpleSpanProcessor(spanExporter);

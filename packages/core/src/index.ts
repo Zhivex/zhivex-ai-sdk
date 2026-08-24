@@ -438,6 +438,7 @@ export { embed, embedMany } from "./embed.js";
 export * from "./catalog.js";
 export * from "./errors.js";
 export * from "./fetch.js";
+export * from "./model-resolver.js";
 export { generateObject, streamObject } from "./generate-object.js";
 export {
   cancelBatch,

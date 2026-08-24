@@ -55,6 +55,7 @@ Use these guides when adopting the SDK in a real app:
 - [Workflows Guide](./docs/WORKFLOWS.md): deterministic multi-step agent workflows, durable state, replay, and workflow evaluations.
 - [Artifact Service Contract](./docs/ARTIFACTS.md): bounded payloads, integrity, backend semantics, maintenance, and release evidence.
 - [Model Catalog Contract](./docs/MODEL_CATALOG.md): immutable snapshots, data-update policy, pricing metadata, and capability boundaries.
+- [Optional Model Resolver](./docs/MODEL_RESOLVER.md): Beta `provider/model` resolution through an explicit, instance-local registry.
 - [CLI Contract](./docs/CLI.md): command compatibility, JSON and exit behavior, local execution, and safety boundaries.
 - [Comparative Model Evaluations](./docs/MODEL_EVALUATIONS.md): candidate matrices, scorers, cost/latency summaries, thresholds, and CLI usage.
 - [Agent Observability Guide](./docs/OBSERVABILITY.md): traces, audit records, ledgers, golden traces, evaluations, and local inspection.

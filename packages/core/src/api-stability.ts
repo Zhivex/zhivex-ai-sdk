@@ -251,6 +251,7 @@ const stableSymbols = [
 ] as const;
 
 const betaSymbols = [
+  "ModelResolutionError",
   "createAgentExecutionEnvironmentBinding",
   "createAgentHarnessBinding",
   "MODEL_EVALUATION_REPORT_SCHEMA_VERSION",
@@ -269,6 +270,7 @@ const betaSymbols = [
   "createJsonValueScorer",
   "createMcpToolRegistry",
   "createModelJudgeScorer",
+  "createModelResolver",
   "createMergedAbortSignal",
   "createProviderAdapter",
   "createRegexScorer",

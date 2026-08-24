@@ -113,6 +113,11 @@ New application code can import these runtime values explicitly from
 
 Beta APIs still require changelog-quality release notes when they change, but they do not yet carry the same compatibility expectations as the stable surface.
 
+`createModelResolver()` and `ModelResolutionError` are Beta and are exposed from
+`@zhivex-ai/sdk/beta`. The resolver is an optional, instance-local
+`provider/model` lookup over an injected catalog and explicit adapters/backend;
+direct provider factories remain the canonical Stable path.
+
 ## Experimental
 
 These areas are available for evaluation, but they should not be treated as long-term compatibility contracts yet:

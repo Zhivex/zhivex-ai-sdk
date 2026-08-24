@@ -40,6 +40,10 @@ describe("api stability manifest", () => {
       symbol: "createAgentHarnessBinding",
       stability: "beta"
     });
+    expect(api.listApiStability("beta")).toContainEqual({
+      symbol: "createModelResolver",
+      stability: "beta"
+    });
     expect(api.listApiStability("stable")).toContainEqual({
       symbol: "chunkText",
       stability: "stable"
@@ -110,6 +114,8 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("migrateAgentApprovalQueueItem")?.stability).toBe("stable");
     expect(api.getApiStability("selectAgentModel")?.stability).toBe("stable");
     expect(api.getApiStability("runModelEvaluation")?.stability).toBe("beta");
+    expect(api.getApiStability("ModelResolutionError")?.stability).toBe("beta");
+    expect(api.getApiStability("createModelResolver")?.stability).toBe("beta");
 
     expect(api.getApiStability("createAdvancedToolRegistry")?.stability).toBe("experimental");
     expect(api.getApiStability("experimentalRawProviderOptions")?.stability).toBe("experimental");
