@@ -1,5 +1,12 @@
 # @zhivex-ai/sdk
 
+## 1.9.1
+
+### Patch Changes
+
+- Updated dependencies [0ed1991]
+  - @zhivex-ai/core@1.9.1
+
 ## 1.9.0
 
 ### Minor Changes
