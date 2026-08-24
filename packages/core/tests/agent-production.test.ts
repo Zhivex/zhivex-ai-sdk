@@ -167,6 +167,133 @@ describe("production agent runtime", () => {
     expect(result.state.cancellationReason).toBe("operator request");
   });
 
+  it("fails closed when a delayed heartbeat observes an expired lease", async () => {
+    const baseStore = createInMemoryAgentRunStore();
+    let renewals = 0;
+    const store: AgentRunStore = {
+      ...baseStore,
+      async renewLease(runId, options, scope) {
+        renewals += 1;
+        if (renewals === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 75));
+        }
+        return await baseStore.renewLease!(runId, options, scope);
+      }
+    };
+    const agent = createAgent({
+      store,
+      policy: { leaseTtlMs: 50, heartbeatMs: 10, cancellationPollMs: 1_000 },
+      model: model(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return {
+          messages: [createTextMessage("assistant", "completed")],
+          text: "completed",
+          finishReason: "stop"
+        };
+      })
+    });
+
+    await expect(runAgent(agent, { runId: "delayed-heartbeat", prompt: "wait" }))
+      .rejects.toThrow("lost its worker lease");
+    expect(renewals).toBeGreaterThan(0);
+  });
+
+  it("does not reclaim an expired lease after another worker acquires and releases it", async () => {
+    const baseStore = createInMemoryAgentRunStore();
+    let firstRenewal = true;
+    let replacementAcquired = false;
+    const store: AgentRunStore = {
+      ...baseStore,
+      async renewLease(runId, options, scope) {
+        if (firstRenewal) {
+          firstRenewal = false;
+          await new Promise((resolve) => setTimeout(resolve, 75));
+          const replacement = await baseStore.acquireLease!(runId, {
+            ownerId: "replacement-worker",
+            ttlMs: 1_000
+          }, scope);
+          replacementAcquired = Boolean(replacement);
+          if (replacement) {
+            await baseStore.releaseLease!(runId, replacement.ownerId, scope);
+          }
+        }
+        return await baseStore.renewLease!(runId, options, scope);
+      }
+    };
+    const agent = createAgent({
+      store,
+      policy: { leaseTtlMs: 50, heartbeatMs: 10, cancellationPollMs: 1_000 },
+      model: model(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return {
+          messages: [createTextMessage("assistant", "must-not-complete")],
+          text: "must-not-complete",
+          finishReason: "stop"
+        };
+      })
+    });
+
+    await expect(runAgent(agent, { runId: "replaced-worker", prompt: "wait" }))
+      .rejects.toThrow("lost its worker lease");
+    expect(replacementAcquired).toBe(true);
+  });
+
+  it("waits for an in-flight heartbeat before releasing the worker lease", async () => {
+    const baseStore = createInMemoryAgentRunStore();
+    let signalRenewalStarted: (() => void) | undefined;
+    const renewalStarted = new Promise<void>((resolve) => {
+      signalRenewalStarted = resolve;
+    });
+    let finishRenewal: (() => void) | undefined;
+    const renewalGate = new Promise<void>((resolve) => {
+      finishRenewal = resolve;
+    });
+    let firstRenewal = true;
+    const store: AgentRunStore = {
+      ...baseStore,
+      async renewLease(runId, options, scope) {
+        if (firstRenewal) {
+          firstRenewal = false;
+          signalRenewalStarted?.();
+          await renewalGate;
+        }
+        return await baseStore.renewLease!(runId, options, scope);
+      }
+    };
+    const agent = createAgent({
+      store,
+      policy: { leaseTtlMs: 50, heartbeatMs: 10, cancellationPollMs: 1_000 },
+      model: model(async () => {
+        await renewalStarted;
+        return {
+          messages: [createTextMessage("assistant", "completed")],
+          text: "completed",
+          finishReason: "stop"
+        };
+      })
+    });
+
+    let runSettled = false;
+    const running = runAgent(agent, { runId: "release-heartbeat", prompt: "wait" });
+    void running.then(
+      () => { runSettled = true; },
+      () => { runSettled = true; }
+    );
+    await renewalStarted;
+    await new Promise((resolve) => setTimeout(resolve, 75));
+
+    expect(runSettled).toBe(false);
+    finishRenewal?.();
+    const result = await running;
+    const replacement = await baseStore.acquireLease!("release-heartbeat", {
+      ownerId: "replacement-worker",
+      ttlMs: 1_000
+    });
+
+    expect(result.status).toBe("completed");
+    expect(replacement).toMatchObject({ ownerId: "replacement-worker" });
+  });
+
   it("journals identical tool inputs independently when provider call IDs differ", async () => {
     const store = createInMemoryAgentRunStore();
     let modelCalls = 0;

@@ -2059,13 +2059,11 @@ const acquireAgentExecutionLease = async <TModel extends LanguageModel>(
   let cancelled: AgentRunState | undefined;
   let lost = false;
   let stopped = false;
-  let monitoring = false;
+  let activeMonitor: Promise<void> | undefined;
   let lastHeartbeat = Date.now();
   let lastCancellationPoll = 0;
   const intervalMs = Math.max(25, Math.min(heartbeatMs, cancellationPollMs));
-  const timer = setInterval(async () => {
-    if (stopped || monitoring) return;
-    monitoring = true;
+  const monitorLease = async () => {
     const now = Date.now();
     try {
       if (now - lastHeartbeat >= heartbeatMs) {
@@ -2075,7 +2073,7 @@ const acquireAgentExecutionLease = async <TModel extends LanguageModel>(
           controller.abort(new ConflictError(`Agent run "${state.runId}" lost its worker lease.`));
           return;
         }
-        lastHeartbeat = now;
+        lastHeartbeat = Date.now();
       }
       if (now - lastCancellationPoll >= cancellationPollMs) {
         const latest = await store.load(state.runId, state.scope);
@@ -2088,9 +2086,13 @@ const acquireAgentExecutionLease = async <TModel extends LanguageModel>(
     } catch (error) {
       lost = true;
       controller.abort(error);
-    } finally {
-      monitoring = false;
     }
+  };
+  const timer = setInterval(() => {
+    if (stopped || activeMonitor) return;
+    activeMonitor = monitorLease().finally(() => {
+      activeMonitor = undefined;
+    });
   }, intervalMs);
   timer.unref?.();
 
@@ -2102,6 +2104,7 @@ const acquireAgentExecutionLease = async <TModel extends LanguageModel>(
     release: async () => {
       stopped = true;
       clearInterval(timer);
+      await activeMonitor;
       await store.releaseLease?.(state.runId, ownerId, state.scope);
     }
   };
