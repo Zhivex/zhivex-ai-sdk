@@ -1216,25 +1216,71 @@ const resolveApiMode = (
   return needsChat ? "chat" : "responses";
 };
 
-const parseAssistantMessage = (message: any): ModelMessage => ({
-  role: "assistant",
-  parts: [
-    ...(typeof message.reasoning_content === "string" && message.reasoning_content
-      ? [providerDataPart("qwen", { type: "reasoning_content", reasoningContent: message.reasoning_content })]
-      : []),
-    ...(typeof message.content === "string" && message.content
-      ? [{ type: "text", text: message.content } as const]
-      : []),
-    ...((message.tool_calls ?? []).map((call: any) => ({
-      type: "tool-call" as const,
-      toolCall: {
-        id: call.id,
-        name: call.function.name,
-        input: JSON.parse(call.function.arguments ?? "{}")
-      }
-    })) ?? [])
-  ]
-});
+const usableToolCallId = (value: unknown) =>
+  typeof value === "string" && value.trim().length > 0 ? value : undefined;
+
+const existingToolCallIds = (messages: readonly ModelMessage[]) => new Set(messages.flatMap((message) =>
+  message.parts.flatMap((part) => part.type === "tool-call" ? [part.toolCall.id] : [])
+));
+
+const fallbackToolCallId = (
+  surface: "chat" | "responses",
+  input: ModelGenerateInput<QwenLanguageModelOptions>,
+  index: number | string
+) => `qwen-${surface}-tool-${input.messages.length}-${index}`;
+
+class QwenToolCallIdError extends ValidationError {
+  readonly diagnosticCode = "QWEN_DUPLICATE_TOOL_CALL_ID" as const;
+
+  constructor() {
+    super("Qwen returned a duplicate tool-call id.");
+    this.name = "QwenToolCallIdError";
+  }
+}
+
+const resolveToolCallId = (
+  candidates: readonly unknown[],
+  fallback: string | (() => string),
+  seenIds: Set<string>
+) => {
+  const candidate = candidates.map(usableToolCallId).find((value) => value !== undefined);
+  const id = candidate ?? (typeof fallback === "function" ? fallback() : fallback);
+  if (seenIds.has(id)) {
+    throw new QwenToolCallIdError();
+  }
+  seenIds.add(id);
+  return id;
+};
+
+const parseAssistantMessage = (
+  message: any,
+  input: ModelGenerateInput<QwenLanguageModelOptions>
+): ModelMessage => {
+  const seenIds = existingToolCallIds(input.messages);
+  return {
+    role: "assistant",
+    parts: [
+      ...(typeof message.reasoning_content === "string" && message.reasoning_content
+        ? [providerDataPart("qwen", { type: "reasoning_content", reasoningContent: message.reasoning_content })]
+        : []),
+      ...(typeof message.content === "string" && message.content
+        ? [{ type: "text", text: message.content } as const]
+        : []),
+      ...((message.tool_calls ?? []).map((call: any, index: number) => ({
+        type: "tool-call" as const,
+        toolCall: {
+          id: resolveToolCallId(
+            [call.id],
+            fallbackToolCallId("chat", input, index),
+            seenIds
+          ),
+          name: call.function.name,
+          input: JSON.parse(call.function.arguments ?? "{}")
+        }
+      })) ?? [])
+    ]
+  };
+};
 
 const getProviderResponseId = (messages: ModelMessage[]) => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -1350,8 +1396,12 @@ const parseResponsesProviderData = (item: unknown) => {
   return item as JsonValue;
 };
 
-const parseResponsesAssistantMessage = (json: any): ModelMessage => {
+const parseResponsesAssistantMessage = (
+  json: any,
+  input: ModelGenerateInput<QwenLanguageModelOptions>
+): ModelMessage => {
   const parts: ModelMessage["parts"] = [];
+  const seenIds = existingToolCallIds(input.messages);
 
   for (const [index, item] of (json.output ?? []).entries()) {
     if (item?.type === "message") {
@@ -1367,7 +1417,11 @@ const parseResponsesAssistantMessage = (json: any): ModelMessage => {
       parts.push({
         type: "tool-call",
         toolCall: {
-          id: item.call_id ?? item.id ?? `${item.name}-${index}`,
+          id: resolveToolCallId(
+            [item.call_id, item.id],
+            fallbackToolCallId("responses", input, index),
+            seenIds
+          ),
           name: item.name,
           input: JSON.parse(item.arguments ?? "{}")
         }
@@ -1412,9 +1466,17 @@ const normalizeResponsesFinishReason = (status: string | undefined, hasToolCalls
 };
 
 const streamResponses = async function* (
-  response: Response
+  response: Response,
+  input: ModelGenerateInput<QwenLanguageModelOptions>
 ): AsyncGenerator<StreamEvent, void, undefined> {
-  const toolBuffers = new Map<string, { callId: string; name: string; args: string; emitted: boolean }>();
+  const toolBuffers = new Map<string, {
+    callId?: string;
+    fallbackId: string;
+    name: string;
+    args: string;
+    emitted: boolean;
+  }>();
+  const seenIds = existingToolCallIds(input.messages);
   let sawToolCalls = false;
 
   const emitToolCall = (key: string) => {
@@ -1428,7 +1490,7 @@ const streamResponses = async function* (
     return {
       type: "tool-call",
       toolCall: {
-        id: toolCall.callId,
+        id: resolveToolCallId([toolCall.callId], toolCall.fallbackId, seenIds),
         name: toolCall.name,
         input: JSON.parse(toolCall.args || "{}")
       }
@@ -1466,14 +1528,17 @@ const streamResponses = async function* (
     if (type === "response.output_item.added" || type === "response.output_item.done") {
       const item = json.item;
       if (item?.type === "function_call") {
-        const key = item.id ?? json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
+        const outputIndex = json.output_index ?? toolBuffers.size;
+        const fallbackId = fallbackToolCallId("responses", input, outputIndex);
+        const key = usableToolCallId(item.id) ?? usableToolCallId(json.item_id) ?? fallbackId;
         const existing = toolBuffers.get(key) ?? {
-          callId: item.call_id ?? key,
+          callId: usableToolCallId(item.call_id) ?? usableToolCallId(item.id) ?? usableToolCallId(json.item_id),
+          fallbackId,
           name: item.name ?? "",
           args: "",
           emitted: false
         };
-        existing.callId = item.call_id ?? existing.callId;
+        existing.callId = usableToolCallId(item.call_id) ?? existing.callId;
         existing.name ||= item.name ?? "";
         if (typeof item.arguments === "string") {
           existing.args = item.arguments;
@@ -1500,9 +1565,12 @@ const streamResponses = async function* (
     }
 
     if (type === "response.function_call_arguments.delta") {
-      const key = json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
+      const outputIndex = json.output_index ?? toolBuffers.size;
+      const fallbackId = fallbackToolCallId("responses", input, outputIndex);
+      const key = usableToolCallId(json.item_id) ?? fallbackId;
       const existing = toolBuffers.get(key) ?? {
-        callId: key,
+        callId: usableToolCallId(json.call_id) ?? usableToolCallId(json.item_id),
+        fallbackId,
         name: "",
         args: "",
         emitted: false
@@ -1513,9 +1581,12 @@ const streamResponses = async function* (
     }
 
     if (type === "response.function_call_arguments.done") {
-      const key = json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
+      const outputIndex = json.output_index ?? toolBuffers.size;
+      const fallbackId = fallbackToolCallId("responses", input, outputIndex);
+      const key = usableToolCallId(json.item_id) ?? fallbackId;
       const existing = toolBuffers.get(key) ?? {
-        callId: key,
+        callId: usableToolCallId(json.call_id) ?? usableToolCallId(json.item_id),
+        fallbackId,
         name: "",
         args: "",
         emitted: false
@@ -1617,7 +1688,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
         );
 
         const json = await parseJson(response);
-        const assistantMessage = parseResponsesAssistantMessage(json);
+        const assistantMessage = parseResponsesAssistantMessage(json, input);
         const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
 
         return {
@@ -1663,7 +1734,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       const json = await parseJson(response);
       const choice = json.choices?.[0];
       const message = choice?.message ?? {};
-      const assistantMessage = parseAssistantMessage(message);
+      const assistantMessage = parseAssistantMessage(message, input);
 
       return {
         messages: [assistantMessage],
@@ -1730,7 +1801,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
 
       return (async function* () {
         try {
-          yield* streamResponses(response);
+          yield* streamResponses(response, input);
         } finally {
           cleanup();
         }
@@ -1768,7 +1839,14 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
 
     return (async function* () {
       try {
-        const toolBuffers = new Map<number, { id: string; name: string; args: string; emitted: boolean }>();
+        const toolBuffers = new Map<number, {
+          id?: string;
+          fallbackId: string;
+          name: string;
+          args: string;
+          emitted: boolean;
+        }>();
+        const seenIds = existingToolCallIds(input.messages);
 
         for await (const event of streamSSE(response)) {
           if (event.data === "[DONE]") {
@@ -1797,12 +1875,13 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           for (const toolCall of delta?.tool_calls ?? []) {
             const index = Number(toolCall.index ?? 0);
             const existing = toolBuffers.get(index) ?? {
-              id: toolCall.id ?? `${index}`,
+              id: usableToolCallId(toolCall.id),
+              fallbackId: fallbackToolCallId("chat", input, index),
               name: toolCall.function?.name ?? "",
               args: "",
               emitted: false
             };
-            existing.id = toolCall.id ?? existing.id;
+            existing.id = usableToolCallId(toolCall.id) ?? existing.id;
             existing.name ||= toolCall.function?.name ?? "";
             existing.args += toolCall.function?.arguments ?? "";
             toolBuffers.set(index, existing);
@@ -1818,7 +1897,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
                 yield {
                   type: "tool-call",
                   toolCall: {
-                    id: toolCall.id,
+                    id: resolveToolCallId([toolCall.id], toolCall.fallbackId, seenIds),
                     name: toolCall.name,
                     input: JSON.parse(toolCall.args || "{}")
                   }
@@ -2635,7 +2714,11 @@ class QwenTasksClientImpl implements QwenTasksClient {
   }
 }
 
-const parseRealtimeEvent = (payload: Record<string, unknown>): RealtimeEvent[] => {
+const parseRealtimeEvent = (
+  payload: Record<string, unknown>,
+  fallbackRealtimeToolCallId: () => string,
+  seenToolCallIds: Set<string>
+): RealtimeEvent[] => {
   const type = String(payload.type ?? "");
   const metadata = payload as Record<string, JsonValue>;
   const itemId = typeof payload.item_id === "string" ? payload.item_id : undefined;
@@ -2677,7 +2760,11 @@ const parseRealtimeEvent = (payload: Record<string, unknown>): RealtimeEvent[] =
     return [{
       type: "realtime-tool-call",
       toolCall: {
-        id: String(payload.call_id ?? payload.item_id ?? "qwen-tool-call"),
+        id: resolveToolCallId(
+          [payload.call_id, payload.item_id],
+          fallbackRealtimeToolCallId,
+          seenToolCallIds
+        ),
         name: String(payload.name ?? ""),
         input: JSON.parse(typeof payload.arguments === "string" ? payload.arguments : "{}")
       }
@@ -2781,6 +2868,8 @@ class QwenRealtimeModel implements RealtimeModel {
       { authorization: `Bearer ${this.apiKey}` },
       options
     );
+    let fallbackRealtimeToolCallIndex = 0;
+    const seenRealtimeToolCallIds = new Set<string>();
     const session = new CallbackRealtimeSession({
       provider: this.provider,
       modelId: this.modelId,
@@ -2788,7 +2877,11 @@ class QwenRealtimeModel implements RealtimeModel {
       config,
       connection,
       callbacks: {
-        parseEvent: parseRealtimeEvent,
+        parseEvent: (payload) => parseRealtimeEvent(
+          payload,
+          () => `qwen-realtime-tool-${fallbackRealtimeToolCallIndex++}`,
+          seenRealtimeToolCallIds
+        ),
         buildInitialPayloads: (value) => [{ type: "session.update", session: mapRealtimeSession(value) }],
         buildAudioPayloads: (frame: AudioFrame, sessionConfig) => [
           { type: "input_audio_buffer.append", audio: encodeRealtimeData(frame.data) },

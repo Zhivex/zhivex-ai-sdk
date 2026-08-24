@@ -1305,6 +1305,7 @@ describe("qwen adapter", () => {
         controller.enqueue(
           new TextEncoder().encode(
             'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"weather","arguments":"{\\"city\\":\\"Madrid\\"}"}}]},"finish_reason":null}]}\n\n' +
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"   ","function":{"arguments":""}}]},"finish_reason":null}]}\n\n' +
               'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n' +
               "data: [DONE]\n\n"
           )
@@ -1331,6 +1332,133 @@ describe("qwen adapter", () => {
     expect(events).toContainEqual({
       type: "tool-call",
       toolCall: { id: "call_1", name: "weather", input: { city: "Madrid" } }
+    });
+  });
+
+  it("synthesizes distinct durable Chat tool-call ids across streamed turns", async () => {
+    const toolResponse = (city: string) => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(
+          `data: ${JSON.stringify({
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  function: { name: "weather", arguments: JSON.stringify({ city }) }
+                }]
+              },
+              finish_reason: null
+            }]
+          })}\n\n` +
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] })}\n\n` +
+          "data: [DONE]\n\n"
+        ));
+        controller.close();
+      }
+    }), { headers: { "content-type": "text/event-stream" } });
+    const finalResponse = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(
+          `data: ${JSON.stringify({ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] })}\n\n` +
+          "data: [DONE]\n\n"
+        ));
+        controller.close();
+      }
+    }), { headers: { "content-type": "text/event-stream" } });
+    fetchMock
+      .mockResolvedValueOnce(toolResponse("Madrid"))
+      .mockResolvedValueOnce(toolResponse("Lisbon"))
+      .mockResolvedValueOnce(finalResponse);
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("qwen-plus"),
+      prompt: "compare weather",
+      maxSteps: 3,
+      providerOptions: { apiMode: "chat" },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, temperatureC: 26 })
+        })
+      }
+    });
+
+    expect((await result.collect()).text).toBe("done");
+    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    const thirdRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    const firstId = secondRequest.messages.find((message: any) => message.role === "assistant")
+      ?.tool_calls?.[0]?.id;
+    const secondId = thirdRequest.messages.filter((message: any) => message.role === "assistant")
+      .at(-1)?.tool_calls?.[0]?.id;
+    expect(firstId).toMatch(/^qwen-chat-tool-\d+-0$/);
+    expect(secondId).toMatch(/^qwen-chat-tool-\d+-0$/);
+    expect(secondId).not.toBe(firstId);
+  });
+
+  it("synthesizes non-empty Responses tool-call ids", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({
+      id: "resp_missing_call_id",
+      status: "completed",
+      output: [{
+        type: "function_call",
+        name: "weather",
+        arguments: JSON.stringify({ city: "Madrid" })
+      }]
+    }));
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await provider("qwen-plus").generate({
+      messages: [createTextMessage("user", "weather")],
+      providerOptions: { apiMode: "responses" }
+    });
+    const toolCall = result.messages?.[0]?.parts.find((part) => part.type === "tool-call");
+    expect(toolCall).toMatchObject({
+      type: "tool-call",
+      toolCall: {
+        id: "qwen-responses-tool-1-0",
+        name: "weather",
+        input: { city: "Madrid" }
+      }
+    });
+  });
+
+  it("rejects duplicate Chat tool-call ids with a bounded diagnostic code", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({
+      choices: [{
+        finish_reason: "tool_calls",
+        message: {
+          tool_calls: [{
+            id: "call_existing",
+            function: { name: "weather", arguments: JSON.stringify({ city: "Lisbon" }) }
+          }]
+        }
+      }]
+    }));
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(provider("qwen-plus").generate({
+      messages: [
+        createTextMessage("user", "weather in Madrid"),
+        {
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCall: { id: "call_existing", name: "weather", input: { city: "Madrid" } }
+          }]
+        },
+        {
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolResult: { toolCallId: "call_existing", isError: false, output: { temperatureC: 26 } }
+          }]
+        },
+        createTextMessage("user", "now Lisbon")
+      ],
+      providerOptions: { apiMode: "chat" }
+    })).rejects.toMatchObject({
+      name: "QwenToolCallIdError",
+      diagnosticCode: "QWEN_DUPLICATE_TOOL_CALL_ID"
     });
   });
 
@@ -2117,6 +2245,16 @@ describe("qwen adapter", () => {
         name: "weather",
         arguments: "{\"city\":\"Madrid\"}"
       },
+      {
+        type: "response.function_call_arguments.done",
+        name: "weather",
+        arguments: "{\"city\":\"Lisbon\"}"
+      },
+      {
+        type: "response.function_call_arguments.done",
+        name: "weather",
+        arguments: "{\"city\":\"Buenos Aires\"}"
+      },
       { type: "response.done", response: { status: "completed" } },
       { type: "session.finished" }
     ];
@@ -2143,6 +2281,14 @@ describe("qwen adapter", () => {
         expect.objectContaining({
           type: "realtime-tool-call",
           toolCall: { id: "call_1", name: "weather", input: { city: "Madrid" } }
+        }),
+        expect.objectContaining({
+          type: "realtime-tool-call",
+          toolCall: { id: "qwen-realtime-tool-0", name: "weather", input: { city: "Lisbon" } }
+        }),
+        expect.objectContaining({
+          type: "realtime-tool-call",
+          toolCall: { id: "qwen-realtime-tool-1", name: "weather", input: { city: "Buenos Aires" } }
         }),
         expect.objectContaining({ type: "realtime-response-complete", reason: "completed" }),
         expect.objectContaining({ type: "realtime-end", reason: "finished" })
