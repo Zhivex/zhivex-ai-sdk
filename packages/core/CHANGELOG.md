@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.10.0
+
+### Minor Changes
+
+- 8faf5c9: Add sanitized provider tool-call diagnostics, durable Agent error metadata, and fail-closed OpenAI Responses tool-call assembly that waits for terminal completion before local policy or execution.
+
 ## 1.9.1
 
 ### Patch Changes
