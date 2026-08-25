@@ -105,6 +105,44 @@ describe("agent run state validation", () => {
     expect(normalized.messages).not.toBe(state.messages);
   });
 
+  it("round-trips sanitized provider tool-call diagnostics", () => {
+    const normalized = normalizeAgentRunState({
+      ...validState(),
+      status: "failed",
+      error: {
+        message: "Provider tool call could not be materialized safely.",
+        category: "provider-tool-call",
+        provider: "openai",
+        transport: "responses",
+        diagnosticCode: "OPENAI_RESPONSES_TOOL_CALL_INVALID",
+        reason: "invalid_json",
+        retryable: true,
+        effectsPossible: false
+      }
+    });
+
+    expect(normalized.error).toEqual({
+      message: "Provider tool call could not be materialized safely.",
+      category: "provider-tool-call",
+      provider: "openai",
+      transport: "responses",
+      diagnosticCode: "OPENAI_RESPONSES_TOOL_CALL_INVALID",
+      reason: "invalid_json",
+      retryable: true,
+      effectsPossible: false
+    });
+    expect(() => normalizeAgentRunState({
+      ...validState(),
+      status: "failed",
+      error: { message: "bad", category: "provider-body" }
+    })).toThrow(/error.category/);
+    expect(() => normalizeAgentRunState({
+      ...validState(),
+      status: "failed",
+      error: { message: "bad", category: "provider-tool-call", reason: "raw-provider-body" }
+    })).toThrow(/error.reason/);
+  });
+
   it("migrates only unversioned legacy states to the current schema", () => {
     const legacy = validState() as AgentRunState & { schemaVersion?: number; revision?: number };
     delete legacy.schemaVersion;

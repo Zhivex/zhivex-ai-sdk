@@ -1,3 +1,5 @@
+import type { ProviderToolCallErrorReason } from "./types.js";
+
 export class ZhivexAIError extends Error {
   readonly cause?: unknown;
 
@@ -70,6 +72,41 @@ export class ProviderResponseTooLargeError extends ZhivexAIError {
     this.contentLength = options.contentLength;
     this.provider = options.provider;
     this.endpoint = options.endpoint;
+  }
+}
+
+/**
+ * Sanitized provider failure raised before an unsafe tool call can cross into
+ * approval, guardrail, or execution policy.
+ *
+ * The message is intentionally fixed. Provider payloads, raw arguments, tool
+ * names, prompts, and response bodies must not be attached to this error.
+ */
+export class ProviderToolCallError extends ZhivexAIError {
+  readonly category = "provider-tool-call" as const;
+  readonly provider: string;
+  readonly transport?: string;
+  readonly diagnosticCode: string;
+  readonly reason: ProviderToolCallErrorReason;
+  readonly retryable: boolean;
+  readonly effectsPossible: boolean;
+
+  constructor(options: {
+    provider: string;
+    transport?: string;
+    diagnosticCode: string;
+    reason: ProviderToolCallErrorReason;
+    retryable?: boolean;
+    effectsPossible?: boolean;
+    cause?: unknown;
+  }) {
+    super("Provider tool call could not be materialized safely.", { cause: options.cause });
+    this.provider = options.provider;
+    this.transport = options.transport;
+    this.diagnosticCode = options.diagnosticCode;
+    this.reason = options.reason;
+    this.effectsPossible = options.effectsPossible ?? false;
+    this.retryable = this.effectsPossible ? false : (options.retryable ?? false);
   }
 }
 

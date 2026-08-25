@@ -252,11 +252,26 @@ const {
   createWorkflow,
   OTEL_GENAI_CONTRACT_VERSION,
   OTEL_GENAI_SEMCONV_REVISION,
+  ProviderToolCallError,
   runWorkflow,
   wrapLanguageModel
 } = await import("@zhivex-ai/core");
 assert.equal(OTEL_GENAI_CONTRACT_VERSION, 1);
 assert.equal(OTEL_GENAI_SEMCONV_REVISION, "a685613a207a580163353b8e48a7ad88967e7b42");
+const installedSdk = await import("@zhivex-ai/sdk");
+const installedOpenAI = await import("@zhivex-ai/openai");
+assert.equal(installedSdk.ProviderToolCallError, ProviderToolCallError);
+assert.equal(installedOpenAI.OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE, "OPENAI_RESPONSES_TOOL_CALL_INVALID");
+const installedProviderToolCallError = new ProviderToolCallError({
+  provider: "openai",
+  transport: "responses",
+  diagnosticCode: installedOpenAI.OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE,
+  reason: "invalid_json",
+  retryable: true
+});
+assert.equal(installedProviderToolCallError.retryable, true);
+assert.equal(installedProviderToolCallError.effectsPossible, false);
+assert.equal(installedProviderToolCallError.message, "Provider tool call could not be materialized safely.");
 
 const { createModelResolver, ModelResolutionError } = await import("@zhivex-ai/sdk/beta");
 const installedResolverCatalog = createModelCatalog([

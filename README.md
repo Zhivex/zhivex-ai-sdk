@@ -2496,12 +2496,15 @@ const openai = createOpenAI({
   responseLimits: {
     speechBytes: 16 * 1024 * 1024,
     transcriptionBytes: 1024 * 1024,
-    errorBodyBytes: 64 * 1024
+    errorBodyBytes: 64 * 1024,
+    toolCallArgumentChars: 256 * 1024
   }
 });
 ```
 
 `Content-Length` is used for early rejection, while chunked bodies are counted as they are read. Oversized successful responses throw `ProviderResponseTooLargeError`; oversized provider error bodies remain `ProviderHTTPError` instances with a bounded, truncated `responseBody`. Qwen validates decoded base64 size before allocation and omits the encoded audio payload from `rawResponse` after decoding.
+
+OpenAI Responses function calls are assembled with the configured argument bound and released to Core only after terminal `response.completed`. Malformed, inconsistent, failed, incomplete, or truncated calls throw the sanitized `ProviderToolCallError` with code `OPENAI_RESPONSES_TOOL_CALL_INVALID`; the error contains diagnostic metadata but never raw arguments, prompts, provider bodies, or tool names. Retry only when `retryable` is `true` and `effectsPossible` is `false`. Durable agent state preserves the same safe diagnostic fields under `state.error`.
 
 ```ts
 import { generateSpeech, transcribeAudio } from "@zhivex-ai/sdk";

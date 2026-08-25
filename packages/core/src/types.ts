@@ -1555,6 +1555,28 @@ export interface AgentStepResponse {
   usage?: TokenUsage;
 }
 
+export type ProviderToolCallErrorReason =
+  | "empty_arguments"
+  | "invalid_json"
+  | "arguments_too_large"
+  | "incomplete_arguments"
+  | "inconsistent_metadata"
+  | "response_failed"
+  | "response_incomplete"
+  | "stream_truncated";
+
+/** Sanitized, durable projection of an agent failure. */
+export interface AgentRunError {
+  message: string;
+  diagnosticCode?: string;
+  category?: "provider-tool-call";
+  provider?: string;
+  transport?: string;
+  reason?: ProviderToolCallErrorReason;
+  retryable?: boolean;
+  effectsPossible?: boolean;
+}
+
 export interface AgentStep {
   index: number;
   status: AgentStepStatus;
@@ -1563,9 +1585,7 @@ export interface AgentStep {
   request: AgentStepRequest;
   response?: AgentStepResponse;
   toolResults: ToolExecutionResult[];
-  error?: {
-    message: string;
-  };
+  error?: AgentRunError;
 }
 
 export interface AgentChildRun {
@@ -1582,9 +1602,7 @@ export interface AgentChildRun {
   usage?: TokenUsage;
   startedAt?: number;
   updatedAt?: number;
-  error?: {
-    message: string;
-  };
+  error?: AgentRunError;
   metadata?: Record<string, JsonValue>;
   /** Durable child state retained only while the parent must resume a child approval. */
   resumeState?: AgentRunState;
@@ -1637,9 +1655,7 @@ export interface AgentRunState {
   updatedAt?: number;
   cancelledAt?: number;
   cancellationReason?: string;
-  error?: {
-    message: string;
-  };
+  error?: AgentRunError;
 }
 
 /**
@@ -2209,9 +2225,7 @@ export interface AgentRunOutput<TOutput = unknown> {
   steps: AgentStep[];
   toolResults: ToolExecutionResult[];
   state: AgentRunState;
-  error?: {
-    message: string;
-  };
+  error?: AgentRunError;
 }
 
 export interface AgentSubAgentDefinition<TModel extends LanguageModel = LanguageModel> {
@@ -2309,9 +2323,7 @@ export interface LiveAgentRunOutput {
   messages: ModelMessage[];
   toolResults: ToolExecutionResult[];
   state: AgentRunState;
-  error?: {
-    message: string;
-  };
+  error?: AgentRunError;
 }
 
 export interface AgentStreamResult<TOutput = unknown> {

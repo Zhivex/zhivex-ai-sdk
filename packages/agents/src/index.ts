@@ -80,6 +80,7 @@ export type {
   AgentOutputGuardrailRequest,
   AgentOperationalError,
   AgentRunCancellationOptions,
+  AgentRunError,
   AgentRunFinishEvent,
   AgentRunInput,
   AgentRunOutput,

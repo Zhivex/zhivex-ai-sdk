@@ -13,14 +13,17 @@ import {
   hostedTool,
   ProviderHTTPError,
   ProviderResponseTooLargeError,
+  ProviderToolCallError,
   streamText,
   tool,
-  transcribeAudio
+  transcribeAudio,
+  ValidationError
 } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import {
   createOpenAI,
+  OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE,
   openAIApplyPatchTool,
   openAICodeInterpreterTool,
   openAIComputerTool,
@@ -38,6 +41,12 @@ import {
   openAIToolSearchTool,
   openAIWebSearchTool
 } from "../src/index.js";
+
+const responsesSse = (...events: Array<Record<string, unknown> | "[DONE]">) =>
+  new Response(
+    events.map((event) => `data: ${event === "[DONE]" ? event : JSON.stringify(event)}\n\n`).join(""),
+    { status: 200, headers: { "content-type": "text/event-stream" } }
+  );
 
 const createPendingRealtimeReceiver = () => {
   let finishReceive: (() => void) | undefined;
@@ -375,6 +384,432 @@ describe("openai adapter", () => {
     ]);
   });
 
+  it("assembles fragmented Responses function calls once after terminal completion", async () => {
+    fetchMock.mockResolvedValueOnce(responsesSse(
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "function_call", id: "item_1", call_id: "call_1", name: "weather", arguments: "" }
+      },
+      { type: "response.function_call_arguments.delta", item_id: "item_1", output_index: 0, delta: "{\"city\":" },
+      { type: "response.function_call_arguments.delta", item_id: "item_1", output_index: 0, delta: "\"Madrid\"}" },
+      {
+        type: "response.function_call_arguments.done",
+        output_index: 0,
+        call_id: "call_1",
+        name: "weather",
+        arguments: "{\"city\":\"Madrid\"}"
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "function_call",
+          id: "item_1",
+          call_id: "call_1",
+          name: "weather",
+          status: "completed",
+          arguments: "{\"city\":\"Madrid\"}"
+        }
+      },
+      { type: "response.completed", response: { id: "resp_1", status: "completed" } },
+      "[DONE]"
+    ));
+
+    const model = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("gpt-5");
+    const events = [];
+    for await (const event of await model.stream!({
+      messages: [createTextMessage("user", "Weather?")],
+      providerOptions: { apiMode: "responses" },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      }
+    })) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "tool-call")).toEqual([
+      { type: "tool-call", toolCall: { id: "call_1", name: "weather", input: { city: "Madrid" } } }
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: "finish",
+      finishReason: "tool-calls",
+      providerFinishReason: "completed"
+    });
+  });
+
+  it("fails closed on malformed Responses arguments before policy or execution", async () => {
+    const privateArgument = '{"city":"private-token"';
+    fetchMock.mockResolvedValueOnce(responsesSse(
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "function_call", id: "item_1", call_id: "call_1", name: "weather", arguments: "" }
+      },
+      {
+        type: "response.function_call_arguments.done",
+        item_id: "item_1",
+        output_index: 0,
+        arguments: privateArgument
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "function_call",
+          id: "item_1",
+          call_id: "call_1",
+          name: "weather",
+          status: "completed",
+          arguments: privateArgument
+        }
+      },
+      { type: "response.completed", response: { id: "resp_bad", status: "completed" } },
+      "[DONE]"
+    ));
+
+    const approval = vi.fn(() => true);
+    const guardrail = vi.fn(() => undefined);
+    const beforeExecution = vi.fn(() => undefined);
+    const execute = vi.fn(({ city }: { city: string }) => ({ city }));
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    let caught: unknown;
+    try {
+      await streamText({
+        model: provider("gpt-5"),
+        prompt: "Weather?",
+        providerOptions: { apiMode: "responses" },
+        tools: {
+          weather: tool({
+            name: "weather",
+            schema: z.object({ city: z.string() }),
+            requiresApproval: true,
+            inputGuardrails: [guardrail],
+            execute
+          })
+        },
+        toolApprovalPolicy: approval,
+        onBeforeToolExecution: beforeExecution
+      }).collect();
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ProviderToolCallError);
+    expect(caught).toMatchObject({
+      diagnosticCode: OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE,
+      provider: "openai",
+      transport: "responses",
+      reason: "invalid_json",
+      retryable: true,
+      effectsPossible: false
+    });
+    expect(String(caught)).not.toContain("private-token");
+    expect(JSON.stringify(caught)).not.toContain("private-token");
+    expect(approval).not.toHaveBeenCalled();
+    expect(guardrail).not.toHaveBeenCalled();
+    expect(beforeExecution).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("does not coerce empty Responses function arguments to an empty object", async () => {
+    fetchMock.mockResolvedValueOnce(responsesSse(
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "function_call",
+          id: "item_1",
+          call_id: "call_1",
+          name: "weather",
+          status: "completed",
+          arguments: ""
+        }
+      },
+      { type: "response.completed", response: { id: "resp_empty", status: "completed" } },
+      "[DONE]"
+    ));
+
+    const execute = vi.fn();
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(streamText({
+      model: provider("gpt-5"),
+      prompt: "Weather?",
+      providerOptions: { apiMode: "responses" },
+      tools: {
+        weather: tool({ name: "weather", schema: z.object({}), execute })
+      }
+    }).collect()).rejects.toMatchObject({
+      diagnosticCode: OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE,
+      reason: "empty_arguments"
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["invalid schema", "weather", "{\"city\":7}"],
+    ["unknown tool", "unknown_weather", "{\"city\":\"Madrid\"}"]
+  ])("rejects %s Responses calls before policy or execution", async (_case, toolName, argumentsJson) => {
+    fetchMock.mockResolvedValueOnce(responsesSse(
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "function_call",
+          id: "item_1",
+          call_id: "call_1",
+          name: toolName,
+          status: "completed",
+          arguments: argumentsJson
+        }
+      },
+      { type: "response.completed", response: { id: "resp_invalid_call", status: "completed" } },
+      "[DONE]"
+    ));
+
+    const approval = vi.fn(() => true);
+    const guardrail = vi.fn(() => undefined);
+    const beforeExecution = vi.fn(() => undefined);
+    const execute = vi.fn(({ city }: { city: string }) => ({ city }));
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(streamText({
+      model: provider("gpt-5"),
+      prompt: "Weather?",
+      providerOptions: { apiMode: "responses" },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          requiresApproval: true,
+          inputGuardrails: [guardrail],
+          execute
+        })
+      },
+      toolApprovalPolicy: approval,
+      onBeforeToolExecution: beforeExecution
+    }).collect()).rejects.toBeInstanceOf(ValidationError);
+    expect(approval).not.toHaveBeenCalled();
+    expect(guardrail).not.toHaveBeenCalled();
+    expect(beforeExecution).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["failed", "response_failed"],
+    ["incomplete", "response_incomplete"]
+  ] as const)("does not emit a function call when Responses ends as %s", async (status, reason) => {
+    fetchMock.mockResolvedValueOnce(responsesSse(
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "function_call",
+          id: "item_1",
+          call_id: "call_1",
+          name: "weather",
+          status: "completed",
+          arguments: "{\"city\":\"Madrid\"}"
+        }
+      },
+      { type: `response.${status}`, response: { id: "resp_terminal", status } },
+      "[DONE]"
+    ));
+
+    const approval = vi.fn(() => true);
+    const execute = vi.fn(({ city }: { city: string }) => ({ city }));
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(streamText({
+      model: provider("gpt-5"),
+      prompt: "Weather?",
+      providerOptions: { apiMode: "responses" },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          requiresApproval: true,
+          execute
+        })
+      },
+      toolApprovalPolicy: approval
+    }).collect()).rejects.toMatchObject({
+      diagnosticCode: OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE,
+      reason,
+      retryable: true,
+      effectsPossible: false
+    });
+    expect(approval).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a Responses function-call stream ends before a terminal event", async () => {
+    fetchMock.mockResolvedValueOnce(responsesSse(
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "function_call",
+          id: "item_1",
+          call_id: "call_1",
+          name: "weather",
+          status: "completed",
+          arguments: "{\"city\":\"Madrid\"}"
+        }
+      },
+      "[DONE]"
+    ));
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(streamText({
+      model: provider("gpt-5"),
+      prompt: "Weather?",
+      providerOptions: { apiMode: "responses" },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      }
+    }).collect()).rejects.toMatchObject({
+      diagnosticCode: OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE,
+      reason: "stream_truncated"
+    });
+  });
+
+  it("bounds assembled Responses function-call arguments", async () => {
+    fetchMock.mockResolvedValueOnce(responsesSse(
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "function_call", id: "item_1", call_id: "call_1", name: "weather", arguments: "" }
+      },
+      { type: "response.function_call_arguments.delta", item_id: "item_1", output_index: 0, delta: "12345" },
+      "[DONE]"
+    ));
+
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      responseLimits: { toolCallArgumentChars: 4 }
+    });
+    await expect(streamText({
+      model: provider("gpt-5"),
+      prompt: "Weather?",
+      providerOptions: { apiMode: "responses" }
+    }).collect()).rejects.toMatchObject({
+      diagnosticCode: OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE,
+      reason: "arguments_too_large"
+    });
+  });
+
+  it("gates local Responses shell execution on terminal completion", async () => {
+    fetchMock.mockResolvedValueOnce(responsesSse(
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "shell_call",
+          id: "shell_1",
+          call_id: "call_shell",
+          status: "completed",
+          action: { command: "echo hi" }
+        }
+      },
+      { type: "response.failed", response: { id: "resp_shell", status: "failed" } },
+      "[DONE]"
+    ));
+
+    const approval = vi.fn(() => true);
+    const execute = vi.fn(() => ({ stdout: "", stderr: "", outcome: { type: "exit" as const, exitCode: 0 } }));
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(streamText({
+      model: provider("gpt-5.4"),
+      prompt: "Run shell",
+      tools: { shell: openAIShellTool({ execute }) },
+      toolApprovalPolicy: approval
+    }).collect()).rejects.toMatchObject({
+      diagnosticCode: OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE,
+      reason: "response_failed"
+    });
+    expect(approval).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("releases a completed local Responses shell call exactly once", async () => {
+    fetchMock.mockResolvedValueOnce(responsesSse(
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "shell_call",
+          id: "shell_1",
+          call_id: "call_shell",
+          status: "completed",
+          action: { command: "echo hi" }
+        }
+      },
+      { type: "response.completed", response: { id: "resp_shell", status: "completed" } },
+      "[DONE]"
+    ));
+
+    const model = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("gpt-5.4");
+    const events = [];
+    for await (const event of await model.stream!({
+      messages: [createTextMessage("user", "Run shell")],
+      tools: {
+        shell: openAIShellTool({
+          execute: () => ({ stdout: "", stderr: "", outcome: { type: "exit", exitCode: 0 } })
+        })
+      }
+    })) {
+      events.push(event);
+    }
+
+    expect(events.filter((event) => event.type === "tool-call")).toEqual([
+      expect.objectContaining({
+        type: "tool-call",
+        toolCall: expect.objectContaining({ id: "call_shell", name: "shell" })
+      })
+    ]);
+    expect(events.at(-1)).toMatchObject({ type: "finish", finishReason: "tool-calls" });
+  });
+
+  it("rejects malformed non-streaming Responses arguments with the same typed contract", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({
+      id: "resp_bad_json",
+      status: "completed",
+      output: [{
+        type: "function_call",
+        call_id: "call_1",
+        name: "weather",
+        arguments: "{"
+      }]
+    }));
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(generateText({
+      model: provider("gpt-5"),
+      prompt: "Weather?",
+      providerOptions: { apiMode: "responses" },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      }
+    })).rejects.toMatchObject({
+      diagnosticCode: OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE,
+      reason: "invalid_json",
+      retryable: true,
+      effectsPossible: false
+    });
+  });
+
   it("streams decoded image-generation events without persisting partial base64", async () => {
     const partialBytes = new Uint8Array(1_100_000).fill(7);
     const partialBase64 = Buffer.from(partialBytes).toString("base64");
@@ -534,11 +969,15 @@ describe("openai adapter", () => {
     });
   });
 
-  it("validates hosted image response limits before creating a provider", () => {
+  it("validates OpenAI response limits before creating a provider", () => {
     expect(() => createOpenAI({
       apiKey: "test",
       responseLimits: { hostedImageEventBytes: 0 }
     })).toThrow('The "hostedImageEventBytes" response limit must be a positive safe integer.');
+    expect(() => createOpenAI({
+      apiKey: "test",
+      responseLimits: { toolCallArgumentChars: 0 }
+    })).toThrow('The "toolCallArgumentChars" response limit must be a positive safe integer.');
   });
 
   it("returns typed hosted image outputs from non-streaming Responses", async () => {

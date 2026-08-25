@@ -107,6 +107,33 @@ const optionalMetadata = (value: unknown, path: string) => {
   jsonValue(value, path);
 };
 
+const providerToolCallErrorReasons = new Set([
+  "empty_arguments",
+  "invalid_json",
+  "arguments_too_large",
+  "incomplete_arguments",
+  "inconsistent_metadata",
+  "response_failed",
+  "response_incomplete",
+  "stream_truncated"
+]);
+
+const agentRunError = (value: unknown, path: string) => {
+  const current = record(value, path);
+  string(current.message, `${path}.message`);
+  optionalString(current.diagnosticCode, `${path}.diagnosticCode`);
+  if (current.category !== undefined && current.category !== "provider-tool-call") {
+    invalid(`${path}.category`, 'must be "provider-tool-call"');
+  }
+  optionalString(current.provider, `${path}.provider`);
+  optionalString(current.transport, `${path}.transport`);
+  if (current.reason !== undefined && !providerToolCallErrorReasons.has(string(current.reason, `${path}.reason`))) {
+    invalid(`${path}.reason`, "must be a supported provider tool-call reason");
+  }
+  optionalBoolean(current.retryable, `${path}.retryable`);
+  optionalBoolean(current.effectsPossible, `${path}.effectsPossible`);
+};
+
 const scope = (value: unknown, path: string) => {
   if (value === undefined) return;
   const current = record(value, path);
@@ -252,8 +279,7 @@ const step = (value: unknown, path: string) => {
   }
   array(current.toolResults, `${path}.toolResults`).forEach((entry, index) => toolResult(entry, `${path}.toolResults[${index}]`));
   if (current.error !== undefined) {
-    const error = record(current.error, `${path}.error`);
-    string(error.message, `${path}.error.message`);
+    agentRunError(current.error, `${path}.error`);
   }
 };
 
@@ -339,7 +365,7 @@ const childRun = (value: unknown, path: string) => {
   usage(current.usage, `${path}.usage`);
   if (current.startedAt !== undefined) finiteNumber(current.startedAt, `${path}.startedAt`, 0);
   if (current.updatedAt !== undefined) finiteNumber(current.updatedAt, `${path}.updatedAt`, 0);
-  if (current.error !== undefined) string(record(current.error, `${path}.error`).message, `${path}.error.message`);
+  if (current.error !== undefined) agentRunError(current.error, `${path}.error`);
   optionalMetadata(current.metadata, `${path}.metadata`);
   if (current.resumeState !== undefined) {
     jsonValue(current.resumeState, `${path}.resumeState`, true);
@@ -465,7 +491,7 @@ export const normalizeAgentRunState = (value: unknown): AgentRunState => {
     invalid("updatedAt", "must not precede startedAt");
   }
   optionalString(state.cancellationReason, "cancellationReason", true);
-  if (state.error !== undefined) string(record(state.error, "error").message, "error.message");
+  if (state.error !== undefined) agentRunError(state.error, "error");
 
   return {
     ...cloneJson(state as unknown as AgentRunState),

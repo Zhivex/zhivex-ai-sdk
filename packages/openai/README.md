@@ -8,21 +8,28 @@ OpenAI adapter for Zhivex AI SDK.
 bun add @zhivex-ai/openai @zhivex-ai/core zod
 ```
 
-## Audio response limits
+## Response limits
 
-Transcription and speech responses are bounded before JSON parsing or binary buffering. Defaults are 16 MiB for speech, 4 MiB for transcription JSON, and 64 KiB for error bodies. Override them at provider creation time when your application requires a stricter policy:
+Transcription and speech responses are bounded before JSON parsing or binary buffering. Responses function-call arguments are also bounded while fragmented SSE events are assembled. Defaults are 16 MiB for speech, 4 MiB for transcription JSON, 64 KiB for error bodies, and 1 MiB of arguments per Responses function call. Override them at provider creation time when your application requires a stricter policy:
 
 ```ts
 const openai = createOpenAI({
   responseLimits: {
     speechBytes: 16 * 1024 * 1024,
     transcriptionBytes: 1024 * 1024,
-    errorBodyBytes: 64 * 1024
+    errorBodyBytes: 64 * 1024,
+    toolCallArgumentChars: 256 * 1024
   }
 });
 ```
 
 Oversized successful bodies throw `ProviderResponseTooLargeError`. Provider HTTP errors keep their original status and expose only a bounded, possibly truncated `responseBody`.
+
+### Fail-closed Responses tool calls
+
+Streaming Responses function calls and SDK-managed local Shell, Apply Patch, and Computer calls do not cross into schema validation, approval, guardrails, or execution until OpenAI emits a terminal `response.completed`. Malformed, empty, oversized, inconsistent, failed, incomplete, or truncated calls throw a sanitized `ProviderToolCallError` with diagnostic code `OPENAI_RESPONSES_TOOL_CALL_INVALID`.
+
+The error exposes only low-cardinality metadata: `provider`, `transport`, `diagnosticCode`, `reason`, `retryable`, and `effectsPossible`. It never includes raw arguments, prompts, provider bodies, or tool names. A caller may consider a fresh retry only when `retryable` is `true` and `effectsPossible` is `false`; Core forces the error to non-retryable if an earlier local tool step may already have produced effects. Durable Agents persist the same sanitized fields in `state.error`.
 
 ## GPT-5.6
 

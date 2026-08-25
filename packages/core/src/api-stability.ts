@@ -25,6 +25,7 @@ const stableSymbols = [
   "ParseError",
   "ProviderHTTPError",
   "ProviderResponseTooLargeError",
+  "ProviderToolCallError",
   "ToolRegistry",
   "UnsupportedFeatureError",
   "ValidationError",
