@@ -17,7 +17,7 @@ const backwardCompatibleProviderCoreRanges = {
   kimi: "^1.1.2",
   meta: "^1.3.0",
   ollama: "^1.3.0",
-  openai: "^1.0.2",
+  openai: "^1.10.0",
   openrouter: "^1.0.2",
   qwen: "^1.4.0",
   vertex: "^1.4.0",

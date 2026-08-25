@@ -442,6 +442,49 @@ describe("openai adapter", () => {
     });
   });
 
+  it("rejects conflicting Responses item IDs at the same output index before execution", async () => {
+    fetchMock.mockResolvedValueOnce(responsesSse(
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "function_call", id: "item_a", call_id: "call_a", name: "weather", arguments: "" }
+      },
+      {
+        type: "response.function_call_arguments.done",
+        item_id: "item_b",
+        output_index: 0,
+        arguments: "{\"city\":\"Madrid\"}"
+      },
+      { type: "response.completed", response: { id: "resp_conflict", status: "completed" } },
+      "[DONE]"
+    ));
+
+    const approval = vi.fn(() => true);
+    const execute = vi.fn(({ city }: { city: string }) => ({ city }));
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(streamText({
+      model: provider("gpt-5"),
+      prompt: "Weather?",
+      providerOptions: { apiMode: "responses" },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          requiresApproval: true,
+          execute
+        })
+      },
+      toolApprovalPolicy: approval
+    }).collect()).rejects.toMatchObject({
+      diagnosticCode: OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE,
+      reason: "inconsistent_metadata",
+      retryable: true,
+      effectsPossible: false
+    });
+    expect(approval).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("fails closed on malformed Responses arguments before policy or execution", async () => {
     const privateArgument = '{"city":"private-token"';
     fetchMock.mockResolvedValueOnce(responsesSse(

@@ -2092,6 +2092,7 @@ const streamResponses = async function* (
   toolCallArgumentChars = DEFAULT_TOOL_CALL_ARGUMENT_CHARS
 ): AsyncGenerator<StreamEvent, void, undefined> {
   type ToolBuffer = {
+    itemId?: string;
     callId?: string;
     name?: string;
     deltaArguments: string;
@@ -2141,46 +2142,63 @@ const streamResponses = async function* (
     throw openAIResponsesToolCallError("inconsistent_metadata", sawToolCalls);
   };
 
-  const getToolBuffer = (key: string, outputIndex: unknown): ToolBuffer => {
-    const existing = toolBuffers.get(key);
-    if (existing) {
+  const getToolBuffer = (key: string, itemId: unknown, outputIndex: unknown): ToolBuffer => {
+    const canonicalItemId = typeof itemId === "string" && itemId.length > 0 ? itemId : undefined;
+    const canonicalOutputIndex =
+      typeof outputIndex === "number" && Number.isSafeInteger(outputIndex) && outputIndex >= 0
+        ? outputIndex
+        : undefined;
+    const bindItemId = (toolCall: ToolBuffer) => {
       if (
-        typeof outputIndex === "number" &&
-        Number.isSafeInteger(outputIndex) &&
-        outputIndex >= 0 &&
-        existing.outputIndex !== undefined &&
-        existing.outputIndex !== outputIndex
+        canonicalItemId !== undefined &&
+        toolCall.itemId !== undefined &&
+        toolCall.itemId !== canonicalItemId
       ) {
         throw openAIResponsesToolCallError("inconsistent_metadata", sawToolCalls);
       }
-      if (typeof outputIndex === "number" && Number.isSafeInteger(outputIndex) && outputIndex >= 0) {
-        existing.outputIndex = outputIndex;
-        toolBuffersByOutputIndex.set(outputIndex, existing);
+      if (canonicalItemId !== undefined) {
+        toolCall.itemId = canonicalItemId;
       }
+    };
+    const bindOutputIndex = (toolCall: ToolBuffer) => {
+      if (canonicalOutputIndex === undefined) {
+        return;
+      }
+      if (toolCall.outputIndex !== undefined && toolCall.outputIndex !== canonicalOutputIndex) {
+        throw openAIResponsesToolCallError("inconsistent_metadata", sawToolCalls);
+      }
+      const indexed = toolBuffersByOutputIndex.get(canonicalOutputIndex);
+      if (indexed && indexed !== toolCall) {
+        throw openAIResponsesToolCallError("inconsistent_metadata", sawToolCalls);
+      }
+      toolCall.outputIndex = canonicalOutputIndex;
+      toolBuffersByOutputIndex.set(canonicalOutputIndex, toolCall);
+    };
+
+    const existing = toolBuffers.get(key);
+    if (existing) {
+      bindItemId(existing);
+      bindOutputIndex(existing);
       return existing;
     }
 
-    if (
-      typeof outputIndex === "number" &&
-      Number.isSafeInteger(outputIndex) &&
-      outputIndex >= 0
-    ) {
-      const indexed = toolBuffersByOutputIndex.get(outputIndex);
+    if (canonicalOutputIndex !== undefined) {
+      const indexed = toolBuffersByOutputIndex.get(canonicalOutputIndex);
       if (indexed) {
+        bindItemId(indexed);
         toolBuffers.set(key, indexed);
         return indexed;
       }
     }
 
     const created: ToolBuffer = {
+      ...(canonicalItemId !== undefined ? { itemId: canonicalItemId } : {}),
       deltaArguments: "",
       argumentsDone: false,
       outputItemDone: false,
       emitted: false,
       order: nextToolOrder++,
-      ...(typeof outputIndex === "number" && Number.isSafeInteger(outputIndex) && outputIndex >= 0
-        ? { outputIndex }
-        : {})
+      ...(canonicalOutputIndex !== undefined ? { outputIndex: canonicalOutputIndex } : {})
     };
     toolBuffers.set(key, created);
     if (created.outputIndex !== undefined) {
@@ -2388,8 +2406,9 @@ const streamResponses = async function* (
         });
       }
       if (item?.type === "function_call") {
-        const key = toolBufferKey(item.id ?? json.item_id, json.output_index);
-        const existing = getToolBuffer(key, json.output_index);
+        const itemId = item.id ?? json.item_id;
+        const key = toolBufferKey(itemId, json.output_index);
+        const existing = getToolBuffer(key, itemId, json.output_index);
         mergeToolString(existing, "callId", item.call_id);
         mergeToolString(existing, "name", item.name);
         if (item.caller && typeof item.caller === "object") {
@@ -2474,7 +2493,7 @@ const streamResponses = async function* (
 
     if (type === "response.function_call_arguments.delta") {
       const key = toolBufferKey(json.item_id, json.output_index);
-      const existing = getToolBuffer(key, json.output_index);
+      const existing = getToolBuffer(key, json.item_id, json.output_index);
       mergeToolString(existing, "callId", json.call_id);
       mergeToolString(existing, "name", json.name);
       if (typeof json.delta === "string") {
@@ -2487,7 +2506,7 @@ const streamResponses = async function* (
 
     if (type === "response.function_call_arguments.done") {
       const key = toolBufferKey(json.item_id, json.output_index);
-      const existing = getToolBuffer(key, json.output_index);
+      const existing = getToolBuffer(key, json.item_id, json.output_index);
       mergeToolString(existing, "callId", json.call_id);
       mergeToolString(existing, "name", json.name);
       existing.argumentsDone = true;
