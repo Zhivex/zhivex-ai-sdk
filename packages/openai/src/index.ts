@@ -25,6 +25,7 @@ import {
   ConfigurationError,
   ProviderHTTPError,
   ProviderResponseTooLargeError,
+  ProviderToolCallError,
   assertTrustedEndpoint,
   decodeBase64WithLimit,
   readBodyWithLimit,
@@ -80,18 +81,24 @@ import {
 const MIB = 1024 * 1024;
 const DEFAULT_HOSTED_IMAGE_EVENT_BYTES = 32 * MIB;
 const DEFAULT_HOSTED_IMAGE_TOTAL_BYTES = 128 * MIB;
+const DEFAULT_TOOL_CALL_ARGUMENT_CHARS = MIB;
 const HOSTED_IMAGE_EVENT_JSON_OVERHEAD_CHARS = MIB;
+
+export const OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE = "OPENAI_RESPONSES_TOOL_CALL_INVALID" as const;
 
 export interface OpenAIResponseLimits extends AudioResponseLimits {
   /** Maximum decoded bytes in one hosted image partial or final SSE event. Defaults to 32 MiB. */
   hostedImageEventBytes?: number;
   /** Maximum decoded hosted image bytes across one Responses SSE stream. Defaults to 128 MiB. */
   hostedImageTotalBytes?: number;
+  /** Maximum assembled characters for one Responses function call. Defaults to 1 MiB. */
+  toolCallArgumentChars?: number;
 }
 
 type ResolvedOpenAIResponseLimits = ReturnType<typeof resolveAudioResponseLimits> & {
   hostedImageEventBytes: number;
   hostedImageTotalBytes: number;
+  toolCallArgumentChars: number;
 };
 
 const normalizeOpenAIResponseLimit = (value: number | undefined, fallback: number, name: string) => {
@@ -113,7 +120,24 @@ const resolveOpenAIResponseLimits = (limits: OpenAIResponseLimits = {}): Resolve
     limits.hostedImageTotalBytes,
     DEFAULT_HOSTED_IMAGE_TOTAL_BYTES,
     "hostedImageTotalBytes"
+  ),
+  toolCallArgumentChars: normalizeOpenAIResponseLimit(
+    limits.toolCallArgumentChars,
+    DEFAULT_TOOL_CALL_ARGUMENT_CHARS,
+    "toolCallArgumentChars"
   )
+});
+
+const openAIResponsesToolCallError = (
+  reason: ConstructorParameters<typeof ProviderToolCallError>[0]["reason"],
+  effectsPossible = false
+) => new ProviderToolCallError({
+  provider: "openai",
+  transport: "responses",
+  diagnosticCode: OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE,
+  reason,
+  retryable: !effectsPossible,
+  effectsPossible
 });
 
 export interface OpenAIProviderOptions {
@@ -1711,6 +1735,28 @@ const parseAssistantMessage = (message: any): ModelMessage => ({
   ]
 });
 
+const parseOpenAIResponsesToolArguments = (
+  rawArguments: unknown,
+  maxChars: number,
+  effectsPossible = false
+): JsonValue => {
+  if (typeof rawArguments !== "string") {
+    throw openAIResponsesToolCallError("incomplete_arguments", effectsPossible);
+  }
+  if (rawArguments.trim().length === 0) {
+    throw openAIResponsesToolCallError("empty_arguments", effectsPossible);
+  }
+  if (rawArguments.length > maxChars) {
+    throw openAIResponsesToolCallError("arguments_too_large", effectsPossible);
+  }
+
+  try {
+    return JSON.parse(rawArguments) as JsonValue;
+  } catch {
+    throw openAIResponsesToolCallError("invalid_json", effectsPossible);
+  }
+};
+
 const extractAudioOutputs = (message: ModelMessage): GeneratedMedia[] =>
   message.parts
     .filter((part): part is Extract<ModelMessage["parts"][number], { type: "audio" }> => part.type === "audio")
@@ -1806,11 +1852,41 @@ const toResponsesInput = (messages: ModelMessage[]) => {
 const parseResponsesAssistantMessage = (
   json: any,
   multiAgentEnabled = false,
-  localTools: Map<string, string> = new Map()
+  localTools: Map<string, string> = new Map(),
+  toolCallArgumentChars = DEFAULT_TOOL_CALL_ARGUMENT_CHARS
 ): ModelMessage => {
   const parts: ModelMessage["parts"] = [];
+  const output = Array.isArray(json.output) ? json.output : [];
+  const responseStatus = typeof json.status === "string" ? json.status : undefined;
+  const isExecutableToolOutput = (item: any) =>
+    item?.type === "function_call" ||
+    (item?.type === "shell_call" && localTools.has("shell")) ||
+    (item?.type === "apply_patch_call" && localTools.has("apply_patch")) ||
+    (item?.type === "computer_call" && localTools.has("computer"));
+  const hasExecutableToolOutput = output.some(isExecutableToolOutput);
 
-  for (const [index, item] of (json.output ?? []).entries()) {
+  if (hasExecutableToolOutput && responseStatus !== "completed") {
+    throw openAIResponsesToolCallError(
+      responseStatus === "failed"
+        ? "response_failed"
+        : responseStatus === "incomplete"
+          ? "response_incomplete"
+          : "inconsistent_metadata"
+    );
+  }
+  const nonCompletedToolOutput = output.find(
+    (item: any) =>
+      isExecutableToolOutput(item) &&
+      typeof item.status === "string" &&
+      item.status !== "completed"
+  );
+  if (nonCompletedToolOutput) {
+    throw openAIResponsesToolCallError(
+      nonCompletedToolOutput.status === "failed" ? "response_failed" : "incomplete_arguments"
+    );
+  }
+
+  for (const [index, item] of output.entries()) {
     if (item?.type === "message") {
       if (multiAgentEnabled && (item.agent?.agent_name !== "/root" || item.phase !== "final_answer")) {
         continue;
@@ -1826,13 +1902,25 @@ const parseResponsesAssistantMessage = (
     }
 
     if (item?.type === "function_call") {
-      const callId = item.call_id ?? item.id ?? `${item.name}-${index}`;
+      if (
+        typeof item.call_id !== "string" ||
+        item.call_id.length === 0 ||
+        typeof item.name !== "string" ||
+        item.name.length === 0
+      ) {
+        throw openAIResponsesToolCallError("inconsistent_metadata");
+      }
+      if (item.status === "incomplete" || item.status === "failed") {
+        throw openAIResponsesToolCallError(
+          item.status === "failed" ? "response_failed" : "incomplete_arguments"
+        );
+      }
       parts.push({
         type: "tool-call",
         toolCall: {
-          id: callId,
+          id: item.call_id,
           name: item.name,
-          input: JSON.parse(item.arguments ?? "{}"),
+          input: parseOpenAIResponsesToolArguments(item.arguments, toolCallArgumentChars),
           ...(item.caller && typeof item.caller === "object"
             ? { providerMetadata: { caller: item.caller as JsonValue } }
             : {})
@@ -1931,6 +2019,10 @@ const normalizeResponsesFinishReason = (
   hasToolCalls: boolean,
   hasRefusal = false
 ) => {
+  if (status === "failed") {
+    return "error" as const;
+  }
+
   if (hasToolCalls) {
     return "tool-calls" as const;
   }
@@ -1941,10 +2033,6 @@ const normalizeResponsesFinishReason = (
 
   if (status === "completed") {
     return "stop" as const;
-  }
-
-  if (status === "failed") {
-    return "error" as const;
   }
 
   return normalizeFinishReason(status);
@@ -2000,15 +2088,36 @@ const streamResponses = async function* (
     outputFormat: OpenAIImageOutputFormat;
     eventMaxBytes?: number;
     totalMaxBytes?: number;
-  }
+  },
+  toolCallArgumentChars = DEFAULT_TOOL_CALL_ARGUMENT_CHARS
 ): AsyncGenerator<StreamEvent, void, undefined> {
-  const toolBuffers = new Map<string, { callId: string; name: string; args: string; caller?: JsonValue; emitted: boolean }>();
+  type ToolBuffer = {
+    itemId?: string;
+    callId?: string;
+    name?: string;
+    deltaArguments: string;
+    finalArguments?: string;
+    argumentsDone: boolean;
+    outputItemDone: boolean;
+    itemStatus?: string;
+    outputIndex?: number;
+    caller?: JsonValue;
+    emitted: boolean;
+    order: number;
+  };
+
+  const toolBuffers = new Map<string, ToolBuffer>();
+  const toolBuffersByOutputIndex = new Map<number, ToolBuffer>();
+  const pendingExecutableEvents: StreamEvent[] = [];
+  const pendingExecutableProviderEvents: StreamEvent[] = [];
   const outputAgents = new Map<number, { agentName?: string }>();
   const hostedImageEventMaxBytes = imageGeneration?.eventMaxBytes ?? DEFAULT_HOSTED_IMAGE_EVENT_BYTES;
   const hostedImageTotalMaxBytes = imageGeneration?.totalMaxBytes ?? DEFAULT_HOSTED_IMAGE_TOTAL_BYTES;
   let hostedImageBytes = 0;
   let sawToolCalls = false;
   let sawRefusal = false;
+  let sawTerminalResponse = false;
+  let nextToolOrder = 0;
 
   const recordHostedImageBytes = (image: GeneratedMedia) => {
     const receivedBytes = hostedImageBytes + (image.data?.byteLength ?? 0);
@@ -2023,24 +2132,154 @@ const streamResponses = async function* (
     hostedImageBytes = receivedBytes;
   };
 
-  const emitToolCall = (key: string) => {
-    const toolCall = toolBuffers.get(key);
-    if (!toolCall || toolCall.emitted || !toolCall.name) {
-      return undefined;
+  const toolBufferKey = (itemId: unknown, outputIndex: unknown) => {
+    if (typeof itemId === "string" && itemId.length > 0) {
+      return `item:${itemId}`;
+    }
+    if (typeof outputIndex === "number" && Number.isSafeInteger(outputIndex) && outputIndex >= 0) {
+      return `output:${outputIndex}`;
+    }
+    throw openAIResponsesToolCallError("inconsistent_metadata", sawToolCalls);
+  };
+
+  const getToolBuffer = (key: string, itemId: unknown, outputIndex: unknown): ToolBuffer => {
+    const canonicalItemId = typeof itemId === "string" && itemId.length > 0 ? itemId : undefined;
+    const canonicalOutputIndex =
+      typeof outputIndex === "number" && Number.isSafeInteger(outputIndex) && outputIndex >= 0
+        ? outputIndex
+        : undefined;
+    const bindItemId = (toolCall: ToolBuffer) => {
+      if (
+        canonicalItemId !== undefined &&
+        toolCall.itemId !== undefined &&
+        toolCall.itemId !== canonicalItemId
+      ) {
+        throw openAIResponsesToolCallError("inconsistent_metadata", sawToolCalls);
+      }
+      if (canonicalItemId !== undefined) {
+        toolCall.itemId = canonicalItemId;
+      }
+    };
+    const bindOutputIndex = (toolCall: ToolBuffer) => {
+      if (canonicalOutputIndex === undefined) {
+        return;
+      }
+      if (toolCall.outputIndex !== undefined && toolCall.outputIndex !== canonicalOutputIndex) {
+        throw openAIResponsesToolCallError("inconsistent_metadata", sawToolCalls);
+      }
+      const indexed = toolBuffersByOutputIndex.get(canonicalOutputIndex);
+      if (indexed && indexed !== toolCall) {
+        throw openAIResponsesToolCallError("inconsistent_metadata", sawToolCalls);
+      }
+      toolCall.outputIndex = canonicalOutputIndex;
+      toolBuffersByOutputIndex.set(canonicalOutputIndex, toolCall);
+    };
+
+    const existing = toolBuffers.get(key);
+    if (existing) {
+      bindItemId(existing);
+      bindOutputIndex(existing);
+      return existing;
     }
 
-    toolCall.emitted = true;
-    sawToolCalls = true;
-
-    return {
-      type: "tool-call",
-      toolCall: {
-        id: toolCall.callId,
-        name: toolCall.name,
-        input: JSON.parse(toolCall.args || "{}"),
-        ...(toolCall.caller !== undefined ? { providerMetadata: { caller: toolCall.caller } } : {})
+    if (canonicalOutputIndex !== undefined) {
+      const indexed = toolBuffersByOutputIndex.get(canonicalOutputIndex);
+      if (indexed) {
+        bindItemId(indexed);
+        toolBuffers.set(key, indexed);
+        return indexed;
       }
-    } satisfies StreamEvent;
+    }
+
+    const created: ToolBuffer = {
+      ...(canonicalItemId !== undefined ? { itemId: canonicalItemId } : {}),
+      deltaArguments: "",
+      argumentsDone: false,
+      outputItemDone: false,
+      emitted: false,
+      order: nextToolOrder++,
+      ...(canonicalOutputIndex !== undefined ? { outputIndex: canonicalOutputIndex } : {})
+    };
+    toolBuffers.set(key, created);
+    if (created.outputIndex !== undefined) {
+      toolBuffersByOutputIndex.set(created.outputIndex, created);
+    }
+    return created;
+  };
+
+  const mergeToolString = (toolCall: ToolBuffer, field: "callId" | "name", value: unknown) => {
+    if (typeof value !== "string" || value.length === 0) {
+      return;
+    }
+    if (toolCall[field] !== undefined && toolCall[field] !== value) {
+      throw openAIResponsesToolCallError("inconsistent_metadata", sawToolCalls);
+    }
+    toolCall[field] = value;
+  };
+
+  const ensureArgumentLimit = (argumentsValue: string) => {
+    if (argumentsValue.length > toolCallArgumentChars) {
+      throw openAIResponsesToolCallError("arguments_too_large", sawToolCalls);
+    }
+  };
+
+  const setFinalArguments = (toolCall: ToolBuffer, argumentsValue: unknown) => {
+    if (typeof argumentsValue !== "string") {
+      return;
+    }
+    ensureArgumentLimit(argumentsValue);
+    if (toolCall.finalArguments !== undefined && toolCall.finalArguments !== argumentsValue) {
+      throw openAIResponsesToolCallError("inconsistent_metadata", sawToolCalls);
+    }
+    if (toolCall.deltaArguments.length > 0 && toolCall.deltaArguments !== argumentsValue) {
+      throw openAIResponsesToolCallError("inconsistent_metadata", sawToolCalls);
+    }
+    toolCall.finalArguments = argumentsValue;
+  };
+
+  const materializeToolCalls = (): StreamEvent[] => {
+    const pending = [...new Set(toolBuffers.values())]
+      .filter((toolCall) => !toolCall.emitted)
+      .sort((left, right) =>
+        (left.outputIndex ?? Number.MAX_SAFE_INTEGER) - (right.outputIndex ?? Number.MAX_SAFE_INTEGER) ||
+        left.order - right.order
+      );
+
+    const events = pending.map((toolCall) => {
+      if (
+        !toolCall.callId ||
+        !toolCall.name ||
+        (!toolCall.argumentsDone && !toolCall.outputItemDone)
+      ) {
+        throw openAIResponsesToolCallError("incomplete_arguments", sawToolCalls);
+      }
+      if (toolCall.itemStatus === "failed" || toolCall.itemStatus === "incomplete") {
+        throw openAIResponsesToolCallError(
+          toolCall.itemStatus === "failed" ? "response_failed" : "incomplete_arguments",
+          sawToolCalls
+        );
+      }
+
+      const rawArguments = toolCall.finalArguments ?? toolCall.deltaArguments;
+      const input = parseOpenAIResponsesToolArguments(rawArguments, toolCallArgumentChars, sawToolCalls);
+      return {
+        type: "tool-call",
+        toolCall: {
+          id: toolCall.callId,
+          name: toolCall.name,
+          input,
+          ...(toolCall.caller !== undefined ? { providerMetadata: { caller: toolCall.caller } } : {})
+        }
+      } satisfies StreamEvent;
+    });
+
+    for (const toolCall of pending) {
+      toolCall.emitted = true;
+    }
+    if (events.length > 0) {
+      sawToolCalls = true;
+    }
+    return events;
   };
 
   const maxHostedImageEventChars = Math.min(
@@ -2051,11 +2290,23 @@ const streamResponses = async function* (
     ? { maxEventChars: maxHostedImageEventChars, maxBufferChars: maxHostedImageEventChars }
     : undefined)) {
     if (event.data === "[DONE]") {
-      return;
+      break;
     }
 
-    const json = JSON.parse(event.data);
+    let json: any;
+    try {
+      json = JSON.parse(event.data);
+    } catch (error) {
+      if (toolBuffers.size > 0 || sawToolCalls) {
+        throw openAIResponsesToolCallError("stream_truncated", sawToolCalls);
+      }
+      throw error;
+    }
     const type = json.type as string | undefined;
+
+    if (sawTerminalResponse) {
+      continue;
+    }
 
     if (type === "response.image_generation_call.partial_image") {
       const normalized = normalizeOpenAIImageGenerationPartialImage(
@@ -2079,6 +2330,9 @@ const streamResponses = async function* (
     }
 
     if (type === "error") {
+      if (toolBuffers.size > 0 || pendingExecutableEvents.length > 0 || sawToolCalls) {
+        throw openAIResponsesToolCallError("response_failed", sawToolCalls);
+      }
       throw new ProviderHTTPError(
         `OpenAI Responses stream failed: ${json.error?.message ?? json.message ?? "unknown error"}`,
         500,
@@ -2110,6 +2364,23 @@ const streamResponses = async function* (
     if (type === "response.output_item.added" || type === "response.output_item.done") {
       const item = json.item;
       let handledLocalToolCall = false;
+      const isLocalExecutableItem =
+        item?.type === "function_call" ||
+        (item?.type === "shell_call" && localTools.has("shell")) ||
+        (item?.type === "apply_patch_call" && localTools.has("apply_patch")) ||
+        (item?.type === "computer_call" && localTools.has("computer"));
+
+      if (
+        type === "response.output_item.done" &&
+        isLocalExecutableItem &&
+        typeof item.status === "string" &&
+        item.status !== "completed"
+      ) {
+        throw openAIResponsesToolCallError(
+          item.status === "failed" ? "response_failed" : "incomplete_arguments",
+          sawToolCalls
+        );
+      }
 
       if (item?.type === "image_generation_call" && type === "response.output_item.done") {
         const normalized = normalizeOpenAIImageGenerationCall(
@@ -2135,39 +2406,26 @@ const streamResponses = async function* (
         });
       }
       if (item?.type === "function_call") {
-        const key = item.id ?? json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
-        const existing: {
-          callId: string;
-          name: string;
-          args: string;
-          caller?: JsonValue;
-          emitted: boolean;
-        } = toolBuffers.get(key) ?? {
-          callId: item.call_id ?? key,
-          name: item.name ?? "",
-          args: "",
-          emitted: false
-        };
-        existing.callId = item.call_id ?? existing.callId;
-        existing.name ||= item.name ?? "";
+        const itemId = item.id ?? json.item_id;
+        const key = toolBufferKey(itemId, json.output_index);
+        const existing = getToolBuffer(key, itemId, json.output_index);
+        mergeToolString(existing, "callId", item.call_id);
+        mergeToolString(existing, "name", item.name);
         if (item.caller && typeof item.caller === "object") {
           existing.caller = item.caller as JsonValue;
         }
-        if (typeof item.arguments === "string") {
-          existing.args = item.arguments;
-        }
-        toolBuffers.set(key, existing);
-
         if (type === "response.output_item.done") {
-          const emitted = emitToolCall(key);
-          if (emitted) {
-            yield emitted;
-          }
+          existing.outputItemDone = true;
+          existing.itemStatus = typeof item.status === "string" ? item.status : existing.itemStatus;
+          setFinalArguments(existing, item.arguments);
+        } else if (typeof item.arguments === "string" && item.arguments.length > 0) {
+          ensureArgumentLimit(item.arguments);
+          existing.deltaArguments = item.arguments;
         }
       }
 
       if (item?.type === "shell_call" && type === "response.output_item.done" && localTools.has("shell")) {
-        yield {
+        pendingExecutableEvents.push({
           type: "tool-call",
           toolCall: {
             id: item.call_id ?? item.id ?? `${json.output_index ?? "shell"}`,
@@ -2175,13 +2433,12 @@ const streamResponses = async function* (
             input: parseShellCallInput(item) as JsonValue,
             providerMetadata: { responsesToolType: "shell" }
           }
-        } satisfies StreamEvent;
-        sawToolCalls = true;
+        } satisfies StreamEvent);
         handledLocalToolCall = true;
       }
 
       if (item?.type === "apply_patch_call" && type === "response.output_item.done" && localTools.has("apply_patch")) {
-        yield {
+        pendingExecutableEvents.push({
           type: "tool-call",
           toolCall: {
             id: item.call_id ?? item.id ?? `${json.output_index ?? "apply_patch"}`,
@@ -2189,13 +2446,12 @@ const streamResponses = async function* (
             input: parseApplyPatchCallInput(item) as JsonValue,
             providerMetadata: { responsesToolType: "apply_patch" }
           }
-        } satisfies StreamEvent;
-        sawToolCalls = true;
+        } satisfies StreamEvent);
         handledLocalToolCall = true;
       }
 
       if (item?.type === "computer_call" && type === "response.output_item.done" && localTools.has("computer")) {
-        yield {
+        pendingExecutableEvents.push({
           type: "tool-call",
           toolCall: {
             id: item.call_id ?? item.id ?? `${json.output_index ?? "computer"}`,
@@ -2205,8 +2461,7 @@ const streamResponses = async function* (
             } as JsonValue,
             providerMetadata: { responsesToolType: "computer" }
           }
-        } satisfies StreamEvent;
-        sawToolCalls = true;
+        } satisfies StreamEvent);
         handledLocalToolCall = true;
       }
 
@@ -2219,7 +2474,7 @@ const streamResponses = async function* (
         } satisfies StreamEvent;
       }
       if (item && type === "response.output_item.done") {
-        yield {
+        const outputEvent = {
           type: "provider-data",
           provider: "openai",
           data: {
@@ -2227,44 +2482,68 @@ const streamResponses = async function* (
             items: [item]
           } as JsonValue
         } satisfies StreamEvent;
+        if (item.type === "function_call" || handledLocalToolCall) {
+          pendingExecutableProviderEvents.push(outputEvent);
+        } else {
+          yield outputEvent;
+        }
       }
       continue;
     }
 
     if (type === "response.function_call_arguments.delta") {
-      const key = json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
-      const existing = toolBuffers.get(key) ?? {
-        callId: key,
-        name: "",
-        args: "",
-        emitted: false
-      };
-      existing.args += typeof json.delta === "string" ? json.delta : "";
-      toolBuffers.set(key, existing);
+      const key = toolBufferKey(json.item_id, json.output_index);
+      const existing = getToolBuffer(key, json.item_id, json.output_index);
+      mergeToolString(existing, "callId", json.call_id);
+      mergeToolString(existing, "name", json.name);
+      if (typeof json.delta === "string") {
+        const nextArguments = existing.deltaArguments + json.delta;
+        ensureArgumentLimit(nextArguments);
+        existing.deltaArguments = nextArguments;
+      }
       continue;
     }
 
     if (type === "response.function_call_arguments.done") {
-      const key = json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
-      const existing = toolBuffers.get(key) ?? {
-        callId: key,
-        name: "",
-        args: "",
-        emitted: false
-      };
-      if (typeof json.arguments === "string") {
-        existing.args = json.arguments;
-      }
-      toolBuffers.set(key, existing);
-      const emitted = emitToolCall(key);
-      if (emitted) {
-        yield emitted;
-      }
+      const key = toolBufferKey(json.item_id, json.output_index);
+      const existing = getToolBuffer(key, json.item_id, json.output_index);
+      mergeToolString(existing, "callId", json.call_id);
+      mergeToolString(existing, "name", json.name);
+      existing.argumentsDone = true;
+      setFinalArguments(existing, json.arguments);
       continue;
     }
 
     if (type === "response.completed" || type === "response.failed" || type === "response.incomplete") {
       const responseData = json.response ?? {};
+      const responseStatus = typeof responseData.status === "string"
+        ? responseData.status
+        : type.slice("response.".length);
+      sawTerminalResponse = true;
+
+      if (responseStatus === "completed") {
+        for (const toolCallEvent of materializeToolCalls()) {
+          yield toolCallEvent;
+        }
+        if (pendingExecutableEvents.length > 0) {
+          sawToolCalls = true;
+          for (const toolCallEvent of pendingExecutableEvents) {
+            yield toolCallEvent;
+          }
+        }
+        for (const providerEvent of pendingExecutableProviderEvents) {
+          yield providerEvent;
+        }
+      } else if (
+        (responseStatus === "failed" || responseStatus === "incomplete") &&
+        (toolBuffers.size > 0 || pendingExecutableEvents.length > 0 || sawToolCalls)
+      ) {
+        throw openAIResponsesToolCallError(
+          responseStatus === "failed" ? "response_failed" : "response_incomplete",
+          sawToolCalls
+        );
+      }
+
       if (typeof responseData.id === "string") {
         yield {
           type: "provider-data",
@@ -2274,11 +2553,19 @@ const streamResponses = async function* (
       }
       yield {
         type: "finish",
-        finishReason: normalizeResponsesFinishReason(responseData.status, sawToolCalls, sawRefusal),
-        providerFinishReason: responseData.status,
+        finishReason: normalizeResponsesFinishReason(responseStatus, sawToolCalls, sawRefusal),
+        providerFinishReason: responseStatus,
         usage: mapResponsesUsage(responseData.usage)
       } satisfies StreamEvent;
+      continue;
     }
+  }
+
+  if (
+    !sawTerminalResponse &&
+    (toolBuffers.size > 0 || pendingExecutableEvents.length > 0 || sawToolCalls)
+  ) {
+    throw openAIResponsesToolCallError("stream_truncated", sawToolCalls);
   }
 };
 
@@ -2418,7 +2705,8 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
       const assistantMessage = parseResponsesAssistantMessage(
         json,
         options.multiAgentEnabled,
-        localResponsesTools(input.tools)
+        localResponsesTools(input.tools),
+        this.responseLimits.toolCallArgumentChars
       );
       const currentOutput = Array.isArray(json.output)
         ? (json.output as Array<Record<string, unknown>>)
@@ -2580,6 +2868,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
         input
       );
       const imageGeneration = responsesImageGenerationConfig(input.tools, this.responseLimits);
+      const toolCallArgumentChars = this.responseLimits.toolCallArgumentChars;
 
       return (async function* () {
         try {
@@ -2587,7 +2876,8 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             response,
             options.multiAgentEnabled,
             localResponsesTools(input.tools),
-            imageGeneration
+            imageGeneration,
+            toolCallArgumentChars
           );
         } finally {
           cleanup();

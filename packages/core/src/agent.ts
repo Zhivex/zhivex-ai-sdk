@@ -5,7 +5,13 @@ import { createAgentHandoffMessage } from "./agent-handoff-contracts.js";
 import { createAgentExecutionEnvironmentBinding, fingerprintAgentHarness } from "./agent-harness.js";
 import { AGENT_RUN_STATE_SCHEMA_VERSION, normalizeAgentRunState } from "./agent-state.js";
 import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
-import { ConflictError, GuardrailTriggeredError, UnsupportedFeatureError, ValidationError } from "./errors.js";
+import {
+  ConflictError,
+  GuardrailTriggeredError,
+  ProviderToolCallError,
+  UnsupportedFeatureError,
+  ValidationError
+} from "./errors.js";
 import { aggregateTokenUsage, generateText, getGenerateTextStepTiming, normalizeMessages, streamText } from "./generate-text.js";
 import { createTextMessage, isCallableToolDefinition, serializeJsonValue } from "./messages.js";
 import { createMergedAbortSignal } from "./runtime.js";
@@ -34,6 +40,7 @@ import type {
   AgentInputGuardrail,
   AgentOutputGuardrail,
   AgentRunCancellationOptions,
+  AgentRunError,
   AgentRunInput,
   AgentRunOutput,
   AgentRunState,
@@ -1880,12 +1887,29 @@ const emptyAsyncIterable = async function* () {
   return;
 };
 
-const createFailedState = (state: AgentRunState, message: string): AgentRunState => ({
+const toAgentRunError = (error: unknown): AgentRunError => {
+  if (error instanceof ProviderToolCallError) {
+    return {
+      message: error.message,
+      diagnosticCode: error.diagnosticCode,
+      category: error.category,
+      provider: error.provider,
+      ...(error.transport ? { transport: error.transport } : {}),
+      reason: error.reason,
+      retryable: error.retryable,
+      effectsPossible: error.effectsPossible
+    };
+  }
+
+  return {
+    message: error instanceof Error ? error.message : String(error)
+  };
+};
+
+const createFailedState = (state: AgentRunState, error: unknown): AgentRunState => ({
   ...state,
   status: "failed",
-  error: {
-    message
-  },
+  error: toAgentRunError(error),
   updatedAt: Date.now()
 });
 
@@ -2724,10 +2748,7 @@ export const runAgent = async <
     const durableState = agent.store
       ? normalizeAgentRunState((await agent.store.load(context.state.runId, context.state.scope)) ?? context.state)
       : context.state;
-    const failedState = createFailedState(
-      durableState,
-      error instanceof Error ? error.message : String(error)
-    );
+    const failedState = createFailedState(durableState, error);
     await persistState(agent, failedState, policy);
     await emitRunFinishTelemetry(agent, failedState);
     executionEnvironmentStatus = failedState.status;
@@ -3138,7 +3159,7 @@ export const streamAgent = <
         const durableState = agent.store
           ? normalizeAgentRunState((await agent.store.load(context.state.runId, context.state.scope)) ?? context.state)
           : context.state;
-        const failedState = createFailedState(durableState, error instanceof Error ? error.message : String(error));
+        const failedState = createFailedState(durableState, error);
         await persistState(agent, failedState, policy);
         await emitRunFinishTelemetry(agent, failedState);
         await publish({

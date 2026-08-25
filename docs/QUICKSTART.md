@@ -155,6 +155,7 @@ For a first-time-user timing trial and the evidence format, use [Golden Path Ver
 ## Errors And Production Boundaries
 
 - Show generic public errors; keep bounded provider diagnostics in server-side telemetry.
+- Handle `ProviderToolCallError` by its low-cardinality `diagnosticCode`, `reason`, `retryable`, and `effectsPossible` fields. Never recover by parsing error text; provider arguments and bodies are intentionally absent.
 - Forward `request.signal` so browser cancellation reaches the agent run.
 - Bound request bodies, message length, session identifiers, output tokens, total run time, steps, tool calls, and retained stream data.
 - Authentication, authorization, tenant isolation, rate limiting, database clients, and retention are application-owned.

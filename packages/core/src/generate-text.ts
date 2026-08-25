@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 
 import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
-import { GuardrailTriggeredError, ParseError, UnsupportedFeatureError, ValidationError } from "./errors.js";
+import {
+  GuardrailTriggeredError,
+  ParseError,
+  ProviderToolCallError,
+  UnsupportedFeatureError,
+  ValidationError
+} from "./errors.js";
 import { emitLanguageModelTelemetryEvent } from "./middleware.js";
 import {
   createTextMessage,
@@ -38,6 +44,22 @@ import type {
 } from "./types.js";
 
 type AnyGenerateTextOptions = GenerateTextOptions<any, any>;
+
+const withPossibleToolEffects = (error: unknown, effectsPossible: boolean): unknown => {
+  if (!(error instanceof ProviderToolCallError) || !effectsPossible || error.effectsPossible) {
+    return error;
+  }
+
+  return new ProviderToolCallError({
+    provider: error.provider,
+    ...(error.transport ? { transport: error.transport } : {}),
+    diagnosticCode: error.diagnosticCode,
+    reason: error.reason,
+    retryable: false,
+    effectsPossible: true,
+    cause: error
+  });
+};
 
 const withToolTimeout = async <T>(
   operation: (signal: AbortSignal | undefined) => Promise<T>,
@@ -750,6 +772,7 @@ export const generateText = async <
   const generatedMessages: ModelMessage[] = [];
   const approvalRequests: NonNullable<GenerateTextOutput["approvalRequests"]> = [];
   let finalResult: GenerateResult | undefined;
+  let effectsPossible = false;
 
   const pendingToolCalls = extractUnresolvedToolCalls(allMessages);
   if (pendingToolCalls.length) {
@@ -774,6 +797,7 @@ export const generateText = async <
     await options.onBeforeToolExecution?.({ request, step, toolCalls: pendingToolCalls });
     let recoveredToolResults: ToolExecutionResult[];
     try {
+      effectsPossible = true;
       recoveredToolResults = await executeTools(preflight, options, {
         request,
         step
@@ -822,7 +846,12 @@ export const generateText = async <
     const request = toRequest(options, allMessages);
     await options.onBeforeModelStep?.({ request, step: absoluteStep });
     const startedAt = Date.now();
-    let response = await options.model.generate(request);
+    let response: GenerateResult;
+    try {
+      response = await options.model.generate(request);
+    } catch (error) {
+      throw withPossibleToolEffects(error, effectsPossible);
+    }
     stepTimings.set(request, { startedAt, finishedAt: Date.now() });
     steps.push({ request, response });
     finalResult = response;
@@ -858,6 +887,7 @@ export const generateText = async <
     await options.onBeforeToolExecution?.({ request, step: absoluteStep, toolCalls });
     let currentToolResults: ToolExecutionResult[];
     try {
+      effectsPossible = true;
       currentToolResults = await executeTools(preflight!, options, {
         request,
         step: absoluteStep
@@ -939,6 +969,7 @@ export const streamText = <
 
   const broadcast = new BoundedReplayBroadcast<StreamEvent>();
   let finalResultPromise: Promise<GenerateTextOutput> | undefined;
+  let effectsPossible = false;
 
   const publish = async (event: StreamEvent, terminal = false) => {
     // Progressive binary previews are useful only to live consumers. Retaining
@@ -990,6 +1021,7 @@ export const streamText = <
       await options.onBeforeToolExecution?.({ request, step, toolCalls: pendingToolCalls });
       let recoveredToolResults: ToolExecutionResult[];
       try {
+        effectsPossible = true;
         recoveredToolResults = await executeTools(preflight, options, {
           request,
           step
@@ -1146,6 +1178,7 @@ export const streamText = <
       await options.onBeforeToolExecution?.({ request, step: absoluteStep, toolCalls });
       let currentToolResults: ToolExecutionResult[];
       try {
+        effectsPossible = true;
         currentToolResults = await executeTools(preflight!, options, {
           request,
           step: absoluteStep
@@ -1214,11 +1247,15 @@ export const streamText = <
   };
 
   finalResultPromise = runner().catch(async (error) => {
-    if (!(error instanceof Error && error.name === "StreamBufferOverflowError")) {
-      await publish({ type: "error", error: error instanceof Error ? error : new Error(String(error)) }, true);
+    const contextualizedError = withPossibleToolEffects(error, effectsPossible);
+    if (!(contextualizedError instanceof Error && contextualizedError.name === "StreamBufferOverflowError")) {
+      await publish({
+        type: "error",
+        error: contextualizedError instanceof Error ? contextualizedError : new Error(String(contextualizedError))
+      }, true);
       broadcast.close();
     }
-    throw error;
+    throw contextualizedError;
   });
 
   return {

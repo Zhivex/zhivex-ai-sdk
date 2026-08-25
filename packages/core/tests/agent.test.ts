@@ -34,6 +34,7 @@ import {
   normalizeAgentRunState,
   replayAgentRun,
   prepareSubagentsForAgent,
+  ProviderToolCallError,
   resumeAgent,
   runAgent,
   runAgentGroup,
@@ -2329,6 +2330,49 @@ describe("agent runtime", () => {
     expect(reloaded.state.runId).toBe(first.state.runId);
     expect(store.load(first.state.runId)).toBeDefined();
     expect(reloaded.outputText).toBe("hello world");
+  });
+
+  it("persists sanitized typed provider tool-call diagnostics", async () => {
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({
+      id: "provider-tool-call-failure",
+      model: createLanguageModel({
+        async generate() {
+          throw new ProviderToolCallError({
+            provider: "openai",
+            transport: "responses",
+            diagnosticCode: "OPENAI_RESPONSES_TOOL_CALL_INVALID",
+            reason: "invalid_json",
+            retryable: true
+          });
+        }
+      }),
+      store
+    });
+
+    await expect(runAgent(agent, {
+      runId: "typed-provider-error",
+      prompt: "Do not persist private-token"
+    })).rejects.toMatchObject({
+      diagnosticCode: "OPENAI_RESPONSES_TOOL_CALL_INVALID",
+      reason: "invalid_json"
+    });
+
+    const persisted = await store.load("typed-provider-error");
+    expect(persisted).toMatchObject({
+      status: "failed",
+      error: {
+        message: "Provider tool call could not be materialized safely.",
+        category: "provider-tool-call",
+        provider: "openai",
+        transport: "responses",
+        diagnosticCode: "OPENAI_RESPONSES_TOOL_CALL_INVALID",
+        reason: "invalid_json",
+        retryable: true,
+        effectsPossible: false
+      }
+    });
+    expect(JSON.stringify(persisted?.error)).not.toContain("private-token");
   });
 
   it("reuses existing runs by idempotency key", async () => {
