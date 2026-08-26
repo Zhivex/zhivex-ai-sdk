@@ -19,6 +19,12 @@ describeToolIntegration("tool calling capability integration", () => {
         ...(provider.omitTemperature ? {} : { temperature: provider.temperature ?? 0 }),
         maxTokens: provider.toolMaxTokens ?? 32,
         maxSteps: 2,
+        reasoning: provider.toolReasoning,
+        onBeforeModelStep: provider.toolChoiceForStep
+          ? ({ request, step }) => {
+              request.toolChoice = provider.toolChoiceForStep?.("sum", step);
+            }
+          : undefined,
         tools: {
           sum: tool({
             name: "sum",
@@ -30,7 +36,9 @@ describeToolIntegration("tool calling capability integration", () => {
             execute: ({ a, b }) => ({ total: a + b })
           })
         },
-        toolChoice: provider.toolChoiceForTool?.("sum")
+        toolChoice: provider.toolChoiceForStep
+          ? undefined
+          : provider.toolChoiceForTool?.("sum")
       });
 
       expect(result.toolResults[0]?.toolName).toBe("sum");

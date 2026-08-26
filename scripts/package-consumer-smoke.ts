@@ -260,6 +260,7 @@ assert.equal(OTEL_GENAI_CONTRACT_VERSION, 1);
 assert.equal(OTEL_GENAI_SEMCONV_REVISION, "a685613a207a580163353b8e48a7ad88967e7b42");
 const installedSdk = await import("@zhivex-ai/sdk");
 const installedOpenAI = await import("@zhivex-ai/openai");
+const installedQwen = await import("@zhivex-ai/qwen");
 assert.equal(installedSdk.ProviderToolCallError, ProviderToolCallError);
 assert.equal(installedOpenAI.OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE, "OPENAI_RESPONSES_TOOL_CALL_INVALID");
 const installedProviderToolCallError = new ProviderToolCallError({
@@ -272,6 +273,33 @@ const installedProviderToolCallError = new ProviderToolCallError({
 assert.equal(installedProviderToolCallError.retryable, true);
 assert.equal(installedProviderToolCallError.effectsPossible, false);
 assert.equal(installedProviderToolCallError.message, "Provider tool call could not be materialized safely.");
+
+const installedQwenModel = installedQwen.createQwen({
+  apiKey: "installed-qwen-smoke",
+  fetch: async () => Response.json({
+    choices: [{
+      finish_reason: "tool_calls",
+      message: {
+        tool_calls: [
+          { id: "0", function: { name: "weather", arguments: "{}" } },
+          { id: "0", function: { name: "timezone", arguments: "{}" } },
+          { id: "call_opaque", function: { name: "weather", arguments: "{}" } }
+        ]
+      }
+    }]
+  })
+})("qwen3.8-flash");
+const installedQwenResult = await installedQwenModel.generate({
+  messages: [createTextMessage("user", "compare cities")],
+  providerOptions: { apiMode: "chat" }
+});
+assert.deepEqual(
+  installedQwenResult.messages[0].parts
+    .filter((part) => part.type === "tool-call")
+    .map((part) => part.toolCall.id),
+  ["qwen-chat-tool-1-0", "qwen-chat-tool-1-1", "call_opaque"]
+);
+console.log("INSTALLED_QWEN_TRANSIENT_TOOL_CALL_ID_SMOKE_OK");
 
 const { createModelResolver, ModelResolutionError } = await import("@zhivex-ai/sdk/beta");
 const installedResolverCatalog = createModelCatalog([

@@ -1,5 +1,11 @@
 # @zhivex-ai/zai
 
+## 0.2.0
+
+### Minor Changes
+
+- Add first-class GLM-5.3 Flash support with required-thinking validation, `low`/`high`/`max` reasoning efforts, ordered multi-image input, general API and Coding Plan documentation, provider smoke coverage, and current catalog metadata with list pricing.
+
 ## 0.1.1
 
 ### Patch Changes

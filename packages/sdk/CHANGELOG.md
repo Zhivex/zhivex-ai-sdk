@@ -1,5 +1,12 @@
 # @zhivex-ai/sdk
 
+## 1.11.0
+
+### Minor Changes
+
+- Add first-class GLM-5.3 Flash support with required-thinking validation, `low`/`high`/`max` reasoning efforts, ordered multi-image input, general API and Coding Plan documentation, provider smoke coverage, and current catalog metadata with list pricing.
+- Add first-class Qwen 3.8 Flash support with hybrid reasoning, multimodal image and video input, native JSON Schema output, production endpoint validation, catalog pricing, and model-aware authenticated tool-loop certification.
+
 ## 1.10.0
 
 ### Minor Changes

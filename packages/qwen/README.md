@@ -32,6 +32,22 @@ Supported region values are `singapore`, `beijing`, `hong-kong`, `tokyo`, `frank
 
 Qwen speech downloads accept HTTPS audio URLs only, validate every redirect manually, and never forward the provider API key to the media host.
 
+### Qwen 3.8 Flash
+
+`qwen3.8-flash` is the low-latency Qwen 3.8 production model exposed through standard QwenCloud/Alibaba Cloud Model Studio credentials and compatible endpoints. It provides a 1M-token context window, up to 128K output tokens, text/image/video input, hybrid reasoning, function calling, built-in tools, parallel function calls, and native JSON Schema structured output. Published pay-as-you-go pricing is $0.16 per million input tokens, $0.47 per million output tokens, and $0.016 per million implicit-cache input tokens.
+
+```ts
+const qwen = createQwen({
+  apiKey: process.env.DASHSCOPE_API_KEY
+});
+
+const model = qwen("qwen3.8-flash");
+```
+
+Responses accepts all seven shared reasoning efforts (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`) directly. Chat Completions normalizes them to Qwen's native `low`, `medium`, and `xhigh` values; `none` disables thinking. Chat always preserves thinking history, uses `max_completion_tokens`, and routes video `FilePart` inputs as `video_url`. Reasoning effort and thinking budget are mutually exclusive, and the adapter caps thinking budgets at the documented 262144-token maximum.
+
+The model uses a standard Model Studio endpoint and key. The adapter rejects `QWEN_TOKEN_PLAN_BASE_URL`, which remains exclusive to `qwen3.8-max-preview`. Upstream model availability is still account- and region-dependent.
+
 ### Qwen 3.8 Max
 
 `qwen3.8-max` is the production Qwen 3.8 flagship exposed through standard Alibaba Cloud Model Studio credentials and compatible endpoints, including regional workspace endpoints. It has a 1M-token context window and supports text, image and video understanding, hybrid reasoning, function calling, built-in tools, parallel function calls, and JSON structured output.
@@ -90,7 +106,7 @@ Use `providerOptions: { apiMode: "responses" }` or `{ apiMode: "chat" }` only wh
 
 `qwen3.5-omni-plus` and `qwen3.5-omni-flash` are streaming-only Chat Completions models. Use `streamText()` for them; the adapter rejects `generateText()`, Responses-only hosted tools, file inputs, and reasoning controls that those models do not support. Text output is selected by default with `modalities: ["text"]`, while an explicit compatible `modalities` option is preserved.
 
-Qwen Chat Completions supports JSON-object mode but does not currently enforce a JSON Schema natively. `generateObject()` therefore sends JSON mode plus a schema system prompt and validates the result locally:
+Qwen Chat Completions supports JSON-object mode across the compatible families. `qwen3.8-flash` additionally receives the native `json_schema` request shape; other supported models use JSON mode plus a schema system prompt, and every result is validated locally:
 
 ```ts
 import { generateObject } from "@zhivex-ai/sdk";
@@ -105,7 +121,7 @@ const result = await generateObject({
 
 For older Qwen families, Responses reasoning maps shared `effort` to `reasoning.effort` (`low` becomes Qwen `minimal`), while Chat reasoning maps to `enable_thinking` and `budgetTokens` to `thinking_budget`.
 
-`qwen3.8-max` uses its stricter model-specific mapping described above, keeps native structured output enabled in thinking and non-thinking modes, accepts images through either compatible API, and routes video through Chat. With no explicit reasoning option, the provider leaves Qwen's thinking-enabled default intact.
+`qwen3.8-flash` and `qwen3.8-max` use the stricter production mapping described above, accept images through either compatible API, and route video through Chat. With no explicit reasoning option, the provider leaves Qwen's thinking-enabled default intact. Flash uses native JSON Schema; Max retains JSON-object mode with local schema validation.
 
 `qwen3.8-max-preview` has a stricter contract:
 
@@ -117,7 +133,7 @@ For older Qwen families, Responses reasoning maps shared `effort` to `reasoning.
 - Because this preview is always thinking, forced or named tool choices are rejected; use `toolChoice: "auto"` or `"none"`.
 - The model supports text, images, function calling, and built-in tools. It does not support native structured output or JSON mode. `generateObject({ mode: "native" })` is rejected through its capabilities; the default `auto` mode can still use prompted output with local schema validation.
 
-For the final model contract, see Alibaba Cloud Model Studio's official [model list](https://help.aliyun.com/en/model-studio/models), [deep-thinking controls](https://help.aliyun.com/en/model-studio/deep-thinking), [OpenAI-compatible Chat contract](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions), [Responses contract](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-responses), and [structured-output guide](https://help.aliyun.com/en/model-studio/qwen-structured-output).
+For the production model contracts, see QwenCloud's official [Qwen 3.8 Flash model page](https://www.qwencloud.com/models/qwen3.8-flash), [text-model guide](https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models), [vision-model guide](https://docs.qwencloud.com/developer-guides/getting-started/vision-models), [OpenAI-compatible Chat contract](https://docs.qwencloud.com/api-reference/chat/openai-chat), [Responses contract](https://docs.qwencloud.com/api-reference/chat/openai-responses), and [structured-output guide](https://docs.qwencloud.com/developer-guides/text-generation/structured-output). The Qwen 3.8 Max contract is also documented in Alibaba Cloud Model Studio's official [model list](https://help.aliyun.com/en/model-studio/models).
 
 For the preview contract, see QwenCloud's official [Token Plan quickstart](https://docs.qwencloud.com/token-plan/quickstart), [Token Plan terms](https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview), [OpenAI-compatible Chat contract](https://docs.qwencloud.com/api-reference/chat/openai-chat), and [Responses contract](https://docs.qwencloud.com/api-reference/chat/openai-responses).
 
@@ -263,7 +279,7 @@ Authenticated realtime connections use the package's Node/Bun `ws` transport by 
 
 ## Current catalog coverage
 
-The default catalog includes current text and multimodal Qwen families plus the specialized IDs wired above: `qwen3.8-max` for standard Model Studio production traffic, `qwen3.8-max-preview` for Token Plan, `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, `qwen3.5-omni-plus-realtime`, `qwen3.5-ocr`, `tongyi-embedding-vision-plus` for international/Singapore, `qwen3-vl-embedding` for Beijing, `qwen3-rerank`, `qwen3-asr-flash`, `qwen3-tts-flash`, `qwen-image-2.0-pro`, and `wan2.7-t2v`.
+The default catalog includes current text and multimodal Qwen families plus the specialized IDs wired above: `qwen3.8-flash` and `qwen3.8-max` for standard Model Studio production traffic, `qwen3.8-max-preview` for Token Plan, `qwen3.7-plus`, `qwen3.7-max`, `qwen3.6-flash`, `qwen3.5-omni-plus`, `qwen3.5-omni-plus-realtime`, `qwen3.5-ocr`, `tongyi-embedding-vision-plus` for international/Singapore, `qwen3-vl-embedding` for Beijing, `qwen3-rerank`, `qwen3-asr-flash`, `qwen3-tts-flash`, `qwen-image-2.0-pro`, and `wan2.7-t2v`.
 
 Run opt-in live coverage with:
 
@@ -271,9 +287,9 @@ Run opt-in live coverage with:
 QWEN_EXTENDED_INTEGRATION=1 bun --env-file=.env run test:integration:qwen
 ```
 
-The shared provider smoke keeps `qwen3.7-plus` as its compatibility default. Certify the final model explicitly with `QWEN_INTEGRATION_MODEL=qwen3.8-max`; the standard international endpoint can be used when the account exposes the model there, while `QWEN_WORKSPACE_ID` and `QWEN_REGION` select an explicit regional workspace (use `beijing` for the currently documented Responses model list). Set only the extended surfaces you want to exercise: `QWEN_MULTIMODAL_EMBEDDING_MODEL`, `QWEN_MULTIMODAL_IMAGE_URL`, `QWEN_RERANK_MODEL`, `QWEN_ASR_MODEL`, `QWEN_ASR_AUDIO_URL`, `QWEN_TTS_MODEL`, `QWEN_IMAGE_MODEL`, `QWEN_VIDEO_MODEL`, and `QWEN_REALTIME_MODEL`. For the default international endpoint, use `tongyi-embedding-vision-plus`; use `qwen3-vl-embedding` only with a Beijing workspace. Workspace and endpoint overrides use `QWEN_WORKSPACE_ID`, `QWEN_REGION`, `QWEN_BASE_URL`, `QWEN_TASK_BASE_URL`, and `QWEN_REALTIME_URL`.
+The shared provider smoke keeps `qwen3.7-plus` as its compatibility default. Certify Flash explicitly with `QWEN_INTEGRATION_MODEL=qwen3.8-flash`, or Max with `QWEN_INTEGRATION_MODEL=qwen3.8-max`. For those two hybrid production IDs only, the tool-loop check disables thinking, forces the named tool on the first model step, and returns to automatic selection for the final answer; earlier Qwen families keep their existing smoke behavior, and the thinking-only preview is not given these overrides. The standard international endpoint can be used when the account exposes the selected model there, while `QWEN_WORKSPACE_ID` and `QWEN_REGION` select an explicit regional workspace. Set only the extended surfaces you want to exercise: `QWEN_MULTIMODAL_EMBEDDING_MODEL`, `QWEN_MULTIMODAL_IMAGE_URL`, `QWEN_RERANK_MODEL`, `QWEN_ASR_MODEL`, `QWEN_ASR_AUDIO_URL`, `QWEN_TTS_MODEL`, `QWEN_IMAGE_MODEL`, `QWEN_VIDEO_MODEL`, and `QWEN_REALTIME_MODEL`. For the default international endpoint, use `tongyi-embedding-vision-plus`; use `qwen3-vl-embedding` only with a Beijing workspace. Workspace and endpoint overrides use `QWEN_WORKSPACE_ID`, `QWEN_REGION`, `QWEN_BASE_URL`, `QWEN_TASK_BASE_URL`, and `QWEN_REALTIME_URL`.
 
-The catalog intentionally omits a price for `qwen3.8-max` until Alibaba Cloud publishes a stable public rate for the final model.
+The catalog records QwenCloud's published `qwen3.8-flash` input, output, and implicit-cache rates. It intentionally omits a price for `qwen3.8-max` until Alibaba Cloud publishes a stable public rate for that model.
 
 Repository and full documentation:
 

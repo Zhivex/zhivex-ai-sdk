@@ -30,8 +30,10 @@ export interface IntegrationLanguageProvider {
   textMaxTokens?: number;
   omitTemperatureForReasoning?: boolean;
   toolMaxTokens?: number;
+  toolReasoning?: ReasoningConfig;
   reasoningMaxTokens?: number;
   toolChoiceForTool?: (toolName: string) => ToolChoice;
+  toolChoiceForStep?: (toolName: string, step: number) => ToolChoice | undefined;
 }
 
 export type IntegrationProviderStatusState = "ready" | "skipped_missing_credentials";
@@ -129,7 +131,8 @@ const deepSeekTextModelId = process.env.DEEPSEEK_INTEGRATION_MODEL ?? "deepseek-
 const zaiApiKey = process.env.ZAI_API_KEY;
 const zaiBaseURL = process.env.ZAI_BASE_URL;
 const zaiEndpoint: ZAIEndpoint = process.env.ZAI_ENDPOINT === "coding" ? "coding" : "general";
-const zaiTextModelId = process.env.ZAI_INTEGRATION_MODEL ?? (zaiEndpoint === "coding" ? "glm-5.3" : "glm-5.2");
+const zaiTextModelId = process.env.ZAI_INTEGRATION_MODEL ?? "glm-5.3-flash";
+const isZaiGLM53Family = /^glm-5\.3(?:-flash)?$/i.test(zaiTextModelId);
 
 const qwenApiKey = process.env.QWEN_API_KEY ?? process.env.DASHSCOPE_API_KEY;
 const qwenBaseURL = process.env.QWEN_BASE_URL;
@@ -137,7 +140,7 @@ const qwenWorkspaceId = process.env.QWEN_WORKSPACE_ID;
 const qwenRegion = process.env.QWEN_REGION as QwenRegion | undefined;
 const qwenTextModelId = process.env.QWEN_INTEGRATION_MODEL ?? "qwen3.7-plus";
 const qwenEmbeddingModelId = process.env.QWEN_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-v4";
-const isQwen38MaxIntegrationModel = /^qwen3\.8-max$/i.test(qwenTextModelId);
+const isQwen38ProductionIntegrationModel = /^qwen3\.8-(?:max|flash)$/i.test(qwenTextModelId);
 
 const kimiApiKey = process.env.KIMI_API_KEY ?? process.env.MOONSHOT_API_KEY;
 const kimiBaseURL = process.env.KIMI_BASE_URL ?? process.env.MOONSHOT_BASE_URL;
@@ -253,7 +256,7 @@ const zaiSupports: IntegrationLanguageProvider["supports"] = {
   structuredOutputMode: "native",
   embeddings: false,
   reasoning: {
-    effort: zaiTextModelId === "glm-5.3" ? "low" : "high"
+    effort: isZaiGLM53Family ? "low" : "high"
   }
 };
 const qwenSupports: IntegrationLanguageProvider["supports"] = {
@@ -639,8 +642,17 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
             }).embeddingModel(qwenEmbeddingModelId),
           // Qwen thinking models need automatic tool selection and enough output
           // budget to emit complete JSON arguments before the follow-up answer.
-          ...(isQwen38MaxIntegrationModel ? { textMaxTokens: 128 } : {}),
+          ...(isQwen38ProductionIntegrationModel ? { textMaxTokens: 128 } : {}),
           toolMaxTokens: 128,
+          ...(isQwen38ProductionIntegrationModel
+            ? { toolReasoning: { effort: "none" } satisfies ReasoningConfig }
+            : {}),
+          ...(isQwen38ProductionIntegrationModel
+            ? {
+                toolChoiceForStep: (toolName: string, step: number) =>
+                  step === 1 ? { type: "tool" as const, toolName } : "auto"
+              }
+            : {}),
           supports: qwenSupports
         } satisfies IntegrationLanguageProvider
       ]

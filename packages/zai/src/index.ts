@@ -92,12 +92,15 @@ const baseCapabilities: ModelCapabilities = {
 };
 
 const isGLM53 = (modelId: string) => modelId.toLowerCase() === "glm-5.3";
+const isGLM53Flash = (modelId: string) => modelId.toLowerCase() === "glm-5.3-flash";
+const isGLM53Family = (modelId: string) => isGLM53(modelId) || isGLM53Flash(modelId);
 const isGLM52 = (modelId: string) => modelId.toLowerCase() === "glm-5.2";
 
 const capabilitiesForModel = (modelId: string): ModelCapabilities => ({
   ...baseCapabilities,
-  reasoning: isGLM53(modelId) || isGLM52(modelId),
-  reasoningEfforts: isGLM53(modelId)
+  vision: isGLM53Flash(modelId),
+  reasoning: isGLM53Family(modelId) || isGLM52(modelId),
+  reasoningEfforts: isGLM53Family(modelId)
     ? ["low", "high", "max"]
     : isGLM52(modelId)
       ? ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -107,11 +110,65 @@ const capabilitiesForModel = (modelId: string): ModelCapabilities => ({
 const isJsonObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
-const mapContentParts = (message: ModelMessage) =>
+const textContentFromMessage = (message: ModelMessage) =>
   message.parts
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("");
+
+type ZAIMessageContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+const toZAIImageURL = (image: string, mediaType: string | undefined) => {
+  const normalizedImage = image.trim();
+  if (!normalizedImage) {
+    throw new ValidationError("Z.ai image input must not be empty.");
+  }
+  if (mediaType !== undefined && !mediaType.toLowerCase().startsWith("image/")) {
+    throw new ValidationError('Z.ai ImagePart "mediaType" must use an image/* MIME type.');
+  }
+  if (/^https?:\/\//i.test(normalizedImage)) {
+    return normalizedImage;
+  }
+  if (/^data:/i.test(normalizedImage)) {
+    if (!/^data:image\//i.test(normalizedImage)) {
+      throw new ValidationError("Z.ai image Data URLs must use an image/* MIME type.");
+    }
+    return normalizedImage;
+  }
+  return `data:${mediaType ?? "image/png"};base64,${normalizedImage}`;
+};
+
+const mapContentParts = (modelId: string, message: ModelMessage): string | ZAIMessageContentPart[] => {
+  const unsupportedMedia = message.parts.find((part) => part.type === "audio" || part.type === "file");
+  if (unsupportedMedia) {
+    throw new UnsupportedFeatureError(`Z.ai model "${modelId}" does not support ${unsupportedMedia.type} input.`);
+  }
+
+  const hasImages = message.parts.some((part) => part.type === "image");
+  if (!hasImages) {
+    return textContentFromMessage(message);
+  }
+  if (!isGLM53Flash(modelId)) {
+    throw new UnsupportedFeatureError(`Z.ai model "${modelId}" does not support image input.`);
+  }
+
+  return message.parts.flatMap<ZAIMessageContentPart>((part) => {
+    if (part.type === "text") {
+      return [{ type: "text", text: part.text }];
+    }
+    if (part.type === "image") {
+      return [
+        {
+          type: "image_url",
+          image_url: { url: toZAIImageURL(part.image, part.mediaType) }
+        }
+      ];
+    }
+    return [];
+  });
+};
 
 const reasoningContentFromMessage = (message: ModelMessage) =>
   message.parts
@@ -161,7 +218,7 @@ const mergeStreamFragment = (current: string, fragment: unknown) => {
   return current + fragment;
 };
 
-const mapMessages = (messages: ModelMessage[]) =>
+const mapMessages = (modelId: string, messages: ModelMessage[]) =>
   messages.map((message) => {
     if (message.role === "tool") {
       const toolResult = message.parts.find((part) => part.type === "tool-result");
@@ -187,7 +244,7 @@ const mapMessages = (messages: ModelMessage[]) =>
       }));
     const payload: Record<string, unknown> = {
       role: message.role,
-      content: mapContentParts(message)
+      content: mapContentParts(modelId, message)
     };
     const reasoningContent = reasoningContentFromMessage(message);
     if (reasoningContent) {
@@ -208,7 +265,7 @@ const ensureJsonOutputInstruction = (
     return messages;
   }
   const schema = structuredOutput?.mode === "native" ? JSON.stringify(toJSONSchema(structuredOutput.schema)) : undefined;
-  if (!schema && messages.some((message) => /\bjson\b/i.test(mapContentParts(message)))) {
+  if (!schema && messages.some((message) => /\bjson\b/i.test(textContentFromMessage(message)))) {
     return messages;
   }
   return [
@@ -280,7 +337,7 @@ const mapSharedReasoning = (modelId: string, input: ModelGenerateInput): MappedZ
   }
   unsupportedReasoningFields(input);
   const effort = reasoning.effort;
-  if (isGLM53(modelId)) {
+  if (isGLM53Family(modelId)) {
     if (reasoning.includeThoughts === false) {
       throw new UnsupportedFeatureError(
         'Provider "zai" cannot hide reasoning content while GLM-5.3 thinking is enabled.'
@@ -351,7 +408,7 @@ const validateProviderOptions = (modelId: string, input: ModelGenerateInput<ZAIL
       'Z.ai "reasoning_effort" must be "none", "minimal", "low", "medium", "high", "xhigh", or "max".'
     );
   }
-  if (isGLM53(modelId)) {
+  if (isGLM53Family(modelId)) {
     if (options?.thinking?.type === "disabled") {
       throw new UnsupportedFeatureError('Z.ai GLM-5.3 requires thinking.type "enabled".');
     }
@@ -429,8 +486,11 @@ const resolveRequestOptions = (modelId: string, input: ModelGenerateInput<ZAILan
   const sharedReasoning = mapSharedReasoning(modelId, input);
   let thinking = sharedReasoning?.thinking ?? providerOptions?.thinking;
   const reasoningHistory = hasReasoningHistory(input.messages);
-  if (isGLM53(modelId) && !thinking) {
+  if (isGLM53Family(modelId) && !thinking) {
     thinking = { type: "enabled" };
+  }
+  if (isGLM53Flash(modelId) && thinking?.type === "enabled" && thinking.clear_thinking === undefined) {
+    thinking = { ...thinking, clear_thinking: false };
   }
   const preserveThinking = reasoningHistory || Boolean(input.tools && Object.keys(input.tools).length);
   const rawThinkingDisabled =
@@ -440,7 +500,7 @@ const resolveRequestOptions = (modelId: string, input: ModelGenerateInput<ZAILan
   if (
     preserveThinking &&
     !rawThinkingDisabled &&
-    (thinking?.type === "enabled" || (!thinking && (isGLM53(modelId) || isGLM52(modelId))))
+    (thinking?.type === "enabled" || (!thinking && (isGLM53Family(modelId) || isGLM52(modelId))))
   ) {
     thinking = { ...(thinking ?? { type: "enabled" as const }), clear_thinking: false };
   }
@@ -671,6 +731,7 @@ class ZAILanguageModel implements LanguageModel<ZAILanguageModelOptions> {
             ...options.bodyOptions,
             model: this.modelId,
             messages: mapMessages(
+              this.modelId,
               ensureJsonOutputInstruction(input.messages, options.responseFormat, input.structuredOutput)
             ),
             tools,
@@ -721,6 +782,7 @@ class ZAILanguageModel implements LanguageModel<ZAILanguageModelOptions> {
             ...options.bodyOptions,
             model: this.modelId,
             messages: mapMessages(
+              this.modelId,
               ensureJsonOutputInstruction(input.messages, options.responseFormat, input.structuredOutput)
             ),
             tools,
