@@ -1527,6 +1527,51 @@ describe("qwen adapter", () => {
     ]);
   });
 
+  it("preserves transient Responses call ids for non-streaming continuations", async () => {
+    fetchMock
+      .mockResolvedValueOnce(Response.json({
+        id: "resp_transient_call",
+        status: "completed",
+        output: [{
+          type: "function_call",
+          call_id: "0",
+          name: "weather",
+          arguments: JSON.stringify({ city: "Madrid" })
+        }]
+      }))
+      .mockResolvedValueOnce(Response.json({
+        id: "resp_after_tool",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "Sunny" }] }]
+      }));
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    const result = await generateText({
+      model: provider("qwen3.8-flash"),
+      prompt: "weather",
+      maxSteps: 2,
+      providerOptions: { apiMode: "responses" },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, temperatureC: 26 })
+        })
+      }
+    });
+
+    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(result.text).toBe("Sunny");
+    expect(result.toolResults[0]).toMatchObject({
+      toolCallId: "qwen-responses-tool-1-0",
+      providerMetadata: { qwenResponsesCallId: "0" }
+    });
+    expect(secondRequest).toMatchObject({
+      previous_response_id: "resp_transient_call",
+      input: [{ type: "function_call_output", call_id: "0" }]
+    });
+  });
+
   it("keeps parallel transient Chat tool calls distinct while streaming", async () => {
     const body = new ReadableStream({
       start(controller) {
@@ -1596,9 +1641,76 @@ describe("qwen adapter", () => {
     }
 
     expect(toolCalls).toEqual([
-      { id: "qwen-responses-tool-1-0", name: "weather", input: { city: "Madrid" } },
-      { id: "qwen-responses-tool-1-1", name: "timezone", input: { city: "Lisbon" } }
+      {
+        id: "qwen-responses-tool-1-0",
+        name: "weather",
+        input: { city: "Madrid" },
+        providerMetadata: { qwenResponsesCallId: "0" }
+      },
+      {
+        id: "qwen-responses-tool-1-1",
+        name: "timezone",
+        input: { city: "Lisbon" },
+        providerMetadata: { qwenResponsesCallId: "0" }
+      }
     ]);
+  });
+
+  it("preserves transient Responses call ids for streaming continuations", async () => {
+    const sseResponse = (events: unknown[]) => new Response(new ReadableStream({
+      start(controller) {
+        for (const event of events) {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+        controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+        controller.close();
+      }
+    }), { headers: { "content-type": "text/event-stream" } });
+    fetchMock
+      .mockResolvedValueOnce(sseResponse([
+        {
+          type: "response.output_item.done",
+          output_index: 0,
+          item: {
+            type: "function_call",
+            call_id: "0",
+            name: "weather",
+            arguments: JSON.stringify({ city: "Madrid" })
+          }
+        },
+        { type: "response.completed", response: { id: "resp_stream_transient", status: "completed" } }
+      ]))
+      .mockResolvedValueOnce(sseResponse([
+        { type: "response.output_text.delta", delta: "Sunny" },
+        { type: "response.completed", response: { id: "resp_stream_after_tool", status: "completed" } }
+      ]));
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    const result = streamText({
+      model: provider("qwen3.8-flash"),
+      prompt: "weather",
+      maxSteps: 2,
+      providerOptions: { apiMode: "responses" },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city, temperatureC: 26 })
+        })
+      }
+    });
+
+    const collected = await result.collect();
+    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(collected.text).toBe("Sunny");
+    expect(collected.toolResults[0]).toMatchObject({
+      toolCallId: "qwen-responses-tool-1-0",
+      providerMetadata: { qwenResponsesCallId: "0" }
+    });
+    expect(secondRequest).toMatchObject({
+      previous_response_id: "resp_stream_transient",
+      input: [{ type: "function_call_output", call_id: "0" }]
+    });
   });
 
   it("synthesizes distinct durable Chat tool-call ids across streamed turns", async () => {

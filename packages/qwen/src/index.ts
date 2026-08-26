@@ -1267,6 +1267,9 @@ const stableToolCallId = (value: unknown) => {
   return classification.kind === "stable" ? classification.id : undefined;
 };
 
+const qwenResponsesProviderCallId = (value: unknown) =>
+  typeof value === "string" && value.trim().length > 0 ? value : undefined;
+
 const existingToolCallIds = (messages: readonly ModelMessage[]) => new Set(messages.flatMap((message) =>
   message.parts.flatMap((part) => part.type === "tool-call" ? [part.toolCall.id] : [])
 ));
@@ -1382,11 +1385,17 @@ const getProviderResponseId = (messages: ModelMessage[]) => {
 const serializeResponsesToolOutput = (message: ModelMessage) =>
   message.parts
     .filter((part): part is Extract<ModelMessage["parts"][number], { type: "tool-result" }> => part.type === "tool-result")
-    .map((part) => ({
-      type: "function_call_output",
-      call_id: part.toolResult.toolCallId,
-      output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
-    }));
+    .map((part) => {
+      const providerCallId = part.toolResult.providerMetadata?.qwenResponsesCallId;
+      return {
+        type: "function_call_output",
+        call_id:
+          typeof providerCallId === "string" && providerCallId.trim().length > 0
+            ? providerCallId
+            : part.toolResult.toolCallId,
+        output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
+      };
+    });
 
 const toResponsesInput = (messages: ModelMessage[]) => {
   const input: Array<Record<string, unknown>> = [];
@@ -1485,16 +1494,21 @@ const parseResponsesAssistantMessage = (
     }
 
     if (item?.type === "function_call") {
+      const providerCallId = qwenResponsesProviderCallId(item.call_id);
+      const id = resolveToolCallId(
+        [item.call_id, item.id],
+        fallbackToolCallId("responses", fallbackGeneration, index),
+        seenIds
+      );
       parts.push({
         type: "tool-call",
         toolCall: {
-          id: resolveToolCallId(
-            [item.call_id, item.id],
-            fallbackToolCallId("responses", fallbackGeneration, index),
-            seenIds
-          ),
+          id,
           name: item.name,
-          input: JSON.parse(item.arguments ?? "{}")
+          input: JSON.parse(item.arguments ?? "{}"),
+          ...(providerCallId !== undefined && providerCallId !== id
+            ? { providerMetadata: { qwenResponsesCallId: providerCallId } }
+            : {})
         }
       });
       continue;
@@ -1542,6 +1556,7 @@ const streamResponses = async function* (
 ): AsyncGenerator<StreamEvent, void, undefined> {
   const toolBuffers = new Map<string, {
     callId?: string;
+    providerCallId?: string;
     fallbackId: string;
     name: string;
     args: string;
@@ -1585,12 +1600,16 @@ const streamResponses = async function* (
 
     toolCall.emitted = true;
     sawToolCalls = true;
+    const id = resolveToolCallId([toolCall.callId], toolCall.fallbackId, seenIds);
     return {
       type: "tool-call",
       toolCall: {
-        id: resolveToolCallId([toolCall.callId], toolCall.fallbackId, seenIds),
+        id,
         name: toolCall.name,
-        input: JSON.parse(toolCall.args || "{}")
+        input: JSON.parse(toolCall.args || "{}"),
+        ...(toolCall.providerCallId !== undefined && toolCall.providerCallId !== id
+          ? { providerMetadata: { qwenResponsesCallId: toolCall.providerCallId } }
+          : {})
       }
     } satisfies StreamEvent;
   };
@@ -1631,12 +1650,14 @@ const streamResponses = async function* (
         const key = bufferKey(json.output_index, [item.id, json.item_id, item.call_id], fallbackId);
         const existing = toolBuffers.get(key) ?? {
           callId: stableToolCallId(item.call_id) ?? stableToolCallId(item.id) ?? stableToolCallId(json.item_id),
+          providerCallId: qwenResponsesProviderCallId(item.call_id),
           fallbackId,
           name: item.name ?? "",
           args: "",
           emitted: false
         };
         existing.callId = stableToolCallId(item.call_id) ?? existing.callId;
+        existing.providerCallId = qwenResponsesProviderCallId(item.call_id) ?? existing.providerCallId;
         existing.name ||= item.name ?? "";
         if (typeof item.arguments === "string") {
           existing.args = item.arguments;
@@ -1668,11 +1689,13 @@ const streamResponses = async function* (
       const key = bufferKey(json.output_index, [json.item_id, json.call_id], fallbackId);
       const existing = toolBuffers.get(key) ?? {
         callId: stableToolCallId(json.call_id) ?? stableToolCallId(json.item_id),
+        providerCallId: qwenResponsesProviderCallId(json.call_id),
         fallbackId,
         name: "",
         args: "",
         emitted: false
       };
+      existing.providerCallId = qwenResponsesProviderCallId(json.call_id) ?? existing.providerCallId;
       existing.args += typeof json.delta === "string" ? json.delta : "";
       toolBuffers.set(key, existing);
       continue;
@@ -1684,11 +1707,13 @@ const streamResponses = async function* (
       const key = bufferKey(json.output_index, [json.item_id, json.call_id], fallbackId);
       const existing = toolBuffers.get(key) ?? {
         callId: stableToolCallId(json.call_id) ?? stableToolCallId(json.item_id),
+        providerCallId: qwenResponsesProviderCallId(json.call_id),
         fallbackId,
         name: "",
         args: "",
         emitted: false
       };
+      existing.providerCallId = qwenResponsesProviderCallId(json.call_id) ?? existing.providerCallId;
       if (typeof json.arguments === "string") {
         existing.args = json.arguments;
       }
