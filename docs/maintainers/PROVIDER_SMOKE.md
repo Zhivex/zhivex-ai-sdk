@@ -45,7 +45,7 @@ Postgres gate, run `bun run test:integration:agents` as documented in
 | `gemini` | `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` |
 | `openrouter` | `OPENROUTER_API_KEY` |
 | `deepseek` | `DEEPSEEK_API_KEY` |
-| `zai` | `ZAI_API_KEY`; optional `ZAI_BASE_URL`, `ZAI_ENDPOINT=general|coding`, and `ZAI_INTEGRATION_MODEL`. The default is `glm-5.2` on the general endpoint or `glm-5.3` when Coding Plan is selected. |
+| `zai` | `ZAI_API_KEY`; optional `ZAI_BASE_URL`, `ZAI_ENDPOINT=general|coding`, `ZAI_INTEGRATION_MODEL` (defaults to `glm-5.3-flash`), `ZAI_INTEGRATION_IMAGE_URL`, and `ZAI_INTEGRATION_IMAGE_MEDIA_TYPE`. |
 | `qwen` | `QWEN_API_KEY` or `DASHSCOPE_API_KEY`; optional `QWEN_WORKSPACE_ID`, `QWEN_REGION`, endpoint overrides, and model overrides for extended multimodal/realtime coverage |
 | `kimi` | `KIMI_API_KEY` or `MOONSHOT_API_KEY`; optional `KIMI_BASE_URL` or `MOONSHOT_BASE_URL`, plus `KIMI_INTEGRATION_MODEL` (defaults to `kimi-k3`) |
 | `bedrock-converse` | `AWS_REGION`; AWS credentials are also required by the default provider chain |
@@ -65,30 +65,38 @@ bun run test:integration:deepseek
 
 This covers the common capability suites plus live `models.list()`, `balance.get()`, FIM generate/stream, and chat prefix completion. `DEEPSEEK_BASE_URL` and `DEEPSEEK_BETA_BASE_URL` are optional overrides for compatible gateways or test environments. The extended suite is skipped unless both `DEEPSEEK_API_KEY` and `DEEPSEEK_EXTENDED_INTEGRATION=1` are present; a skip is not live validation.
 
-For an authenticated Z.ai GLM-5.3 Coding Plan smoke, opt in explicitly:
+For an authenticated Z.ai GLM-5.3 Flash general-API smoke, opt in explicitly:
 
 ```bash
 ZAI_API_KEY=... \
-ZAI_ENDPOINT=coding \
-ZAI_INTEGRATION_MODEL=glm-5.3 \
+ZAI_INTEGRATION_MODEL=glm-5.3-flash \
 ZAI_EXTENDED_INTEGRATION=1 \
 bun run test:integration:zai
 ```
 
-The standard general API and pay-as-you-go catalog currently document GLM-5.2, while GLM-5.3 is announced for Coding Plan. The shared registry therefore defaults to GLM-5.2/general unless `ZAI_ENDPOINT=coding` is selected. Coding Plan may route GLM-5.2/5.1 identifiers to GLM-5.3, so it does not certify exact GLM-5.2 behavior. A skipped or fixture-only run is not live validation.
+Set `ZAI_ENDPOINT=coding` to exercise the same model through GLM Coding Plan. Add `ZAI_INTEGRATION_IMAGE_URL=https://...` and optionally `ZAI_INTEGRATION_IMAGE_MEDIA_TYPE=image/png` to include the vision check. The general Model API and Coding Plan are distinct credential and routing surfaces, so a pass on one does not certify the other. A skipped or fixture-only run is not live validation.
 
 The Kimi K3 smoke path uses `temperature: 1`, `reasoning.effort: "max"`, and `toolChoice: "required"` to match the upstream K3 contract. Override `KIMI_INTEGRATION_MODEL` only when intentionally validating an older K2.x family.
 
 For extended Qwen coverage, enable `QWEN_EXTENDED_INTEGRATION=1` and run `bun run test:integration:qwen`. The provider-specific tests are individually gated by `QWEN_MULTIMODAL_EMBEDDING_MODEL`, `QWEN_RERANK_MODEL`, `QWEN_ASR_MODEL`, `QWEN_TTS_MODEL`, `QWEN_IMAGE_MODEL`, `QWEN_VIDEO_MODEL`, and `QWEN_REALTIME_MODEL`; URL inputs and workspace/endpoint variables are documented in `packages/qwen/README.md`. A skipped surface is not a live validation.
 
-The common Qwen smoke keeps `qwen3.7-plus` as its compatibility default. To certify the final Qwen 3.8 model against the standard international endpoint when the account exposes it there, run:
+The common Qwen smoke keeps `qwen3.7-plus` as its compatibility default. To certify Qwen 3.8 Flash against the standard international endpoint when the account exposes it there, run:
+
+```bash
+QWEN_INTEGRATION_MODEL=qwen3.8-flash \
+bun --env-file=.env run test:integration:qwen
+```
+
+To certify Qwen 3.8 Max instead, run:
 
 ```bash
 QWEN_INTEGRATION_MODEL=qwen3.8-max \
 bun --env-file=.env run test:integration:qwen
 ```
 
-Add `QWEN_WORKSPACE_ID=... QWEN_REGION=beijing` to target the currently documented Beijing Responses workspace explicitly.
+Add `QWEN_WORKSPACE_ID=... QWEN_REGION=...` to target a regional workspace explicitly. A provider `access_denied` response proves that the request reached QwenCloud but does not certify the model: confirm that the account, key, and selected region are entitled to that exact model ID.
+
+The common tool-loop check disables thinking only for the hybrid production IDs `qwen3.8-flash` and `qwen3.8-max`, forces the named tool on the first model step, and returns to automatic selection for the final answer. Earlier Qwen families keep their existing smoke behavior, while the thinking-only `qwen3.8-max-preview` is never assigned these overrides.
 
 Passing contract tests without this authenticated run proves adapter behavior, not live provider availability.
 

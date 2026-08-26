@@ -169,21 +169,148 @@ describe("qwen adapter", () => {
     });
   });
 
-  it("declares qwen3.8-max as a hybrid multimodal production model", () => {
-    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
-    const model = provider("qwen3.8-max");
+  it.each(["qwen3.8-max", "qwen3.8-flash"])(
+    "declares %s as a hybrid multimodal production model",
+    (modelId) => {
+      const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+      const model = provider(modelId);
 
-    expect(model.capabilities).toMatchObject({
-      reasoning: true,
-      reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
-      vision: true,
-      files: true,
-      tools: true,
-      structuredOutput: true,
-      jsonMode: true,
-      parallelToolCalls: true,
-      webSearch: true
+      expect(model.capabilities).toMatchObject({
+        reasoning: true,
+        reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+        vision: true,
+        files: true,
+        tools: true,
+        structuredOutput: true,
+        jsonMode: true,
+        parallelToolCalls: true,
+        webSearch: true
+      });
+    }
+  );
+
+  it("routes qwen3.8-flash multimodal reasoning through Responses without reducing effort", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_38_flash",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "explained" }] }]
+      })
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    const result = await generateText({
+      model: provider("qwen3.8-flash"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "image", image: "https://example.com/diagram.png", mediaType: "image/png" },
+            { type: "text", text: "Explain this diagram." }
+          ]
+        }
+      ],
+      reasoning: { effort: "high" }
     });
+
+    expect(result.text).toBe("explained");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses"
+    );
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      model: "qwen3.8-flash",
+      reasoning: { effort: "high" },
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_image", image_url: "https://example.com/diagram.png" },
+            { type: "input_text", text: "Explain this diagram." }
+          ]
+        }
+      ]
+    });
+  });
+
+  it("maps qwen3.8-flash video and hybrid controls through Chat", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "video understood" } }]
+      })
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    const result = await generateText({
+      model: provider("qwen3.8-flash"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            {
+              type: "file",
+              data: "https://example.com/demo.mp4",
+              mediaType: "video/mp4",
+              filename: "demo.mp4"
+            },
+            { type: "text", text: "Summarize the video." }
+          ]
+        }
+      ],
+      maxTokens: 256,
+      reasoning: { effort: "none" },
+      providerOptions: { parallel_tool_calls: true }
+    });
+
+    expect(result.text).toBe("video understood");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/completions");
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      model: "qwen3.8-flash",
+      parallel_tool_calls: true,
+      enable_thinking: false,
+      preserve_thinking: true,
+      max_completion_tokens: 256
+    });
+    expect(body.max_tokens).toBeUndefined();
+    expect(body.messages[0]?.content).toEqual([
+      { type: "video_url", video_url: { url: "https://example.com/demo.mp4" } },
+      { type: "text", text: "Summarize the video." }
+    ]);
+  });
+
+  it("uses qwen3.8-flash native JSON Schema structured output", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { content: JSON.stringify({ title: "Architecture", components: 3 }) }
+          }
+        ]
+      })
+    );
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    const result = await generateObject({
+      model: provider("qwen3.8-flash"),
+      prompt: "Return a JSON summary.",
+      schema: z.object({ title: z.string(), components: z.number() }),
+      mode: "native",
+      schemaName: "architecture_summary"
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.response_format).toMatchObject({
+      type: "json_schema",
+      json_schema: {
+        name: "architecture_summary",
+        strict: true,
+        schema: { type: "object" }
+      }
+    });
+    expect(body.messages).toEqual([{ role: "user", content: "Return a JSON summary." }]);
+    expect(result.object).toEqual({ title: "Architecture", components: 3 });
   });
 
   it("routes qwen3.8-max multimodal reasoning through the standard Responses endpoint", async () => {
@@ -469,6 +596,12 @@ describe("qwen adapter", () => {
     await expect(
       generateText({
         model: tokenPlanProvider("qwen3.8-max"),
+        prompt: "hello"
+      })
+    ).rejects.toThrow("QWEN_TOKEN_PLAN_BASE_URL is reserved for qwen3.8-max-preview");
+    await expect(
+      generateText({
+        model: tokenPlanProvider("qwen3.8-flash"),
         prompt: "hello"
       })
     ).rejects.toThrow("QWEN_TOKEN_PLAN_BASE_URL is reserved for qwen3.8-max-preview");
@@ -1335,6 +1468,139 @@ describe("qwen adapter", () => {
     });
   });
 
+  it("normalizes parallel transient Chat tool-call ids before deduplication", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({
+      choices: [{
+        finish_reason: "tool_calls",
+        message: {
+          tool_calls: [
+            { id: "0", function: { name: "weather", arguments: JSON.stringify({ city: "Madrid" }) } },
+            { id: "0", function: { name: "weather", arguments: JSON.stringify({ city: "Lisbon" }) } },
+            { id: "   ", function: { name: "weather", arguments: JSON.stringify({ city: "Rome" }) } },
+            { id: "call_opaque", function: { name: "weather", arguments: JSON.stringify({ city: "Paris" }) } }
+          ]
+        }
+      }]
+    }));
+    const model = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch })("qwen3.8-flash");
+    const result = await model.generate({
+      messages: [createTextMessage("user", "compare weather")],
+      providerOptions: { apiMode: "chat" }
+    });
+    const ids = result.messages?.[0]?.parts.flatMap((part) =>
+      part.type === "tool-call" ? [part.toolCall.id] : []
+    );
+
+    expect(ids).toEqual([
+      "qwen-chat-tool-1-0",
+      "qwen-chat-tool-1-1",
+      "qwen-chat-tool-1-2",
+      "call_opaque"
+    ]);
+  });
+
+  it("normalizes parallel transient Responses tool-call ids before deduplication", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({
+      id: "resp_transient_calls",
+      status: "completed",
+      output: [
+        { type: "function_call", call_id: "0", id: "0", name: "weather", arguments: "{}" },
+        { type: "function_call", call_id: "0", id: "0", name: "weather", arguments: "{}" },
+        { type: "function_call", call_id: "   ", id: "   ", name: "weather", arguments: "{}" },
+        { type: "function_call", call_id: "call_opaque", name: "weather", arguments: "{}" }
+      ]
+    }));
+    const model = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch })("qwen3.8-flash");
+    const result = await model.generate({
+      messages: [createTextMessage("user", "compare weather")],
+      providerOptions: { apiMode: "responses" }
+    });
+    const ids = result.messages?.[0]?.parts.flatMap((part) =>
+      part.type === "tool-call" ? [part.toolCall.id] : []
+    );
+
+    expect(ids).toEqual([
+      "qwen-responses-tool-1-0",
+      "qwen-responses-tool-1-1",
+      "qwen-responses-tool-1-2",
+      "call_opaque"
+    ]);
+  });
+
+  it("keeps parallel transient Chat tool calls distinct while streaming", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(
+          `data: ${JSON.stringify({
+            choices: [{
+              delta: {
+                tool_calls: [
+                  { index: 0, id: "0", function: { name: "weather", arguments: "{}" } },
+                  { index: 1, id: "0", function: { name: "timezone", arguments: "{}" } }
+                ]
+              },
+              finish_reason: null
+            }]
+          })}\n\n` +
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] })}\n\n` +
+          "data: [DONE]\n\n"
+        ));
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(new Response(body, { headers: { "content-type": "text/event-stream" } }));
+    const model = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch })("qwen3.8-flash");
+    const stream = await model.stream({
+      messages: [createTextMessage("user", "compare cities")],
+      providerOptions: { apiMode: "chat" }
+    });
+    const toolCalls = [];
+    for await (const event of stream) {
+      if (event.type === "tool-call") toolCalls.push(event.toolCall);
+    }
+
+    expect(toolCalls).toEqual([
+      { id: "qwen-chat-tool-1-0", name: "weather", input: {} },
+      { id: "qwen-chat-tool-1-1", name: "timezone", input: {} }
+    ]);
+  });
+
+  it("correlates parallel transient Responses tool calls by output position while streaming", async () => {
+    const events = [
+      { type: "response.output_item.added", output_index: 0, item: { type: "function_call", id: "0", call_id: "0", name: "weather" } },
+      { type: "response.output_item.added", output_index: 1, item: { type: "function_call", id: "0", call_id: "0", name: "timezone" } },
+      { type: "response.function_call_arguments.delta", output_index: 0, item_id: "0", call_id: "0", delta: "{\"city\":\"Mad" },
+      { type: "response.function_call_arguments.delta", output_index: 1, item_id: "0", call_id: "0", delta: "{\"city\":\"Lis" },
+      { type: "response.function_call_arguments.done", output_index: 0, item_id: "0", call_id: "0", arguments: "{\"city\":\"Madrid\"}" },
+      { type: "response.function_call_arguments.done", output_index: 1, item_id: "0", call_id: "0", arguments: "{\"city\":\"Lisbon\"}" },
+      { type: "response.completed", response: { status: "completed" } }
+    ];
+    const body = new ReadableStream({
+      start(controller) {
+        for (const event of events) {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+        controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(new Response(body, { headers: { "content-type": "text/event-stream" } }));
+    const model = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch })("qwen3.8-flash");
+    const stream = await model.stream({
+      messages: [createTextMessage("user", "compare cities")],
+      providerOptions: { apiMode: "responses" }
+    });
+    const toolCalls = [];
+    for await (const event of stream) {
+      if (event.type === "tool-call") toolCalls.push(event.toolCall);
+    }
+
+    expect(toolCalls).toEqual([
+      { id: "qwen-responses-tool-1-0", name: "weather", input: { city: "Madrid" } },
+      { id: "qwen-responses-tool-1-1", name: "timezone", input: { city: "Lisbon" } }
+    ]);
+  });
+
   it("synthesizes distinct durable Chat tool-call ids across streamed turns", async () => {
     const toolResponse = (city: string) => new Response(new ReadableStream({
       start(controller) {
@@ -1397,20 +1663,21 @@ describe("qwen adapter", () => {
     expect(secondId).not.toBe(firstId);
   });
 
-  it("advances fallback Chat tool-call ids when compacted history length stays constant", async () => {
-    const missingIdResponse = () => Response.json({
+  it("advances fallback Chat tool-call ids for repeated transient ids after compaction", async () => {
+    const transientIdResponse = () => Response.json({
       choices: [{
         finish_reason: "tool_calls",
         message: {
           tool_calls: [{
+            id: "0",
             function: { name: "weather", arguments: JSON.stringify({ city: "Madrid" }) }
           }]
         }
       }]
     });
     fetchMock
-      .mockResolvedValueOnce(missingIdResponse())
-      .mockResolvedValueOnce(missingIdResponse());
+      .mockResolvedValueOnce(transientIdResponse())
+      .mockResolvedValueOnce(transientIdResponse());
     const compactedMessages = (toolCallId: string) => [
       createTextMessage("user", "weather"),
       {
@@ -1512,6 +1779,41 @@ describe("qwen adapter", () => {
       name: "QwenToolCallIdError",
       diagnosticCode: "QWEN_DUPLICATE_TOOL_CALL_ID"
     });
+  });
+
+  it("rejects duplicate stable ids before tool execution", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({
+      choices: [{
+        finish_reason: "tool_calls",
+        message: {
+          tool_calls: [
+            { id: "call_duplicate", function: { name: "weather", arguments: "{}" } },
+            { id: "call_duplicate", function: { name: "weather", arguments: "{}" } }
+          ]
+        }
+      }]
+    }));
+    const execute = vi.fn(() => ({ temperatureC: 26 }));
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(generateText({
+      model: provider("qwen3.8-flash"),
+      prompt: "compare weather",
+      maxSteps: 2,
+      providerOptions: { apiMode: "chat" },
+      tools: {
+        weather: tool({
+          name: "weather",
+          schema: z.object({}),
+          execute
+        })
+      }
+    })).rejects.toMatchObject({
+      name: "QwenToolCallIdError",
+      diagnosticCode: "QWEN_DUPLICATE_TOOL_CALL_ID",
+      message: "Qwen returned a duplicate tool-call id."
+    });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("rejects common reasoning config for Qwen through the shared capabilities contract", async () => {
@@ -2299,13 +2601,27 @@ describe("qwen adapter", () => {
       },
       {
         type: "response.function_call_arguments.done",
+        call_id: "0",
+        item_id: "0",
         name: "weather",
         arguments: "{\"city\":\"Lisbon\"}"
       },
       {
         type: "response.function_call_arguments.done",
+        call_id: "0",
+        item_id: "0",
         name: "weather",
         arguments: "{\"city\":\"Buenos Aires\"}"
+      },
+      {
+        type: "response.function_call_arguments.done",
+        name: "weather",
+        arguments: "{\"city\":\"Rome\"}"
+      },
+      {
+        type: "response.function_call_arguments.done",
+        name: "weather",
+        arguments: "{\"city\":\"Paris\"}"
       },
       { type: "response.done", response: { status: "completed" } },
       { type: "session.finished" }
@@ -2341,6 +2657,14 @@ describe("qwen adapter", () => {
         expect.objectContaining({
           type: "realtime-tool-call",
           toolCall: { id: "qwen-realtime-tool-1", name: "weather", input: { city: "Buenos Aires" } }
+        }),
+        expect.objectContaining({
+          type: "realtime-tool-call",
+          toolCall: { id: "qwen-realtime-tool-2", name: "weather", input: { city: "Rome" } }
+        }),
+        expect.objectContaining({
+          type: "realtime-tool-call",
+          toolCall: { id: "qwen-realtime-tool-3", name: "weather", input: { city: "Paris" } }
         }),
         expect.objectContaining({ type: "realtime-response-complete", reason: "completed" }),
         expect.objectContaining({ type: "realtime-end", reason: "finished" })

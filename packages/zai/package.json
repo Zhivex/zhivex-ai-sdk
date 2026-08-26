@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/zai",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Z.ai GLM adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",

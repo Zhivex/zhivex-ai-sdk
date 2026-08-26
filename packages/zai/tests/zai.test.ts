@@ -65,6 +65,30 @@ describe("zai adapter", () => {
     }
   });
 
+  runLanguageModelContractSuite({
+    providerName: "zai",
+    modelId: "glm-5.3-flash",
+    createModel: () => createZAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("glm-5.3-flash"),
+    expectedAgentTier: "tier-b",
+    expectedCapabilities: {
+      streaming: true,
+      tools: true,
+      structuredOutput: true,
+      jsonMode: true,
+      toolChoice: false,
+      parallelToolCalls: false,
+      vision: true,
+      files: false,
+      audioInput: false,
+      audioOutput: false,
+      embeddings: false,
+      contextCaching: true,
+      reasoningEfforts: ["low", "high", "max"],
+      reasoning: true,
+      webSearch: false
+    }
+  });
+
   runAgentProviderContractSuite({
     providerName: "zai",
     modelId: "glm-5.3",
@@ -114,9 +138,15 @@ describe("zai adapter", () => {
     fetchMock.mockReset();
   });
 
-  it("models GLM-5.2 and unknown-model capabilities independently", () => {
+  it("models GLM-5.3 Flash, GLM-5.2, and unknown-model capabilities independently", () => {
     const provider = createZAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    expect(provider("glm-5.3-flash").capabilities).toMatchObject({
+      vision: true,
+      reasoning: true,
+      reasoningEfforts: ["low", "high", "max"]
+    });
     expect(provider("glm-5.2").capabilities).toMatchObject({
+      vision: false,
       reasoning: true,
       reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
     });
@@ -181,6 +211,118 @@ describe("zai adapter", () => {
       })
     ).rejects.toThrow('GLM-5.3 supports shared reasoning effort "low", "high", or "max"');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps GLM-5.3 Flash multimodal input in order and preserves thinking by default", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ choices: [{ finish_reason: "stop", message: { content: "The diagrams differ." } }] })
+    );
+
+    await generateText({
+      model: createZAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("glm-5.3-flash"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "Compare " },
+            { type: "image", image: "https://example.com/first.png", mediaType: "image/png" },
+            { type: "text", text: " with " },
+            { type: "image", image: "aGVsbG8=", mediaType: "image/jpeg" }
+          ]
+        }
+      ],
+      reasoning: { effort: "max" }
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body).toMatchObject({
+      model: "glm-5.3-flash",
+      thinking: { type: "enabled", clear_thinking: false },
+      reasoning_effort: "max"
+    });
+    expect(body.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Compare " },
+          { type: "image_url", image_url: { url: "https://example.com/first.png" } },
+          { type: "text", text: " with " },
+          { type: "image_url", image_url: { url: "data:image/jpeg;base64,aGVsbG8=" } }
+        ]
+      }
+    ]);
+  });
+
+  it("combines GLM-5.3 Flash image input with JSON-object structured output", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ choices: [{ finish_reason: "stop", message: { content: '{"title":"Diagram"}' } }] })
+    );
+
+    const result = await generateObject({
+      model: createZAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("glm-5.3-flash"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "Return a title for this image." },
+            { type: "image", image: "data:image/png;base64,aGVsbG8=", mediaType: "image/png" }
+          ]
+        }
+      ],
+      schema: z.object({ title: z.string() }),
+      mode: "native",
+      reasoning: { effort: "low" }
+    });
+
+    expect(result.object).toEqual({ title: "Diagram" });
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.response_format).toEqual({ type: "json_object" });
+    expect(body.messages[0]).toMatchObject({
+      role: "system",
+      content: expect.stringContaining('"title"')
+    });
+    expect(body.messages[1]).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "Return a title for this image." },
+        { type: "image_url", image_url: { url: "data:image/png;base64,aGVsbG8=" } }
+      ]
+    });
+  });
+
+  it("rejects undocumented media inputs before calling Z.ai", async () => {
+    const provider = createZAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(
+      provider("glm-5.3").generate({
+        messages: [
+          {
+            role: "user",
+            parts: [{ type: "image", image: "https://example.com/image.png", mediaType: "image/png" }]
+          }
+        ]
+      })
+    ).rejects.toThrow('model "glm-5.3" does not support image input');
+    await expect(
+      provider("glm-5.3-flash").generate({
+        messages: [
+          {
+            role: "user",
+            parts: [{ type: "image", image: "aGVsbG8=", mediaType: "text/plain" }]
+          }
+        ]
+      })
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      provider("glm-5.3-flash").generate({
+        messages: [
+          {
+            role: "user",
+            parts: [{ type: "file", data: "aGVsbG8=", mediaType: "application/pdf" }]
+          }
+        ]
+      })
+    ).rejects.toThrow('does not support file input');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each([

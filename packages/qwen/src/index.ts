@@ -553,8 +553,12 @@ const stripResponsesRequestOptions = (providerOptions: Record<string, unknown> |
 
 const modelFamily = (modelId: string) => modelId.toLowerCase();
 const isQwen38Max = (modelId: string) => modelFamily(modelId) === "qwen3.8-max";
+const isQwen38Flash = (modelId: string) => modelFamily(modelId) === "qwen3.8-flash";
 const isQwen38MaxPreview = (modelId: string) => modelFamily(modelId) === "qwen3.8-max-preview";
-const isQwen38MaxFamily = (modelId: string) => isQwen38Max(modelId) || isQwen38MaxPreview(modelId);
+const isQwen38ProductionModel = (modelId: string) =>
+  isQwen38Max(modelId) || isQwen38Flash(modelId);
+const isQwen38ReasoningModel = (modelId: string) =>
+  isQwen38ProductionModel(modelId) || isQwen38MaxPreview(modelId);
 const isQwenTokenPlanURL = (url: URL) => {
   const path = url.pathname.replace(/\/+$/, "");
   const tokenPlanURL = new URL(QWEN_TOKEN_PLAN_BASE_URL);
@@ -583,7 +587,7 @@ const validateQwen38BaseURL = (baseURL: string) => {
     );
   }
 };
-const validateQwen38MaxBaseURL = (baseURL: string) => {
+const validateQwen38ProductionBaseURL = (modelId: string, baseURL: string) => {
   let url: URL;
   try {
     url = new URL(baseURL);
@@ -592,7 +596,7 @@ const validateQwen38MaxBaseURL = (baseURL: string) => {
   }
   if (isQwenTokenPlanURL(url)) {
     throw new ConfigurationError(
-      "Qwen qwen3.8-max uses standard Model Studio credentials and endpoints; QWEN_TOKEN_PLAN_BASE_URL is reserved for qwen3.8-max-preview."
+      `Qwen ${modelId} uses standard Model Studio credentials and endpoints; QWEN_TOKEN_PLAN_BASE_URL is reserved for qwen3.8-max-preview.`
     );
   }
 };
@@ -615,7 +619,7 @@ const supportsQwenVision = (modelId: string) => {
     model.includes("omni") ||
     model.includes("ocr") ||
     model.includes("vision") ||
-    isQwen38Max(modelId) ||
+    isQwen38ProductionModel(modelId) ||
     isQwen38MaxPreview(modelId) ||
     /^qwen3\.7-plus(?:$|-)/.test(model) ||
     /^qwen3\.6-flash(?:$|-)/.test(model)
@@ -629,7 +633,7 @@ const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
   const tools = supportsQwenTools(modelId);
   const omni = isQwenOmniLanguageModel(modelId);
   const reasoning = supportsQwenReasoning(modelId);
-  const qwen38Max = isQwen38Max(modelId);
+  const qwen38Production = isQwen38ProductionModel(modelId);
   const qwen38MaxPreview = isQwen38MaxPreview(modelId);
 
   return {
@@ -639,12 +643,12 @@ const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
     structuredOutput: tools && !omni && !qwen38MaxPreview,
     jsonMode: tools && !omni && !qwen38MaxPreview,
     toolChoice: tools,
-    parallelToolCalls: qwen38Max,
+    parallelToolCalls: qwen38Production,
     webSearch: tools && !omni,
-    files: supportsQwenFiles(modelId) || qwen38Max,
+    files: supportsQwenFiles(modelId) || qwen38Production,
     audioInput: supportsQwenAudioInput(modelId),
     reasoning,
-    reasoningEfforts: qwen38Max
+    reasoningEfforts: qwen38Production
       ? ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
       : qwen38MaxPreview
       ? ["minimal", "low", "medium", "high", "xhigh", "max"]
@@ -886,16 +890,30 @@ const mapResponsesToolChoice = (
   };
 };
 
-const mapStructuredOutput = (input: ModelGenerateInput) => {
+const mapStructuredOutput = (modelId: string, input: ModelGenerateInput) => {
   if (!input.structuredOutput || input.structuredOutput.mode !== "native") {
     return undefined;
+  }
+
+  if (isQwen38Flash(modelId)) {
+    return {
+      type: "json_schema",
+      json_schema: {
+        name: input.structuredOutput.name ?? "response",
+        strict: true,
+        schema: toJSONSchema(input.structuredOutput.schema)
+      }
+    };
   }
 
   return { type: "json_object" };
 };
 
-const withStructuredOutputMessages = (input: ModelGenerateInput) => {
+const withStructuredOutputMessages = (modelId: string, input: ModelGenerateInput) => {
   if (!input.structuredOutput || input.structuredOutput.mode !== "native") {
+    return input.messages;
+  }
+  if (isQwen38Flash(modelId)) {
     return input.messages;
   }
 
@@ -1014,17 +1032,21 @@ const validateQwen38Request = (
   }
 
   if (
-    isQwen38Max(modelId) &&
+    isQwen38ProductionModel(modelId) &&
     providerOptions.enable_thinking === false &&
     ((effort !== undefined && effort !== "none") || budget !== undefined)
   ) {
     throw new ConfigurationError(
-      "Qwen qwen3.8-max cannot disable thinking while also configuring a reasoning effort or thinking budget."
+      `Qwen ${modelId} cannot disable thinking while also configuring a reasoning effort or thinking budget.`
     );
   }
-  if (isQwen38Max(modelId) && providerOptions.enable_thinking === true && effort === "none") {
+  if (
+    isQwen38ProductionModel(modelId) &&
+    providerOptions.enable_thinking === true &&
+    effort === "none"
+  ) {
     throw new ConfigurationError(
-      'Qwen qwen3.8-max cannot enable thinking with reasoning effort "none".'
+      `Qwen ${modelId} cannot enable thinking with reasoning effort "none".`
     );
   }
 
@@ -1038,7 +1060,7 @@ const validateQwen38Request = (
   }
 
   if (
-    isQwen38Max(modelId) &&
+    isQwen38ProductionModel(modelId) &&
     input.messages.some((message) =>
       message.parts.some(
         (part) => part.type === "file" && !part.mediaType.toLowerCase().startsWith("video/")
@@ -1046,7 +1068,7 @@ const validateQwen38Request = (
     )
   ) {
     throw new UnsupportedFeatureError(
-      "Qwen qwen3.8-max FilePart input is reserved for video/* media. Use ImagePart for images."
+      `Qwen ${modelId} FilePart input is reserved for video/* media. Use ImagePart for images.`
     );
   }
 };
@@ -1056,7 +1078,7 @@ const mapChatReasoning = (
   input: ModelGenerateInput,
   providerOptions: QwenLanguageModelOptions
 ) => {
-  if (isQwen38MaxFamily(modelId)) {
+  if (isQwen38ReasoningModel(modelId)) {
     const rawEffort = input.reasoning?.effort ?? providerOptions.reasoning_effort;
     const thinkingDisabled = rawEffort === "none" || providerOptions.enable_thinking === false;
     if (thinkingDisabled) {
@@ -1101,7 +1123,9 @@ const mapResponsesReasoning = (
 ) => {
   const effort = input.reasoning?.effort ?? providerOptions.reasoning_effort;
   const qwen38Effort =
-    isQwen38Max(modelId) && providerOptions.enable_thinking === false && effort === undefined
+    isQwen38ProductionModel(modelId) &&
+    providerOptions.enable_thinking === false &&
+    effort === undefined
       ? "none"
       : effort;
   if (!qwen38Effort) {
@@ -1112,7 +1136,7 @@ const mapResponsesReasoning = (
     reasoning: {
       effort: isQwen38MaxPreview(modelId)
         ? mapQwen38ChatReasoningEffort(modelId, qwen38Effort)
-        : isQwen38Max(modelId)
+        : isQwen38ProductionModel(modelId)
           ? qwen38Effort
           : qwen38Effort === "low"
           ? "minimal"
@@ -1170,7 +1194,7 @@ const resolveApiMode = (
   providerOptions: QwenLanguageModelOptions
 ): "responses" | "chat" => {
   const videoInput = hasVideoInput(input.messages);
-  if (videoInput && !isQwen38Max(modelId)) {
+  if (videoInput && !isQwen38ProductionModel(modelId)) {
     throw new UnsupportedFeatureError(
       `Qwen model "${modelId}" does not support video FilePart input through this adapter.`
     );
@@ -1216,8 +1240,32 @@ const resolveApiMode = (
   return needsChat ? "chat" : "responses";
 };
 
-const usableToolCallId = (value: unknown) =>
-  typeof value === "string" && value.trim().length > 0 ? value : undefined;
+type QwenToolCallIdClassification =
+  | { kind: "stable"; id: string }
+  | { kind: "missing" | "transient" };
+
+const classifyToolCallId = (value: unknown): QwenToolCallIdClassification => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return { kind: "transient" };
+  }
+  if (typeof value !== "string") {
+    return { kind: "missing" };
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { kind: "missing" };
+  }
+  if (/^\d+$/.test(trimmed)) {
+    return { kind: "transient" };
+  }
+  return { kind: "stable", id: value };
+};
+
+const stableToolCallId = (value: unknown) => {
+  const classification = classifyToolCallId(value);
+  return classification.kind === "stable" ? classification.id : undefined;
+};
 
 const existingToolCallIds = (messages: readonly ModelMessage[]) => new Set(messages.flatMap((message) =>
   message.parts.flatMap((part) => part.type === "tool-call" ? [part.toolCall.id] : [])
@@ -1264,7 +1312,7 @@ const resolveToolCallId = (
   fallback: string | (() => string),
   seenIds: Set<string>
 ) => {
-  const candidate = candidates.map(usableToolCallId).find((value) => value !== undefined);
+  const candidate = candidates.map(stableToolCallId).find((value) => value !== undefined);
   const id = candidate ?? (typeof fallback === "function" ? fallback() : fallback);
   if (seenIds.has(id)) {
     throw new QwenToolCallIdError();
@@ -1499,9 +1547,35 @@ const streamResponses = async function* (
     args: string;
     emitted: boolean;
   }>();
+  const toolBufferAliases = new Map<string, string>();
   const seenIds = existingToolCallIds(input.messages);
   const fallbackGeneration = nextFallbackToolCallGeneration("responses", input, seenIds);
   let sawToolCalls = false;
+
+  const bufferKey = (
+    outputIndex: unknown,
+    candidates: readonly unknown[],
+    fallbackId: string
+  ) => {
+    const stableIds = candidates
+      .map(stableToolCallId)
+      .filter((value): value is string => value !== undefined);
+    if (
+      (typeof outputIndex === "number" && Number.isSafeInteger(outputIndex) && outputIndex >= 0) ||
+      (typeof outputIndex === "string" && outputIndex.trim().length > 0)
+    ) {
+      const key = `output:${outputIndex}`;
+      for (const stableId of stableIds) {
+        toolBufferAliases.set(`id:${stableId}`, key);
+      }
+      return key;
+    }
+    for (const stableId of stableIds) {
+      const identityKey = `id:${stableId}`;
+      return toolBufferAliases.get(identityKey) ?? identityKey;
+    }
+    return `fallback:${fallbackId}`;
+  };
 
   const emitToolCall = (key: string) => {
     const toolCall = toolBuffers.get(key);
@@ -1554,15 +1628,15 @@ const streamResponses = async function* (
       if (item?.type === "function_call") {
         const outputIndex = json.output_index ?? toolBuffers.size;
         const fallbackId = fallbackToolCallId("responses", fallbackGeneration, outputIndex);
-        const key = usableToolCallId(item.id) ?? usableToolCallId(json.item_id) ?? fallbackId;
+        const key = bufferKey(json.output_index, [item.id, json.item_id, item.call_id], fallbackId);
         const existing = toolBuffers.get(key) ?? {
-          callId: usableToolCallId(item.call_id) ?? usableToolCallId(item.id) ?? usableToolCallId(json.item_id),
+          callId: stableToolCallId(item.call_id) ?? stableToolCallId(item.id) ?? stableToolCallId(json.item_id),
           fallbackId,
           name: item.name ?? "",
           args: "",
           emitted: false
         };
-        existing.callId = usableToolCallId(item.call_id) ?? existing.callId;
+        existing.callId = stableToolCallId(item.call_id) ?? existing.callId;
         existing.name ||= item.name ?? "";
         if (typeof item.arguments === "string") {
           existing.args = item.arguments;
@@ -1591,9 +1665,9 @@ const streamResponses = async function* (
     if (type === "response.function_call_arguments.delta") {
       const outputIndex = json.output_index ?? toolBuffers.size;
       const fallbackId = fallbackToolCallId("responses", fallbackGeneration, outputIndex);
-      const key = usableToolCallId(json.item_id) ?? fallbackId;
+      const key = bufferKey(json.output_index, [json.item_id, json.call_id], fallbackId);
       const existing = toolBuffers.get(key) ?? {
-        callId: usableToolCallId(json.call_id) ?? usableToolCallId(json.item_id),
+        callId: stableToolCallId(json.call_id) ?? stableToolCallId(json.item_id),
         fallbackId,
         name: "",
         args: "",
@@ -1607,9 +1681,9 @@ const streamResponses = async function* (
     if (type === "response.function_call_arguments.done") {
       const outputIndex = json.output_index ?? toolBuffers.size;
       const fallbackId = fallbackToolCallId("responses", fallbackGeneration, outputIndex);
-      const key = usableToolCallId(json.item_id) ?? fallbackId;
+      const key = bufferKey(json.output_index, [json.item_id, json.call_id], fallbackId);
       const existing = toolBuffers.get(key) ?? {
-        callId: usableToolCallId(json.call_id) ?? usableToolCallId(json.item_id),
+        callId: stableToolCallId(json.call_id) ?? stableToolCallId(json.item_id),
         fallbackId,
         name: "",
         args: "",
@@ -1666,11 +1740,11 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     }
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
     validateQwenToolStream(this.modelId, providerOptions, false);
-    if (isQwen38MaxFamily(this.modelId)) {
+    if (isQwen38ReasoningModel(this.modelId)) {
       validateQwen38Request(this.modelId, input, providerOptions);
     }
-    if (isQwen38Max(this.modelId)) {
-      validateQwen38MaxBaseURL(this.baseURL);
+    if (isQwen38ProductionModel(this.modelId)) {
+      validateQwen38ProductionBaseURL(this.modelId, this.baseURL);
     }
     if (isQwen38MaxPreview(this.modelId)) {
       validateQwen38BaseURL(this.baseURL);
@@ -1683,7 +1757,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       if (apiMode === "responses") {
         const previousResponse = getProviderResponseId(input.messages);
         const baseResponseProviderOptions = stripResponsesRequestOptions(providerOptions);
-        const responseProviderOptions = isQwen38MaxFamily(this.modelId)
+        const responseProviderOptions = isQwen38ReasoningModel(this.modelId)
           ? stripQwen38ReasoningOptions(baseResponseProviderOptions)
           : baseResponseProviderOptions;
         const messages =
@@ -1729,7 +1803,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       }
 
       const baseChatProviderOptions = stripHeaderOptions(providerOptions);
-      const chatProviderOptions = isQwen38MaxFamily(this.modelId)
+      const chatProviderOptions = isQwen38ReasoningModel(this.modelId)
         ? stripQwen38ReasoningOptions(baseChatProviderOptions)
         : baseChatProviderOptions;
       const response = await withRetry(
@@ -1741,13 +1815,13 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             body: JSON.stringify({
               ...chatProviderOptions,
               model: this.modelId,
-              messages: mapMessages(withStructuredOutputMessages(input)),
+              messages: mapMessages(withStructuredOutputMessages(this.modelId, input)),
               tools: mapChatTools(input.tools),
               tool_choice: mapChatToolChoice(input.toolChoice),
-              response_format: mapStructuredOutput(input),
+              response_format: mapStructuredOutput(this.modelId, input),
               temperature: input.temperature,
-              max_tokens: isQwen38MaxFamily(this.modelId) ? undefined : input.maxTokens,
-              max_completion_tokens: isQwen38MaxFamily(this.modelId) ? input.maxTokens : undefined,
+              max_tokens: isQwen38ReasoningModel(this.modelId) ? undefined : input.maxTokens,
+              max_completion_tokens: isQwen38ReasoningModel(this.modelId) ? input.maxTokens : undefined,
               stream: false,
               ...mapChatReasoning(this.modelId, input, providerOptions)
             })
@@ -1779,11 +1853,11 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
   async stream(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
     validateQwenToolStream(this.modelId, providerOptions, true);
-    if (isQwen38MaxFamily(this.modelId)) {
+    if (isQwen38ReasoningModel(this.modelId)) {
       validateQwen38Request(this.modelId, input, providerOptions);
     }
-    if (isQwen38Max(this.modelId)) {
-      validateQwen38MaxBaseURL(this.baseURL);
+    if (isQwen38ProductionModel(this.modelId)) {
+      validateQwen38ProductionBaseURL(this.modelId, this.baseURL);
     }
     if (isQwen38MaxPreview(this.modelId)) {
       validateQwen38BaseURL(this.baseURL);
@@ -1795,7 +1869,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     if (apiMode === "responses") {
       const previousResponse = getProviderResponseId(input.messages);
       const baseResponseProviderOptions = stripResponsesRequestOptions(providerOptions);
-      const responseProviderOptions = isQwen38MaxFamily(this.modelId)
+      const responseProviderOptions = isQwen38ReasoningModel(this.modelId)
         ? stripQwen38ReasoningOptions(baseResponseProviderOptions)
         : baseResponseProviderOptions;
       const messages =
@@ -1833,7 +1907,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     }
 
     const baseChatProviderOptions = stripHeaderOptions(providerOptions);
-    const chatProviderOptions = isQwen38MaxFamily(this.modelId)
+    const chatProviderOptions = isQwen38ReasoningModel(this.modelId)
       ? stripQwen38ReasoningOptions(baseChatProviderOptions)
       : baseChatProviderOptions;
     const response = await withRetry(
@@ -1846,13 +1920,13 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             ...chatProviderOptions,
             model: this.modelId,
             modalities: isQwenOmniLanguageModel(this.modelId) ? providerOptions.modalities ?? ["text"] : undefined,
-            messages: mapMessages(withStructuredOutputMessages(input)),
+            messages: mapMessages(withStructuredOutputMessages(this.modelId, input)),
             tools: mapChatTools(input.tools),
             tool_choice: mapChatToolChoice(input.toolChoice),
-            response_format: mapStructuredOutput(input),
+            response_format: mapStructuredOutput(this.modelId, input),
             temperature: input.temperature,
-            max_tokens: isQwen38MaxFamily(this.modelId) ? undefined : input.maxTokens,
-            max_completion_tokens: isQwen38MaxFamily(this.modelId) ? input.maxTokens : undefined,
+            max_tokens: isQwen38ReasoningModel(this.modelId) ? undefined : input.maxTokens,
+            max_completion_tokens: isQwen38ReasoningModel(this.modelId) ? input.maxTokens : undefined,
             stream: true,
             stream_options: { include_usage: true },
             ...mapChatReasoning(this.modelId, input, providerOptions)
@@ -1900,13 +1974,13 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           for (const toolCall of delta?.tool_calls ?? []) {
             const index = Number(toolCall.index ?? 0);
             const existing = toolBuffers.get(index) ?? {
-              id: usableToolCallId(toolCall.id),
+              id: stableToolCallId(toolCall.id),
               fallbackId: fallbackToolCallId("chat", fallbackGeneration, index),
               name: toolCall.function?.name ?? "",
               args: "",
               emitted: false
             };
-            existing.id = usableToolCallId(toolCall.id) ?? existing.id;
+            existing.id = stableToolCallId(toolCall.id) ?? existing.id;
             existing.name ||= toolCall.function?.name ?? "";
             existing.args += toolCall.function?.arguments ?? "";
             toolBuffers.set(index, existing);

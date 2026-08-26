@@ -1,5 +1,11 @@
 # @zhivex-ai/qwen
 
+## 0.11.0
+
+### Minor Changes
+
+- Add first-class Qwen 3.8 Flash support with hybrid reasoning, multimodal image and video input, native JSON Schema output, production endpoint validation, catalog pricing, and model-aware authenticated tool-loop certification. Normalize missing, whitespace-only, and numeric placeholder tool-call IDs before deduplication across Chat, Responses, streaming, and realtime flows while continuing to reject duplicate stable provider IDs.
+
 ## 0.10.3
 
 ### Patch Changes

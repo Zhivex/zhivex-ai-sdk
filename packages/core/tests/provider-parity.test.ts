@@ -175,7 +175,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     model: zai("glm-5.3"),
     summary: {
       structuredOutputSummary: "JSON object + schema prompt",
-      reasoningSummary: "5.3 `low` / `high` / `max`; 5.2 mapped",
+      reasoningSummary: "5.3/5.3 Flash `low` / `high` / `max`; 5.2 mapped",
       hostedToolSummary: "no"
     }
   },
