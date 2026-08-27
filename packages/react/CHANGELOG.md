@@ -1,11 +1,5 @@
 # @zhivex-ai/react
 
-## 0.4.0
-
-### Minor Changes
-
-- Add the Beta `@zhivex-ai/react/compat` entrypoint for AI SDK UI v7 interoperability. It includes bidirectional `UIMessage` adapters, bounded request parsing, AI SDK UI v1 stream responses, a secure `useChat` transport with abort and approval propagation, versioned protocol fixtures, and an explicit part compatibility matrix.
-
 ## 0.3.0
 
 ### Minor Changes

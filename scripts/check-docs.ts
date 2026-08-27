@@ -365,6 +365,43 @@ if (standaloneTsconfig.includes('"paths"') || standaloneTsconfig.includes("../..
   reportError("examples/next-runner/tsconfig.json: standalone typecheck must resolve installed packages");
 }
 
+type ChangesetBump = "patch" | "minor" | "major";
+
+const pendingChangesetBump = (packageName: string): ChangesetBump | undefined => {
+  const rank: Record<ChangesetBump, number> = { patch: 1, minor: 2, major: 3 };
+  let selected: ChangesetBump | undefined;
+  const changesetRoot = path.join(repoRoot, ".changeset");
+  for (const [filePath, content] of markdownByPath) {
+    if (path.dirname(filePath) !== changesetRoot || path.basename(filePath) === "README.md") {
+      continue;
+    }
+    for (const line of content.split("\n")) {
+      const match = line.trim().match(/^["']?([^"']+)["']?:\s+(patch|minor|major)$/u);
+      if (match?.[1] !== packageName) {
+        continue;
+      }
+      const bump = match[2] as ChangesetBump;
+      if (!selected || rank[bump] > rank[selected]) {
+        selected = bump;
+      }
+    }
+  }
+  return selected;
+};
+
+const bumpedVersion = (version: string, bump: ChangesetBump): string | undefined => {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/u);
+  if (!match) {
+    return undefined;
+  }
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  if (bump === "major") return `${major + 1}.0.0`;
+  if (bump === "minor") return `${major}.${minor + 1}.0`;
+  return `${major}.${minor}.${patch + 1}`;
+};
+
 for (const [packageDirectory, dependencyName] of [
   ["sdk", "@zhivex-ai/sdk"],
   ["openai", "@zhivex-ai/openai"],
@@ -373,8 +410,18 @@ for (const [packageDirectory, dependencyName] of [
   const manifest = JSON.parse(
     await readFile(path.join(packagesRoot, packageDirectory, "package.json"), "utf8")
   ) as { version?: string };
-  if (!manifest.version || starterManifest.dependencies?.[dependencyName] !== manifest.version) {
-    reportError(`examples/next-runner/package.json: ${dependencyName} must pin the checkout package version`);
+  const expectedVersions = new Set<string>();
+  if (manifest.version) {
+    expectedVersions.add(manifest.version);
+    const pendingBump = pendingChangesetBump(dependencyName);
+    const pendingVersion = pendingBump ? bumpedVersion(manifest.version, pendingBump) : undefined;
+    if (pendingVersion) expectedVersions.add(pendingVersion);
+  }
+  if (!starterManifest.dependencies?.[dependencyName] ||
+      !expectedVersions.has(starterManifest.dependencies[dependencyName])) {
+    reportError(
+      `examples/next-runner/package.json: ${dependencyName} must pin the checkout or pending changeset version`
+    );
   }
 }
 

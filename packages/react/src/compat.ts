@@ -81,6 +81,8 @@ export interface ParsedAISDKUIMessageRequest {
   messageId?: string;
   trigger?: "submit-message" | "regenerate-message";
   messages: AISDKUIMessage[];
+  /** UI-only metadata retained outside provider-facing model content. */
+  messageMetadata: Array<{ messageId: string; metadata: JsonValue }>;
   modelMessages: ModelMessage[];
 }
 
@@ -96,6 +98,8 @@ export interface AISDKUIChatTransportRequestContext {
     approve: boolean;
     reason?: string;
   }>;
+  /** Metadata from the latest AI SDK UI message; never added to message.parts. */
+  messageMetadata?: JsonValue;
   metadata?: unknown;
   body?: object;
 }
@@ -289,17 +293,6 @@ const contentPartsFromAI = (
   const policy = options.unsupportedParts ?? "preserve";
   const content: ContentPart[] = [];
 
-  if (message.metadata !== undefined) {
-    content.push({
-      type: "provider-data",
-      provider: AI_SDK_PROVIDER,
-      data: {
-        type: "ui-message-metadata",
-        metadata: jsonValue(message.metadata, "AI SDK UI message metadata")
-      }
-    });
-  }
-
   for (const rawPart of message.parts) {
     if (!isRecord(rawPart) || !isNonEmptyString(rawPart.type)) {
       throw new AISDKUICompatibilityError("AI SDK UI message parts must be typed objects.", {
@@ -371,6 +364,11 @@ const contentPartsFromAI = (
 
   return content;
 };
+
+const messageMetadataFromAI = (message: AISDKUIMessage): JsonValue | undefined =>
+  message.metadata === undefined
+    ? undefined
+    : jsonValue(message.metadata, "AI SDK UI message metadata");
 
 const validateAIMessage = (value: unknown): AISDKUIMessage => {
   if (!isRecord(value) || !isNonEmptyString(value.id) || !isAIMessageRole(value.role) || !Array.isArray(value.parts)) {
@@ -1128,6 +1126,7 @@ export class ZhivexAISDKChatTransport implements AISDKChatTransport<AISDKUIMessa
     const message = latest && approvals.length === 0
       ? toChatMessage(latest, this.options)
       : undefined;
+    const messageMetadata = latest ? messageMetadataFromAI(latest) : undefined;
     const context: AISDKUIChatTransportRequestContext = {
       chatId: request.chatId,
       trigger: request.trigger,
@@ -1135,6 +1134,7 @@ export class ZhivexAISDKChatTransport implements AISDKChatTransport<AISDKUIMessa
       messages: request.messages,
       message,
       approvals,
+      messageMetadata,
       metadata: request.metadata,
       body: request.body
     };
@@ -1285,6 +1285,10 @@ export const parseAISDKUIMessageRequest = async (
     });
   }
   const messages = parsed.messages.map(validateAIMessage);
+  const messageMetadata = messages.flatMap((message) => {
+    const metadata = messageMetadataFromAI(message);
+    return metadata === undefined ? [] : [{ messageId: message.id, metadata }];
+  });
   let partCount = 0;
   for (const message of messages) {
     if (message.id.length > maxIdChars) {
@@ -1322,6 +1326,7 @@ export const parseAISDKUIMessageRequest = async (
     messageId,
     trigger,
     messages,
+    messageMetadata,
     modelMessages: fromAISDKUIMessages(messages, options)
   };
 };

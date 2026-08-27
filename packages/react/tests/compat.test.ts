@@ -54,11 +54,10 @@ describe("AI SDK UI v7 compatibility", () => {
     ).resolves.toEqual(fixture.expectedAIChunks);
   });
 
-  it("round-trips text, files, reasoning, tools, outputs, and metadata", () => {
+  it("round-trips text, files, reasoning, tools, and outputs", () => {
     const source: UIMessage = {
       id: "assistant-1",
       role: "assistant",
-      metadata: { trace: "public-trace" },
       parts: [
         { type: "reasoning", text: "Reason safely", state: "done" },
         {
@@ -85,7 +84,6 @@ describe("AI SDK UI v7 compatibility", () => {
     expect(restored).toMatchObject({
       id: source.id,
       role: "assistant",
-      metadata: { trace: "public-trace" },
       parts: [
         { type: "reasoning", text: "Reason safely" },
         {
@@ -105,6 +103,32 @@ describe("AI SDK UI v7 compatibility", () => {
         { type: "text", text: "Done" }
       ]
     });
+  });
+
+  it("keeps UI message metadata outside provider-facing model content", async () => {
+    const source = {
+      id: "user-metadata",
+      role: "user",
+      metadata: { layout: "compact", bookkeeping: "ui-only" },
+      parts: [{ type: "text", text: "Hello" }]
+    } satisfies UIMessage;
+
+    expect(fromAISDKUIMessage(source)).toEqual({
+      role: "user",
+      parts: [{ type: "text", text: "Hello" }]
+    });
+
+    const parsed = await parseAISDKUIMessageRequest(new Request("https://example.com/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "chat-metadata", messages: [source] })
+    }));
+    expect(parsed.messages[0]?.metadata).toEqual(source.metadata);
+    expect(parsed.messageMetadata).toEqual([
+      { messageId: source.id, metadata: source.metadata }
+    ]);
+    expect(JSON.stringify(parsed.modelMessages)).not.toContain("bookkeeping");
+    expect(JSON.stringify(parsed.modelMessages)).not.toContain("ui-only");
   });
 
   it("preserves unknown parts explicitly or rejects them fail closed", () => {
@@ -321,7 +345,12 @@ describe("AI SDK UI v7 compatibility", () => {
       trigger: "submit-message",
       messageId: undefined,
       messages: [
-        { id: "user-1", role: "user", parts: [{ type: "text", text: "Hello" }] }
+        {
+          id: "user-1",
+          role: "user",
+          metadata: { bookkeeping: "ui-only" },
+          parts: [{ type: "text", text: "Hello" }]
+        }
       ],
       abortSignal: new AbortController().signal
     });

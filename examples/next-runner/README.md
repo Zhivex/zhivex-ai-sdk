@@ -35,6 +35,11 @@ AI SDK UI `useChat` reducer and `@zhivex-ai/react/compat` transport.
 
 The package manifest pins the versions certified with this starter. It has no workspace ranges or imports into `../../packages`, so copying it to an empty directory exercises published entrypoints rather than monorepo source.
 
+When a feature branch introduces a new package entrypoint, the manifest may pin
+the exact version declared by its pending changeset before that version reaches
+npm. Repository typechecking resolves the checkout source; standalone copying
+requires that pinned version to have been published.
+
 ## Architecture
 
 ```text

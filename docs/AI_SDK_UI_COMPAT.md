@@ -67,6 +67,12 @@ history. Approval resumes omit `message` and send the decoded Zhivex approval
 identity. Use `buildRequestBody` only when the application route has a different
 bounded schema.
 
+Per-message AI SDK UI `metadata` is JSON-validated but never inserted into
+`ModelMessage.parts` or the default Runner body. Custom transports can read it
+from `AISDKUIChatTransportRequestContext.messageMetadata`; server parsers retain
+the original UI messages and expose a separate `messageMetadata` sidecar. Keep
+that bookkeeping in application/UI state rather than forwarding it to a model.
+
 Regeneration is disabled by default because replaying the last user turn can
 duplicate durable Runner history. Set `supportsRegenerate: true` only together
 with a `buildRequestBody` target that implements idempotent regeneration.
@@ -104,6 +110,9 @@ export async function POST(request: Request) {
   return toAISDKUIRunnerStreamResponse(stream);
 }
 ```
+
+`body.messageMetadata` remains separate from `body.modelMessages`; do not merge
+it into provider-facing content.
 
 `toAISDKUIRunnerStreamResponse()` waits for Runner collection before the
 terminal event, preserving durable session writes. The response includes

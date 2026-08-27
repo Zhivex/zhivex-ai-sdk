@@ -28,8 +28,10 @@ const chat = useChat({
 
 This keeps the AI SDK reducer and components, converts message/tool/reasoning
 parts at the transport boundary, rejects redirects, propagates abort, and
-applies bounded SSE parsing. The supported versions and complete part matrix
-are documented in [AI SDK UI Compatibility](../../docs/AI_SDK_UI_COMPAT.md).
+applies bounded SSE parsing. Per-message UI metadata stays in the compatibility
+context/sidecar and is never added to provider-facing model parts. The supported
+versions and complete part matrix are documented in
+[AI SDK UI Compatibility](../../docs/AI_SDK_UI_COMPAT.md).
 
 ## Client
 
