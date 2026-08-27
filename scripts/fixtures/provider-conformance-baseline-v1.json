@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "reportId": "provider-conformance-priority-declared-v1",
+  "generatedAt": "2026-08-27T00:00:00.000Z",
+  "expiresAt": "2026-09-03T00:00:00.000Z",
+  "generator": "repository-baseline",
+  "source": {
+    "repository": "Zhivex/zhivex-ai-sdk",
+    "gitSha": "baseline",
+    "runtime": "repository-fixture"
+  },
+  "providers": [
+    {
+      "provider": "anthropic",
+      "results": [
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": true,
+          "modelId": "claude-opus-5",
+          "endpoint": "anthropic:messages",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/anthropic",
+            "packageVersion": "0.7.4"
+          },
+          "observedAt": "2026-08-27T00:00:00.000Z",
+          "expiresAt": "2026-09-03T00:00:00.000Z",
+          "attempts": 0
+        }
+      ]
+    },
+    {
+      "provider": "azure-openai",
+      "results": [
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": true,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.6.12"
+          },
+          "observedAt": "2026-08-27T00:00:00.000Z",
+          "expiresAt": "2026-09-03T00:00:00.000Z",
+          "attempts": 0
+        }
+      ]
+    },
+    {
+      "provider": "gemini",
+      "results": [
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": true,
+          "modelId": "gemini-3.6-flash",
+          "endpoint": "gemini:generativelanguage",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/gemini",
+            "packageVersion": "0.10.5"
+          },
+          "observedAt": "2026-08-27T00:00:00.000Z",
+          "expiresAt": "2026-09-03T00:00:00.000Z",
+          "attempts": 0
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "results": [
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": true,
+          "modelId": "gpt-5.6-luna",
+          "endpoint": "openai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openai",
+            "packageVersion": "0.10.0"
+          },
+          "observedAt": "2026-08-27T00:00:00.000Z",
+          "expiresAt": "2026-09-03T00:00:00.000Z",
+          "attempts": 0
+        }
+      ]
+    }
+  ]
+}

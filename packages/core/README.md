@@ -2,6 +2,8 @@
 
 Shared contracts, runtime helpers, stream utilities, middleware, catalog helpers, and generation primitives for Zhivex AI SDK.
 
+The Beta provider-conformance helpers (`normalizeProviderConformanceReport`, `compareProviderConformanceReports`, `evaluateProviderConformanceGate`, and `renderProviderConformanceMarkdown`) validate schema-versioned support evidence without persisting prompts, responses, or secrets. They distinguish declared, offline, installed-package, and authenticated live results and apply fail-closed TTL/baseline rules.
+
 `@zhivex-ai/core` owns the stable catalog contract and `createModelCatalog`.
 Its deprecated `defaultModelCatalog` export is a frozen compatibility snapshot
 that remains available until the next major; the release-managed default

@@ -52,6 +52,18 @@ jobs:
       - name: Test
         run: bun run test
 
+      - name: Generate provider conformance report from offline evidence
+        run: >-
+          bun run provider:conformance
+          --offline-passed
+          --baseline=scripts/fixtures/provider-conformance-baseline-v1.json
+          --gate=warn
+          --json="$RUNNER_TEMP/provider-conformance-offline.json"
+          --markdown="$RUNNER_TEMP/provider-conformance-offline.md"
+
+      - name: Add provider conformance summary
+        run: cat "$RUNNER_TEMP/provider-conformance-offline.md" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Certify workflow state with SQLite
         run: bun run test:integration:workflows-sqlite
 
@@ -68,7 +80,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: package-dist
-          path: ${{ runner.temp }}/package-dist.tgz
+          path: |
+            ${{ runner.temp }}/package-dist.tgz
+            ${{ runner.temp }}/provider-conformance-offline.json
+            ${{ runner.temp }}/provider-conformance-offline.md
           if-no-files-found: error
           retention-days: 1
 
@@ -115,7 +130,31 @@ jobs:
       - name: Verify packed packages and OTEL with Node
         env:
           ZHIVEX_OTEL_SDK_VERSION: ${{ matrix.otel-sdk-version }}
+          ZHIVEX_PROVIDER_CONFORMANCE_INSTALLED_OUTPUT: ${{ runner.temp }}/provider-conformance-installed.json
         run: bun run scripts/package-consumer-smoke.ts
+
+      - name: Merge installed provider conformance evidence
+        run: >-
+          bun run provider:conformance
+          --merge="$RUNNER_TEMP/package-dist/provider-conformance-offline.json,$RUNNER_TEMP/provider-conformance-installed.json"
+          --baseline=scripts/fixtures/provider-conformance-baseline-v1.json
+          --gate=warn
+          --json="$RUNNER_TEMP/provider-conformance.json"
+          --markdown="$RUNNER_TEMP/provider-conformance.md"
+
+      - name: Add installed conformance summary
+        run: cat "$RUNNER_TEMP/provider-conformance.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload provider conformance evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: provider-conformance-node-${{ matrix.node-version }}
+          path: |
+            ${{ runner.temp }}/provider-conformance.json
+            ${{ runner.temp }}/provider-conformance.md
+            ${{ runner.temp }}/provider-conformance-installed.json
+          if-no-files-found: error
+          retention-days: 14
 
   workflow-postgres:
     name: Workflow state / Postgres certification
@@ -159,3 +198,26 @@ jobs:
 
       - name: Certify installed SDK package against Postgres
         run: bun run smoke:packages:workflows-postgres
+
+  provider-conformance-attestation:
+    name: Provider conformance provenance
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: package-consumer
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download Node 24 provider conformance evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: provider-conformance-node-24
+          path: ${{ runner.temp }}/provider-conformance
+
+      - name: Attest provider conformance report
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/provider-conformance/provider-conformance.json

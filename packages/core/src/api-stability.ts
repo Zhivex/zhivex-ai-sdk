@@ -253,6 +253,9 @@ const stableSymbols = [
 
 const betaSymbols = [
   "ModelResolutionError",
+  "PROVIDER_CONFORMANCE_EVIDENCE_LEVELS",
+  "PROVIDER_CONFORMANCE_REPORT_SCHEMA_VERSION",
+  "PROVIDER_CONFORMANCE_STATUSES",
   "createAgentExecutionEnvironmentBinding",
   "createAgentHarnessBinding",
   "MODEL_EVALUATION_REPORT_SCHEMA_VERSION",
@@ -300,6 +303,7 @@ const betaSymbols = [
   "isHostedToolClass",
   "isHostedToolDefinition",
   "compareModelEvaluationReports",
+  "compareProviderConformanceReports",
   "listBatches",
   "listContextCaches",
   "listFileSearchStores",
@@ -308,11 +312,15 @@ const betaSymbols = [
   "predictLongRunning",
   "predictRaw",
   "evaluateModelEvaluationGate",
+  "evaluateProviderConformanceGate",
+  "mergeProviderConformanceReports",
+  "normalizeProviderConformanceReport",
   "resumeInteraction",
   "PRODUCTION_AGENT_KIT_SCHEMA_VERSION",
   "pruneFileWorkflowStateStore",
   "streamInteraction",
   "runModelEvaluation",
+  "renderProviderConformanceMarkdown",
   "createToolAuditRecords",
   "uploadFile",
   "uploadToFileSearchStore"
