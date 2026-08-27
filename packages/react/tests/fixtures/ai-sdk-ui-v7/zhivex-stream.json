@@ -1,0 +1,125 @@
+{
+  "supportedVersions": {
+    "ai": "7.0.79",
+    "@ai-sdk/react": "4.0.82"
+  },
+  "messageId": "assistant-fixture",
+  "zhivexChunks": [
+    {
+      "type": "provider-data",
+      "messageId": "assistant-fixture",
+      "role": "assistant",
+      "provider": "deepseek",
+      "data": {
+        "type": "reasoning_content",
+        "reasoningContent": "Check the weather."
+      }
+    },
+    {
+      "type": "tool-call",
+      "messageId": "assistant-fixture",
+      "role": "assistant",
+      "toolCall": {
+        "id": "call-weather",
+        "name": "get_weather",
+        "input": {
+          "city": "Buenos Aires"
+        }
+      }
+    },
+    {
+      "type": "tool-result",
+      "messageId": "assistant-fixture",
+      "role": "tool",
+      "toolResult": {
+        "toolCallId": "call-weather",
+        "toolName": "get_weather",
+        "output": {
+          "temperatureC": 22
+        },
+        "isError": false
+      }
+    },
+    {
+      "type": "text-delta",
+      "messageId": "assistant-fixture",
+      "role": "assistant",
+      "textDelta": "It is 22 C."
+    },
+    {
+      "type": "image-generation",
+      "messageId": "assistant-fixture",
+      "role": "assistant",
+      "provider": "fixture",
+      "image": {
+        "data": "aW1hZ2U=",
+        "encoding": "base64",
+        "mediaType": "image/png"
+      },
+      "partial": false
+    },
+    {
+      "type": "finish",
+      "messageId": "assistant-fixture",
+      "finishReason": "stop"
+    }
+  ],
+  "expectedAIChunks": [
+    {
+      "type": "start",
+      "messageId": "assistant-fixture"
+    },
+    {
+      "type": "reasoning-start",
+      "id": "assistant-fixture:reasoning:1"
+    },
+    {
+      "type": "reasoning-delta",
+      "id": "assistant-fixture:reasoning:1",
+      "delta": "Check the weather."
+    },
+    {
+      "type": "reasoning-end",
+      "id": "assistant-fixture:reasoning:1"
+    },
+    {
+      "type": "tool-input-available",
+      "toolCallId": "call-weather",
+      "toolName": "get_weather",
+      "input": {
+        "city": "Buenos Aires"
+      },
+      "dynamic": true
+    },
+    {
+      "type": "tool-output-available",
+      "toolCallId": "call-weather",
+      "output": {
+        "temperatureC": 22
+      },
+      "dynamic": true
+    },
+    {
+      "type": "text-start",
+      "id": "assistant-fixture:text:1"
+    },
+    {
+      "type": "text-delta",
+      "id": "assistant-fixture:text:1",
+      "delta": "It is 22 C."
+    },
+    {
+      "type": "text-end",
+      "id": "assistant-fixture:text:1"
+    },
+    {
+      "type": "file",
+      "url": "data:image/png;base64,aW1hZ2U=",
+      "mediaType": "image/png"
+    },
+    {
+      "type": "finish",
+      "finishReason": "stop"
+    }
+  ]
+}

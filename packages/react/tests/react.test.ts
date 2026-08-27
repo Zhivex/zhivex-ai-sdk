@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import * as react from "../src/index.js";
+import * as compat from "../src/compat.js";
 import * as headless from "../src/headless.js";
 import * as hooks from "../src/hooks.js";
 
@@ -22,5 +23,14 @@ describe("@zhivex-ai/react public surface", () => {
     expect(headless.chatReducer).toBeTypeOf("function");
     expect(headless.ChatBusyError).toBeTypeOf("function");
     expect(hooks.useZhivexChat).toBeTypeOf("function");
+  });
+
+  it("exposes the beta AI SDK UI compatibility entrypoint", () => {
+    expect(compat.fromAISDKUIMessage).toBeTypeOf("function");
+    expect(compat.toAISDKUIMessage).toBeTypeOf("function");
+    expect(compat.toAISDKUIMessageStreamResponse).toBeTypeOf("function");
+    expect(compat.toAISDKUIRunnerStreamResponse).toBeTypeOf("function");
+    expect(compat.parseAISDKUIMessageRequest).toBeTypeOf("function");
+    expect(compat.createAISDKUIChatTransport).toBeTypeOf("function");
   });
 });

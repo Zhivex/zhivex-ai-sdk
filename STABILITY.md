@@ -108,6 +108,7 @@ These APIs are supported and documented, but they may still change between minor
 - Callable-provider construction and explicit merged-abort cleanup
 - Discriminated model capability profiles and legacy-capability derivation
 - Comparative model evaluation suites, scorers, reports, comparisons, and gates
+- AI SDK UI v7 interoperability exported from `@zhivex-ai/react/compat`, including message adapters, bounded request parsing, stream responses, and the `useChat` transport
 
 New application code can import these runtime values explicitly from
 `@zhivex-ai/sdk/beta` so the compatibility risk is visible at the import site.

@@ -140,6 +140,10 @@ describe("package metadata", () => {
         types: "./dist/transport.d.ts",
         import: "./dist/transport.js"
       },
+      "./compat": {
+        types: "./dist/compat.d.ts",
+        import: "./dist/compat.js"
+      },
       "./hooks": {
         types: "./dist/hooks.d.ts",
         import: "./dist/hooks.js"
@@ -151,6 +155,7 @@ describe("package metadata", () => {
     });
     expect(Object.keys(pkg.exports ?? {}).sort()).toEqual([
       ".",
+      "./compat",
       "./components",
       "./headless",
       "./hooks",
@@ -164,10 +169,11 @@ describe("package metadata", () => {
 
   it("keeps React server-safe and client entrypoint boundaries explicit", async () => {
     const reactSrc = path.join(packagesDir, "react", "src");
-    const [headless, reducer, transport, types, hooks, components] = await Promise.all([
+    const [headless, reducer, transport, compat, types, hooks, components] = await Promise.all([
       readFile(path.join(reactSrc, "headless.ts"), "utf8"),
       readFile(path.join(reactSrc, "reducer.ts"), "utf8"),
       readFile(path.join(reactSrc, "transport.ts"), "utf8"),
+      readFile(path.join(reactSrc, "compat.ts"), "utf8"),
       readFile(path.join(reactSrc, "types.ts"), "utf8"),
       readFile(path.join(reactSrc, "hooks.ts"), "utf8"),
       readFile(path.join(reactSrc, "components.tsx"), "utf8")
@@ -175,10 +181,11 @@ describe("package metadata", () => {
     const importsReactAtRuntime =
       /(?:import|export)\s+(?!type\b)[^;]*\bfrom\s+["']react(?:\/[^"']*)?["']|import\s*["']react(?:\/[^"']*)?["']/;
 
-    for (const source of [headless, reducer, transport, types]) {
+    for (const source of [headless, reducer, transport, compat, types]) {
       expect(source).not.toContain('"use client"');
       expect(source).not.toMatch(importsReactAtRuntime);
     }
+    expect(compat).not.toMatch(/import\s+(?!type\b)[^;]*\bfrom\s+["']ai["']/u);
     expect(hooks.trimStart().startsWith('"use client";')).toBe(true);
     expect(components.trimStart().startsWith('"use client";')).toBe(true);
   });
