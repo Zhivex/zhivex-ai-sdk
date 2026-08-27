@@ -47,6 +47,10 @@ export default function Page() {
           "Help me plan the next task"
         ]}
       />
+      <p style={{ marginTop: "1rem", textAlign: "center" }}>
+        Already use AI SDK UI? Open the{" "}
+        <a href="/ai-sdk-ui">useChat compatibility fixture</a>.
+      </p>
     </main>
   );
 }

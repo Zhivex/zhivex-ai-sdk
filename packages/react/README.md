@@ -10,6 +10,27 @@ The browser package never runs providers or tools. Keep credentials, durable ses
 bun add @zhivex-ai/react @zhivex-ai/sdk @zhivex-ai/openai react react-dom
 ```
 
+To keep an existing AI SDK UI frontend, install its certified major line and
+use the Beta compatibility entrypoint:
+
+```bash
+bun add @zhivex-ai/react ai@^7 @ai-sdk/react@^4
+```
+
+```tsx
+import { useChat } from "@ai-sdk/react";
+import { createAISDKUIChatTransport } from "@zhivex-ai/react/compat";
+
+const chat = useChat({
+  transport: createAISDKUIChatTransport({ endpoint: "/api/chat/stream" })
+});
+```
+
+This keeps the AI SDK reducer and components, converts message/tool/reasoning
+parts at the transport boundary, rejects redirects, propagates abort, and
+applies bounded SSE parsing. The supported versions and complete part matrix
+are documented in [AI SDK UI Compatibility](../../docs/AI_SDK_UI_COMPAT.md).
+
 ## Client
 
 Import the default stylesheet once from the root layout or application entrypoint:
@@ -269,6 +290,7 @@ Hostname filtering cannot prevent DNS rebinding by itself. For high-trust applic
 
 - `@zhivex-ai/react/hooks`: `useZhivexChat()` and its client-only types.
 - `@zhivex-ai/react/transport`: configurable `fetch`/SSE transport and bounded parsing without a React runtime import.
+- `@zhivex-ai/react/compat`: Beta AI SDK UI v7 message, request, response, and `useChat` transport adapters.
 - `@zhivex-ai/react/headless`: reducer, state factory, errors, and shared chat types without a React runtime import.
 - `@zhivex-ai/react/components`: accessible UI primitives without pulling the hook into the entrypoint.
 - `useZhivexChat()`: optimistic messages, multimodal input, abort, approval resume, controlled sessions, and stream reduction.

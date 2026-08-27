@@ -20,9 +20,18 @@ For an existing Next.js application, the equivalent runtime install is:
 bun add @zhivex-ai/react @zhivex-ai/sdk @zhivex-ai/openai react react-dom
 ```
 
+The optional AI SDK UI compatibility fixture also pins:
+
+```bash
+bun add ai@^7 @ai-sdk/react@^4
+```
+
 Set `OPENAI_API_KEY` in `.env` before `bun run first-response`. The value remains server-side and `.env` is ignored by Git.
 
 Open `http://localhost:3000`. The session ID shown in the header is persisted under `.zhivex/sessions`, so later turns use the same server-owned history.
+
+Open `http://localhost:3000/ai-sdk-ui` to run the same backend through the real
+AI SDK UI `useChat` reducer and `@zhivex-ai/react/compat` transport.
 
 The package manifest pins the versions certified with this starter. It has no workspace ranges or imports into `../../packages`, so copying it to an empty directory exercises published entrypoints rather than monorepo source.
 
@@ -39,6 +48,7 @@ Zhivex Runner -> OpenAI + SessionService -> UIMessageChunk SSE
 - `app/api/chat/route.ts`: optional non-streaming JSON endpoint.
 - `app/api/chat/stream/route.ts`: React/SSE endpoint with cancellation propagation.
 - `app/page.tsx`: browser-safe chat UI with bounded fetch/SSE transport.
+- `app/ai-sdk-ui/page.tsx`: version-pinned `useChat` compatibility fixture over the same Runner route.
 - `app/layout.tsx`: imports the default Zhivex React stylesheet.
 
 ## Safety Boundaries

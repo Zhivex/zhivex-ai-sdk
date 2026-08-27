@@ -5,6 +5,7 @@
       "@zhivex-ai/core": ["../../packages/core/src/index.ts"],
       "@zhivex-ai/openai": ["../../packages/openai/src/index.ts"],
       "@zhivex-ai/react": ["../../packages/react/src/index.ts"],
+      "@zhivex-ai/react/compat": ["../../packages/react/src/compat.ts"],
       "@zhivex-ai/sdk": ["../../packages/sdk/src/index.ts"]
     }
   }

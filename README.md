@@ -55,6 +55,7 @@ Use these guides when adopting the SDK in a real app:
 - [Workflows Guide](./docs/WORKFLOWS.md): deterministic multi-step agent workflows, durable state, replay, and workflow evaluations.
 - [Artifact Service Contract](./docs/ARTIFACTS.md): bounded payloads, integrity, backend semantics, maintenance, and release evidence.
 - [Model Catalog Contract](./docs/MODEL_CATALOG.md): immutable snapshots, data-update policy, pricing metadata, and capability boundaries.
+- [AI SDK UI Compatibility](./docs/AI_SDK_UI_COMPAT.md): version-pinned `useChat` transport, message adapters, stream protocol, limits, and part matrix.
 - [Optional Model Resolver](./docs/MODEL_RESOLVER.md): Beta `provider/model` resolution through an explicit, instance-local registry.
 - [CLI Contract](./docs/CLI.md): command compatibility, JSON and exit behavior, local execution, and safety boundaries.
 - [Comparative Model Evaluations](./docs/MODEL_EVALUATIONS.md): candidate matrices, scorers, cost/latency summaries, thresholds, and CLI usage.
@@ -1908,6 +1909,12 @@ const result = streamText({
 
 return toUIMessageStreamResponse(result);
 ```
+
+Existing AI SDK UI applications can keep `useChat` and their message reducer by
+using the Beta `@zhivex-ai/react/compat` entrypoint. It certifies `ai` 7.x with
+`@ai-sdk/react` 4.x, maps Zhivex events to the AI SDK UI v1 stream protocol, and
+retains bounded parsing, abort propagation, safe errors, and redirect rejection.
+See [AI SDK UI Compatibility](./docs/AI_SDK_UI_COMPAT.md).
 
 ### Structured Output
 
