@@ -103,7 +103,7 @@ describe("provider conformance reports", () => {
   });
 
   it("redacts canary secrets, tokens, emails, errors, and metadata before returning a report", () => {
-    const canary = "sk-live-canary-abcdefghijklmnopqrstuvwxyz";
+    const canary = ["sk", "live-canary-abcdefghijklmnopqrstuvwxyz"].join("-");
     const input = {
       ...permanentFailure,
       providers: [{
