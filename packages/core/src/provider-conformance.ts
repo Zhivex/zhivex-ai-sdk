@@ -520,7 +520,7 @@ export const mergeProviderConformanceReports = (
   const expiresAt = normalized
     .map((report) => report.expiresAt)
     .sort()
-    .at(0)!;
+    .at(-1)!;
   return normalizeProviderConformanceReport({
     ...first,
     reportId: `${first.reportId}-merged`,

@@ -150,6 +150,55 @@ describe("provider conformance reports", () => {
       .toContain("| openai | package_import | installed | installed_passed |");
   });
 
+  it("merges expired and current evidence with a valid aggregate time range", () => {
+    const expired = {
+      ...success,
+      generatedAt: "2026-08-20T00:00:00.000Z",
+      expiresAt: "2026-08-27T00:00:00.000Z",
+      providers: [{
+        ...success.providers[0],
+        results: [{
+          ...success.providers[0]!.results[0],
+          observedAt: "2026-08-20T00:00:00.000Z",
+          expiresAt: "2026-08-27T00:00:00.000Z"
+        }]
+      }]
+    };
+    const current = {
+      ...success,
+      reportId: "fixture-current-installed",
+      generatedAt: "2026-08-28T00:00:00.000Z",
+      expiresAt: "2026-09-04T00:00:00.000Z",
+      providers: [{
+        provider: "openai",
+        results: [{
+          ...success.providers[0]!.results[0],
+          capability: "package_import",
+          evidence: "installed",
+          status: "installed_passed",
+          required: false,
+          observedAt: "2026-08-28T00:00:00.000Z",
+          expiresAt: "2026-09-04T00:00:00.000Z",
+          artifact: {
+            ...success.providers[0]!.results[0]!.artifact,
+            kind: "installed"
+          }
+        }]
+      }]
+    };
+
+    const merged = mergeProviderConformanceReports([expired, current], {
+      now: "2026-08-28T00:00:00.000Z"
+    });
+
+    expect(merged).toMatchObject({
+      generatedAt: "2026-08-28T00:00:00.000Z",
+      expiresAt: "2026-09-04T00:00:00.000Z"
+    });
+    expect(merged.providers[0]!.results.map((result) => result.status))
+      .toEqual(["stale", "installed_passed"]);
+  });
+
   it("exports the report contract as Beta from Core", () => {
     expect(getApiStability("PROVIDER_CONFORMANCE_REPORT_SCHEMA_VERSION")?.stability).toBe("beta");
     expect(getApiStability("evaluateProviderConformanceGate")?.stability).toBe("beta");
