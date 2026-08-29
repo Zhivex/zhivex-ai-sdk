@@ -2946,7 +2946,7 @@ bun run test
 bun run build
 ```
 
-The integration layer now includes provider-specific tests plus capability-first suites under [`packages/core/tests/`](./packages/core/tests). These capability suites exercise the shared contract across any providers that have credentials available in the current environment.
+The integration layer includes provider-specific tests plus capability-first suites under [`packages/core/tests/`](./packages/core/tests). These capability suites exercise the shared contract across providers that have credentials available in the current environment. The Beta provider-conformance contract emits versioned JSON and Markdown that keeps `implemented`, `offline_passed`, `installed_passed`, and `live_passed` evidence separate, treats missing credentials as a non-certifying skip, applies TTL, detects baseline regressions, and redacts persisted diagnostics. See the [maintainer conformance guide](./docs/maintainers/PROVIDER_SMOKE.md).
 
 Maintainer-only release and provider-smoke workflows live under [`docs/maintainers/`](./docs/maintainers/README.md).
 

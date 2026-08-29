@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.11.0
+
+### Minor Changes
+
+- ed84fd9: Add a Beta, schema-versioned provider conformance contract with strict evidence states, TTL expiry, redaction, baseline comparison, fail-closed gates, JSON/Markdown reporting, installed-package evidence, and CI provenance support.
+
 ## 1.10.0
 
 ### Minor Changes

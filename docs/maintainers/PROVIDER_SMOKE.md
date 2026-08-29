@@ -1,19 +1,53 @@
 # Provider Smoke Checks
 
-Use provider smoke checks before meaningful stable or prerelease publishes to see which live providers are configured and which integration capabilities will run.
+Use provider conformance checks before meaningful stable or prerelease publishes to distinguish declared support, offline contract coverage, installed-package evidence, and authenticated live results.
 
 ```bash
 bun run smoke:providers
 ```
 
-The command first prints a provider readiness report, then runs the live integration suite:
+The command runs the common live integration suite and emits a schema-versioned Markdown report. Configured capabilities are fail-closed; a permanent or exhausted transient failure returns a non-zero exit code.
 
 ```bash
-bun run scripts/provider-smoke-report.ts
-bun run test:integration
+bun run scripts/provider-smoke-report.ts --run-live --gate=required
 ```
 
-Missing credentials or opt-in service requirements are reported as `skipped_missing_credentials`. That is not a passing live provider check; it only means the local environment is not configured for that provider. The report exits with code 0 so local machines and CI can run it without requiring every vendor credential or local Ollama service.
+Missing credentials or opt-in service requirements are reported as `skipped_missing_credentials`. That is not a passing live provider check and never certifies support. It remains non-fatal unless that exact provider/capability/evidence level is explicitly required.
+
+## Report Contract
+
+`PROVIDER_CONFORMANCE_REPORT_SCHEMA_VERSION` and the report helpers are Beta exports from `@zhivex-ai/core`, `@zhivex-ai/sdk`, and `@zhivex-ai/sdk/evals`.
+
+The allowed result states are:
+
+| State | Meaning |
+| --- | --- |
+| `implemented` | Capability is declared by the checkout. No test or provider call is implied. |
+| `offline_passed` | Offline adapter/contract suite passed. No provider availability is implied. |
+| `installed_passed` | The packed and installed package surface passed its consumer smoke. |
+| `live_passed` | The exact provider/model/capability passed an authenticated live check. |
+| `skipped_missing_credentials` | Live evidence was not attempted because required configuration was absent. |
+| `failed` | The attempted evidence failed; the error summary is redacted. |
+| `stale` | Previously observed evidence exceeded its TTL. |
+
+Every result records the exact model, logical endpoint (never a tenant-bearing URL), package name/version, checkout or installed artifact, git SHA, observation time, expiry, attempts, and whether the evidence is required. Prompts, responses, headers, keys, and full provider payloads are not part of the schema. Error and JSON metadata pass through credential/email redaction before persistence.
+
+Generate machine-readable JSON and Markdown after the offline suite has already passed:
+
+```bash
+bun run provider:conformance \
+  --offline-passed \
+  --baseline=scripts/fixtures/provider-conformance-baseline-v1.json \
+  --gate=warn \
+  --json=.artifacts/provider-conformance.json \
+  --markdown=.artifacts/provider-conformance.md
+```
+
+`--offline-passed` is an assertion by the caller; CI invokes it only after `bun run test` succeeds. The default TTL is seven days and can be changed with `--ttl-hours`. Use repeatable requirements such as `--required=openai:generateText:live:checkout` with `--gate=required` when the evidence must fail closed.
+
+The repository baseline covers the four priority provider families (OpenAI, Anthropic, Gemini, and Azure OpenAI). Baseline regressions are warnings in the initial CI rollout; changing the CI invocation to `--gate=required` makes them mandatory.
+
+`scripts/package-consumer-smoke.ts` packs every workspace, records SHA-256 for each tarball, imports every JavaScript entrypoint from the installed artifacts, and emits an `installed_passed` `package_import` result per provider package when `ZHIVEX_PROVIDER_CONFORMANCE_INSTALLED_OUTPUT` is set. CI merges that report with offline evidence, uploads JSON plus Markdown for 14 days, and creates a GitHub/Sigstore artifact attestation for the Node 24 report on pushes to `main`.
 
 ## Covered Capabilities
 
@@ -28,7 +62,7 @@ The common integration tests cover:
 
 Provider-specific integration files may cover additional adapter behavior.
 
-The generic provider smoke does not certify the durable agent runtime. For the
+The generic provider smoke records `agent_tool_loop` as declared/offline support but does not certify durable agent persistence or approval/resume. For the
 fail-closed Gemini, DeepSeek, Qwen, approval/resume, streaming, and real
 Postgres gate, run `bun run test:integration:agents` as documented in
 [`AGENT_RELEASE.md`](./AGENT_RELEASE.md).
@@ -102,21 +136,21 @@ Passing contract tests without this authenticated run proves adapter behavior, n
 
 ## No-Credentials Example
 
-On a machine with no provider credentials configured, the report will look like this:
+On a machine with no provider credentials configured, live rows use `skipped_missing_credentials` and the summary will resemble:
 
 ```text
 # Zhivex AI SDK Provider Smoke Report
 
 Generated: 2026-05-06T00:00:00.000Z
 
-Ready providers: 0/15
-Skipped providers: 15/15
+Live passed: 0
+Skipped credentials: 15 or more capability rows
 
-| Provider | Status | Text model | Capabilities | Missing requirements |
-| --- | --- | --- | --- | --- |
-| openai | skipped_missing_credentials | gpt-5.6-luna | generateText, streamText, tools, structured output (native), embeddings, reasoning | OPENAI_API_KEY |
-| azure-openai | skipped_missing_credentials | gpt-5.4-nano | generateText, streamText, tools, structured output (native), embeddings, reasoning | AZURE_OPENAI_API_KEY; AZURE_OPENAI_ENDPOINT |
-| anthropic | skipped_missing_credentials | claude-3-5-sonnet | generateText, streamText, tools, structured output (prompted), reasoning | ANTHROPIC_API_KEY |
+| Provider | Capability | Evidence | Status | Model | Endpoint | Artifact |
+| --- | --- | --- | --- | --- | --- | --- |
+| openai | generateText | live | skipped_missing_credentials | gpt-5.6-luna | openai:responses | checkout |
+| azure-openai | generateText | live | skipped_missing_credentials | gpt-5.4-nano | azure-openai:default-api-version | checkout |
+| anthropic | generateText | live | skipped_missing_credentials | claude-opus-5 | anthropic:messages | checkout |
 ```
 
 The real output includes every provider in the registry.

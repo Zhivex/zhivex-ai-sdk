@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import * as sdk from "../src/index.js";
+import * as evals from "../src/evals.js";
 
 describe("sdk public surface", () => {
   it("exports the shared helpers from core", () => {
@@ -21,6 +22,13 @@ describe("sdk public surface", () => {
     expect(sdk.createAgentEvaluationReport).toBeTypeOf("function");
     expect(sdk.runModelEvaluation).toBeTypeOf("function");
     expect(sdk.compareModelEvaluationReports).toBeTypeOf("function");
+    expect(sdk.normalizeProviderConformanceReport).toBeTypeOf("function");
+    expect(sdk.compareProviderConformanceReports).toBeTypeOf("function");
+    expect(sdk.evaluateProviderConformanceGate).toBeTypeOf("function");
+    expect(sdk.mergeProviderConformanceReports).toBeTypeOf("function");
+    expect(sdk.renderProviderConformanceMarkdown).toBeTypeOf("function");
+    expect(sdk.PROVIDER_CONFORMANCE_REPORT_SCHEMA_VERSION).toBe(1);
+    expect(evals.normalizeProviderConformanceReport).toBe(sdk.normalizeProviderConformanceReport);
     expect(sdk.experimentalRawProviderOptions).toBeTypeOf("function");
     expect(sdk.createAgentRunSnapshot).toBeTypeOf("function");
     expect(sdk.createAgentRunTreeSnapshot).toBeTypeOf("function");

@@ -1,8 +1,11 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { integrationProviderStatuses } from "../packages/core/tests/integration-registry.js";
 
 interface PackageManifest {
   name: string;
@@ -98,6 +101,18 @@ try {
     };
   });
   const tarballs = packedPackages.map(({ tarball }) => tarball);
+  const packedPackageEvidence = Object.fromEntries(packedPackages.map(({ manifest, tarball }) => [
+    manifest.name,
+    {
+      version: manifest.version ?? "unknown",
+      integrity: `sha256:${createHash("sha256").update(readFileSync(tarball)).digest("hex")}`
+    }
+  ]));
+  const sourceGitSha = process.env.GITHUB_SHA ?? execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: workspaceDirectory,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"]
+  }).trim();
   const coreTarball = packedPackages.find(({ manifest }) => manifest.name === "@zhivex-ai/core")?.tarball;
   if (!coreTarball) {
     throw new Error("@zhivex-ai/core tarball was not created.");
@@ -215,6 +230,7 @@ console.log("INSTALLED_OTEL_OPTIONAL_PEER_SMOKE_OK");
   const specifiers = manifests.flatMap(({ manifest }) => importSpecifiers(manifest));
   const smokeSource = `
 import assert from "node:assert/strict";
+import { writeFileSync as writeInstalledEvidence } from "node:fs";
 import { context, SpanKind } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import {
@@ -230,6 +246,13 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 
 const specifiers = ${JSON.stringify(specifiers)};
+const providerEvidence = ${JSON.stringify(integrationProviderStatuses.map((provider) => ({
+    provider: provider.name,
+    packageName: provider.packageName,
+    endpoint: provider.endpoint,
+    modelId: provider.textModelId
+  })))};
+const packedPackageEvidence = ${JSON.stringify(packedPackageEvidence)};
 const typeOnlySpecifiers = new Set(["@zhivex-ai/core/contracts"]);
 for (const specifier of specifiers) {
   const exports = await import(specifier);
@@ -250,9 +273,11 @@ const {
   createRunner,
   createTextMessage,
   createWorkflow,
+  normalizeProviderConformanceReport,
   OTEL_GENAI_CONTRACT_VERSION,
   OTEL_GENAI_SEMCONV_REVISION,
   ProviderToolCallError,
+  renderProviderConformanceMarkdown,
   runWorkflow,
   wrapLanguageModel
 } = await import("@zhivex-ai/core");
@@ -638,7 +663,60 @@ assert.ok(installedEventTypes.includes("realtime-tool-call"));
 assert.ok(installedEventTypes.includes("realtime-tool-result"));
 assert.ok(realtimeConnectionClosed, "installed realtime connection was not closed");
 
+const installedObservedAt = new Date().toISOString();
+const installedExpiresAt = new Date(Date.parse(installedObservedAt) + 7 * 24 * 60 * 60 * 1000).toISOString();
+const installedConformance = normalizeProviderConformanceReport({
+  schemaVersion: 1,
+  reportId: ${JSON.stringify(`provider-conformance-installed-${sourceGitSha.slice(0, 12)}`)},
+  generatedAt: installedObservedAt,
+  expiresAt: installedExpiresAt,
+  generator: "scripts/package-consumer-smoke.ts",
+  source: {
+    repository: process.env.GITHUB_REPOSITORY ?? "Zhivex/zhivex-ai-sdk",
+    gitSha: ${JSON.stringify(sourceGitSha)},
+    runtime: "node " + process.version + "; " + process.platform + "/" + process.arch,
+    ...(process.env.GITHUB_RUN_ID ? {
+      ci: {
+        system: "github-actions",
+        runId: process.env.GITHUB_RUN_ID,
+        runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+        workflow: process.env.GITHUB_WORKFLOW
+      }
+    } : {})
+  },
+  providers: providerEvidence.map((provider) => ({
+    provider: provider.provider,
+    results: [{
+      capability: "package_import",
+      evidence: "installed",
+      status: "installed_passed",
+      required: false,
+      modelId: provider.modelId,
+      endpoint: provider.endpoint,
+      artifact: {
+        kind: "installed",
+        packageName: provider.packageName,
+        packageVersion: packedPackageEvidence[provider.packageName].version,
+        integrity: packedPackageEvidence[provider.packageName].integrity
+      },
+      observedAt: installedObservedAt,
+      expiresAt: installedExpiresAt,
+      attempts: 1,
+      metadata: { importedEntrypoints: specifiers.filter((specifier) => specifier.startsWith(provider.packageName)).length }
+    }]
+  }))
+});
+assert.match(renderProviderConformanceMarkdown(installedConformance), /installed_passed/);
+if (process.env.ZHIVEX_PROVIDER_CONFORMANCE_INSTALLED_OUTPUT) {
+  writeInstalledEvidence(
+    process.env.ZHIVEX_PROVIDER_CONFORMANCE_INSTALLED_OUTPUT,
+    JSON.stringify(installedConformance, null, 2) + "\\n",
+    { mode: 0o600 }
+  );
+}
+
 console.log(\`Node package consumer smoke: \${specifiers.length} entrypoints imported\`);
+console.log("INSTALLED_PROVIDER_CONFORMANCE_SMOKE_OK");
 console.log("INSTALLED_REALTIME_LIVE_SMOKE_OK");
 `;
   const smokePath = join(consumerDirectory, "smoke.mjs");

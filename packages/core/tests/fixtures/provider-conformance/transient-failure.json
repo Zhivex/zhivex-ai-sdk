@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "reportId": "fixture-transient-failure",
+  "generatedAt": "2026-08-27T00:00:00.000Z",
+  "expiresAt": "2026-09-03T00:00:00.000Z",
+  "generator": "fixture",
+  "source": {
+    "repository": "Zhivex/zhivex-ai-sdk",
+    "gitSha": "1111111111111111111111111111111111111111",
+    "runtime": "fixture"
+  },
+  "providers": [
+    {
+      "provider": "openai",
+      "results": [
+        {
+          "capability": "streamText",
+          "evidence": "live",
+          "status": "failed",
+          "required": true,
+          "modelId": "gpt-fixture",
+          "endpoint": "openai:default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openai",
+            "packageVersion": "0.0.0-fixture"
+          },
+          "observedAt": "2026-08-27T00:00:00.000Z",
+          "expiresAt": "2026-09-03T00:00:00.000Z",
+          "attempts": 3,
+          "error": {
+            "code": "rate_limited",
+            "message": "Provider remained unavailable after bounded retries.",
+            "retryable": true
+          }
+        }
+      ]
+    }
+  ]
+}

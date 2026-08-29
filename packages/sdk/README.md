@@ -2,6 +2,8 @@
 
 Recommended entry point for Zhivex AI SDK. Re-exports the high-level public API for agents, sessions, text generation, streaming, structured output, tools, multimodal messages, embeddings, workflows, artifacts, and local CLI utilities.
 
+Provider conformance reporting is available as a Beta surface from both the root package and `@zhivex-ai/sdk/evals`. Reports keep declared, offline, installed, and live evidence separate; skipped credentials do not certify support.
+
 ## Install
 
 ```bash

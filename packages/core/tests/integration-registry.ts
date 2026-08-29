@@ -40,6 +40,8 @@ export type IntegrationProviderStatusState = "ready" | "skipped_missing_credenti
 
 export interface IntegrationProviderStatus {
   name: string;
+  packageName: string;
+  endpoint: string;
   status: IntegrationProviderStatusState;
   credentialRequirements: string[];
   missingRequirements: string[];
@@ -71,6 +73,10 @@ const createProviderStatus = (input: {
 
   return {
     name: input.name,
+    packageName: input.name.startsWith("bedrock-")
+      ? "@zhivex-ai/bedrock"
+      : `@zhivex-ai/${input.name}`,
+    endpoint: providerLogicalEndpoint(input.name),
     status: missingRequirements.length ? "skipped_missing_credentials" : "ready",
     credentialRequirements: input.requirements.map((requirement) => requirement.label),
     missingRequirements,
@@ -180,6 +186,27 @@ const vertexEmbeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ??
 const usableVertexAccessToken = vertexAccessToken && (vertexProjectId || vertexBaseURL) ? vertexAccessToken : undefined;
 
 const hasVertexCredentials = Boolean(usableVertexAccessToken || vertexApiKey);
+
+const providerLogicalEndpoint = (name: string): string => {
+  switch (name) {
+    case "openai": return openAIBaseURL ? "openai:custom" : "openai:responses";
+    case "xai": return xaiBaseURL ? "xai:custom" : "xai:responses";
+    case "meta": return metaBaseURL ? "meta:model-api:custom" : "meta:model-api";
+    case "azure-openai": return `azure-openai:${azureOpenAIApiVersion ?? "default-api-version"}`;
+    case "anthropic": return anthropicBaseURL ? "anthropic:messages:custom" : "anthropic:messages";
+    case "gemini": return geminiBaseURL ? "gemini:custom" : "gemini:generativelanguage";
+    case "openrouter": return openRouterBaseURL ? "openrouter:custom" : "openrouter:chat-completions";
+    case "deepseek": return deepSeekBaseURL ? "deepseek:custom" : "deepseek:model-api";
+    case "zai": return `zai:${zaiEndpoint}${zaiBaseURL ? ":custom" : ""}`;
+    case "qwen": return `qwen:${qwenRegion ?? "international"}${qwenBaseURL ? ":custom" : ""}`;
+    case "kimi": return kimiBaseURL ? "kimi:custom" : "kimi:model-api";
+    case "bedrock-converse": return `bedrock:converse:${bedrockRegion ?? "default-region"}`;
+    case "bedrock-openai": return "bedrock:openai-compatible";
+    case "ollama": return ollamaBaseURL ? "ollama:custom" : "ollama:local-default";
+    case "vertex": return `vertex:${vertexLocation ?? "default-location"}${vertexBaseURL ? ":custom" : ""}`;
+    default: return `${name}:default`;
+  }
+};
 const openAISupports: IntegrationLanguageProvider["supports"] = {
   streaming: true,
   tools: true,

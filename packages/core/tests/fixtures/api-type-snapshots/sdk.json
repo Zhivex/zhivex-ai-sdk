@@ -18,9 +18,9 @@
   "catalog/providers/xai.d.ts": "6bafdd8f63945513ff6eec13e9f8866371521bb7cc534349db4d46ba795edea7",
   "catalog/providers/zai.d.ts": "eb4205c2b8d65b1cf46fbc21138e241e132f0565f71610bba04adb6ecfbd27f6",
   "cli.d.ts": "fc31d996538a1b3071e3a17c47daadfec60f6aaaca49b15425a87f807064b6e1",
-  "evals.d.ts": "8b1717d1951cd04f706b9719dd7aed44f472c82d2fb28804731f4e953a400fbe",
+  "evals.d.ts": "14dbe0ff4f73a21d99d2924b268d03201e007558875650558aaa64628c1c5bb9",
   "experimental.d.ts": "2c09b1eb3672f4ce52eeb175903e03c9b2725786c7c16f99f8207b21cb02375d",
-  "index.d.ts": "25f9460f113436d8e76b86426535e7b00e226014fa768b6c19e258bd17fcfdb7",
+  "index.d.ts": "4ad3f1b023389f7f7dc5d91788e9547581aa2904d6e3ddb81b883d19589140c2",
   "runtime.d.ts": "3da9a76acd5bac0fabdaaa84fb44f326bf8824f8387bab8a2fca7158c05a5306",
   "ui.d.ts": "596782b28057907121a3ceada8ed3783cee4bb287b5d9f6a7b2b8e8f1fbaac62",
   "workflows.d.ts": "2b3eeea3c58a20d5d2de5a21f96ca06f2568775ffcdd26ca6031f4c6b5d3260d"

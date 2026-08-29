@@ -527,6 +527,36 @@ export type {
   ProviderSupportMatrixFormat
 } from "./provider-parity.js";
 export {
+  PROVIDER_CONFORMANCE_EVIDENCE_LEVELS,
+  PROVIDER_CONFORMANCE_REPORT_SCHEMA_VERSION,
+  PROVIDER_CONFORMANCE_STATUSES,
+  compareProviderConformanceReports,
+  evaluateProviderConformanceGate,
+  mergeProviderConformanceReports,
+  normalizeProviderConformanceReport,
+  renderProviderConformanceMarkdown
+} from "./provider-conformance.js";
+export type {
+  EvaluateProviderConformanceGateOptions,
+  NormalizeProviderConformanceOptions,
+  ProviderConformanceArtifact,
+  ProviderConformanceArtifactKind,
+  ProviderConformanceCapabilityResult,
+  ProviderConformanceChange,
+  ProviderConformanceCiContext,
+  ProviderConformanceComparison,
+  ProviderConformanceError,
+  ProviderConformanceEvidenceLevel,
+  ProviderConformanceGateIssue,
+  ProviderConformanceGateResult,
+  ProviderConformancePassingStatus,
+  ProviderConformanceProviderReport,
+  ProviderConformanceRegression,
+  ProviderConformanceReport,
+  ProviderConformanceRequirement,
+  ProviderConformanceStatus
+} from "./provider-conformance.js";
+export {
   applySafetyPolicyToAgent,
   createApprovalPolicy,
   createBudgetGuard,
