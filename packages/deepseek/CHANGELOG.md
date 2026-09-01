@@ -1,5 +1,11 @@
 # @zhivex-ai/deepseek
 
+## 0.5.0
+
+### Minor Changes
+
+- 2efba2f: Add first-class support and catalog coverage for Gemini 3.7 Flash, Gemini 3.5 Transcribe and Transcribe Live, Gemini Omni 1.1 Flash, Grok 4.6, and DeepSeek V4 Flash Vision Exp with Files API. Enforce current model-specific reasoning and realtime contracts, and restore the configured Qwen realtime frame-size limit on Bun 1.4.
+
 ## 0.4.3
 
 ### Patch Changes
