@@ -25,7 +25,7 @@ describe("SDK model catalog ownership", () => {
     });
     expect(defaultModelCatalog.find("openai", "gpt-5.6")?.modelId).toBe("gpt-5.6-sol");
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(100);
+    expect(entries).toHaveLength(107);
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
       inputCostPer1kTokens: 0.00015,
       cachedInputCostPer1kTokens: 0.00003,
@@ -60,7 +60,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(100);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(107);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-08-16",
       verifiedAt: "2026-08-16",

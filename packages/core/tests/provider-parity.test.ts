@@ -87,7 +87,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     provider: "xAI",
     model: xai("grok-4.5"),
     summary: {
-      reasoningSummary: "Grok 4.5 `low` / `medium` / `high`",
+      reasoningSummary: "Grok 4.6 `low` / `medium` / `high` / `xhigh`; Grok 4.5 up to `high`",
       hostedToolSummary: "Responses Web Search, X Search, code execution, Collections search, Files API, prompt caching"
     }
   },

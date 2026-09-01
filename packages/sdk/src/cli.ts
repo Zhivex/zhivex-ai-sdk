@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { constants, promises as fs } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -458,6 +459,52 @@ type ProviderTemplateName = keyof typeof providerTemplates;
 const isProviderTemplateName = (value: string): value is ProviderTemplateName =>
   value in providerTemplates;
 
+const configuredProviderCredential = (
+  providerName: ProviderTemplateName,
+  envName: string
+): Promise<string | undefined> => {
+  if (providerName !== "anthropic") {
+    return Promise.resolve(process.env[envName] ? envName : undefined);
+  }
+
+  return (async () => {
+    const directCredential = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"]
+      .find((name) => Boolean(process.env[name]));
+    if (directCredential) {
+      return directCredential;
+    }
+
+    const wifConfigured = Boolean(
+      process.env.ANTHROPIC_FEDERATION_RULE_ID &&
+      process.env.ANTHROPIC_ORGANIZATION_ID &&
+      process.env.ANTHROPIC_SERVICE_ACCOUNT_ID &&
+      (process.env.ANTHROPIC_IDENTITY_TOKEN_FILE || process.env.ANTHROPIC_IDENTITY_TOKEN)
+    );
+    if (wifConfigured) {
+      return "Anthropic WIF environment";
+    }
+
+    const configDirectory = process.env.ANTHROPIC_CONFIG_DIR ?? (
+      process.platform === "win32"
+        ? path.join(process.env.APPDATA ?? homedir(), "Anthropic")
+        : path.join(homedir(), ".config", "anthropic")
+    );
+    let activeProfile = "default";
+    try {
+      activeProfile = (await fs.readFile(path.join(configDirectory, "active_config"), "utf8")).trim() || "default";
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        return undefined;
+      }
+    }
+    if (!/^[A-Za-z0-9._-]+$/.test(activeProfile)) {
+      return undefined;
+    }
+    const profileExists = await pathExists(path.join(configDirectory, "configs", `${activeProfile}.json`));
+    return profileExists ? `Anthropic profile ${activeProfile}` : undefined;
+  })();
+};
+
 const normalizePackageName = (name: string): string =>
   name
     .trim()
@@ -797,6 +844,7 @@ const runDoctorCommand = async (
 
   for (const providerName of providerNames) {
     const template = providerTemplates[providerName];
+    const configuredCredential = await configuredProviderCredential(providerName, template.envName);
     checks.push({
       name: `${providerName}-dependency`,
       status: packageHasDependency(pkg, template.packageName) ? "pass" : "fail",
@@ -806,10 +854,12 @@ const runDoctorCommand = async (
     });
     checks.push({
       name: `${providerName}-env`,
-      status: process.env[template.envName] ? "pass" : "warn",
-      detail: process.env[template.envName]
-        ? `${template.envName} is set`
-        : `${template.envName} is not set`
+      status: configuredCredential ? "pass" : "warn",
+      detail: configuredCredential
+        ? `${configuredCredential} is set`
+        : providerName === "anthropic"
+          ? "No Anthropic API key, auth token, profile, or complete WIF environment is set"
+          : `${template.envName} is not set`
     });
   }
 

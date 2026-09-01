@@ -41,6 +41,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.119.0",
     "@zhivex-ai/core": "^1.1.2",
     "zod": "^4.4.3"
   }

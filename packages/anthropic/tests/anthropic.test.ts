@@ -6,6 +6,31 @@ import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-c
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { anthropicCodeExecutionTool, anthropicMcpToolset, anthropicWebSearchTool, createAnthropic } from "../src/index.js";
 
+const withEnvironment = async <T>(
+  values: Record<string, string | undefined>,
+  operation: () => Promise<T>
+): Promise<T> => {
+  const previous = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
+  try {
+    for (const [name, value] of Object.entries(values)) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+    return await operation();
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+  }
+};
+
 describe("anthropic adapter", () => {
   const fetchMock = vi.fn();
 
@@ -105,6 +130,197 @@ describe("anthropic adapter", () => {
 
     expect(result.text).toBe("hello from anthropic");
     expect(result.finishReason).toBe("stop");
+  });
+
+  it("reads ANTHROPIC_AUTH_TOKEN and sends bearer authentication", async () => {
+    await withEnvironment(
+      {
+        ANTHROPIC_API_KEY: undefined,
+        ANTHROPIC_AUTH_TOKEN: "sentinel-anthropic-auth-token"
+      },
+      async () => {
+        fetchMock.mockResolvedValueOnce(
+          Response.json({
+            content: [{ type: "text", text: "bearer authenticated" }],
+            stop_reason: "end_turn"
+          })
+        );
+
+        const provider = createAnthropic({ fetch: fetchMock as typeof fetch });
+        await generateText({ model: provider("claude-3-5-sonnet"), prompt: "hello" });
+
+        const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+        expect(headers.get("authorization")).toBe("Bearer sentinel-anthropic-auth-token");
+        expect(headers.has("x-api-key")).toBe(false);
+      }
+    );
+  });
+
+  it("lets explicit bearer authentication override an ambient API key", async () => {
+    await withEnvironment({ ANTHROPIC_API_KEY: "ambient-api-key" }, async () => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({ content: [{ type: "text", text: "explicit bearer" }], stop_reason: "end_turn" })
+      );
+
+      const provider = createAnthropic({
+        authToken: "explicit-auth-token",
+        fetch: fetchMock as typeof fetch
+      });
+      await generateText({ model: provider("claude-3-5-sonnet"), prompt: "hello" });
+
+      const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+      expect(headers.get("authorization")).toBe("Bearer explicit-auth-token");
+      expect(headers.has("x-api-key")).toBe(false);
+    });
+  });
+
+  it("prefers an API key and sends the selected workspace for multi-workspace keys", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        content: [{ type: "text", text: "workspace authenticated" }],
+        stop_reason: "end_turn"
+      })
+    );
+
+    const provider = createAnthropic({
+      apiKey: "sentinel-api-key",
+      authToken: "sentinel-auth-token",
+      workspaceId: "wrkspc_test",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({ model: provider("claude-3-5-sonnet"), prompt: "hello" });
+
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("x-api-key")).toBe("sentinel-api-key");
+    expect(headers.get("anthropic-workspace-id")).toBe("wrkspc_test");
+    expect(headers.has("authorization")).toBe(false);
+  });
+
+  it("resolves async API keys before every request", async () => {
+    const apiKey = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce("rotated-key-1")
+      .mockResolvedValueOnce("rotated-key-2");
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ content: [{ type: "text", text: "first" }], stop_reason: "end_turn" }))
+      .mockResolvedValueOnce(Response.json({ content: [{ type: "text", text: "second" }], stop_reason: "end_turn" }));
+
+    const provider = createAnthropic({ apiKey, fetch: fetchMock as typeof fetch });
+    await generateText({ model: provider("claude-3-5-sonnet"), prompt: "first" });
+    await generateText({ model: provider("claude-3-5-sonnet"), prompt: "second" });
+
+    expect(apiKey).toHaveBeenCalledTimes(2);
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("x-api-key")).toBe("rotated-key-1");
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("x-api-key")).toBe("rotated-key-2");
+  });
+
+  it("refreshes access-token credentials once after a 401", async () => {
+    const credentials = vi.fn(async (options?: { forceRefresh?: boolean }) => ({
+      token: options?.forceRefresh ? "fresh-access-token" : "stale-access-token",
+      expiresAt: Math.floor(Date.now() / 1000) + 3_600
+    }));
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ error: { type: "authentication_error" } }, { status: 401 }))
+      .mockResolvedValueOnce(
+        Response.json({ content: [{ type: "text", text: "refreshed" }], stop_reason: "end_turn" })
+      );
+
+    const provider = createAnthropic({
+      apiKey: null,
+      authToken: null,
+      credentials,
+      fetch: fetchMock as typeof fetch
+    });
+    const result = await generateText({ model: provider("claude-3-5-sonnet"), prompt: "hello" });
+
+    expect(result.text).toBe("refreshed");
+    expect(credentials).toHaveBeenNthCalledWith(1, undefined);
+    expect(credentials).toHaveBeenNthCalledWith(2, { forceRefresh: true });
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("authorization")).toBe(
+      "Bearer stale-access-token"
+    );
+    const refreshedHeaders = new Headers(fetchMock.mock.calls[1]?.[1]?.headers);
+    expect(refreshedHeaders.get("authorization")).toBe("Bearer fresh-access-token");
+    expect(refreshedHeaders.get("anthropic-beta")?.split(",")).toContain("oauth-2025-04-20");
+  });
+
+  it("resolves Workload Identity Federation from the Anthropic environment", async () => {
+    await withEnvironment(
+      {
+        ANTHROPIC_API_KEY: undefined,
+        ANTHROPIC_AUTH_TOKEN: undefined,
+        ANTHROPIC_PROFILE: undefined,
+        ANTHROPIC_CONFIG_DIR: "/tmp/zhivex-anthropic-auth-test-no-profile",
+        ANTHROPIC_FEDERATION_RULE_ID: "fdrl_test",
+        ANTHROPIC_ORGANIZATION_ID: "00000000-0000-0000-0000-000000000000",
+        ANTHROPIC_SERVICE_ACCOUNT_ID: "svac_test",
+        ANTHROPIC_WORKSPACE_ID: "wrkspc_test",
+        ANTHROPIC_IDENTITY_TOKEN_FILE: undefined,
+        ANTHROPIC_IDENTITY_TOKEN: "sentinel-identity-token"
+      },
+      async () => {
+        fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input) === "https://api.anthropic.com/v1/oauth/token") {
+            const headers = new Headers(init?.headers);
+            expect(headers.get("anthropic-beta")?.split(",")).toEqual(
+              expect.arrayContaining(["oauth-2025-04-20", "oidc-federation-2026-04-01"])
+            );
+            expect(JSON.parse(String(init?.body))).toMatchObject({
+              assertion: "sentinel-identity-token",
+              federation_rule_id: "fdrl_test",
+              organization_id: "00000000-0000-0000-0000-000000000000",
+              service_account_id: "svac_test",
+              workspace_id: "wrkspc_test"
+            });
+            return Response.json({
+              access_token: "federated-access-token",
+              token_type: "Bearer",
+              expires_in: 3_600
+            });
+          }
+
+          expect(String(input)).toBe("https://api.anthropic.com/v1/messages");
+          const headers = new Headers(init?.headers);
+          expect(headers.get("authorization")).toBe("Bearer federated-access-token");
+          expect(headers.has("anthropic-workspace-id")).toBe(false);
+          return Response.json({ content: [{ type: "text", text: "federated" }], stop_reason: "end_turn" });
+        });
+
+        const provider = createAnthropic({
+          apiKey: null,
+          authToken: null,
+          fetch: fetchMock as typeof fetch
+        });
+        const result = await generateText({ model: provider("claude-3-5-sonnet"), prompt: "hello" });
+
+        expect(result.text).toBe("federated");
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+      }
+    );
+  });
+
+  it("fails on first use when the complete credential chain is empty", async () => {
+    await withEnvironment(
+      {
+        ANTHROPIC_API_KEY: undefined,
+        ANTHROPIC_AUTH_TOKEN: undefined,
+        ANTHROPIC_PROFILE: undefined,
+        ANTHROPIC_CONFIG_DIR: "/tmp/zhivex-anthropic-auth-test-empty-chain",
+        ANTHROPIC_FEDERATION_RULE_ID: undefined,
+        ANTHROPIC_ORGANIZATION_ID: undefined,
+        ANTHROPIC_SERVICE_ACCOUNT_ID: undefined,
+        ANTHROPIC_WORKSPACE_ID: undefined,
+        ANTHROPIC_IDENTITY_TOKEN_FILE: undefined,
+        ANTHROPIC_IDENTITY_TOKEN: undefined
+      },
+      async () => {
+        const provider = createAnthropic({ fetch: fetchMock as typeof fetch });
+        await expect(
+          generateText({ model: provider("claude-3-5-sonnet"), prompt: "hello" })
+        ).rejects.toThrow("Could not resolve Anthropic credentials");
+        expect(fetchMock).not.toHaveBeenCalled();
+      }
+    );
   });
 
   it.each([307, 308])("rejects authenticated %i redirects before contacting the destination", async (status) => {

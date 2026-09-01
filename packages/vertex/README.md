@@ -88,7 +88,7 @@ await generateMusic({
 });
 
 await generateText({
-  model: vertex("gemini-3.6-flash"),
+  model: vertex("gemini-3.7-flash"),
   prompt: "Use URL context for the linked source.",
   tools: {
     urls: googleUrlContextTool()
@@ -96,7 +96,7 @@ await generateText({
 });
 
 const nearby = await generateText({
-  model: vertex("gemini-3.6-flash"),
+  model: vertex("gemini-3.7-flash"),
   prompt: "Find well-reviewed cafes near this location.",
   tools: {
     maps: googleMapsTool({ latitude: 34.050481, longitude: -118.248526 })
@@ -106,13 +106,13 @@ console.log(nearby.text, nearby.rawResponse);
 
 await createContextCache({
   provider: productionVertex,
-  modelId: "gemini-3.6-flash",
+  modelId: "gemini-3.7-flash",
   contents: [{ role: "user", parts: [{ type: "file", data: "gs://bucket/large.pdf", mediaType: "application/pdf" }] }]
 });
 
 await createBatch({
   provider: productionVertex,
-  modelId: "gemini-3.6-flash",
+  modelId: "gemini-3.7-flash",
   fileName: "files/batch-input"
 });
 
@@ -127,11 +127,11 @@ Authentication follows the current Google guidance for Gemini on Vertex AI: API 
 
 Diagnostic response-size errors strip query strings, fragments, and embedded credentials from endpoint URLs before they are exposed, so API-key query parameters are never copied into error messages.
 
-Use `location: "global"` for the broadest current Gemini 3 availability. The global REST host is `aiplatform.googleapis.com`; regional hosts use `<location>-aiplatform.googleapis.com`. Because Veo 3.1 is not served from the global endpoint, `videoGenerationModel("veo-...")` automatically routes a global Vertex provider to `us-central1`; explicit non-global locations and custom `baseURL` values remain unchanged. Gemini 3.6 Flash is currently served only from `global`; Gemini 3.5 Flash-Lite supports `global` plus the `us` and `eu` jurisdictional multi-regions. The adapter rejects unsupported configured locations for these two stable IDs unless a custom `baseURL` is supplied. Model features, pricing, data residency, and Provisioned Throughput differ by location, so choose a non-global location only after checking the selected model's location table.
+Use `location: "global"` for the broadest current Gemini 3 availability. The global REST host is `aiplatform.googleapis.com`; regional hosts use `<location>-aiplatform.googleapis.com`. Because Veo 3.1 is not served from the global endpoint, `videoGenerationModel("veo-...")` automatically routes a global Vertex provider to `us-central1`; explicit non-global locations and custom `baseURL` values remain unchanged. Gemini 3.7 Flash and Gemini 3.6 Flash are currently served only from `global`; Gemini 3.5 Flash-Lite supports `global` plus the `us` and `eu` jurisdictional multi-regions. The adapter rejects unsupported configured locations for these stable IDs unless a custom `baseURL` is supplied. Model features, pricing, data residency, and Provisioned Throughput differ by location, so choose a non-global location only after checking the selected model's location table.
 
 Current model guidance:
 
-- Complex text, multimodal, coding, and multi-step agentic work: `gemini-3.6-flash`.
+- Complex text, multimodal, coding, and multi-step agentic work: `gemini-3.7-flash`.
 - High-volume extraction, routing, document parsing, and low-latency subagent work: `gemini-3.5-flash-lite`. It defaults to minimal thinking; use medium or high for autonomous multi-step agents.
 - Image generation: `gemini-3.1-flash-lite-image`, `gemini-3.1-flash-image`, or `gemini-3-pro-image`. The Flash-Lite image model has shorter lifecycle guarantees than the 12-month GA image models.
 - Video: use the Google Cloud IDs `veo-3.1-generate-001`, `veo-3.1-fast-generate-001`, and `veo-3.1-lite-generate-001`. The Gemini Developer API uses different Veo `*-preview` IDs.
@@ -140,17 +140,17 @@ Current model guidance:
 - Music: `lyria-002` is the GA model supported by `musicGenerationModel()`. Lyria 3 currently uses Agent Platform's Interactions API, which this adapter does not expose.
 - Imagen 4 and older Veo endpoints are intentionally no longer recommended here; Google Cloud required migration away from them by June 30, 2026.
 
-Gemini 3.6 Flash and Gemini 3.5 Flash-Lite use provider-managed sampling. Do not pass `temperature`, `topP` / `top_p`, `topK` / `top_k`, `candidateCount` / `candidate_count`, or frequency/presence penalties; the adapter rejects those controls locally for these model IDs. Both models accept `reasoning.effort` values `minimal`, `low`, `medium`, and `high`, and reject a final assistant/model-output prefill. The current Google Cloud endpoint does not expose Computer Use for either new model, so their Vertex model capabilities report it as unsupported.
+Gemini 3.7 Flash, Gemini 3.6 Flash, and Gemini 3.5 Flash-Lite use provider-managed sampling. Do not pass `temperature`, `topP` / `top_p`, `topK` / `top_k`, `candidateCount` / `candidate_count`, or frequency/presence penalties; the adapter rejects those controls locally for these model IDs. Gemini 3.7 accepts `reasoning.effort` values `low`, `medium`, and `high`; Gemini 3.6 and Gemini 3.5 Flash-Lite also accept `minimal`. All three reject a final assistant/model-output prefill. The current Google Cloud endpoint does not expose Computer Use for these models, so their Vertex model capabilities report it as unsupported.
 
 The mutable aliases `gemini-flash-latest` and `gemini-flash-lite-latest` are available upstream but can be remapped. Prefer the stable IDs above for production workloads and reproducible pricing.
 
-The built-in catalog's Gemini 3.6 Flash and Gemini 3.5 Flash-Lite rates represent Standard global text-token pricing. Non-global Vertex endpoints can cost more, and media, tools, Batch/Flex, Priority, tuning, and Provisioned Throughput use separate pricing.
+The built-in catalog's Gemini 3.7 Flash, Gemini 3.6 Flash, and Gemini 3.5 Flash-Lite rates represent Standard global text-token pricing. Non-global Vertex endpoints can cost more, and media, tools, Batch/Flex, Priority, tuning, and Provisioned Throughput use separate pricing.
 
 Gemini Omni Flash and the Gemini Developer API Interactions/Managed Agents surface are not exposed by this Vertex adapter. Do not substitute `gemini-omni-flash-preview` into `videoGenerationModel()`; use `@zhivex-ai/gemini` with `createInteraction()` for that preview.
 
 When Google Maps grounding is enabled, retain the provider response metadata and render the returned source names and Google Maps links directly after the grounded content. Google requires those sources and its text attribution to remain visible to the end user.
 
-See Google's current [Agent Platform model lifecycle](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions), [Gemini 3.6 Flash model card](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-6-flash), [Gemini 3.5 Flash-Lite model card](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash-lite), [Gemini TTS on Vertex](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts), [Maps grounding requirements](https://ai.google.dev/gemini-api/docs/maps-grounding), [deployment locations](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations), [pricing](https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing), and [release notes](https://docs.cloud.google.com/gemini-enterprise-agent-platform/release-notes).
+See Google's current [Agent Platform model lifecycle](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions), [Gemini 3.7 Flash model card](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-7-flash), [Gemini 3.6 Flash model card](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-6-flash), [Gemini 3.5 Flash-Lite model card](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash-lite), [Gemini TTS on Vertex](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts), [Maps grounding requirements](https://ai.google.dev/gemini-api/docs/maps-grounding), [deployment locations](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations), [pricing](https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing), and [release notes](https://docs.cloud.google.com/gemini-enterprise-agent-platform/release-notes).
 
 Google's current product page labels this surface as [Gemini Enterprise Agent Platform, formerly Vertex AI](https://cloud.google.com/products/gemini-enterprise-agent-platform), and Google's migration docs say Vertex AI is transitioning to become part of Agent Platform. This package intentionally does not rename the provider id yet; doing so would be a breaking API change without a corresponding endpoint-level migration requirement.
 

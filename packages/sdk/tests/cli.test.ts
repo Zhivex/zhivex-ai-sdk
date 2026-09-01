@@ -429,6 +429,40 @@ export const failingSuite = {
     }
   });
 
+  it("recognizes Anthropic bearer authentication in doctor", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-anthropic-doctor-"), "support-agent");
+    await runCli(["init", "agent", "--dir", directory, "--provider", "anthropic"], createCapture().io);
+    const capture = createCapture();
+    const ambientApiKey = process.env.ANTHROPIC_API_KEY;
+    const ambientAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_AUTH_TOKEN = "sentinel-doctor-auth-token";
+    try {
+      await expect(runCli(["doctor", "--dir", directory, "--provider", "anthropic"], capture.io)).resolves.toBe(0);
+
+      expect(JSON.parse(capture.stdout[0]!)).toMatchObject({
+        checks: expect.arrayContaining([
+          expect.objectContaining({
+            name: "anthropic-env",
+            status: "pass",
+            detail: "ANTHROPIC_AUTH_TOKEN is set"
+          })
+        ])
+      });
+    } finally {
+      if (ambientApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = ambientApiKey;
+      }
+      if (ambientAuthToken === undefined) {
+        delete process.env.ANTHROPIC_AUTH_TOKEN;
+      } else {
+        process.env.ANTHROPIC_AUTH_TOKEN = ambientAuthToken;
+      }
+    }
+  });
+
   if (process.platform !== "win32") {
     it("warns when .env is readable by other users", async () => {
       const directory = path.join(await tempDir("zhivex-cli-env-mode-"), "support-agent");

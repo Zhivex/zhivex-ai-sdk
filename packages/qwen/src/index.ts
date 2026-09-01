@@ -212,6 +212,13 @@ const nodeWebSocketDataToText = (data: RawData) => {
   return Buffer.from(data).toString("utf8");
 };
 
+const nodeWebSocketDataByteLength = (data: RawData) =>
+  Array.isArray(data)
+    ? data.reduce((total, chunk) => total + chunk.byteLength, 0)
+    : data instanceof ArrayBuffer
+      ? data.byteLength
+      : data.byteLength;
+
 const QWEN_REALTIME_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const QWEN_JSON_RESPONSE_MAX_BYTES = 128 * 1024 * 1024;
 
@@ -311,6 +318,15 @@ const openQwenRealtimeConnection: RealtimeConnectionFactory = async (url, header
   }
 
   socket.on("message", (data) => {
+    const frameBytes = nodeWebSocketDataByteLength(data);
+    if (frameBytes > maxIncomingFrameBytes) {
+      connectionError = new ValidationError(
+        `Qwen realtime frame exceeds the configured ${maxIncomingFrameBytes}-byte limit.`
+      );
+      rejectReaders(connectionError);
+      socket.close();
+      return;
+    }
     const text = nodeWebSocketDataToText(data);
     const reader = readers.shift();
     if (reader) {

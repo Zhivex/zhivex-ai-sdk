@@ -1019,7 +1019,7 @@ describe("gemini adapter", () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
         id: "int-video",
-        model: "gemini-omni-flash-preview",
+        model: "gemini-omni-1.1-flash",
         status: "completed",
         steps: [
           {
@@ -1043,10 +1043,12 @@ describe("gemini adapter", () => {
     });
     const videoInteraction = await createInteraction({
       provider,
-      modelId: "gemini-omni-flash-preview",
+      modelId: "gemini-omni-1.1-flash",
       input: "Generate a cinematic sunset.",
       responseFormat: { type: "video", aspect_ratio: "9:16" },
-      generationConfig: { video_config: { task: "text_to_video" } }
+      generationConfig: {
+        video_config: { task: "text_to_video", resolution: "4k" }
+      }
     });
 
     const agentBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
@@ -1062,9 +1064,9 @@ describe("gemini adapter", () => {
     expect(agentInteraction.environmentId).toBe("env-1");
     expect(agentInteraction.outputText).toBe("Saved the report.");
     expect(videoBody).toMatchObject({
-      model: "gemini-omni-flash-preview",
+      model: "gemini-omni-1.1-flash",
       response_format: { type: "video", aspect_ratio: "9:16" },
-      generation_config: { video_config: { task: "text_to_video" } }
+      generation_config: { video_config: { task: "text_to_video", resolution: "4k" } }
     });
     expect(videoInteraction.outputVideo).toEqual({
       type: "video",
@@ -1350,7 +1352,7 @@ describe("gemini adapter", () => {
     });
   });
 
-  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+  it.each(["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "exposes and maps the supported reasoning levels for %s",
     async (modelId) => {
       fetchMock.mockResolvedValueOnce(
@@ -1366,13 +1368,19 @@ describe("gemini adapter", () => {
 
       const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
       const model = provider(modelId);
-      expect(model.capabilities.reasoningEfforts).toEqual(["minimal", "low", "medium", "high"]);
+      const expectedEfforts =
+        modelId === "gemini-3.7-flash"
+          ? ["low", "medium", "high"]
+          : ["minimal", "low", "medium", "high"];
+      expect(model.capabilities.reasoningEfforts).toEqual(expectedEfforts);
+
+      const effort = modelId === "gemini-3.5-flash-lite" ? "minimal" : "medium";
 
       await generateText({
         model,
         prompt: "hello",
         reasoning: {
-          effort: modelId === "gemini-3.6-flash" ? "medium" : "minimal"
+          effort
         }
       });
 
@@ -1381,12 +1389,12 @@ describe("gemini adapter", () => {
         generationConfig: { thinkingConfig: { thinkingLevel: string } };
       };
       expect(body.generationConfig.thinkingConfig).toEqual({
-        thinkingLevel: modelId === "gemini-3.6-flash" ? "medium" : "minimal"
+        thinkingLevel: effort
       });
     }
   );
 
-  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+  it.each(["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "rejects deprecated sampling controls locally for %s",
     async (modelId) => {
       const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
@@ -1425,7 +1433,7 @@ describe("gemini adapter", () => {
     }
   );
 
-  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+  it.each(["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "rejects assistant prefill locally for %s",
     async (modelId) => {
       const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
@@ -1450,13 +1458,13 @@ describe("gemini adapter", () => {
     await expect(
       createInteraction({
         provider,
-        modelId: "gemini-3.6-flash",
+        modelId: "gemini-3.7-flash",
         input: "hello",
         generationConfig: {
           top_k: 40
         }
       })
-    ).rejects.toThrow('does not support generation control "top_k" for model "gemini-3.6-flash"');
+    ).rejects.toThrow('does not support generation control "top_k" for model "gemini-3.7-flash"');
 
     await expect(
       createInteraction({
@@ -1602,6 +1610,111 @@ describe("gemini adapter", () => {
     });
 
     expect(result.text).toBe("hello from gemini audio");
+  });
+
+  it("uses Files and Interactions for Gemini 3.5 Transcribe", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, {
+        headers: {
+          "x-goog-upload-url": "https://generativelanguage.googleapis.com/transcribe-upload"
+        }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        file: {
+          name: "files/audio-1",
+          uri: "https://generativelanguage.googleapis.com/v1beta/files/audio-1",
+          mimeType: "audio/wav"
+        }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "interactions/transcription-1",
+        model: "gemini-3.5-transcribe",
+        status: "completed",
+        output_text: "hola mundo",
+        steps: [
+          {
+            type: "model_output",
+            content: [
+              {
+                type: "text",
+                text: "hola mundo",
+                annotations: [
+                  {
+                    type: "word_info",
+                    text: "hola",
+                    speaker: "spk_1",
+                    start_offset: "0.100s",
+                    end_offset: "0.400s"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await transcribeAudio({
+      model: provider.transcriptionModel!("gemini-3.5-transcribe"),
+      audio: {
+        data: "AQID",
+        mediaType: "audio/wav",
+        filename: "meeting.wav"
+      },
+      language: "es-419",
+      providerOptions: {
+        custom_vocabulary: ["Zhivex"],
+        mode: {
+          type: "verbatim",
+          diarization_mode: "speaker",
+          timestamp_granularities: ["word"]
+        }
+      }
+    });
+
+    expect(result.text).toBe("hola mundo");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/upload/v1beta/files?key=test");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://generativelanguage.googleapis.com/transcribe-upload"
+    );
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain("/v1beta/interactions?key=test");
+    const interactionBody = JSON.parse(
+      String((fetchMock.mock.calls[2]?.[1] as RequestInit).body)
+    ) as Record<string, any>;
+    expect(interactionBody).toMatchObject({
+      model: "gemini-3.5-transcribe",
+      input: [
+        {
+          type: "audio",
+          uri: "https://generativelanguage.googleapis.com/v1beta/files/audio-1",
+          mime_type: "audio/wav"
+        }
+      ],
+      generation_config: {
+        transcription_config: {
+          language_codes: ["es-419"],
+          custom_vocabulary: ["Zhivex"],
+          mode: {
+            type: "verbatim",
+            diarization_mode: "speaker",
+            timestamp_granularities: ["word"]
+          }
+        }
+      },
+      store: false
+    });
+    expect(result.rawResponse).toMatchObject({
+      steps: [
+        expect.objectContaining({
+          content: [expect.objectContaining({ annotations: [expect.objectContaining({ type: "word_info" })] })]
+        })
+      ]
+    });
   });
 
   it("generates speech through the shared contract", async () => {
@@ -2121,6 +2234,132 @@ describe("gemini adapter", () => {
       'Model "gemini/gemini-3.5-live-translate-preview" only supports audio input.'
     );
     expect(sent).toHaveLength(1);
+    await session.close();
+  });
+
+  it("connects Gemini 3.5 Transcribe Live as a text-only audio session", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async () => {
+      let reads = 0;
+      return {
+        async sendJson(payload: Record<string, unknown>) {
+          sent.push(payload);
+        },
+        async recvJson() {
+          reads += 1;
+          if (reads === 1) {
+            return { setupComplete: {} };
+          }
+          if (reads === 2) {
+            return {
+              serverContent: {
+                inputTranscription: { text: "hola mundo", finished: true },
+                turnComplete: true
+              }
+            };
+          }
+          return undefined;
+        },
+        async close() {}
+      };
+    });
+    const provider = createGemini({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const model = provider.realtimeModel!("gemini-3.5-transcribe-live");
+    expect(model.capabilities).toMatchObject({
+      tools: false,
+      vision: false,
+      audioInput: true,
+      audioOutput: false,
+      reasoning: false,
+      realtime: {
+        audioInput: true,
+        audioOutput: false,
+        imageInput: false,
+        tools: false
+      }
+    });
+
+    const session = await model.connect({
+      mode: "transcription",
+      inputAudioTranscription: {
+        languageCodes: [],
+        customVocabulary: ["Zhivex"]
+      }
+    });
+    await session.sendAudio({ data: "audio-bytes", mediaType: "audio/pcm" });
+
+    expect(sent[0]).toMatchObject({
+      setup: {
+        model: "models/gemini-3.5-transcribe-live",
+        generationConfig: { responseModalities: ["TEXT"] },
+        inputAudioTranscription: {
+          languageCodes: [],
+          customVocabulary: ["Zhivex"]
+        }
+      }
+    });
+    expect(sent[0]?.setup).not.toHaveProperty("tools");
+    expect(sent[1]).toMatchObject({
+      realtimeInput: {
+        audio: { mimeType: "audio/pcm", data: "audio-bytes" }
+      }
+    });
+
+    const events = [];
+    for await (const event of session.eventStream()) {
+      events.push(event);
+    }
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "realtime-transcript",
+        role: "user",
+        text: "hola mundo",
+        isFinal: true
+      })
+    );
+    await session.close();
+  });
+
+  it("rejects unsupported Gemini 3.5 Transcribe Live setup", async () => {
+    const connectionFactory = vi.fn();
+    const provider = createGemini({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const model = provider.realtimeModel!("gemini-3.5-transcribe-live");
+
+    await expect(model.connect({ mode: "conversation" })).rejects.toThrow(
+      "only supports realtime transcription mode"
+    );
+    await expect(model.connect({ voice: "Kore" })).rejects.toThrow(
+      "does not support audio output"
+    );
+    await expect(
+      model.connect({
+        tools: {
+          weather: tool({
+            name: "weather",
+            schema: z.object({ city: z.string() }),
+            execute: () => ({ ok: true })
+          })
+        }
+      })
+    ).rejects.toThrow("does not support realtime tools");
+    expect(connectionFactory).not.toHaveBeenCalled();
+
+    connectionFactory.mockImplementationOnce(async () => ({
+      async sendJson() {},
+      ...createPendingRealtimeReceiver()
+    }));
+    const session = await model.connect({ mode: "transcription" });
+    await expect(session.sendText("hello")).rejects.toThrow(
+      'Model "gemini/gemini-3.5-transcribe-live" only supports audio input.'
+    );
     await session.close();
   });
 

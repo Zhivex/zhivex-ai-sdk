@@ -4,6 +4,7 @@ import {
   groundedCapabilities,
   imageGenerationCapabilities,
   isGeminiLiveTranslateModel,
+  isGeminiLiveTranscribeModel,
   musicGenerationCapabilities,
   realtimeCapabilities,
   speechCapabilities,
@@ -924,8 +925,42 @@ const assertGeminiRealtimeTranslateConfig = (config: RealtimeSessionConfig, mode
   }
 };
 
+const assertGeminiRealtimeTranscribeConfig = (config: RealtimeSessionConfig, modelId: string) => {
+  if (!isGeminiLiveTranscribeModel(modelId)) {
+    return;
+  }
+
+  if (config.mode && config.mode !== "transcription") {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.5-transcribe-live" only supports realtime transcription mode.'
+    );
+  }
+  if (config.voice || config.outputAudioTranscription) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.5-transcribe-live" produces text transcripts and does not support audio output.'
+    );
+  }
+  if (config.translation) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.5-transcribe-live" does not support realtime translation.'
+    );
+  }
+  const tools = toToolSet(config.tools);
+  if (tools && Object.keys(tools).length > 0) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.5-transcribe-live" does not support realtime tools.'
+    );
+  }
+  if (config.reasoning || config.instructions) {
+    throw new UnsupportedFeatureError(
+      'Model "gemini/gemini-3.5-transcribe-live" does not support reasoning or system instructions.'
+    );
+  }
+};
+
 const assertGeminiRealtimeConfig = (config: RealtimeSessionConfig, modelId: string) => {
   assertGeminiRealtimeTranslateConfig(config, modelId);
+  assertGeminiRealtimeTranscribeConfig(config, modelId);
 
   if (config.toolChoice !== undefined && !["auto", "none"].includes(String(config.toolChoice))) {
     throw new UnsupportedFeatureError(
@@ -954,7 +989,7 @@ const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
   setup: {
     model: `models/${modelId}`,
     generationConfig: {
-      responseModalities: ["AUDIO"],
+      responseModalities: [isGeminiLiveTranscribeModel(modelId) ? "TEXT" : "AUDIO"],
       ...(config.voice
         ? {
             speechConfig: {
@@ -969,10 +1004,14 @@ const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
       ...(mapRealtimeThinkingConfig(config) ? { thinkingConfig: mapRealtimeThinkingConfig(config) } : {})
     },
     ...(mapRealtimeTranslationConfig(config) ? { translationConfig: mapRealtimeTranslationConfig(config) } : {}),
-    ...(mapRealtimeTranscriptionConfig(config.inputAudioTranscription ?? (config.inputTranscription ? true : undefined))
+    ...(mapRealtimeTranscriptionConfig(
+      config.inputAudioTranscription ??
+        (config.inputTranscription || isGeminiLiveTranscribeModel(modelId) ? true : undefined)
+    )
       ? {
           inputAudioTranscription: mapRealtimeTranscriptionConfig(
-            config.inputAudioTranscription ?? (config.inputTranscription ? true : undefined)
+            config.inputAudioTranscription ??
+              (config.inputTranscription || isGeminiLiveTranscribeModel(modelId) ? true : undefined)
           )
         }
       : {}),
@@ -1231,7 +1270,9 @@ const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
 const isGemini3ProModel = (modelId: string) => /^gemini-3([.-].*)?pro([.-]|$)/.test(modelId);
 
 const usesCurrentGeminiRequestRules = (modelId: string) =>
-  modelId === "gemini-3.6-flash" || modelId === "gemini-3.5-flash-lite";
+  modelId === "gemini-3.7-flash" ||
+  modelId === "gemini-3.6-flash" ||
+  modelId === "gemini-3.5-flash-lite";
 
 const currentGeminiReasoningEfforts: NonNullable<ModelCapabilities["reasoningEfforts"]> = [
   "minimal",
@@ -1240,6 +1281,11 @@ const currentGeminiReasoningEfforts: NonNullable<ModelCapabilities["reasoningEff
   "high"
 ];
 
+const reasoningEffortsForModel = (modelId: string) =>
+  modelId === "gemini-3.7-flash"
+    ? (["low", "medium", "high"] satisfies NonNullable<ModelCapabilities["reasoningEfforts"]>)
+    : currentGeminiReasoningEfforts;
+
 const modelCapabilities = (
   modelId: string,
   baseCapabilities: ModelCapabilities = capabilities
@@ -1247,7 +1293,7 @@ const modelCapabilities = (
   usesCurrentGeminiRequestRules(modelId)
     ? {
         ...baseCapabilities,
-        reasoningEfforts: [...currentGeminiReasoningEfforts]
+        reasoningEfforts: [...reasoningEffortsForModel(modelId)]
       }
     : baseCapabilities;
 
@@ -2517,8 +2563,89 @@ class GeminiTranscriptionModel implements TranscriptionModel {
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly allowUnsafeEndpoints = false
   ) {}
+
+  private isDedicatedTranscriptionModel() {
+    return /^gemini-3\.5-transcribe$/i.test(this.modelId.trim());
+  }
+
+  private async transcribeDedicated(input: {
+    audio: AudioInput;
+    prompt?: string;
+    language?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+    maxRetries?: number;
+    retryBackoffMs?: number;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<TranscriptionResult> {
+    if (input.prompt) {
+      throw new UnsupportedFeatureError(
+        'Model "gemini/gemini-3.5-transcribe" does not support a free-form transcription prompt. Use providerOptions.custom_vocabulary for terminology hints.'
+      );
+    }
+
+    const audioBytes =
+      typeof input.audio.data === "string"
+        ? Buffer.from(input.audio.data, "base64")
+        : input.audio.data instanceof Uint8Array
+          ? input.audio.data
+          : new Uint8Array(input.audio.data);
+    const requestOptions = {
+      abortSignal: input.abortSignal,
+      timeoutMs: input.timeoutMs,
+      maxRetries: input.maxRetries,
+      retryBackoffMs: input.retryBackoffMs
+    };
+    const files = new GeminiFilesClient(
+      this.apiKey,
+      this.baseURL,
+      this.fetcher,
+      this.allowUnsafeEndpoints
+    );
+    const uploaded = await files.upload({
+      ...requestOptions,
+      data: audioBytes,
+      mediaType: input.audio.mediaType,
+      displayName: input.audio.filename
+    });
+    if (!uploaded.uri) {
+      throw new ProviderHTTPError(
+        'Gemini Files API did not return a URI for the transcription upload.',
+        500
+      );
+    }
+
+    const interaction = await new GeminiInteractionsClient(
+      this.apiKey,
+      this.baseURL,
+      this.fetcher
+    ).create({
+      ...requestOptions,
+      modelId: this.modelId,
+      input: [
+        {
+          type: "audio",
+          uri: uploaded.uri,
+          mime_type: uploaded.mimeType ?? input.audio.mediaType
+        }
+      ],
+      generationConfig: {
+        transcription_config: {
+          ...(input.providerOptions ?? {}),
+          ...(input.language ? { language_codes: [input.language] } : {})
+        }
+      },
+      store: false
+    });
+
+    return {
+      text: interaction.outputText ?? "",
+      rawResponse: interaction.rawResponse
+    };
+  }
 
   async transcribe(input: {
     audio: AudioInput;
@@ -2530,6 +2657,10 @@ class GeminiTranscriptionModel implements TranscriptionModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<TranscriptionResult> {
+    if (this.isDedicatedTranscriptionModel()) {
+      return this.transcribeDedicated(input);
+    }
+
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
@@ -3054,9 +3185,9 @@ class GeminiRealtimeModel implements RealtimeModel {
           }
         ],
         buildMediaPayloads: (frame) => {
-          if (isGeminiLiveTranslateModel(this.modelId)) {
+          if (isGeminiLiveTranslateModel(this.modelId) || isGeminiLiveTranscribeModel(this.modelId)) {
             throw new UnsupportedFeatureError(
-              'Model "gemini/gemini-3.5-live-translate-preview" only supports audio input.'
+              `Model "gemini/${this.modelId}" only supports audio input.`
             );
           }
 
@@ -3072,9 +3203,9 @@ class GeminiRealtimeModel implements RealtimeModel {
           ];
         },
         buildTextPayloads: (text) => {
-          if (isGeminiLiveTranslateModel(this.modelId)) {
+          if (isGeminiLiveTranslateModel(this.modelId) || isGeminiLiveTranscribeModel(this.modelId)) {
             throw new UnsupportedFeatureError(
-              'Model "gemini/gemini-3.5-live-translate-preview" only supports audio input.'
+              `Model "gemini/${this.modelId}" only supports audio input.`
             );
           }
 
@@ -3213,7 +3344,14 @@ export const createGemini = (
     name: "gemini",
     languageModel: (modelId) => new GeminiLanguageModel(modelId, apiKey, baseURL, fetcher),
     embeddingModel: (modelId) => new GeminiEmbeddingModel(modelId, apiKey, baseURL, fetcher),
-    transcriptionModel: (modelId) => new GeminiTranscriptionModel(modelId, apiKey, baseURL, fetcher),
+    transcriptionModel: (modelId) =>
+      new GeminiTranscriptionModel(
+        modelId,
+        apiKey,
+        baseURL,
+        fetcher,
+        options.allowUnsafeEndpoints
+      ),
     speechModel: (modelId) => new GeminiSpeechModel(modelId, apiKey, baseURL, fetcher),
     imageGenerationModel: (modelId) => new GeminiImageGenerationModel(modelId, apiKey, baseURL, fetcher),
     videoGenerationModel: (modelId) => new GeminiVideoGenerationModel(modelId, apiKey, baseURL, fetcher),

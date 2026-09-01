@@ -5,6 +5,7 @@ import { generateObject, generateText, streamText, tool } from "@zhivex-ai/core"
 import { createAnthropic } from "../src/index.js";
 
 const apiKey = process.env.ANTHROPIC_API_KEY;
+const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
 const baseURL = process.env.ANTHROPIC_BASE_URL;
 const anthropicVersion = process.env.ANTHROPIC_VERSION;
 const textModelId = process.env.ANTHROPIC_INTEGRATION_MODEL ?? "claude-opus-5";
@@ -12,12 +13,18 @@ const usesModernAnthropicControls = (modelId: string) =>
   /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9]|claude-(?:sonnet|fable|mythos)-5)(?:[-@]|$)/.test(modelId);
 const anthropicTemperature = usesModernAnthropicControls(textModelId) ? undefined : 0;
 
-const describeIntegration = apiKey ? (describe.sequential ?? describe.skip) : describe.skip;
+const wifConfigured = Boolean(
+  process.env.ANTHROPIC_FEDERATION_RULE_ID &&
+  process.env.ANTHROPIC_ORGANIZATION_ID &&
+  process.env.ANTHROPIC_SERVICE_ACCOUNT_ID &&
+  (process.env.ANTHROPIC_IDENTITY_TOKEN_FILE || process.env.ANTHROPIC_IDENTITY_TOKEN)
+);
+const credentialsConfigured = Boolean(apiKey || authToken || process.env.ANTHROPIC_PROFILE || wifConfigured);
+const describeIntegration = credentialsConfigured ? (describe.sequential ?? describe.skip) : describe.skip;
 
 describeIntegration("anthropic adapter integration", () => {
   const provider = () =>
     createAnthropic({
-      apiKey,
       baseURL,
       anthropicVersion
     });

@@ -8,6 +8,48 @@ Anthropic adapter for Zhivex AI SDK, with first-class Claude Opus 5 support.
 bun add @zhivex-ai/core @zhivex-ai/anthropic
 ```
 
+## Authentication
+
+`createAnthropic()` resolves the current Anthropic credential chain automatically. Existing
+`ANTHROPIC_API_KEY` configurations continue to send `x-api-key`; `ANTHROPIC_AUTH_TOKEN` sends a
+Bearer token. With neither variable set, the adapter resolves an explicit `profile`,
+`ANTHROPIC_PROFILE`, the complete Workload Identity Federation environment, or the active Anthropic
+profile. WIF and profile tokens are cached, refreshed before expiry, and force-refreshed once after a
+`401` response.
+
+```ts
+// ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, a profile, or WIF environment.
+const anthropic = createAnthropic();
+```
+
+For a personal or service-account API key that spans multiple workspaces, select the workspace with
+`workspaceId` or `ANTHROPIC_WORKSPACE_ID`:
+
+```ts
+const anthropic = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  workspaceId: process.env.ANTHROPIC_WORKSPACE_ID
+});
+```
+
+Long-running applications can rotate API keys without rebuilding the provider, or supply a custom
+access-token provider with expiry metadata:
+
+```ts
+const anthropic = createAnthropic({
+  apiKey: async () => secrets.get("anthropic-api-key")
+});
+
+const federatedAnthropic = createAnthropic({
+  credentials: async ({ forceRefresh } = {}) => tokenBroker.getAnthropicToken({ forceRefresh })
+});
+```
+
+Credential precedence matches Anthropic: explicit constructor authentication, environment API key or
+auth token, explicit/named profile, federation environment, then the active profile. An explicit
+`profile` suppresses ambient `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`. API keys take precedence
+over Bearer credentials when both are explicitly configured.
+
 ## Claude Opus 5
 
 ```ts
@@ -74,7 +116,9 @@ The package also supports current Claude families such as Claude Sonnet 5, Claud
 Mythos 5, Claude Opus 4.8, and Claude Haiku 4.5, with model-specific capability validation. Models
 that reject assistant-prefilled conversations fail locally before an API request is attempted.
 
-Authenticated Anthropic requests reject redirects so a `307` or `308` cannot replay `x-api-key` or the prompt body to another origin. The adapter's explicit `rawFetch` escape hatch remains uncredentialed.
+Authenticated Anthropic requests and WIF token exchanges reject redirects so a `307` or `308` cannot
+replay an API key, Bearer token, identity assertion, or prompt body to another origin. The adapter's
+explicit `rawFetch` escape hatch remains uncredentialed.
 
 Official references:
 
@@ -83,6 +127,8 @@ Official references:
 - [Thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)
 - [Structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
 - [Fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode)
+- [Authentication](https://platform.claude.com/docs/en/manage-claude/authentication)
+- [Workload Identity Federation](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation)
 
 Repository and full documentation:
 

@@ -113,6 +113,84 @@ describe("deepseek adapter", () => {
     }
   });
 
+  it("maps DeepSeek V4 Flash Vision image and file inputs in order", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "vision ok" } }]
+      })
+    );
+    const provider = createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("deepseek-v4-flash-vision-exp");
+
+    expect(model.capabilities.vision).toBe(true);
+    expect(model.capabilities.files).toBe(true);
+
+    await generateText({
+      model,
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "Compare these images." },
+            {
+              type: "image",
+              image: "aGVsbG8=",
+              mediaType: "image/png",
+              providerMetadata: { deepseekDetail: "high" }
+            },
+            { type: "file", data: "file-api-image_123", mediaType: "image/jpeg" }
+          ]
+        }
+      ]
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.model).toBe("deepseek-v4-flash-vision-exp");
+    expect(body.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Compare these images." },
+          {
+            type: "image_url",
+            image_url: { url: "data:image/png;base64,aGVsbG8=", detail: "high" }
+          },
+          { type: "file", file_id: "file-api-image_123" }
+        ]
+      }
+    ]);
+  });
+
+  it("rejects DeepSeek vision media on unsupported models and roles", async () => {
+    const provider = createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: provider("deepseek-v4-flash"),
+        messages: [
+          {
+            role: "user",
+            parts: [{ type: "image", image: "aGVsbG8=", mediaType: "image/png" }]
+          }
+        ]
+      })
+    ).rejects.toThrow('Model "deepseek/deepseek-v4-flash" does not support image inputs.');
+
+    await expect(
+      generateText({
+        model: provider("deepseek-v4-flash-vision-exp"),
+        messages: [
+          {
+            role: "assistant",
+            parts: [{ type: "image", image: "aGVsbG8=", mediaType: "image/png" }]
+          }
+        ]
+      })
+    ).rejects.toThrow("only supports image and file inputs in user messages");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     fetchMock.mockReset();
   });
@@ -829,13 +907,17 @@ describe("deepseek adapter", () => {
     });
   });
 
-  it("exposes FIM, models, and balance clients on the callable provider", () => {
+  it("exposes FIM, models, balance, and files clients on the callable provider", () => {
     const provider = createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
     expect(provider.fim.generate).toBeTypeOf("function");
     expect(provider.fim.stream).toBeTypeOf("function");
     expect(provider.models.list).toBeTypeOf("function");
     expect(provider.balance.get).toBeTypeOf("function");
+    expect(provider.files.upload).toBeTypeOf("function");
+    expect(provider.files.list).toBeTypeOf("function");
+    expect(provider.files.get).toBeTypeOf("function");
+    expect(provider.files.delete).toBeTypeOf("function");
   });
 
   it("omits auto tool choice and rejects forced tool choice while thinking", async () => {

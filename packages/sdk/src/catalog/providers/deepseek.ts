@@ -2,11 +2,31 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const deepseekCatalogFragment = defineModelCatalogFragment({
   provider: "deepseek",
-  revision: "2026-08-16",
-  verifiedAt: "2026-08-16",
-  pricingEffectiveAt: "2026-08-16",
-  sources: ["catalog-release:2026-08-16"],
+  revision: "2026-08-30",
+  verifiedAt: "2026-08-30",
+  pricingEffectiveAt: "2026-08-30",
+  sources: [
+    "https://api-docs.deepseek.com/news/news260821",
+    "https://api-docs.deepseek.com/guides/vision/",
+    "https://api-docs.deepseek.com/guides/files_api/",
+    "https://api-docs.deepseek.com/quick_start/pricing"
+  ],
   entries: [
+    {
+      "provider": "deepseek",
+      "modelId": "deepseek-v4-flash-vision-exp",
+      "inputCostPer1kTokens": 0.00014,
+      "cachedInputCostPer1kTokens": 0.0000028,
+      "outputCostPer1kTokens": 0.00028,
+      "costPer1kTokens": 0.00014,
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "vision",
+        "speed",
+        "tools"
+      ]
+    },
     {
       "provider": "deepseek",
       "modelId": "deepseek-v4-flash",

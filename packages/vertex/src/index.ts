@@ -1042,7 +1042,9 @@ const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
 const isGemini3ProModel = (modelId: string) => /^gemini-3([.-].*)?pro([.-]|$)/.test(modelId);
 
 const usesCurrentGeminiRequestRules = (modelId: string) =>
-  modelId === "gemini-3.6-flash" || modelId === "gemini-3.5-flash-lite";
+  modelId === "gemini-3.7-flash" ||
+  modelId === "gemini-3.6-flash" ||
+  modelId === "gemini-3.5-flash-lite";
 
 const currentGeminiReasoningEfforts: NonNullable<ModelCapabilities["reasoningEfforts"]> = [
   "minimal",
@@ -1050,6 +1052,11 @@ const currentGeminiReasoningEfforts: NonNullable<ModelCapabilities["reasoningEff
   "medium",
   "high"
 ];
+
+const reasoningEffortsForModel = (modelId: string) =>
+  modelId === "gemini-3.7-flash"
+    ? (["low", "medium", "high"] satisfies NonNullable<ModelCapabilities["reasoningEfforts"]>)
+    : currentGeminiReasoningEfforts;
 
 const modelCapabilities = (
   modelId: string,
@@ -1059,7 +1066,7 @@ const modelCapabilities = (
     ? {
         ...baseCapabilities,
         computerUse: false,
-        reasoningEfforts: [...currentGeminiReasoningEfforts],
+        reasoningEfforts: [...reasoningEffortsForModel(modelId)],
         agentCapabilities: baseCapabilities.agentCapabilities
           ? {
               ...baseCapabilities.agentCapabilities,
@@ -1152,6 +1159,12 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
 
     if (input.reasoning.effort === "xhigh") {
       throw new UnsupportedFeatureError('Provider "vertex" does not support "reasoning.effort=xhigh".');
+    }
+
+    if (input.reasoning.effort === "minimal" && modelId === "gemini-3.7-flash") {
+      throw new UnsupportedFeatureError(
+        'Provider "vertex" does not support "reasoning.effort=minimal" for Gemini 3.7 Flash.'
+      );
     }
 
     if (input.reasoning.effort === "minimal" && isGemini3ProModel(modelId)) {
@@ -2547,7 +2560,7 @@ export const createVertex = (
       return;
     }
     const supportedLocations =
-      modelId === "gemini-3.6-flash"
+      modelId === "gemini-3.7-flash" || modelId === "gemini-3.6-flash"
         ? ["global"]
         : modelId === "gemini-3.5-flash-lite"
           ? ["global", "us", "eu"]
