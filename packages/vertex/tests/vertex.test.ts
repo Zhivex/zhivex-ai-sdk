@@ -1354,7 +1354,7 @@ describe("vertex adapter", () => {
     });
   });
 
-  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+  it.each(["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "exposes and maps current Vertex Gemini reasoning levels for %s",
     async (modelId) => {
       fetchMock.mockResolvedValueOnce(
@@ -1374,7 +1374,11 @@ describe("vertex adapter", () => {
         fetch: fetchMock as typeof fetch
       });
       const model = provider(modelId);
-      expect(model.capabilities.reasoningEfforts).toEqual(["minimal", "low", "medium", "high"]);
+      expect(model.capabilities.reasoningEfforts).toEqual(
+        modelId === "gemini-3.7-flash"
+          ? ["low", "medium", "high"]
+          : ["minimal", "low", "medium", "high"]
+      );
       expect(model.capabilities.computerUse).toBe(false);
       expect(model.capabilities.agentCapabilities?.computerUse).toBe(false);
 
@@ -1382,7 +1386,7 @@ describe("vertex adapter", () => {
         model,
         prompt: "hello",
         reasoning: {
-          effort: modelId === "gemini-3.6-flash" ? "medium" : "minimal"
+          effort: modelId === "gemini-3.5-flash-lite" ? "minimal" : "medium"
         }
       });
 
@@ -1391,7 +1395,7 @@ describe("vertex adapter", () => {
         generationConfig: { thinkingConfig: { thinkingLevel: string } };
       };
       expect(body.generationConfig.thinkingConfig).toEqual({
-        thinkingLevel: modelId === "gemini-3.6-flash" ? "medium" : "minimal"
+        thinkingLevel: modelId === "gemini-3.5-flash-lite" ? "minimal" : "medium"
       });
       expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
         `/publishers/google/models/${modelId}:generateContent`
@@ -1399,7 +1403,7 @@ describe("vertex adapter", () => {
     }
   );
 
-  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+  it.each(["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "rejects deprecated Vertex Gemini sampling controls locally for %s",
     async (modelId) => {
       const provider = createVertex({
@@ -1440,7 +1444,7 @@ describe("vertex adapter", () => {
     }
   );
 
-  it.each(["gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+  it.each(["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "rejects Vertex Gemini assistant prefill locally for %s",
     async (modelId) => {
       const provider = createVertex({
@@ -1470,6 +1474,9 @@ describe("vertex adapter", () => {
       location: "us-central1",
       fetch: fetchMock as typeof fetch
     });
+    expect(() => regionalProvider("gemini-3.7-flash")).toThrow(
+      'Vertex model "gemini-3.7-flash" is not available in location "us-central1". Use "global"'
+    );
     expect(() => regionalProvider("gemini-3.6-flash")).toThrow(
       'Vertex model "gemini-3.6-flash" is not available in location "us-central1". Use "global"'
     );

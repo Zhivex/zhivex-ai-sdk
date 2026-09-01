@@ -1,5 +1,14 @@
 import { toJSONSchema } from "zod";
 
+import { resolveCredentialsFromConfig, defaultCredentials } from "@anthropic-ai/sdk/lib/credentials/credential-chain";
+import { TokenCache } from "@anthropic-ai/sdk/lib/credentials/token-cache";
+import {
+  OAUTH_API_BETA_HEADER,
+  type AccessTokenProvider,
+  type CredentialResult
+} from "@anthropic-ai/sdk/lib/credentials/types";
+import type { AnthropicConfig } from "@anthropic-ai/sdk/core/credentials";
+
 import {
   ConfigurationError,
   ProviderHTTPError,
@@ -27,12 +36,37 @@ import {
 } from "@zhivex-ai/core";
 
 export interface AnthropicProviderOptions {
-  apiKey?: string;
+  /** Static API key or an async provider invoked before every request. */
+  apiKey?: string | AnthropicApiKeyProvider | null;
+  /** Static OAuth/WIF bearer token. Defaults to ANTHROPIC_AUTH_TOKEN. */
+  authToken?: string | null;
+  /** Refreshable OAuth/WIF access-token provider. */
+  credentials?: AnthropicAccessTokenProvider | null;
+  /** Explicit Anthropic profile/WIF configuration. */
+  config?: AnthropicCredentialConfig | null;
+  /** Named profile from ANTHROPIC_CONFIG_DIR. */
+  profile?: string | null;
+  /** Workspace selected by a multi-workspace API key. */
+  workspaceId?: string | null;
   baseURL?: string;
   anthropicVersion?: string;
   fetch?: typeof globalThis.fetch;
   allowUnsafeEndpoints?: boolean;
 }
+
+export type AnthropicApiKeyProvider = () => Promise<string>;
+
+export interface AnthropicAccessToken {
+  token: string;
+  /** Unix epoch seconds. null means the token does not expire. */
+  expiresAt: number | null;
+}
+
+export type AnthropicAccessTokenProvider = (options?: {
+  forceRefresh?: boolean;
+}) => Promise<AnthropicAccessToken>;
+
+export type AnthropicCredentialConfig = AnthropicConfig;
 
 export interface AnthropicLanguageModelOptions {
   speed?: "standard" | "fast";
@@ -311,6 +345,209 @@ const rejectCredentialedRedirects = (fetcher: typeof globalThis.fetch): typeof g
       ...init,
       redirect: "error"
     })) as typeof globalThis.fetch;
+
+const normalizeAnthropicBaseURL = (
+  value: string,
+  options: { allowUnsafeEndpoints?: boolean; appendApiVersion?: boolean; label: string }
+) => {
+  const url = assertTrustedEndpoint(value, {
+    label: options.label,
+    protocols: ["https"],
+    allowUnsafe: options.allowUnsafeEndpoints
+  });
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  if (options.appendApiVersion && !url.pathname.endsWith("/v1")) {
+    url.pathname = `${url.pathname}/v1`;
+  }
+  return url.toString().replace(/\/+$/, "");
+};
+
+const credentialBaseURLFromMessagesBaseURL = (messagesBaseURL: string) => {
+  const url = new URL(messagesBaseURL);
+  url.pathname = url.pathname.replace(/\/v1\/?$/, "").replace(/\/+$/, "");
+  return url.toString().replace(/\/+$/, "");
+};
+
+interface ResolvedAnthropicAuth {
+  headers: Record<string, string>;
+  credential: string;
+  refreshable: boolean;
+  oauthBeta: boolean;
+  extraHeaders: Record<string, string>;
+  messagesBaseURL: string;
+}
+
+class AnthropicAuthManager {
+  private readonly apiKey: string | AnthropicApiKeyProvider | null;
+  private readonly authToken: string | null;
+  private readonly credentials: AnthropicAccessTokenProvider | null;
+  private readonly config: AnthropicCredentialConfig | null;
+  private readonly profile: string | null;
+  private readonly workspaceId: string | null;
+  private readonly resolverOptions: Parameters<typeof defaultCredentials>[0];
+  private readonly baseURLIsExplicit: boolean;
+  private readonly defaultMessagesBaseURL: string;
+  private readonly allowUnsafeEndpoints?: boolean;
+  private credentialResolution?: Promise<void>;
+  private tokenCache?: TokenCache;
+  private tokenExtraHeaders: Record<string, string> = {};
+  private credentialMessagesBaseURL?: string;
+
+  constructor(
+    options: AnthropicProviderOptions,
+    settings: {
+      credentialBaseURL: string;
+      defaultMessagesBaseURL: string;
+      baseURLIsExplicit: boolean;
+      credentialFetcher: typeof globalThis.fetch;
+    }
+  ) {
+    const credentialSourceCount = [options.profile, options.credentials, options.config].filter(
+      (source) => source != null
+    ).length;
+    if (credentialSourceCount > 1) {
+      throw new ConfigurationError('Pass at most one of "profile", "credentials", or "config" to createAnthropic().');
+    }
+
+    const hasExplicitAuthentication =
+      options.apiKey !== undefined ||
+      options.authToken !== undefined ||
+      options.credentials !== undefined ||
+      options.config !== undefined ||
+      options.profile !== undefined;
+    this.apiKey = hasExplicitAuthentication
+      ? (options.apiKey ?? null)
+      : (process.env.ANTHROPIC_API_KEY ?? null);
+    this.authToken = hasExplicitAuthentication
+      ? (options.authToken ?? null)
+      : (process.env.ANTHROPIC_AUTH_TOKEN ?? null);
+    this.credentials = options.credentials ?? null;
+    this.config = options.config ?? null;
+    this.profile = options.profile ?? null;
+    this.workspaceId = options.workspaceId === undefined
+      ? (process.env.ANTHROPIC_WORKSPACE_ID ?? null)
+      : options.workspaceId;
+    this.baseURLIsExplicit = settings.baseURLIsExplicit;
+    this.defaultMessagesBaseURL = settings.defaultMessagesBaseURL;
+    this.allowUnsafeEndpoints = options.allowUnsafeEndpoints;
+    this.resolverOptions = {
+      baseURL: settings.credentialBaseURL,
+      fetch: settings.credentialFetcher,
+      userAgent: "@zhivex-ai/anthropic"
+    };
+  }
+
+  async resolve(): Promise<ResolvedAnthropicAuth> {
+    if (this.apiKey != null) {
+      const apiKey = await this.resolveApiKey(this.apiKey);
+      return {
+        headers: { "x-api-key": apiKey },
+        credential: apiKey,
+        refreshable: false,
+        oauthBeta: false,
+        extraHeaders: this.workspaceId ? { "anthropic-workspace-id": this.workspaceId } : {},
+        messagesBaseURL: this.defaultMessagesBaseURL
+      };
+    }
+
+    if (this.authToken != null) {
+      const authToken = this.requireNonEmptyCredential(this.authToken, "Anthropic auth token");
+      return {
+        headers: { Authorization: `Bearer ${authToken}` },
+        credential: authToken,
+        refreshable: false,
+        oauthBeta: false,
+        extraHeaders: {},
+        messagesBaseURL: this.defaultMessagesBaseURL
+      };
+    }
+
+    await this.ensureTokenCredentials();
+    const token = this.requireNonEmptyCredential(await this.tokenCache!.getToken(), "Anthropic access token");
+    return {
+      headers: { Authorization: `Bearer ${token}` },
+      credential: token,
+      refreshable: true,
+      oauthBeta: true,
+      extraHeaders: this.tokenExtraHeaders,
+      messagesBaseURL: this.credentialMessagesBaseURL ?? this.defaultMessagesBaseURL
+    };
+  }
+
+  invalidateToken(): boolean {
+    if (!this.tokenCache) {
+      return false;
+    }
+    this.tokenCache.invalidate();
+    return true;
+  }
+
+  private async resolveApiKey(source: string | AnthropicApiKeyProvider) {
+    if (typeof source === "string") {
+      return this.requireNonEmptyCredential(source, "Anthropic API key");
+    }
+
+    try {
+      return this.requireNonEmptyCredential(await source(), "Anthropic API key provider result");
+    } catch (error) {
+      if (error instanceof ConfigurationError) {
+        throw error;
+      }
+      throw new ConfigurationError("Anthropic API key provider failed.", { cause: error });
+    }
+  }
+
+  private requireNonEmptyCredential(value: unknown, label: string): string {
+    if (typeof value !== "string" || value.length === 0) {
+      throw new ConfigurationError(`${label} must be a non-empty string.`);
+    }
+    return value;
+  }
+
+  private async ensureTokenCredentials() {
+    if (this.tokenCache) {
+      return;
+    }
+    this.credentialResolution ??= this.resolveTokenCredentials();
+    await this.credentialResolution;
+  }
+
+  private async resolveTokenCredentials() {
+    try {
+      if (this.credentials) {
+        this.tokenCache = new TokenCache(this.credentials as AccessTokenProvider);
+        return;
+      }
+
+      const result = this.config
+        ? resolveCredentialsFromConfig(this.config, this.resolverOptions)
+        : await defaultCredentials(this.resolverOptions, this.profile ?? undefined);
+      if (!result) {
+        throw new ConfigurationError(
+          "Could not resolve Anthropic credentials. Set apiKey, authToken, credentials, config, or an Anthropic profile/WIF environment."
+        );
+      }
+      this.applyCredentialResult(result);
+    } catch (error) {
+      if (error instanceof ConfigurationError) {
+        throw error;
+      }
+      throw new ConfigurationError("Could not resolve Anthropic credentials.", { cause: error });
+    }
+  }
+
+  private applyCredentialResult(result: CredentialResult) {
+    this.tokenCache = new TokenCache(result.provider);
+    this.tokenExtraHeaders = { ...result.extraHeaders };
+    if (!this.baseURLIsExplicit && result.baseURL) {
+      this.credentialMessagesBaseURL = normalizeAnthropicBaseURL(result.baseURL, {
+        label: "Anthropic profile base_url",
+        allowUnsafeEndpoints: this.allowUnsafeEndpoints,
+        appendApiVersion: true
+      });
+    }
+  }
+}
 
 const mapFilePart = (modelId: string, part: Extract<ModelMessage["parts"][number], { type: "file" }>) => {
   if (!supportsAnthropicFiles(modelId)) {
@@ -935,27 +1172,64 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
 
   constructor(
     readonly modelId: string,
-    private readonly apiKey: string,
-    private readonly baseURL: string,
+    private readonly auth: AnthropicAuthManager,
     private readonly anthropicVersion: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {
     this.capabilities = modelCapabilities(modelId);
   }
 
-  private headers(withMcpToolset: boolean, withFilesApi: boolean, extraBetas: string[] = []) {
+  private headers(
+    auth: ResolvedAnthropicAuth,
+    withMcpToolset: boolean,
+    withFilesApi: boolean,
+    extraBetas: string[] = []
+  ) {
     const betas = new Set([
       ...(withMcpToolset ? ["mcp-client-2025-11-20"] : []),
       ...(withFilesApi ? ["files-api-2025-04-14"] : []),
+      ...(auth.oauthBeta ? [OAUTH_API_BETA_HEADER] : []),
       ...extraBetas
     ]);
 
     return {
+      ...auth.extraHeaders,
       "content-type": "application/json",
-      "x-api-key": this.apiKey,
+      ...auth.headers,
       "anthropic-version": this.anthropicVersion,
       ...(betas.size ? { "anthropic-beta": Array.from(betas).join(",") } : {})
     };
+  }
+
+  private async fetchMessages(
+    body: string,
+    signal: AbortSignal,
+    withMcpToolset: boolean,
+    withFilesApi: boolean,
+    extraBetas: string[]
+  ) {
+    const send = async (auth: ResolvedAnthropicAuth) =>
+      this.fetcher(`${auth.messagesBaseURL}/messages`, {
+        method: "POST",
+        headers: this.headers(auth, withMcpToolset, withFilesApi, extraBetas),
+        signal,
+        body
+      });
+
+    const auth = await this.auth.resolve();
+    const response = await send(auth);
+    if (response.status !== 401 || !auth.refreshable || !this.auth.invalidateToken()) {
+      return response;
+    }
+
+    const refreshedAuth = await this.auth.resolve();
+    if (refreshedAuth.credential === auth.credential) {
+      return response;
+    }
+    if (response.body) {
+      await response.body.cancel().catch(() => undefined);
+    }
+    return send(refreshedAuth);
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
@@ -967,26 +1241,21 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     );
 
     try {
+      const body = JSON.stringify({
+        ...providerOptions,
+        model: this.modelId,
+        system: systemPromptFromMessages(this.modelId, input.messages),
+        messages: mapMessages(this.modelId, input.messages),
+        ...(mcpServers ? { mcp_servers: mcpServers } : {}),
+        tools: mapTools(input.tools),
+        tool_choice: mapToolChoice(input.toolChoice),
+        temperature: input.temperature,
+        max_tokens: input.maxTokens ?? 1024,
+        ...(outputConfig ? { output_config: outputConfig } : {}),
+        ...(thinking ? { thinking } : {})
+      });
       const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/messages`, {
-            method: "POST",
-            headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, extraBetas),
-            signal,
-            body: JSON.stringify({
-              ...providerOptions,
-              model: this.modelId,
-              system: systemPromptFromMessages(this.modelId, input.messages),
-              messages: mapMessages(this.modelId, input.messages),
-              ...(mcpServers ? { mcp_servers: mcpServers } : {}),
-              tools: mapTools(input.tools),
-              tool_choice: mapToolChoice(input.toolChoice),
-              temperature: input.temperature,
-              max_tokens: input.maxTokens ?? 1024,
-              ...(outputConfig ? { output_config: outputConfig } : {}),
-              ...(thinking ? { thinking } : {})
-            })
-          }),
+        () => this.fetchMessages(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas),
         input
       );
 
@@ -1016,27 +1285,22 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
+    const body = JSON.stringify({
+      ...providerOptions,
+      model: this.modelId,
+      system: systemPromptFromMessages(this.modelId, input.messages),
+      messages: mapMessages(this.modelId, input.messages),
+      ...(mcpServers ? { mcp_servers: mcpServers } : {}),
+      tools: mapTools(input.tools),
+      tool_choice: mapToolChoice(input.toolChoice),
+      temperature: input.temperature,
+      max_tokens: input.maxTokens ?? 1024,
+      stream: true,
+      ...(outputConfig ? { output_config: outputConfig } : {}),
+      ...(thinking ? { thinking } : {})
+    });
     const response = await withRetry(
-      () =>
-        this.fetcher(`${this.baseURL}/messages`, {
-          method: "POST",
-          headers: this.headers(Boolean(mcpServers?.length), usesFilesApi, extraBetas),
-          signal,
-          body: JSON.stringify({
-            ...providerOptions,
-            model: this.modelId,
-            system: systemPromptFromMessages(this.modelId, input.messages),
-            messages: mapMessages(this.modelId, input.messages),
-            ...(mcpServers ? { mcp_servers: mcpServers } : {}),
-            tools: mapTools(input.tools),
-            tool_choice: mapToolChoice(input.toolChoice),
-            temperature: input.temperature,
-            max_tokens: input.maxTokens ?? 1024,
-            stream: true,
-            ...(outputConfig ? { output_config: outputConfig } : {}),
-            ...(thinking ? { thinking } : {})
-          })
-        }),
+      () => this.fetchMessages(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas),
       input
     );
 
@@ -1155,23 +1419,34 @@ export const createAnthropic = (
 ): CallableProviderAdapter<LanguageModel<AnthropicLanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
 } => {
-  const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new ConfigurationError("Missing Anthropic API key.");
-  }
-
-  const baseURL = assertTrustedEndpoint(options.baseURL ?? "https://api.anthropic.com/v1", {
-    label: "Anthropic baseURL",
-    protocols: ["https"],
-    allowUnsafe: options.allowUnsafeEndpoints
-  }).toString().replace(/\/+$/, "");
-  const anthropicVersion = options.anthropicVersion ?? "2023-06-01";
+  const environmentBaseURL = process.env.ANTHROPIC_BASE_URL || undefined;
+  const baseURLIsExplicit = options.baseURL !== undefined || environmentBaseURL !== undefined;
+  const defaultMessagesBaseURL = options.baseURL !== undefined
+    ? normalizeAnthropicBaseURL(options.baseURL, {
+        label: "Anthropic baseURL",
+        allowUnsafeEndpoints: options.allowUnsafeEndpoints
+      })
+    : environmentBaseURL !== undefined
+      ? normalizeAnthropicBaseURL(environmentBaseURL, {
+          label: "ANTHROPIC_BASE_URL",
+          allowUnsafeEndpoints: options.allowUnsafeEndpoints,
+          appendApiVersion: true
+        })
+      : "https://api.anthropic.com/v1";
+  const credentialBaseURL = credentialBaseURLFromMessagesBaseURL(defaultMessagesBaseURL);
   const rawFetch = options.fetch ?? globalThis.fetch;
   const fetcher = rejectCredentialedRedirects(rawFetch);
+  const auth = new AnthropicAuthManager(options, {
+    credentialBaseURL,
+    defaultMessagesBaseURL,
+    baseURLIsExplicit,
+    credentialFetcher: fetcher
+  });
+  const anthropicVersion = options.anthropicVersion ?? "2023-06-01";
 
   return createProviderAdapter({
     name: "anthropic",
-    languageModel: (modelId) => new AnthropicLanguageModel(modelId, apiKey, baseURL, anthropicVersion, fetcher),
+    languageModel: (modelId) => new AnthropicLanguageModel(modelId, auth, anthropicVersion, fetcher),
     rawFetch
   });
 };

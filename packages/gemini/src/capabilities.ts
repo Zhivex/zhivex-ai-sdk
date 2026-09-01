@@ -1,6 +1,7 @@
 import type { ModelCapabilities } from "@zhivex-ai/core";
 
 export const isGeminiLiveTranslateModel = (modelId: string) => /^gemini-3\.5-live-translate(?:-preview)?$/i.test(modelId.trim());
+export const isGeminiLiveTranscribeModel = (modelId: string) => /^gemini-3\.5-transcribe-live$/i.test(modelId.trim());
 
 export const capabilities: ModelCapabilities = {
   streaming: true,
@@ -158,18 +159,20 @@ export const musicGenerationCapabilities: ModelCapabilities = {
 
 export const realtimeCapabilities = (modelId: string): ModelCapabilities => {
   const translation = isGeminiLiveTranslateModel(modelId);
+  const transcription = isGeminiLiveTranscribeModel(modelId);
+  const audioOnly = translation || transcription;
   return {
     ...capabilities,
     streaming: false,
-    tools: !translation,
+    tools: !audioOnly,
     structuredOutput: false,
     jsonMode: false,
     toolChoice: false,
     parallelToolCalls: false,
-    vision: !translation,
+    vision: !audioOnly,
     files: false,
     audioInput: true,
-    audioOutput: true,
+    audioOutput: !transcription,
     embeddings: false,
     fileSearch: false,
     urlContext: false,
@@ -178,12 +181,12 @@ export const realtimeCapabilities = (modelId: string): ModelCapabilities => {
     interactions: false,
     rawPrediction: false,
     computerUse: false,
-    reasoning: !translation,
-    webSearch: !translation,
+    reasoning: !audioOnly,
+    webSearch: !audioOnly,
     agentCapabilities: {
       ...capabilities.agentCapabilities!,
-      toolChoiceNone: !translation,
-      hostedWebSearch: !translation,
+      toolChoiceNone: !audioOnly,
+      hostedWebSearch: !audioOnly,
       hostedFileSearch: false,
       remoteMcp: false,
       computerUse: false,
@@ -192,11 +195,10 @@ export const realtimeCapabilities = (modelId: string): ModelCapabilities => {
     realtime: {
       sessions: true,
       audioInput: true,
-      audioOutput: true,
-      imageInput: !translation,
-      tools: !translation,
+      audioOutput: !transcription,
+      imageInput: !audioOnly,
+      tools: !audioOnly,
       browserTokens: true
     }
   };
 };
-

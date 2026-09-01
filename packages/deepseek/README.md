@@ -11,7 +11,7 @@ bun add @zhivex-ai/core @zhivex-ai/deepseek
 ## Usage
 
 ```ts
-import { generateText } from "@zhivex-ai/core";
+import { generateText, uploadFile } from "@zhivex-ai/core";
 import { createDeepSeek } from "@zhivex-ai/deepseek";
 
 const deepseek = createDeepSeek({
@@ -27,6 +27,29 @@ const result = await generateText({
 });
 
 console.log(result.text);
+
+const image = await uploadFile({
+  provider: deepseek,
+  data: await Bun.file("chart.png").arrayBuffer(),
+  mediaType: "image/png",
+  filename: "chart.png",
+  providerOptions: { expiresAfterSeconds: 3_600 }
+});
+
+const visualResult = await generateText({
+  model: deepseek("deepseek-v4-flash-vision-exp"),
+  messages: [
+    {
+      role: "user",
+      parts: [
+        { type: "text", text: "Explain this chart." },
+        { type: "file", data: image.name, mediaType: "image/png" }
+      ]
+    }
+  ]
+});
+
+console.log(visualResult.text);
 ```
 
 ## Current models
@@ -35,8 +58,9 @@ console.log(result.text);
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `deepseek-v4-flash` | 1M | 384K | $0.0028 | $0.14 | $0.28 |
 | `deepseek-v4-pro` | 1M | 384K | $0.003625 | $0.435 | $0.87 |
+| `deepseek-v4-flash-vision-exp` | 1M | 384K | $0.0028 | $0.14 | $0.28 |
 
-Flash is the fast, economical default. Pro is intended for the strongest reasoning and agentic workloads. Pricing is in USD and should be checked against the [official models and pricing page](https://api-docs.deepseek.com/quick_start/pricing) before making cost-sensitive decisions.
+Flash is the fast, economical default. Pro is intended for the strongest reasoning and agentic workloads. The experimental Vision model matches V4 Flash's text capabilities and pricing, while image inputs add up to 384 billed tokens per image. Pricing is in USD and should be checked against the [official models and pricing page](https://api-docs.deepseek.com/quick_start/pricing) before making cost-sensitive decisions.
 
 Use these V4 model IDs directly. DeepSeek retired the legacy `deepseek-chat` and `deepseek-reasoner` aliases on July 24, 2026 at 15:59 UTC.
 
@@ -50,6 +74,8 @@ DeepSeek documents account-level concurrency limits of 2,500 requests for Flash 
 - thinking and non-thinking modes on both V4 models
 - automatic upstream context caching, including cached-input usage reporting
 - preservation of `reasoning_content` across multi-step tool loops
+- JPEG, PNG, GIF, and WebP input on `deepseek-v4-flash-vision-exp`, inline, by external URL, or through Files API IDs
+- typed Files API upload, list, get, and delete helpers with the documented 64 MiB upload ceiling and optional 1-hour to 30-day expiration
 
 DeepSeek thinking defaults to enabled upstream. In the shared `reasoning` option, `effort: "none"` disables it, `high` and `max` map directly, `low` and `medium` map to `high`, and `xhigh` maps to `max`. Manual `budgetTokens` is not supported.
 
@@ -83,7 +109,7 @@ console.log(prefixed.text);
 
 For thinking-mode prefix completion, `prefix.reasoningContent` can provide the optional reasoning prefix.
 
-## FIM, models, and balance
+## FIM, models, balance, and files
 
 The callable provider also exposes DeepSeek's provider-specific clients:
 
@@ -111,7 +137,7 @@ console.log(fim.text, models, balance.isAvailable);
 
 FIM uses the Beta `/completions` endpoint automatically and supports both `deepseek-v4-flash` and `deepseek-v4-pro` in non-thinking completion mode. The official sources currently disagree: the FIM reference enumerates Pro and the guide still mentions 4K, while the current pricing table lists FIM for both V4 models. Live validation confirmed both model IDs and a `max_tokens` value above 4,096, so `maxTokens` accepts any positive integer and the API enforces its current model ceiling. `models.list()` and `balance.get()` use the stable API.
 
-This OpenAI Chat Completions adapter does not expose provider-hosted tools, remote MCP, hosted web search, embeddings, audio, vision, files, or realtime sessions. DeepSeek separately exposes web search through its Anthropic-compatible endpoint for supported agent integrations.
+This OpenAI Chat Completions adapter does not expose provider-hosted tools, remote MCP, hosted web search, embeddings, audio, or realtime sessions. Vision and Files support is model-dependent and currently limited to the experimental `deepseek-v4-flash-vision-exp` path described above. DeepSeek separately exposes web search through its Anthropic-compatible endpoint for supported agent integrations.
 
 ## Live validation
 

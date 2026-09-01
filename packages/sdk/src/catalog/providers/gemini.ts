@@ -2,11 +2,29 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const geminiCatalogFragment = defineModelCatalogFragment({
   provider: "gemini",
-  revision: "2026-08-16",
-  verifiedAt: "2026-08-16",
-  pricingEffectiveAt: "2026-08-16",
-  sources: ["catalog-release:2026-08-16"],
+  revision: "2026-08-30",
+  verifiedAt: "2026-08-30",
+  pricingEffectiveAt: "2026-08-30",
+  sources: [
+    "https://ai.google.dev/gemini-api/docs/changelog",
+    "https://ai.google.dev/gemini-api/docs/latest-model",
+    "https://ai.google.dev/gemini-api/docs/pricing"
+  ],
   entries: [
+    {
+      "provider": "gemini",
+      "modelId": "gemini-3.7-flash",
+      "inputCostPer1kTokens": 0.0015,
+      "cachedInputCostPer1kTokens": 0.00015,
+      "outputCostPer1kTokens": 0.0075,
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "speed",
+        "vision",
+        "tools"
+      ]
+    },
     {
       "provider": "gemini",
       "modelId": "gemini-3.6-flash",
@@ -141,6 +159,20 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     },
     {
       "provider": "gemini",
+      "modelId": "gemini-3.5-transcribe",
+      "recommendedFor": [
+        "speed"
+      ]
+    },
+    {
+      "provider": "gemini",
+      "modelId": "gemini-3.5-transcribe-live",
+      "recommendedFor": [
+        "speed"
+      ]
+    },
+    {
+      "provider": "gemini",
       "modelId": "gemini-3.1-flash-tts-preview",
       "recommendedFor": [
         "speed"
@@ -179,6 +211,14 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "gemini",
       "modelId": "veo-3.1-lite-generate-preview",
+      "recommendedFor": [
+        "vision",
+        "speed"
+      ]
+    },
+    {
+      "provider": "gemini",
+      "modelId": "gemini-omni-1.1-flash",
       "recommendedFor": [
         "vision",
         "speed"

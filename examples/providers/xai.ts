@@ -8,7 +8,7 @@ const xai = createXAI({
 });
 
 const result = await generateText({
-  model: xai("grok-4.5"),
+  model: xai("grok-4.6"),
   prompt: "What changed in the latest xAI model release? Cite current sources.",
   reasoning: { effort: "medium" },
   providerOptions: { conversationId: "xai-provider-example" },

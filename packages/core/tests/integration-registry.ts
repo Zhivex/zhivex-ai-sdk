@@ -94,7 +94,7 @@ const usesOpenAIGpt56Controls = /^gpt-5\.6(?:$|-)/i.test(openAITextModelId);
 
 const xaiApiKey = process.env.XAI_API_KEY;
 const xaiBaseURL = process.env.XAI_BASE_URL;
-const xaiTextModelId = process.env.XAI_INTEGRATION_MODEL ?? "grok-4.5";
+const xaiTextModelId = process.env.XAI_INTEGRATION_MODEL ?? "grok-4.6";
 
 const metaApiKey = process.env.MODEL_API_KEY;
 const metaBaseURL = process.env.META_BASE_URL;
@@ -107,9 +107,19 @@ const azureOpenAITextModelId = process.env.AZURE_OPENAI_INTEGRATION_MODEL ?? "gp
 const azureOpenAIEmbeddingModelId = process.env.AZURE_OPENAI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-3-small";
 
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+const anthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
 const anthropicBaseURL = process.env.ANTHROPIC_BASE_URL;
 const anthropicVersion = process.env.ANTHROPIC_VERSION;
 const anthropicTextModelId = process.env.ANTHROPIC_INTEGRATION_MODEL ?? "claude-opus-5";
+const anthropicWIFConfigured = Boolean(
+  process.env.ANTHROPIC_FEDERATION_RULE_ID &&
+  process.env.ANTHROPIC_ORGANIZATION_ID &&
+  process.env.ANTHROPIC_SERVICE_ACCOUNT_ID &&
+  (process.env.ANTHROPIC_IDENTITY_TOKEN_FILE || process.env.ANTHROPIC_IDENTITY_TOKEN)
+);
+const anthropicCredentialsConfigured = Boolean(
+  anthropicApiKey || anthropicAuthToken || process.env.ANTHROPIC_PROFILE || anthropicWIFConfigured
+);
 const usesModernAnthropicControls = (modelId: string) =>
   /^(?:claude-opus-4-(?:7|8|9)|claude-opus-[5-9]|claude-(?:sonnet|fable|mythos)-5)(?:[-@]|$)/.test(modelId);
 const anthropicModelCapabilities = createAnthropic({
@@ -123,7 +133,7 @@ const anthropicReasoning = anthropicModelCapabilities.reasoningEfforts?.includes
 
 const geminiApiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 const geminiBaseURL = process.env.GEMINI_BASE_URL;
-const geminiTextModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.6-flash";
+const geminiTextModelId = process.env.GEMINI_INTEGRATION_MODEL ?? "gemini-3.7-flash";
 const geminiEmbeddingModelId = process.env.GEMINI_INTEGRATION_EMBEDDING_MODEL ?? "gemini-embedding-2";
 
 const openRouterApiKey = process.env.OPENROUTER_API_KEY;
@@ -181,7 +191,7 @@ const vertexApiKey = process.env.VERTEX_API_KEY ?? process.env.GOOGLE_API_KEY;
 const vertexProjectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
 const vertexLocation = process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION;
 const vertexBaseURL = process.env.VERTEX_BASE_URL;
-const vertexTextModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-3.6-flash";
+const vertexTextModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-3.7-flash";
 const vertexEmbeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-005";
 const usableVertexAccessToken = vertexAccessToken && (vertexProjectId || vertexBaseURL) ? vertexAccessToken : undefined;
 
@@ -335,7 +345,12 @@ const azureOpenAIRequirements = [
   envRequirement(["AZURE_OPENAI_API_KEY"]),
   envRequirement(["AZURE_OPENAI_ENDPOINT"])
 ];
-const anthropicRequirements = [envRequirement(["ANTHROPIC_API_KEY"])];
+const anthropicRequirements: CredentialRequirement[] = [
+  {
+    label: "ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE, or complete Anthropic WIF environment",
+    satisfied: anthropicCredentialsConfigured
+  }
+];
 const geminiRequirements = [envRequirement(["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"])];
 const openRouterRequirements = [envRequirement(["OPENROUTER_API_KEY"])];
 const deepSeekRequirements = [envRequirement(["DEEPSEEK_API_KEY"])];
@@ -549,13 +564,12 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
         } satisfies IntegrationLanguageProvider
       ]
     : []),
-  ...(anthropicApiKey
+  ...(anthropicCredentialsConfigured
     ? [
         {
           name: "anthropic",
           createModel: () =>
             createAnthropic({
-              apiKey: anthropicApiKey,
               baseURL: anthropicBaseURL,
               anthropicVersion
             })(anthropicTextModelId),

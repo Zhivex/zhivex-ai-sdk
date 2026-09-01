@@ -10,8 +10,14 @@ import {
   withRetry,
   withTimeoutSignal,
   type FinishReason,
+  type FileDeleteInput,
+  type FileGetInput,
+  type FileListInput,
+  type FileUploadInput,
+  type FilesClient,
   type RetryOptions,
-  type TokenUsage
+  type TokenUsage,
+  type UploadedFile
 } from "@zhivex-ai/core";
 
 export interface DeepSeekClientsOptions {
@@ -114,6 +120,7 @@ export interface DeepSeekClients {
   fim: DeepSeekFIMClient;
   models: DeepSeekModelsClient;
   balance: DeepSeekBalanceClient;
+  files: FilesClient;
 }
 
 const jsonHeaders = (apiKey: string) => ({
@@ -122,6 +129,59 @@ const jsonHeaders = (apiKey: string) => ({
 });
 
 const trimURL = (value: string) => value.replace(/\/+$/, "");
+
+const appendQuery = (url: string, query: Record<string, string | number | undefined>) => {
+  const parsed = new URL(url);
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) {
+      parsed.searchParams.set(key, String(value));
+    }
+  }
+  return parsed.toString();
+};
+
+const DEEPSEEK_FILE_MAX_BYTES = 64 * 1024 * 1024;
+const DEEPSEEK_FILE_MEDIA_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp"
+]);
+
+const deepSeekFileId = (value: string) => {
+  if (!/^file-api-[A-Za-z0-9._-]+$/.test(value)) {
+    throw new ValidationError(
+      'DeepSeek file IDs must be opaque identifiers beginning with "file-api-".'
+    );
+  }
+  return encodeURIComponent(value);
+};
+
+const fileDataBytes = async (data: FileUploadInput["data"]) => {
+  if (typeof data === "string") {
+    return new TextEncoder().encode(data);
+  }
+  if (data instanceof Uint8Array) {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  return new Uint8Array(await data.arrayBuffer());
+};
+
+const normalizeDeepSeekFile = (json: any, fallbackMediaType?: string): UploadedFile => {
+  const file = json.file ?? json;
+  return {
+    name: String(file.id ?? file.name ?? ""),
+    mimeType: file.mime_type ?? file.mimeType ?? fallbackMediaType,
+    sizeBytes: file.bytes ?? file.size_bytes ?? file.sizeBytes,
+    state: file.status ?? file.state,
+    displayName: file.filename ?? file.display_name ?? file.displayName,
+    rawResponse: json,
+    providerMetadata: file
+  };
+};
 
 const assertResponseOk = async (response: Response, operation: string) => {
   if (response.ok) {
@@ -150,6 +210,135 @@ const requestJson = async (
       endpoint: operation
     });
   }, retryOptions);
+
+class DeepSeekFilesClientImpl implements FilesClient {
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseURL: string,
+    private readonly fetcher: typeof globalThis.fetch
+  ) {}
+
+  async upload(input: FileUploadInput): Promise<UploadedFile> {
+    const mediaType = input.mediaType.toLowerCase();
+    if (!DEEPSEEK_FILE_MEDIA_TYPES.has(mediaType)) {
+      throw new ValidationError("DeepSeek Vision file uploads support JPEG, PNG, GIF, and WebP images.");
+    }
+    const bytes = await fileDataBytes(input.data);
+    if (bytes.byteLength > DEEPSEEK_FILE_MAX_BYTES) {
+      throw new ValidationError("DeepSeek file uploads must not exceed 64 MiB.");
+    }
+    const expiresAfterSeconds = input.providerOptions?.expiresAfterSeconds;
+    if (
+      expiresAfterSeconds !== undefined &&
+      (!Number.isSafeInteger(expiresAfterSeconds) ||
+        Number(expiresAfterSeconds) < 3_600 ||
+        Number(expiresAfterSeconds) > 2_592_000)
+    ) {
+      throw new ValidationError("DeepSeek file expiration must be an integer from 3,600 to 2,592,000 seconds.");
+    }
+
+    const form = new FormData();
+    const filename = input.filename ?? input.displayName ?? input.name ?? "image";
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    form.set("file", new File([buffer], filename, { type: mediaType }));
+    form.set("purpose", "user_data");
+    if (expiresAfterSeconds !== undefined) {
+      form.set("expires_after[anchor]", "created_at");
+      form.set("expires_after[seconds]", String(expiresAfterSeconds));
+    }
+
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const json = await requestJson(
+        this.fetcher,
+        `${this.baseURL}/files`,
+        {
+          method: "POST",
+          redirect: "error",
+          headers: { authorization: `Bearer ${this.apiKey}` },
+          signal,
+          body: form
+        },
+        "file upload",
+        input
+      );
+      return normalizeDeepSeekFile(json, mediaType);
+    } finally {
+      cleanup();
+    }
+  }
+
+  async get(input: FileGetInput): Promise<UploadedFile> {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const json = await requestJson(
+        this.fetcher,
+        `${this.baseURL}/files/${deepSeekFileId(input.name)}`,
+        { method: "GET", headers: jsonHeaders(this.apiKey), signal },
+        "file get",
+        input
+      );
+      return normalizeDeepSeekFile(json);
+    } finally {
+      cleanup();
+    }
+  }
+
+  async list(input: FileListInput = {}) {
+    if (input.pageSize !== undefined && (!Number.isSafeInteger(input.pageSize) || input.pageSize < 1 || input.pageSize > 1_000)) {
+      throw new ValidationError("DeepSeek file list pageSize must be an integer from 1 to 1,000.");
+    }
+    if (input.pageToken !== undefined) {
+      deepSeekFileId(input.pageToken);
+    }
+    const order = input.providerOptions?.order;
+    if (order !== undefined && order !== "asc" && order !== "desc") {
+      throw new ValidationError('DeepSeek file list order must be "asc" or "desc".');
+    }
+    const purpose = input.providerOptions?.purpose;
+    if (purpose !== undefined && purpose !== "user_data") {
+      throw new ValidationError('DeepSeek file list purpose must be "user_data".');
+    }
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const json = await requestJson(
+        this.fetcher,
+        appendQuery(`${this.baseURL}/files`, {
+          limit: input.pageSize,
+          after: input.pageToken,
+          order: order as string | undefined,
+          purpose: purpose as string | undefined
+        }),
+        { method: "GET", headers: jsonHeaders(this.apiKey), signal },
+        "file list",
+        input
+      );
+      return {
+        files: (json.data ?? json.files ?? []).map((file: unknown) => normalizeDeepSeekFile(file)),
+        nextPageToken: json.has_more ? json.last_id : undefined,
+        rawResponse: json
+      };
+    } finally {
+      cleanup();
+    }
+  }
+
+  async delete(input: FileDeleteInput) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const json = await requestJson(
+        this.fetcher,
+        `${this.baseURL}/files/${deepSeekFileId(input.name)}`,
+        { method: "DELETE", headers: jsonHeaders(this.apiKey), signal },
+        "file delete",
+        input
+      );
+      return { name: input.name, rawResponse: json };
+    } finally {
+      cleanup();
+    }
+  }
+}
 
 const normalizeUsage = (usage: any): TokenUsage | undefined =>
   usage
@@ -469,6 +658,7 @@ export const createDeepSeekClients = (options: DeepSeekClientsOptions = {}): Dee
   return {
     fim: new DeepSeekFIMClientImpl(apiKey, betaBaseURL, fetcher),
     models: new DeepSeekModelsClientImpl(apiKey, baseURL, fetcher),
-    balance: new DeepSeekBalanceClientImpl(apiKey, baseURL, fetcher)
+    balance: new DeepSeekBalanceClientImpl(apiKey, baseURL, fetcher),
+    files: new DeepSeekFilesClientImpl(apiKey, baseURL, fetcher)
   };
 };

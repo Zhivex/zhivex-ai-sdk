@@ -19,7 +19,7 @@
     "@ai-sdk/react": "4.0.82",
     "@zhivex-ai/openai": "0.10.0",
     "@zhivex-ai/react": "0.4.0",
-    "@zhivex-ai/sdk": "1.12.0",
+    "@zhivex-ai/sdk": "1.13.0",
     "ai": "7.0.79",
     "next": "16.3.2",
     "react": "19.2.8",

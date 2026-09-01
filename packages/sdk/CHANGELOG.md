@@ -1,5 +1,15 @@
 # @zhivex-ai/sdk
 
+## 1.13.0
+
+### Minor Changes
+
+- 2efba2f: Add first-class support and catalog coverage for Gemini 3.7 Flash, Gemini 3.5 Transcribe and Transcribe Live, Gemini Omni 1.1 Flash, Grok 4.6, and DeepSeek V4 Flash Vision Exp with Files API. Enforce current model-specific reasoning and realtime contracts, and restore the configured Qwen realtime frame-size limit on Bun 1.4.
+
+### Patch Changes
+
+- 2efba2f: Add current Anthropic authentication support for Bearer tokens, personal and service-account API keys with workspace selection, rotating API-key providers, named profiles, and Workload Identity Federation with cached token refresh and one forced refresh after a 401. Teach the SDK doctor command to recognize API keys, auth tokens, configured WIF environments, and active profiles.
+
 ## 1.12.0
 
 ### Minor Changes

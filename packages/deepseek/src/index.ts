@@ -95,6 +95,28 @@ const capabilities: ModelCapabilities = {
   }
 };
 
+const DEEPSEEK_VISION_MODEL = "deepseek-v4-flash-vision-exp";
+const DEEPSEEK_VISION_MAX_INLINE_IMAGE_BYTES = 32 * 1024 * 1024;
+const DEEPSEEK_VISION_MAX_REQUEST_BYTES = 48 * 1024 * 1024;
+const DEEPSEEK_VISION_MEDIA_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp"
+]);
+
+const isDeepSeekVisionModel = (modelId: string) =>
+  modelId.toLowerCase() === DEEPSEEK_VISION_MODEL;
+
+const modelCapabilities = (modelId: string): ModelCapabilities =>
+  isDeepSeekVisionModel(modelId)
+    ? {
+        ...capabilities,
+        vision: true,
+        files: true
+      }
+    : capabilities;
+
 const reasoningContentFromMessage = (message: ModelMessage) =>
   message.parts
     .filter((part) => {
@@ -131,9 +153,126 @@ const parseJson = async (response: Response) => {
   });
 };
 
-const mapContentParts = (message: ModelMessage) => {
+const textContent = (message: ModelMessage) => {
   const textParts = message.parts.filter((part) => part.type === "text");
   return textParts.map((part) => part.text).join("");
+};
+
+const assertDeepSeekVisionMediaType = (mediaType: string | undefined) => {
+  const normalized = (mediaType ?? "image/png").toLowerCase();
+  if (!DEEPSEEK_VISION_MEDIA_TYPES.has(normalized)) {
+    throw new UnsupportedFeatureError(
+      `DeepSeek Vision supports JPEG, PNG, GIF, and WebP inputs; received "${mediaType ?? "unknown"}".`
+    );
+  }
+  return normalized;
+};
+
+const deepSeekImageDetail = (
+  part: Extract<ModelMessage["parts"][number], { type: "image" }>
+) => {
+  const metadata = part.providerMetadata as Record<string, unknown> | undefined;
+  const scoped =
+    metadata?.deepseek && typeof metadata.deepseek === "object" && !Array.isArray(metadata.deepseek)
+      ? (metadata.deepseek as Record<string, unknown>).detail
+      : undefined;
+  const detail = metadata?.deepseekDetail ?? scoped;
+  if (detail === undefined) {
+    return undefined;
+  }
+  if (detail !== "auto" && detail !== "low" && detail !== "high" && detail !== "original") {
+    throw new ValidationError('DeepSeek image detail must be "auto", "low", "high", or "original".');
+  }
+  return detail;
+};
+
+const deepSeekImageURL = (value: string, mediaType: string) => {
+  if (/^https?:\/\//i.test(value)) {
+    if (value.length > 8_192) {
+      throw new ValidationError("DeepSeek external image URLs must not exceed 8,192 characters.");
+    }
+    return value;
+  }
+  if (/^data:/i.test(value)) {
+    const match = /^data:([^;,]+);base64,([\s\S]*)$/i.exec(value);
+    if (!match) {
+      throw new ValidationError("DeepSeek inline images must use a base64 data URL.");
+    }
+    assertDeepSeekVisionMediaType(match[1]);
+    assertDeepSeekInlineImageSize(match[2]);
+    return value;
+  }
+  assertDeepSeekInlineImageSize(value);
+  return `data:${mediaType};base64,${value}`;
+};
+
+function assertDeepSeekInlineImageSize(data: string) {
+  const normalized = data.replace(/\s+/g, "");
+  if (
+    !normalized ||
+    !/^[A-Za-z0-9+/_-]*={0,2}$/.test(normalized) ||
+    normalized.length % 4 === 1
+  ) {
+    throw new ValidationError("DeepSeek inline image data must be valid base64.");
+  }
+  const decodedBytes = Math.floor((normalized.replace(/=+$/, "").length * 3) / 4);
+  if (decodedBytes > DEEPSEEK_VISION_MAX_INLINE_IMAGE_BYTES) {
+    throw new ValidationError("DeepSeek inline images must not exceed 32 MiB each.");
+  }
+}
+
+const mapContentParts = (message: ModelMessage, modelId: string) => {
+  const mediaParts = message.parts.filter((part) => part.type === "image" || part.type === "file");
+  if (mediaParts.length === 0) {
+    return textContent(message);
+  }
+  if (!isDeepSeekVisionModel(modelId)) {
+    throw new UnsupportedFeatureError(
+      `Model "deepseek/${modelId}" does not support image or file inputs. Use "${DEEPSEEK_VISION_MODEL}".`
+    );
+  }
+  if (message.role !== "user") {
+    throw new UnsupportedFeatureError("DeepSeek Vision only supports image and file inputs in user messages.");
+  }
+
+  return message.parts.flatMap((part): Array<Record<string, unknown>> => {
+    if (part.type === "text") {
+      return [{ type: "text", text: part.text }];
+    }
+    if (part.type === "image") {
+      const mediaType = assertDeepSeekVisionMediaType(part.mediaType);
+      if (/^file-api-[A-Za-z0-9._-]+$/.test(part.image)) {
+        return [{ type: "file", file_id: part.image }];
+      }
+      const detail = deepSeekImageDetail(part);
+      return [
+        {
+          type: "image_url",
+          image_url: {
+            url: deepSeekImageURL(part.image, mediaType),
+            ...(detail ? { detail } : {})
+          }
+        }
+      ];
+    }
+    if (part.type === "file") {
+      const mediaType = assertDeepSeekVisionMediaType(part.mediaType);
+      if (/^file-api-[A-Za-z0-9._-]+$/.test(part.data)) {
+        return [{ type: "file", file_id: part.data }];
+      }
+      if (/^https?:\/\//i.test(part.data)) {
+        return [{ type: "image_url", image_url: { url: deepSeekImageURL(part.data, mediaType) } }];
+      }
+      return [
+        {
+          type: "file",
+          file_data: deepSeekImageURL(part.data, mediaType),
+          filename: part.filename ?? "image"
+        }
+      ];
+    }
+    return [];
+  });
 };
 
 const ensureJsonOutputInstruction = (
@@ -150,7 +289,7 @@ const ensureJsonOutputInstruction = (
       ? JSON.stringify(toJSONSchema(structuredOutput.schema))
       : undefined;
 
-  if (!schema && messages.some((message) => /\bjson\b/i.test(mapContentParts(message)))) {
+  if (!schema && messages.some((message) => /\bjson\b/i.test(textContent(message)))) {
     return messages;
   }
 
@@ -170,7 +309,14 @@ const ensureJsonOutputInstruction = (
   ];
 };
 
-const mapMessages = (messages: ModelMessage[], prefix?: DeepSeekPrefixOptions) => {
+const mapMessages = (messages: ModelMessage[], modelId: string, prefix?: DeepSeekPrefixOptions) => {
+  const mediaPartCount = messages.reduce(
+    (total, message) => total + message.parts.filter((part) => part.type === "image" || part.type === "file").length,
+    0
+  );
+  if (mediaPartCount > 600) {
+    throw new ValidationError("DeepSeek Vision accepts at most 600 image or file inputs per request.");
+  }
   const mapped = messages.map((message) => {
     if (message.role === "tool") {
       const toolResult = message.parts.find((part) => part.type === "tool-result");
@@ -198,7 +344,7 @@ const mapMessages = (messages: ModelMessage[], prefix?: DeepSeekPrefixOptions) =
 
     const payload: Record<string, unknown> = {
       role: message.role,
-      content: mapContentParts(message)
+      content: mapContentParts(message, modelId)
     };
 
     const reasoningContent = reasoningContentFromMessage(message);
@@ -223,6 +369,17 @@ const mapMessages = (messages: ModelMessage[], prefix?: DeepSeekPrefixOptions) =
   }
 
   return mapped;
+};
+
+const stringifyDeepSeekRequest = (modelId: string, body: Record<string, unknown>) => {
+  const json = JSON.stringify(body);
+  if (
+    isDeepSeekVisionModel(modelId) &&
+    new TextEncoder().encode(json).byteLength > DEEPSEEK_VISION_MAX_REQUEST_BYTES
+  ) {
+    throw new ValidationError("DeepSeek Vision request bodies must not exceed 48 MiB.");
+  }
+  return json;
 };
 
 const DEEPSEEK_STRICT_SCHEMA_TYPES = new Set([
@@ -664,7 +821,7 @@ const parseAssistantMessage = (message: any): ModelMessage => ({
 
 class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOptions> {
   readonly provider = "deepseek";
-  readonly capabilities = capabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
@@ -672,7 +829,9 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
     private readonly baseURL: string,
     private readonly betaBaseURL: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {}
+  ) {
+    this.capabilities = modelCapabilities(modelId);
+  }
 
   async generate(input: ModelGenerateInput<DeepSeekLanguageModelOptions>): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
@@ -685,11 +844,12 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
-            body: JSON.stringify({
+            body: stringifyDeepSeekRequest(this.modelId, {
               ...options.bodyOptions,
               model: this.modelId,
               messages: mapMessages(
                 ensureJsonOutputInstruction(input.messages, options.responseFormat, input.structuredOutput),
+                this.modelId,
                 options.prefix
               ),
               tools: mapTools(input.tools, options.strictTools),
@@ -739,11 +899,12 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
-            body: JSON.stringify({
+            body: stringifyDeepSeekRequest(this.modelId, {
               ...options.bodyOptions,
               model: this.modelId,
               messages: mapMessages(
                 ensureJsonOutputInstruction(input.messages, options.responseFormat, input.structuredOutput),
+                this.modelId,
                 options.prefix
               ),
               tools: mapTools(input.tools, options.strictTools),

@@ -356,6 +356,96 @@ describe("DeepSeek provider-specific clients", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.example/user/balance");
   });
 
+  it("uploads, lists, gets, and deletes DeepSeek Vision files", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "file-api-image_123",
+          object: "file",
+          bytes: 3,
+          filename: "sample.png",
+          purpose: "user_data"
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          object: "list",
+          data: [{ id: "file-api-image_123", bytes: 3, filename: "sample.png" }],
+          last_id: "file-api-image_123",
+          has_more: true
+        })
+      )
+      .mockResolvedValueOnce(
+        Response.json({ id: "file-api-image_123", bytes: 3, filename: "sample.png" })
+      )
+      .mockResolvedValueOnce(Response.json({ id: "file-api-image_123", deleted: true }));
+
+    const clients = createDeepSeekClients({
+      apiKey: "secret",
+      baseURL: "https://api.example/v1/",
+      fetch: fetchMock as typeof fetch
+    });
+    const uploaded = await clients.files.upload({
+      data: new Uint8Array([1, 2, 3]),
+      mediaType: "image/png",
+      filename: "sample.png",
+      providerOptions: { expiresAfterSeconds: 3_600 }
+    });
+    const listed = await clients.files.list({
+      pageSize: 100,
+      pageToken: "file-api-previous",
+      providerOptions: { order: "desc", purpose: "user_data" }
+    });
+    const fetched = await clients.files.get({ name: uploaded.name });
+    const deleted = await clients.files.delete({ name: uploaded.name });
+
+    expect(uploaded).toMatchObject({
+      name: "file-api-image_123",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      displayName: "sample.png"
+    });
+    expect(listed.files).toHaveLength(1);
+    expect(listed.nextPageToken).toBe("file-api-image_123");
+    expect(fetched.name).toBe("file-api-image_123");
+    expect(deleted.name).toBe("file-api-image_123");
+
+    const uploadInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const form = uploadInit.body as FormData;
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.example/v1/files");
+    expect(uploadInit.headers).toEqual({ authorization: "Bearer secret" });
+    expect(form.get("purpose")).toBe("user_data");
+    expect(form.get("expires_after[anchor]")).toBe("created_at");
+    expect(form.get("expires_after[seconds]")).toBe("3600");
+    expect(form.get("file")).toBeInstanceOf(File);
+    expect(fetchMock.mock.calls.slice(1).map((call) => [call[0], (call[1] as RequestInit).method])).toEqual([
+      [
+        "https://api.example/v1/files?limit=100&after=file-api-previous&order=desc&purpose=user_data",
+        "GET"
+      ],
+      ["https://api.example/v1/files/file-api-image_123", "GET"],
+      ["https://api.example/v1/files/file-api-image_123", "DELETE"]
+    ]);
+  });
+
+  it("validates DeepSeek file uploads before making a request", async () => {
+    const clients = createDeepSeekClients({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      clients.files.upload({ data: "hello", mediaType: "text/plain" })
+    ).rejects.toThrow("support JPEG, PNG, GIF, and WebP");
+    await expect(
+      clients.files.upload({
+        data: new Uint8Array([1]),
+        mediaType: "image/png",
+        providerOptions: { expiresAfterSeconds: 3_599 }
+      })
+    ).rejects.toThrow("3,600 to 2,592,000 seconds");
+    await expect(clients.files.get({ name: "../secret" })).rejects.toThrow("opaque identifiers");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("does not duplicate the beta segment when baseURL already targets beta", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({ choices: [{ index: 0, text: "ok", finish_reason: "stop" }] })

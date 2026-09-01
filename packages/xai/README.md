@@ -19,7 +19,7 @@ const xai = createXAI({
 });
 
 const result = await generateText({
-  model: xai("grok-4.5"),
+  model: xai("grok-4.6"),
   prompt: "Summarize the latest xAI release with sources.",
   reasoning: { effort: "medium" },
   providerOptions: { conversationId: "release-research" },
@@ -34,13 +34,14 @@ console.log(result.text);
 
 The adapter defaults to `https://api.x.ai/v1` and reads `XAI_API_KEY` when no API key is passed explicitly.
 
-## Supported Grok 4.5 features
+## Supported Grok 4.6 and 4.5 features
 
 - text and image input
 - streaming
 - function calling and tool choice
 - native structured output
-- `low`, `medium`, and `high` reasoning effort
+- Grok 4.6 `low`, `medium`, `high`, and `xhigh` reasoning effort; Grok 4.5 supports up to `high`
+- always-on reasoning for both model families
 - hosted Web Search, X Search, code execution, and Collections file search
 - Files API attachments
 - prompt caching through `conversationId` or `prompt_cache_key`
