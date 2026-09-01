@@ -402,7 +402,10 @@ class AnthropicAuthManager {
       credentialFetcher: typeof globalThis.fetch;
     }
   ) {
-    if (options.profile != null && (options.credentials != null || options.config != null)) {
+    const credentialSourceCount = [options.profile, options.credentials, options.config].filter(
+      (source) => source != null
+    ).length;
+    if (credentialSourceCount > 1) {
       throw new ConfigurationError('Pass at most one of "profile", "credentials", or "config" to createAnthropic().');
     }
 

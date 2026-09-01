@@ -2611,40 +2611,56 @@ class GeminiTranscriptionModel implements TranscriptionModel {
       mediaType: input.audio.mediaType,
       displayName: input.audio.filename
     });
-    if (!uploaded.uri) {
+    if (!uploaded.name) {
       throw new ProviderHTTPError(
-        'Gemini Files API did not return a URI for the transcription upload.',
+        'Gemini Files API did not return a name for the transcription upload.',
         500
       );
     }
 
-    const interaction = await new GeminiInteractionsClient(
-      this.apiKey,
-      this.baseURL,
-      this.fetcher
-    ).create({
-      ...requestOptions,
-      modelId: this.modelId,
-      input: [
-        {
-          type: "audio",
-          uri: uploaded.uri,
-          mime_type: uploaded.mimeType ?? input.audio.mediaType
-        }
-      ],
-      generationConfig: {
-        transcription_config: {
-          ...(input.providerOptions ?? {}),
-          ...(input.language ? { language_codes: [input.language] } : {})
-        }
-      },
-      store: false
-    });
+    try {
+      if (!uploaded.uri) {
+        throw new ProviderHTTPError(
+          'Gemini Files API did not return a URI for the transcription upload.',
+          500
+        );
+      }
 
-    return {
-      text: interaction.outputText ?? "",
-      rawResponse: interaction.rawResponse
-    };
+      const interaction = await new GeminiInteractionsClient(
+        this.apiKey,
+        this.baseURL,
+        this.fetcher
+      ).create({
+        ...requestOptions,
+        modelId: this.modelId,
+        input: [
+          {
+            type: "audio",
+            uri: uploaded.uri,
+            mime_type: uploaded.mimeType ?? input.audio.mediaType
+          }
+        ],
+        generationConfig: {
+          transcription_config: {
+            ...(input.providerOptions ?? {}),
+            ...(input.language ? { language_codes: [input.language] } : {})
+          }
+        },
+        store: false
+      });
+
+      return {
+        text: interaction.outputText ?? "",
+        rawResponse: interaction.rawResponse
+      };
+    } finally {
+      await files.delete({
+        name: uploaded.name,
+        timeoutMs: input.timeoutMs,
+        maxRetries: input.maxRetries,
+        retryBackoffMs: input.retryBackoffMs
+      });
+    }
   }
 
   async transcribe(input: {

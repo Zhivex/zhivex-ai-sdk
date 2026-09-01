@@ -174,6 +174,23 @@ describe("anthropic adapter", () => {
     });
   });
 
+  it("rejects multiple explicit credential-chain sources", () => {
+    expect(() =>
+      createAnthropic({
+        credentials: async () => ({
+          token: "access-token",
+          expiresAt: null
+        }),
+        config: {
+          authentication: {
+            type: "user_oauth"
+          }
+        },
+        fetch: fetchMock as typeof fetch
+      })
+    ).toThrow('Pass at most one of "profile", "credentials", or "config"');
+  });
+
   it("prefers an API key and sends the selected workspace for multi-workspace keys", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({

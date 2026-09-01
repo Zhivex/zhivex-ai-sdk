@@ -1657,6 +1657,7 @@ describe("gemini adapter", () => {
         ]
       })
     );
+    fetchMock.mockResolvedValueOnce(Response.json({}));
 
     const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await transcribeAudio({
@@ -1683,6 +1684,8 @@ describe("gemini adapter", () => {
       "https://generativelanguage.googleapis.com/transcribe-upload"
     );
     expect(String(fetchMock.mock.calls[2]?.[0])).toContain("/v1beta/interactions?key=test");
+    expect(String(fetchMock.mock.calls[3]?.[0])).toContain("/v1beta/files/audio-1?key=test");
+    expect((fetchMock.mock.calls[3]?.[1] as RequestInit).method).toBe("DELETE");
     const interactionBody = JSON.parse(
       String((fetchMock.mock.calls[2]?.[1] as RequestInit).body)
     ) as Record<string, any>;
@@ -1715,6 +1718,45 @@ describe("gemini adapter", () => {
         })
       ]
     });
+  });
+
+  it("deletes Gemini 3.5 Transcribe uploads when the interaction fails", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, {
+        headers: {
+          "x-goog-upload-url": "https://generativelanguage.googleapis.com/transcribe-upload"
+        }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        file: {
+          name: "files/audio-1",
+          uri: "https://generativelanguage.googleapis.com/v1beta/files/audio-1",
+          mimeType: "audio/wav"
+        }
+      })
+    );
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ error: { message: "transcription failed" } }, { status: 400 })
+    );
+    fetchMock.mockResolvedValueOnce(Response.json({}));
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(
+      transcribeAudio({
+        model: provider.transcriptionModel!("gemini-3.5-transcribe"),
+        audio: {
+          data: "AQID",
+          mediaType: "audio/wav"
+        },
+        maxRetries: 0
+      })
+    ).rejects.toThrow("Gemini request failed with status 400");
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(String(fetchMock.mock.calls[3]?.[0])).toContain("/v1beta/files/audio-1?key=test");
+    expect((fetchMock.mock.calls[3]?.[1] as RequestInit).method).toBe("DELETE");
   });
 
   it("generates speech through the shared contract", async () => {
