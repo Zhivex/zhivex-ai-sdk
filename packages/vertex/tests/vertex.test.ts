@@ -1354,7 +1354,7 @@ describe("vertex adapter", () => {
     });
   });
 
-  it.each(["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+  it.each(["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "exposes and maps current Vertex Gemini reasoning levels for %s",
     async (modelId) => {
       fetchMock.mockResolvedValueOnce(
@@ -1375,12 +1375,12 @@ describe("vertex adapter", () => {
       });
       const model = provider(modelId);
       expect(model.capabilities.reasoningEfforts).toEqual(
-        modelId === "gemini-3.7-flash"
+        ["gemini-3.8-flash", "gemini-3.7-flash"].includes(modelId)
           ? ["low", "medium", "high"]
           : ["minimal", "low", "medium", "high"]
       );
-      expect(model.capabilities.computerUse).toBe(false);
-      expect(model.capabilities.agentCapabilities?.computerUse).toBe(false);
+      expect(model.capabilities.computerUse).toBe(modelId === "gemini-3.8-flash");
+      expect(model.capabilities.agentCapabilities?.computerUse).toBe(modelId === "gemini-3.8-flash");
 
       await generateText({
         model,
@@ -1403,7 +1403,7 @@ describe("vertex adapter", () => {
     }
   );
 
-  it.each(["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+  it.each(["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "rejects deprecated Vertex Gemini sampling controls locally for %s",
     async (modelId) => {
       const provider = createVertex({
@@ -1444,7 +1444,7 @@ describe("vertex adapter", () => {
     }
   );
 
-  it.each(["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+  it.each(["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "rejects Vertex Gemini assistant prefill locally for %s",
     async (modelId) => {
       const provider = createVertex({

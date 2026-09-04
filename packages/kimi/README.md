@@ -74,3 +74,9 @@ Kimi K3, K2.7 Code, and K2.6 support image and video understanding. The SDK pres
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+## Retired model recommendations
+
+The release-managed SDK catalog retains `kimi-k2.5` and `kimi-k2-0905-preview` for explicit lookup but no longer recommends them. Kimi documents K2.5 as discontinued on August 31, 2026 and the K2 series on May 25, 2026. Prefer an available K3 or K2.7 Code deployment. Keeping an entry for historical lookup does not imply continued upstream availability.
+
+See [Kimi's model lifecycle](https://platform.kimi.ai/docs/models).

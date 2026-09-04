@@ -567,7 +567,10 @@ const stripResponsesRequestOptions = (providerOptions: Record<string, unknown> |
   return next;
 };
 
-const modelFamily = (modelId: string) => modelId.toLowerCase();
+const modelFamily = (modelId: string) => {
+  const normalized = modelId.toLowerCase();
+  return normalized.replace(/^(qwen3\.8-(?:max|flash))-\d{4}$/, "$1");
+};
 const isQwen38Max = (modelId: string) => modelFamily(modelId) === "qwen3.8-max";
 const isQwen38Flash = (modelId: string) => modelFamily(modelId) === "qwen3.8-flash";
 const isQwen38MaxPreview = (modelId: string) => modelFamily(modelId) === "qwen3.8-max-preview";

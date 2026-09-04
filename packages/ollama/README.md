@@ -81,3 +81,9 @@ Plain HTTP is accepted only for loopback Ollama endpoints. Remote endpoints requ
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+## Qwen 3.8
+
+The `qwen3.8` family, including explicit local tags such as `qwen3.8:27b`, is recognized for reasoning and included in the SDK catalog. Existing native thinking and tool-loop mappings apply. Cloud structured-output restrictions remain unchanged. Install and verify the exact local model artifact before relying on its capabilities.
+
+See the [Ollama model page](https://ollama.com/library/qwen3.8).

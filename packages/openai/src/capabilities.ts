@@ -40,6 +40,12 @@ export const isOpenAIGpt56Model = (modelId: string) =>
   /^gpt-5\.6(?:$|-(?:sol|terra|luna)(?:-|$)|-\d{4}-\d{2}-\d{2})/.test(
     normalizeModelId(modelId)
   );
+export const isOpenAIAstraModel = (modelId: string) =>
+  /^gpt-6-astra(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
+
+export const supportsOpenAIModernResponses = (modelId: string) =>
+  isOpenAIGpt56Model(modelId) || isOpenAIAstraModel(modelId);
+
 const isOpenAIGpt55BaseModel = (modelId: string) =>
   /^gpt-5\.5(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
 const isOpenAIGpt55ProModel = (modelId: string) =>
@@ -54,7 +60,7 @@ const isOpenAIGpt54ProModel = (modelId: string) =>
   /^gpt-5\.4-pro(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
 
 const supportsOpenAIToolSearch = (modelId: string) =>
-  isOpenAIGpt56Model(modelId) ||
+  supportsOpenAIModernResponses(modelId) ||
   isOpenAIGpt55BaseModel(modelId) ||
   isOpenAIGpt54BaseModel(modelId) ||
   isOpenAIGpt54MiniModel(modelId);
@@ -62,7 +68,7 @@ const supportsOpenAIToolSearch = (modelId: string) =>
 const supportsOpenAIComputerUse = supportsOpenAIToolSearch;
 
 export const supportsOpenAIShell = (modelId: string) =>
-  isOpenAIGpt56Model(modelId) ||
+  supportsOpenAIModernResponses(modelId) ||
   isOpenAIGpt55BaseModel(modelId) ||
   isOpenAIGpt55ProModel(modelId) ||
   isOpenAIGpt54BaseModel(modelId) ||
@@ -71,7 +77,7 @@ export const supportsOpenAIShell = (modelId: string) =>
   isOpenAIGpt54ProModel(modelId);
 
 export const supportsOpenAIApplyPatchAndSkills = (modelId: string) =>
-  isOpenAIGpt56Model(modelId) ||
+  supportsOpenAIModernResponses(modelId) ||
   isOpenAIGpt55BaseModel(modelId) ||
   isOpenAIGpt54BaseModel(modelId) ||
   isOpenAIGpt54MiniModel(modelId) ||
@@ -84,13 +90,15 @@ const supportsOpenAIChatAudio = (modelId: string) =>
 
 export const modelCapabilities = (modelId: string): ModelCapabilities => ({
   ...capabilities,
-  explicitPromptCaching: isOpenAIGpt56Model(modelId),
-  files: isOpenAIGpt56Model(modelId),
-  reasoningEfforts: isOpenAIGpt56Model(modelId)
+  explicitPromptCaching: supportsOpenAIModernResponses(modelId),
+  files: supportsOpenAIModernResponses(modelId),
+  reasoningEfforts: isOpenAIAstraModel(modelId)
+    ? ["low", "medium", "high", "xhigh", "max"]
+    : supportsOpenAIModernResponses(modelId)
     ? ["none", "low", "medium", "high", "xhigh", "max"]
     : undefined,
-  reasoningModes: isOpenAIGpt56Model(modelId) ? ["standard", "pro"] : undefined,
-  reasoningContexts: isOpenAIGpt56Model(modelId)
+  reasoningModes: supportsOpenAIModernResponses(modelId) ? ["standard", "pro"] : undefined,
+  reasoningContexts: supportsOpenAIModernResponses(modelId)
     ? ["auto", "current_turn", "all_turns"]
     : undefined,
   audioInput: supportsOpenAIChatAudio(modelId),
@@ -102,8 +110,8 @@ export const modelCapabilities = (modelId: string): ModelCapabilities => ({
     applyPatch: supportsOpenAIApplyPatchAndSkills(modelId),
     skills: supportsOpenAIApplyPatchAndSkills(modelId),
     toolSearch: supportsOpenAIToolSearch(modelId),
-    programmaticToolCalling: isOpenAIGpt56Model(modelId),
-    multiAgent: isOpenAIGpt56Model(modelId),
+    programmaticToolCalling: supportsOpenAIModernResponses(modelId),
+    multiAgent: supportsOpenAIModernResponses(modelId),
   },
 });
 

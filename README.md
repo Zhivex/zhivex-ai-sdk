@@ -352,6 +352,12 @@ See [`@zhivex-ai/openai`](./packages/openai/README.md) for model capability gate
 
 For GPT-5.6 Computer Use GA, use `openAIComputerTool()` and provide the app-owned action executor that returns a `computer_screenshot`. The legacy `openAIComputerUseTool()` preview helper remains available for older integrations. `openAIShellTool()` supports local skills in an app-owned execution root; `openAIHostedShellTool()` is the separate provider-executed path for `container_auto` or `container_reference` and never re-runs commands locally. Hosted networking is off by default. If enabled, restrict `network_policy.allowed_domains`, scope `domain_secrets` to their exact domain, and treat every allowlisted host as a possible prompt-injection exfiltration channel. See OpenAI's [Hosted Shell safety guidance](https://developers.openai.com/api/docs/guides/tools-shell#network-access).
 
+## September 2026 Model Refresh
+
+The release-managed catalog now includes GPT-6 Astra (OpenAI and Azure), Claude Fable/Mythos 5.1, Gemini 3.8 Flash (Gemini and Vertex), Muse Spark 1.3, Lyria 3.5, and new Qwen entries. Astra uses Responses by default, Gemini 3.8 validates provider-managed sampling and reasoning, Claude 5.1 rejects forced tools, and Qwen Max snapshots retain their exact IDs. Retired Kimi models remain available for historical lookup but are excluded from recommendations.
+
+See [model refresh scope and evidence](./docs/MODEL_REFRESH_2026_09.md) for account restrictions, catalog-only additions, and upstream features outside this update.
+
 ## Provider Compatibility
 
 The SDK aims to keep the application-facing contract stable, but capability parity is not identical across providers yet. Use this matrix as the source of truth for the currently implemented SDK behavior.

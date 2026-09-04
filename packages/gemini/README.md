@@ -239,3 +239,9 @@ Model Garden-style coverage is intentionally raw/prediction based. The adapter d
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+## September model update
+
+`gemini-3.8-flash` follows the current provider-managed sampling rules: temperature, top-p/top-k, candidate count, and penalties are rejected locally, as is assistant prefill. Reasoning supports `low`, `medium`, and `high`; `minimal` is rejected. The SDK catalog includes `lyria-3.5`, usable through `musicGenerationModel("lyria-3.5")` and `generateMusic()` with the existing text/image-to-audio contract.
+
+See [Gemini 3.8 migration](https://ai.google.dev/gemini-api/docs/latest-model) and [Lyria 3.5](https://ai.google.dev/gemini-api/docs/models/lyria-3.5). Catalog presence and offline tests do not certify account access.

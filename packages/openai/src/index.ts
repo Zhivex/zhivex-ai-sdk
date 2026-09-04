@@ -10,7 +10,8 @@ import {
   capabilities,
   groundedCapabilities,
   inferOpenAIRealtimeMode,
-  isOpenAIGpt56Model,
+  supportsOpenAIModernResponses,
+  isOpenAIAstraModel,
   modelCapabilities,
   openAIRealtimeSupportsImageInput,
   realtimeCapabilities,
@@ -622,7 +623,7 @@ const openAIResponsesBodyOptions = (
   options: OpenAILanguageModelOptions,
   modelId: string
 ): OpenAILanguageModelOptions =>
-  options.store === false && isOpenAIGpt56Model(modelId)
+  options.store === false && supportsOpenAIModernResponses(modelId)
     ? {
         ...options,
         include: [...new Set([...(options.include ?? []), "reasoning.encrypted_content"])]
@@ -896,7 +897,7 @@ const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInpu
     if (type === "skill" && !currentCapabilities?.skills) {
       throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses skills tool.`);
     }
-    if (type === "programmatic_tool_calling" && !isOpenAIGpt56Model(modelId)) {
+    if (type === "programmatic_tool_calling" && !supportsOpenAIModernResponses(modelId)) {
       throw new UnsupportedFeatureError(
         `Provider "openai" model "${modelId}" does not support Programmatic Tool Calling.`
       );
@@ -905,7 +906,7 @@ const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInpu
 };
 
 const assertOpenAIResponsesOptionsSupported = (modelId: string, options: OpenAILanguageModelOptions) => {
-  if (options.multi_agent?.enabled && !isOpenAIGpt56Model(modelId)) {
+  if (options.multi_agent?.enabled && !supportsOpenAIModernResponses(modelId)) {
     throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support Multi-agent.`);
   }
 };
@@ -2647,6 +2648,20 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
   }
 
   private usesResponsesAPI(input: ModelGenerateInput, options: ReturnType<typeof resolveOpenAILanguageRequestOptions>) {
+    if (isOpenAIAstraModel(this.modelId)) {
+      const raw = options.bodyOptions;
+      const effort = input.reasoning?.effort ?? (raw.reasoning as { effort?: string } | undefined)?.effort ?? raw.reasoning_effort;
+      if (effort !== undefined && !["low", "medium", "high", "xhigh", "max"].includes(String(effort))) {
+        throw new UnsupportedFeatureError(`GPT-6 Astra does not support reasoning effort "${effort}".`);
+      }
+      if (input.temperature !== undefined || raw.temperature !== undefined || raw.top_p !== undefined || raw.top_logprobs !== undefined ||
+          (options.apiMode === "chat" && raw.logprobs !== undefined) || raw.include?.includes("message.output_text.logprobs")) {
+        throw new UnsupportedFeatureError("GPT-6 Astra does not support the requested sampling or logprobs controls.");
+      }
+      if (options.apiMode === "chat" && Object.keys(input.tools ?? {}).length) {
+        throw new UnsupportedFeatureError("GPT-6 Astra tool calling requires the Responses API.");
+      }
+    }
     const requiresResponses = hasResponsesOnlyTools(input.tools) || options.multiAgentEnabled;
     if (options.apiMode === "chat") {
       if (requiresResponses) {
@@ -2656,7 +2671,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
       }
       return false;
     }
-    return options.apiMode === "responses" || requiresResponses || isOpenAIGpt56Model(this.modelId);
+    return options.apiMode === "responses" || requiresResponses || supportsOpenAIModernResponses(this.modelId);
   }
 
   private async generateViaResponses(

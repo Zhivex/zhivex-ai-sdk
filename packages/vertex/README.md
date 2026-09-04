@@ -159,3 +159,9 @@ Model Garden coverage is intentionally raw/prediction based. The adapter does no
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+## Gemini 3.8 Flash
+
+`gemini-3.8-flash` is included in the catalog and uses the same local sampling, prefill, and reasoning validation as the current Vertex Flash family. Accepted reasoning efforts are `low`, `medium`, and `high`. Unlike the earlier Flash releases, 3.8 exposes Computer Use (Preview) and supports `global`, `us`, and `eu` locations. Availability must be verified for the selected project, endpoint, and location. The Vertex adapter does not inherit Gemini API-only surfaces or pricing.
+
+See the [Google Cloud model card](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-8-flash).

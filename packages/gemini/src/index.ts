@@ -1270,6 +1270,7 @@ const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
 const isGemini3ProModel = (modelId: string) => /^gemini-3([.-].*)?pro([.-]|$)/.test(modelId);
 
 const usesCurrentGeminiRequestRules = (modelId: string) =>
+  modelId === "gemini-3.8-flash" ||
   modelId === "gemini-3.7-flash" ||
   modelId === "gemini-3.6-flash" ||
   modelId === "gemini-3.5-flash-lite";
@@ -1282,7 +1283,7 @@ const currentGeminiReasoningEfforts: NonNullable<ModelCapabilities["reasoningEff
 ];
 
 const reasoningEffortsForModel = (modelId: string) =>
-  modelId === "gemini-3.7-flash"
+  (modelId === "gemini-3.8-flash" || modelId === "gemini-3.7-flash")
     ? (["low", "medium", "high"] satisfies NonNullable<ModelCapabilities["reasoningEfforts"]>)
     : currentGeminiReasoningEfforts;
 
@@ -1340,7 +1341,23 @@ const assertCurrentGeminiGenerateInput = (
     return;
   }
 
+  if (input.reasoning?.effort !== undefined && !reasoningEffortsForModel(modelId).includes(input.reasoning.effort)) {
+    throw new UnsupportedFeatureError(`Provider "${provider}" does not support reasoning effort "${input.reasoning.effort}" for model "${modelId}".`);
+  }
   const providerOptions = input.providerOptions as Record<string, unknown> | undefined;
+  const rawConfig = providerOptions?.generationConfig ?? providerOptions?.generation_config;
+  const config = rawConfig && typeof rawConfig === "object" ? rawConfig as Record<string, unknown> : {};
+  const rawThinking = config.thinkingConfig ?? config.thinking_config ?? providerOptions?.thinkingConfig ?? providerOptions?.thinking_config;
+  if (rawThinking && typeof rawThinking === "object") {
+    const thinking = rawThinking as Record<string, unknown>;
+    const effort = thinking.thinkingLevel ?? thinking.thinking_level;
+    if (effort !== undefined && !reasoningEffortsForModel(modelId).some((supported) => supported === String(effort).toLowerCase())) {
+      throw new UnsupportedFeatureError(`Provider "${provider}" does not support thinking level "${effort}" for model "${modelId}".`);
+    }
+    if (thinking.thinkingBudget !== undefined || thinking.thinking_budget !== undefined) {
+      throw new UnsupportedFeatureError(`Provider "${provider}" requires thinking levels instead of budgets for model "${modelId}".`);
+    }
+  }
   const unsupportedControl = firstUnsupportedGenerationControl(
     input.temperature === undefined ? undefined : { temperature: input.temperature },
     providerOptions,

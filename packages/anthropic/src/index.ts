@@ -91,7 +91,8 @@ export interface AnthropicLanguageModelOptions {
 export interface AnthropicThinkingConfig {
   type: "adaptive" | "disabled" | "enabled";
   budget_tokens?: number;
-  display?: "omitted" | "summarized";
+  display?: "omitted" | "summarized" | "updates";
+  block_binding?: { prefix_mismatch_behavior: "error" | "drop_block" };
 }
 
 export interface AnthropicOutputConfig {
@@ -172,6 +173,8 @@ const isClaudeOpus48OrLaterModel = (modelId: string) =>
 const isClaudeFable5Model = (modelId: string) => /^claude-fable-5(?:[-@]|$)/.test(normalizeModelId(modelId));
 
 const isClaudeMythos5Model = (modelId: string) => /^claude-mythos-5(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const isClaude51Model = (modelId: string) => /^claude-(?:fable|mythos)-5-1(?:[-@]|$)/.test(normalizeModelId(modelId));
 
 const isClaudeMythosClass5Model = (modelId: string) => isClaudeFable5Model(modelId) || isClaudeMythos5Model(modelId);
 
@@ -960,6 +963,12 @@ const assertAnthropicRequestCompatibility = (
     );
   }
 
+  if (thinking?.display === "updates" && !isClaude51Model(modelId)) {
+    throw new UnsupportedFeatureError('Thinking display "updates" requires Claude Fable/Mythos 5.1.');
+  }
+  if (thinking?.block_binding && !isClaude51Model(modelId)) {
+    throw new UnsupportedFeatureError("Thinking block binding controls require Claude Fable/Mythos 5.1.");
+  }
   const effort = outputConfig?.effort;
   const supportedEfforts = anthropicReasoningEfforts(modelId);
   if (effort !== undefined && !supportedEfforts?.includes(effort)) {
@@ -1107,6 +1116,12 @@ const prepareAnthropicRequest = (
   input: ModelGenerateInput
 ): PreparedAnthropicRequest => {
   const providerOptions = { ...(input.providerOptions ?? {}) } as AnthropicLanguageModelOptions;
+  if (isClaude51Model(modelId) && (
+    input.toolChoice === "required" || typeof input.toolChoice === "object" ||
+    providerOptions.tool_choice?.type === "any" || providerOptions.tool_choice?.type === "tool"
+  )) {
+    throw new UnsupportedFeatureError(`Provider "anthropic" model "${modelId}" supports only automatic or disabled tool choice.`);
+  }
   const rawThinking = providerOptions.thinking;
   const rawOutputConfig = providerOptions.output_config;
   if (providerOptions.betas !== undefined && !Array.isArray(providerOptions.betas)) {
@@ -1148,6 +1163,8 @@ const prepareAnthropicRequest = (
 
   const extraBetas = [
     ...betas,
+    ...(thinking?.display === "updates" ? ["thinking-display-updates-2026-08-18"] : []),
+    ...(thinking?.block_binding ? ["thinking-binding-controls-2026-08-01"] : []),
     ...(providerOptions.speed === "fast" ? [FAST_MODE_BETA] : []),
     ...(outputConfig?.task_budget ? [TASK_BUDGETS_BETA] : []),
     ...(providerOptions.fallbacks === "default"

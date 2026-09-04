@@ -16,16 +16,16 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-08-26",
+      snapshotVersion: "2026-09-04",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-08-26",
+        version: "2026-09-04",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
     expect(defaultModelCatalog.find("openai", "gpt-5.6")?.modelId).toBe("gpt-5.6-sol");
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(107);
+    expect(entries).toHaveLength(118);
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
       inputCostPer1kTokens: 0.00015,
       cachedInputCostPer1kTokens: 0.00003,
@@ -60,12 +60,12 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(107);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(118);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
-      revision: "2026-08-16",
-      verifiedAt: "2026-08-16",
+      revision: "2026-09-04",
+      verifiedAt: "2026-09-04",
       pricingEffectiveAt: "2026-08-16",
-      sources: ["catalog-release:2026-08-16"]
+      sources: ["https://developers.openai.com/api/docs/models/gpt-6-astra", "catalog-release:2026-08-16"]
     });
     expect(fragments.find((fragment) => fragment.provider === "zai")).toMatchObject({
       revision: "2026-08-26",
@@ -74,10 +74,10 @@ describe("SDK model catalog ownership", () => {
       modelCount: 3
     });
     expect(fragments.find((fragment) => fragment.provider === "qwen")).toMatchObject({
-      revision: "2026-08-26",
-      verifiedAt: "2026-08-26",
+      revision: "2026-09-04",
+      verifiedAt: "2026-09-04",
       pricingEffectiveAt: "2026-08-26",
-      modelCount: 17
+      modelCount: 19
     });
     expect(Object.isFrozen(fragments[0])).toBe(true);
     expect(Object.isFrozen(fragments[0]?.sources)).toBe(true);

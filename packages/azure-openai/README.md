@@ -52,3 +52,9 @@ await generateText({
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+## GPT-6 Astra and Responses deployments
+
+`azure("gpt-6-astra")` selects Responses by default for generation, structured output, callable tools, and streaming. For an opaque deployment name, select `providerOptions: { apiMode: "responses" }` explicitly; model-specific capability validation can only recognize the model ID supplied to the factory. Responses uses native `reasoning.effort` and flat named-function tool choices. Astra rejects unsupported reasoning efforts, temperature, and `top_p` before fetch. Azure deployment availability, API versions, and quotas remain account-specific.
+
+See [Microsoft's model contracts](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure). Azure pricing is not copied from OpenAI's direct API.

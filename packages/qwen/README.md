@@ -294,3 +294,9 @@ The catalog records QwenCloud's published `qwen3.8-flash` input, output, and imp
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+## Qwen 3.8 snapshots
+
+`qwen3.8-max-0902` preserves its exact upstream ID while inheriting the `qwen3.8-max` validation, vision, tools, and token-limit request mapping. Dated four-digit Max/Flash snapshots are recognized separately from Token Plan previews. `qwen3.8-2.4t-a95b` is listed for discovery without automatic recommendations; its specialized behavior has not been live-certified.
+
+See the [QwenCloud model inventory](https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models).

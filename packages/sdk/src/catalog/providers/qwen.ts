@@ -2,14 +2,28 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const qwenCatalogFragment = defineModelCatalogFragment({
   provider: "qwen",
-  revision: "2026-08-26",
-  verifiedAt: "2026-08-26",
+  revision: "2026-09-04",
+  verifiedAt: "2026-09-04",
   pricingEffectiveAt: "2026-08-26",
   sources: [
     "https://www.qwencloud.com/models/qwen3.8-flash",
     "https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models"
   ],
   entries: [
+    {
+      "provider": "qwen",
+      "modelId": "qwen3.8-max-0902",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
+    {
+      "provider": "qwen",
+      "modelId": "qwen3.8-2.4t-a95b"
+    },
     {
       "provider": "qwen",
       "modelId": "qwen3.8-max",
@@ -25,7 +39,7 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
       "modelId": "qwen3.8-flash",
       "inputCostPer1kTokens": 0.00016,
       "outputCostPer1kTokens": 0.00047,
-      "cachedInputCostPer1kTokens": 0.000016,
+      "cachedInputCostPer1kTokens": 1.6e-05,
       "recommendedFor": [
         "chat",
         "speed",

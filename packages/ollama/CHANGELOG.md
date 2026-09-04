@@ -1,5 +1,15 @@
 # @zhivex-ai/ollama
 
+## 0.5.2
+
+### Patch Changes
+
+- Refresh the release-managed model catalog for September 2026, including Astra, Claude 5.1, Gemini 3.8, Muse Spark 1.3, Lyria 3.5, and Qwen. Preserve the frozen core compatibility snapshot and historical retired Kimi entries while removing retired-model recommendations.
+
+  Route OpenAI/Azure Astra through Responses by default and validate its request controls. Add explicit Azure Responses mode for opaque deployment names and normalize Responses reasoning and named tool choice. Validate Gemini 3.8 sampling/prefill/reasoning, recognize Qwen Max/Flash snapshots and Ollama Qwen 3.8, and reject forced tool choices for Claude 5.1. Add typed Claude progress-display and thinking-binding controls with automatic beta headers.
+
+  Catalog additions and offline regression coverage do not imply authenticated model availability or complete parity with every new upstream protocol.
+
 ## 0.5.1
 
 ### Patch Changes
