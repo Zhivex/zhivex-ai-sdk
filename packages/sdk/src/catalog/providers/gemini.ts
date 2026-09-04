@@ -2,15 +2,31 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const geminiCatalogFragment = defineModelCatalogFragment({
   provider: "gemini",
-  revision: "2026-08-30",
-  verifiedAt: "2026-08-30",
+  revision: "2026-09-04",
+  verifiedAt: "2026-09-04",
   pricingEffectiveAt: "2026-08-30",
   sources: [
+    "https://ai.google.dev/gemini-api/docs/models",
     "https://ai.google.dev/gemini-api/docs/changelog",
     "https://ai.google.dev/gemini-api/docs/latest-model",
     "https://ai.google.dev/gemini-api/docs/pricing"
   ],
   entries: [
+    {
+      "provider": "gemini",
+      "modelId": "gemini-3.8-flash",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "speed",
+        "vision",
+        "tools"
+      ]
+    },
+    {
+      "provider": "gemini",
+      "modelId": "lyria-3.5"
+    },
     {
       "provider": "gemini",
       "modelId": "gemini-3.7-flash",
@@ -43,7 +59,7 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
       "provider": "gemini",
       "modelId": "gemini-3.5-flash-lite",
       "inputCostPer1kTokens": 0.0003,
-      "cachedInputCostPer1kTokens": 0.00003,
+      "cachedInputCostPer1kTokens": 3e-05,
       "outputCostPer1kTokens": 0.0025,
       "recommendedFor": [
         "chat",

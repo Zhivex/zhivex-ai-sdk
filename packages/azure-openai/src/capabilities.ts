@@ -33,17 +33,21 @@ export const capabilities: ModelCapabilities = {
 
 const normalizeModelId = (modelId: string) => modelId.trim().toLowerCase();
 
+export const isAzureAstraModel = (modelId: string) =>
+  /^gpt-6-astra(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
+
 const supportsAzureOpenAIToolSearch = (modelId: string) =>
-  /^gpt-5\.4(?:$|-20|-pro)/.test(normalizeModelId(modelId));
+  isAzureAstraModel(modelId) || /^gpt-5\.4(?:$|-20|-pro)/.test(normalizeModelId(modelId));
 
 const supportsAzureOpenAIComputerUse = (modelId: string) =>
-  /^gpt-5\.4(?:$|-20|-pro|-mini)/.test(normalizeModelId(modelId));
+  isAzureAstraModel(modelId) || /^gpt-5\.4(?:$|-20|-pro|-mini)/.test(normalizeModelId(modelId));
 
 export const supportsAzureOpenAIHostedHarnessTools = (modelId: string) =>
-  /^gpt-5\.4(?:$|-)/.test(normalizeModelId(modelId));
+  isAzureAstraModel(modelId) || /^gpt-5\.4(?:$|-)/.test(normalizeModelId(modelId));
 
 export const modelCapabilities = (modelId: string): ModelCapabilities => ({
   ...capabilities,
+  reasoningEfforts: isAzureAstraModel(modelId) ? ["low", "medium", "high", "xhigh", "max"] : undefined,
   agentCapabilities: {
     ...capabilities.agentCapabilities!,
     computerUse: supportsAzureOpenAIComputerUse(modelId),

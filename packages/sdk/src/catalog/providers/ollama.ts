@@ -2,11 +2,22 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const ollamaCatalogFragment = defineModelCatalogFragment({
   provider: "ollama",
-  revision: "2026-08-16",
-  verifiedAt: "2026-08-16",
+  revision: "2026-09-04",
+  verifiedAt: "2026-09-04",
   pricingEffectiveAt: "2026-08-16",
-  sources: ["catalog-release:2026-08-16"],
+  sources: [
+    "https://ollama.com/library/qwen3.8","catalog-release:2026-08-16"],
   entries: [
+    {
+      "provider": "ollama",
+      "modelId": "qwen3.8",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
     {
       "provider": "ollama",
       "modelId": "gemma4",

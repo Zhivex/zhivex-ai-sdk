@@ -2,14 +2,26 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const vertexCatalogFragment = defineModelCatalogFragment({
   provider: "vertex",
-  revision: "2026-08-30",
-  verifiedAt: "2026-08-30",
+  revision: "2026-09-04",
+  verifiedAt: "2026-09-04",
   pricingEffectiveAt: "2026-08-30",
   sources: [
+    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-8-flash",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-7-flash",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-3-7-flash"
   ],
   entries: [
+    {
+      "provider": "vertex",
+      "modelId": "gemini-3.8-flash",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "speed",
+        "vision",
+        "tools"
+      ]
+    },
     {
       "provider": "vertex",
       "modelId": "gemini-3.7-flash",
@@ -42,7 +54,7 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
       "provider": "vertex",
       "modelId": "gemini-3.5-flash-lite",
       "inputCostPer1kTokens": 0.0003,
-      "cachedInputCostPer1kTokens": 0.00003,
+      "cachedInputCostPer1kTokens": 3e-05,
       "outputCostPer1kTokens": 0.0025,
       "recommendedFor": [
         "chat",

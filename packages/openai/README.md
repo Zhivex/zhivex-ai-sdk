@@ -330,3 +330,9 @@ Treat every allowlisted domain as an exfiltration boundary. Prompt injection can
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+## GPT-6 Astra
+
+`openai("gpt-6-astra")` uses Responses by default, including callable tools and native structured output. The existing Computer Use, Tool Search, shell/apply-patch, Programmatic Tool Calling, multi-agent, persisted reasoning, and prompt-cache mappings also recognize Astra and dated Astra snapshots. Reasoning accepts `low`, `medium`, `high`, `xhigh`, and `max`; `none` and `minimal` are rejected. Explicit Chat mode remains available for text but rejects tool calling. Unsupported sampling and logprob controls fail locally.
+
+See [OpenAI's current model guide](https://developers.openai.com/api/docs/guides/latest-model). Async tool execution and mid-turn steering are separate upstream protocols and are not exposed by this HTTP adapter.

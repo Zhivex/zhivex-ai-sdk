@@ -3,6 +3,7 @@ import {
   capabilities,
   groundedCapabilities,
   modelCapabilities,
+  isAzureAstraModel,
   realtimeCapabilities,
   speechCapabilities,
   supportsAzureOpenAIHostedHarnessTools,
@@ -277,6 +278,8 @@ export type AzureOpenAIProviderData =
   | AzureOpenAIMcpListTools;
 
 export interface AzureOpenAILanguageModelOptions {
+  /** Explicitly select Responses for opaque deployment names. */
+  apiMode?: "auto" | "chat" | "responses";
   top_p?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
@@ -719,6 +722,46 @@ const mapReasoning = (input: ModelGenerateInput) => {
     reasoning_effort: input.reasoning.effort,
     max_completion_tokens: input.maxTokens
   };
+};
+
+const azureBodyOptions = (input: Pick<ModelGenerateInput, "providerOptions">) => {
+  const { apiMode: _apiMode, ...body } = input.providerOptions ?? {};
+  return body;
+};
+
+const useAzureResponses = (modelId: string, input: ModelGenerateInput) => {
+  const options = input.providerOptions ?? {};
+  if (isAzureAstraModel(modelId)) {
+    const effort = input.reasoning?.effort ?? options.reasoning_effort ?? (options.reasoning as { effort?: string } | undefined)?.effort;
+    if (effort !== undefined && !["low", "medium", "high", "xhigh", "max"].includes(String(effort))) {
+      throw new UnsupportedFeatureError(`Azure GPT-6 Astra does not support reasoning effort "${effort}".`);
+    }
+    if (input.temperature !== undefined || options.temperature !== undefined || options.top_p !== undefined) {
+      throw new UnsupportedFeatureError("Azure GPT-6 Astra does not support temperature or top_p.");
+    }
+    if (options.apiMode === "chat" && Object.keys(input.tools ?? {}).length) {
+      throw new UnsupportedFeatureError("Azure GPT-6 Astra tool calling requires Responses.");
+    }
+  }
+  const required = hasResponsesOnlyTools(input.tools);
+  if (options.apiMode === "chat" && required) {
+    throw new UnsupportedFeatureError("Responses-only tools cannot use Azure Chat Completions.");
+  }
+  return options.apiMode === "responses" || required || (isAzureAstraModel(modelId) && options.apiMode !== "chat");
+};
+
+const azureResponsesBodyOptions = (input: ModelGenerateInput) => {
+  const { reasoning_effort: _effort, max_completion_tokens: _max, ...body } = azureBodyOptions(input);
+  return body;
+};
+
+const mapAzureResponsesReasoning = (input: ModelGenerateInput) => {
+  if (input.reasoning?.budgetTokens !== undefined) {
+    throw new UnsupportedFeatureError('Provider "azure-openai" does not support "reasoning.budgetTokens".');
+  }
+  const options = input.providerOptions ?? {};
+  const effort = input.reasoning?.effort ?? options.reasoning_effort;
+  return effort === undefined ? {} : { reasoning: { ...(options.reasoning as Record<string, unknown> | undefined), effort } };
 };
 
 const getProviderResponseId = (messages: ModelMessage[]) => {
@@ -1802,7 +1845,7 @@ export const createAzureOpenAI = (
         async generate(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<GenerateResult> {
           const { signal, cleanup } = withTimeoutSignal(input);
           try {
-            if (hasResponsesOnlyTools(input.tools)) {
+            if (useAzureResponses(modelId, input)) {
               assertResponsesToolsSupported(modelId, input.tools);
               const previousResponse = getProviderResponseId(input.messages);
               const messages =
@@ -1816,16 +1859,16 @@ export const createAzureOpenAI = (
                     headers: jsonHeaders(apiKey),
                     signal,
                     body: JSON.stringify({
-                      ...input.providerOptions,
+                      ...azureResponsesBodyOptions(input),
                       model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
                       ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
                       ...(messages.length ? { input: toResponsesInput(messages) } : {}),
                       tools: mapResponsesTools(input.tools),
-                      tool_choice: mapToolChoice(input.toolChoice),
+                      tool_choice: typeof input.toolChoice === "object" ? { type: "function", name: input.toolChoice.toolName } : mapToolChoice(input.toolChoice),
                       text: mapResponsesStructuredOutput(input),
                       temperature: input.temperature,
                       max_output_tokens: input.maxTokens,
-                      ...mapReasoning(input)
+                      ...mapAzureResponsesReasoning(input)
                     })
                   }),
                 input
@@ -1856,7 +1899,7 @@ export const createAzureOpenAI = (
                   headers: jsonHeaders(apiKey),
                   signal,
                   body: JSON.stringify({
-                    ...input.providerOptions,
+                    ...azureBodyOptions(input),
                     model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
                     messages: mapMessages(input.messages),
                     tools: mapTools(input.tools),
@@ -1894,7 +1937,7 @@ export const createAzureOpenAI = (
         }
 
         async stream(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
-          if (hasResponsesOnlyTools(input.tools)) {
+          if (useAzureResponses(modelId, input)) {
             assertResponsesToolsSupported(modelId, input.tools);
             const { signal, cleanup } = withTimeoutSignal(input);
             const response = await withRetry(
@@ -1904,15 +1947,15 @@ export const createAzureOpenAI = (
                   headers: jsonHeaders(apiKey),
                   signal,
                   body: JSON.stringify({
-                    ...input.providerOptions,
+                    ...azureResponsesBodyOptions(input),
                     model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
                     input: toResponsesInput(input.messages),
                     tools: mapResponsesTools(input.tools),
-                    tool_choice: mapToolChoice(input.toolChoice),
+                    tool_choice: typeof input.toolChoice === "object" ? { type: "function", name: input.toolChoice.toolName } : mapToolChoice(input.toolChoice),
                     text: mapResponsesStructuredOutput(input),
                     temperature: input.temperature,
                     max_output_tokens: input.maxTokens,
-                    ...mapReasoning(input),
+                    ...mapAzureResponsesReasoning(input),
                     stream: true
                   })
                 }),
@@ -1936,7 +1979,7 @@ export const createAzureOpenAI = (
                 headers: jsonHeaders(apiKey),
                 signal,
                 body: JSON.stringify({
-                  ...input.providerOptions,
+                  ...azureBodyOptions(input),
                   model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
                   messages: mapMessages(input.messages),
                   tools: mapTools(input.tools),

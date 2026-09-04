@@ -2,11 +2,31 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const openaiCatalogFragment = defineModelCatalogFragment({
   provider: "openai",
-  revision: "2026-08-16",
-  verifiedAt: "2026-08-16",
+  revision: "2026-09-04",
+  verifiedAt: "2026-09-04",
   pricingEffectiveAt: "2026-08-16",
-  sources: ["catalog-release:2026-08-16"],
+  sources: [
+    "https://developers.openai.com/api/docs/models/gpt-6-astra","catalog-release:2026-08-16"],
   entries: [
+    {
+      "provider": "openai",
+      "modelId": "gpt-6-astra",
+      "inputCostPer1kTokens": 0.01,
+      "cachedInputCostPer1kTokens": 0.001,
+      "cacheWriteCostPer1kTokens": 0.0125,
+      "outputCostPer1kTokens": 0.05,
+      "longContextPricing": {
+        "inputTokenThreshold": 272000,
+        "inputMultiplier": 2,
+        "outputMultiplier": 1.5
+      },
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
     {
       "provider": "openai",
       "modelId": "gpt-5.6-sol",
@@ -54,7 +74,7 @@ export const openaiCatalogFragment = defineModelCatalogFragment({
       "provider": "openai",
       "modelId": "gpt-5.6-luna",
       "inputCostPer1kTokens": 0.0002,
-      "cachedInputCostPer1kTokens": 0.00002,
+      "cachedInputCostPer1kTokens": 2e-05,
       "cacheWriteCostPer1kTokens": 0.00025,
       "outputCostPer1kTokens": 0.0012,
       "costPer1kTokens": 0.0002,

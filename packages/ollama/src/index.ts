@@ -137,7 +137,7 @@ const isMuseGlimmerModel = (modelId: string) =>
   /(?:^|[/:-])muse-glimmer(?=$|[/:-])/i.test(modelId);
 
 const isKnownThinkingModel = (modelId: string) =>
-  /(?:^|[/:-])(?:qwen3(?:\.5)?|gpt-oss|deepseek-(?:r1|v3\.1)|gemma4|muse-glimmer)(?=$|[/:-])/i.test(
+  /(?:^|[/:-])(?:qwen3(?:\.[58])?|gpt-oss|deepseek-(?:r1|v3\.1)|gemma4|muse-glimmer)(?=$|[/:-])/i.test(
     modelId
   );
 

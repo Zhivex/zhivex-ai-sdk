@@ -2,10 +2,11 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const kimiCatalogFragment = defineModelCatalogFragment({
   provider: "kimi",
-  revision: "2026-08-16",
-  verifiedAt: "2026-08-16",
+  revision: "2026-09-04",
+  verifiedAt: "2026-09-04",
   pricingEffectiveAt: "2026-08-16",
-  sources: ["catalog-release:2026-08-16"],
+  sources: [
+    "https://platform.kimi.ai/docs/models","catalog-release:2026-08-16"],
   entries: [
     {
       "provider": "kimi",
@@ -49,21 +50,12 @@ export const kimiCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "kimi",
       "modelId": "kimi-k2.5",
-      "costPer1kTokens": 0.002,
-      "recommendedFor": [
-        "chat",
-        "reasoning",
-        "tools",
-        "vision"
-      ]
+      "costPer1kTokens": 0.002
     },
     {
       "provider": "kimi",
       "modelId": "kimi-k2-0905-preview",
-      "costPer1kTokens": 0.002,
-      "recommendedFor": [
-        "tools"
-      ]
+      "costPer1kTokens": 0.002
     }
   ]
 });

@@ -71,3 +71,9 @@ Repository and full documentation:
 - <https://dev.meta.ai/docs/protocols/responses>
 - <https://dev.meta.ai/docs/video-understanding>
 - <https://dev.meta.ai/docs/computer-use>
+
+## Muse Spark 1.3
+
+The SDK catalog includes `muse-spark-1.3`. Pass that exact ID to `languageModel()` to use the existing Chat or Responses adapter, including structured output, tools, streaming, and reasoning. Meta's current announcement confirms `max` reasoning availability. Pricing is omitted until independently verified; no 1.2 price is inherited. Existing 1.2 integrations and smoke defaults remain available.
+
+See [Meta's release announcement](https://research.meta.ai/blog/introducing-muse-spark-1-3).

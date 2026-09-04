@@ -133,3 +133,11 @@ Official references:
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+## Claude Fable 5.1 and Mythos 5.1
+
+`claude-fable-5-1` and `claude-mythos-5-1` use the existing adaptive-thinking, structured-output, and streaming mappings. Forced tools (`required` or a named tool, including raw `tool_choice`) are rejected before fetch. Use automatic tool choice or disable tools with `none`. Mythos 5.1 is invitation-only and is not included in catalog recommendations.
+
+`providerOptions.thinking.display: "updates"` automatically adds `thinking-display-updates-2026-08-18`. The optional `thinking.block_binding.prefix_mismatch_behavior` accepts `error` or `drop_block` and adds `thinking-binding-controls-2026-08-01`. Keep conversations append-only when preserving thinking: changing earlier messages, system instructions, or tools can invalidate later blocks. The SDK never silently drops or rewrites those blocks; opt into upstream `drop_block` explicitly when needed and inspect the raw response for input transformations.
+
+See [Anthropic's migration contract](https://platform.claude.com/docs/en/models/fable-5-1/whats-new-fable-5-1). Per-message effort and turn-scoped system-message metadata are not yet exposed as dedicated shared helpers.

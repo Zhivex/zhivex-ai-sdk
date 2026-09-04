@@ -2,11 +2,22 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const metaCatalogFragment = defineModelCatalogFragment({
   provider: "meta",
-  revision: "2026-08-16",
-  verifiedAt: "2026-08-16",
+  revision: "2026-09-04",
+  verifiedAt: "2026-09-04",
   pricingEffectiveAt: "2026-08-16",
-  sources: ["catalog-release:2026-08-16"],
+  sources: [
+    "https://research.meta.ai/blog/introducing-muse-spark-1-3","catalog-release:2026-08-16"],
   entries: [
+    {
+      "provider": "meta",
+      "modelId": "muse-spark-1.3",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
     {
       "provider": "meta",
       "modelId": "muse-spark-1.2",
