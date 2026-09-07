@@ -108,3 +108,44 @@ describeIntegration("vertex adapter integration", () => {
     expect(result.embeddings[0]?.length ?? 0).toBeGreaterThan(0);
   });
 });
+
+// Opt in independently of Gemini: a passing Google route does not certify Claude.
+const claudeModelId = process.env.VERTEX_CLAUDE_INTEGRATION_MODEL;
+const hasClaudeConfig = Boolean(claudeModelId && (projectId || baseURL));
+const describeClaude = hasClaudeConfig ? describe.sequential : describe.skip;
+describeClaude("Claude on Vertex integration", () => {
+  const model = () => createVertex({
+    accessToken: usableAccessToken,
+    projectId,
+    location: process.env.VERTEX_CLAUDE_LOCATION ?? location ?? "us-east5",
+    baseURL
+  })(claudeModelId!);
+
+  it("generates text through the Anthropic publisher", async () => {
+    const result = await generateText({ model: model(), prompt: "Reply with exactly: vertex-claude-ok", maxTokens: 128, maxRetries: 0 });
+    expect(result.text.toLowerCase()).toContain("vertex-claude-ok");
+  });
+
+  it("streams through the Anthropic publisher", async () => {
+    const result = streamText({ model: model(), prompt: "Reply with exactly: vertex-claude-stream-ok", maxTokens: 128, maxRetries: 0 });
+    const chunks: string[] = [];
+    for await (const chunk of result.textStream) chunks.push(chunk);
+    expect(chunks.join("").toLowerCase()).toContain("vertex-claude-stream-ok");
+    expect((await result.collect()).finishReason).toBeDefined();
+  });
+
+  it("executes a client tool with the Claude message contract", async () => {
+    const result = await generateText({
+      model: model(), prompt: "Call sum with a=2 and b=3. Then answer with the result.",
+      maxTokens: 256, maxSteps: 2, maxRetries: 0,
+      tools: { sum: tool({ name: "sum", schema: z.object({ a: z.number(), b: z.number() }), execute: ({ a, b }) => ({ total: a + b }) }) }
+    });
+    expect(result.toolResults[0]?.toolName).toBe("sum");
+    expect(result.text).toContain("5");
+  });
+
+  it("produces native structured output when the organization policy permits it", async () => {
+    const result = await generateObject({ model: model(), prompt: "Return ok=true.", schema: z.object({ ok: z.boolean() }), mode: "native", maxTokens: 128, maxRetries: 0 });
+    expect(result.object).toEqual({ ok: true });
+  });
+});

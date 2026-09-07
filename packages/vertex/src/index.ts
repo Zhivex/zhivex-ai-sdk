@@ -1,3 +1,4 @@
+import { createVertexClaudeModel } from "./anthropic.js";
 import { GoogleAuth } from "google-auth-library";
 import { toJSONSchema } from "zod";
 import {
@@ -1468,11 +1469,24 @@ class VertexBatchesClient implements BatchesClient {
   }
 }
 
+const vertexPublisherResource = (modelId: string): string => {
+  if (modelId.startsWith("publishers/")) {
+    const segments = modelId.split("/");
+    if (segments.length !== 4 || segments[2] !== "models") {
+      throw new ConfigurationError("Vertex publisher model must use publishers/<publisher>/models/<modelId>.");
+    }
+    return `publishers/${encodeVertexPathSegment(segments[1], "Vertex publisher")}/models/${encodeVertexPathSegment(segments[3], "Vertex model ID")}`;
+  }
+  return `publishers/google/models/${encodeVertexPathSegment(modelId, "Vertex model ID")}`;
+};
+
 class VertexPredictionModel implements PredictionModel {
   readonly provider = "vertex";
   readonly capabilities: ModelCapabilities = {
-    ...capabilities,
-    rawPrediction: true
+    streaming: false, tools: false, structuredOutput: false, jsonMode: false,
+    toolChoice: false, parallelToolCalls: false, vision: false, files: false,
+    audioInput: false, audioOutput: false, embeddings: false, reasoning: false,
+    webSearch: false, rawPrediction: true
   };
 
   constructor(
@@ -1489,7 +1503,7 @@ class VertexPredictionModel implements PredictionModel {
   }
 
   private url(action: string) {
-    return `${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:${action}`;
+    return `${this.baseURL}/${vertexPublisherResource(this.modelId)}:${encodeVertexPathSegment(action, "Vertex prediction action")}`;
   }
 
   private body(input: PredictionModelInput) {
@@ -1508,6 +1522,7 @@ class VertexPredictionModel implements PredictionModel {
         () =>
           this.fetcher(this.url(action), {
             method: "POST",
+            redirect: "error",
             headers: this.headers(),
             signal,
             body: JSON.stringify(this.body(input))
@@ -1527,6 +1542,7 @@ class VertexPredictionModel implements PredictionModel {
         () =>
           this.fetcher(this.url("rawPredict"), {
             method: "POST",
+            redirect: "error",
             headers: this.headers(),
             signal,
             body: JSON.stringify(this.body(input))
@@ -1546,6 +1562,7 @@ class VertexPredictionModel implements PredictionModel {
         () =>
           this.fetcher(this.url("invoke"), {
             method: "POST",
+            redirect: "error",
             headers: this.headers(),
             signal,
             body: JSON.stringify(this.body(input))
@@ -1565,6 +1582,7 @@ class VertexPredictionModel implements PredictionModel {
         () =>
           this.fetcher(this.url("predictLongRunning"), {
             method: "POST",
+            redirect: "error",
             headers: this.headers(),
             signal,
             body: JSON.stringify(this.body(input))
@@ -1584,6 +1602,7 @@ class VertexPredictionModel implements PredictionModel {
         () =>
           this.fetcher(this.url("fetchPredictOperation"), {
             method: "POST",
+            redirect: "error",
             headers: this.headers(),
             signal,
             body: JSON.stringify({
@@ -2573,6 +2592,9 @@ export const createVertex = (
   const rawFetch = options.fetch ?? globalThis.fetch;
   const fetcher = createVertexAuthenticatedFetch(rawFetch, auth);
   const assertModelLocation = (modelId: string) => {
+    if (modelId.startsWith("claude-")) {
+      throw new UnsupportedFeatureError("Claude on Vertex is available through languageModel(); this Google-specific surface is not supported.");
+    }
     if (options.baseURL || auth.type !== "bearer") {
       return;
     }
@@ -2589,11 +2611,25 @@ export const createVertex = (
       );
     }
   };
+  const googleModelId = (modelId: string) => {
+    assertModelLocation(modelId);
+    return modelId;
+  };
   const languageModel = (modelId: string) => {
+    if (modelId.startsWith("claude-")) {
+      const encodedId = encodeVertexPathSegment(modelId, "Vertex Claude model ID");
+      if (auth.type !== "bearer") {
+        throw new ConfigurationError("Claude on Vertex requires Google Cloud bearer credentials (ADC, authClient, getAccessToken, or accessToken), not an API key.");
+      }
+      return createVertexClaudeModel(modelId, `${baseURL}/publishers/anthropic/models/${encodedId}`, fetcher);
+    }
     assertModelLocation(modelId);
     return new VertexLanguageModel(modelId, baseURL, "", fetcher);
   };
   const groundedLanguageModel = (modelId: string) => {
+    if (modelId.startsWith("claude-")) {
+      throw new UnsupportedFeatureError("Claude on Vertex does not support Google grounded generation; use languageModel().");
+    }
     assertModelLocation(modelId);
     return new VertexGroundedLanguageModel(modelId, baseURL, "", fetcher);
   };
@@ -2601,16 +2637,16 @@ export const createVertex = (
   return createProviderAdapter({
     name: "vertex",
     languageModel,
-    embeddingModel: (modelId) => new VertexEmbeddingModel(modelId, baseURL, "", fetcher),
-    transcriptionModel: (modelId) => new VertexTranscriptionModel(modelId, baseURL, "", fetcher),
-    speechModel: (modelId) => new VertexSpeechModel(modelId, baseURL, "", fetcher),
-    imageGenerationModel: (modelId) => new VertexImageGenerationModel(modelId, baseURL, "", fetcher),
+    embeddingModel: (modelId) => new VertexEmbeddingModel(googleModelId(modelId), baseURL, "", fetcher),
+    transcriptionModel: (modelId) => new VertexTranscriptionModel(googleModelId(modelId), baseURL, "", fetcher),
+    speechModel: (modelId) => new VertexSpeechModel(googleModelId(modelId), baseURL, "", fetcher),
+    imageGenerationModel: (modelId) => new VertexImageGenerationModel(googleModelId(modelId), baseURL, "", fetcher),
     videoGenerationModel: (modelId) =>
-      new VertexVideoGenerationModel(modelId, isVeoModel(modelId) ? veoBaseURL : baseURL, "", fetcher),
-    musicGenerationModel: (modelId) => new VertexMusicGenerationModel(modelId, baseURL, "", fetcher),
+      new VertexVideoGenerationModel(googleModelId(modelId), isVeoModel(modelId) ? veoBaseURL : baseURL, "", fetcher),
+    musicGenerationModel: (modelId) => new VertexMusicGenerationModel(googleModelId(modelId), baseURL, "", fetcher),
     realtimeModel: (modelId) =>
       new VertexRealtimeModel(
-        modelId,
+        googleModelId(modelId),
         auth,
         location,
         apiVersion,
@@ -2628,7 +2664,16 @@ export const createVertex = (
     groundedLanguageModel,
     caches: new VertexContextCachesClient(baseURL, "", fetcher, assertModelLocation),
     batches: new VertexBatchesClient(baseURL, "", fetcher, assertModelLocation),
-    predictionModel: (modelId) => new VertexPredictionModel(modelId, baseURL, "", fetcher),
+    predictionModel: (modelId) => {
+      const resource = vertexPublisherResource(modelId);
+      if (modelId.startsWith("claude-")) {
+        throw new ConfigurationError('Use vertex(claudeModelId) or predictionModel("publishers/anthropic/models/<modelId>") for Claude.');
+      }
+      if (!resource.startsWith("publishers/google/") && auth.type !== "bearer") {
+        throw new ConfigurationError("Vertex partner publisher predictions require Google Cloud bearer credentials.");
+      }
+      return new VertexPredictionModel(modelId, baseURL, "", fetcher);
+    },
     rawFetch
   });
 };

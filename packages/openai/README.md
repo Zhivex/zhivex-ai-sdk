@@ -336,3 +336,15 @@ Repository and full documentation:
 `openai("gpt-6-astra")` uses Responses by default, including callable tools and native structured output. The existing Computer Use, Tool Search, shell/apply-patch, Programmatic Tool Calling, multi-agent, persisted reasoning, and prompt-cache mappings also recognize Astra and dated Astra snapshots. Reasoning accepts `low`, `medium`, `high`, `xhigh`, and `max`; `none` and `minimal` are rejected. Explicit Chat mode remains available for text but rejects tool calling. Unsupported sampling and logprob controls fail locally.
 
 See [OpenAI's current model guide](https://developers.openai.com/api/docs/guides/latest-model). Async tool execution and mid-turn steering are separate upstream protocols and are not exposed by this HTTP adapter.
+
+
+## Gateway tool history
+
+The language adapter advertises `capabilities.toolHistory: "json"` for compatible
+models. Chat Completions and Responses preserve multiple results in a tool message.
+When the low-level model input sets `toolResultFormat: "envelope"`, callable tool
+outputs use JSON `{ "output": value }` or `{ "error": { "message": "..." } }`,
+so error state survives the string-only tool output protocol. Direct SDK calls
+retain their existing raw output format by default. See the
+[gateway history contract](../gateway/README.md#continuing-canonical-tool-history)
+for routing, exclusions and the isolated-consumer verification command.

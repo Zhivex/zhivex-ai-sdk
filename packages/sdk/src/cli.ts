@@ -401,7 +401,7 @@ const providerTemplates = {
     packageVersion: "0.9.3",
     factoryName: "createOpenAI",
     envName: "OPENAI_API_KEY",
-    defaultModel: "gpt-5"
+    defaultModel: "gpt-6-astra"
   },
   xai: {
     packageName: "@zhivex-ai/xai",

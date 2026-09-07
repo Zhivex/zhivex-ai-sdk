@@ -314,7 +314,7 @@ const starterSources = new Map(
 const canonicalSdkInstall = "bun add @zhivex-ai/sdk @zhivex-ai/openai";
 const canonicalReactInstall =
   "bun add @zhivex-ai/react @zhivex-ai/sdk @zhivex-ai/openai react react-dom";
-const canonicalModel = "gpt-4o-mini";
+const canonicalModel = "gpt-6-astra";
 const canonicalEndpoint = "/api/chat/stream";
 
 for (const [label, content] of [

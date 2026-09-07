@@ -42,7 +42,7 @@ if (!apiKey) {
 const openai = createOpenAI({ apiKey });
 const startedAt = performance.now();
 const result = await generateText({
-  model: openai("gpt-4o-mini"),
+  model: openai("gpt-6-astra"),
   prompt: "Reply with one short sentence confirming that Zhivex AI SDK is connected.",
   maxTokens: 64,
   timeoutMs: 30_000
@@ -76,7 +76,7 @@ const apiKey = process.env.OPENAI_API_KEY;
 if (!apiKey) throw new Error("Set OPENAI_API_KEY in .env.");
 
 const agent = new Agent({
-  model: createOpenAI({ apiKey })("gpt-4o-mini"),
+  model: createOpenAI({ apiKey })("gpt-6-astra"),
   instructions: "You are a concise product assistant.",
   maxSteps: 4,
   maxTokens: 512,

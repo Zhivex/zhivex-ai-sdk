@@ -27,6 +27,7 @@ import {
 import type { ZodTypeAny } from "zod";
 
 import { createRouteDecision, gatewayMessagesToModelMessages } from "./compat.js";
+import { hasToolHistory, validateGatewayMessages } from "./history.js";
 import {
   GatewayError,
   type GatewayAgentRequest,
@@ -57,6 +58,7 @@ export type {
   GatewayConfig,
   GatewayGenerateObjectRequest,
   GatewayImageAttachment,
+  GatewayInputMessage,
   GatewayMessage,
   GatewayModelTarget,
   GatewayObjectResponse,
@@ -113,6 +115,7 @@ type ErrorDisposition = {
 };
 
 type RouteContext = {
+  toolHistory: boolean;
   attempts: GatewayAttempt[];
   candidates: RouteCandidate[];
   routeDecision: GatewayResponse["routeDecision"];
@@ -280,6 +283,7 @@ const validateTarget = (target: GatewayModelTarget, label: string) => {
 };
 
 const validateRouteRequest = (config: GatewayConfig, request: RouteRequest) => {
+  if (request.messages !== undefined) validateGatewayMessages(request.messages);
   const fallbacks = request.fallbacks ?? [];
   const maxFallbacks = getMaxFallbacks(config);
   if (fallbacks.length > maxFallbacks) {
@@ -730,10 +734,76 @@ const normalizeUsage = (
 };
 
 const getInputText = (request: GatewayRequest) =>
-  `${request.systemPrompt ?? ""}\n${request.messages.map((message) => message.content).join("\n")}`.trim();
+  `${request.systemPrompt ?? ""}\n${request.messages.map((message) => "parts" in message ? JSON.stringify(message.parts) : message.content).join("\n")}`.trim();
 
 const requestHasImages = (request: { messages?: GatewayRequest["messages"] }) =>
-  request.messages?.some((message) => (message.images?.length ?? 0) > 0) ?? false;
+  request.messages?.some((message) => "parts" in message ? message.parts.some((part) => part.type === "image") : (message.images?.length ?? 0) > 0) ?? false;
+
+const requestHasToolHistory = (request: Pick<RouteRequest, "messages">) =>
+  request.messages?.some((message) => "parts" in message && hasToolHistory([message])) ?? false;
+
+// Native Anthropic support predates the optional capability. New adapters opt in explicitly.
+const historyTransport = (model: LanguageModel) =>
+  model.capabilities.toolHistory ?? (model.provider === "anthropic" ? "native" : undefined);
+
+const historySkipReason = (model: LanguageModel, history: boolean) =>
+  history && (!historyTransport(model) || !model.capabilities.tools)
+    ? "Skipped because model does not support the gateway tool history contract."
+    : undefined;
+
+const historyInputSkipReason = (model: LanguageModel, input: ModelGenerateInput) => {
+  if (!hasToolHistory(input.messages)) return undefined;
+  if (historyTransport(model) === "json" && input.messages.some((message) => {
+    let seenCall = false;
+    return message.parts.some((part) => {
+      if (part.type === "tool-call") seenCall = true;
+      return seenCall && part.type === "text";
+    });
+  })) return "Skipped because the destination cannot preserve text interleaved after tool calls.";
+  if (model.provider !== "deepseek" && model.provider !== "qwen") return undefined;
+  const options = input.providerOptions ?? {};
+  const thinking = options.thinking as { type?: string } | undefined;
+  if ((input.reasoning && (input.reasoning.effort !== "none" || input.reasoning.includeThoughts)) ||
+      thinking?.type === "enabled" || options.enable_thinking === true ||
+      (options.reasoning_effort !== undefined && options.reasoning_effort !== "none") ||
+      options.thinking_budget !== undefined) {
+    return "Skipped because portable tool history cannot replay provider-specific thinking state.";
+  }
+  return undefined;
+};
+
+const prepareHistoryInput = (model: LanguageModel, input: ModelGenerateInput, enabled: boolean): ModelGenerateInput => {
+  if (!enabled) return input;
+  const providerOptions = { ...(input.providerOptions ?? {}) };
+  // Portable replay contains no private reasoning state. Default these hybrid models to non-thinking.
+  if (model.provider === "deepseek") providerOptions.thinking = { type: "disabled" };
+  if (model.provider === "qwen") providerOptions.enable_thinking = false;
+  return {
+    ...input,
+    messages: structuredClone(input.messages),
+    toolResultFormat: historyTransport(model) === "json" ? "envelope" : input.toolResultFormat,
+    providerOptions
+  };
+};
+
+const historySignals = new WeakMap<AbortSignal, AbortSignal>();
+const historyAbortSignal = (signal?: AbortSignal): AbortSignal | undefined => {
+  if (!signal) return undefined;
+  const existing = historySignals.get(signal);
+  if (existing) return existing;
+  const controller = new AbortController();
+  const abort = () => controller.abort(new DOMException("Gateway request aborted.", "AbortError"));
+  if (signal.aborted) abort();
+  else signal.addEventListener("abort", abort, { once: true });
+  historySignals.set(signal, controller.signal);
+  return controller.signal;
+};
+
+const assertLegacyAgentMessages = (request: GatewayAgentRequest) => {
+  if (request.messages?.some((message) => "parts" in message)) {
+    throw new GatewayError("Canonical gateway history is not supported by agent operations.", false);
+  }
+};
 
 const buildRequiredCapabilities = (
   request: Pick<GatewayRequest, "requiredCapabilities" | "tools" | "toolChoice" | "reasoning"> & {
@@ -742,7 +812,7 @@ const buildRequiredCapabilities = (
   extra: NonNullable<GatewayRequest["requiredCapabilities"]> = {}
 ): RouteRequiredCapabilities => ({
   ...(request.requiredCapabilities ?? {}),
-  ...(request.tools ? { tools: true } : {}),
+  ...(request.tools || requestHasToolHistory(request) ? { tools: true } : {}),
   ...(request.toolChoice ? { toolChoice: true } : {}),
   ...(request.reasoning ? { reasoning: true } : {}),
   ...(requestHasImages(request) ? { vision: true } : {}),
@@ -768,7 +838,7 @@ const objectCapabilitySkipReason = <TSchema extends ZodTypeAny>(
 };
 
 const modelInputSkipReason = (model: LanguageModel, input: ModelGenerateInput): string | undefined => {
-  if (input.tools && !model.capabilities.tools) {
+  if ((input.tools || hasToolHistory(input.messages)) && !model.capabilities.tools) {
     return "Skipped because model does not support tools.";
   }
   if (input.reasoning && !model.capabilities.reasoning) {
@@ -797,7 +867,7 @@ const createTextOptions = (model: LanguageModel, request: GatewayRequest): Gener
   maxTokens: request.maxTokens,
   reasoning: request.reasoning,
   providerOptions: request.providerOptions,
-  abortSignal: request.abortSignal
+  abortSignal: requestHasToolHistory(request) ? historyAbortSignal(request.abortSignal) : request.abortSignal
 });
 
 const enrichTextResult = (
@@ -943,7 +1013,7 @@ export const createGateway = (config: GatewayConfig) => {
         queueAttempt(
           createAttempt(target, false, 0, targetRank, {
             reasonCode: "operation-skip",
-            errorMessage: error instanceof Error ? error.message : "Provider model construction failed."
+            errorMessage: !requestHasToolHistory(request) && error instanceof Error ? error.message : "Provider model construction failed."
           })
         );
         continue;
@@ -956,6 +1026,15 @@ export const createGateway = (config: GatewayConfig) => {
             errorMessage: "Skipped because model capabilities do not satisfy the request."
           })
         );
+        continue;
+      }
+
+      const historyReason = historySkipReason(model, requestHasToolHistory(request));
+      if (historyReason) {
+        queueAttempt(createAttempt(target, false, 0, targetRank, {
+          reasonCode: "model-capabilities",
+          errorMessage: historyReason
+        }));
         continue;
       }
 
@@ -992,6 +1071,7 @@ export const createGateway = (config: GatewayConfig) => {
     }
 
     const context: RouteContext = {
+      toolHistory: requestHasToolHistory(request),
       attempts,
       candidates,
       routeDecision,
@@ -1024,6 +1104,16 @@ export const createGateway = (config: GatewayConfig) => {
     const first = context.candidates[0]!;
     const maxTotalAttempts = getMaxTotalAttempts(config);
     let totalProviderAttempts = 0;
+    const dispositionFor = (error: unknown): ErrorDisposition => {
+      const disposition = normalizeError(error);
+      if (context.toolHistory) {
+        disposition.error = new GatewayError(
+          "Gateway provider failed while continuing tool history.",
+          disposition.error.retryable
+        );
+      }
+      return disposition;
+    };
 
     const reserveProviderAttempt = () => {
       if (totalProviderAttempts >= maxTotalAttempts) {
@@ -1059,7 +1149,8 @@ export const createGateway = (config: GatewayConfig) => {
       const maxRetries = getMaxRetries(config);
 
       for (const candidate of candidates) {
-        const inputSkipReason = modelInputSkipReason(candidate.model, input);
+        const inputSkipReason = modelInputSkipReason(candidate.model, input) ??
+          (context.toolHistory ? historyInputSkipReason(candidate.model, input) : undefined);
         if (inputSkipReason) {
           await recordInputSkip(candidate, inputSkipReason);
           continue;
@@ -1076,7 +1167,7 @@ export const createGateway = (config: GatewayConfig) => {
           try {
             const result = await control.waitFor(
               candidate.model.generate({
-                ...input,
+                ...prepareHistoryInput(candidate.model, input, context.toolHistory),
                 abortSignal: control.signal
               })
             );
@@ -1107,7 +1198,7 @@ export const createGateway = (config: GatewayConfig) => {
               throw abortReason(input.abortSignal!);
             }
 
-            const disposition = normalizeError(error);
+            const disposition = dispositionFor(error);
             await context.recordAttempt(
               createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                 retry,
@@ -1139,7 +1230,8 @@ export const createGateway = (config: GatewayConfig) => {
       const maxRetries = getMaxRetries(config);
 
       for (const candidate of candidates) {
-        const inputSkipReason = modelInputSkipReason(candidate.model, input);
+        const inputSkipReason = modelInputSkipReason(candidate.model, input) ??
+          (context.toolHistory ? historyInputSkipReason(candidate.model, input) : undefined);
         if (inputSkipReason) {
           await recordInputSkip(candidate, inputSkipReason);
           continue;
@@ -1161,7 +1253,7 @@ export const createGateway = (config: GatewayConfig) => {
           try {
             const providerStream = await control.waitFor(
               candidate.model.stream({
-                ...input,
+                ...prepareHistoryInput(candidate.model, input, context.toolHistory),
                 abortSignal: control.signal
               })
             );
@@ -1216,15 +1308,33 @@ export const createGateway = (config: GatewayConfig) => {
                     completed = true;
                     return;
                   }
+                  if (context.toolHistory && next.value.type === "error") throw next.value.error;
                   yield next.value;
                 }
+              } catch (error) {
+                if (context.toolHistory) {
+                  const aborted = input.abortSignal?.aborted === true;
+                  const failure = aborted ? abortReason(input.abortSignal!) : dispositionFor(error).error;
+                  await context.recordAttempt(createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
+                    retry,
+                    reasonCode: aborted ? "request-aborted" : "provider-error",
+                    errorMessage: failure.message
+                  }));
+                  throw failure;
+                }
+                throw error;
               } finally {
                 if (!completed) {
                   control.abort(new DOMException("Gateway stream consumer closed.", "AbortError"));
                 }
                 control.dispose();
                 if (iterator?.return) {
-                  await iterator.return();
+                  try {
+                    await iterator.return();
+                  } catch (error) {
+                    if (context.toolHistory) throw dispositionFor(error).error;
+                    throw error;
+                  }
                 }
               }
             })();
@@ -1248,7 +1358,7 @@ export const createGateway = (config: GatewayConfig) => {
               throw abortReason(input.abortSignal!);
             }
 
-            const disposition = normalizeError(error);
+            const disposition = dispositionFor(error);
             await context.recordAttempt(
               createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                 retry,
@@ -1411,6 +1521,7 @@ export const createGateway = (config: GatewayConfig) => {
     },
 
     async runAgent(request: GatewayAgentRequest): Promise<GatewayAgentResponse> {
+      assertLegacyAgentMessages(request);
       const route = createStandardRoute(request, {
         defaultIntent: "tool-heavy",
         getSkipReason: (model) =>
@@ -1462,6 +1573,7 @@ export const createGateway = (config: GatewayConfig) => {
     },
 
     streamAgent(request: GatewayAgentRequest): GatewayAgentStreamResult {
+      assertLegacyAgentMessages(request);
       const route = createStandardRoute(request, {
         defaultIntent: "tool-heavy",
         extraRequiredCapabilities: { streaming: true },

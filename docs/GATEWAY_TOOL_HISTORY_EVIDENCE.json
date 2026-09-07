@@ -1,0 +1,464 @@
+{
+  "date": "2026-09-07",
+  "artifactKind": "unpublished candidates; manifest versions do not identify registry releases",
+  "artifacts": [
+    {
+      "name": "@zhivex-ai/core",
+      "version": "1.11.0",
+      "sha512": "7af190c7fd329a9c84c8b96d42a20ecf8f28e67285c7be03f761d5d17bf40fa7ba2053296751bd9e5674971f7ae8b55cab018921b34c07c0b1907cab77f12610"
+    },
+    {
+      "name": "@zhivex-ai/sdk",
+      "version": "1.14.0",
+      "sha512": "232e2f2bb3b84125a29a832c77a63f60f9ee2ef6b492b71601c9d3f34217f6dcdbf5819ebece6ce4dfa6ad613c806277ce8e7df2ccc8a1e438653cc00dc1b63a"
+    },
+    {
+      "name": "@zhivex-ai/gateway",
+      "version": "1.1.0",
+      "sha512": "923ef3c0037da146d6aaf47be7551375075a6c7aa166f8facf15636d89e930777d95d62bd539d05bbd893b61044141028608b51b4c6e8ce22df4ddb065c43ae0"
+    },
+    {
+      "name": "@zhivex-ai/openai",
+      "version": "0.11.0",
+      "sha512": "0bffaa5f467d176775d2fe6de63035b09043631ec6bfdcc011ef79a2309e2ae33170d2455c736e178437533089c3827132291383d1e6db9d07b37657539a66cc"
+    },
+    {
+      "name": "@zhivex-ai/deepseek",
+      "version": "0.5.0",
+      "sha512": "dfd3799be478178cfbe1b9fbf84fffc421eae12326653290cecd9a06392873033613c552f64c3f14c3b035ae5662eff93dd6b34c8ec31d7a9b8f9d753861915a"
+    },
+    {
+      "name": "@zhivex-ai/qwen",
+      "version": "0.11.2",
+      "sha512": "762317c87c582aa0d6b7f8728572232fb1021fbb078f7d48a12da799531740e8047b068a9b47e53e7b47680ef881c31e1cf29071415876939b7976d400a8cdaf"
+    }
+  ],
+  "gates": {
+    "tests": 1583,
+    "gatewayTests": 84,
+    "typecheck": "passed",
+    "build": "passed",
+    "docs": "passed"
+  },
+  "mock": {
+    "status": "passed",
+    "mode": "mock",
+    "providers": [
+      {
+        "provider": "anthropic",
+        "api": "messages",
+        "calls": 2,
+        "executions": 0,
+        "model": "claude-sonnet-4-6",
+        "generate": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      },
+      {
+        "provider": "openai",
+        "api": "chat",
+        "calls": 2,
+        "executions": 0,
+        "model": "gpt-4.1",
+        "generate": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      },
+      {
+        "provider": "openai",
+        "api": "responses",
+        "calls": 2,
+        "executions": 0,
+        "model": "gpt-4.1",
+        "generate": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      },
+      {
+        "provider": "deepseek",
+        "api": "chat",
+        "calls": 2,
+        "executions": 0,
+        "model": "deepseek-chat",
+        "generate": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      },
+      {
+        "provider": "qwen",
+        "api": "chat",
+        "calls": 2,
+        "executions": 0,
+        "model": "qwen-plus",
+        "generate": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      },
+      {
+        "provider": "qwen",
+        "api": "responses",
+        "calls": 2,
+        "executions": 0,
+        "model": "qwen-plus",
+        "generate": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 40,
+            "outputTokens": 5,
+            "totalTokens": 45,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      }
+    ]
+  },
+  "live": {
+    "passed": [
+      {
+        "provider": "openai",
+        "api": "chat",
+        "calls": 2,
+        "executions": 0,
+        "model": "gpt-4.1",
+        "generate": {
+          "usage": {
+            "inputTokens": 88,
+            "outputTokens": 10,
+            "totalTokens": 98,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 88,
+            "outputTokens": 10,
+            "totalTokens": 98,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      },
+      {
+        "provider": "openai",
+        "api": "responses",
+        "calls": 2,
+        "executions": 0,
+        "model": "gpt-4.1",
+        "generate": {
+          "usage": {
+            "inputTokens": 80,
+            "outputTokens": 18,
+            "totalTokens": 98,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 80,
+            "outputTokens": 17,
+            "totalTokens": 97,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      },
+      {
+        "provider": "deepseek",
+        "api": "chat",
+        "calls": 2,
+        "executions": 0,
+        "model": "deepseek-chat",
+        "generate": {
+          "usage": {
+            "inputTokens": 87,
+            "outputTokens": 19,
+            "totalTokens": 106,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 87,
+            "outputTokens": 11,
+            "totalTokens": 98,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      },
+      {
+        "provider": "anthropic",
+        "api": "messages",
+        "calls": 2,
+        "executions": 0,
+        "model": "claude-sonnet-4-6",
+        "generate": {
+          "usage": {
+            "inputTokens": 671,
+            "outputTokens": 22,
+            "totalTokens": 693,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 671,
+            "outputTokens": 22,
+            "totalTokens": 693,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      }
+    ],
+    "blocked": [
+      {
+        "provider": "qwen",
+        "model": "qwen-plus",
+        "api": "chat",
+        "operation": "generate",
+        "httpStatus": 403,
+        "calls": 1
+      }
+    ],
+    "anthropicCredentialRetest": {
+      "status": "passed",
+      "date": "2026-09-07",
+      "installedAnthropic": "0.9.0",
+      "sameCandidateHashes": true,
+      "supersedes": "Previous HTTP 401 with the preceding credential."
+    }
+  },
+  "published": false,
+  "remotePush": "blocked by prior automatic permission review; no new upload attempted",
+  "qwen38Retest": {
+    "date": "2026-09-07",
+    "status": "passed",
+    "endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "fix": "Consume terminal usage-only Chat SSE chunks before emitting finish.",
+    "artifacts": [
+      {
+        "name": "@zhivex-ai/core",
+        "version": "1.11.0",
+        "sha512": "7af190c7fd329a9c84c8b96d42a20ecf8f28e67285c7be03f761d5d17bf40fa7ba2053296751bd9e5674971f7ae8b55cab018921b34c07c0b1907cab77f12610"
+      },
+      {
+        "name": "@zhivex-ai/sdk",
+        "version": "1.14.0",
+        "sha512": "232e2f2bb3b84125a29a832c77a63f60f9ee2ef6b492b71601c9d3f34217f6dcdbf5819ebece6ce4dfa6ad613c806277ce8e7df2ccc8a1e438653cc00dc1b63a"
+      },
+      {
+        "name": "@zhivex-ai/gateway",
+        "version": "1.1.0",
+        "sha512": "923ef3c0037da146d6aaf47be7551375075a6c7aa166f8facf15636d89e930777d95d62bd539d05bbd893b61044141028608b51b4c6e8ce22df4ddb065c43ae0"
+      },
+      {
+        "name": "@zhivex-ai/openai",
+        "version": "0.11.0",
+        "sha512": "0bffaa5f467d176775d2fe6de63035b09043631ec6bfdcc011ef79a2309e2ae33170d2455c736e178437533089c3827132291383d1e6db9d07b37657539a66cc"
+      },
+      {
+        "name": "@zhivex-ai/deepseek",
+        "version": "0.5.0",
+        "sha512": "dfd3799be478178cfbe1b9fbf84fffc421eae12326653290cecd9a06392873033613c552f64c3f14c3b035ae5662eff93dd6b34c8ec31d7a9b8f9d753861915a"
+      },
+      {
+        "name": "@zhivex-ai/qwen",
+        "version": "0.11.2",
+        "sha512": "1e90efc58e8e489ed9ed29662d9f0f703f3419d092f579fe5663c57be8bbd8fa7a5c185782443268b561d2ccfb63390acbb11063fc0a91675a202ca5d4526440"
+      }
+    ],
+    "providers": [
+      {
+        "provider": "qwen",
+        "api": "chat",
+        "calls": 2,
+        "executions": 0,
+        "model": "qwen3.8-max",
+        "generate": {
+          "usage": {
+            "inputTokens": 86,
+            "outputTokens": 12,
+            "totalTokens": 98,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 86,
+            "outputTokens": 12,
+            "totalTokens": 98,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      },
+      {
+        "provider": "qwen",
+        "api": "chat",
+        "calls": 2,
+        "executions": 0,
+        "model": "qwen3.8-flash",
+        "generate": {
+          "usage": {
+            "inputTokens": 99,
+            "outputTokens": 11,
+            "totalTokens": 110,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 99,
+            "outputTokens": 11,
+            "totalTokens": 110,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      },
+      {
+        "provider": "qwen",
+        "api": "responses",
+        "calls": 2,
+        "executions": 0,
+        "model": "qwen3.8-max",
+        "generate": {
+          "usage": {
+            "inputTokens": 122,
+            "outputTokens": 12,
+            "totalTokens": 134,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 122,
+            "outputTokens": 12,
+            "totalTokens": 134,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      },
+      {
+        "provider": "qwen",
+        "api": "responses",
+        "calls": 2,
+        "executions": 0,
+        "model": "qwen3.8-flash",
+        "generate": {
+          "usage": {
+            "inputTokens": 131,
+            "outputTokens": 12,
+            "totalTokens": 143,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        },
+        "stream": {
+          "usage": {
+            "inputTokens": 131,
+            "outputTokens": 11,
+            "totalTokens": 142,
+            "estimated": false
+          },
+          "finishReason": "stop"
+        }
+      }
+    ],
+    "historicalQwenPlus403": "Not reproduced on qwen3.8-max or qwen3.8-flash; original cause remains unconfirmed.",
+    "published": false
+  }
+}

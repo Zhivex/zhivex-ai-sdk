@@ -33,7 +33,7 @@ describe("release workflow", () => {
   });
 
   it("tests packed packages through Node in CI and before publishing", () => {
-    expect(ciWorkflow).toContain("actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38");
+    expect(ciWorkflow).toContain("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020");
     expect(ciWorkflow).toContain("bun run scripts/package-consumer-smoke.ts");
     expect(workflow).toContain("bun run scripts/package-consumer-smoke.ts");
   });
@@ -80,8 +80,8 @@ describe("release workflow", () => {
     expect(workflow).toContain("shasum -a 512 -c .release/SHA512SUMS");
     expect(workflow).toContain('release-artifacts.ts publish --tag=latest --git-head="$GITHUB_SHA"');
     expect(workflow).toContain('release-artifacts.ts publish --tag=next --git-head="$GITHUB_SHA"');
-    expect(workflow).toContain("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02");
-    expect(workflow).toContain("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093");
+    expect(workflow).toContain("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+    expect(workflow).toContain("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c");
   });
 
   it("runs the repository-pinned secret scanner in CI and release validation", () => {
@@ -99,7 +99,7 @@ describe("release workflow", () => {
       expect(reference).toMatch(/@[a-f0-9]{40}$/);
     }
     expect(codeqlWorkflow).toContain(
-      "github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38"
+      "github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938"
     );
     expect(workflow).toContain(
       "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"

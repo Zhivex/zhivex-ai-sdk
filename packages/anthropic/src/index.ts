@@ -1183,18 +1183,19 @@ const prepareAnthropicRequest = (
   };
 };
 
-class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOptions> {
-  readonly provider = "anthropic";
-  readonly capabilities: ModelCapabilities;
+/** Transport hook for hosts serving the Anthropic Messages protocol.
+ * The host owns authentication, endpoint routing, and beta availability.
+ */
+export interface AnthropicMessagesTransport {
+  send(body: string, signal: AbortSignal, withMcpToolset: boolean, withFilesApi: boolean, betas: string[]): Promise<Response>;
+}
 
+class DirectAnthropicMessagesTransport implements AnthropicMessagesTransport {
   constructor(
-    readonly modelId: string,
     private readonly auth: AnthropicAuthManager,
     private readonly anthropicVersion: string,
     private readonly fetcher: typeof globalThis.fetch
-  ) {
-    this.capabilities = modelCapabilities(modelId);
-  }
+  ) {}
 
   private headers(
     auth: ResolvedAnthropicAuth,
@@ -1218,7 +1219,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     };
   }
 
-  private async fetchMessages(
+  async send(
     body: string,
     signal: AbortSignal,
     withMcpToolset: boolean,
@@ -1248,6 +1249,19 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     }
     return send(refreshedAuth);
   }
+}
+
+class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOptions> {
+  readonly capabilities: ModelCapabilities;
+
+  constructor(
+    readonly modelId: string,
+    private readonly transport: AnthropicMessagesTransport,
+    readonly provider = "anthropic",
+    overrides: Partial<ModelCapabilities> = {}
+  ) {
+    this.capabilities = { ...modelCapabilities(modelId), ...overrides };
+  }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
@@ -1272,7 +1286,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
         ...(thinking ? { thinking } : {})
       });
       const response = await withRetry(
-        () => this.fetchMessages(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas),
+        () => this.transport.send(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas),
         input
       );
 
@@ -1317,7 +1331,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
       ...(thinking ? { thinking } : {})
     });
     const response = await withRetry(
-      () => this.fetchMessages(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas),
+      () => this.transport.send(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas),
       input
     );
 
@@ -1431,6 +1445,18 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
   }
 }
 
+/** Reuse Claude message/tool/stream mapping with a host-specific transport.
+ * This helper does not load Anthropic credentials or make HTTP calls itself.
+ * Hosts must constrain capabilities and requests to their supported surface.
+ */
+export const createAnthropicMessagesModel = (options: {
+  modelId: string;
+  transport: AnthropicMessagesTransport;
+  provider?: string;
+  capabilities?: Partial<ModelCapabilities>;
+}): LanguageModel<AnthropicLanguageModelOptions> =>
+  new AnthropicLanguageModel(options.modelId, options.transport, options.provider, options.capabilities);
+
 export const createAnthropic = (
   options: AnthropicProviderOptions = {}
 ): CallableProviderAdapter<LanguageModel<AnthropicLanguageModelOptions>> & {
@@ -1463,7 +1489,7 @@ export const createAnthropic = (
 
   return createProviderAdapter({
     name: "anthropic",
-    languageModel: (modelId) => new AnthropicLanguageModel(modelId, auth, anthropicVersion, fetcher),
+    languageModel: (modelId) => new AnthropicLanguageModel(modelId, new DirectAnthropicMessagesTransport(auth, anthropicVersion, fetcher)),
     rawFetch
   });
 };

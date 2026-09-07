@@ -174,7 +174,7 @@ The repository includes runnable examples under [`examples/`](./examples/README.
 
 ## Quick Start
 
-This is step 1 of the canonical [Quickstart](./docs/QUICKSTART.md). It continues with the same `gpt-4o-mini` provider setup through `Agent`, persistent `Runner` sessions, and the [Next.js React starter](./examples/next-runner/README.md).
+This is step 1 of the canonical [Quickstart](./docs/QUICKSTART.md). It continues with the same `gpt-6-astra` provider setup through `Agent`, persistent `Runner` sessions, and the [Next.js React starter](./examples/next-runner/README.md).
 
 ```ts
 import { generateText } from "@zhivex-ai/sdk";
@@ -184,7 +184,7 @@ const apiKey = process.env.OPENAI_API_KEY;
 if (!apiKey) throw new Error("Set OPENAI_API_KEY in the server environment.");
 
 const result = await generateText({
-  model: createOpenAI({ apiKey })("gpt-4o-mini"),
+  model: createOpenAI({ apiKey })("gpt-6-astra"),
   prompt: "Describe Zhivex AI SDK in one sentence.",
   maxTokens: 64,
   timeoutMs: 30_000
@@ -217,6 +217,22 @@ Use the `/hooks` and `/components` subpaths for client UI, or `/headless` and
 `/transport` for server-safe state and transport imports that do not import
 React at runtime. The server route owns `Runner`, provider credentials, tools,
 authorization, and session persistence. See the [React package guide](./packages/react/README.md) and [Next.js example](./examples/next-runner/README.md).
+
+## OpenAI GPT-6 Astra
+
+The OpenAI CLI starter and canonical Quickstart use `gpt-6-astra`. The adapter selects the Responses API automatically, including for tool calling and structured output. Existing explicit model selections and lower-cost alternatives remain available.
+
+When migrating a request, use reasoning effort `low` in place of `none` or `minimal`; preserve `medium`, `high`, `xhigh`, or `max`. Remove `temperature`, `top_p`, and logprob controls, and replace `prompt_cache_retention` with `prompt_cache_options: { ttl: "30m" }` if caching was configured. Astra tool calling requires Responses; do not force `apiMode: "chat"` for agents. The adapter rejects incompatible sampling and reasoning settings locally.
+
+Access depends on your OpenAI organization's rollout eligibility. See the [official Astra migration guide](https://developers.openai.com/api/docs/guides/latest-model) and [model page](https://developers.openai.com/api/docs/models/gpt-6-astra).
+
+```ts
+const result = await generateText({
+  model: createOpenAI({ apiKey: process.env.OPENAI_API_KEY })("gpt-6-astra"),
+  prompt: "Review this architecture and identify its highest-risk assumption.",
+  reasoning: { effort: "high" }
+});
+```
 
 ## OpenAI GPT-5.6
 
@@ -395,7 +411,7 @@ Compatibility notes:
 - `Realtime sessions` means the provider package exposes `realtimeModel().connect()` through the shared `RealtimeSession` contract. `Browser tokens` means the provider also exposes `realtimeModel().createBrowserToken()` for short-lived client-side credentials.
 - Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime`, `gpt-realtime-2`, `gpt-realtime-2.1`, `gpt-realtime-mini`, and `gpt-realtime-2.1-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
 - Gemini and Vertex expose current Google generative media endpoints through `generateImage()`, `generateVideo()`, and `generateMusic()` where the selected model and endpoint support them, including Gemini Image / Nano Banana and Veo 3.1. Gemini supports Lyria 3 through `generateMusic()`; Vertex's high-level music helper supports the GA `lyria-002`, while Lyria 3 on Agent Platform requires an Interactions API surface that the Vertex adapter does not expose. Gemini Omni Flash is exposed separately through Gemini's Interactions API because it uses a conversational video contract rather than the Veo long-running operation contract.
-- Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, the GA Interactions API, managed-agent calls, hosted Google tools, and raw prediction helpers. Vertex exposes Context Caching, Batch API, hosted Google tools, and generic prediction helpers for publisher / Model Garden endpoints. Full Model Garden coverage is through `predictionModel()` and raw responses, not hand-written wrappers per model.
+- Gemini exposes Files API, File Search stores, URL Context, Context Caching, Batch API, the GA Interactions API, managed-agent calls, hosted Google tools, and raw prediction helpers. Vertex exposes Gemini Context Caching, Batch API and hosted Google tools, plus Claude text/tools/streaming through `vertex("claude-...")`. Explicit `predictionModel("publishers/<publisher>/models/<id>")` resources provide raw prediction transport; they do not imply complete Model Garden compatibility.
 - `model-dependent` means the provider package exposes the shared capability, but the exact accepted config depends on the selected model family. OpenAI exposes GPT-5.6 Sol, Terra, Luna, and the `gpt-5.6` alias through Responses by default, with Programmatic Tool Calling, Multi-agent, explicit prompt cache breakpoints, and model-gated agent tools. Tool Search and Computer Use are also accepted on GPT-5.5 base and GPT-5.4 base/mini; shell, apply patch, and skills have their own documented gates. Unsupported combinations are rejected before a request is sent. Azure OpenAI retains its deployment- and API-version-dependent capability mapping. Current Anthropic families expose native structured output through `output_config.format`; model-specific effort, thinking, sampling, and prefill constraints are validated before network requests. Claude Opus 5 exposes the complete `low` / `medium` / `high` / `xhigh` / `max` effort ladder and adaptive thinking by default. `budgetTokens` remains available only on models that still accept manual thinking such as Claude Haiku 4.5. Gemini and Vertex reasoning currently map `effort` for Gemini 3 models and `budgetTokens` for Gemini 2.5 and earlier models. Qwen maps reasoning differently by protocol: Responses sends `reasoning.effort`, while Chat Completions sends `enable_thinking` and optional `thinking_budget`. Kimi K3 maps shared `reasoning.effort: "max"` to top-level `reasoning_effort: "max"`, while K2.6, K2.5, and legacy thinking models use `thinking.enabled/disabled`; `kimi-k2.7-code` and `kimi-k2.7-code-highspeed` keep preserved thinking enabled. DeepSeek reasoning maps `effort` to `thinking` plus `reasoning_effort` for `deepseek-v4-flash` and `deepseek-v4-pro`. Z.ai GLM-5.3 and GLM-5.3 Flash require thinking with `low`, `high`, or `max`; GLM-5.2 maps the broader shared effort ladder to its documented enabled/disabled and `high`/`max` controls.
 - xAI uses Responses by default. Grok 4.6 supports `low`, `medium`, `high`, and `xhigh`; Grok 4.5 supports up to `high`. Reasoning is always active on both families and defaults to `high`. Use `providerOptions.conversationId` to route Responses requests through `prompt_cache_key`; Chat compatibility mode sends the same value through `x-grok-conv-id`.
 - Meta uses `muse-spark-1.2` as the current documented application default, uses the reduced-cost `muse-spark-1.2-contributor` variant by default only in authenticated integration smoke, and retains Muse Spark 1.1 for existing applications. The Contributor catalog entry intentionally omits unverified pricing. The direct Meta Model API adapter exposes Chat and Responses generation, callable tools, native structured output, vision, MP3/WAV audio input, reasoning effort, Responses web search/tool search, Files API, and prompt caching. Computer use remains a developer-defined function-and-screenshot harness rather than a Meta-hosted tool, so the native `computerUse` capability flag remains disabled.
@@ -2717,7 +2733,7 @@ Gemini and Vertex expose Google-native surfaces in two layers:
 | Batch API | high-level | high-level |
 | Interactions / Deep Research / managed agents | high-level | not exposed by the same Vertex contract |
 | Gemini Omni Flash | Interactions API | not exposed by this adapter |
-| Model Garden / publisher prediction | raw/prediction | raw/prediction |
+| Model Garden / publisher prediction | raw/prediction | explicit publisher resource, raw contract |
 
 ```ts
 import {
@@ -2871,7 +2887,9 @@ Current Google model selection differs by platform:
 
 Official references: [Gemini Interactions](https://ai.google.dev/gemini-api/docs/interactions-overview), [Gemini TTS and streaming](https://ai.google.dev/gemini-api/docs/speech-generation), [Google Maps grounding requirements](https://ai.google.dev/gemini-api/docs/maps-grounding), [Gemini models](https://ai.google.dev/gemini-api/docs/models), [Gemini deprecations](https://ai.google.dev/gemini-api/docs/deprecations), [Agent Platform model lifecycle](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions), and [Agent Platform locations](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations).
 
-Use `predictionModel()` for Vertex Model Garden and other Google publisher endpoints that do not have a stable shared helper yet. The SDK keeps `rawResponse` available so consumers can handle model-specific contracts without the core API overpromising portability.
+Use `vertex("claude-sonnet-4-6")` for Claude on Vertex with Google Cloud bearer credentials; API-key/Express mode is not supported for this route. Text, client tool loops, streaming, reasoning, and supported native structured output reuse the Anthropic message contract while preserving provider identity `vertex`. Hosted Anthropic tools, Files API IDs, and direct-API beta features are explicitly rejected. See the [Vertex package guide](packages/vertex/README.md#claude-on-vertex) for access requirements and limitations.
+
+Use `predictionModel("publishers/<publisher>/models/<id>")` with a model-specific request body and action for raw publisher predictions. Bare prediction IDs default to Google. The SDK preserves `rawResponse`; this transport does not imply normalized support for every Model Garden model or Agent Platform's managed agent services.
 
 ### Grounded Web Search
 
@@ -2930,6 +2948,8 @@ console.log(fromAnthropic.text);
 ## Gateway Routing
 
 `@zhivex-ai/gateway` is the optional SDK-local routing and fallback package for multi-provider setups. It is separate from the main `@zhivex-ai/sdk` facade and separate from any Zhivex-hosted Gateway API. See [`packages/gateway/README.md`](./packages/gateway/README.md) for routing examples and package-specific behavior.
+
+`GatewayRequest.messages` also accepts canonical core `ModelMessage` entries. Text/object generation and streaming preserve resolved tool history on Anthropic, OpenAI, DeepSeek and Qwen, with explicit validation and cross-provider fallback. Adapters declare native or JSON-envelope history support; older/incompatible destinations are skipped. Portable DeepSeek/Qwen replay uses non-thinking mode; agent operations retain legacy message input. See the gateway README for the supported subset and the [delivery evidence](./docs/GATEWAY_TOOL_HISTORY_DELIVERY.md) for artifact and publication status.
 
 `generateObject()` and `streamObject()` now route through the same gateway metadata path as text generation. Native object mode requires `structuredOutput`; prompted object mode requires `jsonMode`; auto mode accepts either capability and skips targets that cannot satisfy object output before making a provider call.
 

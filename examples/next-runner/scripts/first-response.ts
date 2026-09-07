@@ -9,7 +9,7 @@ if (!apiKey) {
 const openai = createOpenAI({ apiKey });
 const startedAt = performance.now();
 const result = await generateText({
-  model: openai("gpt-4o-mini"),
+  model: openai("gpt-6-astra"),
   prompt: "Reply with one short sentence confirming that Zhivex AI SDK is connected.",
   maxTokens: 64,
   timeoutMs: 30_000

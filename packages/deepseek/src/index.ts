@@ -13,6 +13,7 @@ import {
   readErrorBodyWithLimit,
   readJsonWithLimit,
   streamSSE,
+  toolResultPayload,
   withRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
@@ -309,7 +310,7 @@ const ensureJsonOutputInstruction = (
   ];
 };
 
-const mapMessages = (messages: ModelMessage[], modelId: string, prefix?: DeepSeekPrefixOptions) => {
+const mapMessages = (messages: ModelMessage[], modelId: string, prefix?: DeepSeekPrefixOptions, format?: ModelGenerateInput["toolResultFormat"]) => {
   const mediaPartCount = messages.reduce(
     (total, message) => total + message.parts.filter((part) => part.type === "image" || part.type === "file").length,
     0
@@ -317,18 +318,17 @@ const mapMessages = (messages: ModelMessage[], modelId: string, prefix?: DeepSee
   if (mediaPartCount > 600) {
     throw new ValidationError("DeepSeek Vision accepts at most 600 image or file inputs per request.");
   }
-  const mapped = messages.map((message) => {
+  const mapped = messages.flatMap<Record<string, unknown>>((message) => {
     if (message.role === "tool") {
-      const toolResult = message.parts.find((part) => part.type === "tool-result");
-
-      return {
-        role: "tool",
-        tool_call_id: toolResult?.type === "tool-result" ? toolResult.toolResult.toolCallId : undefined,
-        content:
-          toolResult?.type === "tool-result"
-            ? JSON.stringify(toolResult.toolResult.isError ? toolResult.toolResult.error : toolResult.toolResult.output)
-            : ""
-      };
+      return message.parts
+        .filter((part) => part.type === "tool-result")
+        .map((part) => ({
+          role: "tool",
+          tool_call_id: part.toolResult.toolCallId,
+          content: JSON.stringify(format === "envelope"
+            ? toolResultPayload(part.toolResult)
+            : part.toolResult.isError ? part.toolResult.error : part.toolResult.output)
+        }));
     }
 
     const toolCalls = message.parts
@@ -356,7 +356,7 @@ const mapMessages = (messages: ModelMessage[], modelId: string, prefix?: DeepSee
       payload.tool_calls = toolCalls;
     }
 
-    return payload;
+    return [payload];
   });
 
   if (prefix) {
@@ -830,7 +830,7 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
     private readonly betaBaseURL: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {
-    this.capabilities = modelCapabilities(modelId);
+    this.capabilities = { ...modelCapabilities(modelId), toolHistory: modelId.includes("reasoner") ? undefined : "json" };
   }
 
   async generate(input: ModelGenerateInput<DeepSeekLanguageModelOptions>): Promise<GenerateResult> {
@@ -850,7 +850,8 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
               messages: mapMessages(
                 ensureJsonOutputInstruction(input.messages, options.responseFormat, input.structuredOutput),
                 this.modelId,
-                options.prefix
+                options.prefix,
+                input.toolResultFormat
               ),
               tools: mapTools(input.tools, options.strictTools),
               tool_choice: options.toolChoice,
@@ -905,7 +906,8 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
               messages: mapMessages(
                 ensureJsonOutputInstruction(input.messages, options.responseFormat, input.structuredOutput),
                 this.modelId,
-                options.prefix
+                options.prefix,
+                input.toolResultFormat
               ),
               tools: mapTools(input.tools, options.strictTools),
               tool_choice: options.toolChoice,

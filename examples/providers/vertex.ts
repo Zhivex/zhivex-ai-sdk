@@ -10,7 +10,8 @@ const vertex = createVertex({
 });
 
 const result = await generateText({
-  model: vertex("gemini-3.7-flash"),
+  // Set VERTEX_MODEL to a Claude ID enabled in your Google Cloud project to use Anthropic on Vertex.
+  model: vertex(process.env.VERTEX_MODEL ?? "gemini-3.7-flash"),
   prompt: "Say hello from the Vertex adapter."
 });
 
