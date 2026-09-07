@@ -8,26 +8,29 @@ const readManifest = async (packageName: string) => JSON.parse(
   await readFile(path.join(repoRoot, "packages", packageName, "package.json"), "utf8")
 ) as { version: string; dependencies?: Record<string, string> };
 
-const backwardCompatibleProviderCoreRanges = {
-  anthropic: "^1.1.2",
+// Reviewed minimum Core versions for this release. The updated provider cohort
+// ships with Core 1.12 contracts (including toolHistory/toolResultFormat); older
+// adapters retain their existing minimum instead of tracking Core automatically.
+const reviewedProviderCoreRanges = {
+  anthropic: "^1.12.0",
   "azure-openai": "^1.4.0",
   bedrock: "^1.0.2",
-  deepseek: "^1.0.2",
+  deepseek: "^1.12.0",
   gemini: "^1.4.0",
   kimi: "^1.1.2",
   meta: "^1.3.0",
   ollama: "^1.3.0",
-  openai: "^1.10.0",
+  openai: "^1.12.0",
   openrouter: "^1.0.2",
-  qwen: "^1.4.0",
-  vertex: "^1.4.0",
+  qwen: "^1.12.0",
+  vertex: "^1.12.0",
   xai: "^1.0.2",
   zai: "^1.3.0"
 } as const;
 
 describe("internal Core dependency ranges", () => {
-  it("keeps provider declarations installable with their existing compatible Core lines", async () => {
-    for (const [packageName, expectedRange] of Object.entries(backwardCompatibleProviderCoreRanges)) {
+  it("preserves the reviewed Core minimum for updated and unchanged providers", async () => {
+    for (const [packageName, expectedRange] of Object.entries(reviewedProviderCoreRanges)) {
       const manifest = await readManifest(packageName);
       expect(manifest.dependencies?.["@zhivex-ai/core"], packageName).toBe(expectedRange);
     }
