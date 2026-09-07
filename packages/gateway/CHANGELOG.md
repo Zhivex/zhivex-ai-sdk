@@ -1,5 +1,17 @@
 # @zhivex-ai/gateway
 
+## 1.2.0
+
+### Minor Changes
+
+- 744dec7: Accept canonical core ModelMessage history alongside legacy gateway messages. Validate tool call/result associations and JSON payloads before routing, preserve native Anthropic tool and error blocks, and explicitly skip incompatible destinations. Continue generation, object output and streams without reexecuting resolved historical tools, and sanitize history failure/cancellation diagnostics without restarting after partial output. Agent operations retain legacy-only input.
+- 744dec7: Add an optional model tool-history capability and an opt-in discriminated JSON tool-result format. OpenAI and Qwen Chat/Responses, and DeepSeek Chat, preserve all tool results and can explicitly serialize success/error envelopes for gateway continuation. Existing direct SDK calls retain raw result serialization. Gateway routing honors adapter-declared support, enables cross-provider fallback without replaying resolved tools, and rejects explicit private-thinking replay for the portable DeepSeek/Qwen subset. Their default portable replay runs without thinking.
+
+### Patch Changes
+
+- Updated dependencies [744dec7]
+  - @zhivex-ai/core@1.12.0
+
 ## 1.1.0
 
 ### Minor Changes
