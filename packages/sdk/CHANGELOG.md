@@ -1,5 +1,21 @@
 # @zhivex-ai/sdk
 
+## 1.15.0
+
+### Minor Changes
+
+- 744dec7: Add an optional model tool-history capability and an opt-in discriminated JSON tool-result format. OpenAI and Qwen Chat/Responses, and DeepSeek Chat, preserve all tool results and can explicitly serialize success/error envelopes for gateway continuation. Existing direct SDK calls retain raw result serialization. Gateway routing honors adapter-declared support, enables cross-provider fallback without replaying resolved tools, and rejects explicit private-thinking replay for the portable DeepSeek/Qwen subset. Their default portable replay runs without thinking.
+
+### Patch Changes
+
+- 744dec7: Default newly scaffolded OpenAI agents to GPT-6 Astra using the adapter's automatic Responses routing. Explicit --model selections remain unchanged.
+- 744dec7: Support Claude on Vertex with Google bearer authentication, Anthropic publisher routing, text, client tools, streaming, reasoning, and native structured output on supported models. Reuse Anthropic message mapping through an explicit host transport factory and reject direct-API-only features.
+
+  Keep the Vertex package, factory, and provider identity. Add validated explicit publisher resources to raw prediction, limit raw prediction capabilities to their actual contract, and correct Model Garden coverage documentation. Add separate Vertex Claude catalog entries without inheriting direct Anthropic pricing or recommendations.
+
+- Updated dependencies [744dec7]
+  - @zhivex-ai/core@1.12.0
+
 ## 1.14.0
 
 ### Minor Changes

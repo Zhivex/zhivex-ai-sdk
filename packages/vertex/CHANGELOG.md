@@ -1,5 +1,21 @@
 # @zhivex-ai/vertex
 
+## 0.11.0
+
+### Minor Changes
+
+- 744dec7: Support Claude on Vertex with Google bearer authentication, Anthropic publisher routing, text, client tools, streaming, reasoning, and native structured output on supported models. Reuse Anthropic message mapping through an explicit host transport factory and reject direct-API-only features.
+
+  Keep the Vertex package, factory, and provider identity. Add validated explicit publisher resources to raw prediction, limit raw prediction capabilities to their actual contract, and correct Model Garden coverage documentation. Add separate Vertex Claude catalog entries without inheriting direct Anthropic pricing or recommendations.
+
+### Patch Changes
+
+- Updated dependencies [744dec7]
+- Updated dependencies [744dec7]
+- Updated dependencies [744dec7]
+  - @zhivex-ai/anthropic@0.10.0
+  - @zhivex-ai/core@1.12.0
+
 ## 0.10.1
 
 ### Patch Changes

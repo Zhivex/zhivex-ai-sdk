@@ -1,5 +1,14 @@
 # @zhivex-ai/qwen
 
+## 0.11.3
+
+### Patch Changes
+
+- 744dec7: Add an optional model tool-history capability and an opt-in discriminated JSON tool-result format. OpenAI and Qwen Chat/Responses, and DeepSeek Chat, preserve all tool results and can explicitly serialize success/error envelopes for gateway continuation. Existing direct SDK calls retain raw result serialization. Gateway routing honors adapter-declared support, enables cross-provider fallback without replaying resolved tools, and rejects explicit private-thinking replay for the portable DeepSeek/Qwen subset. Their default portable replay runs without thinking.
+- 744dec7: Preserve Chat Completions token usage delivered in a terminal usage-only SSE chunk, including Qwen 3.8 Max and Flash. Emit the final finish event after consuming usage instead of dropping it after finish_reason.
+- Updated dependencies [744dec7]
+  - @zhivex-ai/core@1.12.0
+
 ## 0.11.2
 
 ### Patch Changes
