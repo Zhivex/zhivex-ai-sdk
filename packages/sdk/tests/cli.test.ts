@@ -159,6 +159,15 @@ export const failingSuite = {
     }
   });
 
+  it("defaults the OpenAI starter to GPT-6 Astra", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-astra-"), "agent");
+    const capture = createCapture();
+    expect(await runCli(["init", "agent", "--dir", directory], capture.io)).toBe(0);
+    expect(JSON.parse(capture.stdout[0]!)).toMatchObject({ model: "gpt-6-astra" });
+    expect(await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8"))
+      .toContain('provider("gpt-6-astra")');
+  });
+
   it("scaffolds a production agent project", async () => {
     const directory = path.join(await tempDir("zhivex-cli-init-"), "support-agent");
     const capture = createCapture();

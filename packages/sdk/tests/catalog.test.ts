@@ -25,7 +25,7 @@ describe("SDK model catalog ownership", () => {
     });
     expect(defaultModelCatalog.find("openai", "gpt-5.6")?.modelId).toBe("gpt-5.6-sol");
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(118);
+    expect(entries).toHaveLength(123);
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
       inputCostPer1kTokens: 0.00015,
       cachedInputCostPer1kTokens: 0.00003,
@@ -60,7 +60,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(118);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(123);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-09-04",
       verifiedAt: "2026-09-04",
@@ -81,6 +81,14 @@ describe("SDK model catalog ownership", () => {
     });
     expect(Object.isFrozen(fragments[0])).toBe(true);
     expect(Object.isFrozen(fragments[0]?.sources)).toBe(true);
+  });
+
+  it("keeps Claude served by Vertex separate from direct Anthropic entries", () => {
+    const entry = defaultModelCatalog.find("vertex", "claude-sonnet-4-6");
+    expect(entry).toMatchObject({ provider: "vertex", modelId: "claude-sonnet-4-6" });
+    expect(entry?.inputCostPer1kTokens).toBeUndefined();
+    expect(entry?.recommendedFor).toBeUndefined();
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-09-06");
   });
 
   it("does not derive the release-managed snapshot from the frozen core compatibility copy", () => {

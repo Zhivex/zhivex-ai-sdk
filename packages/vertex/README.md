@@ -2,7 +2,7 @@
 
 Vertex AI / Gemini Enterprise Agent Platform adapter for Zhivex AI SDK.
 
-Supports Vertex Gemini text, multimodal embeddings, speech, realtime sessions, grounded generation, Context Caching, Batch API, raw prediction calls, and current Google generative media endpoints for Gemini Image, Veo 3.1, and Lyria 2.
+Supports Claude text, tools, and streaming through the Anthropic publisher, plus Vertex Gemini text, multimodal embeddings, speech, realtime sessions, grounded generation, Context Caching, Batch API, raw prediction calls, and current Google generative media endpoints for Gemini Image, Veo 3.1, and Lyria 2.
 
 Google is transitioning Vertex AI into Gemini Enterprise Agent Platform. The SDK keeps the package name `@zhivex-ai/vertex`, the factory `createVertex()`, and provider id `"vertex"` for backwards compatibility and because the public API endpoints still use `aiplatform.googleapis.com`. Treat "Vertex" in this package as the Google Cloud Agent Platform / Vertex API surface, not as a separate deprecated wire contract.
 
@@ -20,7 +20,8 @@ bun add @zhivex-ai/core @zhivex-ai/vertex
 | Context Caching and Batch API | high-level |
 | Google Search, Google Maps, URL Context, Code Execution, Computer Use | hosted tool helpers where the selected endpoint supports them |
 | Image, video, music generation | high-level |
-| Vertex publisher models / Model Garden | `predictionModel()` raw/prediction |
+| Claude on Vertex | `vertex("claude-...")`: text, client tools, streaming, reasoning, native structured output on supported models |
+| Publisher models / Model Garden | `predictionModel("publishers/<publisher>/models/<id>")`: explicit raw contract; bare IDs default to Google |
 | Gemini Files API, Gemini File Search stores, Interactions | explicit unsupported surface in this adapter |
 
 ```ts
@@ -154,7 +155,34 @@ See Google's current [Agent Platform model lifecycle](https://docs.cloud.google.
 
 Google's current product page labels this surface as [Gemini Enterprise Agent Platform, formerly Vertex AI](https://cloud.google.com/products/gemini-enterprise-agent-platform), and Google's migration docs say Vertex AI is transitioning to become part of Agent Platform. This package intentionally does not rename the provider id yet; doing so would be a breaking API change without a corresponding endpoint-level migration requirement.
 
-Model Garden coverage is intentionally raw/prediction based. The adapter does not add a dedicated wrapper for every publisher model.
+Model Garden raw prediction accepts explicit `publishers/<publisher>/models/<id>` resources, relative to the configured project and location. Bare prediction IDs retain the Google publisher default. Supply the model-specific `body` and `providerOptions.action` (for example `rawPredict`) to `predictRaw()`. This is transport access, not a promise of normalized tools, streaming, or support for every Model Garden deployment. Self-deployed endpoint resources are not covered by this selector.
+
+## Claude on Vertex
+
+The package, factory, and provider identity remain `@zhivex-ai/vertex`, `createVertex()`, and `vertex`. Claude uses Google's bearer authentication and billing, with the Anthropic Messages protocol at `publishers/anthropic`; no Anthropic API key is needed.
+
+```ts
+const claudeVertex = createVertex({
+  projectId: process.env.GOOGLE_CLOUD_PROJECT,
+  location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-east5"
+});
+const answer = await generateText({
+  model: claudeVertex("claude-sonnet-4-6"),
+  prompt: "Explain why the sky is blue.",
+  maxTokens: 256
+});
+console.log(answer.text);
+```
+
+Enable the selected Claude model in Model Garden and choose a supported location. Use ADC or `authClient`, `getAccessToken`, or `accessToken`; API-key/Express mode is rejected for Claude and other partner publisher predictions. If a Google API-key environment variable is configured, remove it for ADC or pass an explicit bearer credential source. Model IDs, including `@revision` suffixes, are sent as supplied; availability is determined by Google for your project and region.
+
+Supported through the shared language-model API: text, image/document input using Anthropic message mapping, client tool loops, streaming, usage, reasoning, and native structured output for Claude 4.5 and later families. Structured output additionally requires the Google organization policy to allow `structured_outputs`. Capabilities describe the implemented contract, not a guarantee of account entitlement or live certification.
+
+Hosted/server tools, direct Anthropic Files API IDs, remote MCP toolsets, beta features, fast mode, server-side fallbacks, and direct-API context-management options are explicitly rejected. SDK-managed MCP tools can still execute as ordinary client tools. Google grounding, Gemini cache/batch/media APIs, Interactions, and managed Agent Platform runtime/session/deployment APIs are not Claude language-model features exposed here.
+
+The SDK catalog includes Claude entries under `vertex` separately from `anthropic`, without copying direct-API prices or automatic recommendations. Contract tests use mocked HTTP; the opt-in `VERTEX_CLAUDE_INTEGRATION_MODEL` suite validates the actual Google route when credentials and model access are available.
+
+Sources: [Claude requests on Vertex](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/use-claude), [Claude structured outputs on Vertex](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/structured-outputs).
 
 Repository and full documentation:
 

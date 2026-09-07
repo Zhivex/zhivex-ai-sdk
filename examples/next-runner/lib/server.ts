@@ -29,7 +29,7 @@ export const getRunner = (): Runner => {
   runner = createRunner({
     appName: "next-runner-example",
     agent: new Agent({
-      model: openai("gpt-4o-mini"),
+      model: openai("gpt-6-astra"),
       instructions: "You are a concise support assistant.",
       maxSteps: 4,
       maxTokens: 512,

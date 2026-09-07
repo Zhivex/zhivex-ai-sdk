@@ -794,18 +794,18 @@ const mapContentParts = (message: ModelMessage) => {
   return content;
 };
 
-const mapMessages = (messages: ModelMessage[]) =>
-  messages.map((message) => {
+const mapMessages = (messages: ModelMessage[], format?: ModelGenerateInput["toolResultFormat"]) =>
+  messages.flatMap<Record<string, unknown>>((message) => {
     if (message.role === "tool") {
-      const toolResult = message.parts.find((part) => part.type === "tool-result");
-      return {
-        role: "tool",
-        tool_call_id: toolResult?.type === "tool-result" ? toolResult.toolResult.toolCallId : undefined,
-        content:
-          toolResult?.type === "tool-result"
-            ? JSON.stringify(toolResult.toolResult.isError ? toolResult.toolResult.error : toolResult.toolResult.output)
-            : ""
-      };
+      return message.parts
+        .filter((part) => part.type === "tool-result")
+        .map((part) => ({
+          role: "tool",
+          tool_call_id: part.toolResult.toolCallId,
+          content: JSON.stringify(format === "envelope"
+            ? toolResultPayload(part.toolResult)
+            : part.toolResult.isError ? part.toolResult.error : part.toolResult.output)
+        }));
     }
 
     const toolCalls = message.parts
@@ -828,7 +828,7 @@ const mapMessages = (messages: ModelMessage[]) =>
       payload.tool_calls = toolCalls;
     }
 
-    return payload;
+    return [payload];
   });
 
 const hasResponsesOnlyTools = (tools: ModelGenerateInput["tools"]) =>
@@ -1533,12 +1533,12 @@ const getProviderResponseId = (messages: ModelMessage[]) => {
   return undefined;
 };
 
-const serializeToolOutput = (message: ModelMessage) =>
+const serializeToolOutput = (message: ModelMessage, format?: ModelGenerateInput["toolResultFormat"]) =>
   message.parts
     .filter((part): part is Extract<ModelMessage["parts"][number], { type: "tool-result" }> => part.type === "tool-result")
     .map((part) => {
       const responsesToolType = part.toolResult.providerMetadata?.responsesToolType;
-      if (part.toolResult.toolName === "shell" || responsesToolType === "shell") {
+      if ((format !== "envelope" && part.toolResult.toolName === "shell") || responsesToolType === "shell") {
         const rawOutput = part.toolResult.output;
         const rawOutputs = Array.isArray(rawOutput)
           ? rawOutput
@@ -1586,7 +1586,7 @@ const serializeToolOutput = (message: ModelMessage) =>
         };
       }
 
-      if (part.toolResult.toolName === "apply_patch" || responsesToolType === "apply_patch") {
+      if ((format !== "envelope" && part.toolResult.toolName === "apply_patch") || responsesToolType === "apply_patch") {
         const output = part.toolResult.output;
         const outputRecord =
           output && typeof output === "object" && !Array.isArray(output)
@@ -1600,7 +1600,7 @@ const serializeToolOutput = (message: ModelMessage) =>
         };
       }
 
-      if (part.toolResult.toolName === "computer" || responsesToolType === "computer") {
+      if ((format !== "envelope" && part.toolResult.toolName === "computer") || responsesToolType === "computer") {
         if (part.toolResult.isError) {
           throw new Error(
             `OpenAI computer action execution failed: ${part.toolResult.error?.message ?? "unknown error"}`
@@ -1616,7 +1616,7 @@ const serializeToolOutput = (message: ModelMessage) =>
       return {
         type: "function_call_output",
         call_id: part.toolResult.toolCallId,
-        output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null),
+        output: JSON.stringify(format === "envelope" ? toolResultPayload(part.toolResult) : part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null),
         ...(part.toolResult.providerMetadata?.caller !== undefined
           ? { caller: part.toolResult.providerMetadata.caller }
           : {})
@@ -1778,12 +1778,12 @@ const extractMessageText = (message: ModelMessage) =>
     })
     .join("");
 
-const toResponsesInput = (messages: ModelMessage[]) => {
+const toResponsesInput = (messages: ModelMessage[], format?: ModelGenerateInput["toolResultFormat"]) => {
   const input: Array<Record<string, unknown>> = [];
 
   for (const message of messages) {
     if (message.role === "tool") {
-      input.push(...serializeToolOutput(message));
+      input.push(...serializeToolOutput(message, format));
       continue;
     }
 
@@ -2644,7 +2644,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
     private readonly fetcher: typeof globalThis.fetch,
     private readonly responseLimits: ResolvedOpenAIResponseLimits
   ) {
-    this.capabilities = modelCapabilities(modelId);
+    this.capabilities = { ...modelCapabilities(modelId), toolHistory: "json" };
   }
 
   private usesResponsesAPI(input: ModelGenerateInput, options: ReturnType<typeof resolveOpenAILanguageRequestOptions>) {
@@ -2688,7 +2688,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
         ? input.messages.slice(previousResponse.index + 1)
         : input.messages;
     let nextPreviousResponseId = previousResponse?.responseId;
-    let nextInput = messages.length ? toResponsesInput(messages) : [];
+    let nextInput = messages.length ? toResponsesInput(messages, input.toolResultFormat) : [];
     let accumulatedUsage: ReturnType<typeof mapResponsesUsage>;
     let statelessInternalOutputs: Array<Record<string, unknown>> = [];
 
@@ -2806,7 +2806,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             body: JSON.stringify({
               ...options.bodyOptions,
               model: this.modelId,
-              messages: mapMessages(input.messages),
+              messages: mapMessages(input.messages, input.toolResultFormat),
               tools: mapTools(input.tools),
               ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
               response_format: mapStructuredOutput(input),
@@ -2870,7 +2870,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               ...responseBodyOptions,
               model: this.modelId,
               ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-              ...(messages.length ? { input: toResponsesInput(messages) } : {}),
+              ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat) } : {}),
               tools: mapResponsesTools(input.tools),
               ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
               text: mapResponsesStructuredOutput(input),
@@ -2910,7 +2910,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
           body: JSON.stringify({
             ...options.bodyOptions,
             model: this.modelId,
-            messages: mapMessages(input.messages),
+            messages: mapMessages(input.messages, input.toolResultFormat),
             tools: mapTools(input.tools),
             ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
             response_format: mapStructuredOutput(input),

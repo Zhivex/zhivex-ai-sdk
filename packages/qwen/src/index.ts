@@ -29,6 +29,7 @@ import {
   normalizeFinishReason,
   providerDataPart,
   streamSSE,
+  toolResultPayload,
   toToolSet,
   withRetry,
   withTimeoutSignal,
@@ -780,19 +781,18 @@ const mapContentParts = (message: ModelMessage) => {
   });
 };
 
-const mapMessages = (messages: ModelMessage[]) =>
-  messages.map((message) => {
+const mapMessages = (messages: ModelMessage[], format?: ModelGenerateInput["toolResultFormat"]) =>
+  messages.flatMap<Record<string, unknown>>((message) => {
     if (message.role === "tool") {
-      const toolResult = message.parts.find((part) => part.type === "tool-result");
-
-      return {
-        role: "tool",
-        tool_call_id: toolResult?.type === "tool-result" ? toolResult.toolResult.toolCallId : undefined,
-        content:
-          toolResult?.type === "tool-result"
-            ? JSON.stringify(toolResult.toolResult.isError ? toolResult.toolResult.error : toolResult.toolResult.output)
-            : ""
-      };
+      return message.parts
+        .filter((part) => part.type === "tool-result")
+        .map((part) => ({
+          role: "tool",
+          tool_call_id: part.toolResult.toolCallId,
+          content: JSON.stringify(format === "envelope"
+            ? toolResultPayload(part.toolResult)
+            : part.toolResult.isError ? part.toolResult.error : part.toolResult.output)
+        }));
     }
 
     const toolCalls = message.parts
@@ -820,7 +820,7 @@ const mapMessages = (messages: ModelMessage[]) =>
       payload.tool_calls = toolCalls;
     }
 
-    return payload;
+    return [payload];
   });
 
 const mapChatTools = (tools: ModelGenerateInput["tools"]) =>
@@ -1401,7 +1401,7 @@ const getProviderResponseId = (messages: ModelMessage[]) => {
   return undefined;
 };
 
-const serializeResponsesToolOutput = (message: ModelMessage) =>
+const serializeResponsesToolOutput = (message: ModelMessage, format?: ModelGenerateInput["toolResultFormat"]) =>
   message.parts
     .filter((part): part is Extract<ModelMessage["parts"][number], { type: "tool-result" }> => part.type === "tool-result")
     .map((part) => {
@@ -1412,16 +1412,16 @@ const serializeResponsesToolOutput = (message: ModelMessage) =>
           typeof providerCallId === "string" && providerCallId.trim().length > 0
             ? providerCallId
             : part.toolResult.toolCallId,
-        output: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
+        output: JSON.stringify(format === "envelope" ? toolResultPayload(part.toolResult) : part.toolResult.isError ? part.toolResult.error : part.toolResult.output ?? null)
       };
     });
 
-const toResponsesInput = (messages: ModelMessage[]) => {
+const toResponsesInput = (messages: ModelMessage[], format?: ModelGenerateInput["toolResultFormat"]) => {
   const input: Array<Record<string, unknown>> = [];
 
   for (const message of messages) {
     if (message.role === "tool") {
-      input.push(...serializeResponsesToolOutput(message));
+      input.push(...serializeResponsesToolOutput(message, format));
       continue;
     }
 
@@ -1773,7 +1773,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {
-    this.capabilities = qwenLanguageCapabilities(modelId);
+    this.capabilities = { ...qwenLanguageCapabilities(modelId), toolHistory: isQwen38MaxPreview(modelId) || /thinking|qwq/i.test(modelId) ? undefined : "json" };
   }
 
   async generate(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<GenerateResult> {
@@ -1818,7 +1818,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
                 ...responseProviderOptions,
                 model: this.modelId,
                 ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-                ...(messages.length ? { input: toResponsesInput(messages) } : {}),
+                ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat) } : {}),
                 tools: mapResponsesTools(input.tools),
                 tool_choice: mapResponsesToolChoice(input.toolChoice, input.tools),
                 temperature: input.temperature,
@@ -1859,7 +1859,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             body: JSON.stringify({
               ...chatProviderOptions,
               model: this.modelId,
-              messages: mapMessages(withStructuredOutputMessages(this.modelId, input)),
+              messages: mapMessages(withStructuredOutputMessages(this.modelId, input), input.toolResultFormat),
               tools: mapChatTools(input.tools),
               tool_choice: mapChatToolChoice(input.toolChoice),
               response_format: mapStructuredOutput(this.modelId, input),
@@ -1930,7 +1930,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               ...responseProviderOptions,
               model: this.modelId,
               ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-              ...(messages.length ? { input: toResponsesInput(messages) } : {}),
+              ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat) } : {}),
               tools: mapResponsesTools(input.tools),
               tool_choice: mapResponsesToolChoice(input.toolChoice, input.tools),
               temperature: input.temperature,
@@ -1964,7 +1964,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             ...chatProviderOptions,
             model: this.modelId,
             modalities: isQwenOmniLanguageModel(this.modelId) ? providerOptions.modalities ?? ["text"] : undefined,
-            messages: mapMessages(withStructuredOutputMessages(this.modelId, input)),
+            messages: mapMessages(withStructuredOutputMessages(this.modelId, input), input.toolResultFormat),
             tools: mapChatTools(input.tools),
             tool_choice: mapChatToolChoice(input.toolChoice),
             response_format: mapStructuredOutput(this.modelId, input),
@@ -1991,9 +1991,12 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
         const seenIds = existingToolCallIds(input.messages);
         const fallbackGeneration = nextFallbackToolCallGeneration("chat", input, seenIds);
 
+        let lastFinishReason: string | undefined;
+        let lastUsage: any;
+
         for await (const event of streamSSE(response)) {
           if (event.data === "[DONE]") {
-            return;
+            break;
           }
 
           const json = JSON.parse(event.data);
@@ -2047,13 +2050,20 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
                 } satisfies StreamEvent;
               }
             }
-            yield {
-              type: "finish",
-              finishReason: normalizeFinishReason(choice.finish_reason),
-              providerFinishReason: choice.finish_reason,
-              usage: mapChatUsage(json.usage)
-            } satisfies StreamEvent;
+            lastFinishReason = choice.finish_reason;
           }
+          if (json.usage) {
+            lastUsage = json.usage;
+          }
+        }
+
+        if (lastFinishReason || lastUsage) {
+          yield {
+            type: "finish",
+            finishReason: normalizeFinishReason(lastFinishReason),
+            providerFinishReason: lastFinishReason,
+            usage: mapChatUsage(lastUsage)
+          } satisfies StreamEvent;
         }
       } finally {
         cleanup();

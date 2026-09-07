@@ -1643,6 +1643,41 @@ describe("openai adapter", () => {
     ).rejects.toThrow('Provider "openai" does not support "reasoning.budgetTokens".');
   });
 
+  it.each(["gpt-6-astra", "gpt-6-astra-2026-09-04"])("routes %s tools and streaming through Responses", async (modelId) => {
+    const output = [{ type: "message", content: [{ type: "output_text", text: "ok" }] }];
+    fetchMock.mockResolvedValueOnce(Response.json({ id: "resp_astra", status: "completed", output }));
+    fetchMock.mockResolvedValueOnce(responsesSse(
+      { type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "ok" },
+      { type: "response.completed", response: { id: "resp_astra_stream", status: "completed", output } },
+      "[DONE]"
+    ));
+    const model = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })(modelId);
+    const input = {
+      model, prompt: "weather", reasoning: { effort: "low" as const },
+      tools: { weather: tool({ name: "weather", schema: z.object({ city: z.string() }), execute: ({ city }) => ({ city }) }) }
+    };
+    expect((await generateText(input)).text).toBe("ok");
+    expect((await streamText(input).collect()).text).toBe("ok");
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(url).toBe("https://api.openai.com/v1/responses");
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        model: modelId, reasoning: { effort: "low" }, tools: [{ type: "function", name: "weather" }]
+      });
+    }
+  });
+
+  it("rejects incompatible Astra settings before sending requests", async () => {
+    const model = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("gpt-6-astra");
+    for (const effort of ["none", "minimal"] as const) {
+      await expect(generateText({ model, prompt: "hello", reasoning: { effort } })).rejects.toThrow();
+    }
+    await expect(generateText({ model, prompt: "hello", temperature: 0.2 })).rejects.toThrow();
+    await expect(generateText({ model, prompt: "hello", providerOptions: { apiMode: "chat" },
+      tools: { weather: tool({ name: "weather", schema: z.object({}), execute: () => "sunny" }) }
+    })).rejects.toThrow("requires the Responses API");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("reports the current GPT-5.6, GPT-5.5, and GPT-5.4 tool capability matrix", () => {
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
 

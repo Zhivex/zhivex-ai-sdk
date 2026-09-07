@@ -580,6 +580,8 @@ export type {
   McpListToolsResponse,
   McpToolAnnotations,
   McpToolSetOptions,
+  ModelCapabilities,
+  ModelGenerateInput,
   ModelCatalog,
   ModelCatalogEntry,
   ModelCatalogPolicy,

@@ -141,3 +141,7 @@ Repository and full documentation:
 `providerOptions.thinking.display: "updates"` automatically adds `thinking-display-updates-2026-08-18`. The optional `thinking.block_binding.prefix_mismatch_behavior` accepts `error` or `drop_block` and adds `thinking-binding-controls-2026-08-01`. Keep conversations append-only when preserving thinking: changing earlier messages, system instructions, or tools can invalidate later blocks. The SDK never silently drops or rewrites those blocks; opt into upstream `drop_block` explicitly when needed and inspect the raw response for input transformations.
 
 See [Anthropic's migration contract](https://platform.claude.com/docs/en/models/fable-5-1/whats-new-fable-5-1). Per-message effort and turn-scoped system-message metadata are not yet exposed as dedicated shared helpers.
+
+## Reusing the Messages protocol for cloud hosts
+
+`createAnthropicMessagesModel({ modelId, transport, provider, capabilities })` is an advanced adapter-building helper. It reuses Claude message, tool, reasoning, structured-output, and stream mapping without resolving direct Anthropic credentials. The `AnthropicMessagesTransport.send(body, signal, withMcpToolset, withFilesApi, betas)` callback owns authentication, routing, unsupported-feature checks, and HTTP status handling. Capability overrides are shallow; cloud hosts must constrain them to their own supported contract. Application code should use `createAnthropic()` for the direct API or `createVertex()` from `@zhivex-ai/vertex` for Claude on Google Cloud.

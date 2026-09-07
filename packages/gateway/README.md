@@ -18,10 +18,10 @@ For agent routing, the gateway can also filter by `agentCapabilities`, such as p
 ## Install
 
 ```bash
-bun add @zhivex-ai/gateway @zhivex-ai/openai @zhivex-ai/ollama
+bun add @zhivex-ai/gateway @zhivex-ai/core @zhivex-ai/anthropic @zhivex-ai/openai @zhivex-ai/ollama
 ```
 
-Install the provider packages used by your own adapter map; OpenAI and Ollama are included above because the example below uses both.
+Install the provider packages used by your own adapter map; the examples below use OpenAI, Ollama and Anthropic.
 
 ## Usage
 
@@ -107,3 +107,103 @@ This package is the SDK-local routing layer. It is not the Zhivex-hosted Gateway
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+## Continuing canonical tool history
+
+`GatewayRequest.messages` accepts `GatewayInputMessage[]`, a union of the existing
+`GatewayMessage` (role/content/images) and core `ModelMessage` (role/parts).
+Existing text/image requests remain valid. Each message must use exactly one
+representation; `content` or `images` combined with `parts` is rejected.
+
+```ts
+import type { ModelMessage } from "@zhivex-ai/core";
+import { createAnthropic } from "@zhivex-ai/anthropic";
+import { createGateway, type GatewayRequest } from "@zhivex-ai/gateway";
+
+const gateway = createGateway({ adapters: { anthropic: createAnthropic() } });
+const messages: ModelMessage[] = [
+  { role: "user", parts: [{ type: "text", text: "What is the temperature in Buenos Aires?" }] },
+  { role: "assistant", parts: [{
+    type: "tool-call",
+    toolCall: { id: "call_weather_1", name: "weather", input: { city: "Buenos Aires" } }
+  }] },
+  { role: "tool", parts: [{
+    type: "tool-result",
+    toolResult: {
+      toolCallId: "call_weather_1", toolName: "weather",
+      output: { temperatureC: 18 }, isError: false
+    }
+  }] }
+];
+const request: GatewayRequest = {
+  messages,
+  primary: { provider: "anthropic", modelId: "claude-sonnet-4-6" },
+  fallbacks: [{ provider: "anthropic", modelId: "claude-opus-4-6" }]
+};
+const answer = await gateway.generate(request);
+const streamedAnswer = await gateway.streamText(request).collect();
+```
+
+Historical results are input to the model and never invoke a tool executor.
+New tool calls retain the existing `tools`, `toolExecution`, and `maxSteps` policy.
+For an error result, set `isError: true` and `error: { message: "..." }` instead of
+`output`. Successful results require a JSON `output`, including strings or null.
+Tool inputs must be JSON objects. IDs must be unique across the request; results
+must match both ID and tool name, occur after their calls, and resolve every call
+before another conversation turn. Multiple calls and results retain input order;
+results can arrive in a different ID order, grouped in one or consecutive tool
+messages. System messages must precede conversation turns.
+
+| Surface / destination | Canonical history support |
+| --- | --- |
+| `generate`, `streamText` | Supported, including usage estimates, attempts, finish reasons, cancellation and routing |
+| `generateObject`, `streamObject` | Same input validation and routing; destination must also support the requested object mode |
+| `runAgent`, `streamAgent` | Legacy `GatewayMessage[]` only; canonical input is explicitly rejected |
+| Anthropic Messages | Text, user images, assistant tool calls, tool results and native `is_error` |
+| OpenAI Chat / Responses | Callable tool history, including multiple results; explicit JSON success/error envelopes |
+| DeepSeek Chat | Same JSON envelope support; portable replay defaults to non-thinking; reasoning-only models are excluded |
+| Qwen Chat / Responses | Same JSON envelope support; portable replay defaults to non-thinking; thinking-only models are excluded |
+| Other / older provider adapters | Must explicitly advertise `capabilities.toolHistory`; otherwise skipped with `model-capabilities`, even if `tools` is true |
+
+The gateway is extensible through `ModelCapabilities.toolHistory`: `"native"`
+means the adapter preserves error state natively, and `"json"` means it honors
+`ModelGenerateInput.toolResultFormat: "envelope"`. Anthropic is also accepted for
+backward compatibility with its existing native mapping. An older OpenAI,
+DeepSeek or Qwen adapter without the declaration is skipped safely. Custom
+adapters can declare support after implementing and testing the same contract;
+there is no provider-name allowlist for opting in.
+
+For JSON transports, each tool result is a separate Chat tool message or Responses
+`function_call_output`. Its content/output string contains `{ "output": <JSON> }`
+on success or `{ "error": { "message": "..." } }` on failure. This discriminant
+keeps an error-shaped successful value distinguishable from an actual failure.
+Calls and results retain their IDs and order. The original canonical messages and
+`isError` remain unchanged. Direct SDK calls keep their prior raw result format
+unless they explicitly request the new low-level format. Anthropic keeps native
+`is_error`; it does not receive a JSON envelope. Hosted/provider-native tools are
+not part of this portable callable-history contract.
+
+DeepSeek/Qwen portable replay has no private thinking state: it defaults to
+`thinking.type: "disabled"` / `enable_thinking: false` on those destinations only.
+Explicit reasoning/thinking requests are skipped before HTTP; thinking-only
+models do not advertise this capability. Text before assistant tool calls is
+supported. JSON destinations reject text interleaved after calls instead of
+moving it to the beginning. Anthropic can preserve that interleaving natively.
+
+Tool-free canonical text/image messages continue to use normal capability checks.
+Audio, files, provider-data, provider metadata, unsupported roles/parts and unknown
+fields are rejected before provider calls.
+Validation errors contain no message content. Provider failures and caller abort
+reasons for tool-history requests use fixed, sanitized diagnostics. Once a stream
+emits an event, a failure terminates it without retry/fallback; `collect()` rejects
+on both thrown errors and provider error events.
+
+Run `bun run test packages/gateway/tests` for regressions. After `bun run build`,
+run `bun run scripts/gateway-history-package-smoke.ts` for a tarball consumer with
+TypeScript compilation and generation/streaming on all six transport variants
+(Anthropic; OpenAI Chat/Responses; DeepSeek Chat; Qwen Chat/Responses). It installs
+candidate core/gateway/provider tarballs without checkout links. Add
+`--live --provider=openai` (or `deepseek`, `qwen`, `anthropic`) to require an
+authorized credential and perform two bounded live calls for one provider. A missing credential is a blocked live check, not
+a passing certification. Publication evidence and the actual version are recorded
+in [the delivery record](../../docs/GATEWAY_TOOL_HISTORY_DELIVERY.md).

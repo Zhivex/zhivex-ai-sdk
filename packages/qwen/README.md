@@ -300,3 +300,19 @@ Repository and full documentation:
 `qwen3.8-max-0902` preserves its exact upstream ID while inheriting the `qwen3.8-max` validation, vision, tools, and token-limit request mapping. Dated four-digit Max/Flash snapshots are recognized separately from Token Plan previews. `qwen3.8-2.4t-a95b` is listed for discovery without automatic recommendations; its specialized behavior has not been live-certified.
 
 See the [QwenCloud model inventory](https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models).
+
+
+## Gateway tool history
+
+The language adapter advertises `capabilities.toolHistory: "json"` for compatible
+models. Chat Completions and Responses preserve multiple results in a tool message.
+When the low-level model input sets `toolResultFormat: "envelope"`, callable tool
+outputs use JSON `{ "output": value }` or `{ "error": { "message": "..." } }`,
+so error state survives the string-only tool output protocol. Direct SDK calls
+retain their existing raw output format by default. See the
+[gateway history contract](../gateway/README.md#continuing-canonical-tool-history)
+for routing, exclusions and the isolated-consumer verification command.
+
+Portable gateway replay defaults to non-thinking mode and rejects explicit thinking
+requests, because the accepted history has no provider-specific reasoning state.
+Thinking-only models are excluded from the gateway history capability.

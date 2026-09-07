@@ -95,3 +95,11 @@ policy in <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/STABILITY.md>.
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+
+Model adapters can advertise `ModelCapabilities.toolHistory` as `"native"` or
+`"json"`. The latter must honor the low-level `ModelGenerateInput.toolResultFormat`
+option `"envelope"`, using `toolResultPayload()` to preserve a discriminated
+`{ output }` / `{ error }` payload for every callable tool result. These optional
+contract fields are also available through the SDK's ModelCapabilities and
+ModelGenerateInput type exports.

@@ -1,15 +1,17 @@
 import type { ModelMessage } from "@zhivex-ai/core";
 
 import type {
-  GatewayMessage,
+  GatewayInputMessage,
   GatewayModelTarget,
   GatewayResponse
 } from "./types.js";
+import { validateGatewayMessages } from "./history.js";
 
 export const gatewayMessagesToModelMessages = (
-  messages: GatewayMessage[],
+  messages: GatewayInputMessage[],
   systemPrompt?: string
 ): ModelMessage[] => {
+  validateGatewayMessages(messages);
   const mappedMessages: ModelMessage[] = [];
 
   if (systemPrompt) {
@@ -20,6 +22,10 @@ export const gatewayMessagesToModelMessages = (
   }
 
   for (const message of messages) {
+    if ("parts" in message) {
+      mappedMessages.push(structuredClone(message));
+      continue;
+    }
     mappedMessages.push({
       role: message.role,
       parts: [

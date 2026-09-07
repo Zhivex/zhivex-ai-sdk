@@ -154,3 +154,19 @@ It validates the shared text, streaming, thinking-mode tools, structured-output,
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+
+## Gateway tool history
+
+The language adapter advertises `capabilities.toolHistory: "json"` for compatible
+models. Chat Completions preserve multiple results in a tool message.
+When the low-level model input sets `toolResultFormat: "envelope"`, callable tool
+outputs use JSON `{ "output": value }` or `{ "error": { "message": "..." } }`,
+so error state survives the string-only tool output protocol. Direct SDK calls
+retain their existing raw output format by default. See the
+[gateway history contract](../gateway/README.md#continuing-canonical-tool-history)
+for routing, exclusions and the isolated-consumer verification command.
+
+Portable gateway replay defaults to non-thinking mode and rejects explicit thinking
+requests, because the accepted history has no provider-specific reasoning state.
+Thinking-only models are excluded from the gateway history capability.

@@ -105,6 +105,10 @@ export interface ModelMessage {
 }
 
 export interface ModelCapabilities {
+  /** Preserves complete callable tool history, including multiple results and error state.
+   * json adapters must honor ModelGenerateInput.toolResultFormat = "envelope".
+   */
+  toolHistory?: "native" | "json";
   streaming: boolean;
   tools: boolean;
   structuredOutput: boolean;
@@ -690,6 +694,10 @@ export type ProviderOptions = Record<string, unknown>;
 
 export interface ModelGenerateInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
   messages: ModelMessage[];
+  /** Opt-in discriminated JSON tool outputs: { output } on success, { error } on failure.
+   * Only use with models advertising toolHistory: "json"; legacy serialization is the default.
+   */
+  toolResultFormat?: "raw" | "envelope";
   tools?: ToolSet;
   toolChoice?: ToolChoice;
   toolExecution?: ToolExecutionOptions;

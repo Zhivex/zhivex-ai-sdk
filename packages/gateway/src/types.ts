@@ -16,6 +16,7 @@ import type {
   GenerateTextOutput,
   JsonValue,
   ModelCatalog,
+  ModelMessage,
   ProviderAdapter,
   ReasoningConfig,
   StreamObjectResult,
@@ -70,13 +71,16 @@ export interface GatewayMessage {
   images?: GatewayImageAttachment[];
 }
 
+/** Legacy text/image messages or canonical core messages. See the supported history subset in README. */
+export type GatewayInputMessage = GatewayMessage | ModelMessage;
+
 export interface GatewayModelTarget {
   provider: GatewayProviderId;
   modelId: string;
 }
 
 export interface GatewayRequest {
-  messages: GatewayMessage[];
+  messages: GatewayInputMessage[];
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
