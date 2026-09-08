@@ -145,3 +145,7 @@ See [Anthropic's migration contract](https://platform.claude.com/docs/en/models/
 ## Reusing the Messages protocol for cloud hosts
 
 `createAnthropicMessagesModel({ modelId, transport, provider, capabilities })` is an advanced adapter-building helper. It reuses Claude message, tool, reasoning, structured-output, and stream mapping without resolving direct Anthropic credentials. The `AnthropicMessagesTransport.send(body, signal, withMcpToolset, withFilesApi, betas)` callback owns authentication, routing, unsupported-feature checks, and HTTP status handling. Capability overrides are shallow; cloud hosts must constrain them to their own supported contract. Application code should use `createAnthropic()` for the direct API or `createVertex()` from `@zhivex-ai/vertex` for Claude on Google Cloud.
+
+### Generation retries
+
+Language-model generation and streaming startup validate HTTP failures inside the retry boundary. `maxRetries` applies to HTTP 408, 429 and 5xx responses, with bounded `Retry-After` waits. Other 4xx responses are not retried. Timeout and caller cancellation interrupt retry waits; successful stream bodies remain unread until consumption.

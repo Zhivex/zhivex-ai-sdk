@@ -398,7 +398,7 @@ class XAIGroundedLanguageModel implements GroundedLanguageModel<XAILanguageModel
 const blobFromData = (data: FileUploadInput["data"], mediaType: string) => {
   if (data instanceof Blob) return data;
   if (typeof data === "string") return new Blob([Buffer.from(data, "base64")], { type: mediaType });
-  return new Blob([data instanceof Uint8Array ? (data.buffer as ArrayBuffer) : data], { type: mediaType });
+  return new Blob([data instanceof Uint8Array ? new Uint8Array(data) : data], { type: mediaType });
 };
 
 const normalizeUploadedFile = (json: any): UploadedFile => ({

@@ -1,5 +1,15 @@
 # @zhivex-ai/agents
 
+## 1.3.1
+
+### Patch Changes
+
+- Fix persisted agent compaction counting model usage twice and use current response usage for per-step budget preflight, with or without a run store. Preserve correlated tool-call, approval, and result groups across compaction boundaries, including parallel calls. Serialize synthetic assistant text as output_text in OpenAI Responses while retaining its role and native output metadata.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.13.0
+
 ## 1.3.0
 
 ### Minor Changes

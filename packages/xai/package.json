@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/xai",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "xAI Grok adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -42,7 +42,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^1.0.2",
-    "@zhivex-ai/openai": "^0.11.0"
+    "@zhivex-ai/core": "^1.13.0",
+    "@zhivex-ai/openai": "^0.11.2"
   }
 }

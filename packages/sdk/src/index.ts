@@ -123,6 +123,8 @@ export {
   createSqliteAgentMemoryStore,
   createSqliteAgentRunStore,
   createTextMessage,
+  createStructuredOutputPrompt,
+  withResponseRetry,
   cancelAgentRun,
   cancelAgentRunTree,
   cancelBatch,

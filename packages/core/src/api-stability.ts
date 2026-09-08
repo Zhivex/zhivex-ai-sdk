@@ -110,6 +110,7 @@ const stableSymbols = [
   "createOtelTelemetryMiddleware",
   "createOtelWorkflowObserver",
   "createTextMessage",
+  "createStructuredOutputPrompt",
   "createToolRegistry",
   "createUIMessageJsonResponse",
   "createUIMessageLinesResponse",
@@ -247,6 +248,7 @@ const stableSymbols = [
   "verifyArtifactIntegrity",
   "verifyArtifactRecordIntegrity",
   "withRetry",
+  "withResponseRetry",
   "withTimeoutSignal",
   "wrapLanguageModel"
 ] as const;

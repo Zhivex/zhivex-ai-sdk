@@ -1264,7 +1264,7 @@ await cancelAgentRun(store, first.state.runId, {
 - Active workers hold renewable leases. An expired lease can be recovered by another worker; a live lease prevents duplicate model/tool work. The runtime checkpoints every model response before tools and every tool batch before the next model call.
 - Capsule-owned runs persist their harness fingerprint. Resuming with a different capsule id, version, or fingerprint fails before model or tool execution.
 - `executionEnvironment` acquires an app-provided execution boundary per run, preauthorizes the complete tool-call batch, reauthorizes immediately before each call, and persists the environment fingerprint for safe resume. The SDK supplies the contract and enforcement hooks, not a managed sandbox service.
-- `compaction` can summarize an old message prefix before a provider request while preserving leading system messages and an atomic recent tool-call/result tail. The compacted state and digests are persisted before the provider call, appear in replay, and stream as `agent-compaction`.
+- `compaction` can summarize an old message prefix before a provider request while preserving leading system messages and an atomic recent tool-call/approval/result tail matched by correlation IDs. Protected groups that cannot fit the configured limits fail with `ValidationError`. Model and compactor usage are each counted once, including persisted streams and approval resumes; budget preflight uses the latest measured response usage. The compacted state and digests are persisted before the provider call, appear in replay, and stream as `agent-compaction`.
 - Completed local tools are recorded in a durable journal. `tool.execute(input, context)` receives `context.idempotencyKey`; forward it to side-effecting APIs. Completed entries replay without rerunning the tool, while indeterminate executions are blocked for operator reconciliation.
 - Use SQLite or Postgres for durable concurrent workers. The file store serializes revision CAS across local processes with a private, bounded lock that recovers after the owner exits or the lock becomes stale, but its leases and broader crash recovery remain local-development facilities rather than production coordination guarantees.
 - `cancelAgentRun()` marks the saved state as `cancel_requested` by default. Pass `{ mode: "final" }` to write a terminal `cancelled` state.
@@ -2947,6 +2947,8 @@ console.log(fromAnthropic.text);
 
 ## Gateway Routing
 
+Gateway object routing resolves `auto` per destination, including fallback between native structured output and prompted JSON. Stream attempt diagnostics report terminal success/failure, and retries honor bounded provider `retryAfterMs`.
+
 `@zhivex-ai/gateway` is the optional SDK-local routing and fallback package for multi-provider setups. It is separate from the main `@zhivex-ai/sdk` facade and separate from any Zhivex-hosted Gateway API. See [`packages/gateway/README.md`](./packages/gateway/README.md) for routing examples and package-specific behavior.
 
 `GatewayRequest.messages` also accepts canonical core `ModelMessage` entries. Text/object generation and streaming preserve resolved tool history on Anthropic, OpenAI, DeepSeek and Qwen, with explicit validation and cross-provider fallback. Adapters declare native or JSON-envelope history support; older/incompatible destinations are skipped. Portable DeepSeek/Qwen replay uses non-thinking mode; agent operations retain legacy message input. See the gateway README for the supported subset and the [delivery evidence](./docs/GATEWAY_TOOL_HISTORY_DELIVERY.md) for artifact and publication status.
@@ -2960,6 +2962,8 @@ Gateway retries use typed `ProviderHTTPError` status codes: `408`, `429`, and `5
 Image requests are routed only to models declaring `capabilities.vision: true`. Images are never removed silently to accommodate an incompatible target. The unused `GatewayConfig.groundedAdapters` option has been removed; register adapters through `adapters`, and do not rely on this package for a grounded-generation route.
 
 ## Public API Surface
+
+Object generation preserves tool approval policies and lifecycle hooks. Provider stream error events terminate the operation and reject `collect()` before pending tools execute. OpenAI, Anthropic, Gemini and Qwen language-model routes validate HTTP status inside their retry boundary; DeepSeek also cancels retry waits when its timeout expires.
 
 The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives from `core`, including:
 

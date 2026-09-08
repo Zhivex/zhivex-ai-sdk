@@ -23,7 +23,7 @@ import {
   readErrorBodyWithLimit,
   readJsonWithLimit,
   streamSSE,
-  withRetry,
+  withResponseRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
@@ -1285,9 +1285,10 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
         ...(outputConfig ? { output_config: outputConfig } : {}),
         ...(thinking ? { thinking } : {})
       });
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () => this.transport.send(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas),
-        input
+        { ...input, abortSignal: signal },
+        "Anthropic"
       );
 
       const json = await parseJson(response);
@@ -1330,10 +1331,11 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
       ...(outputConfig ? { output_config: outputConfig } : {}),
       ...(thinking ? { thinking } : {})
     });
-    const response = await withRetry(
+    const response = await withResponseRetry(
       () => this.transport.send(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas),
-      input
-    );
+      { ...input, abortSignal: signal },
+      "Anthropic"
+    ).catch((error) => { cleanup(); throw error; });
 
     return (async function* () {
       try {
