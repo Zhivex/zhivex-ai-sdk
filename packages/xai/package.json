@@ -42,7 +42,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^1.13.0",
+    "@zhivex-ai/core": "^1.0.2",
     "@zhivex-ai/openai": "^0.11.2"
   }
 }
