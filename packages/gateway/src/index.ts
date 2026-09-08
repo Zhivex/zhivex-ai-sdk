@@ -4,6 +4,8 @@ import {
   ProviderHTTPError,
   ValidationError,
   createAgent,
+  createStructuredOutputPrompt,
+  createTextMessage,
   generateObject,
   generateText,
   runAgent,
@@ -112,9 +114,11 @@ type ErrorDisposition = {
   error: GatewayError;
   retrySameTarget: boolean;
   fallbackNextTarget: boolean;
+  retryAfterMs?: number;
 };
 
 type RouteContext = {
+  autoObject?: boolean;
   toolHistory: boolean;
   attempts: GatewayAttempt[];
   candidates: RouteCandidate[];
@@ -557,7 +561,8 @@ const normalizeError = (error: unknown): ErrorDisposition => {
         retryable
       ),
       retrySameTarget: retryable,
-      fallbackNextTarget: true
+      fallbackNextTarget: true,
+      retryAfterMs: error instanceof ProviderHTTPError ? error.retryAfterMs : undefined
     };
   }
 
@@ -630,12 +635,14 @@ const getMaxRetries = (config: GatewayConfig) => {
   });
 };
 
-const retryBackoffMs = (config: GatewayConfig, retry: number) => {
+const retryBackoffMs = (config: GatewayConfig, retry: number, retryAfterMs?: number) => {
   const base = config.retryBackoffMs ?? 200;
   if (!Number.isFinite(base) || base < 0) {
     throw new GatewayError("Gateway retryBackoffMs must be a finite non-negative number.", false);
   }
-  return base * (retry + 1);
+  const serverDelay = typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+    ? retryAfterMs : 0;
+  return Math.min(60_000, Math.max(base * (retry + 1), serverDelay));
 };
 
 const createAttempt = (
@@ -983,6 +990,8 @@ export const createGateway = (config: GatewayConfig) => {
     let notificationChain = Promise.resolve();
 
     const queueAttempt = (attempt: GatewayAttempt) => {
+      attempt = { ...attempt, ...(attempt.errorMessage !== undefined
+        ? { errorMessage: redactSensitiveErrorMessage(attempt.errorMessage) } : {}) };
       attempts.push(attempt);
       notificationChain = notificationChain.then(() =>
         notifyAttempt(config, attempt, request.abortSignal)
@@ -1104,6 +1113,17 @@ export const createGateway = (config: GatewayConfig) => {
     const first = context.candidates[0]!;
     const maxTotalAttempts = getMaxTotalAttempts(config);
     let totalProviderAttempts = 0;
+    const prepareInput = (model: LanguageModel, input: ModelGenerateInput): ModelGenerateInput => {
+      const structured = input.structuredOutput;
+      if (!context.autoObject || !structured || model.capabilities.structuredOutput) return input;
+      return {
+        ...input,
+        structuredOutput: undefined,
+        messages: [...input.messages, createTextMessage("system", createStructuredOutputPrompt(structured.schema, {
+          name: structured.name, description: structured.description
+        }))]
+      };
+    };
     const dispositionFor = (error: unknown): ErrorDisposition => {
       const disposition = normalizeError(error);
       if (context.toolHistory) {
@@ -1149,7 +1169,8 @@ export const createGateway = (config: GatewayConfig) => {
       const maxRetries = getMaxRetries(config);
 
       for (const candidate of candidates) {
-        const inputSkipReason = modelInputSkipReason(candidate.model, input) ??
+        const candidateInput = prepareInput(candidate.model, input);
+        const inputSkipReason = modelInputSkipReason(candidate.model, candidateInput) ??
           (context.toolHistory ? historyInputSkipReason(candidate.model, input) : undefined);
         if (inputSkipReason) {
           await recordInputSkip(candidate, inputSkipReason);
@@ -1167,7 +1188,7 @@ export const createGateway = (config: GatewayConfig) => {
           try {
             const result = await control.waitFor(
               candidate.model.generate({
-                ...prepareHistoryInput(candidate.model, input, context.toolHistory),
+                ...prepareHistoryInput(candidate.model, candidateInput, context.toolHistory),
                 abortSignal: control.signal
               })
             );
@@ -1208,7 +1229,7 @@ export const createGateway = (config: GatewayConfig) => {
             );
 
             if (retry < maxRetries && disposition.retrySameTarget) {
-              await abortableSleep(retryBackoffMs(config, retry), input.abortSignal);
+              await abortableSleep(retryBackoffMs(config, retry, disposition.retryAfterMs), input.abortSignal);
               continue;
             }
             if (!disposition.fallbackNextTarget) {
@@ -1230,7 +1251,8 @@ export const createGateway = (config: GatewayConfig) => {
       const maxRetries = getMaxRetries(config);
 
       for (const candidate of candidates) {
-        const inputSkipReason = modelInputSkipReason(candidate.model, input) ??
+        const candidateInput = prepareInput(candidate.model, input);
+        const inputSkipReason = modelInputSkipReason(candidate.model, candidateInput) ??
           (context.toolHistory ? historyInputSkipReason(candidate.model, input) : undefined);
         if (inputSkipReason) {
           await recordInputSkip(candidate, inputSkipReason);
@@ -1253,7 +1275,7 @@ export const createGateway = (config: GatewayConfig) => {
           try {
             const providerStream = await control.waitFor(
               candidate.model.stream({
-                ...prepareHistoryInput(candidate.model, input, context.toolHistory),
+                ...prepareHistoryInput(candidate.model, candidateInput, context.toolHistory),
                 abortSignal: control.signal
               })
             );
@@ -1268,12 +1290,6 @@ export const createGateway = (config: GatewayConfig) => {
             }
 
             control.stopTimeout();
-            await context.recordAttempt(
-              createAttempt(candidate.target, true, Date.now() - attemptStartedAt, candidate.targetRank, {
-                retry,
-                reasonCode: "provider-success"
-              })
-            );
             await context.lock(candidate);
             const streamIdleTimeoutMs = getStreamIdleTimeoutMs(
               config,
@@ -1306,35 +1322,35 @@ export const createGateway = (config: GatewayConfig) => {
                   const next = await nextEvent();
                   if (next.done) {
                     completed = true;
+                    await context.recordAttempt(createAttempt(candidate.target, true, Date.now() - attemptStartedAt, candidate.targetRank, {
+                      retry, reasonCode: "provider-success"
+                    }));
                     return;
                   }
-                  if (context.toolHistory && next.value.type === "error") throw next.value.error;
+                  if (next.value.type === "error") throw next.value.error;
                   yield next.value;
                 }
               } catch (error) {
-                if (context.toolHistory) {
-                  const aborted = input.abortSignal?.aborted === true;
-                  const failure = aborted ? abortReason(input.abortSignal!) : dispositionFor(error).error;
-                  await context.recordAttempt(createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
-                    retry,
-                    reasonCode: aborted ? "request-aborted" : "provider-error",
-                    errorMessage: failure.message
-                  }));
-                  throw failure;
-                }
-                throw error;
+                const aborted = input.abortSignal?.aborted === true;
+                const diagnostic = dispositionFor(error).error;
+                const failure = aborted ? abortReason(input.abortSignal!) : context.toolHistory ? diagnostic : error;
+                await context.recordAttempt(createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
+                  retry,
+                  reasonCode: aborted ? "request-aborted" : "provider-error",
+                  errorMessage: aborted ? abortReason(input.abortSignal!).message : diagnostic.message
+                }));
+                throw failure;
               } finally {
                 if (!completed) {
                   control.abort(new DOMException("Gateway stream consumer closed.", "AbortError"));
                 }
                 control.dispose();
+                // Cleanup is best-effort: an iterator may ignore abort while next() is pending.
+                // Never let return() mask the original failure or hold collect() open.
                 if (iterator?.return) {
                   try {
-                    await iterator.return();
-                  } catch (error) {
-                    if (context.toolHistory) throw dispositionFor(error).error;
-                    throw error;
-                  }
+                    void Promise.resolve(iterator.return()).catch(() => undefined);
+                  } catch { /* Synchronous cleanup failures are also best-effort. */ }
                 }
               }
             })();
@@ -1344,7 +1360,9 @@ export const createGateway = (config: GatewayConfig) => {
             control.abort(error);
             control.dispose();
             if (iterator?.return) {
-              void iterator.return().catch(() => undefined);
+              try {
+                void Promise.resolve(iterator.return()).catch(() => undefined);
+              } catch { /* Cleanup must not prevent fallback. */ }
             }
 
             if (callerAborted) {
@@ -1368,7 +1386,7 @@ export const createGateway = (config: GatewayConfig) => {
             );
 
             if (retry < maxRetries && disposition.retrySameTarget) {
-              await abortableSleep(retryBackoffMs(config, retry), input.abortSignal);
+              await abortableSleep(retryBackoffMs(config, retry, disposition.retryAfterMs), input.abortSignal);
               continue;
             }
             if (!disposition.fallbackNextTarget) {
@@ -1390,7 +1408,9 @@ export const createGateway = (config: GatewayConfig) => {
         return context.winner?.model.modelId ?? first.model.modelId;
       },
       get capabilities() {
-        return context.winner?.model.capabilities ?? first.model.capabilities;
+        const capabilities = context.winner?.model.capabilities ?? first.model.capabilities;
+        // Keep the schema in Core input; each destination resolves auto independently.
+        return context.autoObject ? { ...capabilities, structuredOutput: true } : capabilities;
       },
       generate,
       stream
@@ -1466,6 +1486,7 @@ export const createGateway = (config: GatewayConfig) => {
           return message ? { reasonCode: "operation-skip", message } : undefined;
         }
       });
+      route.context.autoObject = (request.mode ?? "auto") === "auto";
       const result = await generateObject({
         ...createTextOptions(route.model, request),
         schema: request.schema,
@@ -1480,7 +1501,9 @@ export const createGateway = (config: GatewayConfig) => {
         route.context.attempts,
         route.context.routeDecision,
         route.context.startedAt,
-        result as GenerateObjectOutput<TSchema>
+        { ...result, objectMode: route.context.autoObject
+          ? (route.context.winner!.model.capabilities.structuredOutput ? "native" : "prompted")
+          : result.objectMode } as GenerateObjectOutput<TSchema>
       );
     },
 
@@ -1494,6 +1517,7 @@ export const createGateway = (config: GatewayConfig) => {
           return message ? { reasonCode: "operation-skip", message } : undefined;
         }
       });
+      route.context.autoObject = (request.mode ?? "auto") === "auto";
       const streamResult = streamObject({
         ...createTextOptions(route.model, request),
         schema: request.schema,
@@ -1514,7 +1538,9 @@ export const createGateway = (config: GatewayConfig) => {
             route.context.attempts,
             route.context.routeDecision,
             route.context.startedAt,
-            result
+            { ...result, objectMode: route.context.autoObject
+              ? (route.context.winner!.model.capabilities.structuredOutput ? "native" : "prompted")
+              : result.objectMode }
           );
         }
       };

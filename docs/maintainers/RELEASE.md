@@ -70,6 +70,8 @@ bun run smoke:packages
 git status --short
 ```
 
+`bun run version-packages` also synchronizes the standalone Next.js starter pins for SDK, OpenAI, and React with the generated package versions. Review that diff and rerun `docs:check` and the internal Core range tests after versioning; providers that import new Core helpers must require the version that introduced them.
+
 Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The `validate` job has no OIDC permission: it checks out immutable committed source, installs dependencies without lifecycle scripts, scans for recognized secret signatures, repeats audit/typecheck/test/build and the packed Node consumer smoke, then produces the exact release batch as commit-bound SHA-512 tarballs. The separate `publish` job is the only OIDC trust boundary; it installs no dependencies and publishes only those downloaded, checksum-verified tarballs. Package tags are pushed only after npm integrity, dist-tags, and the signed SLSA provenance subject and source commit match the release. `gitHead` is also checked when npm provides it.
 
 Tag discovery comes from npm metadata rather than only from tags created inside the current runner. This lets a safe rerun recover every tag from a partially successful publish while excluding unchanged packages from older commits.

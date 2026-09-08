@@ -77,3 +77,5 @@ Repository and full documentation:
 The SDK catalog includes `muse-spark-1.3`. Pass that exact ID to `languageModel()` to use the existing Chat or Responses adapter, including structured output, tools, streaming, and reasoning. Meta's current announcement confirms `max` reasoning availability. Pricing is omitted until independently verified; no 1.2 price is inherited. Existing 1.2 integrations and smoke defaults remain available.
 
 See [Meta's release announcement](https://research.meta.ai/blog/introducing-muse-spark-1-3).
+
+File uploads preserve the exact bytes of a supplied `Uint8Array` or `Buffer` view, including slices with nonzero offsets.

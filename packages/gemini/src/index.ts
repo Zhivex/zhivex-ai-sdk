@@ -35,6 +35,7 @@ import {
   toolResultPayload,
   unsupportedBrowserToken,
   withRetry,
+  withResponseRetry,
   withTimeoutSignal,
   type AudioInput,
   type BatchCreateInput,
@@ -2426,7 +2427,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.url("generateContent"), {
             method: "POST",
@@ -2441,7 +2442,8 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
               generationConfig: generationConfig(this.modelId, input)
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
 
       const json = await parseJson(response);
@@ -2467,7 +2469,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
     assertCurrentGeminiGenerateInput("gemini", this.modelId, input);
     const { signal, cleanup } = withTimeoutSignal(input);
-    const response = await withRetry(
+    const response = await withResponseRetry(
       () =>
         this.fetcher(this.url("streamGenerateContent?alt=sse"), {
           method: "POST",
@@ -2482,8 +2484,9 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
             generationConfig: generationConfig(this.modelId, input)
           })
         }),
-      input
-    );
+      { ...input, abortSignal: signal },
+      "Gemini"
+    ).catch((error) => { cleanup(); throw error; });
 
     return (async function* () {
       try {

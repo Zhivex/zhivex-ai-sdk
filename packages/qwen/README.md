@@ -316,3 +316,7 @@ for routing, exclusions and the isolated-consumer verification command.
 Portable gateway replay defaults to non-thinking mode and rejects explicit thinking
 requests, because the accepted history has no provider-specific reasoning state.
 Thinking-only models are excluded from the gateway history capability.
+
+### Generation retries
+
+Language-model generation and streaming startup validate HTTP failures inside the retry boundary. `maxRetries` applies to HTTP 408, 429 and 5xx responses, with bounded `Retry-After` waits. Other 4xx responses are not retried. Timeout and caller cancellation interrupt retry waits; successful stream bodies remain unread until consumption.

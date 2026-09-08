@@ -103,3 +103,13 @@ option `"envelope"`, using `toolResultPayload()` to preserve a discriminated
 `{ output }` / `{ error }` payload for every callable tool result. These optional
 contract fields are also available through the SDK's ModelCapabilities and
 ModelGenerateInput type exports.
+
+## Structured output prompt helper
+
+`createStructuredOutputPrompt(schema, { name?, description? })` builds the same JSON Schema instruction used by prompted object generation. It rejects schemas that cannot be represented as JSON Schema. Custom routers can reuse it when adapting a native request to a prompted destination; consumers must still validate the returned JSON. The helper is also exported by `@zhivex-ai/sdk`.
+
+## HTTP retries and generation policies
+
+`withResponseRetry(operation, retryOptions, providerLabel?)` validates HTTP status inside the retry boundary, honors numeric/date `Retry-After` headers, and returns successful responses with their body unread. Pass the combined timeout/caller signal as `retryOptions.abortSignal` and to the HTTP request. The helper is also exported by `@zhivex-ai/sdk`.
+
+Object generation forwards the same tool approval policies, tool choice, context and lifecycle hooks as text generation. A provider stream `error` event rejects `collect()` and stops pending tool execution; it cannot become a successful partial result.

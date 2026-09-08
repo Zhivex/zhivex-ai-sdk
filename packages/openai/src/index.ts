@@ -48,6 +48,7 @@ import {
   toolResultPayload,
   unsupportedBrowserToken,
   withRetry,
+  withResponseRetry,
   withTimeoutSignal,
   type AudioFrame,
   type AudioInput,
@@ -1800,7 +1801,12 @@ const toResponsesInput = (messages: ModelMessage[], format?: ModelGenerateInput[
     for (const part of message.parts) {
       switch (part.type) {
         case "text":
-          content.push({ type: "input_text", text: part.text, ...promptCacheBreakpointForContentPart(part) });
+          content.push({
+            type: message.role === "assistant" ? "output_text" : "input_text",
+            text: part.text,
+            ...(message.role === "assistant" ? { annotations: [] } : {}),
+            ...promptCacheBreakpointForContentPart(part)
+          });
           break;
         case "image":
           const detail = imageDetailForPart(part);
@@ -2693,7 +2699,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
     let statelessInternalOutputs: Array<Record<string, unknown>> = [];
 
     for (let continuation = 0; continuation < 8; continuation += 1) {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/responses`, {
             method: "POST",
@@ -2712,7 +2718,8 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               ...mapResponsesReasoning(input, responseBodyOptions.reasoning)
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "OpenAI"
       );
 
       const json = await parseJson(response);
@@ -2797,7 +2804,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
         return await this.generateViaResponses(input, signal, options);
       }
 
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
             method: "POST",
@@ -2816,7 +2823,8 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               stream: false
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "OpenAI"
       );
 
       const json = await parseJson(response);
@@ -2860,7 +2868,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
         previousResponse && previousResponse.index < input.messages.length - 1
           ? input.messages.slice(previousResponse.index + 1)
           : input.messages;
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/responses`, {
             method: "POST",
@@ -2880,8 +2888,9 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               stream: true
             })
           }),
-        input
-      );
+        { ...input, abortSignal: signal },
+        "OpenAI"
+      ).catch((error) => { cleanup(); throw error; });
       const imageGeneration = responsesImageGenerationConfig(input.tools, this.responseLimits);
       const toolCallArgumentChars = this.responseLimits.toolCallArgumentChars;
 
@@ -2901,7 +2910,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
     }
 
     const { signal, cleanup } = getRequestOptions(input);
-    const response = await withRetry(
+    const response = await withResponseRetry(
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {
           method: "POST",
@@ -2921,8 +2930,9 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             stream_options: { include_usage: true }
           })
         }),
-      input
-    );
+      { ...input, abortSignal: signal },
+      "OpenAI"
+    ).catch((error) => { cleanup(); throw error; });
 
     return (async function* () {
       try {

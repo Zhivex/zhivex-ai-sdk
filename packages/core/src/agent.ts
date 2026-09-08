@@ -1513,6 +1513,37 @@ const compactAgentMessages = async <TContext>(
   while (cut > systemCount && messages[cut]?.role === "tool") {
     cut -= 1;
   }
+  // Preserve whole correlated groups even when approval messages or parallel
+  // tool results separate a call from its result. Moving the boundary can expose
+  // another crossing dependency, so resolve it to a fixed point.
+  const origins = new Map<string, number>();
+  const dependencies: Array<{ from: number; to: number }> = [];
+  messages.forEach((message, index) => {
+    for (const part of message.parts) {
+      let origin: string | undefined;
+      let reference: string | undefined;
+      if (part.type === "tool-call") origin = `tool:${part.toolCall.id}`;
+      if (part.type === "tool-result") reference = `tool:${part.toolResult.toolCallId}`;
+      if (part.type === "provider-data" && typeof part.data === "object" && part.data !== null && !Array.isArray(part.data)) {
+        if (part.data.type === "mcp_approval_request" && typeof part.data.id === "string") {
+          origin = `approval:${part.provider}:${part.data.id}`;
+        }
+        if (part.data.type === "mcp_approval_response" && typeof part.data.approval_request_id === "string") {
+          reference = `approval:${part.provider}:${part.data.approval_request_id}`;
+        }
+      }
+      if (origin) origins.set(origin, index);
+      const from = reference ? origins.get(reference) : undefined;
+      if (from !== undefined) dependencies.push({ from, to: index });
+    }
+  });
+  let previousCut: number;
+  do {
+    previousCut = cut;
+    for (const { from, to } of dependencies) {
+      if (from < cut && to >= cut) cut = from;
+    }
+  } while (cut !== previousCut);
   if (cut <= systemCount) {
     throw new ValidationError("Agent compaction cannot satisfy its limits without removing protected messages.");
   }
@@ -1671,6 +1702,7 @@ const createGenerateOptions = <
     ? undefined
     : input.compaction ?? agent.compaction;
   let checkpointState = cloneState(state);
+  let liveUsage = state.usage;
   let reservedToolCalls = 0;
   const requestedMaxTokens = input.maxTokens ?? agent.maxTokens;
   const budgetStatus = budget ? getAgentBudgetStatus(state, budget) : undefined;
@@ -1739,7 +1771,10 @@ const createGenerateOptions = <
             updatedAt: Date.now()
           };
           state.messages = compacted.messages;
-          state.usage = checkpointState.usage;
+          // Finalization adds this invocation's model usage. Only add the
+          // compactor here; checkpoint usage already includes model responses.
+          state.usage = aggregateTokenUsage([state.usage, compacted.record.usage]);
+          liveUsage = aggregateTokenUsage([liveUsage, compacted.record.usage]);
           state.compactions = checkpointState.compactions;
           await persistState(agent, checkpointState, runPolicy);
           state.revision = checkpointState.revision;
@@ -1749,7 +1784,7 @@ const createGenerateOptions = <
       : undefined,
     onBeforeModelStep: async ({ step }) => {
       if (budget) {
-        const trigger = evaluateAgentBudgetPreflight(state, budget, {
+        const trigger = evaluateAgentBudgetPreflight({ ...state, usage: liveUsage }, budget, {
           operation: "model",
           requiredSteps: Math.max(1, step - state.currentStep),
           requestedOutputTokens: maxTokens
@@ -1771,6 +1806,7 @@ const createGenerateOptions = <
       });
     },
     onModelStep: async ({ request, response, step, toolCalls, approvalRequests }) => {
+      liveUsage = aggregateTokenUsage([liveUsage, response.usage]);
       if (!agent.store) return;
       const responseSnapshot = snapshotResponse(response);
       const approvals = [
@@ -1839,7 +1875,7 @@ const createGenerateOptions = <
     onBeforeToolExecution: async ({ step, toolCalls }) => {
       if (budget) {
         reservedToolCalls += toolCalls.length;
-        const trigger = evaluateAgentBudgetPreflight(state, budget, {
+        const trigger = evaluateAgentBudgetPreflight({ ...state, usage: liveUsage }, budget, {
           operation: "tool",
           requiredToolCalls: reservedToolCalls
         });

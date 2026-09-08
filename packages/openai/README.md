@@ -348,3 +348,7 @@ so error state survives the string-only tool output protocol. Direct SDK calls
 retain their existing raw output format by default. See the
 [gateway history contract](../gateway/README.md#continuing-canonical-tool-history)
 for routing, exclusions and the isolated-consumer verification command.
+
+### Generation retries
+
+Language-model generation and streaming startup validate HTTP failures inside the retry boundary. `maxRetries` applies to HTTP 408, 429 and 5xx responses, with bounded `Retry-After` waits. Other 4xx responses are not retried. Timeout and caller cancellation interrupt retry waits; successful stream bodies remain unread until consumption.

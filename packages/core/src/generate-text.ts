@@ -1086,6 +1086,9 @@ export const streamText = <
       let usage = undefined;
 
       for await (const event of stream) {
+        // The runner catch publishes one terminal error and rejects collect().
+        // Do not execute tool calls accumulated from a failed provider response.
+        if (event.type === "error") throw event.error;
         await publish(event);
 
         if (event.type === "text-delta") {

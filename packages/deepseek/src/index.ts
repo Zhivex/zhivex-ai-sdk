@@ -865,7 +865,7 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
           });
           return parseJson(response);
         },
-        input
+        { ...input, abortSignal: signal }
       );
 
       const choice = json.choices?.[0];
@@ -923,7 +923,7 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
           await assertResponseOk(result);
           return result;
         },
-        input
+        { ...input, abortSignal: signal }
       );
     } catch (error) {
       cleanup();

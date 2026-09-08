@@ -682,3 +682,7 @@ export * from "./stream.js";
 export { createToolRegistry, isToolRegistry, toToolSet, ToolRegistry } from "./tool-registry.js";
 export * from "./types.js";
 export * from "./ui.js";
+
+export { createStructuredOutputPrompt } from "./structured-output-prompt.js";
+
+export { withResponseRetry } from "./http-retry.js";

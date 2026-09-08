@@ -245,3 +245,7 @@ Repository and full documentation:
 `gemini-3.8-flash` follows the current provider-managed sampling rules: temperature, top-p/top-k, candidate count, and penalties are rejected locally, as is assistant prefill. Reasoning supports `low`, `medium`, and `high`; `minimal` is rejected. The SDK catalog includes `lyria-3.5`, usable through `musicGenerationModel("lyria-3.5")` and `generateMusic()` with the existing text/image-to-audio contract.
 
 See [Gemini 3.8 migration](https://ai.google.dev/gemini-api/docs/latest-model) and [Lyria 3.5](https://ai.google.dev/gemini-api/docs/models/lyria-3.5). Catalog presence and offline tests do not certify account access.
+
+### Generation retries
+
+Language-model generation and streaming startup validate HTTP failures inside the retry boundary. `maxRetries` applies to HTTP 408, 429 and 5xx responses, with bounded `Retry-After` waits. Other 4xx responses are not retried. Timeout and caller cancellation interrupt retry waits; successful stream bodies remain unread until consumption.

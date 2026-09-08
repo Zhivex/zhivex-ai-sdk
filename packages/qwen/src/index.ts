@@ -32,6 +32,7 @@ import {
   toolResultPayload,
   toToolSet,
   withRetry,
+  withResponseRetry,
   withTimeoutSignal,
   type AudioFrame,
   type AudioInput,
@@ -1808,7 +1809,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           previousResponse && previousResponse.index < input.messages.length - 1
             ? input.messages.slice(previousResponse.index + 1)
             : input.messages;
-        const response = await withRetry(
+        const response = await withResponseRetry(
           () =>
             this.fetcher(`${this.baseURL}/responses`, {
               method: "POST",
@@ -1826,7 +1827,8 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
                 stream: false
               })
             }),
-          input
+          { ...input, abortSignal: signal },
+          "Qwen"
         );
 
         const json = await parseJson(response);
@@ -1850,7 +1852,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       const chatProviderOptions = isQwen38ReasoningModel(this.modelId)
         ? stripQwen38ReasoningOptions(baseChatProviderOptions)
         : baseChatProviderOptions;
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
             method: "POST",
@@ -1870,7 +1872,8 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               ...mapChatReasoning(this.modelId, input, providerOptions)
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Qwen"
       );
 
       const json = await parseJson(response);
@@ -1920,7 +1923,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
         previousResponse && previousResponse.index < input.messages.length - 1
           ? input.messages.slice(previousResponse.index + 1)
           : input.messages;
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/responses`, {
             method: "POST",
@@ -1938,8 +1941,9 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               stream: true
             })
           }),
-        input
-      );
+        { ...input, abortSignal: signal },
+        "Qwen"
+      ).catch((error) => { cleanup(); throw error; });
 
       return (async function* () {
         try {
@@ -1954,7 +1958,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     const chatProviderOptions = isQwen38ReasoningModel(this.modelId)
       ? stripQwen38ReasoningOptions(baseChatProviderOptions)
       : baseChatProviderOptions;
-    const response = await withRetry(
+    const response = await withResponseRetry(
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {
           method: "POST",
@@ -1976,8 +1980,9 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             ...mapChatReasoning(this.modelId, input, providerOptions)
           })
         }),
-      input
-    );
+      { ...input, abortSignal: signal },
+      "Qwen"
+    ).catch((error) => { cleanup(); throw error; });
 
     return (async function* () {
       try {

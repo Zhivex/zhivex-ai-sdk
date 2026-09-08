@@ -1,5 +1,13 @@
 # @zhivex-ai/meta
 
+## 0.2.3
+
+### Patch Changes
+
+- Preserve approval policies, tool choice and lifecycle hooks in object generation. Treat provider stream error events as terminal failures before executing buffered tools.
+
+  Expose withResponseRetry in Core and SDK and use it for OpenAI, Anthropic, Gemini and Qwen language generation/stream startup. Honor Retry-After and share timeout signals with retry waits. Cancel DeepSeek backoff on timeout. Preserve exact Uint8Array and Buffer view boundaries when uploading files through Meta and xAI.
+
 ## 0.2.2
 
 ### Patch Changes

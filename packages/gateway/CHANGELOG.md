@@ -1,5 +1,18 @@
 # @zhivex-ai/gateway
 
+## 1.2.1
+
+### Patch Changes
+
+- Expose the shared structured output prompt helper through Core and SDK. Resolve Gateway auto object mode per destination without restarting tool loops, including fallback between native and prompted output.
+
+  Prevent uncooperative stream cleanup from blocking timeout or cancellation. Record terminal stream attempts, reject provider error events consistently, sanitize all attempt diagnostics, and honor bounded Retry-After delays.
+
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.13.0
+
 ## 1.2.0
 
 ### Minor Changes

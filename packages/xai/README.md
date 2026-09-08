@@ -52,3 +52,5 @@ Use `providerOptions: { apiMode: "chat" }` only when Chat Completions compatibil
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+File uploads preserve the exact bytes of a supplied `Uint8Array` or `Buffer` view, including slices with nonzero offsets.

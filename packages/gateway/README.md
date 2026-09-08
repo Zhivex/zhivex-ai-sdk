@@ -11,7 +11,7 @@ The gateway now supports:
 - `runAgent()`
 - `streamAgent()`
 
-Tool loops continue to run on the selected target after routing, and streaming fallbacks are resolved before the first chunk is emitted.
+Tool loops run in one Core execution; later model steps can fail over without replaying completed tools. Streaming fallbacks are resolved before the first provider event is emitted.
 
 For agent routing, the gateway can also filter by `agentCapabilities`, such as provider support tier or approval-capable MCP support, before selecting the final target.
 
@@ -60,7 +60,7 @@ console.log(result.providerUsed);
 console.log(result.attempts);
 ```
 
-The gateway also supports `streamText()`, `generateObject()`, and `streamObject()` through one Core generation loop. A provider is fixed once its stream emits, while a later model step in the same tool loop can still fail over before emitting provider output. Object routes skip incompatible targets before making a provider call: native mode requires `structuredOutput`, prompted mode requires `jsonMode`, and auto mode accepts either capability.
+The gateway also supports `streamText()`, `generateObject()`, and `streamObject()` through one Core generation loop. A provider is fixed once its stream emits, while a later model step in the same tool loop can still fail over before emitting provider output. Object routes skip incompatible targets before making a provider call: native mode requires `structuredOutput`, prompted mode requires `jsonMode`, and auto mode accepts either capability. In auto mode, the gateway prepares native output or a schema prompt for each destination independently, and `objectMode` reports the mode used by the final provider.
 
 ## Routing guarantees
 
@@ -68,6 +68,8 @@ The gateway also supports `streamText()`, `generateObject()`, and `streamObject(
 - Text and object streaming fallback is resolved before the first event is exposed. Agent streams may expose lifecycle events such as `agent-run-start` first, but provider fallback is resolved before the first provider event. Once a provider stream emits an event, an error from that stream is propagated without mixing in another provider's transcript.
 - `attemptTimeoutMs` and the per-provider `attemptTimeoutsMs` do more than reject the gateway promise: they abort a non-streaming provider call or a streaming call that has not produced its first event. After the first event, `streamIdleTimeoutMs` and `streamIdleTimeoutsMs` abort a provider that stops producing events; the default is 60 seconds and `false` explicitly disables it. A request-level `abortSignal` remains active for the full operation and stops pending retries, backoff, fallback routing, observers, and active streams.
 - `ProviderHTTPError` is classified by its typed HTTP status. Status `408`, `429`, and `5xx` errors are retryable on the same target. Other `4xx` errors are not retried on that target, but an eligible fallback can still handle a provider- or model-specific rejection.
+- Stream attempts record `provider-success` only after the provider iterator completes; `latencyMs` covers the full attempt. Failures after the first event, including provider error events and cancellation, produce a failed attempt without retry/fallback. `onAgentRoute` still fires on selection after the first provider event, before the terminal attempt exists. Iterator cleanup is best-effort and never delays timeout/cancellation or replaces the original failure.
+- Retry waits honor finite non-negative `ProviderHTTPError.retryAfterMs`, taking the greater of that value and the configured linear backoff, capped at 60 seconds per wait. Caller cancellation interrupts the wait.
 - Attempt diagnostics redact credential-like URL parameters and bearer tokens before they are exposed through `attempts[].errorMessage` or observers.
 - When `maxCostPer1kTokens` is set, a target without configured or catalog pricing is rejected by default. Set `unknownCostPolicy: "allow"` on `createGateway()` only when routing to models with unknown cost is acceptable.
 - Requests containing image attachments only route to models that declare `capabilities.vision: true`. The gateway never removes images to make a target appear compatible; if one target cannot accept the original request, it is skipped in favor of a compatible fallback.

@@ -208,21 +208,11 @@ const createObjectOptions = <TSchema extends ZodTypeAny>(options: GenerateObject
   const objectMode = resolveObjectMode(requestedMode, options.model.capabilities.structuredOutput);
   const promptConfig = withStructuredPrompt(options, objectMode);
   const structuredOutput = getStructuredOutput(options, objectMode);
-  const requestBase = {
-    model: options.model,
-    system: options.system,
-    tools: options.tools,
-    toolExecution: options.toolExecution,
-    maxSteps: options.maxSteps,
-    temperature: options.temperature,
-    maxTokens: options.maxTokens,
-    reasoning: options.reasoning,
-    providerOptions: options.providerOptions,
-    abortSignal: options.abortSignal,
-    timeoutMs: options.timeoutMs,
-    maxRetries: options.maxRetries,
-    retryBackoffMs: options.retryBackoffMs
-  };
+  // Preserve policies, hooks, tool context and retry controls from GenerateTextOptions.
+  const {
+    schema: _schema, mode: _mode, schemaName: _name, schemaDescription: _description,
+    prompt: _prompt, messages: _messages, ...requestBase
+  } = options;
 
   let request: GenerateTextOptions;
   if ("messages" in promptConfig) {

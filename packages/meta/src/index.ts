@@ -165,7 +165,7 @@ const blobFromData = (data: FileUploadInput["data"], mediaType: string) => {
   if (typeof data === "string") {
     return new Blob([Buffer.from(data, "base64")], { type: mediaType });
   }
-  return new Blob([data instanceof Uint8Array ? data.buffer as ArrayBuffer : data], { type: mediaType });
+  return new Blob([data instanceof Uint8Array ? new Uint8Array(data) : data], { type: mediaType });
 };
 
 const isUrlLike = (value: string) => /^https?:\/\//i.test(value) || /^data:/i.test(value);
