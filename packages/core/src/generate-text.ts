@@ -229,6 +229,7 @@ const toRequest = (options: AnyGenerateTextOptions, messages: ModelMessage[]): M
 });
 
 type ValidatedToolCall = {
+  validationError?: ToolExecutionResult["error"];
   call: ToolCall;
   tool: ToolDefinition;
   parsedInput: unknown;
@@ -321,7 +322,7 @@ const validateToolCalls = async (
       );
     }
     const parsed = tool.schema.safeParse(call.input);
-    if (!parsed.success) {
+    if (!parsed.success && (options.toolExecution?.validationErrorMode !== "tool-result" || tool.isEnabled)) {
       throw new ValidationError(`Invalid input for tool "${call.name}": ${parsed.error.message}`);
     }
     const executionContext = {
@@ -332,6 +333,23 @@ const validateToolCalls = async (
       model: options.model,
       request: context.request
     } satisfies ToolExecutionContext;
+    if (!parsed.success) {
+      // Never forward schema messages, received values, union payloads or custom
+      // error metadata. Availability predicates require valid input, so tools
+      // with isEnabled remain strict above.
+      validated.push({
+        call, tool, parsedInput: undefined, executionContext,
+        validationError: {
+          code: "TOOL_INPUT_VALIDATION_ERROR",
+          message: "Tool arguments do not match the input schema.",
+          issues: parsed.error.issues.map((issue: { code: string; path: PropertyKey[] }) => ({
+            code: issue.code,
+            path: issue.path.filter((part): part is string | number => typeof part === "string" || typeof part === "number")
+          }))
+        }
+      });
+      continue;
+    }
     if (tool.isEnabled && !(await tool.isEnabled(parsed.data, executionContext))) {
       throw new ValidationError(`Tool "${call.name}" is disabled for this execution context.`);
     }
@@ -359,6 +377,7 @@ const preflightTools = async (
   const approvalRequests: NonNullable<GenerateTextOutput["approvalRequests"]> = [];
 
   for (const item of validatedCalls) {
+    if (item.validationError) continue;
     await runToolGuardrails(item, "input");
     const binding = localApprovalBinding(options, item, context.step);
     const resolution = options.toolApprovalResolutions?.find(
@@ -527,6 +546,18 @@ const executeTools = async (
     index: number
   ): Promise<void> => {
     const { call, tool } = item;
+    if (context.request.abortSignal?.aborted) {
+      throw context.request.abortSignal.reason ?? new Error("Tool execution aborted.");
+    }
+    if (item.validationError) {
+      results[index] = {
+        toolCallId: call.id,
+        toolName: call.name,
+        isError: true,
+        error: item.validationError
+      };
+      return;
+    }
     const approval = decisions.get(call.id) ?? { approved: true };
     if (!approval.approved) {
       results[index] = {

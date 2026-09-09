@@ -1,5 +1,16 @@
 # @zhivex-ai/agents
 
+## 1.4.0
+
+### Minor Changes
+
+- ca4cc73: Add opt-in toolExecution.validationErrorMode="tool-result" to return sanitized schema validation errors to the model without executing or approving invalid calls. Preserve strict validation by default, correlate results across mixed batches and approval resumes, and account for current tool errors in agent budget preflight.
+
+### Patch Changes
+
+- Updated dependencies [ca4cc73]
+  - @zhivex-ai/core@1.14.0
+
 ## 1.3.1
 
 ### Patch Changes

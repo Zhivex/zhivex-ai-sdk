@@ -1703,6 +1703,7 @@ const createGenerateOptions = <
     : input.compaction ?? agent.compaction;
   let checkpointState = cloneState(state);
   let liveUsage = state.usage;
+  const liveToolResults = [...state.toolResults];
   let reservedToolCalls = 0;
   const requestedMaxTokens = input.maxTokens ?? agent.maxTokens;
   const budgetStatus = budget ? getAgentBudgetStatus(state, budget) : undefined;
@@ -1784,7 +1785,7 @@ const createGenerateOptions = <
       : undefined,
     onBeforeModelStep: async ({ step }) => {
       if (budget) {
-        const trigger = evaluateAgentBudgetPreflight({ ...state, usage: liveUsage }, budget, {
+        const trigger = evaluateAgentBudgetPreflight({ ...state, usage: liveUsage, toolResults: liveToolResults }, budget, {
           operation: "model",
           requiredSteps: Math.max(1, step - state.currentStep),
           requestedOutputTokens: maxTokens
@@ -1850,6 +1851,7 @@ const createGenerateOptions = <
       state.revision = checkpointState.revision;
     },
     onToolExecutionComplete: async ({ toolResults }) => {
+      liveToolResults.push(...toolResults);
       if (!agent.store) return;
       const lastStep = checkpointState.steps.at(-1);
       if (lastStep) {
@@ -1875,7 +1877,7 @@ const createGenerateOptions = <
     onBeforeToolExecution: async ({ step, toolCalls }) => {
       if (budget) {
         reservedToolCalls += toolCalls.length;
-        const trigger = evaluateAgentBudgetPreflight({ ...state, usage: liveUsage }, budget, {
+        const trigger = evaluateAgentBudgetPreflight({ ...state, usage: liveUsage, toolResults: liveToolResults }, budget, {
           operation: "tool",
           requiredToolCalls: reservedToolCalls
         });

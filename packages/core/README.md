@@ -113,3 +113,7 @@ ModelGenerateInput type exports.
 `withResponseRetry(operation, retryOptions, providerLabel?)` validates HTTP status inside the retry boundary, honors numeric/date `Retry-After` headers, and returns successful responses with their body unread. Pass the combined timeout/caller signal as `retryOptions.abortSignal` and to the HTTP request. The helper is also exported by `@zhivex-ai/sdk`.
 
 Object generation forwards the same tool approval policies, tool choice, context and lifecycle hooks as text generation. A provider stream `error` event rejects `collect()` and stops pending tool execution; it cannot become a successful partial result.
+
+### Recovering invalid tool arguments
+
+`generateText`, `streamText`, and `Agent` accept `toolExecution: { validationErrorMode: "tool-result" }` to return schema errors for bounded model correction. Set `maxSteps`; agents can additionally set `policy.budget.maxToolErrors`. The default is `"throw"`, regardless of `stopOnError: false`. Invalid calls receive correlated `isError` results with `error.code: "TOOL_INPUT_VALIDATION_ERROR"` and issue codes/paths, without schema messages or received values. They never execute or request approval. Corrected calls follow the normal checks. Tools with input-dependent `isEnabled` remain strict; `stopOnError: true`, guardrails, unavailable tools and cancellation are not relaxed.
