@@ -36,6 +36,8 @@ export interface ToolExecutionResult {
   output?: JsonValue;
   error?: {
     message: string;
+    code?: "TOOL_INPUT_VALIDATION_ERROR";
+    issues?: Array<{ code: string; path: Array<string | number> }>;
   };
   isError: boolean;
   providerMetadata?: Record<string, JsonValue>;
@@ -180,6 +182,8 @@ export interface ToolExecutionOptions {
   maxConcurrency?: number;
   timeoutMs?: number;
   stopOnError?: boolean;
+  /** Return sanitized schema errors to the model; strict rejection is the default. maxSteps bounds corrections. */
+  validationErrorMode?: "throw" | "tool-result";
 }
 
 export type ToolApprovalMode = "policy" | "interrupt";

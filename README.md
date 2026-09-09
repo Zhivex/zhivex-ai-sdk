@@ -1660,6 +1660,10 @@ Use the agent tiers as release guidance, not just metadata:
 
 ### Safety Policies
 
+Tool argument validation is strict by default, including when `toolExecution.stopOnError` is false. To let a model correct schema-invalid arguments, use `toolExecution: { validationErrorMode: "tool-result" }` with an explicit `maxSteps` on `generateText`, `streamText`, or `Agent`. Each invalid call returns a paired `isError` result with `error.code: "TOOL_INPUT_VALIDATION_ERROR"` and `error.issues` containing only schema issue codes and string/number paths. Error messages and received values from the schema are omitted; the original tool call remains in conversation history.
+
+Invalid calls never execute, invoke tool approval policies, or run tool error handlers. A corrected call follows normal validation, guardrails and approvals. `maxSteps` bounds correction turns; agent `policy.budget.maxToolErrors` and token budgets also count these attempts. `stopOnError: true` still stops on an error result. Unknown and hosted tools, guardrail failures, cancellation and unavailable tools retain their existing restrictions. Tools with an `isEnabled` predicate remain strict on invalid arguments because availability cannot safely be evaluated without validated input. In a mixed batch requiring interrupt approval, execution and validation-result delivery wait for resume; already resolved calls are not repeated.
+
 Safety policies are stable composition helpers for production agent services. They wrap the existing `toolApprovalPolicy`, guardrail, and `toolExecution` hooks instead of changing the runtime contract.
 
 ```ts
