@@ -21,6 +21,7 @@ export {
   ProviderToolCallError,
   UnsupportedFeatureError,
   ValidationError,
+  ToolNotRegisteredError,
   ZhivexAIError,
   assistant,
   agentApprovalResponsePart,

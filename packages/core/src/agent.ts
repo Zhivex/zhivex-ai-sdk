@@ -9,6 +9,7 @@ import {
   ConflictError,
   GuardrailTriggeredError,
   ProviderToolCallError,
+  ToolNotRegisteredError,
   UnsupportedFeatureError,
   ValidationError
 } from "./errors.js";
@@ -1806,9 +1807,8 @@ const createGenerateOptions = <
         startedAt: Date.now()
       });
     },
-    onModelStep: async ({ request, response, step, toolCalls, approvalRequests }) => {
+    onModelStep: async ({ request, response, step, toolCalls, approvalRequests, failedToolResults }) => {
       liveUsage = aggregateTokenUsage([liveUsage, response.usage]);
-      if (!agent.store) return;
       const responseSnapshot = snapshotResponse(response);
       const approvals = [
         ...approvalRequests,
@@ -1826,17 +1826,19 @@ const createGenerateOptions = <
       const finishedAt = timing?.finishedAt ?? Date.now();
       const checkpointStep = {
         index: step,
-        status: approvals.length ? "waiting_approval" : "completed",
+        status: failedToolResults ? "failed" : approvals.length ? "waiting_approval" : "completed",
         startedAt: timing?.startedAt ?? finishedAt,
         finishedAt,
         request: snapshotRequest(request, requestOffset, request.messages.slice(requestOffset)),
         response: responseSnapshot,
-        toolResults: []
+        toolResults: failedToolResults ?? []
       } satisfies AgentStep;
       checkpointState = {
         ...checkpointState,
         status: approvals.length ? "waiting_approval" : toolCalls.length ? "running" : "completed",
-        messages: [...request.messages, ...responseSnapshot.messages],
+        messages: [...request.messages, ...responseSnapshot.messages,
+          ...(failedToolResults ?? []).map(toolResult => ({ role: "tool" as const, parts: [{ type: "tool-result" as const, toolResult }] }))],
+        toolResults: [...checkpointState.toolResults, ...(failedToolResults ?? [])],
         steps: [...checkpointState.steps.filter((existing) => existing.index !== step), checkpointStep],
         currentStep: step,
         outputText: response.text ?? checkpointState.outputText,
@@ -1847,12 +1849,14 @@ const createGenerateOptions = <
         error: undefined,
         updatedAt: Date.now()
       };
-      await persistState(agent, checkpointState, runPolicy);
-      state.revision = checkpointState.revision;
+      if (agent.store) {
+        await persistState(agent, checkpointState, runPolicy);
+        state.revision = checkpointState.revision;
+      }
+      if (failedToolResults) Object.assign(state, checkpointState);
     },
     onToolExecutionComplete: async ({ toolResults }) => {
       liveToolResults.push(...toolResults);
-      if (!agent.store) return;
       const lastStep = checkpointState.steps.at(-1);
       if (lastStep) {
         lastStep.toolResults = [...lastStep.toolResults, ...toolResults];
@@ -1870,8 +1874,10 @@ const createGenerateOptions = <
         toolResults: [...checkpointState.toolResults, ...toolResults],
         updatedAt: Date.now()
       };
-      await persistState(agent, checkpointState, runPolicy);
-      state.revision = checkpointState.revision;
+      if (agent.store) {
+        await persistState(agent, checkpointState, runPolicy);
+        state.revision = checkpointState.revision;
+      }
     },
     stepOffset: state.currentStep,
     onBeforeToolExecution: async ({ step, toolCalls }) => {
@@ -1926,6 +1932,9 @@ const emptyAsyncIterable = async function* () {
 };
 
 const toAgentRunError = (error: unknown): AgentRunError => {
+  if (error instanceof ToolNotRegisteredError) {
+    return { message: error.message, diagnosticCode: error.code };
+  }
   if (error instanceof ProviderToolCallError) {
     return {
       message: error.message,

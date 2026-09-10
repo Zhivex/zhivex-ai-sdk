@@ -6,7 +6,8 @@ import {
   ParseError,
   ProviderToolCallError,
   UnsupportedFeatureError,
-  ValidationError
+  ValidationError,
+  ToolNotRegisteredError
 } from "./errors.js";
 import { emitLanguageModelTelemetryEvent } from "./middleware.js";
 import {
@@ -231,7 +232,7 @@ const toRequest = (options: AnyGenerateTextOptions, messages: ModelMessage[]): M
 type ValidatedToolCall = {
   validationError?: ToolExecutionResult["error"];
   call: ToolCall;
-  tool: ToolDefinition;
+  tool?: ToolDefinition;
   parsedInput: unknown;
   executionContext: ToolExecutionContext;
 };
@@ -240,6 +241,32 @@ type ToolPreflightResult = {
   validatedCalls: ValidatedToolCall[];
   decisions: Map<string, ToolApprovalDecision>;
   approvalRequests: NonNullable<GenerateTextOutput["approvalRequests"]>;
+};
+
+const preflightModelResponse = async (
+  toolCalls: ToolCall[], options: AnyGenerateTextOptions,
+  context: { request: ModelGenerateInput; step: number; tools: NonNullable<ReturnType<typeof toToolSet>> },
+  response: GenerateResult, usages: Array<TokenUsage | undefined>,
+  publish?: (event: StreamEvent) => Promise<void>
+): Promise<ToolPreflightResult | undefined> => {
+  try {
+    return toolCalls.length ? await preflightTools(toolCalls, options, context) : undefined;
+  } catch (error) {
+    if (!(error instanceof ToolNotRegisteredError)) throw error;
+    error.usage = aggregateTokenUsage(usages);
+    error.finishReason = response.finishReason;
+    error.providerFinishReason = response.providerFinishReason;
+    const failedToolResults: ToolExecutionResult[] = toolCalls.map(call => ({
+      toolCallId: call.id, toolName: call.name, isError: true,
+      error: !Object.hasOwn(context.tools, call.name) || !context.tools[call.name]
+        ? { code: "TOOL_NOT_REGISTERED", message: "Tool is not registered." }
+        : { code: "TOOL_BATCH_NOT_EXECUTED", message: "Tool batch rejected before execution." }
+    }));
+    await options.onModelStep?.({ request: context.request, response, step: context.step,
+      toolCalls, approvalRequests: [], failedToolResults });
+    for (const toolResult of failedToolResults) await publish?.({ type: "tool-result", toolResult });
+    throw error;
+  }
 };
 
 const canonicalJson = (value: JsonValue): string => {
@@ -261,7 +288,7 @@ const localApprovalBinding = (
   step: number
 ) => {
   const input = serializeJsonValue(item.parsedInput);
-  const toolVersion = item.tool.approvalVersion ?? "1";
+  const toolVersion = item.tool!.approvalVersion ?? "1";
   const payload = canonicalJson({
     runId: options.toolContext?.runId ?? null,
     step,
@@ -310,11 +337,24 @@ const validateToolCalls = async (
     tools: NonNullable<ReturnType<typeof toToolSet>>;
   }
 ): Promise<ValidatedToolCall[]> => {
+  if (options.toolExecution?.unknownToolMode !== "tool-result" || options.toolExecution.stopOnError) {
+    const missing = toolCalls.find(call => !Object.hasOwn(context.tools, call.name) || !context.tools[call.name]);
+    if (missing) throw new ToolNotRegisteredError(createHash("sha256").update(missing.name).digest("hex"));
+  }
   const validated: ValidatedToolCall[] = [];
   for (const call of toolCalls) {
-    const tool = context.tools[call.name];
+    const tool = Object.hasOwn(context.tools, call.name) ? context.tools[call.name] : undefined;
     if (!tool) {
-      throw new ValidationError(`Tool "${call.name}" was requested by the model but is not registered.`);
+      if (options.toolExecution?.unknownToolMode !== "tool-result" || options.toolExecution.stopOnError) {
+        throw new ToolNotRegisteredError(createHash("sha256").update(call.name).digest("hex"));
+      }
+      validated.push({
+        call, parsedInput: undefined,
+        executionContext: { ...options.toolContext, abortSignal: context.request.abortSignal,
+          toolCall: call, step: context.step, model: options.model, request: context.request },
+        validationError: { code: "TOOL_NOT_REGISTERED", message: "Tool is not registered. Use an available tool with its exact name." }
+      });
+      continue;
     }
     if (!isCallableToolDefinition(tool)) {
       throw new ValidationError(
@@ -377,7 +417,7 @@ const preflightTools = async (
   const approvalRequests: NonNullable<GenerateTextOutput["approvalRequests"]> = [];
 
   for (const item of validatedCalls) {
-    if (item.validationError) continue;
+    if (item.validationError || !item.tool) continue;
     await runToolGuardrails(item, "input");
     const binding = localApprovalBinding(options, item, context.step);
     const resolution = options.toolApprovalResolutions?.find(
@@ -508,6 +548,7 @@ const runToolGuardrails = async (
   stage: "input" | "output",
   output?: unknown
 ) => {
+  if (!item.tool) return;
   const guardrails = stage === "input" ? item.tool.inputGuardrails : item.tool.outputGuardrails;
   for (const guardrail of guardrails ?? []) {
     const trigger = await guardrail({
@@ -558,6 +599,7 @@ const executeTools = async (
       };
       return;
     }
+    if (!tool) throw new ValidationError("Missing validated tool.");
     const approval = decisions.get(call.id) ?? { approved: true };
     if (!approval.approved) {
       results[index] = {
@@ -894,13 +936,9 @@ export const generateText = async <
     }
 
     const toolCalls = extractToolCalls(responseMessages);
-    const preflight = toolCalls.length
-      ? await preflightTools(toolCalls, options, {
-          request,
-          step: absoluteStep,
-          tools: resolvedTools
-        })
-      : undefined;
+    const preflight = await preflightModelResponse(toolCalls, options, {
+      request, step: absoluteStep, tools: resolvedTools
+    }, response, steps.map(step => step.response.usage));
     if (preflight?.approvalRequests.length) {
       approvalRequests.push(...preflight.approvalRequests);
     }
@@ -1185,13 +1223,9 @@ export const streamText = <
       generatedMessages.push(...stepMessages);
 
       const toolCalls = extractToolCalls(stepMessages);
-      const preflight = toolCalls.length
-        ? await preflightTools(toolCalls, options, {
-            request,
-            step: absoluteStep,
-            tools: resolvedTools
-          })
-        : undefined;
+      const preflight = await preflightModelResponse(toolCalls, options, {
+        request, step: absoluteStep, tools: resolvedTools
+      }, finalResult, steps.map(step => step.response.usage), publish);
       if (preflight?.approvalRequests.length) {
         approvalRequests.push(...preflight.approvalRequests);
         for (const approval of preflight.approvalRequests) {

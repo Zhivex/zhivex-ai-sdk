@@ -36,7 +36,7 @@ export interface ToolExecutionResult {
   output?: JsonValue;
   error?: {
     message: string;
-    code?: "TOOL_INPUT_VALIDATION_ERROR";
+    code?: "TOOL_INPUT_VALIDATION_ERROR" | "TOOL_NOT_REGISTERED" | "TOOL_BATCH_NOT_EXECUTED";
     issues?: Array<{ code: string; path: Array<string | number> }>;
   };
   isError: boolean;
@@ -184,6 +184,8 @@ export interface ToolExecutionOptions {
   stopOnError?: boolean;
   /** Return sanitized schema errors to the model; strict rejection is the default. maxSteps bounds corrections. */
   validationErrorMode?: "throw" | "tool-result";
+  /** Recover only names absent from the exact registry; never resolves aliases or bypasses availability. */
+  unknownToolMode?: "throw" | "tool-result";
 }
 
 export type ToolApprovalMode = "policy" | "interrupt";
@@ -1402,6 +1404,8 @@ export type GenerateTextOptions<
       step: number;
       toolCalls: ToolCall[];
       approvalRequests: AgentApprovalRequest[];
+      /** Terminal preflight failure: paired results for the entire unexecuted batch. */
+      failedToolResults?: ToolExecutionResult[];
     }) => void | Promise<void>;
     /** Durable runtimes use this hook to checkpoint tool results before the next model request. */
     onToolExecutionComplete?: (context: {

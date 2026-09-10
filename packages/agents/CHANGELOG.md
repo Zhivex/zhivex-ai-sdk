@@ -1,5 +1,13 @@
 # @zhivex-ai/agents
 
+## 1.4.1
+
+### Patch Changes
+
+- Preserve response usage, finish reason and paired diagnostics when strict tool-name validation rejects a batch. Add ToolNotRegisteredError and explicit unknownToolMode recovery bounded by model steps and agent budgets, without executing or approving unknown calls.
+- Updated dependencies
+  - @zhivex-ai/core@1.15.0
+
 ## 1.4.0
 
 ### Minor Changes
