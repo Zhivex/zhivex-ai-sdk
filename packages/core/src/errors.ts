@@ -1,4 +1,4 @@
-import type { ProviderToolCallErrorReason } from "./types.js";
+import type { ProviderToolCallErrorReason, TokenUsage, FinishReason } from "./types.js";
 
 export class ZhivexAIError extends Error {
   readonly cause?: unknown;
@@ -111,6 +111,19 @@ export class ProviderToolCallError extends ZhivexAIError {
 }
 
 export class ValidationError extends ZhivexAIError {}
+
+/** A local tool name is absent from the exact registry. No tool effects occurred in this batch. */
+export class ToolNotRegisteredError extends ValidationError {
+  readonly code = "TOOL_NOT_REGISTERED";
+  usage?: TokenUsage;
+  finishReason?: FinishReason;
+  providerFinishReason?: string;
+
+  constructor(readonly toolNameHash: string) {
+    super(`Tool is not registered (sha256:${toolNameHash}).`);
+  }
+}
+
 export class ConflictError extends ZhivexAIError {}
 export class ParseError extends ZhivexAIError {}
 export class UnsupportedFeatureError extends ZhivexAIError {}
