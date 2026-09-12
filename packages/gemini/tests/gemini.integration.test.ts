@@ -12,7 +12,7 @@ const liveModelId = process.env.GEMINI_INTEGRATION_LIVE_MODEL ?? "gemini-3.1-fla
 const selectedProvider = process.env.ZHIVEX_INTEGRATION_PROVIDER?.trim();
 
 const describeIntegration = apiKey && (!selectedProvider || selectedProvider === "gemini")
-  ? (describe.sequential ?? describe.skip)
+  ? describe
   : describe.skip;
 
 describeIntegration("gemini adapter integration", () => {

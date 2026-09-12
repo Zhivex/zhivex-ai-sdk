@@ -25,8 +25,12 @@ Publishing remains a separate protected GitHub workflow action after review and 
 
 ## Local verification
 
-The update passed 1,733 tests, typechecking, documentation checks, a frozen-lockfile clean installation and build, installation of candidate tarballs with 42 entrypoint imports, deterministic agent smoke, SQLite certification and the workflow evaluation gate. The dependency audit reported no vulnerabilities across 235 packages. Changesets 3 generated versions and changelogs successfully in a disposable copy; package versions in this branch have not been advanced.
+The update passed 1,733 tests, typechecking, documentation checks, a frozen-lockfile clean installation and build, installation of candidate tarballs with 42 entrypoint imports, deterministic agent smoke, SQLite certification and the workflow evaluation gate. The dependency audit reported no vulnerabilities across 235 packages. Changesets 3 generated versions and changelogs successfully in a disposable copy; the PR subsequently applied that versioning to its release source.
 
 These checks do not certify remote CI, live provider calls or npm publication.
 
 The standalone Next.js 16.3.5 starter also passed an independent npm installation and production build, including TypeScript 7 checking and static page generation. npm completed the download after the initial Bun download stalled; the monorepo clean-install gate used Bun 1.4.2 successfully.
+
+## CI follow-up
+
+After versioning, provider Core range assertions were aligned with the reviewed Changesets output. The SDK assertion permits compatible Core patches within its pinned minor. Integration suites use `describe` with `sequence.concurrent: false`, replacing the removed Vitest 5 `describe.sequential` API and its silent-skip fallbacks. See the [official Vitest migration guide](https://vitest.dev/guide/migration/).

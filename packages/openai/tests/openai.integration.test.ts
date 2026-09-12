@@ -12,7 +12,7 @@ const usesOpenAIGpt56Controls = /^gpt-5\.6(?:$|-)/i.test(textModelId);
 const deterministicTemperature = usesOpenAIGpt56Controls ? {} : { temperature: 0 };
 const generationMaxTokens = usesOpenAIGpt56Controls ? 128 : 32;
 
-const describeIntegration = apiKey ? (describe.sequential ?? describe.skip) : describe.skip;
+const describeIntegration = apiKey ? describe : describe.skip;
 
 describeIntegration("openai adapter integration", () => {
   const provider = () =>

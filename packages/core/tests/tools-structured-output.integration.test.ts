@@ -7,8 +7,8 @@ import { integrationLanguageProviders } from "./integration-registry.js";
 const toolProviders = integrationLanguageProviders.filter((provider) => provider.supports.tools);
 const structuredOutputProviders = integrationLanguageProviders.filter((provider) => provider.supports.structuredOutputMode);
 
-const describeToolIntegration = toolProviders.length ? (describe.sequential ?? describe.skip) : describe.skip;
-const describeStructuredOutputIntegration = structuredOutputProviders.length ? (describe.sequential ?? describe.skip) : describe.skip;
+const describeToolIntegration = toolProviders.length ? describe : describe.skip;
+const describeStructuredOutputIntegration = structuredOutputProviders.length ? describe : describe.skip;
 
 describeToolIntegration("tool calling capability integration", () => {
   for (const provider of toolProviders) {

@@ -16,7 +16,7 @@ const baseURL = process.env.QWEN_BASE_URL;
 const taskBaseURL = process.env.QWEN_TASK_BASE_URL;
 const realtimeURL = process.env.QWEN_REALTIME_URL;
 
-const describeIntegration = apiKey && extended ? (describe.sequential ?? describe.skip) : describe.skip;
+const describeIntegration = apiKey && extended ? describe : describe.skip;
 const enabled = (value: string | undefined) => (value ? it : it.skip);
 
 describeIntegration("qwen extended integration", () => {
