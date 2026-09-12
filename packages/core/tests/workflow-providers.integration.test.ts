@@ -14,7 +14,7 @@ const workflowProviders = integrationLanguageProviders.filter((provider) =>
   provider.name === "gemini" || provider.name === "qwen"
 );
 const describeProviderWorkflows = workflowProviders.length
-  ? (describe.sequential ?? describe.skip)
+  ? describe
   : describe.skip;
 
 describeProviderWorkflows("live provider workflow integration", () => {

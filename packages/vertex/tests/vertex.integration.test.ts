@@ -14,7 +14,7 @@ const embeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ?? "text
 const usableAccessToken = accessToken && (projectId || baseURL) ? accessToken : undefined;
 
 const hasVertexCredentials = Boolean(usableAccessToken || apiKey);
-const describeIntegration = hasVertexCredentials ? (describe.sequential ?? describe.skip) : describe.skip;
+const describeIntegration = hasVertexCredentials ? describe : describe.skip;
 
 describeIntegration("vertex adapter integration", () => {
   const provider = () =>
@@ -112,7 +112,7 @@ describeIntegration("vertex adapter integration", () => {
 // Opt in independently of Gemini: a passing Google route does not certify Claude.
 const claudeModelId = process.env.VERTEX_CLAUDE_INTEGRATION_MODEL;
 const hasClaudeConfig = Boolean(claudeModelId && (projectId || baseURL));
-const describeClaude = hasClaudeConfig ? describe.sequential : describe.skip;
+const describeClaude = hasClaudeConfig ? describe : describe.skip;
 describeClaude("Claude on Vertex integration", () => {
   const model = () => createVertex({
     accessToken: usableAccessToken,

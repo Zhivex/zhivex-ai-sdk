@@ -16,7 +16,7 @@ import { resolveAgentRealtimeCertificationConfig } from "../../../scripts/agent-
 
 const certification = resolveAgentRealtimeCertificationConfig();
 const describeCertification = certification.enabled
-  ? (describe.sequential ?? describe)
+  ? describe
   : describe.skip;
 
 type QueuedFrame = string | Error | undefined;

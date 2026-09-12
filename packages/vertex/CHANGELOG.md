@@ -1,5 +1,17 @@
 # @zhivex-ai/vertex
 
+## 1.0.0
+
+### Major Changes
+
+- Update provider dependencies and Zod to current stable releases. MCP output schemas now enforce uniqueItems, property-count and contains constraints through Zod 4.6.3. Bedrock requires Node.js 20 or newer; Vertex requires Node.js 22 or newer to match their upstream SDKs. Other packages retain their runtime requirements.
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.16.1
+  - @zhivex-ai/anthropic@0.10.2
+
 ## 0.11.0
 
 ### Minor Changes

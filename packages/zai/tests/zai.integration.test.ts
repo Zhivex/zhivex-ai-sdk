@@ -10,7 +10,7 @@ const endpoint = process.env.ZAI_ENDPOINT === "coding" ? "coding" : "general";
 const modelId = process.env.ZAI_INTEGRATION_MODEL ?? "glm-5.3-flash";
 const isGLM53Family = /^glm-5\.3(?:-flash)?$/i.test(modelId);
 const isGLM53Flash = /^glm-5\.3-flash$/i.test(modelId);
-const describeIntegration = apiKey && extended ? (describe.sequential ?? describe.skip) : describe.skip;
+const describeIntegration = apiKey && extended ? describe : describe.skip;
 const enabled = (value: unknown) => (value ? it : it.skip);
 
 describeIntegration("Z.ai extended integration", () => {

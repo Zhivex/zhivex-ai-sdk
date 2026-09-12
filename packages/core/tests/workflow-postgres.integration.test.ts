@@ -33,7 +33,7 @@ if (postgresCertificationRequired && !postgresUrl) {
   );
 }
 
-const describePostgres = postgresUrl ? describe.sequential : describe.skip;
+const describePostgres = postgresUrl ? describe : describe.skip;
 
 const sessionTable = integrationTableName("workflow_sessions");
 const workflowTable = integrationTableName("workflow_states");

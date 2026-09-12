@@ -8,6 +8,8 @@ Google is transitioning Vertex AI into Gemini Enterprise Agent Platform. The SDK
 
 ## Install
 
+Requires Node.js 22 or newer when running on Node, matching Google Auth Library 11.
+
 ```bash
 bun add @zhivex-ai/core @zhivex-ai/vertex
 ```

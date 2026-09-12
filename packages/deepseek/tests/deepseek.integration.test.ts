@@ -9,7 +9,7 @@ const extended = process.env.DEEPSEEK_EXTENDED_INTEGRATION === "1";
 const baseURL = process.env.DEEPSEEK_BASE_URL;
 const betaBaseURL = process.env.DEEPSEEK_BETA_BASE_URL;
 
-const describeIntegration = apiKey && extended ? (describe.sequential ?? describe.skip) : describe.skip;
+const describeIntegration = apiKey && extended ? describe : describe.skip;
 
 describeIntegration("deepseek extended integration", () => {
   const provider = () => createDeepSeek({ apiKey, baseURL, betaBaseURL });

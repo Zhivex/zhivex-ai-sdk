@@ -8,26 +8,23 @@ const readManifest = async (packageName: string) => JSON.parse(
   await readFile(path.join(repoRoot, "packages", packageName, "package.json"), "utf8")
 ) as { version: string; dependencies?: Record<string, string> };
 
-// Reviewed minimum Core versions for this release. The updated provider cohort
-// uses withResponseRetry from Core 1.13; the tool-history cohort needs 1.12.
-// OpenAI needs the Live contract in Core 1.16; xAI follows its OpenAI dependency.
-// Older
-// adapters retain their existing minimum instead of tracking Core automatically.
+// Changesets 3 advanced the dependency-update cohort to Core 1.16.1.
+// xAI was not part of that release and retains its reviewed Live minimum.
 const reviewedProviderCoreRanges = {
-  anthropic: "^1.13.0",
-  "azure-openai": "^1.4.0",
-  bedrock: "^1.0.2",
-  deepseek: "^1.12.0",
-  gemini: "^1.13.0",
-  kimi: "^1.1.2",
-  meta: "^1.3.0",
-  ollama: "^1.3.0",
-  openai: "^1.16.0",
-  openrouter: "^1.0.2",
-  qwen: "^1.13.0",
-  vertex: "^1.12.0",
+  anthropic: "^1.16.1",
+  "azure-openai": "^1.16.1",
+  bedrock: "^1.16.1",
+  deepseek: "^1.16.1",
+  gemini: "^1.16.1",
+  kimi: "^1.16.1",
+  meta: "^1.16.1",
+  ollama: "^1.16.1",
+  openai: "^1.16.1",
+  openrouter: "^1.16.1",
+  qwen: "^1.16.1",
+  vertex: "^1.16.1",
   xai: "^1.16.0",
-  zai: "^1.3.0"
+  zai: "^1.16.1"
 } as const;
 
 describe("internal Core dependency ranges", () => {
@@ -41,6 +38,12 @@ describe("internal Core dependency ranges", () => {
   it("pins SDK to the same Core minor because its opt-in subpaths re-export that release's APIs", async () => {
     const core = await readManifest("core");
     const sdk = await readManifest("sdk");
-    expect(sdk.dependencies?.["@zhivex-ai/core"]).toBe(`~${core.version}`);
+    const [major, minor, patch] = core.version.split(".");
+    const range = sdk.dependencies?.["@zhivex-ai/core"] ?? "";
+    const minimum = range.match(/^~(\d+)\.(\d+)\.(\d+)$/);
+    expect(minimum, "SDK must pin Core to a minor with a tilde range").not.toBeNull();
+    expect(minimum?.[1]).toBe(major);
+    expect(minimum?.[2]).toBe(minor);
+    expect(Number(minimum?.[3])).toBeLessThanOrEqual(Number(patch));
   });
 });

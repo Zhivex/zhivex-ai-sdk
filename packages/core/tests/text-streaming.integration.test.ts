@@ -6,8 +6,8 @@ import { integrationLanguageProviders } from "./integration-registry.js";
 const textProviders = integrationLanguageProviders;
 const streamingProviders = integrationLanguageProviders.filter((provider) => provider.supports.streaming);
 
-const describeTextIntegration = textProviders.length ? (describe.sequential ?? describe.skip) : describe.skip;
-const describeStreamingIntegration = streamingProviders.length ? (describe.sequential ?? describe.skip) : describe.skip;
+const describeTextIntegration = textProviders.length ? describe : describe.skip;
+const describeStreamingIntegration = streamingProviders.length ? describe : describe.skip;
 
 describeTextIntegration("generateText capability integration", () => {
   for (const provider of textProviders) {

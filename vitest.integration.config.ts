@@ -14,6 +14,7 @@ export default defineConfig({
     include: ["packages/**/tests/**/*.integration.test.ts"],
     exclude: ["**/node_modules/**"],
     fileParallelism: false,
+    sequence: { concurrent: false },
     testTimeout: 60_000,
     hookTimeout: 60_000
   },

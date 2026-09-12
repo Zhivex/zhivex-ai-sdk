@@ -61,7 +61,7 @@ const certifiedProviders = requestedProviderNames.flatMap((name) => {
   return provider ? [provider] : [];
 });
 const describeCertification = certificationEnabled
-  ? (describe.sequential ?? describe.skip)
+  ? describe
   : describe.skip;
 
 const runTable = integrationTableName("ar");
