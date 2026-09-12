@@ -50,7 +50,7 @@
     "release:next": "bun run scripts/check-release-readiness.ts --tag=next --require-oidc --release-batch-file=$RUNNER_TEMP/zhivex-release-batch.json && bun run build && changeset publish --tag next && bun run scripts/check-release-readiness.ts --postpublish --tag=next --release-batch-file=$RUNNER_TEMP/zhivex-release-batch.json"
   },
   "devDependencies": {
-    "@ai-sdk/react": "4.0.95",
+    "@ai-sdk/react": "4.0.100",
     "@changesets/cli": "^2.31.1",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/sdk-metrics": "^2.10.0",
@@ -60,7 +60,7 @@
     "@types/react-dom": "^19.2.4",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "4.1.11",
-    "ai": "7.0.92",
+    "ai": "7.0.97",
     "happy-dom": "^20.11.2",
     "postgres": "^3.4.9",
     "react": "^19.2.8",
