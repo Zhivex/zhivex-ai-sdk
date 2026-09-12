@@ -4,6 +4,8 @@ This is the standalone, executable end of the canonical Zhivex [Quickstart](../.
 
 ## Run From A Clean Directory
 
+Use Node.js 22.12 or newer and Bun 1.4.2 or newer. This starter uses Next.js 16.3.5 and TypeScript 7; Next's default TypeScript CLI integration supports the native compiler.
+
 Copy this folder outside the monorepo, then run:
 
 ```bash

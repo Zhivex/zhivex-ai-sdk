@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createApprovalPolicy, createMcpToolSet, streamText } from "../src/index.js";
-import type { LanguageModel, StreamEvent } from "../src/index.js";
+import type { JsonValue, LanguageModel, StreamEvent } from "../src/index.js";
 
 describe("mcp helpers", () => {
   it("creates callable tools from an MCP client", async () => {
@@ -295,6 +295,28 @@ describe("mcp helpers", () => {
         { callToolTimeoutMs: 0 }
       )
     ).rejects.toThrow('"callToolTimeoutMs" option must be a positive safe integer');
+  });
+
+  it.each([
+    { name: "uniqueItems", schema: { type: "array", items: { type: "number" }, uniqueItems: true }, valid: [1, 2], invalid: [1, 1] },
+    { name: "minProperties", schema: { type: "object", minProperties: 2 }, valid: { a: 1, b: 2 }, invalid: { a: 1 } },
+    { name: "maxProperties", schema: { type: "object", maxProperties: 1 }, valid: { a: 1 }, invalid: { a: 1, b: 2 } },
+    { name: "contains", schema: { type: "array", contains: { type: "number" } }, valid: ["a", 1], invalid: ["a"] },
+    { name: "minContains", schema: { type: "array", contains: { type: "number" }, minContains: 2 }, valid: [1, 2], invalid: ["a", 1] },
+    { name: "maxContains", schema: { type: "array", contains: { type: "number" }, maxContains: 1 }, valid: ["a", 1], invalid: [1, 2] }
+  ])("enforces MCP output $name constraints", async ({ schema, valid, invalid }) => {
+    let value: JsonValue = valid;
+    const tools = await createMcpToolSet({
+      async listTools() {
+        return [{ name: "lookup", outputSchema: { type: "object", properties: { value: schema }, required: ["value"] } }];
+      },
+      async callTool() { return { structuredContent: { value } }; }
+    });
+    const lookup = tools.lookup;
+    if (!lookup || !("execute" in lookup)) throw new Error("Expected callable MCP tool.");
+    await expect(lookup.execute({})).resolves.toMatchObject({ structuredContent: { value: valid } });
+    value = invalid;
+    await expect(lookup.execute({})).rejects.toThrow("MCP structured output validation failed");
   });
 
   it("validates structuredContent against MCP outputSchema", async () => {

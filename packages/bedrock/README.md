@@ -4,6 +4,8 @@ AWS Bedrock adapter for Zhivex AI SDK.
 
 ## Install
 
+Requires Node.js 20 or newer when running on Node, matching the AWS SDK runtime requirement.
+
 ```bash
 bun add @zhivex-ai/core @zhivex-ai/bedrock
 ```

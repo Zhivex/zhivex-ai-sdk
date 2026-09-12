@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/core",
-  "version": "1.16.0",
+  "version": "1.16.1",
   "description": "Shared contracts and runtime helpers for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -74,7 +74,7 @@
     "access": "public"
   },
   "dependencies": {
-    "zod": "^4.4.3"
+    "zod": "^4.6.3"
   },
   "peerDependencies": {
     "@opentelemetry/api": "^1.9.0"

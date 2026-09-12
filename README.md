@@ -42,6 +42,8 @@ bun add @zhivex-ai/sdk@next
 
 Use the SDK from server runtimes: Node.js, Bun, Next.js route handlers/server actions, API servers, or background workers. Browser React clients should call your backend instead of importing provider-backed runners directly, because provider credentials, tools, database clients, and durable stores must stay server-side.
 
+Repository development requires Node.js 22.12+ and Bun 1.4.2+. Provider runtime requirements vary: Bedrock requires Node.js 20+, and Vertex requires Node.js 22+. See the [September dependency migration notes](docs/DEPENDENCY_UPGRADE_2026_09.md) for compatibility details.
+
 For local development, file-backed stores are convenient. For serverless and production deployments, prefer database-backed services such as `createPostgresSessionService()` over file stores, because serverless filesystems are usually ephemeral and not shared across instances.
 
 ## Start Here
