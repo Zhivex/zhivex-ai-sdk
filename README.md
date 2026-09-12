@@ -4,6 +4,43 @@ Zhivex AI SDK is a TypeScript monorepo for Bun and Node that provides a unified,
 
 It is designed around a small shared contract in `@zhivex-ai/core` and thin provider adapters on top of it, so application code can stay stable while models and vendors change underneath.
 
+## Try it
+
+```bash
+bun add @zhivex-ai/sdk @zhivex-ai/openai
+```
+
+[Run your first response](./docs/QUICKSTART.md#2-get-the-first-response), then
+follow the same guide to add a persistent agent and a React client. Provider
+calls require your own API key and may incur provider charges.
+
+For a local example without API keys, clone this repository and run:
+
+```bash
+bun install --frozen-lockfile
+bun run examples/agents/approval-hitl.ts
+```
+
+This example uses a scripted model and a simulated deployment to demonstrate
+an interrupted run and approval resume. Its approval is scripted, and its
+approval-queue helper is Beta.
+
+## Choose your next step
+
+| Goal | Guide |
+| --- | --- |
+| Build an agent with tools and approvals | [Agents](./docs/AGENTS.md) |
+| Add a web UI | [Next.js](./docs/NEXTJS.md) |
+| Deploy shared state and observability | [Production](./docs/PRODUCTION.md) |
+| Check API maturity and guarantees | [Stability](./STABILITY.md) |
+| Explore runnable code | [Examples](./examples/README.md) |
+
+The SDK has Stable, Beta, and Experimental APIs. Consult the stability manifest
+and provider capabilities before selecting an integration.
+
+<details>
+<summary><strong>Full reference: packages, providers, API examples, and development</strong></summary>
+
 ## Stability And Support
 
 The SDK now documents its public contract and release expectations more explicitly:
@@ -3051,3 +3088,5 @@ CI scans version-controlled candidate files for recognized credential signatures
 ## License
 
 MIT
+
+</details>
