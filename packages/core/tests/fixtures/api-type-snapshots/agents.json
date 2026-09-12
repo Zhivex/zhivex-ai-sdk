@@ -3,6 +3,6 @@
   "control-plane.d.ts": "7c36e323be70217b7f608958dc268427d8071825e9503779fbfef31404efd746",
   "index.d.ts": "2d5d171f0afad8eed1cb54126472bff7a29c9a85083e7359922ea2d3be7cb73f",
   "ops.d.ts": "5c650aced413ddf1ee85cebca692caeb366ba85a674f3fe33301a849d6d6a023",
-  "realtime.d.ts": "5cbb127c12ae61d53e073542f1ef6007a9be04dce3cd68a03c6f4ad6b07e6356",
+  "realtime.d.ts": "27757f49b8470ef483a45b598a672ebe3e8a9f7552b9dc06aa3bc5acc0f398eb",
   "testing.d.ts": "8ebf442cc31650925d4d19e481a46ceca92de46581982e71357167e455d159d6"
 }

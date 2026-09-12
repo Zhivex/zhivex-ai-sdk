@@ -1,4 +1,5 @@
 import { toJSONSchema, z } from "zod";
+import { OpenAILiveModel, isOpenAILiveModel } from "./live.js";
 
 import {
   createOpenAIImageGenerationModel,
@@ -3266,6 +3267,7 @@ class OpenAIRealtimeModel implements RealtimeModel {
   }
 
   private resolveConfig(config: RealtimeSessionConfig): RealtimeSessionConfig {
+    if (config.delegation) throw new UnsupportedFeatureError("Client delegation requires a GPT-Live model.");
     const mode = inferOpenAIRealtimeMode(this.modelId, config.mode);
     if (mode !== "conversation" && (config.tools || config.toolChoice)) {
       throw new UnsupportedFeatureError(`Provider "openai" model "${this.modelId}" does not support realtime tools in ${mode} mode.`);
@@ -3533,7 +3535,10 @@ export const createOpenAI = (
 
   return createProviderAdapter({
     name: "openai",
-    languageModel: (modelId) => new OpenAILanguageModel(modelId, apiKey, baseURL, fetcher, responseLimits),
+    languageModel: (modelId) => {
+      if (modelId.startsWith("gpt-live-")) throw new UnsupportedFeatureError("GPT-Live is a voice model; use openai.realtimeModel(modelId).");
+      return new OpenAILanguageModel(modelId, apiKey, baseURL, fetcher, responseLimits);
+    },
     embeddingModel: (modelId) => new OpenAIEmbeddingModel(modelId, apiKey, baseURL, fetcher),
     transcriptionModel: (modelId) => new OpenAITranscriptionModel(modelId, apiKey, baseURL, fetcher, responseLimits),
     speechModel: (modelId) => new OpenAISpeechModel(modelId, apiKey, baseURL, fetcher, responseLimits),
@@ -3545,8 +3550,14 @@ export const createOpenAI = (
         fetch: fetcher,
         allowUnsafeEndpoints: options.allowUnsafeEndpoints
       }),
-    realtimeModel: (modelId) =>
-      new OpenAIRealtimeModel(
+    realtimeModel: (modelId) => {
+      if (modelId.startsWith("gpt-live-") && !isOpenAILiveModel(modelId)) {
+        throw new UnsupportedFeatureError(`Unsupported GPT-Live model "${modelId}". Use gpt-live-1 or its dated snapshot.`);
+      }
+      return isOpenAILiveModel(modelId) ? new OpenAILiveModel(
+        modelId, baseURL, (providerOptions) => resolveOpenAIRealtimeHeaders(apiKey, providerOptions),
+        options.realtimeConnectionFactory ?? openWebSocketConnection, realtimeURL, options.allowUnsafeEndpoints
+      ) : new OpenAIRealtimeModel(
         modelId,
         apiKey,
         baseURL,
@@ -3555,7 +3566,8 @@ export const createOpenAI = (
         realtimeURL,
         browserTokenURL,
         options.allowUnsafeEndpoints
-      ),
+      );
+    },
     groundedLanguageModel: (modelId) => new OpenAIGroundedLanguageModel(modelId, apiKey, baseURL, fetcher),
     rawFetch: fetcher
   });

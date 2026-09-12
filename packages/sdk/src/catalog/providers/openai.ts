@@ -2,12 +2,17 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const openaiCatalogFragment = defineModelCatalogFragment({
   provider: "openai",
-  revision: "2026-09-04",
-  verifiedAt: "2026-09-04",
+  revision: "2026-09-12",
+  verifiedAt: "2026-09-12",
   pricingEffectiveAt: "2026-08-16",
   sources: [
-    "https://developers.openai.com/api/docs/models/gpt-6-astra","catalog-release:2026-08-16"],
+    "https://developers.openai.com/api/docs/models/gpt-6-astra", "catalog-release:2026-08-16",
+    "https://developers.openai.com/api/docs/guides/live"],
   entries: [
+    {
+      "provider": "openai",
+      "modelId": "gpt-live-1"
+    },
     {
       "provider": "openai",
       "modelId": "gpt-6-astra",

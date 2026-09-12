@@ -16,7 +16,7 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-09-04",
+      snapshotVersion: "2026-09-12",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
         version: "2026-09-04",
@@ -24,8 +24,10 @@ describe("SDK model catalog ownership", () => {
       }
     });
     expect(defaultModelCatalog.find("openai", "gpt-5.6")?.modelId).toBe("gpt-5.6-sol");
+    expect(defaultModelCatalog.find("openai", "gpt-live-1")).toMatchObject({ modelId: "gpt-live-1" });
+    expect(defaultModelCatalog.find("openai", "gpt-live-1")?.inputCostPer1kTokens).toBeUndefined();
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(123);
+    expect(entries).toHaveLength(124);
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
       inputCostPer1kTokens: 0.00015,
       cachedInputCostPer1kTokens: 0.00003,
@@ -60,12 +62,12 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(123);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(124);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
-      revision: "2026-09-04",
-      verifiedAt: "2026-09-04",
+      revision: "2026-09-12",
+      verifiedAt: "2026-09-12",
       pricingEffectiveAt: "2026-08-16",
-      sources: ["https://developers.openai.com/api/docs/models/gpt-6-astra", "catalog-release:2026-08-16"]
+      sources: ["https://developers.openai.com/api/docs/models/gpt-6-astra", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
     });
     expect(fragments.find((fragment) => fragment.provider === "zai")).toMatchObject({
       revision: "2026-08-26",

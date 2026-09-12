@@ -1,0 +1,94 @@
+{
+  "baseCommit": "91676ca7f1066e53ef154dda4587b19acc679268",
+  "workingTree": "uncommitted implementation",
+  "inputSource": "synthetic local PCM16/24kHz; no personal audio",
+  "scope": "spoken cancellation during real Qwen read-only tool execution; abrupt real WebSocket disconnect; no reconnect or physical playback certification",
+  "sourceSha256": {
+    "packages/openai/src/live.ts": "8d6a6026e697c51f232b185df72fa558d366038fdbcfde370d1de31ff8e21c76",
+    "packages/core/src/realtime.ts": "35001dfb4c61acef3fdaec0e3440d8cdc22b8a834e009fa2f1fa2720090fb754",
+    "packages/core/src/realtime-delegation.ts": "b2af54dd9e9079d82bf13d7038b1ef8415d54b3ce862a3abf7d3ce035ba46ffe",
+    "packages/core/src/agent.ts": "94b702cd41bd80028d98ad3b0ab9b9bfd95db2ae7a28b2a6459e455a6a25728a",
+    "packages/qwen/src/index.ts": "e40a5575ada4ec66ff4a3c20bb8558cef92ddb854e50e36dcd9e46d375d82ef2",
+    "scripts/openai-live-fault-smoke.ts": "96b8036a37cfd916ac2f44e32a25c14f7014bac062e29db83312281f778d664a",
+    "scripts/lib/openai-live-smoke-transport.ts": "877856334c322be61bb00bff611518b83703b1ef0704b50cfe27ea3fa3df7612"
+  },
+  "attempts": [
+    {
+      "scenario": "interruption",
+      "model": "gpt-live-1",
+      "backendModel": "qwen3.8-flash",
+      "startedAt": "2026-09-12T21:17:49.893Z",
+      "toolExecutions": 1,
+      "userTranscript": "Please ask the backend for the verification code and tell me its answerActually, cancel that request. Do not tell me me the code. Just say canceled",
+      "assistantTranscript": "Sure, I'll check.Okay, canceled. I won\u2019t share it.Canceled.",
+      "outputBytes": 1531200,
+      "finalUsageConfirmed": false,
+      "started": true,
+      "injectedWhileBackendPending": true,
+      "cancellationObservedWhileBackendPending": true,
+      "bridgeSignalAbortedOnSpeech": false,
+      "passed": false,
+      "error": "Realtime close acknowledgement timed out; final usage is unconfirmed.",
+      "agentRuns": [],
+      "finishedAt": "2026-09-12T21:18:29.536Z",
+      "note": "Initial run used a 5-second close deadline; final usage and agent completion were unconfirmed. Retry used the SDK default 15-second close deadline and passed; this does not prove the cause of the first agent failure."
+    },
+    {
+      "scenario": "interruption",
+      "model": "gpt-live-1",
+      "backendModel": "qwen3.8-flash",
+      "startedAt": "2026-09-12T21:19:22.999Z",
+      "toolExecutions": 1,
+      "userTranscript": "Please ask the backend for the verification code and tell me its answer.Actually, cancel that reque- Request. Do not tell me the code. Just say cancelled.",
+      "assistantTranscript": " Checking.Okay, cancelling it.Cancelled.Cancelled.",
+      "outputBytes": 1318080,
+      "finalUsageConfirmed": true,
+      "started": true,
+      "injectedWhileBackendPending": true,
+      "cancellationObservedWhileBackendPending": true,
+      "bridgeSignalAbortedOnSpeech": false,
+      "staleResultSuppressed": true,
+      "usage": {
+        "seconds": 32
+      },
+      "passed": true,
+      "agentRuns": [
+        {
+          "status": "completed",
+          "steps": 2,
+          "toolResults": 1,
+          "usage": {
+            "inputTokens": 2788,
+            "cachedInputTokens": 1024,
+            "outputTokens": 31,
+            "totalTokens": 2819
+          }
+        }
+      ],
+      "finishedAt": "2026-09-12T21:19:57.317Z"
+    },
+    {
+      "scenario": "disconnect",
+      "model": "gpt-live-1",
+      "backendModel": "qwen3.8-flash",
+      "startedAt": "2026-09-12T21:18:52.419Z",
+      "toolExecutions": 1,
+      "userTranscript": " Please ask the backend for the verification code and tell me its answer",
+      "assistantTranscript": " Sure. Let me check on that.",
+      "outputBytes": 292800,
+      "finalUsageConfirmed": false,
+      "started": true,
+      "injectedWhileBackendPending": true,
+      "abortObserved": true,
+      "settledAfterDisconnectMs": 1,
+      "bridgeErrorObserved": true,
+      "transportErrorObserved": true,
+      "lateUpdateRejected": true,
+      "passed": true,
+      "agentRuns": [],
+      "bridgeError": "WebSocket closed: 1006",
+      "eventError": "WebSocket closed: 1006",
+      "finishedAt": "2026-09-12T21:19:10.697Z"
+    }
+  ]
+}

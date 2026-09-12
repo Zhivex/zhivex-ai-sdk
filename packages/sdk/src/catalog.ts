@@ -19,8 +19,8 @@ export const listDefaultModelCatalogFragments = (): ModelCatalogProviderSnapshot
 export const defaultModelCatalog = createModelCatalog(
   defaultModelCatalogFragments.flatMap((fragment) => fragment.entries),
   {
-    snapshotVersion: "2026-09-04",
-    publishedAt: "2026-09-04T00:00:00.000Z",
+    snapshotVersion: "2026-09-12",
+    publishedAt: "2026-09-12T00:00:00.000Z",
     policy: {
       data: "rolling",
       updates: "package-release"

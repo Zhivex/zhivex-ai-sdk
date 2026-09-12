@@ -342,6 +342,8 @@ export type {
   TokenPricing
 } from "./agent-trace.js";
 export { streamLiveAgent } from "./live-agent.js";
+export { runRealtimeDelegations } from "./realtime-delegation.js";
+export type { RealtimeDelegationContext, RealtimeDelegationOptions } from "./realtime-delegation.js";
 export {
   createFileSessionService,
   createInMemorySessionService,

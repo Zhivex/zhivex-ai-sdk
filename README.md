@@ -1089,6 +1089,12 @@ const liveTranscription = await gemini.realtimeModel!("gemini-3.5-transcribe-liv
 
 Current shared provider coverage for realtime sessions:
 
+OpenAI `gpt-live-1` supports server WebSockets and client delegation through
+`realtimeModel().connect()` and `runRealtimeDelegations()`. It uses continuous
+audio and an independent backend agent, with timestamped transcript fragments
+and acknowledged close. See [GPT-Live support and the agent recipe](docs/OPENAI_LIVE.md).
+Managed Responses delegation, WebRTC and SIP are not implemented by this adapter.
+
 - OpenAI
 - Azure OpenAI
 - Gemini
