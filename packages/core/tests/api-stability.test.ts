@@ -67,6 +67,7 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("encodeMediaFrame")?.stability).toBe("stable");
     expect(api.getApiStability("openWebSocketConnection")?.stability).toBe("stable");
     expect(api.getApiStability("streamLiveAgent")?.stability).toBe("stable");
+    expect(api.getApiStability("runRealtimeDelegations")?.stability).toBe("stable");
     expect(api.getApiStability("unsupportedBrowserToken")?.stability).toBe("stable");
 
     expect(api.getApiStability("createRunner")?.stability).toBe("stable");

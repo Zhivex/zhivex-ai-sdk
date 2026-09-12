@@ -220,6 +220,7 @@ const stableSymbols = [
   "selectAgentModel",
   "streamAgent",
   "streamLiveAgent",
+  "runRealtimeDelegations",
   "streamObject",
   "streamSpeech",
   "streamSSE",

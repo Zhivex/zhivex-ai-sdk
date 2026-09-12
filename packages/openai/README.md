@@ -133,6 +133,16 @@ Partial images are transient live stream events: they are not copied into collec
 
 ## Realtime 2.1 and remote MCP
 
+For `gpt-live-1`, use `realtimeModel().connect()` with client delegation and
+`runRealtimeDelegations()` from core/SDK. The dedicated Live WebSocket adapter
+supports continuous PCM/G.711 audio, timestamped transcripts, verified context
+appends, input muting and graceful close with final usage. It requires a server
+`realtimeConnectionFactory` for authenticated headers. It does not expose managed
+Responses delegation, WebRTC or SIP, and does not use Realtime client secrets.
+See the [GPT-Live guide](../../docs/OPENAI_LIVE.md) and
+[Zhivex backend recipe](../../examples/openai-live-agent.ts). Existing Realtime
+models retain their turn-based protocol.
+
 `gpt-realtime-2.1` and `gpt-realtime-2.1-mini` use the GA Realtime tool shape and support image input. A stable `providerOptions.safety_identifier` is sent as the `OpenAI-Safety-Identifier` header for both server WebSocket sessions and browser client-secret creation.
 
 Remote MCP lifecycle, calls, failures, and approval requests arrive as `realtime-provider-data` events so provider-executed MCP is not confused with an app-executed function tool. Return an approval with `openAIRealtimeMcpApprovalResult()` through `session.sendToolResult()`. See OpenAI's [Realtime MCP guide](https://developers.openai.com/api/docs/guides/realtime-mcp).

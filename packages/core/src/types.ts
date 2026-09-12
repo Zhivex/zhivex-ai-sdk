@@ -145,6 +145,9 @@ export interface ModelCapabilities {
     imageInput: boolean;
     tools: boolean;
     browserTokens: boolean;
+    /** Continuous speech without authoritative response/turn completion events. */
+    fullDuplex?: boolean;
+    clientDelegation?: boolean;
   };
   agentCapabilities?: AgentCapabilities;
 }
@@ -1012,6 +1015,8 @@ export interface RealtimeConnectOptions {
 }
 
 export interface RealtimeSessionConfig {
+  /** Backend execution is owned by the application, separately from speech. */
+  delegation?: { type: "client" };
   mode?: "conversation" | "translation" | "transcription";
   instructions?: string;
   voice?: string;
@@ -1087,6 +1092,9 @@ export interface RealtimeTranscriptEvent {
   role: "user" | "assistant";
   /** Explicit provider signal that no more transcript chunks remain for this item. */
   isFinal: boolean;
+  /** Provider session timeline, not wall-clock time or playback completion. */
+  startMs?: number;
+  endMs?: number;
   itemId?: string;
   responseId?: string;
   providerMetadata?: Record<string, JsonValue>;
@@ -1095,6 +1103,22 @@ export interface RealtimeTranscriptEvent {
 export interface RealtimeToolCallEvent {
   type: "realtime-tool-call";
   toolCall: ToolCall;
+}
+
+export interface RealtimeDelegationEvent {
+  type: "realtime-delegation";
+  /** Opaque provider ID. A delegation does not contain task text or tool arguments. */
+  delegationId: string;
+  offsetMs?: number;
+  providerMetadata?: Record<string, JsonValue>;
+}
+
+export interface RealtimeContextUpdate {
+  kind: "instructions" | "context" | "commentary";
+  content: string;
+  /** Omit for session-wide context. Only known client delegation IDs are valid. */
+  delegationId?: string;
+  eventId?: string;
 }
 
 export interface RealtimeToolResultEvent {
@@ -1142,6 +1166,7 @@ export interface RealtimeErrorEvent {
 
 export type RealtimeEvent =
   | RealtimeSessionStartedEvent
+  | RealtimeDelegationEvent
   | RealtimeTextDeltaEvent
   | RealtimeAudioOutputEvent
   | RealtimeTranscriptEvent
@@ -1163,6 +1188,8 @@ export interface RealtimeSession {
   sendMedia(frame: MediaFrame): Promise<void>;
   sendText(text: string): Promise<void>;
   sendToolResult(result: ToolExecutionResult): Promise<void>;
+  appendContext?(update: RealtimeContextUpdate): Promise<void>;
+  setInputMuted?(muted: boolean): Promise<void>;
   update(config: Partial<RealtimeSessionConfig>): Promise<void>;
   eventStream(): AsyncIterable<RealtimeEvent>;
   close(): Promise<void>;

@@ -6,6 +6,7 @@ import type {
   ModelCapabilities,
   ProviderOptions,
   RealtimeConnectOptions,
+  RealtimeContextUpdate,
   RealtimeErrorEvent,
   RealtimeEvent,
   RealtimeModel,
@@ -42,6 +43,12 @@ export interface RealtimeSessionCallbacks {
   buildUpdatePayloads: RealtimePayloadBuilder<RealtimeSessionConfig>;
   buildInitialPayloads?: RealtimePayloadBuilder<RealtimeSessionConfig>;
   buildClosePayloads?: RealtimePayloadBuilder<RealtimeSessionConfig>;
+  buildContextPayloads?: RealtimePayloadBuilder<RealtimeContextUpdate>;
+  buildInputMutePayloads?: RealtimePayloadBuilder<boolean>;
+  /** Keep receiving through a graceful close until this provider acknowledgement. */
+  isCloseAcknowledgementPayload?: (payload: Record<string, unknown>) => boolean;
+  /** Streaming audio can be transient; lifecycle and context remain replayable. */
+  shouldReplayEvent?: (event: RealtimeEvent) => boolean;
 }
 
 type CallbackRealtimeSessionState = "new" | "initializing" | "handshaking" | "open" | "closing" | "closed";
@@ -90,6 +97,12 @@ export class CallbackRealtimeSession implements RealtimeSession {
   private rejectReady?: (error: Error) => void;
   private ready = false;
   private ended = false;
+  private closeRequested = false;
+  private closeAcknowledged = false;
+  private gracefulClosePromise?: Promise<void>;
+  private readonly closedPromise: Promise<void>;
+  private resolveClosed!: () => void;
+  private readonly closeTimeoutMs: number;
 
   constructor(options: {
     provider: string;
@@ -100,6 +113,7 @@ export class CallbackRealtimeSession implements RealtimeSession {
     callbacks: RealtimeSessionCallbacks;
     /** Optional deadline for a provider setup acknowledgement after the transport opens. */
     initializationTimeoutMs?: number;
+    closeTimeoutMs?: number;
   }) {
     this.provider = options.provider;
     this.modelId = options.modelId;
@@ -107,6 +121,11 @@ export class CallbackRealtimeSession implements RealtimeSession {
     this.config = options.config;
     this.connection = options.connection;
     this.callbacks = options.callbacks;
+    this.closeTimeoutMs = options.closeTimeoutMs ?? 15_000;
+    if (!Number.isSafeInteger(this.closeTimeoutMs) || this.closeTimeoutMs <= 0) {
+      throw new ConfigurationError('Realtime closeTimeoutMs must be a positive safe integer.');
+    }
+    this.closedPromise = new Promise<void>((resolve) => { this.resolveClosed = resolve; });
     if (
       options.initializationTimeoutMs !== undefined &&
       (!Number.isSafeInteger(options.initializationTimeoutMs) || options.initializationTimeoutMs <= 0)
@@ -179,6 +198,22 @@ export class CallbackRealtimeSession implements RealtimeSession {
     }
   }
 
+  async appendContext(update: RealtimeContextUpdate) {
+    this.assertOpen();
+    if (!this.callbacks.buildContextPayloads) {
+      throw new UnsupportedFeatureError(`Provider "${this.provider}" does not support realtime context appends.`);
+    }
+    await this.sendBuiltPayloads(() => this.callbacks.buildContextPayloads!(update, this.config));
+  }
+
+  async setInputMuted(muted: boolean) {
+    this.assertOpen();
+    if (!this.callbacks.buildInputMutePayloads) {
+      throw new UnsupportedFeatureError(`Provider "${this.provider}" does not support realtime input muting.`);
+    }
+    await this.sendBuiltPayloads(() => this.callbacks.buildInputMutePayloads!(muted, this.config));
+  }
+
   async update(config: Partial<RealtimeSessionConfig>) {
     this.assertOpen();
     const nextConfig = {
@@ -194,6 +229,12 @@ export class CallbackRealtimeSession implements RealtimeSession {
   }
 
   async close() {
+    if (this.gracefulClosePromise) return this.gracefulClosePromise;
+    if (this.callbacks.isCloseAcknowledgementPayload && this.state === "open") {
+      this.closeRequested = true;
+      this.gracefulClosePromise = this.closeGracefully();
+      return this.gracefulClosePromise;
+    }
     if (this.state === "closed") {
       return;
     }
@@ -205,6 +246,30 @@ export class CallbackRealtimeSession implements RealtimeSession {
     });
     if (initiatedTermination && this.terminationError) {
       throw this.terminationError;
+    }
+  }
+
+  private async closeGracefully() {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // Register the deadline before sending: the provider may acknowledge immediately.
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Realtime close acknowledgement timed out; final usage is unconfirmed.")), this.closeTimeoutMs);
+      });
+      await Promise.race([
+        (async () => {
+          await this.sendPayloads(this.callbacks.buildClosePayloads?.(this.config, this.config) ?? []);
+          await this.closedPromise;
+          if (!this.closeAcknowledged) throw new Error("Realtime connection ended without close acknowledgement; final usage is unconfirmed.");
+          if (this.terminationError) throw this.terminationError;
+        })(),
+        deadline
+      ]);
+    } catch (error) {
+      await this.terminate({ reason: "error", error });
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -264,7 +329,7 @@ export class CallbackRealtimeSession implements RealtimeSession {
   }
 
   private assertOpen() {
-    if (this.state !== "open") {
+    if (this.state !== "open" || this.closeRequested) {
       throw new ConfigurationError("Realtime session is not open.");
     }
   }
@@ -293,10 +358,12 @@ export class CallbackRealtimeSession implements RealtimeSession {
           return;
         }
         if (payload == null) {
-          await this.terminate({ reason: "connection-closed" });
+          await this.terminate({ reason: "connection-closed", ...(this.callbacks.isCloseAcknowledgementPayload && !this.closeAcknowledged
+            ? { error: new Error("Realtime connection ended without close acknowledgement; final usage is unconfirmed.") } : {}) });
           return;
         }
         const record = (payload ?? {}) as Record<string, unknown>;
+        if (this.callbacks.isCloseAcknowledgementPayload?.(record)) this.closeAcknowledged = true;
         if (!this.ready && this.callbacks.isReadyPayload?.(record)) {
           this.ready = true;
           this.resolveReady?.();
@@ -336,7 +403,7 @@ export class CallbackRealtimeSession implements RealtimeSession {
           if (this.state !== "open" && this.state !== "handshaking") {
             return;
           }
-          await this.broadcast.publish(event);
+          await this.broadcast.publish(event, { replay: this.callbacks.shouldReplayEvent?.(event) ?? true });
         }
       }
     } catch (error) {
@@ -421,6 +488,7 @@ export class CallbackRealtimeSession implements RealtimeSession {
     } finally {
       this.broadcast.close();
       this.state = "closed";
+      this.resolveClosed();
     }
 
     this.terminationError = failure;

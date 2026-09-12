@@ -1,0 +1,27 @@
+{
+  "model": "gpt-live-1",
+  "startedAt": "2026-09-12T21:07:42.549Z",
+  "started": true,
+  "inputBytes": 177678,
+  "outputBytes": 950400,
+  "delegations": 1,
+  "userTranscript": "Please ask the backend for the verification code and tell me its answer",
+  "assistantTranscript": "Sure, checking now. The code is violet seven.",
+  "finalUsageConfirmed": true,
+  "usage": {
+    "seconds": 21
+  },
+  "passed": true,
+  "finishedAt": "2026-09-12T21:08:08.564Z",
+  "baseCommit": "91676ca7f1066e53ef154dda4587b19acc679268",
+  "workingTree": "uncommitted implementation",
+  "backend": "deterministic client callback returning violet seven; no backend LLM",
+  "inputSource": "local synthetic speech; no personal audio",
+  "sourceSha256": {
+    "packages/openai/src/live.ts": "8d6a6026e697c51f232b185df72fa558d366038fdbcfde370d1de31ff8e21c76",
+    "packages/openai/src/index.ts": "ca05332b379c0dfd2886afc880ff68dd75d1c4500c05ab2c01abcd2e91e0da02",
+    "packages/core/src/realtime.ts": "35001dfb4c61acef3fdaec0e3440d8cdc22b8a834e009fa2f1fa2720090fb754",
+    "packages/core/src/realtime-delegation.ts": "b2af54dd9e9079d82bf13d7038b1ef8415d54b3ce862a3abf7d3ce035ba46ffe",
+    "scripts/openai-live-smoke.ts": "e40e1e8f8d57532a94be8f91f1feb3841ffe9105e616c93a6a4558efa07d887f"
+  }
+}

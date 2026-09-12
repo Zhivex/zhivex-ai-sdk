@@ -520,11 +520,18 @@ try {
 }
 
 const { CallbackRealtimeSession } = await import("@zhivex-ai/core");
-const { streamLiveAgent } = await import("@zhivex-ai/agents/realtime");
+const { streamLiveAgent, runRealtimeDelegations } = await import("@zhivex-ai/agents/realtime");
 const sdk = await import("@zhivex-ai/sdk");
 assert.equal(typeof CallbackRealtimeSession, "function");
 assert.equal(typeof streamLiveAgent, "function");
 assert.equal(sdk.streamLiveAgent, streamLiveAgent);
+assert.equal(typeof runRealtimeDelegations, "function");
+assert.equal(sdk.runRealtimeDelegations, runRealtimeDelegations);
+assert.equal((await import("@zhivex-ai/core")).runRealtimeDelegations, runRealtimeDelegations);
+const installedFullDuplexOpenAI = (await import("@zhivex-ai/openai")).createOpenAI({ apiKey: "installed-smoke-placeholder" });
+assert.equal(installedFullDuplexOpenAI.realtimeModel("gpt-live-1").capabilities.realtime.fullDuplex, true);
+assert.equal(installedFullDuplexOpenAI.realtimeModel("gpt-live-1").capabilities.realtime.clientDelegation, true);
+assert.throws(() => installedFullDuplexOpenAI("gpt-live-1"), /voice model/);
 
 let realtimeConnectionClosed = false;
 let deterministicToolExecutions = 0;

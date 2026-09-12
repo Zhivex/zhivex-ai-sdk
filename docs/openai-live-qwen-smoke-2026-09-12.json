@@ -1,0 +1,53 @@
+{
+  "model": "gpt-live-1",
+  "startedAt": "2026-09-12T21:12:22.300Z",
+  "started": true,
+  "inputBytes": 177678,
+  "outputBytes": 1538880,
+  "delegations": 1,
+  "userTranscript": "Please ask the backend for the verification code and tell me its answer.",
+  "assistantTranscript": " Sure, I'll check with the backend. The verification code is violet nine.",
+  "finalUsageConfirmed": true,
+  "backendModel": "qwen3.8-flash",
+  "expectedCode": "violet nine",
+  "toolExecutions": 1,
+  "agentRuns": [
+    {
+      "status": "completed",
+      "outputText": "The verification code is violet nine.",
+      "steps": 2,
+      "toolResults": 1,
+      "usage": {
+        "inputTokens": 2969,
+        "cachedInputTokens": 1024,
+        "outputTokens": 21,
+        "totalTokens": 2990
+      },
+      "elapsedMs": 3934
+    }
+  ],
+  "usage": {
+    "seconds": 35
+  },
+  "passed": true,
+  "finishedAt": "2026-09-12T21:13:00.320Z",
+  "baseCommit": "91676ca7f1066e53ef154dda4587b19acc679268",
+  "workingTree": "uncommitted implementation",
+  "backend": "real qwen3.8-flash via runAgent; automatic tool selection; local read-only get_verification_code tool",
+  "inputSource": "local synthetic speech; no personal audio",
+  "limitations": [
+    "single successful session",
+    "no physical microphone or playback validation",
+    "no real interruption or disconnect fault injection",
+    "not an npm artifact certification"
+  ],
+  "sourceSha256": {
+    "packages/openai/src/live.ts": "8d6a6026e697c51f232b185df72fa558d366038fdbcfde370d1de31ff8e21c76",
+    "packages/openai/src/index.ts": "ca05332b379c0dfd2886afc880ff68dd75d1c4500c05ab2c01abcd2e91e0da02",
+    "packages/core/src/realtime.ts": "35001dfb4c61acef3fdaec0e3440d8cdc22b8a834e009fa2f1fa2720090fb754",
+    "packages/core/src/realtime-delegation.ts": "b2af54dd9e9079d82bf13d7038b1ef8415d54b3ce862a3abf7d3ce035ba46ffe",
+    "packages/core/src/agent.ts": "94b702cd41bd80028d98ad3b0ab9b9bfd95db2ae7a28b2a6459e455a6a25728a",
+    "packages/qwen/src/index.ts": "e40a5575ada4ec66ff4a3c20bb8558cef92ddb854e50e36dcd9e46d375d82ef2",
+    "scripts/openai-live-smoke.ts": "5603598686c02557b3fafdade2203087d323c5ba77ab1cfc035619051861ba07"
+  }
+}

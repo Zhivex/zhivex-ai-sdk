@@ -9,7 +9,9 @@ const readManifest = async (packageName: string) => JSON.parse(
 ) as { version: string; dependencies?: Record<string, string> };
 
 // Reviewed minimum Core versions for this release. The updated provider cohort
-// uses withResponseRetry from Core 1.13; the tool-history cohort needs 1.12. Older
+// uses withResponseRetry from Core 1.13; the tool-history cohort needs 1.12.
+// OpenAI needs the Live contract in Core 1.16; xAI follows its OpenAI dependency.
+// Older
 // adapters retain their existing minimum instead of tracking Core automatically.
 const reviewedProviderCoreRanges = {
   anthropic: "^1.13.0",
@@ -20,11 +22,11 @@ const reviewedProviderCoreRanges = {
   kimi: "^1.1.2",
   meta: "^1.3.0",
   ollama: "^1.3.0",
-  openai: "^1.13.0",
+  openai: "^1.16.0",
   openrouter: "^1.0.2",
   qwen: "^1.13.0",
   vertex: "^1.12.0",
-  xai: "^1.0.2",
+  xai: "^1.16.0",
   zai: "^1.3.0"
 } as const;
 

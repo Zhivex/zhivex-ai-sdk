@@ -92,7 +92,7 @@ describe("agents package public surface", () => {
   });
 
   it("keeps stable realtime and deterministic testing helpers on dedicated entry points", () => {
-    expect(sortedKeys(realtime)).toEqual(["streamLiveAgent"]);
+    expect(sortedKeys(realtime)).toEqual(["runRealtimeDelegations", "streamLiveAgent"]);
     expect(sortedKeys(testing)).toEqual(["createMockLanguageModel", "createMockTool"]);
     expect("streamLiveAgent" in agents).toBe(false);
     expect("createMockLanguageModel" in agents).toBe(false);

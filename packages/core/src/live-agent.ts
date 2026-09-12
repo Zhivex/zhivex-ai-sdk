@@ -497,6 +497,9 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
   agent: LiveAgentDefinition<TModel>,
   input: LiveAgentRunInput = {}
 ): AgentLiveStreamResult => {
+  if (agent.model.capabilities.realtime?.fullDuplex) {
+    throw new ValidationError("Full-duplex models require model.connect() and runRealtimeDelegations(); streamLiveAgent() requires response completion events.");
+  }
   const broadcast = createBroadcast<AgentLiveEvent>();
   let resolveSession!: (session: RealtimeSession) => void;
   let rejectSession!: (error: unknown) => void;

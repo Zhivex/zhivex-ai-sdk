@@ -69,7 +69,7 @@ These APIs are the supported public contract for application code and production
 - Audio: `transcribeAudio`, `generateSpeech`, `streamSpeech`
 - Generative media: `generateImage`, `generateVideo`, `generateMusic`
 - Agent runtime: `createAgent`, `runAgent`, `resumeAgent`, `streamAgent`
-- Realtime/live runtime: `CallbackRealtimeSession`, `streamLiveAgent`, browser-safe frame encoders, and the default WebSocket transport helpers
+- Realtime/live runtime: `CallbackRealtimeSession`, `streamLiveAgent`, `runRealtimeDelegations`, browser-safe frame encoders, and the default WebSocket transport helpers. GPT-Live uses the delegation bridge instead of the turn-based `streamLiveAgent` lifecycle; see [supported scope and certification boundaries](docs/OPENAI_LIVE.md).
 - Runner/session APIs: `createRunner`, in-memory/file/SQLite/Postgres `SessionService` implementations, `AgentSession`, `SessionEvent`, session schema v1 normalization/migration helpers, and file-backed session pruning helpers
 - Declarative workflows: `createWorkflow`, `runWorkflow`, `replayWorkflowRun`, sequential/parallel/loop step contracts, approval resume, schema-versioned `WorkflowRunState`, and its normalization/migration helpers
 - Workflow state: the `WorkflowStateService` contract, `loadWorkflowState`, `saveWorkflowState`, schema-versioned records and migration helpers, plus the in-memory, file-backed, SQLite, and Postgres implementations
