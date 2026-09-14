@@ -24,7 +24,8 @@ import {
   type ProviderAdapter,
   type StreamEvent,
   type StreamObjectResult,
-  type StreamTextResult
+  type StreamTextResult,
+  type TokenUsage
 } from "@zhivex-ai/core";
 import type { ZodTypeAny } from "zod";
 
@@ -725,7 +726,7 @@ const notifyAttempt = async (
 };
 
 const normalizeUsage = (
-  usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | undefined,
+  usage: TokenUsage | undefined,
   inputText: string,
   outputText: string
 ) => {
@@ -733,6 +734,7 @@ const normalizeUsage = (
   const outputTokens = usage?.outputTokens ?? estimateTokens(outputText);
   const totalTokens = usage?.totalTokens ?? inputTokens + outputTokens;
   return {
+    ...usage,
     inputTokens,
     outputTokens,
     totalTokens,

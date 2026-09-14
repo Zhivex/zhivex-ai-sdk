@@ -1435,6 +1435,10 @@ const group = await runAgentGroup(
 
 With `stopOnError: false`, groups keep all-settled behavior and report every member result. With `stopOnError: true`, the first thrown error or member output with `status: "failed"` or `status: "timed_out"` aborts pending members cooperatively through `AbortSignal`; aborted members are returned as rejected outputs with a stable fail-fast error message.
 
+A group `idempotencyKey` is namespaced by each member's stable `name` (or `agent.id`), so reordering members preserves their runs. Idempotent members must have unique nonempty identities. Explicit member keys override derivation; collisions in the same store and scope are rejected before execution. Persisted keys cannot be reassigned to a different member or agent. This changes keys used by older groups: do not replay an old shared group key expecting migration of previously conflated runs. Reconcile those runs explicitly first. The `agentGroupIdentity` metadata field is reserved by the runtime.
+
+Group status follows this precedence: `failed` (including rejected members), `timed_out`, `cancel_requested`, `running`, `queued`, `waiting_approval` (legacy `suspended` is normalized), `cancelled`, `completed`. An empty group completes. Inspect every member result when terminal failures coexist with active work. Approval waits do not trigger `stopOnError`.
+
 Use `handoff` for sequential ownership transfer, `subagents` for model-driven delegation inside an agent loop, and `runAgentGroup()` for deterministic fan-out from application code.
 
 ### Subagent Defaults

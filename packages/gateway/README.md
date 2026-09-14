@@ -209,3 +209,7 @@ candidate core/gateway/provider tarballs without checkout links. Add
 authorized credential and perform two bounded live calls for one provider. A missing credential is a blocked live check, not
 a passing certification. Publication evidence and the actual version are recorded
 in [the delivery record](../../docs/GATEWAY_TOOL_HISTORY_DELIVERY.md).
+
+## Usage accounting
+
+`generate`, `generateObject`, `streamText().collect()` and `streamObject().collect()` preserve all reported `TokenUsage` fields, including `cachedInputTokens`, `cacheWriteTokens`, `reasoningTokens` and `speed`. Reported zeros remain zeros; missing optional details remain absent. Only missing `inputTokens`/`outputTokens` are estimated from text and a missing `totalTokens` is derived from those base counters. `estimated` is true if any of those three base counters was missing, including a derived total. Reasoning/cache details are never added again to the total. Agent results retain their existing usage aggregation without an `estimated` flag.

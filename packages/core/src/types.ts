@@ -2318,7 +2318,7 @@ export interface AgentGroupMemberResult {
 }
 
 export interface AgentGroupRunOutput {
-  status: "completed" | "failed";
+  status: AgentStatus;
   parentRunId?: string;
   outputs: AgentGroupMemberResult[];
 }

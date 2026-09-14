@@ -734,6 +734,10 @@ console.log("INSTALLED_REALTIME_LIVE_SMOKE_OK");
     stdio: "inherit"
   });
 
+  const agwSmokePath = join(consumerDirectory, "sdk-agw-consumer.mjs");
+  writeFileSync(agwSmokePath, readFileSync(join(scriptDirectory, "fixtures/sdk-agw-consumer.mjs"), "utf8"));
+  execFileSync("node", [agwSmokePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
+
   const goldenPathSmokePath = join(consumerDirectory, "golden-path-smoke.mjs");
   writeFileSync(
     goldenPathSmokePath,
