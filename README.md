@@ -1433,6 +1433,8 @@ const group = await runAgentGroup(
 );
 ```
 
+Set `maxConcurrency` to a positive safe integer to bound active members. The default remains unrestricted fan-out. A FIFO worker queue preserves input order in results. Aborted queued members are rejected before claiming a run or invoking the model; they can be retried later with the same stable identity. `stopOnError` aborts active members cooperatively and rejects queued entries with the fail-fast message. A rejected member contributes `failed` to the group status, including a cancellation exception; inspect member outputs for details.
+
 With `stopOnError: false`, groups keep all-settled behavior and report every member result. With `stopOnError: true`, the first thrown error or member output with `status: "failed"` or `status: "timed_out"` aborts pending members cooperatively through `AbortSignal`; aborted members are returned as rejected outputs with a stable fail-fast error message.
 
 A group `idempotencyKey` is namespaced by each member's stable `name` (or `agent.id`), so reordering members preserves their runs. Idempotent members must have unique nonempty identities. Explicit member keys override derivation; collisions in the same store and scope are rejected before execution. Persisted keys cannot be reassigned to a different member or agent. This changes keys used by older groups: do not replay an old shared group key expecting migration of previously conflated runs. Reconcile those runs explicitly first. The `agentGroupIdentity` metadata field is reserved by the runtime.

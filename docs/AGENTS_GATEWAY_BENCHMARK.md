@@ -19,3 +19,12 @@ Reports include source SHA, dirty status, runtime, machine, fixture seed, warmup
 The store is in-memory. Checkpoint bytes are the serialized state presented at write boundaries, not physical disk writes. Store time includes the instrumentation's serialization and the store's copies. The residual wall time subtracts the union of model/store intervals; it includes SDK work plus harness overhead. RSS is process-wide at trial boundaries, not a per-request peak. Stream time covers generator lifetime including consumer pauses. These boundaries prevent treating summed overlapping durations as exclusive wall time.
 
 For a proposed regression band, compare two runs on the same runtime and machine: use the maximum of their p95 values and their absolute p95 difference as an observed noise envelope. Freeze that per-fixture envelope before measuring a candidate; flag a candidate p95 above `max(baseline p95) + abs(baseline p95 difference)` for investigation, never as an automatic performance failure. Five repetitions give a preliminary band, not a reliable tail estimate. Increase repetitions and repeat on a quiet dedicated runner before adopting a CI performance gate. Do not compare Node and Bun as if they were repeated samples of the same environment.
+
+Produce the proposed observed bands mechanically after each pair:
+
+```sh
+node scripts/benchmarks/compare-baselines.mjs artifacts/agw-node-1.json artifacts/agw-node-2.json artifacts/agw-node-bands.json
+node scripts/benchmarks/compare-baselines.mjs artifacts/agw-bun-1.json artifacts/agw-bun-2.json artifacts/agw-bun-bands.json
+```
+
+The comparison rejects different source/runtime/environment/fixture metadata. The runner rejects source-commit or hashed-artifact changes during measurement. Run sequentially with no builds or tests competing for CPU; run-level process isolation does not isolate the host from unrelated activity.

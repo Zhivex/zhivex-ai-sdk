@@ -32,6 +32,7 @@ export const validateFixture = fixture => {
     if (!Number.isSafeInteger(fixture[field]) || fixture[field] < 1 || fixture[field] > max) throw new Error(`Invalid ${field}`);
   }
   if (!Number.isSafeInteger(fixture.seed) || fixture.seed < 0 || fixture.seed > 0xffffffff) throw new Error("Invalid seed");
+  if (fixture.maxConcurrency !== undefined && (!Number.isSafeInteger(fixture.maxConcurrency) || fixture.maxConcurrency < 1 || fixture.maxConcurrency > 16)) throw new Error("Invalid maxConcurrency");
   return fixture;
 };
 
@@ -84,7 +85,7 @@ export async function runTrial(fixture) {
   const start = performance.now();
   if (fixture.scenario === "group") {
     const group = Array.from({ length: fixture.concurrency }, (_, i) => ({ name: `member-${i}`, agent: makeAgent(`member-${i}`) }));
-    const output = await runAgentGroup(group, { prompt: payload, idempotencyKey: "benchmark-group" });
+    const output = await runAgentGroup(group, { prompt: payload, idempotencyKey: "benchmark-group", maxConcurrency: fixture.maxConcurrency });
     assert.equal(output.status, "completed");
     assert.equal(new Set(output.outputs.map(x => x.output.state.runId)).size, fixture.concurrency);
     for (const member of output.outputs) assert.equal(member.output.outputText, "correct");
@@ -138,6 +139,11 @@ export async function main(args = process.argv.slice(2)) {
   if (!Number.isSafeInteger(repetitions) || repetitions < 2 || repetitions > 20 || !Number.isSafeInteger(warmup) || warmup < 0 || warmup > 5) throw new Error("Invalid repetitions/warmup");
   const fixtures = scenarios.flatMap(scenario => (matrix === "full" ? [1, 10, 100] : [1, 10]).flatMap(steps =>
     (matrix === "full" ? [64, 1024] : [64]).flatMap(payloadBytes => (matrix === "full" ? [1, 4, 16] : [1, 4]).map(concurrency => validateFixture({ scenario, steps, payloadBytes, concurrency, seed })))));
+  const git = args => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  const hash = async file => createHash("sha256").update(await readFile(resolve(root, file))).digest("hex");
+  const files = { runner: "scripts/benchmarks/agents-gateway.mjs", lockfile: "bun.lock", catalog: "packages/core/src/catalog.ts", coreRuntime: "packages/core/dist/agent.js", gatewayRuntime: "packages/gateway/dist/index.js" };
+  const hashes = Object.fromEntries(await Promise.all(Object.entries(files).map(async ([key, path]) => [key, await hash(path)])));
+  const sourceSha = git(["rev-parse", "HEAD"]), dirty = Boolean(git(["status", "--porcelain"]));
   const rows = [];
   const deadline = performance.now() + 10 * 60_000;
   for (const fixture of fixtures) {
@@ -150,13 +156,14 @@ export async function main(args = process.argv.slice(2)) {
     const p50Ms = percentile(trials.map(x => x.wallMs), .5), p95Ms = percentile(trials.map(x => x.wallMs), .95);
     rows.push({ fixture, p50Ms, p95Ms, throughputTasksPerSecond: trials.reduce((s, x) => s + x.correctTasks, 0) / trials.reduce((s, x) => s + x.wallMs / 1000, 0),
       observedSpreadRatio: p95Ms / p50Ms, trials });
+    console.log(`Completed ${rows.length}/${fixtures.length}: ${fixture.scenario}, steps=${fixture.steps}, concurrency=${fixture.concurrency}, bytes=${fixture.payloadBytes}`);
   }
-  const git = args => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
-  const hash = async file => createHash("sha256").update(await readFile(resolve(root, file))).digest("hex");
+  for (const [key, path] of Object.entries(files)) if (hashes[key] !== await hash(path)) throw new Error(`Artifact changed during benchmark: ${path}`);
+  if (sourceSha !== git(["rev-parse", "HEAD"])) throw new Error("Source commit changed during benchmark");
   const report = { schemaVersion: 1, mode: "offline", createdAt: new Date().toISOString(), matrix, repetitions, warmup, seed,
-    sourceSha: git(["rev-parse", "HEAD"]), dirty: Boolean(git(["status", "--porcelain"])), runtime: { node: process.versions.node, bun: process.versions.bun ?? null },
+    sourceSha, dirty, runtime: { node: process.versions.node, bun: process.versions.bun ?? null },
     environment: { platform: platform(), arch: arch(), cpu: cpus()[0]?.model, logicalCpus: cpus().length },
-    hashes: { runner: await hash("scripts/benchmarks/agents-gateway.mjs"), lockfile: await hash("bun.lock"), catalog: await hash("packages/core/src/catalog.ts"), coreRuntime: await hash("packages/core/dist/agent.js"), gatewayRuntime: await hash("packages/gateway/dist/index.js") },
+    hashes,
     limitations: ["Deterministic mocks, no provider/network latency or monetary cost", "In-memory store; checkpointBytes measures logical serialized state at write boundaries, not disk I/O", "SDK residual includes fixture orchestration and instrumentation", "RSS endpoints are process-wide, not peak per request", "Model/store durations are sums; overlaps are removed only for residual wall time", "Stream ttftMs is within-trial p95 of first text latency", "Proposed regression bands require a second run; never a product performance promise"], rows };
   const output = resolve(values.output ?? "artifacts/agents-gateway-benchmark.json"); await mkdir(dirname(output), { recursive: true });
   await writeFile(output, JSON.stringify(report, null, 2) + "\n");

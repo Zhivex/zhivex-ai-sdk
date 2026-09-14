@@ -2422,7 +2422,10 @@ export const runAgentGroup = async (
   agents: AgentGroupMember[],
   input: AgentGroupRunInput = {}
 ): Promise<AgentGroupRunOutput> => {
-  const { stopOnError, runId: _runId, state: _state, approvals: _approvals, handoff: _handoff, ...sharedInput } = input;
+  const { stopOnError, maxConcurrency, runId: _runId, state: _state, approvals: _approvals, handoff: _handoff, ...sharedInput } = input;
+  if (maxConcurrency !== undefined && (!Number.isSafeInteger(maxConcurrency) || maxConcurrency < 1)) {
+    throw new ValidationError('Agent group "maxConcurrency" must be a positive safe integer.');
+  }
   // Validate the complete group before any member can claim a key or invoke a model.
   const identities = new Set<string>();
   const claims: Array<{ store: AgentDefinition["store"]; key: string }> = [];
@@ -2467,13 +2470,16 @@ export const runAgentGroup = async (
     });
   };
 
-  const runs = agents.map(async (member, index) => {
+  const runMember = async (member: AgentGroupMember, index: number) => {
     const merged = createMergedAbortSignal(
       input.abortSignal,
       member.input?.abortSignal,
       controllers[index]!.signal
     );
     try {
+      if (merged.signal?.aborted) {
+        throw new DOMException("Agent group member aborted before execution.", "AbortError");
+      }
       const runInput = {
         ...memberInputs[index],
         parentRunId: member.input?.parentRunId ?? parentRunId,
@@ -2493,8 +2499,19 @@ export const runAgentGroup = async (
     } finally {
       merged.cleanup();
     }
-  });
-  const settled = await Promise.allSettled(runs);
+  };
+  const settled: PromiseSettledResult<AgentRunOutput>[] = new Array(agents.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(maxConcurrency ?? agents.length, agents.length) }, async () => {
+    while (nextIndex < agents.length) {
+      const index = nextIndex++;
+      try {
+        settled[index] = { status: "fulfilled", value: await runMember(agents[index]!, index) };
+      } catch (reason) {
+        settled[index] = { status: "rejected", reason };
+      }
+    }
+  }));
   const outputs = settled.map((result, index) => {
     const member = agents[index]!;
     if (result.status === "fulfilled") {

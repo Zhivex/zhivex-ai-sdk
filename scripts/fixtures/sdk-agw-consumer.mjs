@@ -16,7 +16,7 @@ for (const operation of ["generate", "generateObject", "streamText", "streamObje
 }
 const store = createInMemoryAgentRunStore();
 const members = ["a", "b"].map(id => ({ agent: createAgent({ id, store, model: createMockLanguageModel({ responses: [response] }) }) }));
-const input = { prompt: "hello", idempotencyKey: "installed-group" };
+const input = { prompt: "hello", idempotencyKey: "installed-group", maxConcurrency: 1 };
 const first = await runAgentGroup(members, input);
 assert.equal(first.status, "completed");
 const ids = first.outputs.map(x => x.output.state.runId);

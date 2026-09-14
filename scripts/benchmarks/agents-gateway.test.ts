@@ -19,3 +19,10 @@ it("validates effects, model steps and checkpoints on a tiny workload", async ()
   expect(trial.checkpoints).toBeGreaterThan(0);
   expect(trial.checkpointBytes).toBeGreaterThan(0);
 });
+
+it("derives proposed noise bands only from equivalent observed runs", async () => {
+  const { compareBaselines } = await import("./compare-baselines.mjs");
+  const baseline = { mode: "offline", schemaVersion: 1, sourceSha: "abc", rows: [{ fixture: { scenario: "text" }, p95Ms: 10 }] };
+  expect(compareBaselines(baseline, { ...baseline, rows: [{ ...baseline.rows[0], p95Ms: 14 }] }).rows[0].investigateAboveP95Ms).toBe(18);
+  expect(() => compareBaselines(baseline, { ...baseline, sourceSha: "different" })).toThrow();
+});

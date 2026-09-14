@@ -2305,6 +2305,8 @@ export interface AgentGroupMember<TModel extends LanguageModel = LanguageModel> 
 
 export type AgentGroupRunInput<TModel extends LanguageModel = LanguageModel> = AgentRunInput<TModel> & {
   stopOnError?: boolean;
+  /** Maximum active members. Omitted means all members may run concurrently. */
+  maxConcurrency?: number;
 };
 
 export interface AgentGroupMemberResult {
