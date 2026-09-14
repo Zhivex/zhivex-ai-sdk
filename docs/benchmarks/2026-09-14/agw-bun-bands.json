@@ -1,0 +1,1775 @@
+{
+  "schemaVersion": 1,
+  "sourceSha": "631b73363607d0831f6f7e0d39e52cf32d4892ef",
+  "runtime": {
+    "node": "26.3.0",
+    "bun": "1.4.0"
+  },
+  "status": "proposed-observed-noise-envelope",
+  "rows": [
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.21137500000000387,
+        0.07537499999999397
+      ],
+      "investigateAboveP95Ms": 0.34737500000001376
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.12650000000002137,
+        0.12908400000000597
+      ],
+      "investigateAboveP95Ms": 0.13166799999999057
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.0412919999999986,
+        0.5592079999999982
+      ],
+      "investigateAboveP95Ms": 1.523375999999999
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.027665999999982205,
+        0.02158300000000679
+      ],
+      "investigateAboveP95Ms": 0.03374899999995762
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.06787499999998658,
+        0.06341700000000117
+      ],
+      "investigateAboveP95Ms": 0.072332999999972
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.228541000000007,
+        0.23012500000000102
+      ],
+      "investigateAboveP95Ms": 0.23170899999999506
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.5021250000000066,
+        1.6225409999999982
+      ],
+      "investigateAboveP95Ms": 2.74295699999999
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.3355420000000038,
+        0.363624999999999
+      ],
+      "investigateAboveP95Ms": 0.39170799999999417
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.2738750000000039,
+        1.2169170000000094
+      ],
+      "investigateAboveP95Ms": 1.3308329999999984
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.8810000000000002,
+        0.14070900000000108
+      ],
+      "investigateAboveP95Ms": 1.6212909999999994
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.29400000000001114,
+        0.25808400000001086
+      ],
+      "investigateAboveP95Ms": 0.3299160000000114
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.820999999999998,
+        1.7635000000000076
+      ],
+      "investigateAboveP95Ms": 1.8784999999999883
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.6929580000000044,
+        0.5949169999999953
+      ],
+      "investigateAboveP95Ms": 0.7909990000000136
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        2.7566249999999854,
+        2.6799999999999926
+      ],
+      "investigateAboveP95Ms": 2.8332499999999783
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        12.402291999999989,
+        12.048208000000002
+      ],
+      "investigateAboveP95Ms": 12.756375999999975
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.6144160000000056,
+        0.6308750000000032
+      ],
+      "investigateAboveP95Ms": 0.6473340000000007
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        3.0939170000000047,
+        3.0687499999999943
+      ],
+      "investigateAboveP95Ms": 3.119084000000015
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        9.951709000000022,
+        9.950874999999996
+      ],
+      "investigateAboveP95Ms": 9.952543000000048
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.09837500000000432,
+        0.08100000000001728
+      ],
+      "investigateAboveP95Ms": 0.11574999999999136
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.13458299999999213,
+        0.15162499999999568
+      ],
+      "investigateAboveP95Ms": 0.16866699999999923
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.3726249999999993,
+        0.3274590000000046
+      ],
+      "investigateAboveP95Ms": 0.41779099999999403
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.024833000000000993,
+        0.035499999999984766
+      ],
+      "investigateAboveP95Ms": 0.04616699999996854
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.0643750000000125,
+        0.06745800000001623
+      ],
+      "investigateAboveP95Ms": 0.07054100000001995
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.23758300000000077,
+        0.27387500000000387
+      ],
+      "investigateAboveP95Ms": 0.31016700000000696
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.18433399999997846,
+        0.18524999999999636
+      ],
+      "investigateAboveP95Ms": 0.18616600000001426
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.7310830000000124,
+        0.5442079999999976
+      ],
+      "investigateAboveP95Ms": 0.9179580000000271
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        2.4327920000000063,
+        2.500541999999996
+      ],
+      "investigateAboveP95Ms": 2.5682919999999854
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.12237500000003365,
+        0.1215829999999869
+      ],
+      "investigateAboveP95Ms": 0.1231670000000804
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.3785419999999817,
+        0.38537499999998204
+      ],
+      "investigateAboveP95Ms": 0.39220799999998235
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        2.124333999999976,
+        2.134083000000004
+      ],
+      "investigateAboveP95Ms": 2.1438320000000317
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.699625000000026,
+        1.5891670000000033
+      ],
+      "investigateAboveP95Ms": 1.8100830000000485
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        4.345708999999999,
+        4.368875000000003
+      ],
+      "investigateAboveP95Ms": 4.392041000000006
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        17.057875000000024,
+        17.737291999999997
+      ],
+      "investigateAboveP95Ms": 18.41670899999997
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.761000000000024,
+        1.6879160000000297
+      ],
+      "investigateAboveP95Ms": 1.8340840000000185
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        4.441000000000031,
+        4.335624999999993
+      ],
+      "investigateAboveP95Ms": 4.546375000000069
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        18.223457999999994,
+        19.100707999999997
+      ],
+      "investigateAboveP95Ms": 19.977958
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.1609589999999912,
+        0.867416999999989
+      ],
+      "investigateAboveP95Ms": 1.5738749999999868
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.30220800000000736,
+        0.25337500000000546
+      ],
+      "investigateAboveP95Ms": 0.35104100000000926
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.9525830000000042,
+        0.8397080000000301
+      ],
+      "investigateAboveP95Ms": 1.0654579999999783
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.04666599999995924,
+        0.05179200000003448
+      ],
+      "investigateAboveP95Ms": 0.056918000000109714
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.16962499999999636,
+        0.12174999999996317
+      ],
+      "investigateAboveP95Ms": 0.21750000000002956
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.5868330000000128,
+        0.4790840000000003
+      ],
+      "investigateAboveP95Ms": 0.6945820000000253
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.7329169999999863,
+        0.5314579999999864
+      ],
+      "investigateAboveP95Ms": 0.9343759999999861
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.2992499999999723,
+        2.193790999999976
+      ],
+      "investigateAboveP95Ms": 3.08833199999998
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        4.517209000000037,
+        5.173000000000002
+      ],
+      "investigateAboveP95Ms": 5.828790999999967
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.1187499999999773,
+        0.3605840000000171
+      ],
+      "investigateAboveP95Ms": 1.8769159999999374
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.3142500000000155,
+        1.8251670000000217
+      ],
+      "investigateAboveP95Ms": 2.336084000000028
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        5.811582999999985,
+        5.418291000000011
+      ],
+      "investigateAboveP95Ms": 6.204874999999959
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        12.385958000000016,
+        12.784334000000001
+      ],
+      "investigateAboveP95Ms": 13.182709999999986
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        49.49445800000001,
+        46.81524999999999
+      ],
+      "investigateAboveP95Ms": 52.173666000000026
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        195.64312500000005,
+        192.0182920000001
+      ],
+      "investigateAboveP95Ms": 199.26795800000002
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        16.824457999999822,
+        16.049125000000004
+      ],
+      "investigateAboveP95Ms": 17.59979099999964
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        61.52558299999987,
+        63.431957999999895
+      ],
+      "investigateAboveP95Ms": 65.33833299999992
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        267.3966250000001,
+        247.30941599999983
+      ],
+      "investigateAboveP95Ms": 287.48383400000034
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.2612500000000182,
+        0.24887500000022555
+      ],
+      "investigateAboveP95Ms": 0.2736249999998108
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.5460419999999431,
+        0.44566700000041237
+      ],
+      "investigateAboveP95Ms": 0.6464169999994738
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.4619580000003225,
+        1.4942089999999553
+      ],
+      "investigateAboveP95Ms": 1.526459999999588
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.12212500000032378,
+        0.12279100000023391
+      ],
+      "investigateAboveP95Ms": 0.12345700000014403
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.39466700000002675,
+        0.3702499999999418
+      ],
+      "investigateAboveP95Ms": 0.4190840000001117
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.5099169999998594,
+        1.4511669999997139
+      ],
+      "investigateAboveP95Ms": 1.568667000000005
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        2.0709160000001248,
+        1.9617089999997006
+      ],
+      "investigateAboveP95Ms": 2.180123000000549
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        8.084957999999915,
+        8.290292000000136
+      ],
+      "investigateAboveP95Ms": 8.495626000000357
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        30.46683299999995,
+        30.403332999999748
+      ],
+      "investigateAboveP95Ms": 30.530333000000155
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        2.6729999999997744,
+        2.6191250000001673
+      ],
+      "investigateAboveP95Ms": 2.7268749999993815
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        11.817250000000058,
+        10.037832999999864
+      ],
+      "investigateAboveP95Ms": 13.596667000000252
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        39.618167000000085,
+        36.82945900000004
+      ],
+      "investigateAboveP95Ms": 42.40687500000013
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        123.2529999999997,
+        114.57999999999993
+      ],
+      "investigateAboveP95Ms": 131.92599999999948
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        488.7926659999998,
+        460.6000839999997
+      ],
+      "investigateAboveP95Ms": 516.985248
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1891.504167,
+        1892.9865840000002
+      ],
+      "investigateAboveP95Ms": 1894.4690010000004
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        155.64133299999958,
+        157.34100000000035
+      ],
+      "investigateAboveP95Ms": 159.04066700000112
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        671.2866250000006,
+        645.9239170000001
+      ],
+      "investigateAboveP95Ms": 696.6493330000012
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        2790.3091669999994,
+        2680.608167000002
+      ],
+      "investigateAboveP95Ms": 2900.0101669999967
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.07266700000036508,
+        0.07633300000088639
+      ],
+      "investigateAboveP95Ms": 0.0799990000014077
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.09299999999711872,
+        0.06312500000058208
+      ],
+      "investigateAboveP95Ms": 0.12287499999365536
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.25533399999767425,
+        0.2073339999988093
+      ],
+      "investigateAboveP95Ms": 0.3033339999965392
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.026458000000275206,
+        0.021500000002561137
+      ],
+      "investigateAboveP95Ms": 0.031415999997989275
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.056582999997772276,
+        0.13904200000251876
+      ],
+      "investigateAboveP95Ms": 0.22150100000726525
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.18833299999823794,
+        0.2227920000004815
+      ],
+      "investigateAboveP95Ms": 0.25725100000272505
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.11733300000196323,
+        0.12195799999972223
+      ],
+      "investigateAboveP95Ms": 0.12658299999748124
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.476542000000336,
+        0.40887500000098953
+      ],
+      "investigateAboveP95Ms": 0.5442089999996824
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.379000000000815,
+        1.2594580000004498
+      ],
+      "investigateAboveP95Ms": 1.49854200000118
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.11441700000068522,
+        0.09629099999801838
+      ],
+      "investigateAboveP95Ms": 0.13254300000335206
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.37104200000248966,
+        0.34679200000027777
+      ],
+      "investigateAboveP95Ms": 0.39529200000470155
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.3359159999999974,
+        1.3493339999986347
+      ],
+      "investigateAboveP95Ms": 1.362751999997272
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.8837080000012065,
+        0.9025829999991402
+      ],
+      "investigateAboveP95Ms": 0.9214579999970738
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        3.2135420000013255,
+        3.1186670000024606
+      ],
+      "investigateAboveP95Ms": 3.3084170000001905
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        12.823417000003246,
+        12.393792000002577
+      ],
+      "investigateAboveP95Ms": 13.253042000003916
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.6116250000013679,
+        0.9022909999985131
+      ],
+      "investigateAboveP95Ms": 2.3209590000042226
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        4.088124999998399,
+        3.174208999997063
+      ],
+      "investigateAboveP95Ms": 5.0020409999997355
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        15.418916000002355,
+        14.320832999997947
+      ],
+      "investigateAboveP95Ms": 16.516999000006763
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.12279200000193669,
+        0.13249999999970896
+      ],
+      "investigateAboveP95Ms": 0.14220799999748124
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.293416000000434,
+        0.2681670000019949
+      ],
+      "investigateAboveP95Ms": 0.3186649999988731
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.9782080000004498,
+        1.454541999999492
+      ],
+      "investigateAboveP95Ms": 1.930875999998534
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.08462499999950523,
+        0.09133400000064285
+      ],
+      "investigateAboveP95Ms": 0.09804300000178046
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.299749999998312,
+        0.35124999999970896
+      ],
+      "investigateAboveP95Ms": 0.40275000000110595
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        2.00762499999837,
+        1.112875000002532
+      ],
+      "investigateAboveP95Ms": 2.9023749999942083
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        4.106125000002066,
+        3.3288329999995767
+      ],
+      "investigateAboveP95Ms": 4.883417000004556
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        13.724291000002268,
+        14.534832999997889
+      ],
+      "investigateAboveP95Ms": 15.34537499999351
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        55.6551670000008,
+        49.84125000000131
+      ],
+      "investigateAboveP95Ms": 61.469084000000294
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        4.591625000000931,
+        3.9420829999980924
+      ],
+      "investigateAboveP95Ms": 5.24116700000377
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        18.901832999999897,
+        16.087166999997862
+      ],
+      "investigateAboveP95Ms": 21.71649900000193
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        67.44479199999842,
+        61.39866600000096
+      ],
+      "investigateAboveP95Ms": 73.49091799999587
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        239.98358400000143,
+        230.5734999999986
+      ],
+      "investigateAboveP95Ms": 249.39366800000425
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        974.2309999999998,
+        961.5382079999981
+      ],
+      "investigateAboveP95Ms": 986.9237920000014
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        4205.934874999999,
+        4210.544834
+      ],
+      "investigateAboveP95Ms": 4215.1547930000015
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        312.1194170000017,
+        311.6584589999984
+      ],
+      "investigateAboveP95Ms": 312.580375000005
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1307.1179590000029,
+        1326.3117079999938
+      ],
+      "investigateAboveP95Ms": 1345.5054569999847
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        5645.322709,
+        5573.191957999996
+      ],
+      "investigateAboveP95Ms": 5717.453460000004
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.091999999996915,
+        0.09208300000318559
+      ],
+      "investigateAboveP95Ms": 0.09216600000945618
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.25408299999980954,
+        0.23966700000164565
+      ],
+      "investigateAboveP95Ms": 0.26849899999797344
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.9101250000021537,
+        0.9575000000040745
+      ],
+      "investigateAboveP95Ms": 1.0048750000059954
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.07908300000417512,
+        0.08204100000148173
+      ],
+      "investigateAboveP95Ms": 0.08499899999878835
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        0.2913750000006985,
+        0.25854200000321725
+      ],
+      "investigateAboveP95Ms": 0.32420799999817973
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.090291000000434,
+        1.076082999999926
+      ],
+      "investigateAboveP95Ms": 1.104499000000942
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1.8429160000014235,
+        1.6997499999997672
+      ],
+      "investigateAboveP95Ms": 1.9860820000030799
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        7.730916000000434,
+        7.3889170000038575
+      ],
+      "investigateAboveP95Ms": 8.07291499999701
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        26.708917000003566,
+        26.793832999996084
+      ],
+      "investigateAboveP95Ms": 26.878748999988602
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        2.4184170000007725,
+        3.403375000001688
+      ],
+      "investigateAboveP95Ms": 4.3883330000026035
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        9.986959000001661,
+        9.835250000003725
+      ],
+      "investigateAboveP95Ms": 10.138667999999598
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        37.418165999995836,
+        37.138874999996915
+      ],
+      "investigateAboveP95Ms": 37.697456999994756
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        118.67045800000051,
+        118.07845899999666
+      ],
+      "investigateAboveP95Ms": 119.26245700000436
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        480.1626249999972,
+        478.54795799999556
+      ],
+      "investigateAboveP95Ms": 481.77729199999885
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        1928.9117499999993,
+        1883.9384169999976
+      ],
+      "investigateAboveP95Ms": 1973.885083000001
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        154.7509160000045,
+        157.18341700000747
+      ],
+      "investigateAboveP95Ms": 159.61591800001042
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        645.6624169999996,
+        647.8034590000025
+      ],
+      "investigateAboveP95Ms": 649.9445010000054
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "baselineP95Ms": [
+        2747.192916999993,
+        2703.9972500000003
+      ],
+      "investigateAboveP95Ms": 2790.3885839999857
+    }
+  ]
+}

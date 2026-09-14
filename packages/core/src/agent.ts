@@ -888,11 +888,11 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
   };
 };
 
-const saveStateWithRevision = async (store: AgentRunStore, state: AgentRunState) => {
+const saveStateWithRevision = async (store: AgentRunStore, state: AgentRunState, serializedNextState?: string) => {
   const expectedRevision = state.revision ?? 0;
   const nextRevision = expectedRevision + 1;
   const nextState = { ...state, revision: nextRevision } satisfies AgentRunState;
-  await store.save(cloneState(nextState), { expectedRevision });
+  await store.save(serializedNextState === undefined ? cloneState(nextState) : JSON.parse(serializedNextState) as AgentRunState, { expectedRevision });
   state.revision = nextRevision;
 };
 
@@ -902,9 +902,9 @@ const claimAgentExecution = async <TModel extends LanguageModel>(
 ) => {
   state.status = "running";
   state.updatedAt = Date.now();
-  assertStateSize(agent, state);
+  const serialized = assertStateSize(agent, agent.store ? normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }) : state);
   if (agent.store) {
-    await saveStateWithRevision(agent.store, state);
+    await saveStateWithRevision(agent.store, state, serialized);
   }
 };
 
@@ -917,12 +917,14 @@ const assertStateSize = <TModel extends LanguageModel>(
   if (!Number.isSafeInteger(limit) || limit < 1) {
     throw new ValidationError('Agent policy "maxStateBytes" must be a positive integer.');
   }
-  const bytes = new TextEncoder().encode(JSON.stringify(state)).byteLength;
+  const serialized = JSON.stringify(state);
+  const bytes = new TextEncoder().encode(serialized).byteLength;
   if (bytes > limit) {
     throw new ValidationError(
       `Agent run state is ${bytes} bytes and exceeds maxStateBytes=${limit}. Offload large tool outputs to artifacts or raise the explicit limit.`
     );
   }
+  return serialized;
 };
 
 const persistState = async <TModel extends LanguageModel>(
@@ -931,9 +933,9 @@ const persistState = async <TModel extends LanguageModel>(
   policy?: AgentRunPolicy
 ) => {
   state.updatedAt = Date.now();
-  assertStateSize(agent, state, policy);
+  const serialized = assertStateSize(agent, agent.store ? normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }) : state, policy);
   if (agent.store) {
-    await saveStateWithRevision(agent.store, state);
+    await saveStateWithRevision(agent.store, state, serialized);
   }
   await emitTelemetryEvent(agent, {
     type: "state-saved",
@@ -1722,7 +1724,7 @@ const createGenerateOptions = <
   ].filter((value): value is number => value !== undefined);
   const maxTokens = tokenCeilings.length ? Math.min(...tokenCeilings) : undefined;
   const requestedToolExecution = input.toolExecution ?? agent.toolExecution;
-  const toolExecution = agent.subagents?.length
+  const toolExecution = agent.subagents?.length && !(requestedToolExecution?.parallel && requestedToolExecution.independentOnly)
     ? {
         ...requestedToolExecution,
         parallel: false,

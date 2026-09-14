@@ -4,6 +4,7 @@ import {
   ProviderHTTPError,
   ValidationError,
   createAgent,
+  calculateModelCost,
   createStructuredOutputPrompt,
   createTextMessage,
   generateObject,
@@ -28,6 +29,14 @@ import {
   type TokenUsage
 } from "@zhivex-ai/core";
 import type { ZodTypeAny } from "zod";
+import { GatewayCircuitOpenError } from "./circuit-breaker.js";
+import { scoreAdaptiveTarget, validateAdaptivePolicy } from "./adaptive-routing.js";
+export type { GatewayAdaptiveCandidate, GatewayAdaptiveRoutingPolicy, GatewayQualityProfile } from "./adaptive-routing.js";
+export { createGatewayCircuitBreaker, GatewayCircuitOpenError } from "./circuit-breaker.js";
+export type { GatewayCircuitBreaker, GatewayCircuitOptions, GatewayCircuitPermit, GatewayCircuitSnapshot, GatewayCircuitState } from "./circuit-breaker.js";
+import type { GatewayMetricsHandle, GatewayMetricOutcome } from "./metrics.js";
+export { createGatewayMetrics } from "./metrics.js";
+export type { GatewayMetricsHandle, GatewayMetricsOptions, GatewayMetricsSnapshot, GatewayMetricsStore, GatewayMetricOutcome } from "./metrics.js";
 
 import { createRouteDecision, gatewayMessagesToModelMessages } from "./compat.js";
 import { hasToolHistory, validateGatewayMessages } from "./history.js";
@@ -103,8 +112,13 @@ type RouteRequest = Pick<
   | "toolChoice"
   | "reasoning"
   | "abortSignal"
+  | "maxTokens"
 > & {
   messages?: GatewayRequest["messages"];
+  prompt?: string;
+  systemPrompt?: string;
+  system?: string;
+  instructions?: string;
 };
 
 type RouteRequiredCapabilities = NonNullable<GatewayRequest["requiredCapabilities"]> & {
@@ -651,7 +665,7 @@ const createAttempt = (
   ok: boolean,
   latencyMs: number,
   targetRank: number,
-  options: Pick<GatewayAttempt, "errorMessage" | "reasonCode" | "retry"> = {}
+  options: Pick<GatewayAttempt, "errorMessage" | "reasonCode" | "retry" | "usage"> = {}
 ): GatewayAttempt => ({
   provider: target.provider,
   modelId: target.modelId,
@@ -808,11 +822,34 @@ const historyAbortSignal = (signal?: AbortSignal): AbortSignal | undefined => {
   return controller.signal;
 };
 
-const assertLegacyAgentMessages = (request: GatewayAgentRequest) => {
-  if (request.messages?.some((message) => "parts" in message)) {
-    throw new GatewayError("Canonical gateway history is not supported by agent operations.", false);
+const prepareAgentHistoryRequest = (request: GatewayAgentRequest): GatewayAgentRequest => {
+  if (request.prompt !== undefined && request.messages !== undefined) throw new GatewayError("Pass prompt or messages, not both.", false);
+  if (!request.messages?.some(message => "parts" in message)) return request;
+  validateGatewayMessages(request.messages);
+  if (request.state || request.runId || request.handoff || request.approvals || request.idempotencyKey) {
+    throw new GatewayError("Import canonical agent history as a fresh run; resume durable state using state or runId without messages or an import idempotency key.", false);
   }
+  return { ...request, metadata: { ...request.metadata, gatewayPortableHistory: true }, abortSignal: historyAbortSignal(request.abortSignal) };
 };
+
+const agentHistoryStore = (store: GatewayAgentRequest["store"], context: RouteContext, binding?: string): GatewayAgentRequest["store"] => store ? new Proxy(store, {
+  get(target, key) {
+    const value = Reflect.get(target, key);
+    if (key === "load") return async (...args: Parameters<typeof target.load>) => {
+      const state = await target.load(...args);
+      if (state && binding !== undefined && state.metadata?.gatewayAgentRouteBinding !== binding) throw new ConflictError("Agent state belongs to a different gateway route binding.");
+      if (state?.metadata?.gatewayPortableHistory === true) context.toolHistory = true;
+      return state;
+    };
+    if (key === "claimIdempotencyKey" && target.claimIdempotencyKey) return async (...args: Parameters<NonNullable<typeof target.claimIdempotencyKey>>) => {
+      const claim = await target.claimIdempotencyKey!(...args);
+      if (binding !== undefined && claim.state.metadata?.gatewayAgentRouteBinding !== binding) throw new ConflictError("Agent idempotency key belongs to a different gateway route binding.");
+      if (claim.state.metadata?.gatewayPortableHistory === true) context.toolHistory = true;
+      return claim;
+    };
+    return typeof value === "function" ? value.bind(target) : value;
+  }
+}) : undefined;
 
 const buildRequiredCapabilities = (
   request: Pick<GatewayRequest, "requiredCapabilities" | "tools" | "toolChoice" | "reasoning"> & {
@@ -945,6 +982,9 @@ const createAgentRunInput = (request: GatewayAgentRequest) => {
     providerOptions: request.providerOptions,
     policy: request.policy,
     metadata: request.metadata,
+    context: request.context,
+    compaction: request.compaction,
+    executionEnvironment: request.executionEnvironment,
     abortSignal: request.abortSignal
   };
 };
@@ -969,6 +1009,47 @@ const enrichAgentResult = (
 });
 
 export const createGateway = (config: GatewayConfig) => {
+  if (config.adaptiveRouting) {
+    validateAdaptivePolicy(config.adaptiveRouting);
+    if (config.scoreTarget) throw new GatewayError("Choose adaptiveRouting or scoreTarget, not both.", false);
+  }
+  const configuredAgentRequest = (request: GatewayAgentRequest): GatewayAgentRequest => {
+    const definition = request.agent;
+    if (!definition) return request;
+    const defaults = {
+      agentId: definition.id, instructions: definition.instructions, tools: Array.isArray(definition.tools) ? Object.fromEntries(definition.tools.map(tool => [tool.name, tool])) : definition.tools,
+      maxSteps: definition.maxSteps, temperature: definition.temperature, maxTokens: definition.maxTokens,
+      reasoning: definition.reasoning, toolExecution: definition.toolExecution, toolApprovalPolicy: definition.toolApprovalPolicy,
+      providerOptions: definition.providerOptions, store: definition.store, memory: definition.memory,
+      onTelemetryEvent: definition.onTelemetryEvent, hookFailurePolicy: definition.hookFailurePolicy,
+      compaction: definition.compaction, executionEnvironment: definition.executionEnvironment
+    };
+    const merged = { ...defaults, ...Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined)),
+      policy: { ...definition.policy, ...request.policy }, metadata: { ...definition.metadata, ...request.metadata }
+    } as GatewayAgentRequest;
+    const binding = JSON.stringify([1, merged.agentId ?? null, request.primary, request.fallbacks ?? [], config.adaptiveRouting?.version ?? "legacy", definition.harness?.fingerprint ?? null]);
+    merged.metadata = { ...merged.metadata, gatewayAgentRouteBinding: binding };
+    if (request.state && request.state.metadata?.gatewayAgentRouteBinding !== binding) throw new ConflictError("Agent state belongs to a different gateway route binding.");
+    return merged;
+  };
+
+  const beginMetrics = (target: GatewayModelTarget, signal?: AbortSignal) => {
+    let handle: GatewayMetricsHandle | undefined;
+    try { handle = config.metrics?.begin(target); } catch { /* Metrics cannot affect execution. */ }
+    let ended = false;
+    const end = (outcome: GatewayMetricOutcome) => {
+      if (ended) return; ended = true;
+      signal?.removeEventListener("abort", onAbort);
+      try { handle?.end(outcome); } catch { /* Best effort. */ }
+    };
+    const onAbort = () => end("cancelled");
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    return { end, firstText: () => { try { handle?.firstText(); } catch { /* Best effort. */ } } };
+  };
+  if (config.costAccounting && !config.modelCatalog) throw new GatewayError("costAccounting requires a modelCatalog snapshot.", false);
+  if (config.costAccounting?.unknownCostPolicy !== undefined && !["allow", "reject"].includes(config.costAccounting.unknownCostPolicy)) throw new GatewayError("Invalid detailed unknownCostPolicy.", false);
+  if (config.costAccounting?.cacheAssumption !== undefined && !["reported", "none"].includes(config.costAccounting.cacheAssumption)) throw new GatewayError("Invalid cacheAssumption.", false);
   const createRouteContext = (
     request: RouteRequest,
     options: {
@@ -985,8 +1066,20 @@ export const createGateway = (config: GatewayConfig) => {
     validateRouteRequest(config, request);
     const mode = request.routingMode ?? "balanced";
     const intent = request.taskIntent ?? options.defaultIntent ?? "chat";
-    const orderedTargets = orderTargets(mode, intent, request.primary, request.fallbacks ?? [], config);
+    const orderedTargets = config.adaptiveRouting
+      ? [request.primary, ...(request.fallbacks ?? [])].filter((target, index, all) => all.findIndex(x => x.provider === target.provider && x.modelId === target.modelId) === index)
+      : orderTargets(mode, intent, request.primary, request.fallbacks ?? [], config);
     const routeDecision = createRouteDecision(mode, intent, orderedTargets);
+    if (config.costAccounting) {
+      routeDecision.estimatedCosts = orderedTargets.map(target => calculateModelCost({
+        catalog: config.modelCatalog!, ...target,
+        usage: {
+          inputTokens: estimateTokens([request.systemPrompt, request.system, request.instructions, request.prompt, JSON.stringify(request.messages ?? [])].filter(Boolean).join("\n")),
+          outputTokens: config.costAccounting!.expectedOutputTokens ?? request.maxTokens
+        },
+        cacheAssumption: "none", estimated: true
+      }));
+    }
     const attempts: GatewayAttempt[] = [];
     const candidates: RouteCandidate[] = [];
     let notificationChain = Promise.resolve();
@@ -1060,6 +1153,11 @@ export const createGateway = (config: GatewayConfig) => {
         continue;
       }
 
+      if (config.costAccounting?.unknownCostPolicy === "reject" && routeDecision.estimatedCosts?.[targetRank]?.status === "unknown") {
+        queueAttempt(createAttempt(target, false, 0, targetRank, { reasonCode: "cost-budget", errorMessage: "Skipped because detailed request cost is unknown." }));
+        continue;
+      }
+
       const skip = options.getSkipReason?.(model, target);
       if (skip) {
         queueAttempt(
@@ -1074,7 +1172,30 @@ export const createGateway = (config: GatewayConfig) => {
       candidates.push({ target, targetRank, model });
     }
 
+    if (config.adaptiveRouting) {
+      const policy = config.adaptiveRouting;
+      const evaluated = orderedTargets.map((target, index) => {
+        const candidate = candidates.find(x => x.target === target);
+        let snapshot;
+        try { snapshot = config.metrics?.snapshot(target); } catch { /* Treat unavailable metrics as cold start. */ }
+        const evaluation = scoreAdaptiveTarget(policy, target, intent, snapshot, routeDecision.estimatedCosts?.[index]);
+        if (!candidate) evaluation.exclusions.push(...attempts.filter(x => x.provider === target.provider && x.modelId === target.modelId).map(x => x.reasonCode ?? "operation-skip"));
+        if (config.circuitBreaker && !config.circuitBreaker.canAttempt(target)) evaluation.exclusions.push("circuit-open");
+        if (evaluation.exclusions.length && candidate) queueAttempt(createAttempt(target, false, 0, index, { reasonCode: evaluation.exclusions.includes("circuit-open") ? "circuit-open" : "operation-skip", errorMessage: `Adaptive exclusion: ${evaluation.exclusions.join(", ")}.` }));
+        return evaluation;
+      });
+      routeDecision.reasonCode = "routing-adaptive";
+      routeDecision.adaptive = { policyVersion: policy.version, candidates: evaluated };
+      const eligible = candidates.filter(candidate => !evaluated.find(x => x.target.provider === candidate.target.provider && x.target.modelId === candidate.target.modelId)!.exclusions.length);
+      eligible.sort((left, right) => evaluated.find(x => x.target.provider === right.target.provider && x.target.modelId === right.target.modelId)!.score! - evaluated.find(x => x.target.provider === left.target.provider && x.target.modelId === left.target.modelId)!.score! || left.targetRank - right.targetRank);
+      candidates.splice(0, candidates.length, ...eligible);
+      candidates.forEach((candidate, index) => { candidate.targetRank = index; });
+      routeDecision.orderedTargets = candidates.map(x => x.target);
+      routeDecision.reason = `Ordered by adaptive policy ${policy.version}; ties preserve request order.`;
+    }
+
     if (!candidates.length) {
+      if (attempts.at(-1)?.reasonCode === "circuit-open") throw new GatewayCircuitOpenError();
       throw new GatewayError(
         attempts.at(-1)?.errorMessage ?? "No gateway target satisfied the request.",
         false
@@ -1089,6 +1210,17 @@ export const createGateway = (config: GatewayConfig) => {
       startedAt: Date.now(),
       flushAttempts: () => notificationChain,
       recordAttempt: async (attempt) => {
+        if (config.costAccounting && ["provider-success", "provider-error", "request-aborted"].includes(attempt.reasonCode ?? "")) {
+          const costInput = { catalog: config.modelCatalog!, provider: attempt.provider, modelId: attempt.modelId };
+          try {
+            attempt = { ...attempt, cost: calculateModelCost({ ...costInput, usage: attempt.usage, cacheAssumption: config.costAccounting.cacheAssumption, reasoningAccounting: config.costAccounting.reasoningAccounting?.[attempt.provider] }) };
+          } catch {
+            // Accounting cannot turn a successful model invocation into a retry.
+            const cost = calculateModelCost(costInput);
+            cost.unknownReasons.push("invalid-reported-usage");
+            attempt = { ...attempt, cost };
+          }
+        }
         queueAttempt(attempt);
         await notificationChain;
       },
@@ -1157,6 +1289,7 @@ export const createGateway = (config: GatewayConfig) => {
     };
 
     const throwFinalError = (): never => {
+      if (context.attempts.at(-1)?.reasonCode === "circuit-open") throw new GatewayCircuitOpenError();
       throw new GatewayError(
         context.attempts.at(-1)?.errorMessage ?? "All gateway attempts failed.",
         false
@@ -1173,19 +1306,26 @@ export const createGateway = (config: GatewayConfig) => {
       for (const candidate of candidates) {
         const candidateInput = prepareInput(candidate.model, input);
         const inputSkipReason = modelInputSkipReason(candidate.model, candidateInput) ??
-          (context.toolHistory ? historyInputSkipReason(candidate.model, input) : undefined);
+          (context.toolHistory ? historySkipReason(candidate.model, hasToolHistory(input.messages)) ?? historyInputSkipReason(candidate.model, input) : undefined);
         if (inputSkipReason) {
           await recordInputSkip(candidate, inputSkipReason);
           continue;
         }
 
         for (let retry = 0; retry <= maxRetries; retry += 1) {
-          reserveProviderAttempt();
+          const timeoutMs = getAttemptTimeoutMs(config, candidate.target.provider);
+          const permit = config.circuitBreaker?.acquire(candidate.target);
+          if (config.circuitBreaker && !permit) {
+            await context.recordAttempt(createAttempt(candidate.target, false, 0, candidate.targetRank, { reasonCode: "circuit-open", errorMessage: "Destination circuit is open or probe capacity is exhausted." }));
+            break;
+          }
+          try { reserveProviderAttempt(); } catch (error) { permit?.end("neutral"); throw error; }
           const attemptStartedAt = Date.now();
           const control = createAttemptControl(
             input.abortSignal,
-            getAttemptTimeoutMs(config, candidate.target.provider)
+            timeoutMs
           );
+          const metrics = beginMetrics(candidate.target, input.abortSignal);
 
           try {
             const result = await control.waitFor(
@@ -1195,10 +1335,13 @@ export const createGateway = (config: GatewayConfig) => {
               })
             );
             control.stopTimeout();
+            metrics.end("success");
+            permit?.end("success");
             await context.recordAttempt(
               createAttempt(candidate.target, true, Date.now() - attemptStartedAt, candidate.targetRank, {
                 retry,
-                reasonCode: "provider-success"
+                reasonCode: "provider-success",
+                ...(config.costAccounting ? { usage: result.usage } : {})
               })
             );
             await context.lock(candidate);
@@ -1206,11 +1349,13 @@ export const createGateway = (config: GatewayConfig) => {
             return result;
           } catch (rawError) {
             const callerAborted = input.abortSignal?.aborted === true;
+            metrics.end(callerAborted ? "cancelled" : "error");
             const error = control.timedOut() ? control.timeoutError : rawError;
             control.abort(error);
             control.dispose();
 
             if (callerAborted) {
+              permit?.end("neutral");
               await context.recordAttempt(
                 createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                   retry,
@@ -1222,6 +1367,7 @@ export const createGateway = (config: GatewayConfig) => {
             }
 
             const disposition = dispositionFor(error);
+            permit?.end(disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
             await context.recordAttempt(
               createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                 retry,
@@ -1230,6 +1376,7 @@ export const createGateway = (config: GatewayConfig) => {
               })
             );
 
+            if (config.circuitBreaker?.snapshot(candidate.target)?.state === "open") break;
             if (retry < maxRetries && disposition.retrySameTarget) {
               await abortableSleep(retryBackoffMs(config, retry, disposition.retryAfterMs), input.abortSignal);
               continue;
@@ -1255,7 +1402,7 @@ export const createGateway = (config: GatewayConfig) => {
       for (const candidate of candidates) {
         const candidateInput = prepareInput(candidate.model, input);
         const inputSkipReason = modelInputSkipReason(candidate.model, candidateInput) ??
-          (context.toolHistory ? historyInputSkipReason(candidate.model, input) : undefined);
+          (context.toolHistory ? historySkipReason(candidate.model, hasToolHistory(input.messages)) ?? historyInputSkipReason(candidate.model, input) : undefined);
         if (inputSkipReason) {
           await recordInputSkip(candidate, inputSkipReason);
           continue;
@@ -1266,13 +1413,20 @@ export const createGateway = (config: GatewayConfig) => {
         }
 
         for (let retry = 0; retry <= maxRetries; retry += 1) {
-          reserveProviderAttempt();
+          const timeoutMs = getAttemptTimeoutMs(config, candidate.target.provider);
+          const permit = config.circuitBreaker?.acquire(candidate.target);
+          if (config.circuitBreaker && !permit) {
+            await context.recordAttempt(createAttempt(candidate.target, false, 0, candidate.targetRank, { reasonCode: "circuit-open", errorMessage: "Destination circuit is open or probe capacity is exhausted." }));
+            break;
+          }
+          try { reserveProviderAttempt(); } catch (error) { permit?.end("neutral"); throw error; }
           const attemptStartedAt = Date.now();
           const control = createAttemptControl(
             input.abortSignal,
-            getAttemptTimeoutMs(config, candidate.target.provider)
+            timeoutMs
           );
           let iterator: AsyncIterator<StreamEvent> | undefined;
+          const metrics = beginMetrics(candidate.target, input.abortSignal);
 
           try {
             const providerStream = await control.waitFor(
@@ -1290,6 +1444,7 @@ export const createGateway = (config: GatewayConfig) => {
             if (firstEvent.value.type === "error") {
               throw firstEvent.value.error;
             }
+            if (firstEvent.value.type === "text-delta") metrics.firstText();
 
             control.stopTimeout();
             await context.lock(candidate);
@@ -1318,32 +1473,43 @@ export const createGateway = (config: GatewayConfig) => {
 
             return (async function* () {
               let completed = false;
+              let usage: TokenUsage | undefined = firstEvent.value.type === "finish" ? firstEvent.value.usage : undefined;
               try {
                 yield firstEvent.value;
                 for (;;) {
                   const next = await nextEvent();
                   if (next.done) {
                     completed = true;
+                    metrics.end("success");
+                    permit?.end("success");
                     await context.recordAttempt(createAttempt(candidate.target, true, Date.now() - attemptStartedAt, candidate.targetRank, {
-                      retry, reasonCode: "provider-success"
+                      retry, reasonCode: "provider-success", ...(config.costAccounting ? { usage } : {})
                     }));
                     return;
                   }
                   if (next.value.type === "error") throw next.value.error;
+                  if (next.value.type === "text-delta") metrics.firstText();
+                  if (next.value.type === "finish" && next.value.usage) usage = { ...usage, ...next.value.usage };
                   yield next.value;
                 }
               } catch (error) {
                 const aborted = input.abortSignal?.aborted === true;
-                const diagnostic = dispositionFor(error).error;
+                metrics.end(aborted ? "cancelled" : "error");
+                const disposition = dispositionFor(error);
+                permit?.end(aborted ? "neutral" : disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
+                const diagnostic = disposition.error;
                 const failure = aborted ? abortReason(input.abortSignal!) : context.toolHistory ? diagnostic : error;
                 await context.recordAttempt(createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                   retry,
+                  ...(config.costAccounting ? { usage } : {}),
                   reasonCode: aborted ? "request-aborted" : "provider-error",
                   errorMessage: aborted ? abortReason(input.abortSignal!).message : diagnostic.message
                 }));
                 throw failure;
               } finally {
                 if (!completed) {
+                  metrics.end("cancelled");
+                  permit?.end("neutral");
                   control.abort(new DOMException("Gateway stream consumer closed.", "AbortError"));
                 }
                 control.dispose();
@@ -1358,6 +1524,7 @@ export const createGateway = (config: GatewayConfig) => {
             })();
           } catch (rawError) {
             const callerAborted = input.abortSignal?.aborted === true;
+            metrics.end(callerAborted ? "cancelled" : "error");
             const error = control.timedOut() ? control.timeoutError : rawError;
             control.abort(error);
             control.dispose();
@@ -1368,6 +1535,7 @@ export const createGateway = (config: GatewayConfig) => {
             }
 
             if (callerAborted) {
+              permit?.end("neutral");
               await context.recordAttempt(
                 createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                   retry,
@@ -1379,6 +1547,7 @@ export const createGateway = (config: GatewayConfig) => {
             }
 
             const disposition = dispositionFor(error);
+            permit?.end(disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
             await context.recordAttempt(
               createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                 retry,
@@ -1387,6 +1556,7 @@ export const createGateway = (config: GatewayConfig) => {
               })
             );
 
+            if (config.circuitBreaker?.snapshot(candidate.target)?.state === "open") break;
             if (retry < maxRetries && disposition.retrySameTarget) {
               await abortableSleep(retryBackoffMs(config, retry, disposition.retryAfterMs), input.abortSignal);
               continue;
@@ -1442,7 +1612,7 @@ export const createGateway = (config: GatewayConfig) => {
     };
   };
 
-  return {
+  const gateway = {
     async generate(request: GatewayRequest): Promise<GatewayResponse> {
       const route = createStandardRoute(request);
       const result = await generateText(createTextOptions(route.model, request));
@@ -1549,7 +1719,7 @@ export const createGateway = (config: GatewayConfig) => {
     },
 
     async runAgent(request: GatewayAgentRequest): Promise<GatewayAgentResponse> {
-      assertLegacyAgentMessages(request);
+      request = prepareAgentHistoryRequest(configuredAgentRequest(request));
       const route = createStandardRoute(request, {
         defaultIntent: "tool-heavy",
         getSkipReason: (model) =>
@@ -1570,7 +1740,9 @@ export const createGateway = (config: GatewayConfig) => {
           });
         }
       });
+      if (request.state?.metadata?.gatewayPortableHistory === true) route.context.toolHistory = true;
       const agent = createAgent({
+        ...request.agent,
         id: request.agentId,
         model: route.model,
         instructions: request.instructions,
@@ -1584,7 +1756,7 @@ export const createGateway = (config: GatewayConfig) => {
         providerOptions: request.providerOptions,
         policy: request.policy,
         metadata: request.metadata,
-        store: request.store,
+        store: agentHistoryStore(request.store, route.context, request.agent ? request.metadata?.gatewayAgentRouteBinding as string : undefined),
         memory: request.memory,
         onTelemetryEvent: request.onTelemetryEvent,
         hookFailurePolicy: request.hookFailurePolicy
@@ -1601,7 +1773,7 @@ export const createGateway = (config: GatewayConfig) => {
     },
 
     streamAgent(request: GatewayAgentRequest): GatewayAgentStreamResult {
-      assertLegacyAgentMessages(request);
+      request = prepareAgentHistoryRequest(configuredAgentRequest(request));
       const route = createStandardRoute(request, {
         defaultIntent: "tool-heavy",
         extraRequiredCapabilities: { streaming: true },
@@ -1623,7 +1795,9 @@ export const createGateway = (config: GatewayConfig) => {
           });
         }
       });
+      if (request.state?.metadata?.gatewayPortableHistory === true) route.context.toolHistory = true;
       const agent = createAgent({
+        ...request.agent,
         id: request.agentId,
         model: route.model,
         instructions: request.instructions,
@@ -1637,7 +1811,7 @@ export const createGateway = (config: GatewayConfig) => {
         providerOptions: request.providerOptions,
         policy: request.policy,
         metadata: request.metadata,
-        store: request.store,
+        store: agentHistoryStore(request.store, route.context, request.agent ? request.metadata?.gatewayAgentRouteBinding as string : undefined),
         memory: request.memory,
         onTelemetryEvent: request.onTelemetryEvent,
         hookFailurePolicy: request.hookFailurePolicy
@@ -1659,5 +1833,46 @@ export const createGateway = (config: GatewayConfig) => {
         }
       };
     }
+  };
+
+  const managedStream = <TRequest extends { abortSignal?: AbortSignal }, TResult extends { collect: () => Promise<unknown> }>(
+    request: TRequest, start: (request: TRequest) => TResult
+  ): TResult => {
+    if (!config.metrics && !config.circuitBreaker) return start(request);
+    const controller = new AbortController();
+    const abort = () => controller.abort(new DOMException("Gateway stream consumer closed.", "AbortError"));
+    request.abortSignal?.addEventListener("abort", abort, { once: true });
+    if (request.abortSignal?.aborted) abort();
+    const cleanup = () => request.abortSignal?.removeEventListener("abort", abort);
+    try {
+      const result = start({ ...request, abortSignal: controller.signal });
+      const completion = result.collect().finally(cleanup);
+      void completion.catch(() => undefined);
+      const wrapped = { ...result, collect: () => completion } as TResult;
+      for (const key of ["eventStream", "textStream", "partialObjectStream"] as const) {
+        const source = (result as Record<string, unknown>)[key] as AsyncIterable<unknown> | undefined;
+        if (!source) continue;
+        (wrapped as Record<string, unknown>)[key] = {
+          [Symbol.asyncIterator]() {
+            const iterator = source[Symbol.asyncIterator]();
+            return {
+              next: () => iterator.next(),
+              return: async () => {
+                abort(); cleanup();
+                try { void Promise.resolve(iterator.return?.()).catch(() => undefined); } catch { /* Best effort. */ }
+                return { done: true as const, value: undefined };
+              }
+            };
+          }
+        };
+      }
+      return wrapped;
+    } catch (error) { abort(); cleanup(); throw error; }
+  };
+  return {
+    ...gateway,
+    streamText: (request: GatewayRequest) => managedStream(request, gateway.streamText),
+    streamObject: <TSchema extends ZodTypeAny>(request: GatewayGenerateObjectRequest<TSchema>) => managedStream(request, gateway.streamObject<TSchema>),
+    streamAgent: (request: GatewayAgentRequest) => managedStream(request, gateway.streamAgent)
   };
 };

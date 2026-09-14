@@ -82,6 +82,7 @@ const stableSymbols = [
   "createInMemoryWorkflowStateService",
   "createMcpToolSet",
   "createModelCatalog",
+  "calculateModelCost",
   "createMockLanguageModel",
   "createMockTool",
   "createPostgresAgentMemoryStore",

@@ -1,0 +1,5961 @@
+{
+  "schemaVersion": 1,
+  "mode": "offline",
+  "createdAt": "2026-09-14T16:15:26.418Z",
+  "matrix": "full",
+  "repetitions": 2,
+  "warmup": 1,
+  "seed": 42,
+  "sourceSha": "631b73363607d0831f6f7e0d39e52cf32d4892ef",
+  "dirty": true,
+  "runtime": {
+    "node": "26.3.0",
+    "bun": "1.4.0"
+  },
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M4 Pro",
+    "logicalCpus": 12
+  },
+  "hashes": {
+    "runner": "c9726695b2109f34f99d0ca7d67d8c286ca7460e3b526fbceb3c12d3b2fa97ce",
+    "lockfile": "3e5df147020b3f311862a4f6427ac0a2498c2f2e2ba9170ff1914637c325761e",
+    "catalog": "5af5c8bf84a73c5e396d0b63fbcd0a0b6ef22c4fca1c77001f9316b423a701fd",
+    "coreRuntime": "4691673445ee2ebbfcd3e4760cce5d4393724147d5ff7744796db143ea6f3ca2",
+    "gatewayRuntime": "590ce01a76cc65fce60ff9e6d7f05ae8f2dba1d4ed54d83c1d2806e7e4228c9c"
+  },
+  "limitations": [
+    "Deterministic mocks, no provider/network latency or monetary cost",
+    "In-memory store; checkpointBytes measures logical serialized state at write boundaries, not disk I/O",
+    "SDK residual includes fixture orchestration and instrumentation",
+    "RSS endpoints are process-wide, not peak per request",
+    "Model/store durations are sums; overlaps are removed only for residual wall time",
+    "Stream ttftMs is within-trial p95 of first text latency",
+    "Proposed regression bands require a second run; never a product performance promise"
+  ],
+  "rows": [
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.05141700000001492,
+      "p95Ms": 0.21137500000000387,
+      "throughputTasksPerSecond": 7610.581752868646,
+      "observedSpreadRatio": 4.110994418187419,
+      "trials": [
+        {
+          "wallMs": 0.21137500000000387,
+          "cpuMs": 0.128,
+          "rssBefore": 62406656,
+          "rssAfter": 62439424,
+          "modelMs": 0.0034589999999923293,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.20791600000001154,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.05141700000001492,
+          "cpuMs": 0.07,
+          "rssBefore": 62439424,
+          "rssAfter": 62472192,
+          "modelMs": 0.003958000000011452,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.04745900000000347,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.11191700000000537,
+      "p95Ms": 0.12650000000002137,
+      "throughputTasksPerSecond": 33554.65424025595,
+      "observedSpreadRatio": 1.1303019201731221,
+      "trials": [
+        {
+          "wallMs": 0.11191700000000537,
+          "cpuMs": 0.236,
+          "rssBefore": 62619648,
+          "rssAfter": 62783488,
+          "modelMs": 0.00824900000000639,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.10366799999999898,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.12650000000002137,
+          "cpuMs": 0.313,
+          "rssBefore": 62799872,
+          "rssAfter": 62980096,
+          "modelMs": 0.007873999999986836,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.11862600000003454,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 0.5310839999999928,
+      "p95Ms": 1.0412919999999986,
+      "throughputTasksPerSecond": 20351.366339857756,
+      "observedSpreadRatio": 1.9606917173178118,
+      "trials": [
+        {
+          "wallMs": 1.0412919999999986,
+          "cpuMs": 2.827,
+          "rssBefore": 64176128,
+          "rssAfter": 65372160,
+          "modelMs": 0.03229299999986779,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.0089990000001308,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 0.5310839999999928,
+          "cpuMs": 0.835,
+          "rssBefore": 65404928,
+          "rssAfter": 65880064,
+          "modelMs": 0.03470600000005675,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.49637799999993604,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.01866699999999355,
+      "p95Ms": 0.027665999999982205,
+      "throughputTasksPerSecond": 43165.77817108857,
+      "observedSpreadRatio": 1.4820806771303243,
+      "trials": [
+        {
+          "wallMs": 0.027665999999982205,
+          "cpuMs": 0.118,
+          "rssBefore": 65880064,
+          "rssAfter": 65880064,
+          "modelMs": 0.002165999999988344,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.02549999999999386,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.01866699999999355,
+          "cpuMs": 0.02,
+          "rssBefore": 65880064,
+          "rssAfter": 65880064,
+          "modelMs": 0.0017920000000231084,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.01687499999997044,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.05016699999998764,
+      "p95Ms": 0.06787499999998658,
+      "throughputTasksPerSecond": 67772.4877586092,
+      "observedSpreadRatio": 1.3529810433153928,
+      "trials": [
+        {
+          "wallMs": 0.06787499999998658,
+          "cpuMs": 0.199,
+          "rssBefore": 65912832,
+          "rssAfter": 66043904,
+          "modelMs": 0.006457999999980757,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.06141700000000583,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.05016699999998764,
+          "cpuMs": 0.05,
+          "rssBefore": 66043904,
+          "rssAfter": 66142208,
+          "modelMs": 0.00583399999996459,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.04433300000002305,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 0.2236249999999984,
+      "p95Ms": 0.228541000000007,
+      "throughputTasksPerSecond": 70770.46925244185,
+      "observedSpreadRatio": 1.021983230855265,
+      "trials": [
+        {
+          "wallMs": 0.228541000000007,
+          "cpuMs": 0.663,
+          "rssBefore": 66404352,
+          "rssAfter": 66813952,
+          "modelMs": 0.025002000000029057,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.20353899999997793,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 0.2236249999999984,
+          "cpuMs": 0.926,
+          "rssBefore": 66813952,
+          "rssAfter": 67469312,
+          "modelMs": 0.025706999999925984,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.19791800000007242,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.21579199999999332,
+      "p95Ms": 0.5021250000000066,
+      "throughputTasksPerSecond": 2785.8373600290847,
+      "observedSpreadRatio": 2.3268934900275364,
+      "trials": [
+        {
+          "wallMs": 0.21579199999999332,
+          "cpuMs": 0.735,
+          "rssBefore": 67862528,
+          "rssAfter": 68075520,
+          "modelMs": 0.022001000000017257,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.19379099999997607,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.5021250000000066,
+          "cpuMs": 2.334,
+          "rssBefore": 68075520,
+          "rssAfter": 68714496,
+          "modelMs": 0.029747999999955255,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.47237700000005134,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.31254100000001017,
+      "p95Ms": 0.3355420000000038,
+      "throughputTasksPerSecond": 12344.097901040188,
+      "observedSpreadRatio": 1.0735935445269351,
+      "trials": [
+        {
+          "wallMs": 0.3355420000000038,
+          "cpuMs": 0.781,
+          "rssBefore": 72941568,
+          "rssAfter": 73007104,
+          "modelMs": 0.06508500000003892,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.27045699999996486,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.31254100000001017,
+          "cpuMs": 0.955,
+          "rssBefore": 73007104,
+          "rssAfter": 73105408,
+          "modelMs": 0.05804000000000542,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.25450100000000475,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 1.2297920000000033,
+      "p95Ms": 1.2738750000000039,
+      "throughputTasksPerSecond": 12781.25245889326,
+      "observedSpreadRatio": 1.0358458991439206,
+      "trials": [
+        {
+          "wallMs": 1.2738750000000039,
+          "cpuMs": 2.847,
+          "rssBefore": 75300864,
+          "rssAfter": 77856768,
+          "modelMs": 0.23499199999980647,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.0388830000001974,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 1.2297920000000033,
+          "cpuMs": 2.273,
+          "rssBefore": 77856768,
+          "rssAfter": 80838656,
+          "modelMs": 0.23278899999982627,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.997003000000177,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.09908299999997894,
+      "p95Ms": 0.8810000000000002,
+      "throughputTasksPerSecond": 2040.6434965202359,
+      "observedSpreadRatio": 8.891535379431259,
+      "trials": [
+        {
+          "wallMs": 0.8810000000000002,
+          "cpuMs": 2.127,
+          "rssBefore": 81182720,
+          "rssAfter": 81379328,
+          "modelMs": 0.024292000000002645,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.8567079999999976,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.09908299999997894,
+          "cpuMs": 0.311,
+          "rssBefore": 81379328,
+          "rssAfter": 81494016,
+          "modelMs": 0.014541999999977406,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.08454100000000153,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.287666999999999,
+      "p95Ms": 0.29400000000001114,
+      "throughputTasksPerSecond": 13753.573780186707,
+      "observedSpreadRatio": 1.022015038221319,
+      "trials": [
+        {
+          "wallMs": 0.29400000000001114,
+          "cpuMs": 0.557,
+          "rssBefore": 81674240,
+          "rssAfter": 81756160,
+          "modelMs": 0.05570900000003576,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.23829099999997538,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.287666999999999,
+          "cpuMs": 0.556,
+          "rssBefore": 81756160,
+          "rssAfter": 81838080,
+          "modelMs": 0.06250199999993811,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.2251650000000609,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 0.9534170000000017,
+      "p95Ms": 1.820999999999998,
+      "throughputTasksPerSecond": 11533.954701113786,
+      "observedSpreadRatio": 1.9099722367022978,
+      "trials": [
+        {
+          "wallMs": 0.9534170000000017,
+          "cpuMs": 2.216,
+          "rssBefore": 82231296,
+          "rssAfter": 82739200,
+          "modelMs": 0.22063299999979336,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.7327840000002084,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 1.820999999999998,
+          "cpuMs": 4.709,
+          "rssBefore": 82739200,
+          "rssAfter": 83951616,
+          "modelMs": 0.22437999999985436,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.5966200000001436,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.6020000000000039,
+      "p95Ms": 0.6929580000000044,
+      "throughputTasksPerSecond": 1544.4516347248227,
+      "observedSpreadRatio": 1.1510930232558139,
+      "trials": [
+        {
+          "wallMs": 0.6929580000000044,
+          "cpuMs": 1.876,
+          "rssBefore": 84983808,
+          "rssAfter": 85426176,
+          "modelMs": 0.15574800000015898,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.5372099999998454,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.6020000000000039,
+          "cpuMs": 1.196,
+          "rssBefore": 85426176,
+          "rssAfter": 85655552,
+          "modelMs": 0.1514149999997585,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.4505850000002454,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 2.110624999999999,
+      "p95Ms": 2.7566249999999854,
+      "throughputTasksPerSecond": 1643.6386049617392,
+      "observedSpreadRatio": 1.3060704767545097,
+      "trials": [
+        {
+          "wallMs": 2.110624999999999,
+          "cpuMs": 4.739,
+          "rssBefore": 88408064,
+          "rssAfter": 88801280,
+          "modelMs": 0.5182550000000958,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.592369999999903,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 2.7566249999999854,
+          "cpuMs": 5.522,
+          "rssBefore": 88801280,
+          "rssAfter": 89735168,
+          "modelMs": 0.5492399999996849,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 2.2073850000003006,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 10.849333000000001,
+      "p95Ms": 12.402291999999989,
+      "throughputTasksPerSecond": 1376.247896652385,
+      "observedSpreadRatio": 1.1431386611508731,
+      "trials": [
+        {
+          "wallMs": 12.402291999999989,
+          "cpuMs": 47.535,
+          "rssBefore": 97861632,
+          "rssAfter": 103071744,
+          "modelMs": 2.2371690000003355,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 10.165122999999653,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 10.849333000000001,
+          "cpuMs": 48.066,
+          "rssBefore": 103071744,
+          "rssAfter": 108707840,
+          "modelMs": 2.255574000000678,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 8.593758999999324,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.614167000000009,
+      "p95Ms": 0.6144160000000056,
+      "throughputTasksPerSecond": 1627.8916442763543,
+      "observedSpreadRatio": 1.0004054271883651,
+      "trials": [
+        {
+          "wallMs": 0.6144160000000056,
+          "cpuMs": 3.73,
+          "rssBefore": 108855296,
+          "rssAfter": 109608960,
+          "modelMs": 0.13370500000010566,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.48071099999989997,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.614167000000009,
+          "cpuMs": 2.849,
+          "rssBefore": 109608960,
+          "rssAfter": 109936640,
+          "modelMs": 0.13307799999995495,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.48108900000005406,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 2.3619589999999846,
+      "p95Ms": 3.0939170000000047,
+      "throughputTasksPerSecond": 1466.308985028255,
+      "observedSpreadRatio": 1.3098944562543315,
+      "trials": [
+        {
+          "wallMs": 2.3619589999999846,
+          "cpuMs": 10.75,
+          "rssBefore": 111099904,
+          "rssAfter": 111493120,
+          "modelMs": 0.5736730000000421,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.7882859999999425,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 3.0939170000000047,
+          "cpuMs": 12.532,
+          "rssBefore": 111542272,
+          "rssAfter": 111706112,
+          "modelMs": 0.5851349999999513,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 2.5087820000000534,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "text",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 9.894750000000016,
+      "p95Ms": 9.951709000000022,
+      "throughputTasksPerSecond": 1612.3783088963094,
+      "observedSpreadRatio": 1.0057564870259488,
+      "trials": [
+        {
+          "wallMs": 9.894750000000016,
+          "cpuMs": 18.387,
+          "rssBefore": 112295936,
+          "rssAfter": 112705536,
+          "modelMs": 2.1426490000008585,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 7.752100999999158,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 9.951709000000022,
+          "cpuMs": 15.059,
+          "rssBefore": 112705536,
+          "rssAfter": 117063680,
+          "modelMs": 2.1625130000003026,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 7.78919599999972,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.05258299999999849,
+      "p95Ms": 0.09837500000000432,
+      "throughputTasksPerSecond": 13248.718186515209,
+      "observedSpreadRatio": 1.8708517962080358,
+      "trials": [
+        {
+          "wallMs": 0.09837500000000432,
+          "cpuMs": 0.376,
+          "rssBefore": 118685696,
+          "rssAfter": 118718464,
+          "modelMs": 0.021500000000003183,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.07687500000000114,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.06312500000001364,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.05258299999999849,
+          "cpuMs": 0.055,
+          "rssBefore": 118718464,
+          "rssAfter": 118734848,
+          "modelMs": 0.013125000000002274,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.03945799999999622,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.028458999999998014,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.1269580000000019,
+      "p95Ms": 0.13458299999999213,
+      "throughputTasksPerSecond": 30587.938411186704,
+      "observedSpreadRatio": 1.0600592321869446,
+      "trials": [
+        {
+          "wallMs": 0.1269580000000019,
+          "cpuMs": 0.368,
+          "rssBefore": 118767616,
+          "rssAfter": 118833152,
+          "modelMs": 0.15191600000002836,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.08633299999999622,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.07433299999999576,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.13458299999999213,
+          "cpuMs": 0.418,
+          "rssBefore": 118833152,
+          "rssAfter": 118882304,
+          "modelMs": 0.22262500000002206,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.07458299999998985,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.07879199999999287,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 0.3002909999999872,
+      "p95Ms": 0.3726249999999993,
+      "throughputTasksPerSecond": 47554.22667911097,
+      "observedSpreadRatio": 1.2408796800437416,
+      "trials": [
+        {
+          "wallMs": 0.3726249999999993,
+          "cpuMs": 1.391,
+          "rssBefore": 119128064,
+          "rssAfter": 119177216,
+          "modelMs": 2.004917999999975,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.23537500000000477,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.18858299999999417,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 0.3002909999999872,
+          "cpuMs": 1.103,
+          "rssBefore": 119177216,
+          "rssAfter": 119390208,
+          "modelMs": 1.5463309999999524,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.19508200000001352,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.1890409999999747,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.023083000000013953,
+      "p95Ms": 0.024833000000000993,
+      "throughputTasksPerSecond": 41739.71116118574,
+      "observedSpreadRatio": 1.0758133691455176,
+      "trials": [
+        {
+          "wallMs": 0.023083000000013953,
+          "cpuMs": 0.037,
+          "rssBefore": 119521280,
+          "rssAfter": 119570432,
+          "modelMs": 0.006749999999982492,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.01633300000003146,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.011749999999977945,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.024833000000000993,
+          "cpuMs": 0.026,
+          "rssBefore": 119570432,
+          "rssAfter": 119570432,
+          "modelMs": 0.010166999999995596,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.014666000000005397,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.015250000000008868,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.0589170000000081,
+      "p95Ms": 0.0643750000000125,
+      "throughputTasksPerSecond": 64886.610647881964,
+      "observedSpreadRatio": 1.0926387969517057,
+      "trials": [
+        {
+          "wallMs": 0.0643750000000125,
+          "cpuMs": 0.066,
+          "rssBefore": 119570432,
+          "rssAfter": 119586816,
+          "modelMs": 0.09395800000001486,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.03941700000001447,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.03854099999998084,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.0589170000000081,
+          "cpuMs": 0.059,
+          "rssBefore": 119586816,
+          "rssAfter": 119586816,
+          "modelMs": 0.0730010000000334,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.038625000000024556,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.03254199999997809,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 0.21999999999999886,
+      "p95Ms": 0.23758300000000077,
+      "throughputTasksPerSecond": 69932.66795313642,
+      "observedSpreadRatio": 1.0799227272727363,
+      "trials": [
+        {
+          "wallMs": 0.23758300000000077,
+          "cpuMs": 0.986,
+          "rssBefore": 119717888,
+          "rssAfter": 119717888,
+          "modelMs": 0.9843789999999899,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.16370800000001395,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.13204099999998675,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 0.21999999999999886,
+          "cpuMs": 0.417,
+          "rssBefore": 119717888,
+          "rssAfter": 119767040,
+          "modelMs": 0.9879980000000046,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.14954199999999673,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.12812500000001137,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.1756249999999966,
+      "p95Ms": 0.18433399999997846,
+      "throughputTasksPerSecond": 5556.188343672859,
+      "observedSpreadRatio": 1.049588612099542,
+      "trials": [
+        {
+          "wallMs": 0.18433399999997846,
+          "cpuMs": 0.378,
+          "rssBefore": 119832576,
+          "rssAfter": 119914496,
+          "modelMs": 0.05150099999994495,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.1328330000000335,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.018083999999987554,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.1756249999999966,
+          "cpuMs": 0.355,
+          "rssBefore": 119914496,
+          "rssAfter": 119930880,
+          "modelMs": 0.05262500000003456,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.12299999999996203,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.012584000000003925,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.6875829999999894,
+      "p95Ms": 0.7310830000000124,
+      "throughputTasksPerSecond": 5639.100394314088,
+      "observedSpreadRatio": 1.0632650894510534,
+      "trials": [
+        {
+          "wallMs": 0.7310830000000124,
+          "cpuMs": 4.926,
+          "rssBefore": 120274944,
+          "rssAfter": 120553472,
+          "modelMs": 0.6128359999998452,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.5630400000000577,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.03299999999998704,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.6875829999999894,
+          "cpuMs": 2.399,
+          "rssBefore": 120553472,
+          "rssAfter": 121077760,
+          "modelMs": 0.7117509999998219,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.4871240000000512,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.059499999999985675,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 1.6533750000000111,
+      "p95Ms": 2.4327920000000063,
+      "throughputTasksPerSecond": 7831.300091259086,
+      "observedSpreadRatio": 1.471409692296055,
+      "trials": [
+        {
+          "wallMs": 1.6533750000000111,
+          "cpuMs": 8.099,
+          "rssBefore": 122126336,
+          "rssAfter": 122863616,
+          "modelMs": 7.75799700000033,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.1006250000000364,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.10775000000001,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 2.4327920000000063,
+          "cpuMs": 5.682,
+          "rssBefore": 122863616,
+          "rssAfter": 123633664,
+          "modelMs": 7.317160999999373,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.9019169999999974,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.12279200000000401,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.11979100000002063,
+      "p95Ms": 0.12237500000003365,
+      "throughputTasksPerSecond": 8258.797684231278,
+      "observedSpreadRatio": 1.0215709026555633,
+      "trials": [
+        {
+          "wallMs": 0.12237500000003365,
+          "cpuMs": 0.126,
+          "rssBefore": 123682816,
+          "rssAfter": 123682816,
+          "modelMs": 0.03166799999996783,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.09070700000006582,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.008457999999961885,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.11979100000002063,
+          "cpuMs": 0.121,
+          "rssBefore": 123682816,
+          "rssAfter": 123682816,
+          "modelMs": 0.03075000000012551,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.08904099999989512,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.008000000000038199,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.3775410000000079,
+      "p95Ms": 0.3785419999999817,
+      "throughputTasksPerSecond": 10580.848927961757,
+      "observedSpreadRatio": 1.002651367665959,
+      "trials": [
+        {
+          "wallMs": 0.3785419999999817,
+          "cpuMs": 0.38,
+          "rssBefore": 123699200,
+          "rssAfter": 123715584,
+          "modelMs": 0.44733399999995527,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.2544149999999945,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.023374999999987267,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.3775410000000079,
+          "cpuMs": 0.379,
+          "rssBefore": 123715584,
+          "rssAfter": 123715584,
+          "modelMs": 0.4377909999999474,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.25587500000006,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.023624999999981355,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 1.511082999999985,
+      "p95Ms": 2.124333999999976,
+      "throughputTasksPerSecond": 8802.291456523513,
+      "observedSpreadRatio": 1.4058354173794538,
+      "trials": [
+        {
+          "wallMs": 1.511082999999985,
+          "cpuMs": 4.462,
+          "rssBefore": 123748352,
+          "rssAfter": 123846656,
+          "modelMs": 6.833297000000073,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.0166679999998678,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.09050000000002001,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 2.124333999999976,
+          "cpuMs": 7.21,
+          "rssBefore": 123846656,
+          "rssAfter": 124633088,
+          "modelMs": 6.782255999999961,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.63333300000005,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.18183399999998073,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 1.046124999999961,
+      "p95Ms": 1.699625000000026,
+      "throughputTasksPerSecond": 728.3984339433705,
+      "observedSpreadRatio": 1.6246863424543811,
+      "trials": [
+        {
+          "wallMs": 1.046124999999961,
+          "cpuMs": 1.36,
+          "rssBefore": 124944384,
+          "rssAfter": 124960768,
+          "modelMs": 0.30363700000026483,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.7424879999996961,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.008500000000026375,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 1.699625000000026,
+          "cpuMs": 4.635,
+          "rssBefore": 124960768,
+          "rssAfter": 125435904,
+          "modelMs": 0.3508779999995113,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.3487470000005146,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.010249999999984993,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 4.259208000000001,
+      "p95Ms": 4.345708999999999,
+      "throughputTasksPerSecond": 929.7010069940244,
+      "observedSpreadRatio": 1.0203091748512865,
+      "trials": [
+        {
+          "wallMs": 4.345708999999999,
+          "cpuMs": 10.606,
+          "rssBefore": 126140416,
+          "rssAfter": 126271488,
+          "modelMs": 4.564073000001315,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 3.067544999999825,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.024416999999971267,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 4.259208000000001,
+          "cpuMs": 12.747,
+          "rssBefore": 126271488,
+          "rssAfter": 126959616,
+          "modelMs": 4.453880999999683,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 3.017699000000107,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.024166000000036547,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 16.662540999999976,
+      "p95Ms": 17.057875000000024,
+      "throughputTasksPerSecond": 948.9799888589748,
+      "observedSpreadRatio": 1.0237259131125347,
+      "trials": [
+        {
+          "wallMs": 16.662540999999976,
+          "cpuMs": 39.833,
+          "rssBefore": 130924544,
+          "rssAfter": 132644864,
+          "modelMs": 68.49529500000244,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 11.203537000000097,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.09391699999997627,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 17.057875000000024,
+          "cpuMs": 29.836,
+          "rssBefore": 132644864,
+          "rssAfter": 133087232,
+          "modelMs": 74.55951300000015,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 11.764919000000361,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.10550000000000637,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 1.1074580000000083,
+      "p95Ms": 1.761000000000024,
+      "throughputTasksPerSecond": 697.2387254754916,
+      "observedSpreadRatio": 1.5901280229137458,
+      "trials": [
+        {
+          "wallMs": 1.1074580000000083,
+          "cpuMs": 2.183,
+          "rssBefore": 133103616,
+          "rssAfter": 133136384,
+          "modelMs": 0.3057880000001205,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.8016699999998878,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.008707999999955973,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 1.761000000000024,
+          "cpuMs": 3.562,
+          "rssBefore": 133136384,
+          "rssAfter": 133169152,
+          "modelMs": 0.30762500000003,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.453374999999994,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.00866600000000517,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 4.163749999999993,
+      "p95Ms": 4.441000000000031,
+      "throughputTasksPerSecond": 929.7190505244171,
+      "observedSpreadRatio": 1.0665866106274484,
+      "trials": [
+        {
+          "wallMs": 4.441000000000031,
+          "cpuMs": 9.681,
+          "rssBefore": 133234688,
+          "rssAfter": 133611520,
+          "modelMs": 4.462413000000311,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 3.196546000000012,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.026083000000028278,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 4.163749999999993,
+          "cpuMs": 6.724,
+          "rssBefore": 133611520,
+          "rssAfter": 133726208,
+          "modelMs": 4.209578999999394,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 2.985667000000433,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.02483399999999847,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "stream",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 18.066125,
+      "p95Ms": 18.223457999999994,
+      "throughputTasksPerSecond": 881.7957483832208,
+      "observedSpreadRatio": 1.0087087297359005,
+      "trials": [
+        {
+          "wallMs": 18.066125,
+          "cpuMs": 33.423,
+          "rssBefore": 135086080,
+          "rssAfter": 135872512,
+          "modelMs": 92.74510099999884,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 11.476378999999952,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.10929199999998218,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 18.223457999999994,
+          "cpuMs": 36.668,
+          "rssBefore": 135888896,
+          "rssAfter": 136970240,
+          "modelMs": 92.8990580000006,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 11.736416000000077,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": 0.10104200000000674,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.11637499999994816,
+      "p95Ms": 0.1609589999999912,
+      "throughputTasksPerSecond": 7211.5211261527165,
+      "observedSpreadRatio": 1.3831063372722912,
+      "trials": [
+        {
+          "wallMs": 0.1609589999999912,
+          "cpuMs": 0.167,
+          "rssBefore": 137674752,
+          "rssAfter": 137674752,
+          "modelMs": 0.003375000000005457,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.15758399999998574,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.11637499999994816,
+          "cpuMs": 0.283,
+          "rssBefore": 137674752,
+          "rssAfter": 137707520,
+          "modelMs": 0.0027910000000019863,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.11358399999994617,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.25891599999999926,
+      "p95Ms": 0.30220800000000736,
+      "throughputTasksPerSecond": 14257.098252792443,
+      "observedSpreadRatio": 1.167204807736904,
+      "trials": [
+        {
+          "wallMs": 0.30220800000000736,
+          "cpuMs": 1.403,
+          "rssBefore": 137854976,
+          "rssAfter": 138035200,
+          "modelMs": 0.006458000000009179,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.2957499999999982,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.25891599999999926,
+          "cpuMs": 0.495,
+          "rssBefore": 138035200,
+          "rssAfter": 138051584,
+          "modelMs": 0.006666000000052463,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.2522499999999468,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 0.5719579999999951,
+      "p95Ms": 0.9525830000000042,
+      "throughputTasksPerSecond": 20989.924180458263,
+      "observedSpreadRatio": 1.66547718538776,
+      "trials": [
+        {
+          "wallMs": 0.9525830000000042,
+          "cpuMs": 3.278,
+          "rssBefore": 138346496,
+          "rssAfter": 138772480,
+          "modelMs": 0.024958999999853404,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.9276240000001508,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 0.5719579999999951,
+          "cpuMs": 1.078,
+          "rssBefore": 138772480,
+          "rssAfter": 139034624,
+          "modelMs": 0.02383400000007896,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.5481239999999161,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.0442920000000413,
+      "p95Ms": 0.04666599999995924,
+      "throughputTasksPerSecond": 21988.170364343852,
+      "observedSpreadRatio": 1.0535988440331376,
+      "trials": [
+        {
+          "wallMs": 0.0442920000000413,
+          "cpuMs": 0.047,
+          "rssBefore": 139083776,
+          "rssAfter": 139083776,
+          "modelMs": 0.0017080000000078144,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.042584000000033484,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.04666599999995924,
+          "cpuMs": 0.208,
+          "rssBefore": 139083776,
+          "rssAfter": 139100160,
+          "modelMs": 0.0016249999999899956,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.045040999999969245,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.13308299999999917,
+      "p95Ms": 0.16962499999999636,
+      "throughputTasksPerSecond": 26428.10893666543,
+      "observedSpreadRatio": 1.274580524935547,
+      "trials": [
+        {
+          "wallMs": 0.16962499999999636,
+          "cpuMs": 0.17,
+          "rssBefore": 139247616,
+          "rssAfter": 139247616,
+          "modelMs": 0.006833999999969365,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.162791000000027,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.13308299999999917,
+          "cpuMs": 0.401,
+          "rssBefore": 139247616,
+          "rssAfter": 139247616,
+          "modelMs": 0.007083000000022821,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.12599999999997635,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 0.464458000000036,
+      "p95Ms": 0.5868330000000128,
+      "throughputTasksPerSecond": 30438.765289533076,
+      "observedSpreadRatio": 1.2634791520438173,
+      "trials": [
+        {
+          "wallMs": 0.5868330000000128,
+          "cpuMs": 1.65,
+          "rssBefore": 139247616,
+          "rssAfter": 139247616,
+          "modelMs": 0.025580000000161363,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.5612529999998515,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 0.464458000000036,
+          "cpuMs": 0.605,
+          "rssBefore": 139247616,
+          "rssAfter": 139247616,
+          "modelMs": 0.022793999999862535,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.4416640000001735,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.6463340000000244,
+      "p95Ms": 0.7329169999999863,
+      "throughputTasksPerSecond": 1450.0623889342728,
+      "observedSpreadRatio": 1.1339601506341281,
+      "trials": [
+        {
+          "wallMs": 0.7329169999999863,
+          "cpuMs": 0.699,
+          "rssBefore": 139657216,
+          "rssAfter": 139689984,
+          "modelMs": 0.003960000000063246,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.728956999999923,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.6463340000000244,
+          "cpuMs": 0.95,
+          "rssBefore": 139689984,
+          "rssAfter": 139739136,
+          "modelMs": 0.004374000000098022,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.6419599999999264,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 1.2654170000000136,
+      "p95Ms": 1.2992499999999723,
+      "throughputTasksPerSecond": 3119.3133455532607,
+      "observedSpreadRatio": 1.0267366409649612,
+      "trials": [
+        {
+          "wallMs": 1.2654170000000136,
+          "cpuMs": 2.098,
+          "rssBefore": 140001280,
+          "rssAfter": 140148736,
+          "modelMs": 0.007873000000074626,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.257543999999939,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 1.2992499999999723,
+          "cpuMs": 5.457,
+          "rssBefore": 140148736,
+          "rssAfter": 140541952,
+          "modelMs": 0.008373000000233333,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.290876999999739,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 4.044208999999967,
+      "p95Ms": 4.517209000000037,
+      "throughputTasksPerSecond": 3737.6985915183654,
+      "observedSpreadRatio": 1.116957358039625,
+      "trials": [
+        {
+          "wallMs": 4.517209000000037,
+          "cpuMs": 13.12,
+          "rssBefore": 142622720,
+          "rssAfter": 143785984,
+          "modelMs": 0.03183299999972178,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 4.485376000000315,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 4.044208999999967,
+          "cpuMs": 5.577,
+          "rssBefore": 143785984,
+          "rssAfter": 143966208,
+          "modelMs": 0.03303599999981088,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 4.011173000000156,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.42962499999998727,
+      "p95Ms": 1.1187499999999773,
+      "throughputTasksPerSecond": 1291.6767578913673,
+      "observedSpreadRatio": 2.604015129473402,
+      "trials": [
+        {
+          "wallMs": 0.42962499999998727,
+          "cpuMs": 0.574,
+          "rssBefore": 144211968,
+          "rssAfter": 144474112,
+          "modelMs": 0.004958999999928437,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.42466600000005883,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 1.1187499999999773,
+          "cpuMs": 2.502,
+          "rssBefore": 144474112,
+          "rssAfter": 144687104,
+          "modelMs": 0.003954999999791653,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.1147950000001856,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 1.287417000000005,
+      "p95Ms": 1.3142500000000155,
+      "throughputTasksPerSecond": 3074.951559903684,
+      "observedSpreadRatio": 1.0208425086821211,
+      "trials": [
+        {
+          "wallMs": 1.287417000000005,
+          "cpuMs": 1.291,
+          "rssBefore": 145719296,
+          "rssAfter": 146227200,
+          "modelMs": 0.007957999999973708,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.2794590000000312,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 1.3142500000000155,
+          "cpuMs": 1.891,
+          "rssBefore": 146227200,
+          "rssAfter": 146767872,
+          "modelMs": 0.01104099999997743,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.303209000000038,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 5.573417000000006,
+      "p95Ms": 5.811582999999985,
+      "throughputTasksPerSecond": 2810.7158541941176,
+      "observedSpreadRatio": 1.0427324924727466,
+      "trials": [
+        {
+          "wallMs": 5.811582999999985,
+          "cpuMs": 9.981,
+          "rssBefore": 148291584,
+          "rssAfter": 149094400,
+          "modelMs": 0.02883099999968408,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 5.7827520000003005,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 5.573417000000006,
+          "cpuMs": 9.544,
+          "rssBefore": 149094400,
+          "rssAfter": 150798336,
+          "modelMs": 0.03262500000022328,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 5.540791999999783,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 11.613917000000015,
+      "p95Ms": 12.385958000000016,
+      "throughputTasksPerSecond": 83.33376736337158,
+      "observedSpreadRatio": 1.066475505206383,
+      "trials": [
+        {
+          "wallMs": 12.385958000000016,
+          "cpuMs": 14.169,
+          "rssBefore": 151879680,
+          "rssAfter": 152649728,
+          "modelMs": 0.016999999999995907,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 12.36895800000002,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 11.613917000000015,
+          "cpuMs": 14.256,
+          "rssBefore": 152649728,
+          "rssAfter": 156303360,
+          "modelMs": 0.010128999999892585,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 11.603788000000122,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 48.31558300000006,
+      "p95Ms": 49.49445800000001,
+      "throughputTasksPerSecond": 81.7911936055726,
+      "observedSpreadRatio": 1.0243994779075718,
+      "trials": [
+        {
+          "wallMs": 49.49445800000001,
+          "cpuMs": 62.677,
+          "rssBefore": 169459712,
+          "rssAfter": 178012160,
+          "modelMs": 0.03502400000002126,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 49.45943399999999,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 48.31558300000006,
+          "cpuMs": 60.001,
+          "rssBefore": 178012160,
+          "rssAfter": 183877632,
+          "modelMs": 0.03490699999940716,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 48.28067600000065,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 193.144542,
+      "p95Ms": 195.64312500000005,
+      "throughputTasksPerSecond": 82.30713758726301,
+      "observedSpreadRatio": 1.012936337595292,
+      "trials": [
+        {
+          "wallMs": 193.144542,
+          "cpuMs": 272.029,
+          "rssBefore": 291045376,
+          "rssAfter": 376635392,
+          "modelMs": 0.16727500000001783,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 192.97726699999998,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 195.64312500000005,
+          "cpuMs": 285.28,
+          "rssBefore": 376635392,
+          "rssAfter": 452182016,
+          "modelMs": 0.14556300000276678,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 195.4975619999973,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 15.803584,
+      "p95Ms": 16.824457999999822,
+      "throughputTasksPerSecond": 61.296966578626154,
+      "observedSpreadRatio": 1.0645976254500131,
+      "trials": [
+        {
+          "wallMs": 15.803584,
+          "cpuMs": 16.455,
+          "rssBefore": 471482368,
+          "rssAfter": 495370240,
+          "modelMs": 0.007923000001028413,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 15.795660999998972,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 16.824457999999822,
+          "cpuMs": 20.49,
+          "rssBefore": 495370240,
+          "rssAfter": 519372800,
+          "modelMs": 0.010661000000027343,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 16.813796999999795,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 61.36633400000005,
+      "p95Ms": 61.52558299999987,
+      "throughputTasksPerSecond": 65.09785342513621,
+      "observedSpreadRatio": 1.0025950548064322,
+      "trials": [
+        {
+          "wallMs": 61.52558299999987,
+          "cpuMs": 77.008,
+          "rssBefore": 591888384,
+          "rssAfter": 594739200,
+          "modelMs": 0.0510799999988194,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 61.47450300000105,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 61.36633400000005,
+          "cpuMs": 71.796,
+          "rssBefore": 594739200,
+          "rssAfter": 594739200,
+          "modelMs": 0.04949699999838231,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 61.31683700000167,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "tools",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 259.64641699999993,
+      "p95Ms": 267.3966250000001,
+      "throughputTasksPerSecond": 60.71610371435279,
+      "observedSpreadRatio": 1.029849085111774,
+      "trials": [
+        {
+          "wallMs": 267.3966250000001,
+          "cpuMs": 330.905,
+          "rssBefore": 629735424,
+          "rssAfter": 709754880,
+          "modelMs": 0.13725800000679556,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 267.2593669999933,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 259.64641699999993,
+          "cpuMs": 314.718,
+          "rssBefore": 709754880,
+          "rssAfter": 719683584,
+          "modelMs": 0.1506939999953829,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 259.4957230000048,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.16541700000016135,
+      "p95Ms": 0.2612500000000182,
+      "throughputTasksPerSecond": 4687.496337891513,
+      "observedSpreadRatio": 1.57934190560682,
+      "trials": [
+        {
+          "wallMs": 0.2612500000000182,
+          "cpuMs": 0.32,
+          "rssBefore": 719798272,
+          "rssAfter": 719814656,
+          "modelMs": 0.0028339999998934218,
+          "storeMs": 0.08808200000021316,
+          "sdkAndHarnessWallMs": 0.1703339999999116,
+          "checkpointBytes": 3691,
+          "checkpoints": 4,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.16541700000016135,
+          "cpuMs": 0.168,
+          "rssBefore": 719814656,
+          "rssAfter": 719814656,
+          "modelMs": 0.0024169999996956903,
+          "storeMs": 0.06170899999915491,
+          "sdkAndHarnessWallMs": 0.10129100000131075,
+          "checkpointBytes": 3691,
+          "checkpoints": 4,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.4966250000002219,
+      "p95Ms": 0.5460419999999431,
+      "throughputTasksPerSecond": 7672.631818211121,
+      "observedSpreadRatio": 1.0995056632261748,
+      "trials": [
+        {
+          "wallMs": 0.5460419999999431,
+          "cpuMs": 0.585,
+          "rssBefore": 719814656,
+          "rssAfter": 719814656,
+          "modelMs": 0.008751000000302156,
+          "storeMs": 0.7129989999993995,
+          "sdkAndHarnessWallMs": 0.21503999999913503,
+          "checkpointBytes": 14764,
+          "checkpoints": 16,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.4966250000002219,
+          "cpuMs": 1.655,
+          "rssBefore": 719814656,
+          "rssAfter": 719814656,
+          "modelMs": 0.006708000000799075,
+          "storeMs": 0.686460000000352,
+          "sdkAndHarnessWallMs": 0.17591599999877872,
+          "checkpointBytes": 14764,
+          "checkpoints": 16,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 1.3815840000002026,
+      "p95Ms": 1.4619580000003225,
+      "throughputTasksPerSecond": 11253.570371035172,
+      "observedSpreadRatio": 1.0581752539115306,
+      "trials": [
+        {
+          "wallMs": 1.4619580000003225,
+          "cpuMs": 3.085,
+          "rssBefore": 719847424,
+          "rssAfter": 719880192,
+          "modelMs": 0.022169000000758388,
+          "storeMs": 8.002372000000378,
+          "sdkAndHarnessWallMs": 0.4602050000003146,
+          "checkpointBytes": 59152,
+          "checkpoints": 64,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 1.3815840000002026,
+          "cpuMs": 5.255,
+          "rssBefore": 719880192,
+          "rssAfter": 719945728,
+          "modelMs": 0.021958000000722677,
+          "storeMs": 7.5726660000036645,
+          "sdkAndHarnessWallMs": 0.41975299999921845,
+          "checkpointBytes": 59152,
+          "checkpoints": 64,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.11850000000004002,
+      "p95Ms": 0.12212500000032378,
+      "throughputTasksPerSecond": 8311.688311675745,
+      "observedSpreadRatio": 1.0305907173019624,
+      "trials": [
+        {
+          "wallMs": 0.11850000000004002,
+          "cpuMs": 0.119,
+          "rssBefore": 719945728,
+          "rssAfter": 719945728,
+          "modelMs": 0.0016660000001138542,
+          "storeMs": 0.04112500000019281,
+          "sdkAndHarnessWallMs": 0.07570899999973335,
+          "checkpointBytes": 8491,
+          "checkpoints": 4,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.12212500000032378,
+          "cpuMs": 0.123,
+          "rssBefore": 719945728,
+          "rssAfter": 719945728,
+          "modelMs": 0.0016660000001138542,
+          "storeMs": 0.04466500000035012,
+          "sdkAndHarnessWallMs": 0.0757939999998598,
+          "checkpointBytes": 8491,
+          "checkpoints": 4,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.3755420000002232,
+      "p95Ms": 0.39466700000002675,
+      "throughputTasksPerSecond": 10386.791117732204,
+      "observedSpreadRatio": 1.050926394384096,
+      "trials": [
+        {
+          "wallMs": 0.39466700000002675,
+          "cpuMs": 0.482,
+          "rssBefore": 719945728,
+          "rssAfter": 719945728,
+          "modelMs": 0.005498999999872467,
+          "storeMs": 0.6151670000012928,
+          "sdkAndHarnessWallMs": 0.1319589999998243,
+          "checkpointBytes": 33964,
+          "checkpoints": 16,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.3755420000002232,
+          "cpuMs": 0.376,
+          "rssBefore": 719945728,
+          "rssAfter": 719945728,
+          "modelMs": 0.005914999999731663,
+          "storeMs": 0.5508320000012645,
+          "sdkAndHarnessWallMs": 0.1285440000010567,
+          "checkpointBytes": 33964,
+          "checkpoints": 16,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 1.4535839999998643,
+      "p95Ms": 1.5099169999998594,
+      "throughputTasksPerSecond": 10798.03921105577,
+      "observedSpreadRatio": 1.0387545542603662,
+      "trials": [
+        {
+          "wallMs": 1.5099169999998594,
+          "cpuMs": 3.375,
+          "rssBefore": 719962112,
+          "rssAfter": 719994880,
+          "modelMs": 0.02274900000065827,
+          "storeMs": 8.318170000000919,
+          "sdkAndHarnessWallMs": 0.4640829999984817,
+          "checkpointBytes": 135952,
+          "checkpoints": 64,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 1.4535839999998643,
+          "cpuMs": 2.7,
+          "rssBefore": 719994880,
+          "rssAfter": 720011264,
+          "modelMs": 0.020831999999245454,
+          "storeMs": 8.26374800000167,
+          "sdkAndHarnessWallMs": 0.4165020000009463,
+          "checkpointBytes": 135952,
+          "checkpoints": 64,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 2.058082999999897,
+      "p95Ms": 2.0709160000001248,
+      "throughputTasksPerSecond": 484.37890152068076,
+      "observedSpreadRatio": 1.0062354142180994,
+      "trials": [
+        {
+          "wallMs": 2.0709160000001248,
+          "cpuMs": 2.121,
+          "rssBefore": 720093184,
+          "rssAfter": 720109568,
+          "modelMs": 0.0031659999995099497,
+          "storeMs": 1.044585000000552,
+          "sdkAndHarnessWallMs": 1.0231650000000627,
+          "checkpointBytes": 118198,
+          "checkpoints": 22,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 2.058082999999897,
+          "cpuMs": 2.303,
+          "rssBefore": 720109568,
+          "rssAfter": 720109568,
+          "modelMs": 0.002248999999210355,
+          "storeMs": 1.0180030000019542,
+          "sdkAndHarnessWallMs": 1.0378309999987323,
+          "checkpointBytes": 118198,
+          "checkpoints": 22,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 8.004083000000264,
+      "p95Ms": 8.084957999999915,
+      "throughputTasksPerSecond": 497.2328680124509,
+      "observedSpreadRatio": 1.0101042180596638,
+      "trials": [
+        {
+          "wallMs": 8.084957999999915,
+          "cpuMs": 8.937,
+          "rssBefore": 720683008,
+          "rssAfter": 722092032,
+          "modelMs": 0.008084000000053493,
+          "storeMs": 14.583163000001605,
+          "sdkAndHarnessWallMs": 1.7857500000000073,
+          "checkpointBytes": 472792,
+          "checkpoints": 88,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 8.004083000000264,
+          "cpuMs": 12.417,
+          "rssBefore": 722092032,
+          "rssAfter": 722550784,
+          "modelMs": 0.00861899999972593,
+          "storeMs": 14.162873999996464,
+          "sdkAndHarnessWallMs": 1.8463380000030156,
+          "checkpointBytes": 472792,
+          "checkpoints": 88,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 28.90970900000002,
+      "p95Ms": 30.46683299999995,
+      "throughputTasksPerSecond": 538.9333720377319,
+      "observedSpreadRatio": 1.0538616282854985,
+      "trials": [
+        {
+          "wallMs": 28.90970900000002,
+          "cpuMs": 31.416,
+          "rssBefore": 724566016,
+          "rssAfter": 724598784,
+          "modelMs": 0.04433800000106203,
+          "storeMs": 202.83503000000792,
+          "sdkAndHarnessWallMs": 4.511703999999554,
+          "checkpointBytes": 1891696,
+          "checkpoints": 352,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 30.46683299999995,
+          "cpuMs": 34.746,
+          "rssBefore": 724598784,
+          "rssAfter": 724893696,
+          "modelMs": 0.04559799999969982,
+          "storeMs": 208.14212100001123,
+          "sdkAndHarnessWallMs": 4.401068999996369,
+          "checkpointBytes": 1891696,
+          "checkpoints": 352,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 2.5963329999999587,
+      "p95Ms": 2.6729999999997744,
+      "throughputTasksPerSecond": 379.55467988075554,
+      "observedSpreadRatio": 1.0295289548759026,
+      "trials": [
+        {
+          "wallMs": 2.5963329999999587,
+          "cpuMs": 2.597,
+          "rssBefore": 725663744,
+          "rssAfter": 726482944,
+          "modelMs": 0.004500999999891064,
+          "storeMs": 1.3014590000007047,
+          "sdkAndHarnessWallMs": 1.290372999999363,
+          "checkpointBytes": 434038,
+          "checkpoints": 22,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 2.6729999999997744,
+          "cpuMs": 3.922,
+          "rssBefore": 726482944,
+          "rssAfter": 728875008,
+          "modelMs": 0.0027919999993173406,
+          "storeMs": 1.332000000001699,
+          "sdkAndHarnessWallMs": 1.3382079999987582,
+          "checkpointBytes": 434038,
+          "checkpoints": 22,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 10.351959000000079,
+      "p95Ms": 11.817250000000058,
+      "throughputTasksPerSecond": 360.860867882113,
+      "observedSpreadRatio": 1.141547218260811,
+      "trials": [
+        {
+          "wallMs": 10.351959000000079,
+          "cpuMs": 12.77,
+          "rssBefore": 736313344,
+          "rssAfter": 753795072,
+          "modelMs": 0.010417999999390304,
+          "storeMs": 18.92170699999815,
+          "sdkAndHarnessWallMs": 2.1869570000026215,
+          "checkpointBytes": 1736152,
+          "checkpoints": 88,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 11.817250000000058,
+          "cpuMs": 14.585,
+          "rssBefore": 753795072,
+          "rssAfter": 771981312,
+          "modelMs": 0.009834000000864762,
+          "storeMs": 22.57042499999625,
+          "sdkAndHarnessWallMs": 2.3368320000013227,
+          "checkpointBytes": 1736152,
+          "checkpoints": 88,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 38.82074999999986,
+      "p95Ms": 39.618167000000085,
+      "throughputTasksPerSecond": 407.9607575408011,
+      "observedSpreadRatio": 1.0205409993367007,
+      "trials": [
+        {
+          "wallMs": 39.618167000000085,
+          "cpuMs": 42.649,
+          "rssBefore": 777912320,
+          "rssAfter": 778928128,
+          "modelMs": 0.03322000000207481,
+          "storeMs": 275.9528919999975,
+          "sdkAndHarnessWallMs": 5.370319999999083,
+          "checkpointBytes": 6945136,
+          "checkpoints": 352,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 38.82074999999986,
+          "cpuMs": 43.415,
+          "rssBefore": 778928128,
+          "rssAfter": 779993088,
+          "modelMs": 0.0380029999960243,
+          "storeMs": 275.11596500000223,
+          "sdkAndHarnessWallMs": 5.1774950000044555,
+          "checkpointBytes": 6945136,
+          "checkpoints": 352,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 122.40379200000007,
+      "p95Ms": 123.2529999999997,
+      "throughputTasksPerSecond": 8.14143986704834,
+      "observedSpreadRatio": 1.006937758921714,
+      "trials": [
+        {
+          "wallMs": 123.2529999999997,
+          "cpuMs": 129.951,
+          "rssBefore": 789364736,
+          "rssAfter": 794624000,
+          "modelMs": 0.013574000001881359,
+          "storeMs": 63.60630400000127,
+          "sdkAndHarnessWallMs": 59.63312199999655,
+          "checkpointBytes": 9799139,
+          "checkpoints": 202,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 122.40379200000007,
+          "cpuMs": 129.892,
+          "rssBefore": 794624000,
+          "rssAfter": 797261824,
+          "modelMs": 0.01300200000332552,
+          "storeMs": 63.11287300000413,
+          "sdkAndHarnessWallMs": 59.27791699999261,
+          "checkpointBytes": 9799139,
+          "checkpoints": 202,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 465.32737499999985,
+      "p95Ms": 488.7926659999998,
+      "throughputTasksPerSecond": 8.384689196566203,
+      "observedSpreadRatio": 1.0504274888190277,
+      "trials": [
+        {
+          "wallMs": 488.7926659999998,
+          "cpuMs": 514.059,
+          "rssBefore": 799211520,
+          "rssAfter": 799211520,
+          "modelMs": 0.04404399999157249,
+          "storeMs": 918.9858850000014,
+          "sdkAndHarnessWallMs": 91.82775300000912,
+          "checkpointBytes": 39196556,
+          "checkpoints": 808,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 465.32737499999985,
+          "cpuMs": 491.544,
+          "rssBefore": 799211520,
+          "rssAfter": 802603008,
+          "modelMs": 0.041361999998116517,
+          "storeMs": 877.6280940000261,
+          "sdkAndHarnessWallMs": 86.1957990000019,
+          "checkpointBytes": 39196556,
+          "checkpoints": 808,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 1875.277666,
+      "p95Ms": 1891.504167,
+      "throughputTasksPerSecond": 8.495315475840567,
+      "observedSpreadRatio": 1.008652852478434,
+      "trials": [
+        {
+          "wallMs": 1875.277666,
+          "cpuMs": 2118.363,
+          "rssBefore": 828653568,
+          "rssAfter": 829112320,
+          "modelMs": 0.20315400002073147,
+          "storeMs": 13676.855582000073,
+          "sdkAndHarnessWallMs": 219.2648419999723,
+          "checkpointBytes": 156791072,
+          "checkpoints": 3232,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 1891.504167,
+          "cpuMs": 2185.758,
+          "rssBefore": 829112320,
+          "rssAfter": 834764800,
+          "modelMs": 0.19616900001892645,
+          "storeMs": 13881.373136999951,
+          "sdkAndHarnessWallMs": 220.02837299996463,
+          "checkpointBytes": 156791072,
+          "checkpoints": 3232,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 154.7066250000007,
+      "p95Ms": 155.64133299999958,
+      "throughputTasksPerSecond": 6.444379440705063,
+      "observedSpreadRatio": 1.0060418097802784,
+      "trials": [
+        {
+          "wallMs": 154.7066250000007,
+          "cpuMs": 175.421,
+          "rssBefore": 908525568,
+          "rssAfter": 930349056,
+          "modelMs": 0.01575599999887345,
+          "storeMs": 80.807120999978,
+          "sdkAndHarnessWallMs": 73.88374800002384,
+          "checkpointBytes": 38886179,
+          "checkpoints": 202,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 155.64133299999958,
+          "cpuMs": 165.226,
+          "rssBefore": 930349056,
+          "rssAfter": 959741952,
+          "modelMs": 0.016582000007474562,
+          "storeMs": 80.95146100001875,
+          "sdkAndHarnessWallMs": 74.67328999997335,
+          "checkpointBytes": 38886179,
+          "checkpoints": 202,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 642.3530840000003,
+      "p95Ms": 671.2866250000006,
+      "throughputTasksPerSecond": 6.08994988899197,
+      "observedSpreadRatio": 1.0450430483182678,
+      "trials": [
+        {
+          "wallMs": 642.3530840000003,
+          "cpuMs": 727.842,
+          "rssBefore": 1027588096,
+          "rssAfter": 1131839488,
+          "modelMs": 0.06365400000322552,
+          "storeMs": 1213.9594220000472,
+          "sdkAndHarnessWallMs": 113.48360299996966,
+          "checkpointBytes": 155544716,
+          "checkpoints": 808,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 671.2866250000006,
+          "cpuMs": 794.557,
+          "rssBefore": 1131839488,
+          "rssAfter": 1147502592,
+          "modelMs": 0.053210000007311464,
+          "storeMs": 1280.721857000024,
+          "sdkAndHarnessWallMs": 119.6422100000018,
+          "checkpointBytes": 155544716,
+          "checkpoints": 808,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "group",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 2715.5300419999985,
+      "p95Ms": 2790.3091669999994,
+      "throughputTasksPerSecond": 5.812011354725345,
+      "observedSpreadRatio": 1.027537579714981,
+      "trials": [
+        {
+          "wallMs": 2715.5300419999985,
+          "cpuMs": 3224.991,
+          "rssBefore": 1191493632,
+          "rssAfter": 1291485184,
+          "modelMs": 0.3114390000118874,
+          "storeMs": 19971.270511999923,
+          "sdkAndHarnessWallMs": 302.8070539999735,
+          "checkpointBytes": 622183712,
+          "checkpoints": 3232,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 2790.3091669999994,
+          "cpuMs": 3310.366,
+          "rssBefore": 1291485184,
+          "rssAfter": 1317355520,
+          "modelMs": 0.3318650000474008,
+          "storeMs": 20624.540419999976,
+          "sdkAndHarnessWallMs": 301.3295499998676,
+          "checkpointBytes": 622183712,
+          "checkpoints": 3232,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.027750000001105946,
+      "p95Ms": 0.07266700000036508,
+      "throughputTasksPerSecond": 19916.94633349634,
+      "observedSpreadRatio": 2.618630630539424,
+      "trials": [
+        {
+          "wallMs": 0.07266700000036508,
+          "cpuMs": 0.075,
+          "rssBefore": 1317519360,
+          "rssAfter": 1317519360,
+          "modelMs": 0.0033750000038708095,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.06929199999649427,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 1,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.027750000001105946,
+          "cpuMs": 0.03,
+          "rssBefore": 1317519360,
+          "rssAfter": 1317519360,
+          "modelMs": 0.002375000000029104,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.02537500000107684,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 1,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.07395800000085728,
+      "p95Ms": 0.09299999999711872,
+      "throughputTasksPerSecond": 47916.24240885123,
+      "observedSpreadRatio": 1.2574704561513388,
+      "trials": [
+        {
+          "wallMs": 0.07395800000085728,
+          "cpuMs": 0.077,
+          "rssBefore": 1317519360,
+          "rssAfter": 1317519360,
+          "modelMs": 0.00804299999435898,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.0659150000064983,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 4,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.09299999999711872,
+          "cpuMs": 0.371,
+          "rssBefore": 1317519360,
+          "rssAfter": 1317552128,
+          "modelMs": 0.007999999990715878,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.08500000000640284,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 4,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 0.23941699999704724,
+      "p95Ms": 0.25533399999767425,
+      "throughputTasksPerSecond": 64679.00014419659,
+      "observedSpreadRatio": 1.066482329996714,
+      "trials": [
+        {
+          "wallMs": 0.23941699999704724,
+          "cpuMs": 1.164,
+          "rssBefore": 1317568512,
+          "rssAfter": 1317568512,
+          "modelMs": 0.03149699998903088,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.20792000000801636,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 16,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 0.25533399999767425,
+          "cpuMs": 1.564,
+          "rssBefore": 1317568512,
+          "rssAfter": 1317584896,
+          "modelMs": 0.025667000005341833,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.22966699999233242,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 16,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.02449999999953434,
+      "p95Ms": 0.026458000000275206,
+      "throughputTasksPerSecond": 39248.00816373239,
+      "observedSpreadRatio": 1.0799183673786972,
+      "trials": [
+        {
+          "wallMs": 0.02449999999953434,
+          "cpuMs": 0.026,
+          "rssBefore": 1317584896,
+          "rssAfter": 1317584896,
+          "modelMs": 0.0018750000053842086,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.02262499999415013,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 1,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.026458000000275206,
+          "cpuMs": 0.18,
+          "rssBefore": 1317584896,
+          "rssAfter": 1317584896,
+          "modelMs": 0.0020010000007459894,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.024456999999529216,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1,
+          "failedAttempts": 1,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.04779200000120909,
+      "p95Ms": 0.056582999997772276,
+      "throughputTasksPerSecond": 76646.70658757437,
+      "observedSpreadRatio": 1.1839429192404751,
+      "trials": [
+        {
+          "wallMs": 0.056582999997772276,
+          "cpuMs": 0.341,
+          "rssBefore": 1317584896,
+          "rssAfter": 1317584896,
+          "modelMs": 0.007166000003053341,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.049416999994718935,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 4,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.04779200000120909,
+          "cpuMs": 0.05,
+          "rssBefore": 1317584896,
+          "rssAfter": 1317584896,
+          "modelMs": 0.0063760000084585045,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.041415999992750585,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 4,
+          "failedAttempts": 4,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 0.17270899999857647,
+      "p95Ms": 0.18833299999823794,
+      "throughputTasksPerSecond": 88632.34748390035,
+      "observedSpreadRatio": 1.090464307012317,
+      "trials": [
+        {
+          "wallMs": 0.17270899999857647,
+          "cpuMs": 0.174,
+          "rssBefore": 1317584896,
+          "rssAfter": 1317584896,
+          "modelMs": 0.03295600000637933,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.13975299999219715,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 16,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 0.18833299999823794,
+          "cpuMs": 0.398,
+          "rssBefore": 1317584896,
+          "rssAfter": 1317584896,
+          "modelMs": 0.024243999996542698,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.16408900000169524,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 16,
+          "failedAttempts": 16,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.11129199999777484,
+      "p95Ms": 0.11733300000196323,
+      "throughputTasksPerSecond": 8747.949699299252,
+      "observedSpreadRatio": 1.0542806311712358,
+      "trials": [
+        {
+          "wallMs": 0.11129199999777484,
+          "cpuMs": 0.401,
+          "rssBefore": 1317584896,
+          "rssAfter": 1317584896,
+          "modelMs": 0.016795000006823102,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.09449699999095174,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 10,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.11733300000196323,
+          "cpuMs": 0.228,
+          "rssBefore": 1317584896,
+          "rssAfter": 1317584896,
+          "modelMs": 0.017295000005105976,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.10003799999685725,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 10,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.36449999999967986,
+      "p95Ms": 0.476542000000336,
+      "throughputTasksPerSecond": 9512.01010175455,
+      "observedSpreadRatio": 1.3073854595356778,
+      "trials": [
+        {
+          "wallMs": 0.476542000000336,
+          "cpuMs": 3.487,
+          "rssBefore": 1317650432,
+          "rssAfter": 1317699584,
+          "modelMs": 0.06491600001754705,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.4116259999827889,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 40,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.36449999999967986,
+          "cpuMs": 0.365,
+          "rssBefore": 1317699584,
+          "rssAfter": 1317699584,
+          "modelMs": 0.06116799998562783,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.30333200001405203,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 40,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 1.3589160000010452,
+      "p95Ms": 1.379000000000815,
+      "throughputTasksPerSecond": 11687.721610151028,
+      "observedSpreadRatio": 1.0147794271314448,
+      "trials": [
+        {
+          "wallMs": 1.3589160000010452,
+          "cpuMs": 1.579,
+          "rssBefore": 1317699584,
+          "rssAfter": 1317699584,
+          "modelMs": 0.24212799997258116,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.116788000028464,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 160,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 1.379000000000815,
+          "cpuMs": 2.863,
+          "rssBefore": 1317699584,
+          "rssAfter": 1317699584,
+          "modelMs": 0.24109099999259342,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.1379090000082215,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 160,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.1077499999992142,
+      "p95Ms": 0.11441700000068522,
+      "throughputTasksPerSecond": 9002.237055912468,
+      "observedSpreadRatio": 1.0618747099909016,
+      "trials": [
+        {
+          "wallMs": 0.1077499999992142,
+          "cpuMs": 0.109,
+          "rssBefore": 1317699584,
+          "rssAfter": 1317699584,
+          "modelMs": 0.01642100000026403,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.09132899999895017,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 10,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.11441700000068522,
+          "cpuMs": 0.115,
+          "rssBefore": 1317699584,
+          "rssAfter": 1317699584,
+          "modelMs": 0.016206000011152355,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.09821099998953287,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 10,
+          "failedAttempts": 10,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.3610420000004524,
+      "p95Ms": 0.37104200000248966,
+      "throughputTasksPerSecond": 10927.707749340034,
+      "observedSpreadRatio": 1.0276976085940825,
+      "trials": [
+        {
+          "wallMs": 0.37104200000248966,
+          "cpuMs": 0.372,
+          "rssBefore": 1317699584,
+          "rssAfter": 1317699584,
+          "modelMs": 0.0625439999930677,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.30849800000942196,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 40,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.3610420000004524,
+          "cpuMs": 0.362,
+          "rssBefore": 1317699584,
+          "rssAfter": 1317699584,
+          "modelMs": 0.06150100000013481,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.2995410000003176,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 40,
+          "failedAttempts": 40,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 1.3267090000008466,
+      "p95Ms": 1.3359159999999974,
+      "throughputTasksPerSecond": 12018.21510726815,
+      "observedSpreadRatio": 1.0069397283045076,
+      "trials": [
+        {
+          "wallMs": 1.3359159999999974,
+          "cpuMs": 2.648,
+          "rssBefore": 1317699584,
+          "rssAfter": 1317715968,
+          "modelMs": 0.24108299999352312,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.0948330000064743,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 160,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 1.3267090000008466,
+          "cpuMs": 2.607,
+          "rssBefore": 1317715968,
+          "rssAfter": 1317732352,
+          "modelMs": 0.28128700002707774,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.0454219999737688,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 160,
+          "failedAttempts": 160,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.8622919999979786,
+      "p95Ms": 0.8837080000012065,
+      "throughputTasksPerSecond": 1145.4753722800306,
+      "observedSpreadRatio": 1.024836134399111,
+      "trials": [
+        {
+          "wallMs": 0.8622919999979786,
+          "cpuMs": 1.124,
+          "rssBefore": 1317732352,
+          "rssAfter": 1317732352,
+          "modelMs": 0.15404099999796017,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.7082510000000184,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 100,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.8837080000012065,
+          "cpuMs": 0.886,
+          "rssBefore": 1317732352,
+          "rssAfter": 1317732352,
+          "modelMs": 0.17203699999299715,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.7116710000082094,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 100,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 3.19037500000195,
+      "p95Ms": 3.2135420000013255,
+      "throughputTasksPerSecond": 1249.23542887828,
+      "observedSpreadRatio": 1.007261528816945,
+      "trials": [
+        {
+          "wallMs": 3.2135420000013255,
+          "cpuMs": 4.367,
+          "rssBefore": 1317797888,
+          "rssAfter": 1317928960,
+          "modelMs": 0.6121319999874686,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 2.601410000013857,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 400,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 3.19037500000195,
+          "cpuMs": 7.475,
+          "rssBefore": 1317928960,
+          "rssAfter": 1317928960,
+          "modelMs": 0.6160929999896325,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 2.5742820000123174,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 400,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 12.315707999998267,
+      "p95Ms": 12.823417000003246,
+      "throughputTasksPerSecond": 1272.916221228785,
+      "observedSpreadRatio": 1.0412245077591196,
+      "trials": [
+        {
+          "wallMs": 12.823417000003246,
+          "cpuMs": 23.047,
+          "rssBefore": 1317978112,
+          "rssAfter": 1317994496,
+          "modelMs": 2.5923349999466154,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 10.231082000056631,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 1600,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 12.315707999998267,
+          "cpuMs": 15.789,
+          "rssBefore": 1317994496,
+          "rssAfter": 1317994496,
+          "modelMs": 2.4681750000454485,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 9.847532999952818,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 1600,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.8563329999997222,
+      "p95Ms": 1.6116250000013679,
+      "throughputTasksPerSecond": 810.3865624938175,
+      "observedSpreadRatio": 1.8820073499466803,
+      "trials": [
+        {
+          "wallMs": 0.8563329999997222,
+          "cpuMs": 0.857,
+          "rssBefore": 1317994496,
+          "rssAfter": 1317994496,
+          "modelMs": 0.15920699998605414,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 0.6971260000136681,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 100,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 1.6116250000013679,
+          "cpuMs": 4.93,
+          "rssBefore": 1317994496,
+          "rssAfter": 1317994496,
+          "modelMs": 0.16562999998495798,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 1.44599500001641,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 100,
+          "failedAttempts": 100,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 3.0862919999999576,
+      "p95Ms": 4.088124999998399,
+      "throughputTasksPerSecond": 1115.073182950173,
+      "observedSpreadRatio": 1.3246073281460262,
+      "trials": [
+        {
+          "wallMs": 3.0862919999999576,
+          "cpuMs": 6.857,
+          "rssBefore": 1318027264,
+          "rssAfter": 1318027264,
+          "modelMs": 0.5919949999879464,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 2.4942970000120113,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 400,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 4.088124999998399,
+          "cpuMs": 7.259,
+          "rssBefore": 1318027264,
+          "rssAfter": 1318027264,
+          "modelMs": 0.5909880000181147,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 3.4971369999802846,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 400,
+          "failedAttempts": 400,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "fallback",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 13.7556250000016,
+      "p95Ms": 15.418916000002355,
+      "throughputTasksPerSecond": 1096.8467335954201,
+      "observedSpreadRatio": 1.1209171520741923,
+      "trials": [
+        {
+          "wallMs": 13.7556250000016,
+          "cpuMs": 18.46,
+          "rssBefore": 1318027264,
+          "rssAfter": 1318043648,
+          "modelMs": 2.346365999928821,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 11.40925900007278,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 1600,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 15.418916000002355,
+          "cpuMs": 42.313,
+          "rssBefore": 1318043648,
+          "rssAfter": 1318158336,
+          "modelMs": 3.8732860000163782,
+          "storeMs": 0,
+          "sdkAndHarnessWallMs": 11.545629999985977,
+          "checkpointBytes": 0,
+          "checkpoints": 0,
+          "modelCalls": 1600,
+          "failedAttempts": 1600,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.08254200000010314,
+      "p95Ms": 0.12279200000193669,
+      "throughputTasksPerSecond": 9740.228116045719,
+      "observedSpreadRatio": 1.4876305396256844,
+      "trials": [
+        {
+          "wallMs": 0.12279200000193669,
+          "cpuMs": 0.125,
+          "rssBefore": 1318223872,
+          "rssAfter": 1318223872,
+          "modelMs": 0.0019170000014128163,
+          "storeMs": 0.02666499999759253,
+          "sdkAndHarnessWallMs": 0.09421000000293134,
+          "checkpointBytes": 2542,
+          "checkpoints": 3,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.08254200000010314,
+          "cpuMs": 0.155,
+          "rssBefore": 1318223872,
+          "rssAfter": 1318256640,
+          "modelMs": 0.0017499999994470272,
+          "storeMs": 0.021914999997534323,
+          "sdkAndHarnessWallMs": 0.05887700000312179,
+          "checkpointBytes": 2542,
+          "checkpoints": 3,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.2632499999999709,
+      "p95Ms": 0.293416000000434,
+      "throughputTasksPerSecond": 14371.274696126906,
+      "observedSpreadRatio": 1.1145906932591318,
+      "trials": [
+        {
+          "wallMs": 0.293416000000434,
+          "cpuMs": 1.611,
+          "rssBefore": 1318256640,
+          "rssAfter": 1318322176,
+          "modelMs": 0.005332999997335719,
+          "storeMs": 0.37720900000203983,
+          "sdkAndHarnessWallMs": 0.13087399999494664,
+          "checkpointBytes": 10168,
+          "checkpoints": 12,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.2632499999999709,
+          "cpuMs": 0.36,
+          "rssBefore": 1318322176,
+          "rssAfter": 1318322176,
+          "modelMs": 0.005250000005617039,
+          "storeMs": 0.3322069999885571,
+          "sdkAndHarnessWallMs": 0.1053329999995185,
+          "checkpointBytes": 10168,
+          "checkpoints": 12,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 0.9344579999997222,
+      "p95Ms": 0.9782080000004498,
+      "throughputTasksPerSecond": 16730.573973708488,
+      "observedSpreadRatio": 1.0468185836075463,
+      "trials": [
+        {
+          "wallMs": 0.9782080000004498,
+          "cpuMs": 4.226,
+          "rssBefore": 1318322176,
+          "rssAfter": 1318387712,
+          "modelMs": 0.02083400000628899,
+          "storeMs": 5.050877000008768,
+          "sdkAndHarnessWallMs": 0.34749899999587797,
+          "checkpointBytes": 40690,
+          "checkpoints": 48,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 0.9344579999997222,
+          "cpuMs": 3.162,
+          "rssBefore": 1318387712,
+          "rssAfter": 1318436864,
+          "modelMs": 0.019833000005746726,
+          "storeMs": 4.691463000002841,
+          "sdkAndHarnessWallMs": 0.3380839999917953,
+          "checkpointBytes": 40690,
+          "checkpoints": 48,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.07849999999962165,
+      "p95Ms": 0.08462499999950523,
+      "throughputTasksPerSecond": 12260.536398533057,
+      "observedSpreadRatio": 1.0780254777058995,
+      "trials": [
+        {
+          "wallMs": 0.07849999999962165,
+          "cpuMs": 0.08,
+          "rssBefore": 1318436864,
+          "rssAfter": 1318436864,
+          "modelMs": 0.0016250000007858034,
+          "storeMs": 0.02654199999960838,
+          "sdkAndHarnessWallMs": 0.05033299999922747,
+          "checkpointBytes": 6382,
+          "checkpoints": 3,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.08462499999950523,
+          "cpuMs": 0.088,
+          "rssBefore": 1318436864,
+          "rssAfter": 1318436864,
+          "modelMs": 0.0016660000001138542,
+          "storeMs": 0.02404200000091805,
+          "sdkAndHarnessWallMs": 0.05891699999847333,
+          "checkpointBytes": 6382,
+          "checkpoints": 3,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.2929580000018177,
+      "p95Ms": 0.299749999998312,
+      "throughputTasksPerSecond": 13497.371386919443,
+      "observedSpreadRatio": 1.023184210693861,
+      "trials": [
+        {
+          "wallMs": 0.2929580000018177,
+          "cpuMs": 0.575,
+          "rssBefore": 1318453248,
+          "rssAfter": 1318502400,
+          "modelMs": 0.006457999999838648,
+          "storeMs": 0.37595799999689916,
+          "sdkAndHarnessWallMs": 0.12454200000502169,
+          "checkpointBytes": 25528,
+          "checkpoints": 12,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.299749999998312,
+          "cpuMs": 0.862,
+          "rssBefore": 1318502400,
+          "rssAfter": 1318535168,
+          "modelMs": 0.006083000000216998,
+          "storeMs": 0.4022929999882763,
+          "sdkAndHarnessWallMs": 0.1191240000007383,
+          "checkpointBytes": 25528,
+          "checkpoints": 12,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 1.3496669999985897,
+      "p95Ms": 2.00762499999837,
+      "throughputTasksPerSecond": 9531.491452047952,
+      "observedSpreadRatio": 1.4874965454445193,
+      "trials": [
+        {
+          "wallMs": 2.00762499999837,
+          "cpuMs": 6.9,
+          "rssBefore": 1318567936,
+          "rssAfter": 1318567936,
+          "modelMs": 0.02149999999892316,
+          "storeMs": 18.437961000014184,
+          "sdkAndHarnessWallMs": 0.39912499999263673,
+          "checkpointBytes": 102130,
+          "checkpoints": 48,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 1.3496669999985897,
+          "cpuMs": 5.571,
+          "rssBefore": 1318567936,
+          "rssAfter": 1318748160,
+          "modelMs": 0.024581000001489883,
+          "storeMs": 6.204248999994888,
+          "sdkAndHarnessWallMs": 0.5493779999997059,
+          "checkpointBytes": 102130,
+          "checkpoints": 48,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 3.5056669999976293,
+      "p95Ms": 4.106125000002066,
+      "throughputTasksPerSecond": 262.7502170316898,
+      "observedSpreadRatio": 1.1712820983866532,
+      "trials": [
+        {
+          "wallMs": 3.5056669999976293,
+          "cpuMs": 4.08,
+          "rssBefore": 1319534592,
+          "rssAfter": 1319632896,
+          "modelMs": 0.006248000001505716,
+          "storeMs": 1.6095009999989998,
+          "sdkAndHarnessWallMs": 1.8899179999971238,
+          "checkpointBytes": 230342,
+          "checkpoints": 29,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 4.106125000002066,
+          "cpuMs": 5.45,
+          "rssBefore": 1319632896,
+          "rssAfter": 1319632896,
+          "modelMs": 0.004085000000486616,
+          "storeMs": 2.303080999987287,
+          "sdkAndHarnessWallMs": 1.7989590000142925,
+          "checkpointBytes": 230342,
+          "checkpoints": 29,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 13.198874999998225,
+      "p95Ms": 13.724291000002268,
+      "throughputTasksPerSecond": 297.14187402773706,
+      "observedSpreadRatio": 1.039807635120729,
+      "trials": [
+        {
+          "wallMs": 13.724291000002268,
+          "cpuMs": 18.103,
+          "rssBefore": 1319796736,
+          "rssAfter": 1319813120,
+          "modelMs": 0.013453999999910593,
+          "storeMs": 23.817581999981485,
+          "sdkAndHarnessWallMs": 2.9622550000167394,
+          "checkpointBytes": 921368,
+          "checkpoints": 116,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 13.198874999998225,
+          "cpuMs": 17.397,
+          "rssBefore": 1319813120,
+          "rssAfter": 1319862272,
+          "modelMs": 0.016913000003114576,
+          "storeMs": 22.529710000017076,
+          "sdkAndHarnessWallMs": 3.0205429999805347,
+          "checkpointBytes": 921368,
+          "checkpoints": 116,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 53.032624999999825,
+      "p95Ms": 55.6551670000008,
+      "throughputTasksPerSecond": 294.4212906634428,
+      "observedSpreadRatio": 1.0494514838743318,
+      "trials": [
+        {
+          "wallMs": 55.6551670000008,
+          "cpuMs": 84.402,
+          "rssBefore": 1320157184,
+          "rssAfter": 1320583168,
+          "modelMs": 0.05521599997882731,
+          "storeMs": 378.30199899999934,
+          "sdkAndHarnessWallMs": 9.003743000012037,
+          "checkpointBytes": 3685646,
+          "checkpoints": 464,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 53.032624999999825,
+          "cpuMs": 61.211,
+          "rssBefore": 1320599552,
+          "rssAfter": 1320599552,
+          "modelMs": 0.0912520000274526,
+          "storeMs": 372.07384600001024,
+          "sdkAndHarnessWallMs": 7.9474499999778345,
+          "checkpointBytes": 3685646,
+          "checkpoints": 464,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 4.583750000001601,
+      "p95Ms": 4.591625000000931,
+      "throughputTasksPerSecond": 217.9747421766901,
+      "observedSpreadRatio": 1.0017180256338867,
+      "trials": [
+        {
+          "wallMs": 4.583750000001601,
+          "cpuMs": 5.444,
+          "rssBefore": 1320599552,
+          "rssAfter": 1320615936,
+          "modelMs": 0.004376000008051051,
+          "storeMs": 2.487418999993679,
+          "sdkAndHarnessWallMs": 2.091954999999871,
+          "checkpointBytes": 641222,
+          "checkpoints": 29,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 4.591625000000931,
+          "cpuMs": 5.66,
+          "rssBefore": 1320615936,
+          "rssAfter": 1320615936,
+          "modelMs": 0.004124000002775574,
+          "storeMs": 2.5668340000047465,
+          "sdkAndHarnessWallMs": 2.0206669999934093,
+          "checkpointBytes": 641222,
+          "checkpoints": 29,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 17.580125000000407,
+      "p95Ms": 18.901832999999897,
+      "throughputTasksPerSecond": 219.28647579715798,
+      "observedSpreadRatio": 1.0751819455208345,
+      "trials": [
+        {
+          "wallMs": 17.580125000000407,
+          "cpuMs": 24.867,
+          "rssBefore": 1320632320,
+          "rssAfter": 1320632320,
+          "modelMs": 0.010917999999946915,
+          "storeMs": 35.20770699997229,
+          "sdkAndHarnessWallMs": 3.474623000023712,
+          "checkpointBytes": 2564888,
+          "checkpoints": 116,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 18.901832999999897,
+          "cpuMs": 25.929,
+          "rssBefore": 1320632320,
+          "rssAfter": 1320665088,
+          "modelMs": 0.010124999989784556,
+          "storeMs": 37.244713999982196,
+          "sdkAndHarnessWallMs": 3.5508330000157002,
+          "checkpointBytes": 2564888,
+          "checkpoints": 116,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 64.42995900000096,
+      "p95Ms": 67.44479199999842,
+      "throughputTasksPerSecond": 242.65448660449144,
+      "observedSpreadRatio": 1.046792409102688,
+      "trials": [
+        {
+          "wallMs": 67.44479199999842,
+          "cpuMs": 82.864,
+          "rssBefore": 1320697856,
+          "rssAfter": 1320714240,
+          "modelMs": 0.03850499998225132,
+          "storeMs": 471.7404949999873,
+          "sdkAndHarnessWallMs": 9.121037000022625,
+          "checkpointBytes": 10259726,
+          "checkpoints": 464,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 64.42995900000096,
+          "cpuMs": 76.645,
+          "rssBefore": 1320714240,
+          "rssAfter": 1320714240,
+          "modelMs": 0.03432199998860597,
+          "storeMs": 449.593127000051,
+          "sdkAndHarnessWallMs": 8.517013000018778,
+          "checkpointBytes": 10259726,
+          "checkpoints": 464,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 236.39608300000327,
+      "p95Ms": 239.98358400000143,
+      "throughputTasksPerSecond": 4.198331999757623,
+      "observedSpreadRatio": 1.0151758055991058,
+      "trials": [
+        {
+          "wallMs": 239.98358400000143,
+          "cpuMs": 272.428,
+          "rssBefore": 1321533440,
+          "rssAfter": 1321648128,
+          "modelMs": 0.01500399998985813,
+          "storeMs": 136.2390299999679,
+          "sdkAndHarnessWallMs": 103.72955000004367,
+          "checkpointBytes": 24710746,
+          "checkpoints": 299,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 236.39608300000327,
+          "cpuMs": 272.534,
+          "rssBefore": 1321648128,
+          "rssAfter": 1321648128,
+          "modelMs": 0.015953000005538343,
+          "storeMs": 134.13811800003896,
+          "sdkAndHarnessWallMs": 102.24201199995878,
+          "checkpointBytes": 24710746,
+          "checkpoints": 299,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 970.957957999999,
+      "p95Ms": 974.2309999999998,
+      "throughputTasksPerSecond": 4.112710987330211,
+      "observedSpreadRatio": 1.0033709410104044,
+      "trials": [
+        {
+          "wallMs": 970.957957999999,
+          "cpuMs": 1178.313,
+          "rssBefore": 1321664512,
+          "rssAfter": 1321680896,
+          "modelMs": 0.05294900001172209,
+          "storeMs": 1956.768928999969,
+          "sdkAndHarnessWallMs": 126.81684599996152,
+          "checkpointBytes": 98842984,
+          "checkpoints": 1196,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 974.2309999999998,
+          "cpuMs": 1157.251,
+          "rssBefore": 1321680896,
+          "rssAfter": 1321680896,
+          "modelMs": 0.06365700004971586,
+          "storeMs": 1976.4009679999945,
+          "sdkAndHarnessWallMs": 128.0432619999483,
+          "checkpointBytes": 98842984,
+          "checkpoints": 1196,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 4198.5896250000005,
+      "p95Ms": 4205.934874999999,
+      "throughputTasksPerSecond": 3.8074729867228068,
+      "observedSpreadRatio": 1.0017494565213667,
+      "trials": [
+        {
+          "wallMs": 4198.5896250000005,
+          "cpuMs": 5387.261,
+          "rssBefore": 1321730048,
+          "rssAfter": 1321697280,
+          "modelMs": 0.3263050000387011,
+          "storeMs": 33287.49869500012,
+          "sdkAndHarnessWallMs": 193.59092099992267,
+          "checkpointBytes": 395373730,
+          "checkpoints": 4784,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 4205.934874999999,
+          "cpuMs": 5446.212,
+          "rssBefore": 1321697280,
+          "rssAfter": 1323024384,
+          "modelMs": 0.3132540000297013,
+          "storeMs": 33362.866116999896,
+          "sdkAndHarnessWallMs": 196.73376799993275,
+          "checkpointBytes": 395373730,
+          "checkpoints": 4784,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 308.25966699999844,
+      "p95Ms": 312.1194170000017,
+      "throughputTasksPerSecond": 3.2238353155052524,
+      "observedSpreadRatio": 1.0125210996221679,
+      "trials": [
+        {
+          "wallMs": 308.25966699999844,
+          "cpuMs": 387.496,
+          "rssBefore": 1323040768,
+          "rssAfter": 1323106304,
+          "modelMs": 0.02570699996431358,
+          "storeMs": 173.37027800002397,
+          "sdkAndHarnessWallMs": 134.86368200001016,
+          "checkpointBytes": 67673626,
+          "checkpoints": 299,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 312.1194170000017,
+          "cpuMs": 394.554,
+          "rssBefore": 1323106304,
+          "rssAfter": 1323106304,
+          "modelMs": 0.03107900002214592,
+          "storeMs": 175.29915499998606,
+          "sdkAndHarnessWallMs": 136.7891829999935,
+          "checkpointBytes": 67673626,
+          "checkpoints": 299,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 1301.1962920000005,
+      "p95Ms": 1307.1179590000029,
+      "throughputTasksPerSecond": 3.067115090496812,
+      "observedSpreadRatio": 1.004550940574001,
+      "trials": [
+        {
+          "wallMs": 1301.1962920000005,
+          "cpuMs": 1640.373,
+          "rssBefore": 1324548096,
+          "rssAfter": 1326022656,
+          "modelMs": 0.08283399998617824,
+          "storeMs": 2628.669219999938,
+          "sdkAndHarnessWallMs": 159.96277500007272,
+          "checkpointBytes": 270694504,
+          "checkpoints": 1196,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 1307.1179590000029,
+          "cpuMs": 1623.816,
+          "rssBefore": 1326022656,
+          "rssAfter": 1326039040,
+          "modelMs": 0.08359799996105721,
+          "storeMs": 2632.622630999802,
+          "sdkAndHarnessWallMs": 166.30724900010682,
+          "checkpointBytes": 270694504,
+          "checkpoints": 1196,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "compaction",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 5608.001707999996,
+      "p95Ms": 5645.322709,
+      "throughputTasksPerSecond": 2.8436041488023522,
+      "observedSpreadRatio": 1.0066549553554458,
+      "trials": [
+        {
+          "wallMs": 5645.322709,
+          "cpuMs": 7378.578,
+          "rssBefore": 1326088192,
+          "rssAfter": 1326579712,
+          "modelMs": 0.34410099996603094,
+          "storeMs": 44411.23408499959,
+          "sdkAndHarnessWallMs": 263.1924110000764,
+          "checkpointBytes": 1082779810,
+          "checkpoints": 4784,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 5608.001707999996,
+          "cpuMs": 7233.258,
+          "rssBefore": 1326579712,
+          "rssAfter": 1328168960,
+          "modelMs": 0.303698999909102,
+          "storeMs": 44241.59472700036,
+          "sdkAndHarnessWallMs": 256.7684250000166,
+          "checkpointBytes": 1082779810,
+          "checkpoints": 4784,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.07200000000011642,
+      "p95Ms": 0.091999999996915,
+      "throughputTasksPerSecond": 12195.121951440256,
+      "observedSpreadRatio": 1.2777777777328645,
+      "trials": [
+        {
+          "wallMs": 0.091999999996915,
+          "cpuMs": 0.092,
+          "rssBefore": 1328168960,
+          "rssAfter": 1328168960,
+          "modelMs": 0.0025840000016614795,
+          "storeMs": 0.019789999998465646,
+          "sdkAndHarnessWallMs": 0.06962599999678787,
+          "checkpointBytes": 2542,
+          "checkpoints": 3,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.07200000000011642,
+          "cpuMs": 0.072,
+          "rssBefore": 1328168960,
+          "rssAfter": 1328168960,
+          "modelMs": 0.0024579999953857623,
+          "storeMs": 0.02262499999778811,
+          "sdkAndHarnessWallMs": 0.046917000006942544,
+          "checkpointBytes": 2542,
+          "checkpoints": 3,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.24679199999809498,
+      "p95Ms": 0.25408299999980954,
+      "throughputTasksPerSecond": 15972.048914466623,
+      "observedSpreadRatio": 1.0295430970281485,
+      "trials": [
+        {
+          "wallMs": 0.25408299999980954,
+          "cpuMs": 0.255,
+          "rssBefore": 1328218112,
+          "rssAfter": 1328218112,
+          "modelMs": 0.008499000003212132,
+          "storeMs": 0.30720599998312537,
+          "sdkAndHarnessWallMs": 0.10016800000448711,
+          "checkpointBytes": 10168,
+          "checkpoints": 12,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.24679199999809498,
+          "cpuMs": 0.248,
+          "rssBefore": 1328218112,
+          "rssAfter": 1328218112,
+          "modelMs": 0.007709000004979316,
+          "storeMs": 0.33437399996910244,
+          "sdkAndHarnessWallMs": 0.09995900000649272,
+          "checkpointBytes": 10168,
+          "checkpoints": 12,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 0.9003749999974389,
+      "p95Ms": 0.9101250000021537,
+      "throughputTasksPerSecond": 17674.6755040084,
+      "observedSpreadRatio": 1.0108288213297154,
+      "trials": [
+        {
+          "wallMs": 0.9003749999974389,
+          "cpuMs": 0.905,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.02362600000196835,
+          "storeMs": 4.793039999975008,
+          "sdkAndHarnessWallMs": 0.2869150000042282,
+          "checkpointBytes": 40690,
+          "checkpoints": 48,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 0.9101250000021537,
+          "cpuMs": 1.126,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.028999999987718184,
+          "storeMs": 4.69695399999182,
+          "sdkAndHarnessWallMs": 0.310250000016822,
+          "checkpointBytes": 40690,
+          "checkpoints": 48,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 0.07625000000552973,
+      "p95Ms": 0.07908300000417512,
+      "throughputTasksPerSecond": 12875.564109848163,
+      "observedSpreadRatio": 1.037154098340196,
+      "trials": [
+        {
+          "wallMs": 0.07625000000552973,
+          "cpuMs": 0.077,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.0019169999941368587,
+          "storeMs": 0.02583200000663055,
+          "sdkAndHarnessWallMs": 0.04850100000476232,
+          "checkpointBytes": 6382,
+          "checkpoints": 3,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 0.07908300000417512,
+          "cpuMs": 0.08,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.0018750000017462298,
+          "storeMs": 0.02970800000912277,
+          "sdkAndHarnessWallMs": 0.04749999999330612,
+          "checkpointBytes": 6382,
+          "checkpoints": 3,
+          "modelCalls": 1,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 0.2687089999963064,
+      "p95Ms": 0.2913750000006985,
+      "throughputTasksPerSecond": 14283.571750028173,
+      "observedSpreadRatio": 1.084351473172479,
+      "trials": [
+        {
+          "wallMs": 0.2913750000006985,
+          "cpuMs": 0.293,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.006792000007408205,
+          "storeMs": 0.40095999999175547,
+          "sdkAndHarnessWallMs": 0.1071239999946556,
+          "checkpointBytes": 25528,
+          "checkpoints": 12,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 0.2687089999963064,
+          "cpuMs": 0.27,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.006793000007746741,
+          "storeMs": 0.34679299998970237,
+          "sdkAndHarnessWallMs": 0.10928999999305233,
+          "checkpointBytes": 25528,
+          "checkpoints": 12,
+          "modelCalls": 4,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 1,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 1.0837920000049053,
+      "p95Ms": 1.090291000000434,
+      "throughputTasksPerSecond": 14718.849280327113,
+      "observedSpreadRatio": 1.005996538076955,
+      "trials": [
+        {
+          "wallMs": 1.090291000000434,
+          "cpuMs": 1.092,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.028333000009297393,
+          "storeMs": 5.876504000014393,
+          "sdkAndHarnessWallMs": 0.353581999988819,
+          "checkpointBytes": 102130,
+          "checkpoints": 48,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 1.0837920000049053,
+          "cpuMs": 1.084,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.02541899999778252,
+          "storeMs": 6.092708999982278,
+          "sdkAndHarnessWallMs": 0.3280400000003283,
+          "checkpointBytes": 102130,
+          "checkpoints": 48,
+          "modelCalls": 16,
+          "failedAttempts": 0,
+          "effects": 0,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 1.6988750000018626,
+      "p95Ms": 1.8429160000014235,
+      "throughputTasksPerSecond": 564.6860585500795,
+      "observedSpreadRatio": 1.0847861084537727,
+      "trials": [
+        {
+          "wallMs": 1.8429160000014235,
+          "cpuMs": 1.844,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.0024609999964013696,
+          "storeMs": 0.8723739999986719,
+          "sdkAndHarnessWallMs": 0.9680810000063502,
+          "checkpointBytes": 114024,
+          "checkpoints": 21,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 1.6988750000018626,
+          "cpuMs": 1.701,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.0028719999972963706,
+          "storeMs": 0.8217859999786015,
+          "sdkAndHarnessWallMs": 0.8742170000259648,
+          "checkpointBytes": 114024,
+          "checkpoints": 21,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 6.6542499999995925,
+      "p95Ms": 7.730916000000434,
+      "throughputTasksPerSecond": 556.1284450940633,
+      "observedSpreadRatio": 1.1618012548372705,
+      "trials": [
+        {
+          "wallMs": 6.6542499999995925,
+          "cpuMs": 7.518,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.009502000008069444,
+          "storeMs": 11.852510999997321,
+          "sdkAndHarnessWallMs": 1.5067450000206009,
+          "checkpointBytes": 456096,
+          "checkpoints": 84,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 7.730916000000434,
+          "cpuMs": 10.357,
+          "rssBefore": 1328234496,
+          "rssAfter": 1328234496,
+          "modelMs": 0.010915999991993885,
+          "storeMs": 13.057990000022983,
+          "sdkAndHarnessWallMs": 1.5617930000298657,
+          "checkpointBytes": 456096,
+          "checkpoints": 84,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 26.420333000001847,
+      "p95Ms": 26.708917000003566,
+      "throughputTasksPerSecond": 602.3047567958655,
+      "observedSpreadRatio": 1.0109227994969519,
+      "trials": [
+        {
+          "wallMs": 26.708917000003566,
+          "cpuMs": 28.977,
+          "rssBefore": 1328250880,
+          "rssAfter": 1328250880,
+          "modelMs": 0.04237799999100389,
+          "storeMs": 186.89908499996818,
+          "sdkAndHarnessWallMs": 4.077539000005345,
+          "checkpointBytes": 1824510,
+          "checkpoints": 336,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 26.420333000001847,
+          "cpuMs": 28.907,
+          "rssBefore": 1328250880,
+          "rssAfter": 1328250880,
+          "modelMs": 0.036507000018900726,
+          "storeMs": 191.3221270000795,
+          "sdkAndHarnessWallMs": 4.006911999982549,
+          "checkpointBytes": 1824510,
+          "checkpoints": 336,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 2.380582999998296,
+      "p95Ms": 2.4184170000007725,
+      "throughputTasksPerSecond": 416.7534903105623,
+      "observedSpreadRatio": 1.015892745601604,
+      "trials": [
+        {
+          "wallMs": 2.4184170000007725,
+          "cpuMs": 2.42,
+          "rssBefore": 1328250880,
+          "rssAfter": 1328250880,
+          "modelMs": 0.0030400000032386743,
+          "storeMs": 1.174380000004021,
+          "sdkAndHarnessWallMs": 1.2409969999935129,
+          "checkpointBytes": 428904,
+          "checkpoints": 21,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 2.380582999998296,
+          "cpuMs": 2.381,
+          "rssBefore": 1328250880,
+          "rssAfter": 1328250880,
+          "modelMs": 0.0027919999993173406,
+          "storeMs": 1.182249999998021,
+          "sdkAndHarnessWallMs": 1.1955410000009579,
+          "checkpointBytes": 428904,
+          "checkpoints": 21,
+          "modelCalls": 10,
+          "failedAttempts": 0,
+          "effects": 9,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 9.594875000002503,
+      "p95Ms": 9.986959000001661,
+      "throughputTasksPerSecond": 408.54191696233863,
+      "observedSpreadRatio": 1.04086389869582,
+      "trials": [
+        {
+          "wallMs": 9.594875000002503,
+          "cpuMs": 9.596,
+          "rssBefore": 1328300032,
+          "rssAfter": 1328300032,
+          "modelMs": 0.014170000002195593,
+          "storeMs": 17.2661660000158,
+          "sdkAndHarnessWallMs": 2.058411000005435,
+          "checkpointBytes": 1715616,
+          "checkpoints": 84,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 9.986959000001661,
+          "cpuMs": 11.486,
+          "rssBefore": 1328300032,
+          "rssAfter": 1328300032,
+          "modelMs": 0.013332000009540934,
+          "storeMs": 18.367415999993682,
+          "sdkAndHarnessWallMs": 1.9445910000285949,
+          "checkpointBytes": 1715616,
+          "checkpoints": 84,
+          "modelCalls": 40,
+          "failedAttempts": 0,
+          "effects": 36,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 10,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 36.11791700000322,
+      "p95Ms": 37.418165999995836,
+      "throughputTasksPerSecond": 435.16051840836303,
+      "observedSpreadRatio": 1.0360001104159053,
+      "trials": [
+        {
+          "wallMs": 36.11791700000322,
+          "cpuMs": 39.982,
+          "rssBefore": 1328300032,
+          "rssAfter": 1328300032,
+          "modelMs": 0.04058600001735613,
+          "storeMs": 262.1119919999255,
+          "sdkAndHarnessWallMs": 4.994082000019262,
+          "checkpointBytes": 6862590,
+          "checkpoints": 336,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 37.418165999995836,
+          "cpuMs": 41.364,
+          "rssBefore": 1328300032,
+          "rssAfter": 1328300032,
+          "modelMs": 0.043709000034141354,
+          "storeMs": 257.11250900000596,
+          "sdkAndHarnessWallMs": 5.806625999946846,
+          "checkpointBytes": 6862590,
+          "checkpoints": 336,
+          "modelCalls": 160,
+          "failedAttempts": 0,
+          "effects": 144,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 116.60787499999424,
+      "p95Ms": 118.67045800000051,
+      "throughputTasksPerSecond": 8.500570258630848,
+      "observedSpreadRatio": 1.017688196444763,
+      "trials": [
+        {
+          "wallMs": 118.67045800000051,
+          "cpuMs": 127.842,
+          "rssBefore": 1328316416,
+          "rssAfter": 1328316416,
+          "modelMs": 0.014498000004095957,
+          "storeMs": 61.16699799995695,
+          "sdkAndHarnessWallMs": 57.488962000039464,
+          "checkpointBytes": 9764724,
+          "checkpoints": 201,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 116.60787499999424,
+          "cpuMs": 121.877,
+          "rssBefore": 1328316416,
+          "rssAfter": 1328316416,
+          "modelMs": 0.014170000016747508,
+          "storeMs": 60.47570500004076,
+          "sdkAndHarnessWallMs": 56.11799999993673,
+          "checkpointBytes": 9764724,
+          "checkpoints": 201,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 479.13300000000163,
+      "p95Ms": 480.1626249999972,
+      "throughputTasksPerSecond": 8.339452189203937,
+      "observedSpreadRatio": 1.0021489335946294,
+      "trials": [
+        {
+          "wallMs": 480.1626249999972,
+          "cpuMs": 513.165,
+          "rssBefore": 1328332800,
+          "rssAfter": 1328332800,
+          "modelMs": 0.049084999969636556,
+          "storeMs": 906.5276619997894,
+          "sdkAndHarnessWallMs": 89.58153800004948,
+          "checkpointBytes": 39058896,
+          "checkpoints": 804,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 479.13300000000163,
+          "cpuMs": 568.111,
+          "rssBefore": 1328332800,
+          "rssAfter": 1328332800,
+          "modelMs": 0.04341599995677825,
+          "storeMs": 902.1123699999589,
+          "sdkAndHarnessWallMs": 88.0866330001445,
+          "checkpointBytes": 39058896,
+          "checkpoints": 804,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 64,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 1885.695458000002,
+      "p95Ms": 1928.9117499999993,
+      "throughputTasksPerSecond": 8.388806043487136,
+      "observedSpreadRatio": 1.0229179594279945,
+      "trials": [
+        {
+          "wallMs": 1885.695458000002,
+          "cpuMs": 2103.585,
+          "rssBefore": 1328398336,
+          "rssAfter": 1328726016,
+          "modelMs": 0.19990799987135688,
+          "storeMs": 13783.32388499999,
+          "sdkAndHarnessWallMs": 220.25229100014985,
+          "checkpointBytes": 156236790,
+          "checkpoints": 3216,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 1928.9117499999993,
+          "cpuMs": 2322.28,
+          "rssBefore": 1328726016,
+          "rssAfter": 1328988160,
+          "modelMs": 0.21834400000807364,
+          "storeMs": 14159.89381199985,
+          "sdkAndHarnessWallMs": 224.53044300012698,
+          "checkpointBytes": 156236790,
+          "checkpoints": 3216,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 1,
+        "seed": 42
+      },
+      "p50Ms": 154.47379100001126,
+      "p95Ms": 154.7509160000045,
+      "throughputTasksPerSecond": 6.467788487547658,
+      "observedSpreadRatio": 1.0017939936490148,
+      "trials": [
+        {
+          "wallMs": 154.47379100001126,
+          "cpuMs": 164.926,
+          "rssBefore": 1329135616,
+          "rssAfter": 1329152000,
+          "modelMs": 0.0150389999471372,
+          "storeMs": 79.33804400007648,
+          "sdkAndHarnessWallMs": 75.12070799998764,
+          "checkpointBytes": 38850804,
+          "checkpoints": 201,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        },
+        {
+          "wallMs": 154.7509160000045,
+          "cpuMs": 166.898,
+          "rssBefore": 1329152000,
+          "rssAfter": 1329152000,
+          "modelMs": 0.01858300004096236,
+          "storeMs": 80.05987100009224,
+          "sdkAndHarnessWallMs": 74.6724619998713,
+          "checkpointBytes": 38850804,
+          "checkpoints": 201,
+          "modelCalls": 100,
+          "failedAttempts": 0,
+          "effects": 99,
+          "ttftMs": null,
+          "correctTasks": 1
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 4,
+        "seed": 42
+      },
+      "p50Ms": 639.2820000000065,
+      "p95Ms": 645.6624169999996,
+      "throughputTasksPerSecond": 6.225950238904351,
+      "observedSpreadRatio": 1.0099805985464834,
+      "trials": [
+        {
+          "wallMs": 639.2820000000065,
+          "cpuMs": 738.425,
+          "rssBefore": 1329184768,
+          "rssAfter": 1329217536,
+          "modelMs": 0.09283000011055265,
+          "storeMs": 1212.9807750000036,
+          "sdkAndHarnessWallMs": 115.4983299998421,
+          "checkpointBytes": 155403216,
+          "checkpoints": 804,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        },
+        {
+          "wallMs": 645.6624169999996,
+          "cpuMs": 801.82,
+          "rssBefore": 1329217536,
+          "rssAfter": 1329217536,
+          "modelMs": 0.06265699992945883,
+          "storeMs": 1226.6970269999001,
+          "sdkAndHarnessWallMs": 114.63841400023375,
+          "checkpointBytes": 155403216,
+          "checkpoints": 804,
+          "modelCalls": 400,
+          "failedAttempts": 0,
+          "effects": 396,
+          "ttftMs": null,
+          "correctTasks": 4
+        }
+      ]
+    },
+    {
+      "fixture": {
+        "scenario": "checkpoints",
+        "steps": 100,
+        "payloadBytes": 1024,
+        "concurrency": 16,
+        "seed": 42
+      },
+      "p50Ms": 2711.3966669999936,
+      "p95Ms": 2747.192916999993,
+      "throughputTasksPerSecond": 5.862320203335529,
+      "observedSpreadRatio": 1.0132021442807209,
+      "trials": [
+        {
+          "wallMs": 2747.192916999993,
+          "cpuMs": 3482.328,
+          "rssBefore": 1330233344,
+          "rssAfter": 1335214080,
+          "modelMs": 0.3246250001975568,
+          "storeMs": 20481.69013999999,
+          "sdkAndHarnessWallMs": 295.5398699997895,
+          "checkpointBytes": 621614070,
+          "checkpoints": 3216,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        },
+        {
+          "wallMs": 2711.3966669999936,
+          "cpuMs": 3277.623,
+          "rssBefore": 1335214080,
+          "rssAfter": 1405747200,
+          "modelMs": 0.3184250006743241,
+          "storeMs": 19965.58855100024,
+          "sdkAndHarnessWallMs": 303.8555269992212,
+          "checkpointBytes": 621614070,
+          "checkpoints": 3216,
+          "modelCalls": 1600,
+          "failedAttempts": 0,
+          "effects": 1584,
+          "ttftMs": null,
+          "correctTasks": 16
+        }
+      ]
+    }
+  ]
+}

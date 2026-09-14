@@ -734,6 +734,10 @@ console.log("INSTALLED_REALTIME_LIVE_SMOKE_OK");
     stdio: "inherit"
   });
 
+  const agwTypePath = join(consumerDirectory, "sdk-agw-consumer.ts");
+  writeFileSync(agwTypePath, readFileSync(join(scriptDirectory, "fixtures/sdk-agw-consumer.ts"), "utf8"));
+  execFileSync(join(workspaceDirectory, "node_modules/.bin/tsc"), ["--noEmit", "--strict", "--skipLibCheck", "--module", "NodeNext", "--target", "ES2022", agwTypePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
+
   const agwSmokePath = join(consumerDirectory, "sdk-agw-consumer.mjs");
   writeFileSync(agwSmokePath, readFileSync(join(scriptDirectory, "fixtures/sdk-agw-consumer.mjs"), "utf8"));
   execFileSync("node", [agwSmokePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });

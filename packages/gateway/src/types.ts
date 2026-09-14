@@ -1,5 +1,7 @@
 import type {
   AgentApprovalResponse,
+  AgentDefinition,
+  AgentRunInput,
   AgentCapabilities,
   AgentHookFailurePolicy,
   AgentHandoff,
@@ -16,6 +18,7 @@ import type {
   GenerateTextOutput,
   JsonValue,
   ModelCatalog,
+  ModelCostValuation,
   ModelMessage,
   ProviderAdapter,
   ReasoningConfig,
@@ -28,6 +31,9 @@ import type {
   ToolSet
 } from "@zhivex-ai/core";
 import type { ZodTypeAny } from "zod";
+import type { GatewayMetricsStore } from "./metrics.js";
+import type { GatewayCircuitBreaker } from "./circuit-breaker.js";
+import type { GatewayAdaptiveCandidate, GatewayAdaptiveRoutingPolicy } from "./adaptive-routing.js";
 
 export type GatewayProviderId =
   | "openai"
@@ -54,11 +60,13 @@ export type GatewayAttemptReasonCode =
   | "operation-skip"
   | "request-aborted"
   | "provider-error"
-  | "provider-success";
+  | "provider-success"
+  | "circuit-open";
 export type GatewayRouteDecisionReasonCode =
   | "routing-speed"
   | "routing-balanced"
-  | "routing-quality";
+  | "routing-quality"
+  | "routing-adaptive";
 
 export interface GatewayImageAttachment {
   dataUrl: string;
@@ -100,8 +108,13 @@ export interface GatewayRequest {
 }
 
 export interface GatewayAgentRequest extends Omit<GatewayRequest, "messages" | "systemPrompt"> {
+  /** Reuse a configured definition while routing its model through the existing Core loop. */
+  agent?: AgentDefinition;
+  context?: AgentRunInput["context"];
+  compaction?: AgentRunInput["compaction"];
+  executionEnvironment?: AgentRunInput["executionEnvironment"];
   prompt?: string;
-  messages?: GatewayMessage[];
+  messages?: GatewayInputMessage[];
   system?: string;
   instructions?: string;
   agentId?: string;
@@ -133,6 +146,9 @@ export interface GatewayAttempt {
   reasonCode?: GatewayAttemptReasonCode;
   retry?: number;
   targetRank?: number;
+  /** Reported provider usage for this attempt, never an estimated request total. */
+  usage?: TokenUsage;
+  cost?: ModelCostValuation;
 }
 
 export interface GatewayResponse {
@@ -150,6 +166,8 @@ export interface GatewayResponse {
     orderedTargets: GatewayModelTarget[];
     reasonCode?: GatewayRouteDecisionReasonCode;
     reason: string;
+    estimatedCosts?: ModelCostValuation[];
+    adaptive?: { policyVersion: string; candidates: GatewayAdaptiveCandidate[] };
   };
   steps: GenerateTextOutput["steps"];
   messages: GenerateTextOutput["messages"];
@@ -205,7 +223,17 @@ export interface GatewayRoutingScoreContext {
 
 export interface GatewayConfig {
   adapters: Partial<Record<GatewayProviderId, ProviderAdapter>>;
+  metrics?: GatewayMetricsStore;
+  circuitBreaker?: GatewayCircuitBreaker;
+  adaptiveRouting?: GatewayAdaptiveRoutingPolicy;
   modelCatalog?: ModelCatalog;
+  /** Opt-in valuation from the detailed catalog; does not replace the legacy rate budget. */
+  costAccounting?: {
+    unknownCostPolicy?: GatewayUnknownCostPolicy;
+    expectedOutputTokens?: number;
+    cacheAssumption?: "reported" | "none";
+    reasoningAccounting?: Partial<Record<GatewayProviderId, "included" | "additional">>;
+  };
   providerCostsPer1kTokens?: Partial<Record<GatewayProviderId, number>>;
   latencyBiasMs?: Partial<Record<GatewayProviderId, number>>;
   unknownCostPolicy?: GatewayUnknownCostPolicy;

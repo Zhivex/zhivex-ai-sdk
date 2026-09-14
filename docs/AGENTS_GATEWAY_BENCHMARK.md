@@ -28,3 +28,5 @@ node scripts/benchmarks/compare-baselines.mjs artifacts/agw-bun-1.json artifacts
 ```
 
 The comparison rejects different source/runtime/environment/fixture metadata. The runner rejects source-commit or hashed-artifact changes during measurement. Run sequentially with no builds or tests competing for CPU; run-level process isolation does not isolate the host from unrelated activity.
+
+The [2026-09-14 artifacts](./benchmarks/2026-09-14/README.md) retain the initial matrices and checkpoint before/after measurements. Reproduce the serialization experiment with `node scripts/benchmarks/checkpoint-serialization.mjs /tmp/checkpoint.json` after building the desired revision. It counts full-state JSON serialization, includes instrumentation overhead, and validates model/tool effects before reporting.

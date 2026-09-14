@@ -210,12 +210,24 @@ describe("gateway canonical tool history", () => {
     expect(stream).toHaveBeenCalledTimes(1);
   });
 
-  it("explicitly rejects canonical histories on agent surfaces", async () => {
+  it.each([false, true])("imports resolved history into agents without reexecution (stream=%s)", async streaming => {
     const { gateway, fetch } = fixture();
-    // JS users cannot bypass the deliberately legacy-only agent input contract.
-    const request = { primary, messages: history() } as unknown as Parameters<typeof gateway.runAgent>[0];
-    await expect(gateway.runAgent(request)).rejects.toThrow("not supported by agent");
-    expect(() => gateway.streamAgent(request)).toThrow("not supported by agent");
+    fetch.mockResolvedValue(streaming ? streamResponse() : response());
+    const execute = vi.fn();
+    const request = { primary, messages: history(), tools: { weather: tool({ name: "weather", schema: z.object({ city: z.string() }), execute }) } };
+    const result = streaming ? await gateway.streamAgent(request).collect() : await gateway.runAgent(request);
+    expect(result.outputText).toBe("18 °C");
+    expect(result.state.metadata?.gatewayPortableHistory).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    const body = JSON.parse(String(fetch.mock.calls[0]![1]!.body));
+    expect(body.messages[1].content[1].id).toBe("call_weather_1");
+  });
+  it("rejects ambiguous history and durable input combinations before providers", async () => {
+    const { gateway, fetch } = fixture();
+    for (const extra of [{ prompt: "conflict" }, { runId: "existing" }, { idempotencyKey: "key" }]) {
+      await expect(gateway.runAgent({ primary, messages: history(), ...extra })).rejects.toThrow();
+      expect(() => gateway.streamAgent({ primary, messages: history(), ...extra })).toThrow();
+    }
     expect(fetch).not.toHaveBeenCalled();
   });
 });

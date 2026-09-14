@@ -160,7 +160,7 @@ messages. System messages must precede conversation turns.
 | --- | --- |
 | `generate`, `streamText` | Supported, including usage estimates, attempts, finish reasons, cancellation and routing |
 | `generateObject`, `streamObject` | Same input validation and routing; destination must also support the requested object mode |
-| `runAgent`, `streamAgent` | Legacy `GatewayMessage[]` only; canonical input is explicitly rejected |
+| `runAgent`, `streamAgent` | Fresh canonical history imports; durable resumes use state/runId without resupplying messages |
 | Anthropic Messages | Text, user images, assistant tool calls, tool results and native `is_error` |
 | OpenAI Chat / Responses | Callable tool history, including multiple results; explicit JSON success/error envelopes |
 | DeepSeek Chat | Same JSON envelope support; portable replay defaults to non-thinking; reasoning-only models are excluded |
@@ -213,3 +213,39 @@ in [the delivery record](../../docs/GATEWAY_TOOL_HISTORY_DELIVERY.md).
 ## Usage accounting
 
 `generate`, `generateObject`, `streamText().collect()` and `streamObject().collect()` preserve all reported `TokenUsage` fields, including `cachedInputTokens`, `cacheWriteTokens`, `reasoningTokens` and `speed`. Reported zeros remain zeros; missing optional details remain absent. Only missing `inputTokens`/`outputTokens` are estimated from text and a missing `totalTokens` is derived from those base counters. `estimated` is true if any of those three base counters was missing, including a derived total. Reasoning/cache details are never added again to the total. Agent results retain their existing usage aggregation without an `estimated` flag.
+
+## Detailed cost valuation
+
+Opt in with `costAccounting: { unknownCostPolicy: "allow" }` and an immutable `modelCatalog` carrying pricing metadata. `routeDecision.estimatedCosts` contains cold-cache preflight estimates from input length and `expectedOutputTokens` (or request `maxTokens`). They are estimates, not spending limits. With `unknownCostPolicy: "reject"`, destinations with unknown quotes are excluded before a call. The existing `maxCostPer1kTokens` budget remains independent.
+
+Each actual `attempt` carries its reported `usage` and `cost`, including provider/model, currency, catalog/pricing versions, optional provenance source, components, assumptions and unknown reasons. A failed attempt without usage has `amount: null`; a successful fallback does not make that failure free. Sum amounts only when every actual attempt is known or explicitly estimated; otherwise total cost remains unknown. Streams use terminal usage, and partial stream failures preserve any usage already received.
+
+`calculateModelCost()` is also exported from Core and SDK for standalone valuation. Input tokens must include cached reads and cache writes; these are subtracted from ordinary input before applying their separate prices. Missing cache counters remain unknown unless `cacheAssumption: "none"` explicitly assumes zeros. Missing relevant prices or base usage never become a free estimate. Long-context multipliers apply above the catalog threshold to all input classes and output. Zero tokens incur zero cost even when that unused category has no rate; its rate remains null.
+
+Reasoning semantics vary between adapters. Set `reasoningAccounting: { openai: "included", gemini: "additional" }` only for the provider protocols you have verified: included leaves the output count unchanged, additional adds reasoning once. Without an explicit setting, a positive reasoning counter produces an unknown valuation. For standalone valuation this setting is a single string. The catalog does not describe fast-tier pricing, so `speed: "fast"` remains unknown. Invalid reported counters produce unknown accounting without retrying a successful model call. This API is neither billing nor a strict monetary budget.
+
+## Local destination metrics
+
+Pass `metrics: createGatewayMetrics({ windowMs: 60_000, maxTargets: 128, maxSamplesPerTarget: 256 })` to opt in. Query `metrics.snapshot({ provider, modelId })` for in-flight count, recent successes/errors/cancellations, full-attempt p50/p95 and first-text p95. Cold destinations return undefined; expired samples have no latency estimates. Client cancellation is excluded from provider error and latency samples. The clock is injectable through `now` for deterministic tests.
+
+Storage is bounded by targets and samples. The least recently touched idle destination is evicted when full; if all target slots are active, a new destination remains untracked until capacity is available. No prompts, outputs, error payloads or credentials are retained. The default store is local to the process; applications may inject the synchronous `GatewayMetricsStore` contract. Hook failures are best effort. Do not put expensive synchronous work in a metrics hook.
+
+With metrics enabled, explicitly returning an event/text/object stream iterator cancels that routed operation and releases the in-flight slot. This applies to all consumers of that operation, including collect. Consume the stream fully if you also need its final result. Caller abort and timeout also release slots even when a provider ignores its signal. An operation with no explicit return/abort continues until completion or timeout; the SDK cannot detect garbage collection as abandonment.
+
+## Circuit breaker and adaptive routing
+
+Pass `circuitBreaker: createGatewayCircuitBreaker({ failureThreshold: 5, cooldownMs: 30_000 })` to opt in to local closed/open/half-open circuits. Retryable errors (including 429/5xx and attempt timeouts) accumulate; validation, authentication and client cancellation do not. Open circuits receive no calls. Recovery allows one concurrent probe by default; successful probes close the circuit, failed probes reopen it. Late results from an older circuit epoch cannot close a newly opened circuit. When all eligible circuits are unavailable the operation raises `GatewayCircuitOpenError`.
+
+Cooldown is `min(maxCooldownMs, max(cooldownMs, Retry-After))`, with defaults of 60 seconds maximum and 30 seconds minimum. The circuit never sleeps until recovery: it skips the target. Existing bounded retry backoff applies only while the circuit remains closed. Target storage is bounded; closed idle entries may be evicted, while capacity exhausted by active/open entries refuses admission. State observers receive only target IDs, state and timestamps, and run best effort. Metrics/circuit-enabled stream iterator return cancels the operation. Neither feature coordinates across processes.
+
+`adaptiveRouting` is an explicit alternative to legacy scoring. Supply a policy version, nonnegative weights for `latency`, `cost`, `quality`, `load`, `errorRate`, positive `latencyScaleMs`/`costScale`, and explicit `coldStart`, `unknownCost`, `missingQuality` policies (`allow`/`reject`). Quality profiles carry a target, task `intent`, score in [0,1] and evaluation version. There are no model-name quality heuristics in this mode.
+
+The score is quality reward minus normalized p95 latency, estimated request cost, in-flight load and observed error rate penalties. Enable `metrics` and `costAccounting` for those signals. Missing signals under `allow` omit that score term and remain listed as missing; `reject` excludes the destination. Expired samples become cold start. Capabilities and circuits are filtered before ordering, and circuits are rechecked atomically before each call. Ties preserve primary/fallback input order. `routeDecision.adaptive` records policy version, signals, profile versions and exclusions. Do not configure both `scoreTarget` and `adaptiveRouting`. These rules are transparent heuristics, not a claim of globally optimal routing.
+
+## Composing configured agents
+
+Pass `agent: configuredAgent` to `runAgent` or `streamAgent`. The gateway substitutes a routed LanguageModel and uses the existing Core runtime. Context schema, guardrails, output schema, compactor, approval signer, subagents, harness binding, environment, hooks and store remain on the definition. Supply ephemeral `context` on each invocation. Defined request options override definition defaults; policy and metadata merge shallowly. `compaction: false` explicitly disables the default for an invocation. The original definition is not mutated.
+
+Configured gateway runs persist a `gatewayAgentRouteBinding` metadata value for agent ID, primary/fallback targets, routing policy version and harness fingerprint. Resume must retain that binding; changing it fails before provider work. An older direct run without this binding requires a separately designed migration instead of silent adoption. Core still validates harness/environment fingerprints. Reserve `gatewayAgentRouteBinding` and `gatewayPortableHistory` for runtime use.
+
+For canonical history, import a fresh run with `messages` only. Do not combine import with prompt, state, runId, handoff, approvals or idempotencyKey. Resolved historical tools are input, never effects to replay. Then resume with store/runId or state and approvals as needed, without messages. Portable-history capability checks survive store reloads and compaction. Legacy inputs remain supported. Provider-specific approval data stays in durable state; it is not part of the portable history import format.

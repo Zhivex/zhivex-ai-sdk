@@ -731,6 +731,36 @@ const executeTools = async (
     }
   };
 
+  if (parallel && options.toolExecution?.independentOnly) {
+    if (options.toolExecution.maxConcurrency !== undefined && (!Number.isSafeInteger(options.toolExecution.maxConcurrency) || options.toolExecution.maxConcurrency < 1)) throw new ValidationError("Independent tool maxConcurrency must be a positive integer.");
+    const independent = (index: number) => validatedCalls[index]?.tool?.independent === true && validatedCalls[index]?.tool?.metadata?.type !== "subagent";
+    let start = 0;
+    while (start < validatedCalls.length) {
+      let end = start + 1;
+      if (independent(start)) while (end < validatedCalls.length && independent(end)) end++;
+      let cursor = start;
+      let failure: unknown;
+      let failed = false;
+      const workers = Array.from({ length: Math.min(maxConcurrency, end - start) }, async () => {
+        while (cursor < end && !failed) {
+          const index = cursor++;
+          try {
+            await executeSingleTool(validatedCalls[index], index);
+            if (stopOnError && results[index]?.isError) throw new Error(`Tool "${validatedCalls[index]!.call.name}" failed: ${results[index]?.error?.message ?? "Unknown tool error."}`);
+          } catch (error) { if (!failed) failure = error; failed = true; }
+        }
+      });
+      // Finish active journal writes before publishing a failure or starting a serial barrier.
+      await Promise.all(workers);
+      if (failed) {
+        if (failure instanceof ToolExecutionSuspendedError) throw new ToolExecutionSuspendedError(failure.approvals, results.filter((result): result is ToolExecutionResult => Boolean(result)));
+        throw failure;
+      }
+      start = end;
+    }
+    return results;
+  }
+
   if (!parallel || validatedCalls.length <= 1) {
     for (const [index, item] of validatedCalls.entries()) {
       try {

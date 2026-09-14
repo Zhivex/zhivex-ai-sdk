@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "mode": "offline-instrumented",
+  "runtime": "v24.11.0",
+  "agentHash": "4691673445ee2ebbfcd3e4760cce5d4393724147d5ff7744796db143ea6f3ca2",
+  "limitations": [
+    "JSON.stringify instrumentation adds overhead; compare work counts, not uninstrumented production speed",
+    "In-memory store, compact JSON logical bytes, process RSS endpoints"
+  ],
+  "rows": [
+    {
+      "steps": 1,
+      "payloadBytes": 1024,
+      "trials": [
+        {
+          "wallMs": 0.2652080000000012,
+          "cpuMs": 0.344,
+          "rssBefore": 73023488,
+          "rssAfter": 73039872,
+          "serializations": 25,
+          "writes": 3,
+          "logicalCheckpointBytes": 2052
+        },
+        {
+          "wallMs": 0.19745799999999747,
+          "cpuMs": 0.258,
+          "rssBefore": 73039872,
+          "rssAfter": 73089024,
+          "serializations": 25,
+          "writes": 3,
+          "logicalCheckpointBytes": 2052
+        },
+        {
+          "wallMs": 0.201749999999997,
+          "cpuMs": 0.275,
+          "rssBefore": 73089024,
+          "rssAfter": 73105408,
+          "serializations": 25,
+          "writes": 3,
+          "logicalCheckpointBytes": 2052
+        }
+      ]
+    },
+    {
+      "steps": 10,
+      "payloadBytes": 1024,
+      "trials": [
+        {
+          "wallMs": 4.894458,
+          "cpuMs": 5.985,
+          "rssBefore": 78659584,
+          "rssAfter": 82837504,
+          "serializations": 151,
+          "writes": 21,
+          "logicalCheckpointBytes": 397775
+        },
+        {
+          "wallMs": 4.315459000000004,
+          "cpuMs": 4.539,
+          "rssBefore": 82837504,
+          "rssAfter": 83017728,
+          "serializations": 151,
+          "writes": 21,
+          "logicalCheckpointBytes": 397775
+        },
+        {
+          "wallMs": 4.4005829999999975,
+          "cpuMs": 4.603,
+          "rssBefore": 83034112,
+          "rssAfter": 83197952,
+          "serializations": 151,
+          "writes": 21,
+          "logicalCheckpointBytes": 397775
+        }
+      ]
+    },
+    {
+      "steps": 100,
+      "payloadBytes": 1024,
+      "trials": [
+        {
+          "wallMs": 341.28720899999996,
+          "cpuMs": 347.093,
+          "rssBefore": 156614656,
+          "rssAfter": 208683008,
+          "serializations": 1411,
+          "writes": 201,
+          "logicalCheckpointBytes": 37936391
+        },
+        {
+          "wallMs": 353.88625,
+          "cpuMs": 372.397,
+          "rssBefore": 208683008,
+          "rssAfter": 247775232,
+          "serializations": 1411,
+          "writes": 201,
+          "logicalCheckpointBytes": 37936391
+        },
+        {
+          "wallMs": 344.49795900000004,
+          "cpuMs": 351.119,
+          "rssBefore": 247775232,
+          "rssAfter": 248627200,
+          "serializations": 1411,
+          "writes": 201,
+          "logicalCheckpointBytes": 37936391
+        }
+      ]
+    }
+  ]
+}

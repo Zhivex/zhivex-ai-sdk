@@ -1441,6 +1441,10 @@ A group `idempotencyKey` is namespaced by each member's stable `name` (or `agent
 
 Group status follows this precedence: `failed` (including rejected members), `timed_out`, `cancel_requested`, `running`, `queued`, `waiting_approval` (legacy `suspended` is normalized), `cancelled`, `completed`. An empty group completes. Inspect every member result when terminal failures coexist with active work. Approval waits do not trigger `stopOnError`.
 
+For agents with subagents, opt in to ordinary-tool overlap with `toolExecution: { parallel: true, independentOnly: true, maxConcurrency: 2 }`. Only tools explicitly declared `independent: true` may overlap, in contiguous batches; subagents and other tools are serial barriers. The application owns the independence assertion. Whole-batch approval/budget preflight still precedes execution, results retain call order, and active journal writes settle before failure is published. The default remains serial when subagents are configured.
+
+Checkpoint persistence reuses the validated serialized snapshot. The size limit measures normalized compact JSON including the next revision; no checkpoints or CAS checks are removed. See [the offline measurements](./docs/AGENTS_GATEWAY_BENCHMARK.md).
+
 Use `handoff` for sequential ownership transfer, `subagents` for model-driven delegation inside an agent loop, and `runAgentGroup()` for deterministic fan-out from application code.
 
 ### Subagent Defaults
@@ -2973,7 +2977,7 @@ Gateway object routing resolves `auto` per destination, including fallback betwe
 
 `@zhivex-ai/gateway` is the optional SDK-local routing and fallback package for multi-provider setups. It is separate from the main `@zhivex-ai/sdk` facade and separate from any Zhivex-hosted Gateway API. See [`packages/gateway/README.md`](./packages/gateway/README.md) for routing examples and package-specific behavior.
 
-`GatewayRequest.messages` also accepts canonical core `ModelMessage` entries. Text/object generation and streaming preserve resolved tool history on Anthropic, OpenAI, DeepSeek and Qwen, with explicit validation and cross-provider fallback. Adapters declare native or JSON-envelope history support; older/incompatible destinations are skipped. Portable DeepSeek/Qwen replay uses non-thinking mode; agent operations retain legacy message input. See the gateway README for the supported subset and the [delivery evidence](./docs/GATEWAY_TOOL_HISTORY_DELIVERY.md) for artifact and publication status.
+`GatewayRequest.messages` also accepts canonical core `ModelMessage` entries. Text/object generation and streaming preserve resolved tool history on Anthropic, OpenAI, DeepSeek and Qwen, with explicit validation and cross-provider fallback. Adapters declare native or JSON-envelope history support; older/incompatible destinations are skipped. Portable DeepSeek/Qwen replay uses non-thinking mode; agent operations accept canonical history on fresh runs and resume durable state without resupplying history. See the gateway README for the supported subset and the [delivery evidence](./docs/GATEWAY_TOOL_HISTORY_DELIVERY.md) for artifact and publication status.
 
 `generateObject()` and `streamObject()` now route through the same gateway metadata path as text generation. Native object mode requires `structuredOutput`; prompted object mode requires `jsonMode`; auto mode accepts either capability and skips targets that cannot satisfy object output before making a provider call.
 
