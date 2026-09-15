@@ -888,11 +888,11 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
   };
 };
 
-const saveStateWithRevision = async (store: AgentRunStore, state: AgentRunState) => {
+const saveStateWithRevision = async (store: AgentRunStore, state: AgentRunState, serializedNextState?: string) => {
   const expectedRevision = state.revision ?? 0;
   const nextRevision = expectedRevision + 1;
   const nextState = { ...state, revision: nextRevision } satisfies AgentRunState;
-  await store.save(cloneState(nextState), { expectedRevision });
+  await store.save(serializedNextState === undefined ? cloneState(nextState) : JSON.parse(serializedNextState) as AgentRunState, { expectedRevision });
   state.revision = nextRevision;
 };
 
@@ -902,9 +902,9 @@ const claimAgentExecution = async <TModel extends LanguageModel>(
 ) => {
   state.status = "running";
   state.updatedAt = Date.now();
-  assertStateSize(agent, state);
+  const serialized = assertStateSize(agent, agent.store ? normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }) : state);
   if (agent.store) {
-    await saveStateWithRevision(agent.store, state);
+    await saveStateWithRevision(agent.store, state, serialized);
   }
 };
 
@@ -917,12 +917,14 @@ const assertStateSize = <TModel extends LanguageModel>(
   if (!Number.isSafeInteger(limit) || limit < 1) {
     throw new ValidationError('Agent policy "maxStateBytes" must be a positive integer.');
   }
-  const bytes = new TextEncoder().encode(JSON.stringify(state)).byteLength;
+  const serialized = JSON.stringify(state);
+  const bytes = new TextEncoder().encode(serialized).byteLength;
   if (bytes > limit) {
     throw new ValidationError(
       `Agent run state is ${bytes} bytes and exceeds maxStateBytes=${limit}. Offload large tool outputs to artifacts or raise the explicit limit.`
     );
   }
+  return serialized;
 };
 
 const persistState = async <TModel extends LanguageModel>(
@@ -931,9 +933,9 @@ const persistState = async <TModel extends LanguageModel>(
   policy?: AgentRunPolicy
 ) => {
   state.updatedAt = Date.now();
-  assertStateSize(agent, state, policy);
+  const serialized = assertStateSize(agent, agent.store ? normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }) : state, policy);
   if (agent.store) {
-    await saveStateWithRevision(agent.store, state);
+    await saveStateWithRevision(agent.store, state, serialized);
   }
   await emitTelemetryEvent(agent, {
     type: "state-saved",
@@ -1202,6 +1204,13 @@ const resolveContext = async <
 
   const metadata = cloneMetadata(agent.metadata, loadedState?.metadata, input.metadata, input.handoff?.metadata);
   if (loadedState) {
+    const groupIdentity = input.metadata?.agentGroupIdentity;
+    if (groupIdentity !== undefined && (
+      loadedState.metadata?.agentGroupIdentity !== groupIdentity ||
+      loadedState.agentId !== agent.id
+    )) {
+      throw new ConflictError("Agent group idempotency key belongs to a different member or agent.");
+    }
     bindDurableRuntime(agent, input, loadedState, executionEnvironmentBinding);
     const maxSteps = input.maxSteps ?? loadedState.maxSteps;
     const resumed = await applyApprovalResponses(
@@ -1715,7 +1724,7 @@ const createGenerateOptions = <
   ].filter((value): value is number => value !== undefined);
   const maxTokens = tokenCeilings.length ? Math.min(...tokenCeilings) : undefined;
   const requestedToolExecution = input.toolExecution ?? agent.toolExecution;
-  const toolExecution = agent.subagents?.length
+  const toolExecution = agent.subagents?.length && !(requestedToolExecution?.parallel && requestedToolExecution.independentOnly)
     ? {
         ...requestedToolExecution,
         parallel: false,
@@ -2415,7 +2424,38 @@ export const runAgentGroup = async (
   agents: AgentGroupMember[],
   input: AgentGroupRunInput = {}
 ): Promise<AgentGroupRunOutput> => {
-  const { stopOnError, runId: _runId, state: _state, approvals: _approvals, handoff: _handoff, ...sharedInput } = input;
+  const { stopOnError, maxConcurrency, runId: _runId, state: _state, approvals: _approvals, handoff: _handoff, ...sharedInput } = input;
+  if (maxConcurrency !== undefined && (!Number.isSafeInteger(maxConcurrency) || maxConcurrency < 1)) {
+    throw new ValidationError('Agent group "maxConcurrency" must be a positive safe integer.');
+  }
+  // Validate the complete group before any member can claim a key or invoke a model.
+  const identities = new Set<string>();
+  const claims: Array<{ store: AgentDefinition["store"]; key: string }> = [];
+  const memberInputs = agents.map((member) => {
+    const merged = { ...sharedInput, ...member.input } as AgentRunInput;
+    ensureValidScope(merged.scope);
+    ensureValidIdempotencyInput(merged, member.agent.store);
+    if (!merged.idempotencyKey) return merged;
+    const identity = member.name ?? member.agent.id;
+    if (!identity || identities.has(identity)) {
+      throw new ValidationError("Idempotent agent group members require unique names or agent IDs.");
+    }
+    identities.add(identity);
+    const key = member.input?.idempotencyKey ?? `agent-group:${JSON.stringify([input.idempotencyKey, identity])}`;
+    const scope = merged.scope;
+    const scopedKey = JSON.stringify([scope?.namespace ?? "default", scope?.tenantId, scope?.userId, key]);
+    if (claims.some((claim) => claim.store === member.agent.store && claim.key === scopedKey)) {
+      throw new ConflictError("Agent group members cannot share an explicit idempotency key in the same store and scope.");
+    }
+    claims.push({ store: member.agent.store, key: scopedKey });
+    return {
+      ...merged,
+      idempotencyKey: key,
+      metadata: cloneMetadata(input.metadata, member.input?.metadata, {
+        agentGroupIdentity: JSON.stringify([input.idempotencyKey ?? null, identity])
+      })
+    };
+  });
   const parentRunId = input.parentRunId;
   const controllers = agents.map(() => new AbortController());
   let failFastTriggered = false;
@@ -2432,19 +2472,21 @@ export const runAgentGroup = async (
     });
   };
 
-  const runs = agents.map(async (member, index) => {
+  const runMember = async (member: AgentGroupMember, index: number) => {
     const merged = createMergedAbortSignal(
       input.abortSignal,
       member.input?.abortSignal,
       controllers[index]!.signal
     );
     try {
+      if (merged.signal?.aborted) {
+        throw new DOMException("Agent group member aborted before execution.", "AbortError");
+      }
       const runInput = {
-        ...sharedInput,
-        ...(member.input ?? {}),
+        ...memberInputs[index],
         parentRunId: member.input?.parentRunId ?? parentRunId,
         abortSignal: merged.signal,
-        metadata: cloneMetadata(input.metadata, member.input?.metadata, {
+        metadata: cloneMetadata(input.metadata, memberInputs[index]?.metadata, {
           ...(member.name ? { agentGroupMember: member.name } : {})
         })
       } as AgentRunInput;
@@ -2459,8 +2501,19 @@ export const runAgentGroup = async (
     } finally {
       merged.cleanup();
     }
-  });
-  const settled = await Promise.allSettled(runs);
+  };
+  const settled: PromiseSettledResult<AgentRunOutput>[] = new Array(agents.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(maxConcurrency ?? agents.length, agents.length) }, async () => {
+    while (nextIndex < agents.length) {
+      const index = nextIndex++;
+      try {
+        settled[index] = { status: "fulfilled", value: await runMember(agents[index]!, index) };
+      } catch (reason) {
+        settled[index] = { status: "rejected", reason };
+      }
+    }
+  }));
   const outputs = settled.map((result, index) => {
     const member = agents[index]!;
     if (result.status === "fulfilled") {
@@ -2486,12 +2539,15 @@ export const runAgentGroup = async (
       }
     };
   });
-  const failed = outputs.some(
-    (output) => output.status === "rejected" || output.output?.status === "failed" || output.output?.status === "timed_out"
-  );
+  const precedence: AgentRunOutput["status"][] = [
+    "failed", "timed_out", "cancel_requested", "running", "queued", "waiting_approval", "suspended", "cancelled", "completed"
+  ];
+  const status = precedence.find((status) => outputs.some((output) =>
+    output.status === "rejected" ? status === "failed" : output.output?.status === status
+  )) ?? "completed";
 
   return {
-    status: stopOnError && failed ? "failed" : failed ? "failed" : "completed",
+    status,
     parentRunId,
     outputs
   };

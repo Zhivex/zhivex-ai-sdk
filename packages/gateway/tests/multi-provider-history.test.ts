@@ -61,6 +61,30 @@ describe.each(cases)("$provider $apiMode canonical history", ({ provider, modelI
     expect(result.messages.slice(0, messages.length)).toEqual(messages);
   });
 
+  it.each([false, true])("imports history into an agent and preserves error discriminants (stream=%s)", async (streaming) => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response(apiMode, streaming));
+    const adapter = factory({ apiKey: "test", fetch });
+    const execute = vi.fn();
+    const gateway = createGateway({ adapters: { [provider]: adapter }, maxRetries: 0 });
+    const request = { primary: { provider, modelId }, messages, providerOptions: provider === "deepseek" ? {} : { apiMode }, tools: { weather: tool({ name: "weather", schema: z.object({ city: z.string() }), execute }) } };
+    const result = streaming ? await gateway.streamAgent(request).collect() : await gateway.runAgent(request);
+    expect(result).toMatchObject({ outputText: "continued", finishReason: "stop", usage: { inputTokens: 20, outputTokens: 3, totalTokens: 23 } });
+    expect(result.attempts).toHaveLength(1);
+    expect(execute).not.toHaveBeenCalled();
+    const body = JSON.parse(String(fetch.mock.calls[0]![1]!.body));
+    const results = apiMode === "chat" ? body.messages.filter((m: any) => m.role === "tool") : body.input.filter((m: any) => m.type === "function_call_output");
+    expect(results.map((r: any) => r.tool_call_id ?? r.call_id)).toEqual(["weather_2", "weather_1"]);
+    expect(results.map((r: any) => JSON.parse(r.content ?? r.output))).toEqual([
+      { error: { message: "private failure" } }, { output: { error: { message: "private failure" } } }
+    ]);
+    const calls = apiMode === "chat" ? body.messages[1].tool_calls : body.input.filter((m: any) => m.type === "function_call");
+    expect(calls.map((c: any) => c.id ?? c.call_id)).toEqual(["weather_1", "weather_2"]);
+    expect(JSON.parse(calls[0].arguments ?? calls[0].function.arguments)).toEqual({ city: "Buenos Aires", nested: { units: ["C"] } });
+    if (provider === "deepseek") expect(body.thinking).toEqual({ type: "disabled" });
+    if (provider === "qwen") expect(body.enable_thinking).toBe(false);
+    expect(result.messages.slice(0, messages.length)).toEqual(messages);
+  });
+
   it("retains raw serialization for existing direct SDK consumers and fixes multiple results", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response(apiMode, false));
     await factory({ apiKey: "test", fetch })(modelId).generate({ messages, providerOptions: provider === "deepseek" ? { thinking: { type: "disabled" } } : { apiMode, enable_thinking: false } });

@@ -688,3 +688,6 @@ export * from "./ui.js";
 export { createStructuredOutputPrompt } from "./structured-output-prompt.js";
 
 export { withResponseRetry } from "./http-retry.js";
+
+export { calculateModelCost } from "./model-cost.js";
+export type { ModelCostInput, ModelCostValuation } from "./model-cost.js";

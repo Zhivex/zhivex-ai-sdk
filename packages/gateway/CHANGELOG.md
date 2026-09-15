@@ -1,5 +1,26 @@
 # @zhivex-ai/gateway
 
+## 1.3.0
+
+### Minor Changes
+
+- a909491: Add catalog-backed model cost valuation with cache breakdown, long-context pricing, explicit reasoning semantics, provenance and unknown-cost handling. Gateway costAccounting adds opt-in request quotes and per-attempt reported valuations without changing the legacy rate budget or retrying successful calls on accounting errors.
+- a909491: Add bounded opt-in local destination metrics with in-flight counts, rolling latency and TTFT, error/cancellation separation, and an injectable clock/store. Metrics-enabled stream iterator cancellation aborts the routed operation and releases its slot without waiting for an uncooperative provider.
+- a909491: Add opt-in local circuit breaking and explainable adaptive gateway routing, portable agent history import, and configured agent composition with durable route binding.
+  
+  Allow explicitly independent ordinary tools to overlap with subagents configured while keeping serial barriers and journal completion ordering. Reuse validated checkpoint serialization without removing persistence boundaries, and measure the normalized next revision for state limits.
+
+### Patch Changes
+
+- 66162f8: Isolate idempotent agent group members by stable identity, reject key collisions, and report pending and cancelled group states instead of premature completion. Existing callers must handle the expanded group status union and reconcile legacy shared group keys before replay.
+  
+  Preserve complete reported TokenUsage in gateway text/object generation and streaming collection, estimating only missing base counters.
+- Updated dependencies [a909491]
+- Updated dependencies [66162f8]
+- Updated dependencies [631b733]
+- Updated dependencies [a909491]
+  - @zhivex-ai/core@1.17.0
+
 ## 1.2.2
 
 ### Patch Changes

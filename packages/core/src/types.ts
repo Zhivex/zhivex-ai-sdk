@@ -182,6 +182,8 @@ export interface RetryOptions {
 
 export interface ToolExecutionOptions {
   parallel?: boolean;
+  /** Only explicitly independent ordinary tools may overlap; all others form serial barriers. */
+  independentOnly?: boolean;
   maxConcurrency?: number;
   timeoutMs?: number;
   stopOnError?: boolean;
@@ -1245,6 +1247,8 @@ export interface ToolDefinition<
   TContext = any
 > {
   name: string;
+  /** Application assertion that this tool may overlap with other independent tools. */
+  independent?: boolean;
   description?: string;
   schema: TSchema;
   metadata?: Record<string, JsonValue>;
@@ -2305,6 +2309,8 @@ export interface AgentGroupMember<TModel extends LanguageModel = LanguageModel> 
 
 export type AgentGroupRunInput<TModel extends LanguageModel = LanguageModel> = AgentRunInput<TModel> & {
   stopOnError?: boolean;
+  /** Maximum active members. Omitted means all members may run concurrently. */
+  maxConcurrency?: number;
 };
 
 export interface AgentGroupMemberResult {
@@ -2318,7 +2324,7 @@ export interface AgentGroupMemberResult {
 }
 
 export interface AgentGroupRunOutput {
-  status: "completed" | "failed";
+  status: AgentStatus;
   parentRunId?: string;
   outputs: AgentGroupMemberResult[];
 }

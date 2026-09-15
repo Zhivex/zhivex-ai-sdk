@@ -830,3 +830,6 @@ export type {
   UIMessageToolApprovalRequestChunk,
   UISessionFinishChunk
 } from "@zhivex-ai/core";
+
+export { calculateModelCost } from "@zhivex-ai/core";
+export type { ModelCostInput, ModelCostValuation, TokenUsage } from "@zhivex-ai/core";
