@@ -401,6 +401,7 @@ const evaluateExpectations = (
   expectations: AgentEvaluationExpectations | undefined
 ): string[] => {
   const failures: string[] = [];
+  if (output.state.taskOutcome?.status === "needs_reconciliation") failures.push("Task has indeterminate effects requiring reconciliation.");
   if (!expectations) {
     return failures;
   }

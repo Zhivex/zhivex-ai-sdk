@@ -1,0 +1,34 @@
+{
+  "total": 60,
+  "passed": 60,
+  "blocked": 0,
+  "failed": 0,
+  "byScenario": {
+    "A3": {
+      "total": 30,
+      "passed": 30,
+      "toolAttempts": 0,
+      "effects": 0,
+      "recovered": 0,
+      "blocked": 0,
+      "duplicateToolAttempts": 0
+    },
+    "A4": {
+      "total": 30,
+      "passed": 30,
+      "toolAttempts": 30,
+      "effects": 30,
+      "recovered": 30,
+      "blocked": 0,
+      "duplicateToolAttempts": 0
+    }
+  },
+  "limitations": [
+    "Offline fixture; no model-quality or monetary-cost claim",
+    "Common idempotent effect service protects effects; count tool attempts separately",
+    "A4 holds HTTP response after durable effect; not power loss or concurrent workers",
+    "A4 reported separately; blocked recovery is not task success",
+    "Routing and live models not executed",
+    "Different stores and integration APIs; no performance ranking"
+  ]
+}

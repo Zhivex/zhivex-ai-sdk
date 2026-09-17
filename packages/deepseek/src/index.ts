@@ -96,7 +96,8 @@ const capabilities: ModelCapabilities = {
   }
 };
 
-const DEEPSEEK_VISION_MODEL = "deepseek-v4-flash-vision-exp";
+const DEEPSEEK_VISION_MODEL = "deepseek-flash";
+const DEEPSEEK_VISION_MODELS = new Set([DEEPSEEK_VISION_MODEL, "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"]);
 const DEEPSEEK_VISION_MAX_INLINE_IMAGE_BYTES = 32 * 1024 * 1024;
 const DEEPSEEK_VISION_MAX_REQUEST_BYTES = 48 * 1024 * 1024;
 const DEEPSEEK_VISION_MEDIA_TYPES = new Set([
@@ -107,7 +108,7 @@ const DEEPSEEK_VISION_MEDIA_TYPES = new Set([
 ]);
 
 const isDeepSeekVisionModel = (modelId: string) =>
-  modelId.toLowerCase() === DEEPSEEK_VISION_MODEL;
+  DEEPSEEK_VISION_MODELS.has(modelId.trim().toLowerCase());
 
 const modelCapabilities = (modelId: string): ModelCapabilities =>
   isDeepSeekVisionModel(modelId)

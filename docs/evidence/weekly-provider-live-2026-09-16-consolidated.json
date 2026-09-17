@@ -1,0 +1,872 @@
+{
+  "startedAt": "2026-09-17T00:10:01.960Z",
+  "baseCommit": "6577e2aefc0d80ebf1e996a656508a766b508734",
+  "trackedDiffSha256": "6412a8babff8de2ba7d489778ace7e58f5d21bd90ea6af62ab797fbb1ddf58d4",
+  "fixtureSha256": "d0cb9b71765db2f760eca61b0f873229a88263da3896c92d1ef7a1db600815c1",
+  "lockfileSha256": "3e5df147020b3f311862a4f6427ac0a2498c2f2e2ba9170ff1914637c325761e",
+  "consumerDependencies": {
+    "ws": "8.21.3",
+    "zod": "4.6.3"
+  },
+  "artifacts": [
+    {
+      "name": "@zhivex-ai/core",
+      "version": "1.17.0",
+      "tarballSha256": "9d289bfa81df4279fc349c719f19b523a6b9af2239607bd038f52c48ec924d14",
+      "entrySha256": "a46e39427501afcdf741c7a0adf96d5bdb232bcccf10c61c08a944e8089dd375"
+    },
+    {
+      "name": "@zhivex-ai/sdk",
+      "version": "1.20.0",
+      "tarballSha256": "b17b726b261e1a3b8e3efbd52fde201df99c26f28f2fc082b4876c4306b62ce8",
+      "entrySha256": "7ab05fd60fea83d55112bef12a8b11d3ceedb74a93a1046540361764939ae88f"
+    },
+    {
+      "name": "@zhivex-ai/deepseek",
+      "version": "0.5.3",
+      "tarballSha256": "90e0855ed1d71e682d0aab232d9489a247649a288f5106836203d6aaf22a8e28",
+      "entrySha256": "42635dbd2cfa473c6ed08ad8070658fe145cd5f14685359bf8142e74b00f999d"
+    },
+    {
+      "name": "@zhivex-ai/gemini",
+      "version": "0.11.3",
+      "tarballSha256": "a413cad6ba4e8ce9ca137bd34658c245413e866aa422dc63990c4f828ae086ca",
+      "entrySha256": "5175e90694dc6340af635dd6d629d11cd3e759426142e5182c01f13a9b66bda0"
+    },
+    {
+      "name": "@zhivex-ai/anthropic",
+      "version": "0.10.2",
+      "tarballSha256": "14ae11fbbfc173963f0b2f31133d550ee8c01f561e5a46a7383f816dfe51a5c7",
+      "entrySha256": "7a6deca341f70b94268c2b9102c3ab872f05ef3c2fd6c2a37e5c70df5e3e4fea"
+    },
+    {
+      "name": "@zhivex-ai/openai",
+      "version": "0.12.1",
+      "tarballSha256": "bddc1bb760c42c1edf77d33588e21b385cfbe15f4696b3458e039b3bdc0aef1f",
+      "entrySha256": "6db14456ea701c1b074cb831823e71ee93ffc1670064958539c8ed8973755082"
+    },
+    {
+      "name": "@zhivex-ai/qwen",
+      "version": "0.11.5",
+      "tarballSha256": "7761a40dc5113661dde1d5e79568c8fe97ad34fc240a38b3170f869631d06a43",
+      "entrySha256": "38f8e396a5c6efe9e036f2862b09cd4626ab3e7d89baf31a8afed2d162ba1088"
+    }
+  ],
+  "results": [
+    {
+      "name": "deepseek-vision:deepseek-flash",
+      "startedAt": "2026-09-17T00:10:02.077Z",
+      "status": "passed",
+      "requestedModel": "deepseek-flash",
+      "returnedModel": "deepseek-flash",
+      "text": "Red",
+      "usage": {
+        "inputTokens": 202,
+        "cachedInputTokens": 0,
+        "outputTokens": 1,
+        "totalTokens": 203
+      },
+      "finishedAt": "2026-09-17T00:10:03.202Z"
+    },
+    {
+      "name": "deepseek-vision:deepseek-v4-flash",
+      "startedAt": "2026-09-17T00:10:03.202Z",
+      "status": "passed",
+      "requestedModel": "deepseek-v4-flash",
+      "returnedModel": "deepseek-flash",
+      "text": "Red",
+      "usage": {
+        "inputTokens": 202,
+        "cachedInputTokens": 0,
+        "outputTokens": 1,
+        "totalTokens": 203
+      },
+      "finishedAt": "2026-09-17T00:10:04.379Z"
+    },
+    {
+      "name": "deepseek-vision:deepseek-v4-flash-vision-exp",
+      "startedAt": "2026-09-17T00:10:04.380Z",
+      "status": "passed",
+      "requestedModel": "deepseek-v4-flash-vision-exp",
+      "returnedModel": "deepseek-flash",
+      "text": "Red",
+      "usage": {
+        "inputTokens": 202,
+        "cachedInputTokens": 0,
+        "outputTokens": 1,
+        "totalTokens": 203
+      },
+      "finishedAt": "2026-09-17T00:10:05.494Z"
+    },
+    {
+      "name": "qwen-hosted:deepseek-v4.1-flash",
+      "startedAt": "2026-09-17T00:10:05.494Z",
+      "status": "passed",
+      "text": "READY",
+      "usage": {
+        "inputTokens": 34,
+        "cachedInputTokens": 0,
+        "outputTokens": 16,
+        "reasoningTokens": 13,
+        "totalTokens": 50
+      },
+      "finishedAt": "2026-09-17T00:10:07.203Z"
+    },
+    {
+      "name": "gemini-live:gemini-3.8-live",
+      "startedAt": "2026-09-17T00:10:07.204Z",
+      "status": "passed",
+      "calls": 1,
+      "audioBytes": 48960,
+      "text": "strawberry",
+      "idle": false,
+      "complete": true,
+      "diagnostics": {
+        "frames": [
+          {
+            "keys": [
+              "setupComplete"
+            ]
+          },
+          {
+            "keys": [
+              "sessionResumptionUpdate"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": []
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "toolCall"
+            ]
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "generationComplete"
+            ]
+          },
+          {
+            "keys": [
+              "serverContent",
+              "usageMetadata"
+            ],
+            "contentKeys": [
+              "turnComplete"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": []
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn",
+              "outputTranscription"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "generationComplete"
+            ]
+          }
+        ],
+        "events": {
+          "realtime-start": 1,
+          "realtime-session-resumption": 1,
+          "realtime-tool-call": 1,
+          "realtime-tool-result": 1,
+          "realtime-response-complete": 3,
+          "realtime-audio-output": 6,
+          "realtime-transcript": 1
+        }
+      },
+      "finishedAt": "2026-09-17T00:10:10.172Z"
+    },
+    {
+      "name": "gemini-live:gemini-3.8-live-extended-thinking",
+      "startedAt": "2026-09-17T00:10:10.172Z",
+      "status": "passed",
+      "calls": 1,
+      "audioBytes": 103688,
+      "text": "Let me take a look at that.strawberryLet me take a look at that.strawberry",
+      "idle": true,
+      "complete": true,
+      "diagnostics": {
+        "frames": [
+          {
+            "keys": [
+              "setupComplete"
+            ]
+          },
+          {
+            "keys": [
+              "sessionResumptionUpdate"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": []
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn",
+              "outputTranscription"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn",
+              "outputTranscription"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "generationComplete"
+            ]
+          },
+          {
+            "keys": [
+              "serverContent",
+              "usageMetadata"
+            ],
+            "status": "IN_PROGRESS",
+            "contentKeys": [
+              "turnComplete",
+              "interactionStatus"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "toolCall"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": []
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn",
+              "outputTranscription"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": []
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "modelTurn"
+            ]
+          },
+          {
+            "keys": [
+              "serverContent"
+            ],
+            "contentKeys": [
+              "generationComplete"
+            ]
+          },
+          {
+            "keys": [
+              "serverContent",
+              "usageMetadata"
+            ],
+            "status": "IDLE",
+            "contentKeys": [
+              "turnComplete",
+              "interactionStatus"
+            ]
+          }
+        ],
+        "events": {
+          "realtime-start": 1,
+          "realtime-session-resumption": 1,
+          "realtime-audio-output": 16,
+          "realtime-transcript": 4,
+          "realtime-provider-data": 2,
+          "realtime-tool-call": 1,
+          "realtime-tool-result": 1,
+          "realtime-response-complete": 1
+        }
+      },
+      "finishedAt": "2026-09-17T00:10:25.347Z"
+    },
+    {
+      "name": "anthropic-compaction",
+      "startedAt": "2026-09-17T00:10:25.348Z",
+      "status": "passed",
+      "signedBlock": true,
+      "replayMatched": true,
+      "usage": {
+        "inputTokens": 131,
+        "cachedInputTokens": 0,
+        "cacheWriteTokens": 0,
+        "outputTokens": 403,
+        "totalTokens": 534
+      },
+      "replayUsage": {
+        "inputTokens": 449,
+        "cachedInputTokens": 0,
+        "cacheWriteTokens": 0,
+        "outputTokens": 10,
+        "reasoningTokens": 0,
+        "totalTokens": 459
+      },
+      "finishedAt": "2026-09-17T00:10:32.706Z"
+    },
+    {
+      "name": "anthropic-compaction-stream",
+      "startedAt": "2026-09-17T00:10:32.706Z",
+      "status": "passed",
+      "signedBlock": true,
+      "replayMatched": true,
+      "usage": {
+        "inputTokens": 109,
+        "cachedInputTokens": 0,
+        "cacheWriteTokens": 0,
+        "outputTokens": 1838,
+        "totalTokens": 1947
+      },
+      "replayUsage": {
+        "inputTokens": 1885,
+        "cachedInputTokens": 0,
+        "cacheWriteTokens": 0,
+        "outputTokens": 10,
+        "reasoningTokens": 0,
+        "totalTokens": 1895
+      },
+      "finishedAt": "2026-09-17T00:10:57.061Z"
+    },
+    {
+      "name": "openai-agents-cancel",
+      "startedAt": "2026-09-17T00:10:57.062Z",
+      "status": "passed",
+      "eventTypes": [
+        "agent.session.turn.created",
+        "agent.session.turn.item.added",
+        "agent.session.in_progress",
+        "agent.session.turn.in_progress",
+        "agent.session.turn.item.added",
+        "agent.session.turn.content_part.added",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.done",
+        "agent.session.turn.content_part.done",
+        "agent.session.turn.item.done",
+        "agent.session.turn.completed",
+        "agent.session.idle",
+        "agent.session.turn.created",
+        "agent.session.turn.item.added",
+        "agent.session.in_progress",
+        "agent.session.turn.in_progress",
+        "agent.session.turn.item.added",
+        "agent.session.turn.content_part.added",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.done",
+        "agent.session.turn.content_part.done",
+        "agent.session.turn.item.done",
+        "agent.session.turn.cancelled"
+      ],
+      "sessionCreated": true,
+      "messageSent": true,
+      "cancelRequested": true,
+      "cancelled": true,
+      "finishedAt": "2026-09-17T00:11:20.235Z"
+    },
+    {
+      "name": "openai-agents",
+      "startedAt": "2026-09-17T00:11:20.236Z",
+      "status": "passed",
+      "eventTypes": [
+        "agent.session.created",
+        "agent.session.turn.created",
+        "agent.session.turn.item.added",
+        "agent.session.in_progress",
+        "agent.session.turn.in_progress",
+        "agent.session.turn.item.added",
+        "agent.session.turn.content_part.added",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.delta",
+        "agent.session.turn.output_text.done",
+        "agent.session.turn.content_part.done",
+        "agent.session.turn.item.done",
+        "agent.session.turn.completed"
+      ],
+      "sessionRetrieved": true,
+      "itemsMatched": true,
+      "finishedAt": "2026-09-17T00:11:37.343Z"
+    },
+    {
+      "name": "anthropic-managed-agents-auto",
+      "startedAt": "2026-09-17T00:11:37.343Z",
+      "status": "passed",
+      "eventTypes": [
+        "session.thread_status_running",
+        "user.message",
+        "span.model_request_start",
+        "span.model_request_end",
+        "agent.tool_use",
+        "agent.tool_result",
+        "span.model_request_start",
+        "agent.message",
+        "span.model_request_end",
+        "session.thread_status_idle"
+      ],
+      "autoPermissionAllowed": true,
+      "outputMatched": true,
+      "toolSucceeded": true,
+      "idle": true,
+      "finishedAt": "2026-09-17T00:11:43.899Z"
+    }
+  ],
+  "finishedAt": "2026-09-17T00:11:43.900Z"
+}

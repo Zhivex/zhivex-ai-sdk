@@ -815,6 +815,9 @@ const mapRealtimeProviderOptions = (providerOptions: Record<string, unknown> | u
       )
     : {};
 
+const isGemini38LiveModel = (modelId: string) => /^gemini-3\.8-live(?:-extended-thinking)?$/i.test(modelId.trim());
+const isGemini38ThinkingModel = (modelId: string) => modelId.trim().toLowerCase() === "gemini-3.8-live-extended-thinking";
+
 const isGemini31FlashLiveModel = (modelId: string) => /^gemini-3\.1-flash-live(?:-preview)?$/i.test(modelId.trim());
 
 const geminiRealtimeURL = (baseURL: string, apiKey: string, providerOptions?: Record<string, unknown>) => {
@@ -969,6 +972,19 @@ const assertGeminiRealtimeConfig = (config: RealtimeSessionConfig, modelId: stri
     );
   }
 
+  if (isGemini38LiveModel(modelId)) {
+    const raw = config.providerOptions as Record<string, any> | undefined;
+    const reasoning = config.reasoning;
+    const level = reasoning?.effort ?? raw?.generationConfig?.thinkingConfig?.thinkingLevel;
+    const budget = reasoning?.budgetTokens ?? raw?.generationConfig?.thinkingConfig?.thinkingBudget;
+    if (budget !== undefined || (level !== undefined &&
+      (!isGemini38ThinkingModel(modelId) || !["low", "medium", "high"].includes(level)))) {
+      throw new UnsupportedFeatureError("Gemini 3.8 Live does not accept thinking budgets; only Extended Thinking accepts low, medium, or high effort.");
+    }
+    if (raw?.tools !== undefined || raw?.generationConfig !== undefined || raw?.generation_config !== undefined) {
+      throw new UnsupportedFeatureError("Configure Gemini 3.8 Live tools and reasoning through the shared session fields.");
+    }
+  }
   if (!isGemini31FlashLiveModel(modelId)) {
     return;
   }
@@ -984,6 +1000,17 @@ const assertGeminiRealtimeConfig = (config: RealtimeSessionConfig, modelId: stri
       'Model "gemini/gemini-3.1-flash-live-preview" does not support realtime proactiveAudio.'
     );
   }
+};
+
+const mapLiveTools = (config: RealtimeSessionConfig, modelId: string) => {
+  const tools = mapTools(toToolSet(config.tools));
+  if (!isGemini38LiveModel(modelId)) return tools;
+  return tools?.map((entry) => "functionDeclarations" in entry ? {
+    ...entry,
+    functionDeclarations: (entry.functionDeclarations as Record<string, unknown>[]).map((declaration) => ({
+      ...declaration, behavior: "NON_BLOCKING"
+    }))
+  } : entry);
 };
 
 const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => ({
@@ -1029,14 +1056,14 @@ const geminiRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
           }
         }
       : {}),
-    ...(config.toolChoice !== "none" && mapTools(toToolSet(config.tools))
-      ? { tools: mapTools(toToolSet(config.tools)) }
+    ...(config.toolChoice !== "none" && mapLiveTools(config, modelId)
+      ? { tools: mapLiveTools(config, modelId) }
       : {}),
     ...mapRealtimeProviderOptions(config.providerOptions as Record<string, unknown> | undefined)
   }
 });
 
-const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
+const parseGeminiRealtimeEvent = (payload: Record<string, unknown>): RealtimeEvent[] => {
   if ("setupComplete" in payload) {
     return [];
   }
@@ -1063,7 +1090,9 @@ const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
         continue;
       }
       const typedPart = part as Record<string, unknown>;
-      if (typeof typedPart.text === "string" && typedPart.text) {
+      if (typedPart.thought === true && typeof typedPart.text === "string") {
+        events.push({ type: "realtime-provider-data" as const, provider: "gemini", data: { thought: typedPart.text } });
+      } else if (typeof typedPart.text === "string" && typedPart.text) {
         events.push({
           type: "realtime-text-delta" as const,
           textDelta: typedPart.text,
@@ -1227,12 +1256,30 @@ const parseGeminiRealtimeEvent = (payload: Record<string, unknown>) => {
   return [];
 };
 
-const createGeminiRealtimeEventParser = () => {
+const createGeminiRealtimeEventParser = (modelId?: string) => {
+  let interactionStatus: unknown;
   let outputTranscript = "";
 
   return (payload: Record<string, unknown>): RealtimeEvent[] => {
     const events: RealtimeEvent[] = [];
-    for (const event of parseGeminiRealtimeEvent(payload)) {
+    const content = (payload.serverContent ?? payload.server_content) as Record<string, unknown> | undefined;
+    const status = content?.interactionStatus ?? content?.interaction_status ?? payload.interactionStatus ?? payload.interaction_status;
+    if (status !== undefined) {
+      interactionStatus = status;
+      events.push({ type: "realtime-provider-data", provider: "gemini", data: { interactionStatus: status as JsonValue } });
+    }
+    const parsed = parseGeminiRealtimeEvent(payload);
+    // A server frame may contain both content and a sibling tool call.
+    if (content && (payload.toolCall || payload.tool_call)) {
+      parsed.push(...parseGeminiRealtimeEvent({ toolCall: payload.toolCall ?? payload.tool_call }));
+    }
+    if (modelId && isGemini38ThinkingModel(modelId) && status === "IDLE" &&
+      !parsed.some((event) => event.type === "realtime-response-complete")) {
+      parsed.push({ type: "realtime-response-complete", reason: "interaction-idle" });
+    }
+    for (const event of parsed) {
+      // Extended Thinking may finish a spoken fragment while work continues.
+      if (modelId && isGemini38ThinkingModel(modelId) && event.type === "realtime-response-complete" && interactionStatus !== "IDLE") continue;
       if (event.type === "realtime-transcript" && event.role === "assistant") {
         if (event.isFinal) {
           const completeText = event.text.startsWith(outputTranscript)
@@ -3208,7 +3255,7 @@ class GeminiRealtimeModel implements RealtimeModel {
       connection,
       initializationTimeoutMs: options?.timeoutMs,
       callbacks: {
-        parseEvent: createGeminiRealtimeEventParser(),
+        parseEvent: createGeminiRealtimeEventParser(this.modelId),
         isReadyPayload: (payload) => "setupComplete" in payload || "setup_complete" in payload,
         buildAudioPayloads: (frame) => [
           {

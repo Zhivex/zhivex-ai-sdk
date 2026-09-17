@@ -16,18 +16,29 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-09-12",
+      snapshotVersion: "2026-09-16",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-09-04",
+        version: "2026-09-16",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
     expect(defaultModelCatalog.find("openai", "gpt-5.6")?.modelId).toBe("gpt-5.6-sol");
     expect(defaultModelCatalog.find("openai", "gpt-live-1")).toMatchObject({ modelId: "gpt-live-1" });
     expect(defaultModelCatalog.find("openai", "gpt-live-1")?.inputCostPer1kTokens).toBeUndefined();
+    expect(defaultModelCatalog.find("deepseek", "deepseek-v4-flash")?.modelId).toBe("deepseek-flash");
+    expect(defaultModelCatalog.find("deepseek", "deepseek-v4-flash-vision-exp")?.modelId).toBe("deepseek-flash");
+    for (const id of ["deepseek-flash", "deepseek-v4-pro"]) {
+      const entry = defaultModelCatalog.find("deepseek", id);
+      expect(entry).toBeDefined();
+      for (const field of ["costPer1kTokens", "inputCostPer1kTokens", "outputCostPer1kTokens", "cachedInputCostPer1kTokens"]) {
+        expect(entry).not.toHaveProperty(field);
+      }
+    }
+    expect(defaultModelCatalog.find("qwen", "deepseek-v4.1-flash")?.provider).toBe("qwen");
+    expect(defaultModelCatalog.find("gemini", "gemini-3.8-live-extended-thinking")).toBeDefined();
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(124);
+    expect(entries).toHaveLength(126);
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
       inputCostPer1kTokens: 0.00015,
       cachedInputCostPer1kTokens: 0.00003,
@@ -62,7 +73,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(124);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(126);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-09-12",
       verifiedAt: "2026-09-12",
@@ -76,10 +87,10 @@ describe("SDK model catalog ownership", () => {
       modelCount: 3
     });
     expect(fragments.find((fragment) => fragment.provider === "qwen")).toMatchObject({
-      revision: "2026-09-04",
-      verifiedAt: "2026-09-04",
+      revision: "2026-09-16",
+      verifiedAt: "2026-09-16",
       pricingEffectiveAt: "2026-08-26",
-      modelCount: 19
+      modelCount: 20
     });
     expect(Object.isFrozen(fragments[0])).toBe(true);
     expect(Object.isFrozen(fragments[0]?.sources)).toBe(true);

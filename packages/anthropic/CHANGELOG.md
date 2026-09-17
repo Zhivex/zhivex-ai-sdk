@@ -1,5 +1,16 @@
 # @zhivex-ai/anthropic
 
+## 0.11.0
+
+### Minor Changes
+
+- Align September provider releases: enable DeepSeek V4.1 Flash vision and legacy aliases, remove stale fixed DeepSeek prices, add Gemini 3.8 Live catalog entries and background-thinking protocol handling, preserve signed Anthropic compaction and billed iterations, and expose native Beta managed-agent resources for OpenAI and Anthropic. Keep managed provider state separate from the local agent runtime and document certification boundaries. Accept empty HTTP 202 acknowledgements for native OpenAI agent events and allow Anthropic compaction of completed assistant turns.
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.18.0
+
 ## 0.10.2
 
 ### Patch Changes

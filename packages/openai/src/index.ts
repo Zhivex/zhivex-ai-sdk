@@ -1,3 +1,6 @@
+import { OpenAIAgentsClient } from "./agents.js";
+export { OpenAIAgentsClient } from "./agents.js";
+export type { OpenAIAgentSessionInput, OpenAIAgentSession, OpenAIAgentEvent, OpenAIAgentsPage, OpenAIAgentsRequestOptions } from "./agents.js";
 import { toJSONSchema, z } from "zod";
 import { OpenAILiveModel, isOpenAILiveModel } from "./live.js";
 
@@ -3502,6 +3505,7 @@ export const createOpenAI = (
   options: OpenAIProviderOptions = {}
 ): CallableProviderAdapter<LanguageModel<OpenAILanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
+  agents: OpenAIAgentsClient;
 } => {
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -3569,7 +3573,8 @@ export const createOpenAI = (
       );
     },
     groundedLanguageModel: (modelId) => new OpenAIGroundedLanguageModel(modelId, apiKey, baseURL, fetcher),
-    rawFetch: fetcher
+    rawFetch: fetcher,
+    agents: new OpenAIAgentsClient(baseURL, apiKey, fetcher, options.allowUnsafeEndpoints)
   });
 };
 

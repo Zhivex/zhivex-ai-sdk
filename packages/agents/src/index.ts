@@ -134,3 +134,5 @@ export type {
   ToolRuntimeContext,
   ToolSet
 } from "@zhivex-ai/core";
+
+export type { AgentTaskOutcome, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "@zhivex-ai/core";

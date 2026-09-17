@@ -149,3 +149,45 @@ See [Anthropic's migration contract](https://platform.claude.com/docs/en/models/
 ### Generation retries
 
 Language-model generation and streaming startup validate HTTP failures inside the retry boundary. `maxRetries` applies to HTTP 408, 429 and 5xx responses, with bounded `Retry-After` waits. Other 4xx responses are not retried. Timeout and caller cancellation interrupt retry waits; successful stream bodies remain unread until consumption.
+
+## On-demand compaction (Beta)
+
+```ts
+const model = anthropic("claude-opus-5");
+const summary = await model.generate({
+  messages: history,
+  maxTokens: 4096,
+  providerOptions: { compaction: { type: "summarize" } }
+});
+// Only replace the submitted prefix when a signed summary was returned.
+if (summary.providerFinishReason === "compaction" && summary.messages[0]?.parts.length) {
+  history = summary.messages;
+}
+```
+
+The adapter automatically sends `compact-2026-09-04` for summarization and replay of a signed block. Keep the returned `provider-data` block, including its signature, unchanged and first in the non-system history. For background/keep-tail compaction, replace exactly the submitted prefix and retain later turns; preserve the same system/tools when relying on preserved thinking. A completed assistant turn can be summarized without being treated as an assistant prefill. No history is replaced automatically. Empty or refused summaries remain visible in `providerFinishReason`; retain the original history.
+
+`compaction` cannot be combined with `context_management`, stop sequences, structured output, or forced tool choice. Optional `instructions` must be non-blank and at most 16,384 characters. Usage aggregates billed `usage.iterations` rather than the zero top-level counters of summary-only responses. Raw responses retain the provider breakdown. See [Anthropic compaction](https://platform.claude.com/docs/en/build-with-claude/compaction).
+
+## Managed Agents (native Beta)
+
+`createAnthropic(options).managedAgents` exposes the installed official SDK's `agents`, `environments`, and `sessions` resources, including session event streaming, pagination, cancellation via input events, and tool confirmations. Types and errors are native Anthropic SDK types. Zhivex supplies its existing credential chain, refresh handling, endpoint policy, and `managed-agents-2026-04-01` header. Automatic request retries are disabled; caller request options can explicitly opt in using the native SDK.
+
+```ts
+const native = anthropic.managedAgents;
+const agent = await native.agents.create({
+  name: "Support", model: "claude-opus-5", system: "Help with support requests.",
+  tools: [{ type: "agent_toolset_20260401", default_config: { permission_policy: { type: "auto" } } }]
+});
+const session = await native.sessions.create({ agent: agent.id, environment_id: "env_existing" });
+const events = await native.sessions.events.stream(session.id);
+try {
+  await native.sessions.events.send(session.id, { events: [{ type: "user.message", content: [{ type: "text", text: "Inspect the project" }] }] });
+  for await (const event of events) {
+    console.log(event); // evaluated_permission and evaluation are preserved
+    if (event.type === "session.status_idle") break;
+  }
+} finally { events.controller.abort(); }
+```
+
+`auto` is a server decision and can execute a call without human review. Use `always_ask` when a human checkpoint is required. These resources run on Anthropic's platform and do not use Zhivex's local agent persistence or approval queues. The September certification additionally exercises a real managed session, automatic permission evaluation, a successful tool result, idle state, and cleanup; see the [scoped evidence report](../../docs/maintainers/WEEKLY_PROVIDER_LIVE_2026_09_16.md). See [permission policies](https://platform.claude.com/docs/en/managed-agents/permission-policies).

@@ -182,6 +182,8 @@ export const realtimeCapabilities = (modelId: string): ModelCapabilities => {
     rawPrediction: false,
     computerUse: false,
     reasoning: !audioOnly,
+    reasoningEfforts: modelId === "gemini-3.8-live" ? [] : modelId === "gemini-3.8-live-extended-thinking"
+      ? ["low", "medium", "high"] : undefined,
     webSearch: !audioOnly,
     agentCapabilities: {
       ...capabilities.agentCapabilities!,

@@ -1663,8 +1663,37 @@ export interface AgentHarnessBinding {
   algorithm: "sha256";
 }
 
+export interface AgentTaskOutcome {
+  status: "in_progress" | "resolved" | "denied" | "failed" | "needs_reconciliation";
+  operations: Array<{ toolCallId: string; toolName: string; idempotencyKey: string; diagnosticCode: "INDETERMINATE_TOOL_EXECUTION" }>;
+}
+
+/** Evidence must be authenticated against an authoritative external source by the verifier. */
+export interface AgentToolReconciliationEvidence {
+  operationId: string;
+  runId: string;
+  scope?: AgentStoreScope;
+  toolCallId: string;
+  toolName: string;
+  idempotencyKey: string;
+  input: JsonValue;
+  output: JsonValue;
+  source: string;
+  proof: JsonValue;
+}
+
+export interface AgentToolReconciliationRecord {
+  evidence: AgentToolReconciliationEvidence;
+  decision: "confirmed";
+  verifiedAt: number;
+  previousOutcome?: AgentTaskOutcome;
+  previousOutputText: string;
+}
+
 export interface AgentRunState {
   schemaVersion: 1;
+  taskOutcome?: AgentTaskOutcome;
+  reconciliations?: AgentToolReconciliationRecord[];
   /**
    * Monotonic durable-store revision. Legacy states without a revision are
    * normalized to revision 0 before their next write.
@@ -1736,6 +1765,8 @@ export interface AgentRunLeaseOptions {
 export type AgentToolCallJournalStatus = "pending" | "running" | "completed" | "failed";
 
 export interface AgentToolCallJournalEntry {
+  providerToolCallId?: string;
+  reconciliation?: AgentToolReconciliationRecord;
   runId: string;
   scope?: AgentStoreScope;
   toolCallId: string;
@@ -1753,6 +1784,7 @@ export interface AgentToolCallJournalEntry {
 }
 
 export interface AgentToolCallJournalSaveOptions {
+  leaseOwnerId?: string;
   expectedRevision?: number;
 }
 
@@ -1784,6 +1816,7 @@ export interface AgentRunRetentionOptions {
 }
 
 export interface AgentRunSaveOptions {
+  leaseOwnerId?: string;
   expectedRevision?: number;
 }
 
@@ -1793,6 +1826,8 @@ export interface AgentRunClaimResult {
 }
 
 export interface AgentRunStore {
+  /** Lease ownership is checked atomically with reconciliation writes. */
+  reconciliationFencing?: boolean;
   load(runId: string, scope?: AgentStoreScope): Promise<AgentRunState | undefined> | AgentRunState | undefined;
   findByIdempotencyKey?(idempotencyKey: string, scope?: AgentStoreScope): Promise<AgentRunState | undefined> | AgentRunState | undefined;
   findByParentRunId?(parentRunId: string, scope?: AgentStoreScope): Promise<AgentRunState[]> | AgentRunState[];
@@ -2262,6 +2297,7 @@ export type AgentRunInput<
   };
 
 export interface AgentRunOutput<TOutput = unknown> {
+  taskOutcome?: AgentTaskOutcome;
   status: AgentStatus;
   outputText: string;
   finalOutput?: TOutput;
