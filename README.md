@@ -1193,6 +1193,10 @@ The opt-in gate uses real Gemini, Qwen, and OpenAI realtime sessions, requires o
 local tool execution, a non-empty post-tool response, and a closed session. See
 the [realtime/live certification guide](./docs/maintainers/AGENT_REALTIME_CERTIFICATION.md).
 
+The [September provider certification](./docs/maintainers/WEEKLY_PROVIDER_LIVE_2026_09_16.md)
+records installed-package evidence for the new DeepSeek, Gemini, Anthropic, and
+OpenAI surfaces, with Qwen-hosted DeepSeek tested separately.
+
 ### Agent Persistence And Memory
 
 The agent runtime now supports pluggable run stores and memory stores. Use a run store when you want to save and reload full `AgentRunState` snapshots by `runId`, and use a memory store when you want fresh runs to inherit compact prior context automatically.
@@ -3063,3 +3067,17 @@ CI scans version-controlled candidate files for recognized credential signatures
 ## License
 
 MIT
+
+### September 9–16 provider updates
+
+- [DeepSeek](packages/deepseek/README.md): V4.1 Flash via `deepseek-flash`, vision on its legacy aliases, and explicit unknown catalog costs for time-of-use pricing.
+- [Gemini](packages/gemini/README.md): 3.8 Live and Extended Thinking, non-blocking tools, reasoning validation and background interaction status.
+- [Anthropic](packages/anthropic/README.md): signed on-demand compaction with billed iteration usage, plus native Managed Agents resources and `auto` permission evaluation.
+- [OpenAI](packages/openai/README.md): native Agents API sessions, input events, cancellation, saved items and SSE, alongside the existing GPT-Live client delegation support.
+
+Provider-native additions remain Beta. Offline protocol tests do not certify live provider access or a published artifact.
+
+Agent results now expose an additive `taskOutcome`: a technically `completed` run
+can still have `taskOutcome.status: "needs_reconciliation"`.
+Use the Beta `reconcileAgentToolExecution` API with authenticated external evidence
+before continuing an indeterminate effect. See [external effect reconciliation](docs/AGENTS.md#external-effect-reconciliation-beta).

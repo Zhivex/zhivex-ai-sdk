@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.18.0
+
+### Minor Changes
+
+- Add persisted task outcomes that distinguish technical completion from indeterminate effects, and a Beta API for verified external-effect reconciliation with audit history, lease fencing, replay protection, and restart recovery. Serialize file-store journal CAS and lease mutations. Agent evaluations exclude pending reconciliation from passing cases.
+
 ## 1.17.0
 
 ### Minor Changes

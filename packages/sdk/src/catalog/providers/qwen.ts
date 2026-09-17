@@ -2,14 +2,16 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const qwenCatalogFragment = defineModelCatalogFragment({
   provider: "qwen",
-  revision: "2026-09-04",
-  verifiedAt: "2026-09-04",
+  revision: "2026-09-16",
+  verifiedAt: "2026-09-16",
   pricingEffectiveAt: "2026-08-26",
   sources: [
+    "https://docs.qwencloud.com/changelog/models",
     "https://www.qwencloud.com/models/qwen3.8-flash",
     "https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models"
   ],
   entries: [
+    { provider: "qwen", modelId: "deepseek-v4.1-flash" },
     {
       "provider": "qwen",
       "modelId": "qwen3.8-max-0902",

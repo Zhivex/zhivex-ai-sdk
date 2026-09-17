@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { toJSONSchema } from "zod";
 
 import { resolveCredentialsFromConfig, defaultCredentials } from "@anthropic-ai/sdk/lib/credentials/credential-chain";
@@ -68,7 +69,14 @@ export type AnthropicAccessTokenProvider = (options?: {
 
 export type AnthropicCredentialConfig = AnthropicConfig;
 
+export interface AnthropicCompactionConfig {
+  type: "summarize";
+  instructions?: string;
+}
+
 export interface AnthropicLanguageModelOptions {
+  /** Request a signed summary without generating a conversation reply. */
+  compaction?: AnthropicCompactionConfig;
   speed?: "standard" | "fast";
   top_p?: number;
   top_k?: number;
@@ -285,6 +293,16 @@ const mapAnthropicUsage = (usage: any): GenerateResult["usage"] | undefined => {
     return undefined;
   }
 
+  // Iterations include compaction billing; top-level counters omit it.
+  if (Array.isArray(usage.iterations) && usage.iterations.length) {
+    const totals: Record<string, number> = {};
+    for (const iteration of usage.iterations) {
+      for (const key of ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]) {
+        if (typeof iteration?.[key] === "number") totals[key] = (totals[key] ?? 0) + iteration[key];
+      }
+    }
+    usage = { ...usage, ...totals };
+  }
   const uncachedInputTokens = definedNumber(usage.input_tokens);
   const cachedInputTokens = definedNumber(usage.cache_read_input_tokens);
   const cacheWriteTokens = definedNumber(usage.cache_creation_input_tokens);
@@ -1015,6 +1033,7 @@ const assertAnthropicRequestCompatibility = (
 
   if (
     rejectsAssistantPrefill(modelId) &&
+    providerOptions.compaction === undefined &&
     input.messages.at(-1)?.role === "assistant"
   ) {
     throw new UnsupportedFeatureError(
@@ -1122,6 +1141,26 @@ const prepareAnthropicRequest = (
   )) {
     throw new UnsupportedFeatureError(`Provider "anthropic" model "${modelId}" supports only automatic or disabled tool choice.`);
   }
+  const signedBlocks = input.messages.filter((message) => message.role !== "system").flatMap((message, messageIndex) =>
+    message.parts.flatMap((part, partIndex) => part.type === "provider-data" && part.provider === "anthropic" &&
+      part.data && typeof part.data === "object" && !Array.isArray(part.data) && part.data.type === "compaction" && "signature" in part.data
+      ? [{ messageIndex, partIndex }] : [])
+  );
+  if (signedBlocks.length > 1 || signedBlocks.some((block) => block.messageIndex !== 0 || block.partIndex !== 0)) {
+    throw new ValidationError("A signed compaction block must be the first block of the first non-system message, exactly once.");
+  }
+  if (providerOptions.compaction !== undefined) {
+    const compact = providerOptions.compaction;
+    if (!compact || compact.type !== "summarize" || (compact.instructions !== undefined &&
+      (typeof compact.instructions !== "string" || !compact.instructions.trim() || compact.instructions.length > 16384))) {
+      throw new ValidationError("compaction requires type=summarize and optional non-blank instructions of at most 16384 characters.");
+    }
+    if (providerOptions.context_management !== undefined || providerOptions.stop_sequences !== undefined ||
+      providerOptions.output_config?.format || input.structuredOutput || input.toolChoice === "required" ||
+      typeof input.toolChoice === "object" || ["any", "tool"].includes(providerOptions.tool_choice?.type ?? "")) {
+      throw new UnsupportedFeatureError("On-demand compaction cannot combine context_management, stop sequences, structured output, or forced tools.");
+    }
+  }
   const rawThinking = providerOptions.thinking;
   const rawOutputConfig = providerOptions.output_config;
   if (providerOptions.betas !== undefined && !Array.isArray(providerOptions.betas)) {
@@ -1163,6 +1202,7 @@ const prepareAnthropicRequest = (
 
   const extraBetas = [
     ...betas,
+    ...(providerOptions.compaction || signedBlocks.length ? ["compact-2026-09-04"] : []),
     ...(thinking?.display === "updates" ? ["thinking-display-updates-2026-08-18"] : []),
     ...(thinking?.block_binding ? ["thinking-binding-controls-2026-08-01"] : []),
     ...(providerOptions.speed === "fast" ? [FAST_MODE_BETA] : []),
@@ -1459,10 +1499,14 @@ export const createAnthropicMessagesModel = (options: {
 }): LanguageModel<AnthropicLanguageModelOptions> =>
   new AnthropicLanguageModel(options.modelId, options.transport, options.provider, options.capabilities);
 
+/** Native Beta resources, preserving Anthropic permission policies and event payloads. */
+export type AnthropicManagedAgentsClient = Pick<Anthropic["beta"], "agents" | "environments" | "sessions">;
+
 export const createAnthropic = (
   options: AnthropicProviderOptions = {}
 ): CallableProviderAdapter<LanguageModel<AnthropicLanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
+  managedAgents: AnthropicManagedAgentsClient;
 } => {
   const environmentBaseURL = process.env.ANTHROPIC_BASE_URL || undefined;
   const baseURLIsExplicit = options.baseURL !== undefined || environmentBaseURL !== undefined;
@@ -1488,11 +1532,51 @@ export const createAnthropic = (
     credentialFetcher: fetcher
   });
   const anthropicVersion = options.anthropicVersion ?? "2023-06-01";
+  // Reuse the installed native SDK for the rapidly evolving managed resource
+  // schema, but keep credential resolution and redirect policy owned by Zhivex.
+  const managedFetch: typeof globalThis.fetch = async (request, init) => {
+    const url = new URL(typeof request === "string" || request instanceof URL ? request : request.url);
+    const expected = new URL(credentialBaseURL);
+    const nativePrefix = `${expected.pathname.replace(/\/+$/, "")}/v1`;
+    if (url.origin !== expected.origin || !url.pathname.startsWith(`${nativePrefix}/`)) {
+      throw new ConfigurationError("Unexpected Anthropic managed resource endpoint.");
+    }
+    const send = async (resolved: ResolvedAnthropicAuth) => {
+      const headers = new Headers(init?.headers);
+      headers.delete("x-api-key");
+      headers.delete("authorization");
+      for (const [key, value] of Object.entries({ ...resolved.extraHeaders, ...resolved.headers })) headers.set(key, value);
+      headers.set("anthropic-version", anthropicVersion);
+      const betas = new Set((headers.get("anthropic-beta") ?? "").split(",").filter(Boolean));
+      betas.add("managed-agents-2026-04-01");
+      if (resolved.oauthBeta) betas.add(OAUTH_API_BETA_HEADER);
+      headers.set("anthropic-beta", [...betas].join(","));
+      return fetcher(`${resolved.messagesBaseURL}${url.pathname.slice(nativePrefix.length)}${url.search}`, { ...init, headers, redirect: "error" });
+    };
+    const resolved = await auth.resolve();
+    const response = await send(resolved);
+    if (response.status !== 401 || !resolved.refreshable || !auth.invalidateToken()) return response;
+    const refreshed = await auth.resolve();
+    if (refreshed.credential === resolved.credential) return response;
+    await response.body?.cancel().catch(() => undefined);
+    return send(refreshed);
+  };
+  let managedClient: AnthropicManagedAgentsClient | undefined;
 
   return createProviderAdapter({
     name: "anthropic",
     languageModel: (modelId) => new AnthropicLanguageModel(modelId, new DirectAnthropicMessagesTransport(auth, anthropicVersion, fetcher)),
-    rawFetch
+    rawFetch,
+    get managedAgents() {
+      if (!managedClient) {
+        const native = new Anthropic({
+          apiKey: "zhivex-managed-credentials", authToken: null, baseURL: credentialBaseURL,
+          fetch: managedFetch, maxRetries: 0
+        });
+        managedClient = { agents: native.beta.agents, environments: native.beta.environments, sessions: native.beta.sessions };
+      }
+      return managedClient;
+    }
   });
 };
 

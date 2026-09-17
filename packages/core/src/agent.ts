@@ -1,3 +1,4 @@
+import { refreshAgentTaskOutcome } from "./agent-reconciliation.js";
 import { createHash } from "node:crypto";
 
 import { createAgentApprovalMessage, getAgentApprovalRequests } from "./agent-approval.js";
@@ -206,6 +207,7 @@ const cloneMetadata = (...values: Array<Record<string, JsonValue> | undefined>) 
 
 const toOutput = <TOutput = unknown>(state: AgentRunState): AgentRunOutput<TOutput> => ({
   status: state.status,
+  taskOutcome: state.taskOutcome,
   outputText: state.outputText,
   finalOutput:
     state.status === "completed" && state.finalOutput !== undefined
@@ -933,6 +935,7 @@ const persistState = async <TModel extends LanguageModel>(
   policy?: AgentRunPolicy
 ) => {
   state.updatedAt = Date.now();
+  await refreshAgentTaskOutcome(state, agent.store);
   const serialized = assertStateSize(agent, agent.store ? normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }) : state, policy);
   if (agent.store) {
     await saveStateWithRevision(agent.store, state, serialized);
@@ -1382,6 +1385,8 @@ const wrapToolWithJournal = <TModel extends LanguageModel>(
         throw new ValidationError(`Durable tool "${tool.name}" requires an execution context.`);
       }
       const serializedInput = serializeJsonValue(input);
+      const confirmed = state.reconciliations?.find(record => record.evidence.toolName === tool.name && canonicalJson(record.evidence.input) === canonicalJson(serializedInput));
+      if (confirmed) return confirmed.evidence.output;
       const step = context.step;
       const toolCallId = durableToolCallId(state.runId, step, context.toolCall.id, tool.name, serializedInput);
       const idempotencyKey = `${state.runId}:${toolCallId}`;
@@ -1390,6 +1395,7 @@ const wrapToolWithJournal = <TModel extends LanguageModel>(
         runId: state.runId,
         scope: state.scope,
         toolCallId,
+        providerToolCallId: context.toolCall.id,
         toolName: tool.name,
         status: "pending",
         idempotencyKey,
@@ -2818,6 +2824,7 @@ export const runAgent = async <
       ...approvalsFromEvents(newSteps.flatMap((step) => step.response?.messages ?? []))
     ]);
     await persistState(agent, output.state, policy);
+    output.taskOutcome = output.state.taskOutcome;
     await emitRunFinishTelemetry(agent, output.state);
 
     executionEnvironmentStatus = output.status;
@@ -3205,6 +3212,7 @@ export const streamAgent = <
           await emitApprovalTelemetry(agent, result.state, approvalsFromEvents(newSteps.flatMap((step) => step.response?.messages ?? [])));
         }
         await persistState(agent, result.state, policy);
+        result.taskOutcome = result.state.taskOutcome;
         await emitRunFinishTelemetry(agent, result.state);
 
         await publish({

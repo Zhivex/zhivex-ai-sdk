@@ -28,3 +28,6 @@ export type {
   ToolAuditRecord,
   ToolAuditRecordOptions
 } from "@zhivex-ai/core";
+
+export { reconcileAgentToolExecution } from "@zhivex-ai/core";
+export type { ReconcileAgentToolExecutionOptions, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "@zhivex-ai/core";

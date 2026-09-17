@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const geminiCatalogFragment = defineModelCatalogFragment({
   provider: "gemini",
-  revision: "2026-09-04",
-  verifiedAt: "2026-09-04",
+  revision: "2026-09-16",
+  verifiedAt: "2026-09-16",
   pricingEffectiveAt: "2026-08-30",
   sources: [
     "https://ai.google.dev/gemini-api/docs/models",
@@ -12,6 +12,8 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     "https://ai.google.dev/gemini-api/docs/pricing"
   ],
   entries: [
+    { provider: "gemini", modelId: "gemini-3.8-live" },
+    { provider: "gemini", modelId: "gemini-3.8-live-extended-thinking" },
     {
       "provider": "gemini",
       "modelId": "gemini-3.8-flash",

@@ -1,0 +1,35 @@
+{
+  "protocol": "ZHX-EXP-001 v0.3 / A3 denial and A4 uncertain effect window",
+  "candidate": "zhivex",
+  "leasePolicy": {
+    "ttlMs": 2000,
+    "heartbeatMs": 500
+  },
+  "recoveryPolicy": "native resume then externally verified reconciliation; at most one retry after 2200ms on lease conflict",
+  "workerRuntime": "v22.21.0",
+  "dependencies": {
+    "@zhivex-ai/core": "file:artifacts/zhivex-ai-core-5a5d203d4b804e05dd32d5b6a441fe43c3d119719d998e39b3d65e00755e3f2a.tgz",
+    "zod": "4.6.3"
+  },
+  "baselineSourceSha": "6577e2aefc0d80ebf1e996a656508a766b508734",
+  "sourceSha": "6577e2aefc0d80ebf1e996a656508a766b508734",
+  "modifiedWorkingTree": true,
+  "artifact": "source-built core 1.17.0, not registry-certified",
+  "artifactSha256": "5a5d203d4b804e05dd32d5b6a441fe43c3d119719d998e39b3d65e00755e3f2a",
+  "bun": "1.4.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "store": "SDK FileAgentRunStore; external effects SQLite WAL/FULL",
+  "model": "deterministic-orders-v1",
+  "network": "loopback only; no provider credentials",
+  "count": 10,
+  "repetitions": 3,
+  "codeHashes": {
+    "runner.ts": "daf33d61f332b553e3e7681850f1b4d9816a203bb61d6c0337f6780b004f992c",
+    "worker.ts": "03a6438122c0dfbb984bac30dcaa7f17567dae6aed52c48a17c2760bd127a5e3",
+    "fixture.ts": "aa27eba5e3c8b72d93442e4de2c85d58e422fe0b7f29f59f46ae6861e81c1c89",
+    "evaluator.ts": "0f7cac5bca542f9d546e1e5098ad12470ea5e5e59c106da590e519a02bfa5cd1",
+    "bun.lock": "c036be08d95bf6da07c24880617d3a32383e8ede58b78852065522f226c4ffba",
+    "dist/worker.js": "30f0b4824f412e75b1de28a818e19c35066e3c61a9746e6d15dbef46bf50abcc"
+  }
+}

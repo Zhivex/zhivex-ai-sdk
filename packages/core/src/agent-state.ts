@@ -424,6 +424,18 @@ const cloneJson = <T>(value: T): T => {
   }
 };
 
+const taskOutcome = (value: unknown, path: string) => {
+  const current = record(value, path);
+  if (!["in_progress", "resolved", "denied", "failed", "needs_reconciliation"].includes(string(current.status, `${path}.status`))) invalid(path, "has unsupported task status");
+  const operations = array(current.operations, `${path}.operations`);
+  if ((current.status === "needs_reconciliation") !== (operations.length > 0)) invalid(path, "must identify exactly the unresolved operations");
+  operations.forEach((item, index) => {
+    const operation = record(item, `${path}.operations[${index}]`);
+    for (const key of ["toolCallId", "toolName", "idempotencyKey"]) string(operation[key], `${path}.${key}`);
+    if (operation.diagnosticCode !== "INDETERMINATE_TOOL_EXECUTION") invalid(path, "has unsupported diagnosticCode");
+  });
+};
+
 export const normalizeAgentRunState = (value: unknown): AgentRunState => {
   const state = record(value, "payload");
   if (state.schemaVersion !== undefined && state.schemaVersion !== AGENT_RUN_STATE_SCHEMA_VERSION) {
@@ -436,6 +448,19 @@ export const normalizeAgentRunState = (value: unknown): AgentRunState => {
   }
   if (state.revision !== undefined) integer(state.revision, "revision");
   scope(state.scope, "scope");
+  if (state.taskOutcome !== undefined) taskOutcome(state.taskOutcome, "taskOutcome");
+  if (state.reconciliations !== undefined) array(state.reconciliations, "reconciliations").forEach((item, index) => {
+    const path = `reconciliations[${index}]`;
+    const current = record(item, path);
+    if (current.decision !== "confirmed") invalid(path, "requires a confirmed decision");
+    finiteNumber(current.verifiedAt, `${path}.verifiedAt`, 0);
+    string(current.previousOutputText, `${path}.previousOutputText`, true);
+    if (current.previousOutcome !== undefined) taskOutcome(current.previousOutcome, `${path}.previousOutcome`);
+    const evidence = record(current.evidence, `${path}.evidence`);
+    for (const key of ["operationId", "runId", "toolCallId", "toolName", "idempotencyKey", "source"]) string(evidence[key], `${path}.evidence.${key}`);
+    scope(evidence.scope, `${path}.evidence.scope`);
+    for (const key of ["input", "output", "proof"]) jsonValue(evidence[key], `${path}.evidence.${key}`);
+  });
   string(state.runId, "runId");
   optionalString(state.idempotencyKey, "idempotencyKey");
   optionalString(state.agentId, "agentId");

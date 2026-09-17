@@ -257,6 +257,7 @@ const stableSymbols = [
 ] as const;
 
 const betaSymbols = [
+  "reconcileAgentToolExecution",
   "ModelResolutionError",
   "PROVIDER_CONFORMANCE_EVIDENCE_LEVELS",
   "PROVIDER_CONFORMANCE_REPORT_SCHEMA_VERSION",

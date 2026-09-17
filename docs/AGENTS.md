@@ -266,3 +266,49 @@ Before cutting an agent-focused release:
 4. After the build, run `bun run packages/agents/tests/dist-entrypoints.smoke.ts` to verify every published subpath loads from `dist`.
 5. Verify the provider matrix still describes current adapter behavior.
 6. Confirm the changeset includes every published package with changed exports or docs.
+
+## External effect reconciliation (Beta)
+
+`status: "completed"` still means the agent loop finished. The additive
+`taskOutcome` on state and output distinguishes `resolved`, `denied`, `failed`,
+`in_progress`, and `needs_reconciliation`. The latter includes durable tool IDs,
+idempotency keys and the typed `INDETERMINATE_TOOL_EXECUTION` diagnostic. Historical
+states can omit this field. An ordinary tool error does not imply an indeterminate
+external effect. `resolved` means the runtime has finished without unresolved
+journal entries; applications must still validate their business success criteria.
+A denied approval is reported as `denied`. Agent evaluations reject pending
+reconciliation even when the technical status is completed.
+
+Use `reconcileAgentToolExecution` from `@zhivex-ai/sdk` or
+`@zhivex-ai/agents/beta` with FileAgentRunStore or InMemoryAgentRunStore:
+
+```ts
+const state = await reconcileAgentToolExecution({
+  store,
+  evidence, // operationId, runId, scope, toolCallId, toolName, idempotencyKey,
+            // exact input, confirmed output, source, proof (all JSON)
+  verifyEvidence: async (candidate, journal) => {
+    // Application-owned verification against an authenticated external ledger.
+    // Verify operationId, tenant, arguments, receipt integrity AND output.
+    return externalLedger.verifyConfirmedEffect(candidate, journal);
+  }
+});
+const result = await runAgent(agent, { state, maxSteps: state.currentStep + 2 });
+const successful = result.taskOutcome?.status === "resolved" && validateBusinessResult(result);
+```
+
+The SDK binds evidence to the persisted run, scope, tool and input. The required
+verifier authenticates the source and binds the external operation ID and result;
+returning `true` without verification is unsafe. No evidence, rejection, conflicting
+evidence or an active worker leaves the operation blocked. Evidence is stored in
+the journal with its decision, timestamp and previous task outcome/output. Keep
+receipts minimal and free of secrets. Identical reconciliation is idempotent.
+
+The journal decision precedes the CAS state projection. A crash between those
+writes is repaired by repeating reconciliation with the same evidence. The state
+becomes queued; continuation is required to resolve the task. Previous steps and
+output remain in audit records. Exact repeats of the confirmed tool/input reuse
+its result within this run; use a distinct operation ID for a new intentional
+mutation. Other inputs are separate operations. Lease ownership is fenced at each
+write. SQL stores currently reject this API until they implement the same fencing
+capability; direct journal editing is not a supported reconciliation workflow.

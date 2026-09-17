@@ -298,6 +298,12 @@ const assertJournalRevision = (
   }
 };
 
+const assertLeaseOwner = (lease: AgentRunLease | undefined, ownerId: string | undefined) => {
+  if (ownerId !== undefined && (!lease || lease.ownerId !== ownerId || lease.expiresAt <= Date.now())) {
+    throw new ConflictError("Reconciliation lost execution ownership.");
+  }
+};
+
 const nextJournalEntry = (
   entry: AgentToolCallJournalEntry,
   options?: AgentToolCallJournalSaveOptions
@@ -443,6 +449,7 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
   };
 
   return {
+    reconciliationFencing: true,
     load(runId, scope) {
       const state = states.get(runKey(runId, scope));
       return state ? cloneState(normalizeAgentRunState(state)) : undefined;
@@ -484,6 +491,7 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
     },
     save(state, saveOptions) {
       const scope = resolveScope(options.scope, state.scope);
+      assertLeaseOwner(leases.get(runKey(state.runId, scope)), saveOptions?.leaseOwnerId);
       const current = states.get(runKey(state.runId, scope));
       assertExpectedRevision(current, saveOptions?.expectedRevision);
       const normalized = nextStoredState(state, saveOptions);
@@ -573,6 +581,7 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
     saveToolCall(entry, journalOptions) {
       const scope = resolveScope(options.scope, entry.scope);
       if (!states.has(runKey(entry.runId, scope))) throw new ValidationError("Cannot journal a tool call for an unknown run.");
+      assertLeaseOwner(leases.get(runKey(entry.runId, scope)), journalOptions?.leaseOwnerId);
       const key = journalKey(entry.runId, entry.toolCallId, scope);
       const current = journal.get(key);
       assertJournalRevision(current, journalOptions?.expectedRevision);
@@ -648,6 +657,7 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
   };
 
   return {
+    reconciliationFencing: true,
     load,
     findByIdempotencyKey,
     async findByParentRunId(parentRunId, scope) {
@@ -704,6 +714,7 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       const scope = effectiveScope(state.scope);
       const releaseLock = await acquireFileRunStoreLock(revisionLockPath(state.runId, scope));
       try {
+        if (saveOptions?.leaseOwnerId) assertLeaseOwner(JSON.parse(await fs.readFile(leasePath(state.runId, scope), "utf8")), saveOptions.leaseOwnerId);
         const current = await load(state.runId, scope);
         assertExpectedRevision(current, saveOptions?.expectedRevision);
         const normalized = nextStoredState(state, saveOptions);
@@ -784,54 +795,72 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       return items.length;
     },
     async acquireLease(runId, leaseOptions, scope) {
-      validateLeaseOptions(leaseOptions);
-      if (!await load(runId, scope)) return undefined;
       await ensurePrivateDirectory(options.directory);
-      const file = leasePath(runId, scope);
-      const now = leaseOptions.now ?? Date.now();
-      const lease = { runId, ownerId: leaseOptions.ownerId, expiresAt: now + leaseOptions.ttlMs };
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          await writePrivateFile(file, JSON.stringify(lease), { flag: "wx" });
-          return lease;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-          const current = JSON.parse(await fs.readFile(file, "utf8")) as AgentRunLease;
-          if (current.ownerId === leaseOptions.ownerId) {
-            await writePrivateFile(file, JSON.stringify(lease));
+      const unlock = await acquireFileRunStoreLock(revisionLockPath(runId, scope));
+      try {
+        validateLeaseOptions(leaseOptions);
+        if (!await load(runId, scope)) return undefined;
+        await ensurePrivateDirectory(options.directory);
+        const file = leasePath(runId, scope);
+        const now = leaseOptions.now ?? Date.now();
+        const lease = { runId, ownerId: leaseOptions.ownerId, expiresAt: now + leaseOptions.ttlMs };
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            await writePrivateFile(file, JSON.stringify(lease), { flag: "wx" });
             return lease;
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+            const current = JSON.parse(await fs.readFile(file, "utf8")) as AgentRunLease;
+            if (current.ownerId === leaseOptions.ownerId) {
+              await writePrivateFile(file, JSON.stringify(lease));
+              return lease;
+            }
+            if (current.expiresAt > now) return undefined;
+            await fs.unlink(file).catch(() => undefined);
           }
-          if (current.expiresAt > now) return undefined;
-          await fs.unlink(file).catch(() => undefined);
         }
+        return undefined;
+      } finally {
+        await unlock();
       }
-      return undefined;
     },
     async renewLease(runId, leaseOptions, scope) {
-      validateLeaseOptions(leaseOptions);
-      const file = leasePath(runId, scope);
-      const now = leaseOptions.now ?? Date.now();
+      await ensurePrivateDirectory(options.directory);
+      const unlock = await acquireFileRunStoreLock(revisionLockPath(runId, scope));
       try {
-        const current = JSON.parse(await fs.readFile(file, "utf8")) as AgentRunLease;
-        if (current.ownerId !== leaseOptions.ownerId || current.expiresAt <= now) return undefined;
-        const lease = { runId, ownerId: leaseOptions.ownerId, expiresAt: now + leaseOptions.ttlMs };
-        await writePrivateFile(file, JSON.stringify(lease));
-        return lease;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-        throw error;
+        validateLeaseOptions(leaseOptions);
+        const file = leasePath(runId, scope);
+        const now = leaseOptions.now ?? Date.now();
+        try {
+          const current = JSON.parse(await fs.readFile(file, "utf8")) as AgentRunLease;
+          if (current.ownerId !== leaseOptions.ownerId || current.expiresAt <= now) return undefined;
+          const lease = { runId, ownerId: leaseOptions.ownerId, expiresAt: now + leaseOptions.ttlMs };
+          await writePrivateFile(file, JSON.stringify(lease));
+          return lease;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+          throw error;
+        }
+      } finally {
+        await unlock();
       }
     },
     async releaseLease(runId, ownerId, scope) {
-      const file = leasePath(runId, scope);
+      await ensurePrivateDirectory(options.directory);
+      const unlock = await acquireFileRunStoreLock(revisionLockPath(runId, scope));
       try {
-        const current = JSON.parse(await fs.readFile(file, "utf8")) as AgentRunLease;
-        if (current.ownerId !== ownerId) return false;
-        await fs.unlink(file);
-        return true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-        throw error;
+        const file = leasePath(runId, scope);
+        try {
+          const current = JSON.parse(await fs.readFile(file, "utf8")) as AgentRunLease;
+          if (current.ownerId !== ownerId) return false;
+          await fs.unlink(file);
+          return true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+          throw error;
+        }
+      } finally {
+        await unlock();
       }
     },
     async loadToolCall(runId, toolCallId, scope) {
@@ -857,29 +886,42 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       return results.sort((a, b) => a.updatedAt - b.updatedAt || a.toolCallId.localeCompare(b.toolCallId));
     },
     async saveToolCall(entry, journalOptions) {
-      const file = toolPath(entry.runId, entry.toolCallId, entry.scope);
-      const current = await this.loadToolCall?.(entry.runId, entry.toolCallId, entry.scope);
-      assertJournalRevision(current, journalOptions?.expectedRevision);
-      const next = nextJournalEntry(entry, journalOptions);
-      await writePrivateFile(file, JSON.stringify(next, null, 2));
-      return next;
+      await ensurePrivateDirectory(options.directory);
+      const unlock = await acquireFileRunStoreLock(revisionLockPath(entry.runId, entry.scope));
+      try {
+        if (journalOptions?.leaseOwnerId) assertLeaseOwner(JSON.parse(await fs.readFile(leasePath(entry.runId, entry.scope), "utf8")), journalOptions.leaseOwnerId);
+        const file = toolPath(entry.runId, entry.toolCallId, entry.scope);
+        const current = await this.loadToolCall?.(entry.runId, entry.toolCallId, entry.scope);
+        assertJournalRevision(current, journalOptions?.expectedRevision);
+        const next = nextJournalEntry(entry, journalOptions);
+        await writePrivateFile(file, JSON.stringify(next, null, 2));
+        return next;
+      } finally {
+        await unlock();
+      }
     },
     async claimToolExecution(entry) {
       await ensurePrivateDirectory(options.directory);
-      if (!await load(entry.runId, entry.scope)) throw new ValidationError("Cannot journal a tool call for an unknown run.");
-      const next = nextJournalEntry({ ...entry, status: "running", revision: 0 });
+      const unlock = await acquireFileRunStoreLock(revisionLockPath(entry.runId, entry.scope));
       try {
-        await writePrivateFile(
-          toolPath(entry.runId, entry.toolCallId, entry.scope),
-          JSON.stringify(next, null, 2),
-          { flag: "wx" }
-        );
-        return { claimed: true, entry: next };
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const existing = await this.loadToolCall?.(entry.runId, entry.toolCallId, entry.scope);
-        if (!existing) throw new ConflictError("Tool execution claim could not be loaded.");
-        return { claimed: false, entry: existing };
+        await ensurePrivateDirectory(options.directory);
+        if (!await load(entry.runId, entry.scope)) throw new ValidationError("Cannot journal a tool call for an unknown run.");
+        const next = nextJournalEntry({ ...entry, status: "running", revision: 0 });
+        try {
+          await writePrivateFile(
+            toolPath(entry.runId, entry.toolCallId, entry.scope),
+            JSON.stringify(next, null, 2),
+            { flag: "wx" }
+          );
+          return { claimed: true, entry: next };
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          const existing = await this.loadToolCall?.(entry.runId, entry.toolCallId, entry.scope);
+          if (!existing) throw new ConflictError("Tool execution claim could not be loaded.");
+          return { claimed: false, entry: existing };
+        }
+      } finally {
+        await unlock();
       }
     },
     async completeToolExecution(entry, journalOptions) {

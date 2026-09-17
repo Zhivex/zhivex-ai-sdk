@@ -38,8 +38,8 @@ describe("deepseek adapter", () => {
       jsonMode: true,
       toolChoice: true,
       parallelToolCalls: true,
-      vision: false,
-      files: false,
+      vision: true,
+      files: true,
       audioInput: false,
       audioOutput: false,
       embeddings: false,
@@ -113,14 +113,14 @@ describe("deepseek adapter", () => {
     }
   });
 
-  it("maps DeepSeek V4 Flash Vision image and file inputs in order", async () => {
+  it.each(["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"])("maps DeepSeek V4 Flash Vision image and file inputs in order", async (modelId) => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
         choices: [{ finish_reason: "stop", message: { content: "vision ok" } }]
       })
     );
     const provider = createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch });
-    const model = provider("deepseek-v4-flash-vision-exp");
+    const model = provider(modelId);
 
     expect(model.capabilities.vision).toBe(true);
     expect(model.capabilities.files).toBe(true);
@@ -145,7 +145,7 @@ describe("deepseek adapter", () => {
     });
 
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
-    expect(body.model).toBe("deepseek-v4-flash-vision-exp");
+    expect(body.model).toBe(modelId);
     expect(body.messages).toEqual([
       {
         role: "user",
@@ -166,7 +166,7 @@ describe("deepseek adapter", () => {
 
     await expect(
       generateText({
-        model: provider("deepseek-v4-flash"),
+        model: provider("deepseek-v4-pro"),
         messages: [
           {
             role: "user",
@@ -174,7 +174,7 @@ describe("deepseek adapter", () => {
           }
         ]
       })
-    ).rejects.toThrow('Model "deepseek/deepseek-v4-flash" does not support image inputs.');
+    ).rejects.toThrow('Model "deepseek/deepseek-v4-pro" does not support image inputs.');
 
     await expect(
       generateText({

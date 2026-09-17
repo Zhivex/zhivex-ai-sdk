@@ -362,3 +362,22 @@ for routing, exclusions and the isolated-consumer verification command.
 ### Generation retries
 
 Language-model generation and streaming startup validate HTTP failures inside the retry boundary. `maxRetries` applies to HTTP 408, 429 and 5xx responses, with bounded `Retry-After` waits. Other 4xx responses are not retried. Timeout and caller cancellation interrupt retry waits; successful stream bodies remain unread until consumption.
+
+## OpenAI Agents API (native Beta)
+
+`createOpenAI(options).agents` exposes `createSession`, `streamSession`, `getSession`, `deleteSession`, `sendEvents`, `cancelTurn`, `streamEvents`, and `listItems`. It uses `/v1/agents/sessions` with `OpenAI-Beta: agents=v1`. Native event payloads remain intact; this API does not use the local Zhivex agent runtime.
+
+```ts
+const sessions = openai.agents;
+const session = await sessions.createSession({
+  agent: { model: "gpt-6-astra", instructions: "Answer concisely." },
+  environment: { type: "none" },
+  input: "Hello"
+});
+const items = await sessions.listItems(session.id, { order: "asc", limit: 100 });
+console.log(items);
+```
+
+Use `environment: { type: "openai_hosted" }` when a managed sandbox is required, or supply the documented native environment object. Streaming returns a lazy async generator; iteration starts the request, and break/return releases its response reader. Requests support `abortSignal` and `timeoutMs`; no automatic mutation retries or reconnection are performed. Aborting a stream does not cancel remote work: call `cancelTurn` explicitly. Recover disconnected streams by retrieving the session and saved items before resubmitting work.
+
+Events such as idle, subagent completion, turn failure and cancellation are preserved, not treated as root-turn success. The client does not execute local function requests automatically. Pagination uses explicit cursors in `listItems`; preserve provider IDs for continuation. Event submission and cancellation may return `undefined` for the native empty HTTP 202 acknowledgement. Conversation-only sessions (`environment.type: "none"`) require initial input. The [September evidence report](../../docs/maintainers/WEEKLY_PROVIDER_LIVE_2026_09_16.md) covers real conversation sessions; sandbox and remote-tool execution are outside this scope. See [Agents API quickstart](https://developers.openai.com/api/docs/guides/agents-api/quickstart) and [events](https://developers.openai.com/api/docs/guides/agents-api/sessions/events).

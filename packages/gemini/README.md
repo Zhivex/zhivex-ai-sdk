@@ -249,3 +249,12 @@ See [Gemini 3.8 migration](https://ai.google.dev/gemini-api/docs/latest-model) a
 ### Generation retries
 
 Language-model generation and streaming startup validate HTTP failures inside the retry boundary. `maxRetries` applies to HTTP 408, 429 and 5xx responses, with bounded `Retry-After` waits. Other 4xx responses are not retried. Timeout and caller cancellation interrupt retry waits; successful stream bodies remain unread until consumption.
+
+## Gemini 3.8 Live (September 2026)
+
+Use `gemini.realtimeModel!("gemini-3.8-live")` or `gemini.realtimeModel!("gemini-3.8-live-extended-thinking")`.
+The standard model accepts no reasoning effort or token budget. Extended Thinking accepts `reasoning: { effort: "low" | "medium" | "high", includeThoughts: true }`, without a token budget. Both map callable tools to `NON_BLOCKING`. Raw `providerOptions.tools` and `generationConfig` overrides are rejected for these models; use the shared fields.
+
+`session.sendText()` sends an explicit user turn with `turnComplete: true`, which interrupts generation. Tool results retain call IDs. Extended Thinking may finish intermediate spoken fragments while still working: the adapter only reports response completion after `interactionStatus: "IDLE"`. Status and thought summaries are preserved as `realtime-provider-data`, and audio, text and tool calls are all consumed. No scheduling or blocking override is exposed for Extended Thinking.
+
+The [September live evidence report](../../docs/maintainers/WEEKLY_PROVIDER_LIVE_2026_09_16.md) covers text input, a local tool result, output audio, and Extended Thinking returning to `IDLE`. It does not certify microphone input or production latency. See [Google Live capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities) and [background thinking](https://ai.google.dev/gemini-api/docs/live-api/thinking).

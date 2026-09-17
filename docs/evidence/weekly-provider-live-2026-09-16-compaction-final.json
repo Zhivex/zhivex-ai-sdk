@@ -1,0 +1,75 @@
+{
+  "startedAt": "2026-09-17T00:04:04.358Z",
+  "baseCommit": "6577e2aefc0d80ebf1e996a656508a766b508734",
+  "trackedDiffSha256": "5f3a0d6b7c0d3e0a20842cb21f57e8a76f54e37d0a8918c8de6f28814192728e",
+  "artifacts": [
+    {
+      "name": "@zhivex-ai/core",
+      "version": "1.17.0",
+      "tarballSha256": "9d289bfa81df4279fc349c719f19b523a6b9af2239607bd038f52c48ec924d14",
+      "entrySha256": "a46e39427501afcdf741c7a0adf96d5bdb232bcccf10c61c08a944e8089dd375"
+    },
+    {
+      "name": "@zhivex-ai/sdk",
+      "version": "1.20.0",
+      "tarballSha256": "b17b726b261e1a3b8e3efbd52fde201df99c26f28f2fc082b4876c4306b62ce8",
+      "entrySha256": "7ab05fd60fea83d55112bef12a8b11d3ceedb74a93a1046540361764939ae88f"
+    },
+    {
+      "name": "@zhivex-ai/deepseek",
+      "version": "0.5.3",
+      "tarballSha256": "90e0855ed1d71e682d0aab232d9489a247649a288f5106836203d6aaf22a8e28",
+      "entrySha256": "42635dbd2cfa473c6ed08ad8070658fe145cd5f14685359bf8142e74b00f999d"
+    },
+    {
+      "name": "@zhivex-ai/gemini",
+      "version": "0.11.3",
+      "tarballSha256": "7b78f46eafdac35d9f1b3504d36dcf5c8c21267e34b3a0afdb63b2cc141bfb84",
+      "entrySha256": "5175e90694dc6340af635dd6d629d11cd3e759426142e5182c01f13a9b66bda0"
+    },
+    {
+      "name": "@zhivex-ai/anthropic",
+      "version": "0.10.2",
+      "tarballSha256": "dac3209b7c16858d579041d006d17dd99af7f1c86b81fdcb9a298dd0edbc83b6",
+      "entrySha256": "7a6deca341f70b94268c2b9102c3ab872f05ef3c2fd6c2a37e5c70df5e3e4fea"
+    },
+    {
+      "name": "@zhivex-ai/openai",
+      "version": "0.12.1",
+      "tarballSha256": "54eee79f5038e6aa90369a380d7e00bf038453aee9e338c4a67ab3da03f0ac24",
+      "entrySha256": "6db14456ea701c1b074cb831823e71ee93ffc1670064958539c8ed8973755082"
+    },
+    {
+      "name": "@zhivex-ai/qwen",
+      "version": "0.11.5",
+      "tarballSha256": "7761a40dc5113661dde1d5e79568c8fe97ad34fc240a38b3170f869631d06a43",
+      "entrySha256": "38f8e396a5c6efe9e036f2862b09cd4626ab3e7d89baf31a8afed2d162ba1088"
+    }
+  ],
+  "results": [
+    {
+      "name": "anthropic-compaction",
+      "startedAt": "2026-09-17T00:04:04.477Z",
+      "status": "passed",
+      "signedBlock": true,
+      "replayMatched": true,
+      "usage": {
+        "inputTokens": 131,
+        "cachedInputTokens": 0,
+        "cacheWriteTokens": 0,
+        "outputTokens": 586,
+        "totalTokens": 717
+      },
+      "replayUsage": {
+        "inputTokens": 632,
+        "cachedInputTokens": 0,
+        "cacheWriteTokens": 0,
+        "outputTokens": 10,
+        "reasoningTokens": 0,
+        "totalTokens": 642
+      },
+      "finishedAt": "2026-09-17T00:04:16.055Z"
+    }
+  ],
+  "finishedAt": "2026-09-17T00:04:16.056Z"
+}
