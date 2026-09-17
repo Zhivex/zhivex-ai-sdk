@@ -42,7 +42,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.125.0",
-    "@zhivex-ai/core": "^1.18.0",
+    "@zhivex-ai/core": "^1.16.1",
     "zod": "^4.6.3"
   }
 }

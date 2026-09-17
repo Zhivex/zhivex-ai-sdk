@@ -41,7 +41,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^1.18.0",
+    "@zhivex-ai/core": "^1.16.1",
     "@zhivex-ai/anthropic": "^0.11.0",
     "google-auth-library": "^11.0.2",
     "zod": "^4.6.3"
