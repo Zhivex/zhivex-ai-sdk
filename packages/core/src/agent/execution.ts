@@ -136,7 +136,13 @@ const subAgentToolInputSchema = z.object({
 
 const defaultSubAgentToolName = (agent: AgentDefinition): string => {
   const id = agent.id ?? `${agent.model.provider}_${agent.model.modelId}`;
-  return `subagent_${id.replace(/[^A-Za-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "agent"}`;
+  const normalized = id.replace(/[^A-Za-z0-9_]+/g, "_");
+  let start = 0;
+  let end = normalized.length;
+  // Scan the edges once to avoid regex backtracking on long underscore runs.
+  while (start < end && normalized[start] === "_") start++;
+  while (end > start && normalized[end - 1] === "_") end--;
+  return `subagent_${normalized.slice(start, end) || "agent"}`;
 };
 
 export const createSubAgentTool = <TModel extends LanguageModel>(
