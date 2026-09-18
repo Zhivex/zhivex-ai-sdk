@@ -1,7 +1,7 @@
 import type {
   ModelCapabilities,
   RealtimeSessionConfig,
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/contracts";
 
 export const capabilities: ModelCapabilities = {
   streaming: true,

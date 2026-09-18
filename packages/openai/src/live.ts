@@ -4,7 +4,7 @@ import {
   type JsonValue, type ModelCapabilities, type RealtimeConnectOptions,
   type RealtimeConnectionFactory, type RealtimeContextUpdate, type RealtimeEvent,
   type RealtimeModel, type RealtimeSessionConfig
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export const isOpenAILiveModel = (modelId: string) => /^gpt-live-1(?:-\d{4}-\d{2}-\d{2})?$/.test(modelId);
 

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { supportsChatMediaType, validateChatInputParts, type ChatInputCapabilities } from "./input-capabilities.js";
 import type { ChatInputPart } from "./types.js";
 
 export interface AttachmentUploadContext {
@@ -50,6 +51,7 @@ const readAttachment: AttachmentUploader = (file, { signal, onProgress }) => new
 });
 
 export function useAttachments(options: {
+  inputCapabilities?: ChatInputCapabilities;
   accept?: string; maxAttachments: number; maxAttachmentBytes: number;
   uploadAttachment?: AttachmentUploader;
   onError?: (error: Error, file?: File) => void;
@@ -84,6 +86,7 @@ export function useAttachments(options: {
       });
       if (!current()) return;
       if (!["image", "audio", "file"].includes(part.type)) throw new Error("An attachment must resolve to image, audio, or file content.");
+      validateChatInputParts([part], settings.current.inputCapabilities);
       entry.value = { ...entry.value, status: "ready", part, progress: 1 };
       publish();
     } catch (cause) {
@@ -99,11 +102,11 @@ export function useAttachments(options: {
       const config = settings.current;
       const failure = entries.current.size >= config.maxAttachments ? config.errors.limit
         : file.size > config.maxAttachmentBytes ? config.errors.size
-        : !acceptsAttachment(file, config.accept) ? config.errors.type : undefined;
+        : (!acceptsAttachment(file, config.accept) || !supportsChatMediaType(file.type, config.inputCapabilities)) ? config.errors.type : undefined;
       if (failure) { config.onError?.(new Error(failure), file); continue; }
       const id = typeof globalThis.crypto?.randomUUID === "function" ? globalThis.crypto.randomUUID()
         : `attachment_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-      const previewUrl = /^(image|audio)\//.test(file.type) && typeof URL.createObjectURL === "function"
+      const previewUrl = /^(image|audio|video)\//.test(file.type) && typeof URL.createObjectURL === "function"
         ? URL.createObjectURL(file) : undefined;
       entries.current.set(id, { file, controller: new AbortController(), value: {
         id, name: file.name, mediaType: file.type, size: file.size,

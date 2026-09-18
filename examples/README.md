@@ -77,3 +77,7 @@ For migration-oriented snippets from direct provider SDKs, Vercel AI SDK core us
 - Some providers do not support every capability. The examples follow the actual adapter capabilities in this repo.
 - `zod` is used in structured output and tool examples.
 - Agent examples focus on the shared runtime, local tools, lifecycle streaming, SSE/UI transport, and deterministic approval/resume flows. Provider-native remote MCP approvals still require provider-specific setup and are documented in the root `README.md`.
+
+## React Omni and realtime
+
+The [React Omni example](./react-omni/README.md) combines Qwen multimodal uploads, agent approval, HTTP replay and a separate server-owned voice relay.

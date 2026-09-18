@@ -52,7 +52,7 @@ Packages currently publishable to npm:
 
 ## Stack and Commands
 
-- Preferred runtime: `bun` 1.3+.
+- Preferred runtime: `bun` 1.4.2+.
 - Language: TypeScript with project references.
 - Tests: `vitest`.
 - Versioning and publishing: `changesets`.
@@ -126,102 +126,11 @@ A changeset is usually not needed if:
 - You only adjusted tests with no package impact.
 - You made a pure refactor with no observable runtime or type changes.
 
-### Recommended Publishing Steps
+### Publishing Procedure
 
-1. Confirm you are on the correct branch and that the working tree does not contain unrelated changes that could leak into the release.
-2. Implement the change and update tests and documentation as needed.
-3. Run:
+Follow [the canonical release guide](docs/maintainers/RELEASE.md) for validation, versioning, protected workflow dispatch, and postpublish verification. The supported channels are `latest` (stable) and `next` (prerelease). Do not publish locally or use another prerelease tag.
 
-```bash
-bun run typecheck
-bun run test
-bun run build
-```
-
-4. Create the changeset:
-
-```bash
-bun run changeset
-```
-
-5. Choose the correct packages and bump type:
-
-- `patch`: bug fixes or compatible adjustments.
-- `minor`: new backward-compatible capabilities.
-- `major`: breaking changes.
-
-6. Review the generated file in `.changeset/` and confirm it includes the correct packages.
-7. If the change touches `core`, review whether `sdk` and affected providers also need version bumps due to type, dependency, or public API impact.
-8. When preparing the release, run local versioning:
-
-```bash
-bun run version-packages
-```
-
-9. Review diffs in `package.json` files, internal dependency ranges, and any expected versioning output.
-10. Run again:
-
-```bash
-bun run typecheck
-bun run test
-bun run build
-```
-
-11. Commit and push the reviewed release source to `main`.
-12. Dispatch `.github/workflows/release.yml` with channel `latest`.
-
-### Stable Release Workflow
-
-Stable releases use the `latest` channel:
-
-1. Create or review the pending changesets.
-2. Run `bun run release:check`, `bun run docs:check`, typecheck, tests, build, and provider smoke.
-3. Run `bun run version-packages`.
-4. Review the generated versions, internal dependency ranges, changelogs, and lockfile.
-5. Re-run the validation gates.
-6. Commit and push the immutable release source to `main`.
-7. Dispatch `release.yml` with channel `latest`.
-8. Verify exact npm versions, the `latest` dist-tag, provenance, and package tags after the workflow completes.
-
-Do not publish stable packages manually. If Trusted Publishing fails, repair the npm/GitHub configuration and rerun the workflow without creating new versions.
-
-### Prerelease Workflow
-
-The supported prerelease channel is `next`:
-
-```bash
-bun run changeset
-bunx changeset pre enter next
-bun run version-packages
-bun run docs:check
-bun run typecheck
-bun run test
-bun run build
-bun run smoke:providers
-```
-
-Review, commit, and push the generated `-next.N` versions to `main`, then dispatch `release.yml` with channel `next`. The workflow publishes with the explicit `next` dist-tag and runs postpublish verification.
-
-When the prerelease cycle is complete:
-
-```bash
-bunx changeset pre exit
-bun run version-packages
-bun run docs:check
-bun run typecheck
-bun run test
-bun run build
-```
-
-Review and commit the stable versions before dispatching the `latest` channel.
-
-### Pre-release Rules
-
-- Do not publish a pre-release with the default `latest` dist-tag.
-- Use the same tag consistently within the same cycle, for example always `beta` until that line is ready to stabilize.
-- If `core` enters pre-release and downstream providers depend on it, review internal dependency ranges carefully after `version-packages`.
-- Treat pre-releases as npm-visible artifacts: documentation, tests, and package metadata should still be in good shape.
-- Before the final stable publish, confirm that pre-release suffixes were removed after `pre exit` and re-versioning.
+Use [agent release readiness](docs/maintainers/AGENT_RELEASE.md) for additional agent-specific gates.
 
 ### Mental Checklist Before Publishing
 

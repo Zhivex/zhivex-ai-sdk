@@ -45,6 +45,10 @@ surface. The package root remains backward compatible.
 | Import | Intended surface | Node.js built-ins |
 | --- | --- | --- |
 | `@zhivex-ai/core/contracts` | Provider-neutral TypeScript contracts | No runtime module |
+| `@zhivex-ai/core/agents` | Agent runtime and safety, without storage backends | Server-side |
+| `@zhivex-ai/core/generation` | Server-side generation and model wrapping, without stores or agents | Crypto only |
+| `@zhivex-ai/core/provider` | Adapter HTTP, SSE, realtime, and message helpers | Server-side |
+| `@zhivex-ai/core/catalog` | Catalog contracts and factory, without a default inventory | None |
 | `@zhivex-ai/core/runtime` | Adapter, message, tool, media, retrieval, and realtime primitives | None |
 | `@zhivex-ai/core/workflows` | Portable workflow orchestration, evaluation contracts, diffs, and gates | None |
 | `@zhivex-ai/core/ui` | UI messages, request parsing, and response streams | None |

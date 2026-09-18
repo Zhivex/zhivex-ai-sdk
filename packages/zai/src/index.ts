@@ -25,7 +25,7 @@ import {
   type ModelGenerateInput,
   type ModelMessage,
   type StreamEvent
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export const ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4";
 export const ZAI_CODING_BASE_URL = "https://api.z.ai/api/coding/paas/v4";

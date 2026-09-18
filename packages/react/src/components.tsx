@@ -67,6 +67,12 @@ export type {
   ResolvedChatLabels,
 } from "./component-support.js";
 
+import { getChatAttachmentAccept, validateChatInputParts, type ChatInputCapabilities } from "./input-capabilities.js";
+
+import { AgentRunsPanel, type AgentRunsPanelProps } from "./agent-runs.js";
+export { AgentRunsPanel } from "./agent-runs.js";
+export type { AgentRunsPanelProps } from "./agent-runs.js";
+
 export type ChatTheme = "system" | "light" | "dark";
 export type ChatDensity = "comfortable" | "compact";
 
@@ -422,6 +428,12 @@ function DefaultMessagePart({
       "file",
       mediaUrlPolicy
     );
+    if (part.mediaType.toLowerCase().startsWith("video/")) {
+      return <figure className="zhivex-media" data-slot="video">
+        {source ? <video className="zhivex-video" src={source} controls preload="metadata" playsInline aria-label={part.filename ?? labels.video} /> : <p>{labels.videoUnavailable}</p>}
+        {part.filename ? <figcaption>{part.filename}</figcaption> : null}
+      </figure>;
+    }
     const protocol = source ? new URL(source).protocol : undefined;
     return (
       <div className="zhivex-file" data-slot="file">
@@ -1370,6 +1382,7 @@ export interface ComposerProps
   onStop?: () => void;
   status?: ChatStatus;
   labels?: Partial<ChatLabels>;
+  inputCapabilities?: ChatInputCapabilities;
   allowAttachments?: boolean;
   accept?: string;
   maxAttachments?: number;
@@ -1395,6 +1408,7 @@ export function Composer({
   onStop,
   status = "ready",
   labels: labelsOverride,
+  inputCapabilities,
   allowAttachments = true,
   accept,
   maxAttachments = DEFAULT_MAX_ATTACHMENTS,
@@ -1416,7 +1430,8 @@ export function Composer({
   const submittingRef = useRef(false);
   const [attachmentError, setAttachmentError] = useState<string>();
   const isBusy = isBusyStatus(status);
-  const attachmentsEnabled = allowAttachments && Boolean(onSendMessage);
+  const modelAccept = getChatAttachmentAccept(inputCapabilities);
+  const attachmentsEnabled = allowAttachments && modelAccept !== "" && Boolean(onSendMessage);
   const normalizedMaxAttachments =
     Number.isSafeInteger(maxAttachments) && maxAttachments > 0
       ? maxAttachments
@@ -1426,15 +1441,18 @@ export function Composer({
       ? maxAttachmentBytes
       : DEFAULT_MAX_ATTACHMENT_BYTES;
   const { attachments, addFiles: prepareFiles, remove, retry } = useAttachments({
-    accept, maxAttachments: normalizedMaxAttachments, maxAttachmentBytes: normalizedMaxAttachmentBytes,
+    accept, inputCapabilities, maxAttachments: normalizedMaxAttachments, maxAttachmentBytes: normalizedMaxAttachmentBytes,
     uploadAttachment,
     errors: { limit: labels.attachmentLimit, size: labels.attachmentTooLarge,
       type: labels.attachmentTypeError, read: labels.attachmentReadError },
     onError: (error, file) => { setAttachmentError(error.message); onAttachmentError?.(error, file); }
   });
+  const incompatibleAttachment = attachments.some(attachment => {
+    try { if (attachment.part) validateChatInputParts([attachment.part], inputCapabilities); return false; } catch { return true; }
+  });
   const canSend =
     (value.trim().length > 0 || attachments.length > 0) &&
-    attachments.every((attachment) => attachment.status === "ready") &&
+    !incompatibleAttachment && attachments.every(attachment => attachment.status === "ready") &&
     !isBusy && !textareaProps?.disabled && !textareaProps?.readOnly;
   const addFiles = (files: readonly File[]) => {
     if (!attachmentsEnabled || textareaProps?.disabled || textareaProps?.readOnly) return;
@@ -1527,6 +1545,8 @@ export function Composer({
                 <img src={attachment.previewUrl} alt={attachment.name} className="zhivex-attachment-preview" />
               ) : attachment.previewUrl && attachment.mediaType.startsWith("audio/") ? (
                 <audio src={attachment.previewUrl} controls aria-label={attachment.name} />
+              ) : attachment.previewUrl && attachment.mediaType.startsWith("video/") ? (
+                <video src={attachment.previewUrl} controls preload="metadata" playsInline aria-label={attachment.name} className="zhivex-video" />
               ) : null}
               {attachment.status === "reading" || attachment.status === "uploading" ? (
                 <progress value={attachment.progress} max={1} aria-label={`${labels.attachmentPreparing}: ${attachment.name}`} />
@@ -1549,9 +1569,9 @@ export function Composer({
           ))}
         </ul>
       ) : null}
-      {attachmentError ? (
+      {attachmentError || incompatibleAttachment ? (
         <p className="zhivex-composer__error" role="alert">
-          {attachmentError}
+          {attachmentError ?? labels.attachmentTypeError}
         </p>
       ) : null}
       {leadingActions || attachmentsEnabled ? (
@@ -1560,7 +1580,7 @@ export function Composer({
           {attachmentsEnabled ? (
             <>
               <input
-                accept={accept}
+                accept={accept ?? modelAccept}
                 className="zhivex-sr-only"
                 multiple
                 onChange={(event: ChangeEvent<HTMLInputElement>) => {
@@ -1626,6 +1646,7 @@ export function Composer({
 }
 
 export interface ChatController {
+  inputCapabilities?: ChatInputCapabilities;
   state: ChatState;
   input: string;
   setInput: (value: string) => void;
@@ -1648,6 +1669,8 @@ export interface ChatController {
 export interface ZhivexChatProps
   extends Omit<ChatRootProps, "children" | "label"> {
   controller: ChatController;
+  agentRunsProps?: Omit<AgentRunsPanelProps, "runs">;
+  showAgentRuns?: boolean;
   header?: ReactNode;
   emptyState?: ReactNode;
   renderers?: MessagePartRenderers;
@@ -1696,6 +1719,8 @@ export interface ZhivexChatProps
 
 export function ZhivexChat({
   controller,
+  agentRunsProps,
+  showAgentRuns = true,
   header,
   emptyState,
   renderers,
@@ -1744,6 +1769,7 @@ export function ZhivexChat({
           {header}
         </header>
       ) : null}
+      {showAgentRuns && controller.state.runs?.length ? <AgentRunsPanel {...agentRunsProps} runs={controller.state.runs} /> : null}
       <MessageListComponent
         {...messageListProps}
         activity={controller.state.activity}
@@ -1782,6 +1808,7 @@ export function ZhivexChat({
         </div>
       ) : null}
       <Composer
+        inputCapabilities={controller.inputCapabilities}
         {...composerProps}
         labels={labels}
         onSend={(value) =>

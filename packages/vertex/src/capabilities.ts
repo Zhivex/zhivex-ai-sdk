@@ -1,4 +1,4 @@
-import type { ModelCapabilities } from "@zhivex-ai/core";
+import type { ModelCapabilities } from "@zhivex-ai/core/contracts";
 
 export const isGeminiLiveTranslateModel = (modelId: string) => /^gemini-3\.5-live-translate(?:-preview)?$/i.test(modelId.trim());
 

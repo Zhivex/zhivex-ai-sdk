@@ -18,7 +18,7 @@ import {
   type RetryOptions,
   type TokenUsage,
   type UploadedFile
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export interface DeepSeekClientsOptions {
   apiKey?: string;

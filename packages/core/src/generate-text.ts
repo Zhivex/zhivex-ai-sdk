@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { normalizeMessages as buildMessages } from "./normalize-messages.js";
 import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
 import {
   GuardrailTriggeredError,
@@ -9,7 +10,7 @@ import {
   ValidationError,
   ToolNotRegisteredError
 } from "./errors.js";
-import { emitLanguageModelTelemetryEvent } from "./middleware.js";
+import { emitLanguageModelTelemetryEvent } from "./middleware-runtime.js";
 import {
   createTextMessage,
   getTextFromMessages,
@@ -152,24 +153,6 @@ const validateReasoning = (options: Pick<AnyGenerateTextOptions, "model" | "reas
       `Model "${options.model.provider}/${options.model.modelId}" does not support reasoning context "${reasoning.context}".`
     );
   }
-};
-
-const validateInputSource = (options: Pick<AnyGenerateTextOptions, "prompt" | "messages">) => {
-  if (options.prompt !== undefined && options.messages !== undefined) {
-    throw new ValidationError('Pass either "prompt" or "messages", but not both.');
-  }
-};
-
-const buildMessages = (options: Pick<AnyGenerateTextOptions, "prompt" | "messages" | "system">): ModelMessage[] => {
-  validateInputSource(options);
-  const messages = [...(options.messages ?? [])];
-  if (options.system) {
-    messages.unshift(createTextMessage("system", options.system));
-  }
-  if (options.prompt) {
-    messages.push(createTextMessage("user", options.prompt));
-  }
-  return messages;
 };
 
 type GenerateTextStepTiming = {
@@ -800,7 +783,7 @@ const executeTools = async (
   return results;
 };
 
-export const normalizeMessages = buildMessages;
+export { normalizeMessages } from "./normalize-messages.js";
 
 const extractToolCalls = (messages: ModelMessage[]): ToolCall[] =>
   messages.flatMap((message) =>

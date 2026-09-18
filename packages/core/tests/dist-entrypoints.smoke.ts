@@ -1,18 +1,31 @@
 import assert from "node:assert/strict";
 
-import type { LanguageModel } from "@zhivex-ai/core/contracts";
-import * as core from "@zhivex-ai/core";
-import * as contracts from "@zhivex-ai/core/contracts";
-import * as nodeCore from "@zhivex-ai/core/node";
-import * as runtime from "@zhivex-ai/core/runtime";
-import * as testing from "@zhivex-ai/core/testing";
-import * as ui from "@zhivex-ai/core/ui";
-import * as workflows from "@zhivex-ai/core/workflows";
+// Use emitted files here: workspace tsconfig aliases can replace package roots
+// with source while subpaths resolve to dist. Installed-consumer smoke separately
+// verifies public package specifiers and package.json exports.
+
+import type { LanguageModel } from "../dist/contracts.js";
+import * as core from "../dist/index.js";
+import * as agents from "../dist/agents-entry.js";
+import * as generation from "../dist/generation-entry.js";
+import * as provider from "../dist/provider-entry.js";
+import * as catalog from "../dist/catalog-contracts.js";
+import * as contracts from "../dist/contracts.js";
+import * as nodeCore from "../dist/node.js";
+import * as runtime from "../dist/runtime-entry.js";
+import * as testing from "../dist/testing.js";
+import * as ui from "../dist/ui-entry.js";
+import * as workflows from "../dist/workflows-entry.js";
 
 const acceptsModel = (_model: LanguageModel) => undefined;
 void acceptsModel;
 
 assert.deepEqual(Object.keys(contracts), []);
+assert.equal(generation.generateText, core.generateText);
+assert.equal(agents.Agent, core.Agent);
+assert.equal(provider.normalizeMessages, core.normalizeMessages);
+assert.equal(catalog.createModelCatalog, core.createModelCatalog);
+assert.equal("defaultModelCatalog" in catalog, false);
 assert.equal(typeof core.generateText, "function");
 assert.equal(typeof nodeCore.generateText, "function");
 assert.equal(typeof runtime.createProviderAdapter, "function");

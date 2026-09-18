@@ -22,6 +22,8 @@ export interface ChatLabels {
   message: string;
   imageAlt: string;
   imageUnavailable: string;
+  video?: string;
+  videoUnavailable?: string;
   audioUnavailable: string;
   file: string;
   openFile: string;
@@ -93,6 +95,8 @@ export const defaultChatLabels: ResolvedChatLabels = {
   imageAlt: "Generated or attached content",
   imageUnavailable: "This image cannot be displayed.",
   audioUnavailable: "This audio cannot be played in the browser.",
+  video: "Video",
+  videoUnavailable: "This video cannot be played in the browser.",
   file: "File",
   openFile: "Open file",
   toolCall: "Tool call",

@@ -1,5 +1,21 @@
 # @zhivex-ai/react
 
+## 0.6.0
+
+### Minor Changes
+
+- Add model-aware React media inputs and video rendering, bounded agent execution summaries and hierarchy, and an optional browser realtime voice hook with PCM audio and a server-owned WebSocket relay. Expose optional realtime interruption and implement Qwen response cancellation. Keep provider credentials and tool execution on the server.
+  
+  Fix resumed tool approvals so the original tool card completes and the final response remains an assistant message. Include a runnable Qwen Omni/voice example and browser regression coverage for uploads, approvals, replay, microphone capture and interruption.
+  
+  Refresh chat spacing, composer focus, responsive prompt cards and agent status badges while preserving theme tokens. Modernize the example's voice controls with explicit microphone state, surfaced action errors and a keyboard alternative. Request PCM output in the voice example and avoid idle provider cancellation when only local playback needs clearing.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.19.0
+
 ## 0.5.0
 
 ### Minor Changes

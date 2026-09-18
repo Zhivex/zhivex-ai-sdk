@@ -192,6 +192,22 @@ compareInventory(
   extractPackageNames(getSection(supportDoc, "Published Packages"))
 );
 
+// Active maintenance instructions must follow the manifest and the configured test runner.
+const repositoryManifest = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")) as {
+  packageManager: string;
+};
+const developmentBunVersion = repositoryManifest.packageManager.replace(/^bun@/, "");
+if (!agentsDoc.includes(`\`bun\` ${developmentBunVersion}+`)) {
+  reportError(`AGENTS.md: preferred Bun runtime must match packageManager (${developmentBunVersion}+)`);
+}
+for (const [filePath, content] of markdownByPath) {
+  const relative = toRepoPath(filePath);
+  if (relative.startsWith("docs/history/") || relative.includes("CHANGELOG.md")) continue;
+  if (/\bbun test\b/.test(content)) {
+    reportError(`${relative}: use bun run test so documented tests run through Vitest`);
+  }
+}
+
 const stabilityImportsEnd = stabilityDoc.indexOf("\nDeep imports");
 compareInventory(
   "STABILITY.md supported imports",

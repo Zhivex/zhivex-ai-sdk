@@ -80,7 +80,7 @@ import {
   type UploadedFile,
   type VideoGenerationModel,
   type VideoGenerationResult
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export interface QwenProviderOptions {
   apiKey?: string;
@@ -663,6 +663,7 @@ const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
     ...capabilities,
     vision: supportsQwenVision(modelId),
     tools,
+    ...(omni38 ? { inputMediaTypes: ["image/*", "audio/*", "video/*"] } : {}),
     structuredOutput: tools && !omni && !omni38 && !qwen38MaxPreview,
     jsonMode: tools && !omni && !omni38 && !qwen38MaxPreview,
     toolChoice: tools,
@@ -3122,6 +3123,7 @@ class QwenRealtimeModel implements RealtimeModel {
           ...((sessionConfig.autoResponse ?? true) ? [{ type: "response.create" }] : [])
         ],
         buildUpdatePayloads: (value) => [{ type: "session.update", session: mapRealtimeSession(value) }],
+        buildInterruptPayloads: () => [{ type: "response.cancel" }],
         buildClosePayloads: () => []
       }
     });

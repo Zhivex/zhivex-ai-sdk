@@ -837,3 +837,5 @@ export type { ModelCostInput, ModelCostValuation, TokenUsage } from "@zhivex-ai/
 export { reconcileAgentToolExecution } from "@zhivex-ai/core";
 export type { ReconcileAgentToolExecutionOptions } from "@zhivex-ai/core";
 export type { AgentTaskOutcome, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "@zhivex-ai/core";
+
+export type { AgentRunView, AgentRunUpdateEvent } from "@zhivex-ai/core";

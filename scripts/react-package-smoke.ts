@@ -23,7 +23,7 @@ await writeFile(join(consumer, "package.json"), JSON.stringify({ name: "react-co
 await run(["bun", "install", "--ignore-scripts"], consumer);
 await writeFile(join(consumer, "smoke.mjs"), `
 import assert from "node:assert/strict";
-for (const subpath of ["", "/hooks", "/headless", "/transport", "/components", "/replay"]) {
+for (const subpath of ["", "/hooks", "/headless", "/transport", "/components", "/replay", "/realtime", "/realtime-server"]) {
   assert.ok(Object.keys(await import("@zhivex-ai/react" + subpath)).length);
 }
 for (const peer of ["react-markdown", "remark-gfm", "@tanstack/react-virtual"]) {

@@ -1,4 +1,4 @@
-import { createModelCatalog } from "@zhivex-ai/core";
+import { createModelCatalog } from "@zhivex-ai/core/catalog";
 
 import { defaultModelCatalogFragments } from "./catalog/fragments.js";
 import { snapshotMetadata, type ModelCatalogProviderSnapshotMetadata } from "./catalog/fragment.js";

@@ -1,0 +1,68 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "rootDir": "../..",
+    "jsx": "react-jsx",
+    "paths": {
+      "@zhivex-ai/core": [
+        "../../packages/core/src/index.ts"
+      ],
+      "@zhivex-ai/openai": [
+        "../../packages/openai/src/index.ts"
+      ],
+      "@zhivex-ai/xai": [
+        "../../packages/xai/src/index.ts"
+      ],
+      "@zhivex-ai/deepseek": [
+        "../../packages/deepseek/src/index.ts"
+      ],
+      "@zhivex-ai/zai": [
+        "../../packages/zai/src/index.ts"
+      ],
+      "@zhivex-ai/anthropic": [
+        "../../packages/anthropic/src/index.ts"
+      ],
+      "@zhivex-ai/gemini": [
+        "../../packages/gemini/src/index.ts"
+      ],
+      "@zhivex-ai/bedrock": [
+        "../../packages/bedrock/src/index.ts"
+      ],
+      "@zhivex-ai/ollama": [
+        "../../packages/ollama/src/index.ts"
+      ],
+      "@zhivex-ai/azure-openai": [
+        "../../packages/azure-openai/src/index.ts"
+      ],
+      "@zhivex-ai/openrouter": [
+        "../../packages/openrouter/src/index.ts"
+      ],
+      "@zhivex-ai/gateway": [
+        "../../packages/gateway/src/index.ts"
+      ],
+      "@zhivex-ai/react": [
+        "../../packages/react/src/index.ts"
+      ],
+      "@zhivex-ai/sdk": [
+        "../../packages/sdk/src/index.ts"
+      ],
+      "@zhivex-ai/react/realtime": [
+        "../../packages/react/src/realtime.ts"
+      ],
+      "@zhivex-ai/react/realtime-server": [
+        "../../packages/react/src/realtime-server.ts"
+      ],
+      "@zhivex-ai/qwen": [
+        "../../packages/qwen/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "app.tsx",
+    "client.tsx",
+    "routes.ts",
+    "env.d.ts"
+  ]
+}

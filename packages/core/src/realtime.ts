@@ -44,6 +44,7 @@ export interface RealtimeSessionCallbacks {
   buildInitialPayloads?: RealtimePayloadBuilder<RealtimeSessionConfig>;
   buildClosePayloads?: RealtimePayloadBuilder<RealtimeSessionConfig>;
   buildContextPayloads?: RealtimePayloadBuilder<RealtimeContextUpdate>;
+  buildInterruptPayloads?: RealtimePayloadBuilder<RealtimeSessionConfig>;
   buildInputMutePayloads?: RealtimePayloadBuilder<boolean>;
   /** Keep receiving through a graceful close until this provider acknowledgement. */
   isCloseAcknowledgementPayload?: (payload: Record<string, unknown>) => boolean;
@@ -212,6 +213,12 @@ export class CallbackRealtimeSession implements RealtimeSession {
       throw new UnsupportedFeatureError(`Provider "${this.provider}" does not support realtime input muting.`);
     }
     await this.sendBuiltPayloads(() => this.callbacks.buildInputMutePayloads!(muted, this.config));
+  }
+
+  async interrupt() {
+    this.assertOpen();
+    if (!this.callbacks.buildInterruptPayloads) throw new UnsupportedFeatureError("This realtime provider does not support interruption.");
+    await this.sendBuiltPayloads(() => this.callbacks.buildInterruptPayloads!(this.config, this.config));
   }
 
   async update(config: Partial<RealtimeSessionConfig>) {

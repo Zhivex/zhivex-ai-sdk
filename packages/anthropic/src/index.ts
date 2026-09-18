@@ -34,7 +34,7 @@ import {
   type ModelGenerateInput,
   type ModelMessage,
   type StreamEvent
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export interface AnthropicProviderOptions {
   /** Static API key or an async provider invoked before every request. */

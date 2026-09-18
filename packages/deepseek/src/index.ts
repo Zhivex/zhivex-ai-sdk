@@ -24,7 +24,7 @@ import {
   type ModelGenerateInput,
   type ModelMessage,
   type StreamEvent
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 import { createDeepSeekClients, type DeepSeekClients } from "./clients.js";
 

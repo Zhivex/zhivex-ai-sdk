@@ -160,6 +160,8 @@ describe("package metadata", () => {
       "./headless",
       "./hooks",
       "./markdown",
+      "./realtime",
+      "./realtime-server",
       "./replay",
       "./styles.css",
       "./transport",

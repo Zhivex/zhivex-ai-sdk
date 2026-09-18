@@ -1,7 +1,7 @@
 import {
   ConfigurationError, ParseError, ProviderHTTPError, ValidationError, assertTrustedEndpoint, readErrorBodyWithLimit,
   readBodyWithLimit, readJsonWithLimit, streamSSE, withTimeoutSignal, type JsonValue
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export interface OpenAIAgentsRequestOptions {
   abortSignal?: AbortSignal;

@@ -1,4 +1,4 @@
-import type { ModelCapabilities } from "@zhivex-ai/core";
+import type { ModelCapabilities } from "@zhivex-ai/core/contracts";
 
 export const capabilities: ModelCapabilities = {
   streaming: true,

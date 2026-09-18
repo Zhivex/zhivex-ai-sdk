@@ -28,7 +28,7 @@ import {
   type StreamEvent,
   type ToolSet,
   type UploadedFile
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 import { createOpenAI } from "@zhivex-ai/openai";
 

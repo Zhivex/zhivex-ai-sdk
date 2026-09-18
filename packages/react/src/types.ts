@@ -1,6 +1,8 @@
+import type { ChatInputCapabilities } from "./input-capabilities.js";
 import type { ChatReplayCursor } from "./replay.js";
 export type { ChatReplayCursor } from "./replay.js";
 import type {
+  AgentRunView,
   AgentApprovalRequest,
   AgentApprovalResponse,
   AgentCompactionRecord,
@@ -64,6 +66,8 @@ export type ChatActivity =
     };
 
 export interface ChatState {
+  /** Bounded execution summaries keyed by run identity, including child runs. */
+  runs?: AgentRunView[];
   checkpoint?: ChatReplayCursor;
   replayComplete?: boolean;
   messages: ChatMessage[];
@@ -215,6 +219,7 @@ export interface ChatResetOptions {
 }
 
 export interface UseZhivexChatOptions {
+  inputCapabilities?: ChatInputCapabilities;
   transport?: ChatTransport;
   endpoint?: string;
   initialMessages?: readonly (UIMessage | ChatMessage)[];
@@ -236,6 +241,7 @@ export interface UseZhivexChatOptions {
 }
 
 export interface UseZhivexChatResult {
+  inputCapabilities?: ChatInputCapabilities;
   state: ChatState;
   messages: ChatMessage[];
   status: ChatStatus;

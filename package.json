@@ -14,7 +14,7 @@
   "scripts": {
     "build": "bun run scripts/clean-dist.ts && tsc -b --force",
     "changeset": "changeset",
-    "docs:check": "bun run scripts/check-docs.ts",
+    "docs:check": "bun run scripts/check-docs.ts && bun run scripts/check-doc-examples.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:workflow-evaluation-gate": "bun run scripts/workflow-evaluation-ci-gate.ts",
@@ -41,7 +41,7 @@
     "smoke:packages:workflows-postgres": "bun run build && bun run scripts/workflow-package-postgres-smoke.ts",
     "snapshots:update:api": "bun run scripts/update-api-type-snapshots.ts",
     "typecheck": "tsc -b --force --pretty false && bun run typecheck:examples",
-    "typecheck:examples": "tsc -p examples/next-runner/tsconfig.repo.json --pretty false",
+    "typecheck:examples": "tsc -p examples/next-runner/tsconfig.repo.json --pretty false && tsc -p examples/react-omni/tsconfig.json --pretty false",
     "version-packages": "changeset version && bun run scripts/sync-release-consumers.ts",
     "release:check": "bun run scripts/check-release-readiness.ts",
     "release:check:next": "bun run scripts/check-release-readiness.ts --tag=next",

@@ -89,6 +89,7 @@ export const toUIMessageStream = (
 
   return (async function* () {
     for await (const event of eventStream) {
+      if (event.type === "agent-run-update") yield event;
       if (event.type === "text-delta") {
         yield {
           type: "text-delta",

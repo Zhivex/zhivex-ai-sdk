@@ -510,3 +510,124 @@ rerunning the producer, variable-height virtualization and scroll intent,
 file selection/drop/paste, upload cancellation, IME/keyboard focus, Markdown
 and clipboard copy. CI runs this suite after the unit tests. Browser fixtures
 use deterministic local responses and do not call a model provider.
+
+## Model-aware media and video
+
+Pass the backend-selected model's **serializable capabilities** to the hook; `ZhivexChat`
+forwards them to its composer. Provider clients and credentials remain on the server.
+
+```tsx
+const chat = useZhivexChat({
+  endpoint: "/api/chat",
+  inputCapabilities: {
+    vision: true, audioInput: true, files: true,
+    inputMediaTypes: ["image/*", "audio/*", "video/*"]
+  }
+});
+<ZhivexChat controller={chat} />;
+```
+
+An explicit `inputMediaTypes` list takes precedence over broad capability flags. An
+empty list means no attachments. Without that list, `vision`, `audioInput`, and
+`files` supply broad defaults; without capabilities, existing behavior is unchanged.
+The composer validates selection, paste, drop and upload results, and prevents sending
+existing attachments when switching to an incompatible model. `sendMessage()` and
+`sendMessageWithResult()` also reject incompatible parts before clearing the draft or
+calling the transport. These checks are UI feedback; validate again on the server.
+
+`video/*` file parts render with a native, non-autoplaying video player and local
+attachment previews. Video uses the existing `file` renderer override and media URL
+policy. Remote media remains opt-in. `composerProps.accept` can narrow selection further.
+
+For Qwen3.8-Omni-Flash use image/audio/video input and text output; PDF and audio output
+are not part of this model's supported SDK contract. See the runnable
+[Omni and realtime example](../../examples/react-omni/README.md).
+
+## Agent execution views
+
+`streamAgent()` emits additive `agent-run-update` events containing an `AgentRunView`.
+The existing UI stream bridge forwards these through Runner/SSE and replay. The React
+reducer stores up to 200 summaries in `chat.state.runs`; child executions use their own
+run IDs and `parentRunId`. Updates do not contain prompts, tool arguments, scope or full
+state. They supplement existing lifecycle events; existing terminal chunks are unchanged.
+
+`ZhivexChat` renders `AgentRunsPanel` automatically when summaries are available. Set
+`showAgentRuns={false}` to hide it, or use `agentRunsProps` for labels, status formatting,
+and a custom `renderRun`. Standalone dashboards can supply their own authorized run
+summaries, including independent group runs and handoff destinations:
+
+```tsx
+<AgentRunsPanel
+  runs={chat.state.runs ?? []}
+  label="Ejecuciones"
+  labels={{ tokens: "Tokens", tools: "Herramientas", steps: "Pasos", handoff: "Transferencia" }}
+  formatStatus={status => status === "waiting_approval" ? "Esperando aprobación" : status}
+/>
+```
+
+The view shows status, hierarchy, steps, token usage, tool counts and configured token/tool
+limits. Final usage is authoritative at run completion; absent live counters display a
+dash. Summary history is bounded and resets with the local chat. For full historical
+inspection, query an authenticated server-side run store. `runAgentGroup()` itself is
+not a streaming API: project its returned states into `AgentRunView` or feed authorized
+updates from your application's coordinator.
+
+## Realtime voice
+
+`@zhivex-ai/react/realtime` is an optional browser entrypoint, separate from HTTP chat.
+It contains `useZhivexRealtime`, `createWebSocketRealtimeTransport`, and
+`createBrowserRealtimeAudio`. No provider or Node runtime is imported into the client.
+
+```tsx
+const transport = useMemo(() => createWebSocketRealtimeTransport({
+  url: "wss://app.example.com/voice"
+}), []);
+const voice = useZhivexRealtime({ transport });
+// Call voice.connect() in a click handler to unlock browser audio.
+// Then startMicrophone(), stopMicrophone(), interrupt(), and disconnect().
+// voice.transcripts contains bounded partial/final user and assistant transcripts.
+```
+
+The PCM16 audio driver captures mono 16 kHz input through AudioWorklet and schedules
+24 kHz output (or event-specific rates) with bounded buffers. Override `createAudio`
+for other formats/platforms; use `createBrowserRealtimeAudio({ inputSampleRateHz,
+outputSampleRateHz, workletUrl })` for a different supported configuration or CSP-hosted
+worklet. Serve the exported `REALTIME_CAPTURE_WORKLET_SOURCE` as JavaScript for that
+`workletUrl` (the processor name and Float32 message format must match). The browser must support AudioWorklet/getUserMedia and provide the requested
+sample rate. Browser microphone permission and a secure context are required. Audio
+frames are transient; they are not retained in React state. `onEvent` allows custom tool,
+delegation and agent UI. The default UI data is transcripts, not a durable chat session.
+
+The socket-independent server helper `createRealtimeRelay` is exported only from
+`@zhivex-ai/react/realtime-server`. Create it **after authenticating the upgrade and
+validating Origin**. Its transport methods are `receive(string)`, `close()` and `done`;
+bind those to your WebSocket server. Keep a bounded send implementation: throw on socket
+backpressure. The relay bounds input commands, frame sizes and session lifetime. It
+forwards safe realtime event families and execution summaries, not full run state or
+raw provider data. Browser commands cannot submit tool results or change model/policies.
+Tools execute on the server; immediate live-agent approvals remain application-owned.
+
+Transport URL callbacks can obtain a short-lived relay ticket; provider API keys must
+never be put in a URL or browser bundle. Defaults allow WSS and loopback-only WS.
+The relay and driver must agree on PCM MIME, sample rate and channel count. Images use
+`sendMedia()` with raw base64 or binary media. This relay is WebSocket, not WebRTC.
+
+`interrupt()` clears queued playback and invokes the backend cancellation command.
+`RealtimeSession.interrupt()` is optional; Qwen implements `response.cancel`. An
+unsupported provider fails explicitly, or the relay can supply a provider-specific
+interrupt callback. Disconnect/unmount aborts connection setup, closes late sessions,
+stops tracks, disconnects audio nodes and closes AudioContext. Automatic reconnect is
+intentionally not applied to realtime inference; reconnect explicitly after a failure.
+
+### Comfortable chat and voice UX
+
+The default stylesheet provides a framed composer with focus feedback, responsive
+starter prompts, and agent status badges. Existing `--zhivex-*` tokens, `data-theme`,
+`data-density`, slots and renderer overrides remain available; no font or icon service
+is required. `ChatEmptyState.onStarterPrompt` can populate the draft and return keyboard
+focus to the composer. The [Omni example](../../examples/react-omni/README.md) demonstrates
+this pattern alongside explicit microphone controls, action errors and typed voice input.
+Idle `interrupt()` clears local audio without asking Qwen to cancel a nonexistent response.
+
+See the [React/Qwen live certification](../../docs/REACT_QWEN_LIVE.md) for the tested
+provider matrix, commands and limits; browser fixture results alone are not live evidence.

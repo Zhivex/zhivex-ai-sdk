@@ -43,7 +43,7 @@ import {
   type ModelMessage,
   type StreamEvent,
   type ToolSet
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export interface BedrockProviderOptions {
   client?: BedrockRuntimeClient;

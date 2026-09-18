@@ -27,6 +27,7 @@ Supported public imports should come from published package entrypoints such as:
 Focused published entrypoints are also supported: `@zhivex-ai/core/contracts`,
 `@zhivex-ai/core/runtime`, `@zhivex-ai/core/workflows`, `@zhivex-ai/core/ui`,
 `@zhivex-ai/core/node`, `@zhivex-ai/core/testing`,
+`@zhivex-ai/core/agents`, `@zhivex-ai/core/generation`, `@zhivex-ai/core/provider`, `@zhivex-ai/core/catalog`,
 `@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/workflows`, `@zhivex-ai/sdk/ui`,
 `@zhivex-ai/sdk/evals`, `@zhivex-ai/sdk/catalog`, `@zhivex-ai/sdk/beta`, and
 `@zhivex-ai/sdk/experimental`. The package roots remain backward compatible.

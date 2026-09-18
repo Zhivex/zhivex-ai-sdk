@@ -126,3 +126,16 @@ describe("Qwen3.8-Omni-Flash", () => {
     expect(JSON.parse(String(fetch.mock.calls[0]![1]!.body)).response_format).toBeUndefined();
   });
 });
+it("cancels realtime inference without closing the session", async () => {
+  const sent: unknown[] = []; let end!: (value: undefined) => void;
+  const provider = createQwen({ apiKey: "test", realtimeConnectionFactory: async () => ({
+    sendJson: async value => { sent.push(value); },
+    recvJson: () => new Promise(resolve => { end = resolve; }), close: async () => { end?.(undefined); }
+  }) });
+  const session = await provider.realtimeModel!("qwen3.5-omni-flash-realtime").connect();
+  await session.interrupt!();
+  expect(sent).toContainEqual({ type: "response.cancel" });
+  await session.sendText("continue");
+  expect(sent.some(value => (value as { type: string }).type === "conversation.item.create")).toBe(true);
+  await session.close();
+});

@@ -32,7 +32,7 @@ import {
   type RetryOptions,
   type StreamEvent,
   type UploadedFile
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export interface MetaProviderOptions {
   apiKey?: string;

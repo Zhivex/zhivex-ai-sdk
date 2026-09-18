@@ -85,7 +85,7 @@ import {
   type TranscriptionResult,
   type VideoGenerationModel,
   type VideoGenerationResult
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export interface VertexAuthClient {
   getAccessToken: () => string | null | undefined | Promise<string | null | undefined>;
