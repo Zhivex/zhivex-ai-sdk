@@ -182,6 +182,9 @@ console.log("INSTALLED_OTEL_OPTIONAL_PEER_SMOKE_OK");
       `@opentelemetry/context-async-hooks@${otelSdkVersion}`,
       `@opentelemetry/sdk-metrics@${otelSdkVersion}`,
       `@opentelemetry/sdk-trace-base@${otelSdkVersion}`,
+      "react-markdown@10.1.0",
+      "remark-gfm@4.0.1",
+      "@tanstack/react-virtual@3.14.13",
       ...tarballs
     ],
     { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" }

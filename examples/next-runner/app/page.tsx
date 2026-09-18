@@ -10,7 +10,9 @@ import {
 export default function Page() {
   const transport = useMemo(
     () => createFetchChatTransport({
-      endpoint: "/api/chat/stream",
+      endpoint: "/api/chat/stream?replay=1",
+      reconnectEndpoint: "/api/chat/stream",
+      cancelEndpoint: "/api/chat/stream",
       requestTimeoutMs: 90_000,
       streamIdleTimeoutMs: 30_000,
       maxEventChars: 256 * 1024,
@@ -19,7 +21,8 @@ export default function Page() {
     []
   );
   const chat = useZhivexChat({
-    transport
+    transport,
+    maxReconnectAttempts: 2
   });
 
   return (

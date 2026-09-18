@@ -573,11 +573,12 @@ const modelFamily = (modelId: string) => {
   const normalized = modelId.toLowerCase();
   return normalized.replace(/^(qwen3\.8-(?:max|flash))-\d{4}$/, "$1");
 };
+const isQwen38OmniFlash = (modelId: string) => modelId.toLowerCase() === "qwen3.8-omni-flash";
 const isQwen38Max = (modelId: string) => modelFamily(modelId) === "qwen3.8-max";
 const isQwen38Flash = (modelId: string) => modelFamily(modelId) === "qwen3.8-flash";
 const isQwen38MaxPreview = (modelId: string) => modelFamily(modelId) === "qwen3.8-max-preview";
 const isQwen38ProductionModel = (modelId: string) =>
-  isQwen38Max(modelId) || isQwen38Flash(modelId);
+  isQwen38Max(modelId) || isQwen38Flash(modelId) || isQwen38OmniFlash(modelId);
 const isQwen38ReasoningModel = (modelId: string) =>
   isQwen38ProductionModel(modelId) || isQwen38MaxPreview(modelId);
 const isQwenTokenPlanURL = (url: URL) => {
@@ -653,6 +654,7 @@ const supportsQwenAudioInput = (modelId: string) => /(omni|audio|asr)/.test(mode
 const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
   const tools = supportsQwenTools(modelId);
   const omni = isQwenOmniLanguageModel(modelId);
+  const omni38 = isQwen38OmniFlash(modelId);
   const reasoning = supportsQwenReasoning(modelId);
   const qwen38Production = isQwen38ProductionModel(modelId);
   const qwen38MaxPreview = isQwen38MaxPreview(modelId);
@@ -661,10 +663,10 @@ const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
     ...capabilities,
     vision: supportsQwenVision(modelId),
     tools,
-    structuredOutput: tools && !omni && !qwen38MaxPreview,
-    jsonMode: tools && !omni && !qwen38MaxPreview,
+    structuredOutput: tools && !omni && !omni38 && !qwen38MaxPreview,
+    jsonMode: tools && !omni && !omni38 && !qwen38MaxPreview,
     toolChoice: tools,
-    parallelToolCalls: qwen38Production,
+    parallelToolCalls: qwen38Production && !omni38,
     webSearch: tools && !omni,
     files: supportsQwenFiles(modelId) || qwen38Production,
     audioInput: supportsQwenAudioInput(modelId),
@@ -681,10 +683,10 @@ const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
       supportTier: tools && !omni ? "tier-b" : "tier-c",
       toolChoiceNone: tools,
       hostedWebSearch: tools && !omni,
-      hostedFileSearch: tools && !omni,
-      remoteMcp: tools && !omni,
-      codeExecution: tools && !omni,
-      webExtraction: tools && !omni
+      hostedFileSearch: tools && !omni && !omni38,
+      remoteMcp: tools && !omni && !omni38,
+      codeExecution: tools && !omni && !omni38,
+      webExtraction: tools && !omni && !omni38
     }
   };
 };
@@ -735,12 +737,17 @@ type QwenMessageContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string } }
   | { type: "video_url"; video_url: { url: string } }
-  | { type: "input_audio"; input_audio: { data: string } };
+  | { type: "input_audio"; input_audio: { data: string; format?: string; use_multichannel?: boolean } };
 
 const toQwenMediaURL = (data: string, mediaType: string) =>
   /^(?:https?:\/\/|data:)/i.test(data) ? data : `data:${mediaType};base64,${data}`;
 
-const mapContentParts = (message: ModelMessage) => {
+const qwenAudioFormat = (part: Extract<ModelMessage["parts"][number], { type: "audio" }>) => {
+  const format = part.format ?? part.mediaType.split(";")[0]!.split("/")[1];
+  return format === "mpeg" ? "mp3" : format === "x-wav" ? "wav" : format;
+};
+
+const mapContentParts = (message: ModelMessage, modelId?: string) => {
   const hasMedia = message.parts.some(
     (part) =>
       part.type === "image" ||
@@ -763,7 +770,18 @@ const mapContentParts = (message: ModelMessage) => {
       return [{ type: "image_url", image_url: { url: part.image } }];
     }
     if (part.type === "audio") {
-      return [{ type: "input_audio", input_audio: { data: toDataURL(part.data, part.mediaType) } }];
+      return [{
+        type: "input_audio",
+        input_audio: {
+          data: toDataURL(part.data, part.mediaType),
+          ...(modelId && isQwen38OmniFlash(modelId) ? {
+            format: qwenAudioFormat(part),
+            ...(part.providerMetadata?.use_multichannel !== undefined
+              ? { use_multichannel: part.providerMetadata.use_multichannel as boolean }
+              : {})
+          } : {})
+        }
+      }];
     }
     if (part.type === "file") {
       if (!part.mediaType.toLowerCase().startsWith("video/")) {
@@ -782,7 +800,7 @@ const mapContentParts = (message: ModelMessage) => {
   });
 };
 
-const mapMessages = (messages: ModelMessage[], format?: ModelGenerateInput["toolResultFormat"]) =>
+const mapMessages = (messages: ModelMessage[], format?: ModelGenerateInput["toolResultFormat"], modelId?: string) =>
   messages.flatMap<Record<string, unknown>>((message) => {
     if (message.role === "tool") {
       return message.parts
@@ -809,7 +827,7 @@ const mapMessages = (messages: ModelMessage[], format?: ModelGenerateInput["tool
 
     const payload: Record<string, unknown> = {
       role: message.role,
-      content: mapContentParts(message)
+      content: mapContentParts(message, modelId)
     };
 
     const reasoningContent = reasoningContentFromMessage(message);
@@ -999,6 +1017,34 @@ const validateQwen38Request = (
   input: ModelGenerateInput,
   providerOptions: QwenLanguageModelOptions
 ) => {
+  if (isQwen38OmniFlash(modelId)) {
+    const modalities = providerOptions.modalities;
+    if (providerOptions.audio !== undefined || (modalities !== undefined &&
+        (!Array.isArray(modalities) || modalities.length !== 1 || modalities[0] !== "text"))) {
+      throw new UnsupportedFeatureError("Qwen3.8-Omni-Flash HTTP supports text output only.");
+    }
+    if (input.structuredOutput?.mode === "native" || providerOptions.response_format !== undefined) {
+      throw new UnsupportedFeatureError("Qwen3.8-Omni-Flash native structured output is not certified; use prompted structured output.");
+    }
+    for (const tool of Object.values(input.tools ?? {})) {
+      if (!isCallableToolDefinition(tool) && (tool.type !== "web_search" ||
+          (tool.provider !== undefined && tool.provider !== "qwen") ||
+          (tool.config && typeof tool.config === "object" && "type" in tool.config && tool.config.type !== "web_search"))) {
+        throw new UnsupportedFeatureError("Qwen3.8-Omni-Flash supports only web_search as a hosted Responses tool.");
+      }
+    }
+    for (const message of input.messages) {
+      for (const part of message.parts) {
+        if ((part.type === "audio" || part.type === "file") && message.role !== "user") {
+          throw new UnsupportedFeatureError("Qwen3.8-Omni-Flash audio/video input is allowed only in user messages.");
+        }
+        if (part.type === "audio" && part.providerMetadata?.use_multichannel !== undefined &&
+            typeof part.providerMetadata.use_multichannel !== "boolean") {
+          throw new ConfigurationError("Qwen use_multichannel must be a boolean.");
+        }
+      }
+    }
+  }
   const sharedEffort = input.reasoning?.effort;
   const providerEffort = providerOptions.reasoning_effort;
   const sharedBudget = input.reasoning?.budgetTokens;
@@ -1104,6 +1150,7 @@ const mapChatReasoning = (
     if (thinkingDisabled) {
       return {
         enable_thinking: false,
+        ...(isQwen38OmniFlash(modelId) ? { reasoning_effort: "none" } : {}),
         preserve_thinking: true
       };
     }
@@ -1220,14 +1267,14 @@ const resolveApiMode = (
     );
   }
 
+  const omni38 = isQwen38OmniFlash(modelId);
   const needsChat =
     input.maxTokens !== undefined ||
     input.reasoning?.budgetTokens !== undefined ||
     providerOptions.thinking_budget !== undefined ||
     providerOptions.tool_stream === true ||
     input.structuredOutput?.mode === "native" ||
-    hasMessagePart(input.messages, "audio") ||
-    videoInput;
+    (!omni38 && (hasMessagePart(input.messages, "audio") || videoInput));
   const needsResponses = hasHostedTools(input.tools) || hasNonVideoFileInput(input.messages);
 
   if (needsChat && needsResponses) {
@@ -1417,7 +1464,7 @@ const serializeResponsesToolOutput = (message: ModelMessage, format?: ModelGener
       };
     });
 
-const toResponsesInput = (messages: ModelMessage[], format?: ModelGenerateInput["toolResultFormat"]) => {
+const toResponsesInput = (messages: ModelMessage[], format?: ModelGenerateInput["toolResultFormat"], modelId?: string) => {
   const input: Array<Record<string, unknown>> = [];
 
   for (const message of messages) {
@@ -1435,7 +1482,20 @@ const toResponsesInput = (messages: ModelMessage[], format?: ModelGenerateInput[
         case "image":
           content.push({ type: "input_image", image_url: part.image });
           break;
+        case "audio":
+          if (modelId && isQwen38OmniFlash(modelId)) {
+            content.push({ type: "input_audio", audio_url: toDataURL(part.data, part.mediaType),
+              format: qwenAudioFormat(part),
+              ...(part.providerMetadata?.use_multichannel !== undefined ? { use_multichannel: part.providerMetadata.use_multichannel } : {}) });
+          } else {
+            throw new UnsupportedFeatureError("This Qwen model does not support Responses audio input.");
+          }
+          break;
         case "file":
+          if (modelId && isQwen38OmniFlash(modelId) && part.mediaType.toLowerCase().startsWith("video/")) {
+            content.push({ type: "input_video", video_url: toQwenMediaURL(part.data, part.mediaType) });
+            break;
+          }
           if (!/^https?:\/\//i.test(part.data)) {
             throw new UnsupportedFeatureError(
               "Qwen Responses file input requires a public HTTP(S) file URL; DashScope Files IDs are reserved for batch jobs."
@@ -1819,7 +1879,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
                 ...responseProviderOptions,
                 model: this.modelId,
                 ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-                ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat) } : {}),
+                ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat, this.modelId) } : {}),
                 tools: mapResponsesTools(input.tools),
                 tool_choice: mapResponsesToolChoice(input.toolChoice, input.tools),
                 temperature: input.temperature,
@@ -1861,7 +1921,8 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             body: JSON.stringify({
               ...chatProviderOptions,
               model: this.modelId,
-              messages: mapMessages(withStructuredOutputMessages(this.modelId, input), input.toolResultFormat),
+              modalities: isQwen38OmniFlash(this.modelId) ? ["text"] : undefined,
+              messages: mapMessages(withStructuredOutputMessages(this.modelId, input), input.toolResultFormat, this.modelId),
               tools: mapChatTools(input.tools),
               tool_choice: mapChatToolChoice(input.toolChoice),
               response_format: mapStructuredOutput(this.modelId, input),
@@ -1933,7 +1994,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               ...responseProviderOptions,
               model: this.modelId,
               ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-              ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat) } : {}),
+              ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat, this.modelId) } : {}),
               tools: mapResponsesTools(input.tools),
               tool_choice: mapResponsesToolChoice(input.toolChoice, input.tools),
               temperature: input.temperature,
@@ -1967,8 +2028,8 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           body: JSON.stringify({
             ...chatProviderOptions,
             model: this.modelId,
-            modalities: isQwenOmniLanguageModel(this.modelId) ? providerOptions.modalities ?? ["text"] : undefined,
-            messages: mapMessages(withStructuredOutputMessages(this.modelId, input), input.toolResultFormat),
+            modalities: isQwen38OmniFlash(this.modelId) ? ["text"] : isQwenOmniLanguageModel(this.modelId) ? providerOptions.modalities ?? ["text"] : undefined,
+            messages: mapMessages(withStructuredOutputMessages(this.modelId, input), input.toolResultFormat, this.modelId),
             tools: mapChatTools(input.tools),
             tool_choice: mapChatToolChoice(input.toolChoice),
             response_format: mapStructuredOutput(this.modelId, input),

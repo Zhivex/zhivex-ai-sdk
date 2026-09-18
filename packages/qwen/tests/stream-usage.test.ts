@@ -3,7 +3,7 @@ import { createTextMessage, streamText } from "@zhivex-ai/core";
 import { createQwen } from "../src/index.js";
 
 describe("Qwen Chat terminal usage", () => {
-  it.each(["qwen3.8-max", "qwen3.8-flash"])("preserves usage-only chunks after finish for %s", async (modelId) => {
+  it.each(["qwen3.8-max", "qwen3.8-flash", "qwen3.8-omni-flash"])("preserves usage-only chunks after finish for %s", async (modelId) => {
     const provider = createQwen({ apiKey: "test", fetch: async () => new Response([
       { choices: [{ delta: { content: "18 C" }, finish_reason: null }] },
       { choices: [{ delta: {}, finish_reason: "stop" }], usage: null },

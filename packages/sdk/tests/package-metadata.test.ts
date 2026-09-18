@@ -159,8 +159,11 @@ describe("package metadata", () => {
       "./components",
       "./headless",
       "./hooks",
+      "./markdown",
+      "./replay",
       "./styles.css",
-      "./transport"
+      "./transport",
+      "./virtualized"
     ]);
     expect(pkg.exports?.["./styles.css"]).toBe("./styles.css");
     expect(pkg.files).toEqual(expect.arrayContaining(["dist", "styles.css"]));

@@ -436,7 +436,7 @@ export const createInitialChatState = (
   activity: []
 });
 
-export const applyUIMessageChunk = (
+const applyChunk = (
   state: ChatState,
   chunk: ChatStreamChunk,
   now: number = Date.now(),
@@ -445,6 +445,8 @@ export const applyUIMessageChunk = (
   if (!isRecord(chunk) || !isString(chunk.type)) {
     return state;
   }
+
+  if (chunk.type === "stream-end") return { ...state, replayComplete: true };
 
   if (chunk.type === "text-delta") {
     if (
@@ -741,7 +743,64 @@ export const applyUIMessageChunk = (
   return state;
 };
 
+const acceptReplay = (state: ChatState, chunk: ChatStreamChunk): ChatState | undefined => {
+  if (!isRecord(chunk) || !isString(chunk.type)) return undefined;
+  if (chunk.replay === undefined) return state;
+  const cursor = chunk.replay;
+  if (!isRecord(cursor) || !isString(cursor.streamId) || !cursor.streamId ||
+      !Number.isSafeInteger(cursor.sequence) || cursor.sequence <= 0) {
+    throw new Error("Invalid chat replay cursor.");
+  }
+  const previous = state.checkpoint;
+  if (previous && previous.streamId !== cursor.streamId) throw new Error("Chat replay stream changed.");
+  if (previous && cursor.sequence <= previous.sequence) return undefined;
+  if (cursor.sequence !== (previous?.sequence ?? 0) + 1) throw new Error("Chat replay has missing events.");
+  return { ...state, checkpoint: { ...cursor } };
+};
+
+export const applyUIMessageChunk = (
+  state: ChatState, chunk: ChatStreamChunk, now = Date.now(),
+  activityLimit = DEFAULT_CHAT_ACTIVITY_LIMIT
+): ChatState => {
+  const accepted = acceptReplay(state, chunk);
+  return accepted ? applyChunk(accepted, chunk, now, activityLimit) : state;
+};
+
+/** Coalesce adjacent deltas without crossing tool, lifecycle, or replay boundaries. */
+const applyChunks = (state: ChatState, chunks: readonly ChatStreamChunk[], now: number, limit: number) => {
+  let next = state;
+  let text: { type: "text-delta"; messageId: string; role: MessageRole; textDelta: string } | undefined;
+  const flush = () => {
+    if (text) next = applyChunk(next, text, now, limit);
+    text = undefined;
+  };
+  for (const chunk of chunks) {
+    const accepted = acceptReplay(next, chunk);
+    if (!accepted) continue;
+    next = accepted;
+    if (chunk.type === "text-delta" && isString(chunk.textDelta) &&
+        isString(chunk.messageId) && isMessageRole(chunk.role)) {
+      if (text && (text.messageId !== chunk.messageId || text.role !== chunk.role)) flush();
+      text = text ? { ...text, textDelta: `${text.textDelta}${chunk.textDelta}` } : { type: "text-delta", messageId: chunk.messageId, role: chunk.role, textDelta: chunk.textDelta };
+    } else {
+      flush();
+      next = applyChunk(next, chunk, now, limit);
+    }
+  }
+  flush();
+  return next;
+};
+
 export const chatReducer = (state: ChatState, action: ChatAction): ChatState => {
+  if (action.type === "request-reconnect") {
+    let lastUser = -1;
+    for (let index = state.messages.length - 1; index >= 0; index--) {
+      if (state.messages[index]?.role === "user") { lastUser = index; break; }
+    }
+    return { ...state, status: "reconnecting", error: undefined,
+      messages: state.messages.map((message, index) => index >= lastUser && (message.status === "error" || message.status === "stopped")
+        ? { ...message, status: message.role === "user" ? "pending" : "streaming" } : message) };
+  }
   if (action.type === "request-start") {
     const messages = action.messages
       ? action.messages.map((message) => normalizeMessage(message))
@@ -752,6 +811,8 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
       ...state,
       messages,
       status: "submitting",
+      checkpoint: undefined,
+      replayComplete: false,
       error: undefined,
       usage: undefined,
       activity: []
@@ -768,16 +829,7 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
   }
 
   if (action.type === "stream-chunks") {
-    return action.chunks.reduce(
-      (next, chunk) =>
-        applyUIMessageChunk(
-          next,
-          chunk,
-          action.now,
-          action.activityLimit
-        ),
-      state
-    );
+    return applyChunks(state, action.chunks, action.now ?? Date.now(), action.activityLimit ?? DEFAULT_CHAT_ACTIVITY_LIMIT);
   }
 
   if (action.type === "request-finish" || action.type === "request-stop") {
@@ -808,6 +860,8 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
     return {
       ...state,
       messages: action.messages.map((message) => normalizeMessage(message)),
+      checkpoint: undefined,
+      replayComplete: false,
       error: undefined,
       status: "ready"
     };
@@ -816,7 +870,8 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
   if (action.type === "set-session") {
     return {
       ...state,
-      sessionId: action.sessionId
+      sessionId: action.sessionId,
+      checkpoint: undefined
     };
   }
 

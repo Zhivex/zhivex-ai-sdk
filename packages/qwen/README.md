@@ -32,7 +32,45 @@ Supported region values are `singapore`, `beijing`, `hong-kong`, `tokyo`, `frank
 
 Qwen speech downloads accept HTTPS audio URLs only, validate every redirect manually, and never forward the provider API key to the media host.
 
-### Qwen 3.8 Flash
+### Qwen3.8 Omni Flash
+
+`qwen3.8-omni-flash` accepts text, images, audio, and video and returns **text only** over HTTP. It uses standard Model Studio credentials, including the default Singapore endpoint or a regional workspace endpoint. Both Chat Completions and Responses support streaming and non-streaming generation. This is a separate contract from streaming-only Omni 3/3.5 and from the Realtime model.
+
+```ts
+const result = await generateText({
+  model: qwen("qwen3.8-omni-flash"),
+  messages: [{
+    role: "user",
+    parts: [
+      { type: "audio", data: "https://example.com/meeting.wav", mediaType: "audio/wav" },
+      { type: "file", data: "https://example.com/meeting.mp4", mediaType: "video/mp4" },
+      { type: "text", text: "Summarize the meeting with timestamps." }
+    ]
+  }],
+  reasoning: { effort: "low" },
+  providerOptions: { apiMode: "responses" }
+});
+```
+
+- Auto mode permits audio/video on Responses, including with hosted web search. Chat is selected for `maxTokens`, thinking budgets, or `tool_stream`; explicit incompatible combinations are rejected.
+- Audio uses `AudioPart` (URL, base64, or bytes), with format inferred from the MIME type or overridden by `format`. Set `AudioPart.providerMetadata.use_multichannel: true` for two/four-channel spatial audio. Video uses a `video/*` `FilePart`. Audio/video is restricted to user messages; document files are rejected.
+- Chat maps media to `input_audio` and `video_url`; Responses maps it to `input_audio.audio_url` and `input_video.video_url`.
+- Thinking defaults to upstream `xhigh`. All seven shared efforts are accepted; Chat maps `minimal` to `low`, `high`/`max` to `xhigh`, and `none` disables thinking. Chat preserves thinking history. Effort and budget cannot be combined.
+- Callable tools are supported; the only exposed hosted Responses tool is `qwenWebSearchTool()`. MCP, hosted file search, code execution, and other hosted tools are rejected. Forced callable-tool selection requires thinking to be disabled.
+- Audio output settings are rejected. Structured output uses `generateObject({ mode: "prompted", ... })` with local schema validation; native JSON Schema/JSON mode is not advertised pending a verified model-specific contract.
+- QwenCloud lists a 1M context window and $0.15/M input, $0.47/M output, and $0.016/M implicit-cache input tokens. Media tokenization and account limits still apply; these rates are not a flat price per minute.
+
+Sources: [QwenCloud model card](https://www.qwencloud.com/models/qwen3.8-omni-flash), [Omni API guide](https://www.alibabacloud.com/help/en/model-studio/qwen-omni).
+
+Run the dedicated opt-in live suite (fails if enabled without credentials):
+
+```bash
+QWEN_OMNI_INTEGRATION=1 bun --env-file=.env run test:integration packages/qwen/tests/omni-flash.integration.test.ts
+```
+
+The suite uses public Alibaba sample media, checks both HTTP APIs, reasoning streams, final usage, tool execution/continuation, prompted JSON, and hosted web search. It does not certify the separate Realtime model.
+
+## Qwen 3.8 Flash
 
 `qwen3.8-flash` is the low-latency Qwen 3.8 production model exposed through standard QwenCloud/Alibaba Cloud Model Studio credentials and compatible endpoints. It provides a 1M-token context window, up to 128K output tokens, text/image/video input, hybrid reasoning, function calling, built-in tools, parallel function calls, and native JSON Schema structured output. Published pay-as-you-go pricing is $0.16 per million input tokens, $0.47 per million output tokens, and $0.016 per million implicit-cache input tokens.
 
@@ -99,7 +137,7 @@ Token Plan terms limit these credentials to interactive use in programming and a
 The default `apiMode: "auto"` selects the protocol required by the request:
 
 - Responses for hosted tools, Qwen OCR file URLs, and `previous_response_id` continuation.
-- Chat Completions for structured output, audio/video input, `maxTokens`, `reasoning.budgetTokens`, or `providerOptions.tool_stream`.
+- Chat Completions for structured output, audio/video input (except Omni 3.8, which also supports Responses), `maxTokens`, `reasoning.budgetTokens`, or `providerOptions.tool_stream`.
 - Either path for ordinary text and local function tools; automatic mode prefers Responses.
 
 Use `providerOptions: { apiMode: "responses" }` or `{ apiMode: "chat" }` only when you need to force a compatible path. Unsupported combinations fail before the network request instead of silently dropping fields.

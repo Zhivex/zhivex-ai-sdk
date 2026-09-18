@@ -52,6 +52,12 @@ jobs:
       - name: Test
         run: bun run test
 
+      - name: Install Chromium for React browser tests
+        run: bunx playwright install --with-deps chromium
+
+      - name: React browser tests
+        run: bun run test:react:browser
+
       - name: Generate provider conformance report from offline evidence
         run: >-
           bun run provider:conformance
@@ -72,6 +78,9 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: Packed React optional-entrypoint smoke
+        run: bun run scripts/react-package-smoke.ts
 
       - name: Bundle package build output
         run: tar -czf "$RUNNER_TEMP/package-dist.tgz" packages/*/dist

@@ -1,13 +1,17 @@
 {
   "approval.d.ts": "ed6efccabed5adf4b91b0a551f0a3a2770bc02169b0a49e4c0d8a6fa5ac03236",
-  "compat.d.ts": "757d996f0bd4ee203a8c5071800a36d6ac9d4671bf2cc1e075b47eef08c64ec7",
-  "component-support.d.ts": "739c60b98071526f1f21bb8ff5540206fcc0ccc9eb03da7b60e9f07e05e2834c",
-  "components.d.ts": "52d9a2a2d0c93b3e6d5ffed8944ebb4cb232ce3b4e57e927f58777c1baa156a2",
+  "attachments.d.ts": "b8fa1bcde602601ff6f5e8b556ee00be228aba41bcd8254cb1e818bba0d8eebf",
+  "compat.d.ts": "60fad7eacf43ecc4b8bb3c20fb39b119b5f28ba4eba292618e824a1d2a10b349",
+  "component-support.d.ts": "e72643c42e44cb286234a1e9cdb9da48f4c3909ee23b160389eb206993c678ab",
+  "components.d.ts": "9388f79e66ac96d9192db4bfd7115dc19903b49816dc4d9bcf52386d2cae76f7",
   "headless.d.ts": "f8ab69d007c107d697594fd0cd74d940ff01f90ba628bd0b8b56b107291b29b0",
-  "hooks.d.ts": "6f1da74d2a7f8660cb5b1b94fb4f2a77b552353567ae3e948c436f6cb268d852",
+  "hooks.d.ts": "faa0902787be8d2b499451eacc2c5a45913425cef2a6011a28437b6043d90ec8",
   "index.d.ts": "fb0cbd5018cc6bda6bb7de3ae93208b9f47213bca43d64b1dbce90ee77deffb1",
+  "markdown.d.ts": "06af790158d88223a63be6dfa9457ee854ad3fffc510f609962d25e754728004",
   "reducer.d.ts": "74a50da93d8d85700752e9c94b7a6353090974404d1c9bb38614338d0a17e571",
-  "transport.d.ts": "a89adb2e16bc18955994bd64ad0d38e4164003d23bf3473c6d773a61f3d31bb7",
-  "types.d.ts": "c911c657c06fd7eab16fa5997c4cfe7f1841853f955b74e01155514f1fbcdead",
-  "use-zhivex-chat.d.ts": "5848d2093e79331981f0ce1284fd4e975752a2f8ef19c774384e33307f340265"
+  "replay.d.ts": "6433d93ccfa749a31763ec0d28a2c5aab29f6dc80f2d3982738a915fd565b70d",
+  "transport.d.ts": "9aa973ae07b52c7aae9091df4edfb2b3ed4901a9b489afde895737b1da1d6727",
+  "types.d.ts": "4863953eccb438224836dec347081b4a74c2d93e901d5c4f6f6cf6773b962080",
+  "use-zhivex-chat.d.ts": "5848d2093e79331981f0ce1284fd4e975752a2f8ef19c774384e33307f340265",
+  "virtualized.d.ts": "aaf16cf803251082292673d07c18d1aebf259839185e352acf9786e9fc88131b"
 }

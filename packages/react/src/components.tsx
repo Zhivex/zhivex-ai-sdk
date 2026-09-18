@@ -23,14 +23,18 @@ import type {
   HTMLAttributes,
   KeyboardEvent,
   ReactNode,
+  RefObject,
   UIEvent
 } from "react";
+import { useAttachments, type AttachmentUploader } from "./attachments.js";
+export type { AttachmentUploader, AttachmentUploadContext, ChatAttachment } from "./attachments.js";
 import { approvalKey } from "./approval.js";
 import type {
   ChatActivity,
   ChatInputPart,
   ChatMessage,
   ChatSendInput,
+  ChatSendResult,
   ChatState,
   ChatStatus
 } from "./types.js";
@@ -1086,6 +1090,9 @@ export function ActivityPanel({
 export interface MessageListProps
   extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
   messages: readonly ChatMessage[];
+  /** Optional renderer used by the virtualized entrypoint. */
+  renderMessages?: (renderMessage: (message: ChatMessage) => ReactNode) => ReactNode;
+  viewportRef?: RefObject<HTMLDivElement | null>;
   status?: ChatStatus;
   pendingApprovals?: readonly AgentApprovalRequest[];
   activity?: readonly ChatActivity[];
@@ -1120,6 +1127,8 @@ export interface MessageListProps
 
 export function MessageList({
   messages,
+  renderMessages,
+  viewportRef,
   status = "ready",
   pendingApprovals = EMPTY_APPROVALS,
   activity = EMPTY_ACTIVITY,
@@ -1221,6 +1230,31 @@ export function MessageList({
     previousCompletionKeyRef.current = latestCompletionKey;
   }, [isBusy, latestCompletedAssistant, latestCompletionKey]);
 
+  const setViewport = useCallback((node: HTMLDivElement | null) => {
+    listRef.current = node;
+    if (viewportRef) viewportRef.current = node;
+  }, [viewportRef]);
+
+  const renderMessage = (message: ChatMessage) => (
+            <Message
+              key={message.id}
+              getImageAlt={getImageAlt}
+              labels={labels}
+              message={message}
+              mediaUrlPolicy={mediaUrlPolicy}
+              onCopy={onCopyMessage}
+              onCopyError={onCopyError}
+              onRetry={
+                onRetry && message.id === latestAssistantId
+                  ? onRetry
+                  : undefined
+              }
+              renderers={renderers}
+              showActions={showMessageActions}
+              showStatus={showMessageStatus}
+            />
+  );
+
   return (
     <>
       <div
@@ -1231,7 +1265,7 @@ export function MessageList({
         className={joinClassNames("zhivex-message-list", className)}
         data-slot="message-list"
         onScroll={handleScroll}
-        ref={listRef}
+        ref={setViewport}
         role="log"
         tabIndex={0}
       >
@@ -1254,25 +1288,7 @@ export function MessageList({
         )
       ) : (
         <>
-          {messages.map((message) => (
-            <Message
-              key={message.id}
-              getImageAlt={getImageAlt}
-              labels={labels}
-              message={message}
-              mediaUrlPolicy={mediaUrlPolicy}
-              onCopy={onCopyMessage}
-              onCopyError={onCopyError}
-              onRetry={
-                onRetry && message.id === latestAssistantId
-                  ? onRetry
-                  : undefined
-              }
-              renderers={renderers}
-              showActions={showMessageActions}
-              showStatus={showMessageStatus}
-            />
-          ))}
+          {renderMessages ? renderMessages(renderMessage) : messages.map(renderMessage)}
           {pendingApprovals.map((approval) => (
             <ApprovalCard
               key={approvalKey(approval)}
@@ -1333,43 +1349,6 @@ export interface ComposerAttachment {
   part: ChatInputPart;
 }
 
-type AttachmentReadResult =
-  | { attachment: ComposerAttachment; file: File }
-  | { error: Error; file: File };
-
-const attachmentId = () =>
-  typeof globalThis.crypto?.randomUUID === "function"
-    ? `attachment_${globalThis.crypto.randomUUID()}`
-    : `attachment_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-
-const readFileAsDataUrl = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("File read failed."));
-    reader.onload = () =>
-      typeof reader.result === "string"
-        ? resolve(reader.result)
-        : reject(new Error("File read returned an unsupported result."));
-    reader.readAsDataURL(file);
-  });
-
-const fileToAttachment = async (file: File): Promise<ComposerAttachment> => {
-  const mediaType = file.type || "application/octet-stream";
-  const data = await readFileAsDataUrl(file);
-  const part: ChatInputPart = mediaType.startsWith("image/")
-    ? { type: "image", image: data, mediaType }
-    : mediaType.startsWith("audio/")
-      ? { type: "audio", data, mediaType, filename: file.name }
-      : { type: "file", data, mediaType, filename: file.name };
-  return {
-    id: attachmentId(),
-    name: file.name,
-    mediaType,
-    size: file.size,
-    part
-  };
-};
-
 const formatFileSize = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
@@ -1383,8 +1362,10 @@ export interface ComposerProps
   > {
   value: string;
   onValueChange: (value: string) => void;
-  onSend: (value: string) => void | Promise<void>;
-  onSendMessage?: (input: ChatSendInput) => void | Promise<void>;
+  onSend: (value: string) => void | ChatSendResult | Promise<void | ChatSendResult>;
+  onSendMessage?: (
+    input: ChatSendInput
+  ) => void | ChatSendResult | Promise<void | ChatSendResult>;
   onSendError?: (error: unknown) => void;
   onStop?: () => void;
   status?: ChatStatus;
@@ -1393,6 +1374,7 @@ export interface ComposerProps
   accept?: string;
   maxAttachments?: number;
   maxAttachmentBytes?: number;
+  uploadAttachment?: AttachmentUploader;
   onAttachmentError?: (error: Error, file?: File) => void;
   leadingActions?: ReactNode;
   trailingActions?: ReactNode;
@@ -1418,6 +1400,7 @@ export function Composer({
   maxAttachments = DEFAULT_MAX_ATTACHMENTS,
   maxAttachmentBytes = DEFAULT_MAX_ATTACHMENT_BYTES,
   onAttachmentError,
+  uploadAttachment,
   leadingActions,
   trailingActions,
   onDrop,
@@ -1430,7 +1413,7 @@ export function Composer({
   const generatedTextareaId = useId();
   const textareaId = textareaProps?.id ?? generatedTextareaId;
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const submittingRef = useRef(false);
   const [attachmentError, setAttachmentError] = useState<string>();
   const isBusy = isBusyStatus(status);
   const attachmentsEnabled = allowAttachments && Boolean(onSendMessage);
@@ -1442,75 +1425,49 @@ export function Composer({
     Number.isSafeInteger(maxAttachmentBytes) && maxAttachmentBytes > 0
       ? maxAttachmentBytes
       : DEFAULT_MAX_ATTACHMENT_BYTES;
+  const { attachments, addFiles: prepareFiles, remove, retry } = useAttachments({
+    accept, maxAttachments: normalizedMaxAttachments, maxAttachmentBytes: normalizedMaxAttachmentBytes,
+    uploadAttachment,
+    errors: { limit: labels.attachmentLimit, size: labels.attachmentTooLarge,
+      type: labels.attachmentTypeError, read: labels.attachmentReadError },
+    onError: (error, file) => { setAttachmentError(error.message); onAttachmentError?.(error, file); }
+  });
   const canSend =
     (value.trim().length > 0 || attachments.length > 0) &&
-    !isBusy &&
-    !textareaProps?.disabled &&
-    !textareaProps?.readOnly;
-
-  const addFiles = async (files: readonly File[]) => {
-    if (!attachmentsEnabled || files.length === 0) return;
+    attachments.every((attachment) => attachment.status === "ready") &&
+    !isBusy && !textareaProps?.disabled && !textareaProps?.readOnly;
+  const addFiles = (files: readonly File[]) => {
+    if (!attachmentsEnabled || textareaProps?.disabled || textareaProps?.readOnly) return;
     setAttachmentError(undefined);
-    const remaining = normalizedMaxAttachments - attachments.length;
-    if (remaining <= 0) {
-      const error = new Error(labels.attachmentLimit);
-      setAttachmentError(error.message);
-      onAttachmentError?.(error);
-      return;
-    }
-    const selected = files.slice(0, remaining);
-    if (files.length > remaining) setAttachmentError(labels.attachmentLimit);
-    const results = await Promise.all(
-      selected.map(async (file): Promise<AttachmentReadResult> => {
-        if (file.size > normalizedMaxAttachmentBytes) {
-          const error = new Error(
-            `${labels.attachmentTooLarge} ${file.name} (${formatFileSize(file.size)}).`
-          );
-          return { error, file };
-        }
-        try {
-          return { attachment: await fileToAttachment(file), file };
-        } catch (cause) {
-          const error = new Error(labels.attachmentReadError, { cause });
-          return { error, file };
-        }
-      })
-    );
-    const next: ComposerAttachment[] = [];
-    for (const result of results) {
-      if ("attachment" in result) {
-        next.push(result.attachment);
-      } else {
-        setAttachmentError(result.error.message);
-        onAttachmentError?.(result.error, result.file);
-      }
-    }
-    if (next.length > 0) {
-      setAttachments((current) => [
-        ...current,
-        ...next.slice(0, normalizedMaxAttachments - current.length)
-      ]);
-    }
+    prepareFiles(files);
   };
 
   const submit = async () => {
-    if (!canSend) return;
+    if (!canSend || submittingRef.current) return;
+    submittingRef.current = true;
     try {
       if (attachments.length > 0 && onSendMessage) {
         const parts: ChatInputPart[] = [
-          ...attachments.map((attachment) => attachment.part),
+          ...attachments.flatMap((attachment) => attachment.part ? [attachment.part] : []),
           ...(value.trim().length > 0
             ? ([{ type: "text", text: value }] as const)
             : [])
         ];
-        await onSendMessage(parts);
-        setAttachments([]);
-        setAttachmentError(undefined);
+        const sentIds = new Set(attachments.map((attachment) => attachment.id));
+        const result = await onSendMessage(parts);
+        if (result?.status === "error") onSendError?.(result.error);
+        if (result === undefined || result.status === "completed") {
+          for (const id of sentIds) remove(id);
+          setAttachmentError(undefined);
+        }
       } else {
-        await onSend(value);
+        const result = await onSend(value);
+        if (result?.status === "error") onSendError?.(result.error);
       }
     } catch (error) {
       onSendError?.(error);
+    } finally {
+      submittingRef.current = false;
     }
   };
 
@@ -1565,18 +1522,25 @@ export function Composer({
       {attachments.length > 0 ? (
         <ul aria-label={labels.attachments} className="zhivex-composer__attachments">
           {attachments.map((attachment) => (
-            <li key={attachment.id}>
+            <li key={attachment.id} data-attachment-status={attachment.status}>
+              {attachment.previewUrl && attachment.mediaType.startsWith("image/") ? (
+                <img src={attachment.previewUrl} alt={attachment.name} className="zhivex-attachment-preview" />
+              ) : attachment.previewUrl && attachment.mediaType.startsWith("audio/") ? (
+                <audio src={attachment.previewUrl} controls aria-label={attachment.name} />
+              ) : null}
+              {attachment.status === "reading" || attachment.status === "uploading" ? (
+                <progress value={attachment.progress} max={1} aria-label={`${labels.attachmentPreparing}: ${attachment.name}`} />
+              ) : null}
+              {attachment.status === "error" ? (
+                <button type="button" onClick={() => retry(attachment.id)}>{labels.retry}</button>
+              ) : null}
               <span>
                 <strong>{attachment.name}</strong>
                 <small>{formatFileSize(attachment.size)}</small>
               </span>
               <button
                 aria-label={`${labels.removeAttachment}: ${attachment.name}`}
-                onClick={() =>
-                  setAttachments((current) =>
-                    current.filter((candidate) => candidate.id !== attachment.id)
-                  )
-                }
+                onClick={() => remove(attachment.id)}
                 type="button"
               >
                 ×
@@ -1640,14 +1604,16 @@ export function Composer({
       ) : null}
       {isBusy && onStop ? (
         <button
+          key="stop"
           className="zhivex-button zhivex-button--stop"
-          onClick={onStop}
+          onClick={(event) => { event.preventDefault(); onStop(); }}
           type="button"
         >
           {labels.stop}
         </button>
       ) : (
         <button
+          key="send"
           className="zhivex-button zhivex-button--primary"
           disabled={!canSend}
           type="submit"
@@ -1665,8 +1631,11 @@ export interface ChatController {
   setInput: (value: string) => void;
   send: (input?: string) => Promise<void>;
   sendMessage?: (input: ChatSendInput) => Promise<void>;
+  sendMessageWithResult?: (input: ChatSendInput) => Promise<ChatSendResult>;
   stop: () => void;
   reload: () => Promise<void>;
+  canReconnect?: boolean;
+  reconnect?: () => Promise<ChatSendResult>;
   canReload?: boolean;
   resolveApproval: (
     approvalRequestId: string,
@@ -1689,6 +1658,7 @@ export interface ZhivexChatProps
   onStarterPrompt?: (prompt: string) => void;
   formatError?: (error: Error) => ReactNode;
   showErrorDetails?: boolean;
+  MessageListComponent?: ComponentType<MessageListProps>;
   messageListProps?: Omit<
     MessageListProps,
     | "messages"
@@ -1737,6 +1707,7 @@ export function ZhivexChat({
   formatError,
   showErrorDetails = false,
   messageListProps,
+  MessageListComponent = MessageList,
   onApproval,
   onApprovalError,
   onRetry,
@@ -1761,6 +1732,7 @@ export function ZhivexChat({
       ));
   const retry =
     onRetry ??
+    (controller.canReconnect && controller.reconnect ? async () => { await controller.reconnect!(); } : undefined) ??
     (controller.canReload === true ? () => controller.reload() : undefined);
   const handleStarterPrompt =
     onStarterPrompt ?? ((prompt: string) => controller.setInput(prompt));
@@ -1772,7 +1744,7 @@ export function ZhivexChat({
           {header}
         </header>
       ) : null}
-      <MessageList
+      <MessageListComponent
         {...messageListProps}
         activity={controller.state.activity}
         emptyState={emptyState}
@@ -1812,8 +1784,12 @@ export function ZhivexChat({
       <Composer
         {...composerProps}
         labels={labels}
-        onSend={(value) => controller.send(value)}
-        onSendMessage={controller.sendMessage}
+        onSend={(value) =>
+          controller.sendMessageWithResult
+            ? controller.sendMessageWithResult(value)
+            : controller.send(value)
+        }
+        onSendMessage={controller.sendMessageWithResult ?? controller.sendMessage}
         onStop={controller.stop}
         onValueChange={controller.setInput}
         status={controller.state.status}

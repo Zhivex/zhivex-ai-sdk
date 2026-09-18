@@ -1,3 +1,5 @@
+import type { ChatReplayCursor } from "./replay.js";
+export type { ChatReplayCursor } from "./replay.js";
 import type {
   AgentApprovalRequest,
   AgentApprovalResponse,
@@ -17,7 +19,7 @@ export type ChatMessageStatus =
   | "complete"
   | "stopped"
   | "error";
-export type ChatStatus = "ready" | "submitting" | "streaming" | "error";
+export type ChatStatus = "ready" | "submitting" | "streaming" | "reconnecting" | "error";
 
 export interface ChatMessage extends UIMessage {
   createdAt: number;
@@ -62,6 +64,8 @@ export type ChatActivity =
     };
 
 export interface ChatState {
+  checkpoint?: ChatReplayCursor;
+  replayComplete?: boolean;
   messages: ChatMessage[];
   status: ChatStatus;
   error?: Error;
@@ -87,7 +91,11 @@ export interface UnknownUIMessageChunk {
   [key: string]: unknown;
 }
 
-export type ChatStreamChunk = UIMessageChunk | UnknownUIMessageChunk;
+export type ChatStreamChunk = (UIMessageChunk | UnknownUIMessageChunk) & { replay?: ChatReplayCursor };
+
+export interface ChatReconnectRequest extends ChatTransportRequest {
+  checkpoint: ChatReplayCursor;
+}
 
 export interface ChatTransportRequest {
   /** Latest user message for the default stateless request contract. */
@@ -106,6 +114,9 @@ export interface ChatTransport {
    * transports should leave this disabled to avoid duplicating session history.
    */
   readonly supportsReload?: boolean;
+  readonly supportsReconnect?: boolean;
+  reconnect?(request: ChatReconnectRequest): AsyncIterable<ChatStreamChunk>;
+  cancel?(request: ChatReconnectRequest): Promise<void>;
   send(request: ChatTransportRequest): AsyncIterable<ChatStreamChunk>;
 }
 
@@ -139,6 +150,10 @@ export type ChatTransportErrorFormatter = (
 ) => string | undefined | Promise<string | undefined>;
 
 export interface FetchChatTransportOptions {
+  /** GET endpoint serving cursor-based replay. Must never start a new run. */
+  reconnectEndpoint?: string;
+  /** Optional authenticated DELETE endpoint for stopping background execution. */
+  cancelEndpoint?: string;
   endpoint?: string;
   headers?: ChatHeaders;
   buildRequestBody?: ChatRequestBodyBuilder;
@@ -187,6 +202,13 @@ export type ChatSendInput =
   | readonly ChatInputPart[]
   | ChatInputMessage;
 
+/** Outcome of an explicit send; completion does not imply tool approval or run success. */
+export type ChatSendResult =
+  | { status: "completed" }
+  | { status: "error"; error: Error }
+  | { status: "stopped" }
+  | { status: "skipped"; reason: "empty" };
+
 export interface ChatResetOptions {
   messages?: readonly (UIMessage | ChatMessage)[];
   sessionId?: string;
@@ -202,6 +224,10 @@ export interface UseZhivexChatOptions {
   metadata?: Record<string, JsonValue>;
   /** Maximum lifecycle entries retained for the active request. Defaults to 200. */
   activityLimit?: number;
+  /** Bounded automatic GET reconnect attempts after a network interruption. Default: 0. */
+  maxReconnectAttempts?: number;
+  /** Restore only together with the exact messages represented by this cursor. */
+  initialCheckpoint?: ChatReplayCursor;
   /** Stream batching window in milliseconds. Defaults to 16; use 0 for immediate updates. */
   streamBatchMs?: number;
   onError?: (error: Error) => void;
@@ -222,7 +248,10 @@ export interface UseZhivexChatResult {
   setInput: (value: string) => void;
   send: (input?: string) => Promise<void>;
   sendMessage: (input: ChatSendInput) => Promise<void>;
+  sendMessageWithResult: (input: ChatSendInput) => Promise<ChatSendResult>;
   stop: () => void;
+  canReconnect: boolean;
+  reconnect: () => Promise<ChatSendResult>;
   canReload: boolean;
   reload: () => Promise<void>;
   setMessages: (update: ChatMessagesUpdate) => void;
@@ -236,6 +265,7 @@ export interface UseZhivexChatResult {
 }
 
 export type ChatAction =
+  | { type: "request-reconnect" }
   | {
       type: "request-start";
       message?: ChatMessage;

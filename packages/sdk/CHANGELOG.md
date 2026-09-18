@@ -1,5 +1,11 @@
 # @zhivex-ai/sdk
 
+## 1.21.1
+
+### Patch Changes
+
+- Support Qwen3.8-Omni-Flash HTTP with multimodal Chat and Responses inputs, hybrid reasoning, text-only output guardrails, and model-specific hosted-tool validation. Add the model and published pricing to the SDK catalog.
+
 ## 1.21.0
 
 ### Minor Changes

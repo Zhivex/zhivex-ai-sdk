@@ -7,6 +7,7 @@ export type {
   ChatMessagesUpdate,
   ChatResetOptions,
   ChatSendInput,
+  ChatSendResult,
   UseZhivexChatOptions,
   UseZhivexChatResult
 } from "./types.js";

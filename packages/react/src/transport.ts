@@ -1,6 +1,7 @@
 import type { ContentPart, UIMessage } from "@zhivex-ai/core";
 import type {
   ChatRequestBody,
+  ChatReconnectRequest,
   ChatStreamChunk,
   ChatTransport,
   ChatTransportRequest,
@@ -556,15 +557,42 @@ const responseError = async (
 export class FetchChatTransport implements ChatTransport {
   readonly endpoint: string;
   readonly supportsReload: boolean;
+  readonly supportsReconnect: boolean;
   private readonly options: FetchChatTransportOptions;
 
   constructor(options: FetchChatTransportOptions = {}) {
     this.endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
     this.supportsReload = options.supportsReload ?? false;
     this.options = options;
+    this.supportsReconnect = Boolean(options.reconnectEndpoint);
   }
 
-  async *send(request: ChatTransportRequest): AsyncGenerator<ChatStreamChunk> {
+  send(request: ChatTransportRequest): AsyncIterable<ChatStreamChunk> {
+    return this.request(request);
+  }
+
+  reconnect(request: ChatReconnectRequest): AsyncIterable<ChatStreamChunk> {
+    if (!this.options.reconnectEndpoint) throw new Error("Reconnect is not configured.");
+    return this.request(request, request.checkpoint);
+  }
+
+  async cancel(request: ChatReconnectRequest): Promise<void> {
+    if (!this.options.cancelEndpoint) return;
+    const control = createRequestControl(request.signal, 10_000);
+    try {
+      const headers = await awaitWithSignal(Promise.resolve().then(() => typeof this.options.headers === "function"
+        ? this.options.headers({ ...request, signal: control.signal }) : this.options.headers), control.signal);
+      const endpoint = this.options.cancelEndpoint;
+      const response = await awaitWithSignal((this.options.fetch ?? globalThis.fetch)(
+        `${endpoint}${endpoint.includes("?") ? "&" : "?"}${new URLSearchParams({ streamId: request.checkpoint.streamId })}`,
+        { method: "DELETE", headers, signal: control.signal, credentials: this.options.credentials, redirect: "error" }
+      ), control.signal);
+      if (!response.ok) throw new ChatTransportError("Unable to cancel the background chat run.", { code: "http_error", status: response.status });
+      await response.body?.cancel();
+    } finally { control.dispose(); }
+  }
+
+  private async *request(request: ChatTransportRequest, checkpoint?: ChatReconnectRequest["checkpoint"]): AsyncGenerator<ChatStreamChunk> {
     const maxErrorBodyBytes = positiveSafeInteger(
       "maxErrorBodyBytes",
       this.options.maxErrorBodyBytes,
@@ -585,6 +613,10 @@ export class FetchChatTransport implements ChatTransport {
     }
     const control = createRequestControl(request.signal, requestTimeoutMs);
     let completed = false;
+    const baseEndpoint = checkpoint ? this.options.reconnectEndpoint! : this.endpoint;
+    const endpoint = checkpoint
+      ? `${baseEndpoint}${baseEndpoint.includes("?") ? "&" : "?"}${new URLSearchParams({ streamId: checkpoint.streamId, after: String(checkpoint.sequence) })}`
+      : baseEndpoint;
 
     try {
       const fetchImplementation = this.options.fetch ?? globalThis.fetch;
@@ -616,7 +648,7 @@ export class FetchChatTransport implements ChatTransport {
 
       const buildRequestBody =
         this.options.buildRequestBody ?? prepareChatRequestBody;
-      const body = await awaitWithSignal(
+      const body = checkpoint ? undefined : await awaitWithSignal(
         Promise.resolve().then(() => buildRequestBody(managedRequest)),
         control.signal
       );
@@ -625,8 +657,8 @@ export class FetchChatTransport implements ChatTransport {
       try {
         response = await awaitWithSignal(
           Promise.resolve(
-            fetchImplementation(this.endpoint, {
-              method: "POST",
+            fetchImplementation(endpoint, {
+              method: checkpoint ? "GET" : "POST",
               headers,
               body: JSON.stringify(body),
               signal: control.signal,
@@ -686,13 +718,23 @@ export class FetchChatTransport implements ChatTransport {
         );
       }
 
-      yield* parseChatEventStream(response.body, {
+      let resumable = Boolean(checkpoint);
+      let terminal = false;
+      for await (const chunk of parseChatEventStream(response.body, {
         maxEventChars: this.options.maxEventChars,
         maxBufferChars: this.options.maxBufferChars,
         maxStreamChars: this.options.maxStreamChars,
         maxStreamEvents: this.options.maxStreamEvents,
         idleTimeoutMs: streamIdleTimeoutMs
-      });
+      })) {
+        resumable ||= chunk.replay !== undefined;
+        if (resumable && !chunk.replay) throw new ChatTransportError("Resumable event is missing its cursor.", { code: "invalid_response" });
+        if (chunk.type === "stream-end") terminal = true;
+        yield chunk;
+      }
+      if (resumable && !terminal) {
+        throw new ChatTransportError("Chat stream disconnected before completion.", { code: "network_error" });
+      }
       completed = true;
     } catch (error) {
       if (request.signal.aborted) {
@@ -701,7 +743,8 @@ export class FetchChatTransport implements ChatTransport {
       if (control.timedOut()) {
         throw control.timeoutError();
       }
-      throw error;
+      if (error instanceof ChatTransportError) throw error;
+      throw new ChatTransportError("Chat stream interrupted.", { code: "network_error", cause: error });
     } finally {
       if (!completed) {
         control.abort(
