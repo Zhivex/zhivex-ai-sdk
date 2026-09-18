@@ -18,7 +18,7 @@ import {
   type ImageGenerationResult,
   type JsonValue,
   type ModelCapabilities
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 const MIB = 1024 * 1024;
 const DEFAULT_RESPONSE_MAX_BYTES = 128 * MIB;

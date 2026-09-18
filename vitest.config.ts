@@ -1,7 +1,15 @@
 import { defineConfig } from "vitest/config";
 import { resolve } from "node:path";
+import coreManifest from "./packages/core/package.json" with { type: "json" };
 
 export const workspaceAliases = {
+  // Resolve focused subpaths before the root alias, always against source.
+  ...Object.fromEntries(Object.entries(coreManifest.exports)
+    .filter(([subpath]) => subpath !== ".")
+    .map(([subpath, target]) => [
+      `@zhivex-ai/core/${subpath.slice(2)}`,
+      resolve(import.meta.dirname, "packages/core/src", target.import.replace("./dist/", "").replace(/\.js$/, ".ts"))
+    ])),
   "#secure-id": resolve(import.meta.dirname, "packages/core/src/secure-id-node.ts"),
   "@zhivex-ai/core": resolve(import.meta.dirname, "packages/core/src/index.ts"),
   "@zhivex-ai/openai": resolve(import.meta.dirname, "packages/openai/src/index.ts"),

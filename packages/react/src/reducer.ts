@@ -232,7 +232,8 @@ const updateMessage = (
   }
 
   const next = [...messages];
-  next[index] = update(messages[index]!);
+  const existing = messages[index]!;
+  next[index] = update(existing.role === "tool" && role === "assistant" ? { ...existing, role } : existing);
   return next;
 };
 
@@ -446,6 +447,28 @@ const applyChunk = (
     return state;
   }
 
+  if (chunk.type === "agent-run-update") {
+    const run = chunk.run;
+    if (!isRecord(run) || !isString(run.runId) || !run.runId || !isAgentStatus(run.status) ||
+        !isNumber(run.currentStep) || !isNumber(run.maxSteps)) return state;
+    const safe: import("@zhivex-ai/core").AgentRunView = {
+      runId: run.runId, status: run.status, currentStep: run.currentStep, maxSteps: run.maxSteps,
+      usage: toTokenUsage(run.usage)
+    };
+    for (const key of ["parentRunId", "agentId", "name", "provider", "modelId", "handoffToAgentId"] as const) {
+      if (isString(run[key])) safe[key] = run[key];
+    }
+    for (const key of ["toolCalls", "startedAt", "updatedAt"] as const) if (isNumber(run[key])) safe[key] = run[key];
+    if (isRecord(run.budget)) {
+      safe.budget = {};
+      for (const key of ["maxTotalTokens", "maxToolCalls"] as const) if (isNumber(run.budget[key]) && run.budget[key] >= 0) safe.budget[key] = run.budget[key];
+    }
+    const runs = [...(state.runs ?? [])];
+    const index = runs.findIndex(item => item.runId === safe.runId);
+    if (index < 0) runs.push(safe); else runs[index] = safe;
+    return { ...state, runs: runs.slice(-200) };
+  }
+
   if (chunk.type === "stream-end") return { ...state, replayComplete: true };
 
   if (chunk.type === "text-delta") {
@@ -499,12 +522,20 @@ const applyChunk = (
     ) {
       return state;
     }
+    // Approval resumes have a new stream message ID. Complete the original card
+    // by tool identity so the resumed answer can become a separate assistant message.
+    const toolResult = chunk.toolResult;
+    let owner: ChatMessage | undefined;
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+      const candidate = state.messages[i]!;
+      if (candidate.parts.some(part => part.type === "tool-call" && part.toolCall.id === toolResult.toolCallId && part.toolCall.name === toolResult.toolName)) { owner = candidate; break; }
+    }
     return {
       ...state,
       messages: appendPart(
         state.messages,
-        chunk.messageId,
-        chunk.role,
+        owner?.id ?? chunk.messageId,
+        owner?.role ?? chunk.role,
         { type: "tool-result", toolResult: chunk.toolResult },
         now
       ),

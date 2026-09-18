@@ -82,7 +82,7 @@ import {
   type ToolExecutionResult,
   type TranscriptionModel,
   type TranscriptionResult
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 const MIB = 1024 * 1024;
 const DEFAULT_HOSTED_IMAGE_EVENT_BYTES = 32 * MIB;

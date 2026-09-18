@@ -66,7 +66,7 @@ Beta APIs may change between minor releases. Provider-specific realtime options 
 - Production safety: stable safety policies and budget guards in the root; beta governance policies and audit records under `/beta`.
 - Observability and evaluation from `/ops`: trace collectors, run snapshots, replay, cost estimates, and evaluation fixtures.
 - Provider inspection from `/ops`, with beta capability routing and model selection under `/beta`.
-- Beta control plane from `/beta`: capsules, tool policies, approval queue items, ledgers, golden traces, and inspectable run records.
+- Stable control plane from `/control-plane`: capsules, tool policies, approval queue items, ledgers, golden traces, and inspectable run records; `/beta` remains a compatibility path with additional beta governance APIs.
 
 ## Tools
 
@@ -242,3 +242,7 @@ There is no runtime compatibility shim: unsupported root imports now fail during
 Use `@zhivex-ai/sdk` when you also need the broader high-level API: `generateText()`, `generateObject()`, embeddings, media generation, artifacts, declarative workflows, `Runner + SessionService`, and the CLI.
 
 Use `@zhivex-ai/agents` when you want a narrow stable runtime, and opt into `/ops`, `/beta`, `/realtime`, or `/testing` only where the application needs those capabilities.
+
+## React execution summaries
+
+`streamAgent()` now emits `agent-run-update` summaries for the root and nested subagent runs. `AgentRunView` contains identity, parent relationship, lifecycle, usage and budget counters without internal messages or tool arguments. `toUIMessageStream()` forwards these summaries; `@zhivex-ai/react` consumes them in its bounded execution panel. Existing lifecycle and terminal events remain supported. See the [React guide](../react/README.md#agent-execution-views).

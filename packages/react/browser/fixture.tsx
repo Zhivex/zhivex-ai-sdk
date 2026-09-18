@@ -1,3 +1,4 @@
+import { OmniChat, VoiceChat } from "../../../examples/react-omni/app.js";
 import { useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import { ZhivexChat, type MessagePartRenderers } from "../src/components";
@@ -32,4 +33,4 @@ function App() {
     <output aria-label="Chat status">{chat.status}</output>
   </main>;
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(view === "omni" ? <OmniChat /> : view === "voice" ? <VoiceChat /> : <App />);

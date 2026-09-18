@@ -23,7 +23,7 @@ import {
   type ModelGenerateInput,
   type ModelMessage,
   type StreamEvent
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export interface OpenRouterProviderOptions {
   apiKey?: string;

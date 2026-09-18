@@ -241,31 +241,9 @@ zhivex-ai agents inspect --ledger run-ledger.json
 zhivex-ai agents golden --ledger run-ledger.json --name happy-path --out golden-trace.json
 ```
 
-## Provider Positioning
+## Release Validation
 
-Zhivex is strongest when the agent must be portable across providers:
-
-| Capability | Zhivex AI SDK | OpenAI Agents SDK | Vercel AI SDK | LangGraph | Mastra |
-| --- | --- | --- | --- | --- | --- |
-| Multi-provider agent contract | Strong | OpenAI-first | Strong JS provider ecosystem | Integration-based | Router/framework-based |
-| Human approvals | Runtime state + queues | Native HITL | Tool approval flows | Interrupts/checkpoints | Approval APIs |
-| Durable state | Run/session/workflow stores | Sessions | App persistence | Checkpointing focus | Storage/framework services |
-| UI streaming | Agent/UI stream helpers | Realtime/voice focus | Best React/UI DX | Event streaming | Streaming APIs + Studio |
-| Graph orchestration | Stable declarative workflows | Code orchestration | Code patterns | Strongest graph runtime | Strong workflows |
-| Product UI/Studio | Local CLI/artifacts | OpenAI platform | DevTools | LangSmith | Mastra Studio |
-
-Use Zhivex when provider portability, capability routing, Gateway alignment, explicit state, and local control-plane artifacts matter more than a managed platform UI.
-
-## Release Readiness Checklist
-
-Before cutting an agent-focused release:
-
-1. Run focused agent tests: `bun test packages/core/tests/agent.test.ts packages/core/tests/runner.test.ts packages/core/tests/workflow.test.ts packages/core/tests/agent-control-plane.test.ts packages/agents/tests/agents.test.ts`.
-2. Run API stability, package metadata, and type snapshot tests.
-3. Run `bun run typecheck`, `bun run test`, and `bun run build`.
-4. After the build, run `bun run packages/agents/tests/dist-entrypoints.smoke.ts` to verify every published subpath loads from `dist`.
-5. Verify the provider matrix still describes current adapter behavior.
-6. Confirm the changeset includes every published package with changed exports or docs.
+Maintainers use the [agent release checklist](./maintainers/AGENT_RELEASE.md) and the [canonical release workflow](./maintainers/RELEASE.md).
 
 ## External effect reconciliation (Beta)
 

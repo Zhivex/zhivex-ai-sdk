@@ -77,6 +77,13 @@ describe.skipIf(!enabled)("Qwen3.8-Omni-Flash live", () => {
     expect(search?.action?.sources?.some(source => /qwen\.(ai|cloud)/.test(source.url))).toBe(true);
     const final = await model().generate({ messages: [...result.messages, ...text("Using those search results, return the official Qwen website URL.")],
       reasoning: { effort: "none" }, providerOptions: { apiMode: "responses" }, ...limits });
-    expect(final.text).toMatch(/qwen\.(ai|cloud)/);
+    // The model can select another official Qwen property in its final answer.
+    // Keep the hosted search/source assertions above; validate URL ownership here,
+    // rather than requiring a single nondeterministic choice of official homepage.
+    const urls = final.text.match(/https?:\/\/[^\s<>"*)]+/g) ?? [];
+    expect(urls.some(value => {
+      const host = new URL(value).hostname;
+      return ["qwen.ai", "qwen.cloud", "qwenlm.github.io", "tongyi.aliyun.com"].some(domain => host === domain || host.endsWith(`.${domain}`));
+    })).toBe(true);
   }, 190_000);
 });

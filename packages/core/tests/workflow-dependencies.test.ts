@@ -60,7 +60,11 @@ const findDependencyPath = (
 
 const findCycles = (graph: Map<string, string[]>): string[][] => {
   const cycles = new Map<string, string[]>();
+  // Completed subgraphs cannot introduce a new back edge; avoid rewalking the
+  // shared contract domains once for every import path through the facades.
+  const completed = new Set<string>();
   const visit = (current: string, stack: string[]): void => {
+    if (completed.has(current)) return;
     const cycleStart = stack.indexOf(current);
     if (cycleStart >= 0) {
       const cycle = [...stack.slice(cycleStart), current];
@@ -78,6 +82,7 @@ const findCycles = (graph: Map<string, string[]>): string[][] => {
     for (const dependency of graph.get(current) ?? []) {
       visit(dependency, [...stack, current]);
     }
+    completed.add(current);
   };
 
   for (const module of graph.keys()) {

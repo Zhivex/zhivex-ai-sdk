@@ -8,27 +8,27 @@ const readManifest = async (packageName: string) => JSON.parse(
   await readFile(path.join(repoRoot, "packages", packageName, "package.json"), "utf8")
 ) as { version: string; dependencies?: Record<string, string> };
 
-// Changesets 3 advanced the dependency-update cohort to Core 1.16.1.
-// xAI was not part of that release and retains its reviewed Live minimum.
+// All providers now import the focused Core entrypoints introduced in 1.19.0.
+// Older Core versions do not expose these package subpaths.
 const reviewedProviderCoreRanges = {
-  anthropic: "^1.16.1",
-  "azure-openai": "^1.16.1",
-  bedrock: "^1.16.1",
-  deepseek: "^1.16.1",
-  gemini: "^1.16.1",
-  kimi: "^1.16.1",
-  meta: "^1.16.1",
-  ollama: "^1.16.1",
-  openai: "^1.16.1",
-  openrouter: "^1.16.1",
-  qwen: "^1.16.1",
-  vertex: "^1.16.1",
-  xai: "^1.16.0",
-  zai: "^1.16.1"
+  anthropic: "^1.19.0",
+  "azure-openai": "^1.19.0",
+  bedrock: "^1.19.0",
+  deepseek: "^1.19.0",
+  gemini: "^1.19.0",
+  kimi: "^1.19.0",
+  meta: "^1.19.0",
+  ollama: "^1.19.0",
+  openai: "^1.19.0",
+  openrouter: "^1.19.0",
+  qwen: "^1.19.0",
+  vertex: "^1.19.0",
+  xai: "^1.19.0",
+  zai: "^1.19.0"
 } as const;
 
 describe("internal Core dependency ranges", () => {
-  it("preserves the reviewed Core minimum for updated and unchanged providers", async () => {
+  it("requires the reviewed Core release with focused provider entrypoints", async () => {
     for (const [packageName, expectedRange] of Object.entries(reviewedProviderCoreRanges)) {
       const manifest = await readManifest(packageName);
       expect(manifest.dependencies?.["@zhivex-ai/core"], packageName).toBe(expectedRange);

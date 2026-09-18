@@ -1,13 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { constants, promises as fs } from "node:fs";
 
-const canonicalTuple = (parts: readonly string[]): string => JSON.stringify(parts);
-
-export const canonicalStoreKey = (namespace: string, parts: readonly string[]): string =>
-  `${namespace}:v2:${createHash("sha256").update(canonicalTuple(parts)).digest("hex")}`;
-
-export const canonicalStoreFileStem = (namespace: string, parts: readonly string[]): string =>
-  canonicalStoreKey(namespace, parts).replaceAll(":", "_");
+export { canonicalStoreKey, canonicalStoreFileStem } from "./store-key.js";
 
 export const ensurePrivateDirectory = async (directory: string): Promise<void> => {
   const created = await fs.mkdir(directory, { recursive: true, mode: 0o700 });

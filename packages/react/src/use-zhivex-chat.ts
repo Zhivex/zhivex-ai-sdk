@@ -16,6 +16,7 @@ import {
   chatReducer,
   createInitialChatState
 } from "./reducer.js";
+import { validateChatInputParts } from "./input-capabilities.js";
 import { selectPendingApproval } from "./approval.js";
 import { ChatTransportError, createFetchChatTransport } from "./transport.js";
 import { ChatBusyError } from "./types.js";
@@ -138,6 +139,8 @@ export const useZhivexChat = (
     onFinish: options.onFinish,
     onSessionChange: options.onSessionChange
   };
+  const capabilitiesRef = useRef(options.inputCapabilities);
+  capabilitiesRef.current = options.inputCapabilities;
   const metadataRef = useRef<Record<string, JsonValue> | undefined>(
     options.metadata
   );
@@ -379,6 +382,7 @@ export const useZhivexChat = (
         throw new ChatBusyError("send");
       }
       const parts = toInputParts(input);
+      validateChatInputParts(parts, capabilitiesRef.current);
       if (!hasInputContent(parts)) {
         return { status: "skipped", reason: "empty" };
       }
@@ -595,6 +599,7 @@ export const useZhivexChat = (
     setInput,
     send,
     sendMessage,
+    inputCapabilities: options.inputCapabilities,
     sendMessageWithResult,
     stop,
     canReconnect: Boolean(!state.replayComplete && state.checkpoint && transportRef.current.supportsReconnect && transportRef.current.reconnect),

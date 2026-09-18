@@ -1,7 +1,7 @@
 {
   "beta.d.ts": "fd1ee7503d3f9cf46d5d42db83bbb25f563142a6cf468463727ade3145f92cd4",
   "control-plane.d.ts": "7c36e323be70217b7f608958dc268427d8071825e9503779fbfef31404efd746",
-  "index.d.ts": "379bc798d79fcc1c90cb8f50ddfcc9a7ab129821a9bd961b2d09eb30cdb2e785",
+  "index.d.ts": "98af9b57080fe31500ae614a7ed7ceff4beb235cb64cdeb356c302fc45889243",
   "ops.d.ts": "5c650aced413ddf1ee85cebca692caeb366ba85a674f3fe33301a849d6d6a023",
   "realtime.d.ts": "27757f49b8470ef483a45b598a672ebe3e8a9f7552b9dc06aa3bc5acc0f398eb",
   "testing.d.ts": "8ebf442cc31650925d4d19e481a46ceca92de46581982e71357167e455d159d6"

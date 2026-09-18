@@ -61,7 +61,7 @@ import {
   type ToolDefinition,
   type TranscriptionModel,
   type TranscriptionResult
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export interface AzureOpenAIProviderOptions {
   apiKey?: string;

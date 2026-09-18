@@ -7,7 +7,7 @@ Use this checklist when a release is positioned around the agent runtime or `@zh
 Confirm these entry points are intentionally exposed and classified:
 
 ```bash
-bun test packages/core/tests/api-stability.test.ts packages/core/tests/api-type-snapshot.test.ts
+bun run test packages/core/tests/api-stability.test.ts packages/core/tests/api-type-snapshot.test.ts
 ```
 
 Required stable root entry points from `@zhivex-ai/agents`:
@@ -44,7 +44,7 @@ Declarative workflows, every built-in workflow state service, workflow evaluatio
 Run the focused agent suite before the full repo gate:
 
 ```bash
-bun test \
+bun run test \
   packages/core/tests/agent.test.ts \
   packages/core/tests/agent-production.test.ts \
   packages/core/tests/agent-state.test.ts \

@@ -6,6 +6,16 @@ import { describe, expect, it } from "vitest";
 
 import * as contracts from "../src/contracts.js";
 import * as core from "../src/index.js";
+import * as agents from "../src/agents-entry.js";
+import * as agentFacade from "../src/agent.js";
+import * as agentExecution from "../src/agent/execution.js";
+import * as agentDefinition from "../src/agent/definition.js";
+import * as agentInstance from "../src/agent/instance.js";
+import * as agentGroups from "../src/agent/groups.js";
+import * as agentCancellation from "../src/agent/cancellation.js";
+import * as generation from "../src/generation-entry.js";
+import * as provider from "../src/provider-entry.js";
+import * as catalog from "../src/catalog-contracts.js";
 import * as nodeCore from "../src/node.js";
 import * as runtime from "../src/runtime-entry.js";
 import * as testing from "../src/testing.js";
@@ -57,7 +67,7 @@ const runtimeModuleSpecifiers = (source: string, fileName: string): string[] => 
   return specifiers;
 };
 
-const collectRuntimeDependencies = async (entry: string): Promise<Set<string>> => {
+const collectRuntimeDependencies = async (entry: string, forbiddenBuiltins = ["node:"]): Promise<Set<string>> => {
   const visited = new Set<string>();
 
   const visit = async (filePath: string): Promise<void> => {
@@ -67,7 +77,7 @@ const collectRuntimeDependencies = async (entry: string): Promise<Set<string>> =
     visited.add(filePath);
     const source = await readFile(filePath, "utf8");
     for (const specifier of runtimeModuleSpecifiers(source, filePath)) {
-      if (specifier.startsWith("node:")) {
+      if (forbiddenBuiltins.some((prefix) => specifier.startsWith(prefix))) {
         throw new Error(`${path.relative(sourceRoot, filePath)} imports ${specifier}`);
       }
       if (specifier === "#secure-id") {
@@ -102,7 +112,7 @@ describe("core public entrypoints", () => {
   });
 
   it("only re-exports runtime symbols already classified by the root stability contract", () => {
-    for (const surface of [runtime, workflows, ui, testing]) {
+    for (const surface of [runtime, workflows, ui, testing, generation, provider, catalog, agents]) {
       for (const symbol of Object.keys(surface)) {
         expect(core.getApiStability(symbol), symbol).toBeDefined();
       }
@@ -121,7 +131,11 @@ describe("core public entrypoints", () => {
       "./workflows": { types: "./dist/workflows-entry.d.ts", import: "./dist/workflows-entry.js" },
       "./node": { types: "./dist/node.d.ts", import: "./dist/node.js" },
       "./ui": { types: "./dist/ui-entry.d.ts", import: "./dist/ui-entry.js" },
-      "./testing": { types: "./dist/testing.d.ts", import: "./dist/testing.js" }
+      "./testing": { types: "./dist/testing.d.ts", import: "./dist/testing.js" },
+      "./generation": { types: "./dist/generation-entry.d.ts", import: "./dist/generation-entry.js" },
+      "./provider": { types: "./dist/provider-entry.d.ts", import: "./dist/provider-entry.js" },
+      "./catalog": { types: "./dist/catalog-contracts.d.ts", import: "./dist/catalog-contracts.js" },
+      "./agents": { types: "./dist/agents-entry.d.ts", import: "./dist/agents-entry.js" }
     });
   });
 
@@ -151,5 +165,61 @@ describe("core public entrypoints", () => {
     expect(pkg.files).toContain("secure-id-internal.d.ts");
     expect(webSource).not.toContain("node:");
     expect(nodeSource).toContain('from "node:crypto"');
+  });
+});
+
+
+describe("focused dependency boundaries", () => {
+  it("preserves agent facade exports and function identity after internal modularization", () => {
+    const implementations = { ...agentExecution, ...agentDefinition, ...agentInstance, ...agentGroups, ...agentCancellation };
+    for (const name of ["Agent", "createAgent", "runAgent", "resumeAgent", "streamAgent",
+      "createSubAgentTool", "prepareSubagentsForAgent", "runAgentGroup", "cancelAgentRun", "cancelAgentRunTree"] as const) {
+      expect(agentFacade[name]).toBe(implementations[name]);
+      expect(core[name]).toBe(implementations[name]);
+      expect(agents[name]).toBe(implementations[name]);
+    }
+    expect(Object.keys(agentFacade).sort()).toEqual(Object.keys(implementations).sort());
+  });
+
+  it("preserves the existing generation and provider function identities", () => {
+    expect(generation.generateText).toBe(core.generateText);
+    expect(generation.streamObject).toBe(core.streamObject);
+    expect(generation.wrapLanguageModel).toBe(core.wrapLanguageModel);
+    expect(provider.normalizeMessages).toBe(core.normalizeMessages);
+    expect(catalog.createModelCatalog).toBe(core.createModelCatalog);
+    expect("defaultModelCatalog" in catalog).toBe(false);
+  });
+
+  it.each(["generation-entry.ts", "provider-entry.ts", "catalog-contracts.ts"])(
+    "%s does not load persistence, agents, or the legacy catalog",
+    async (entry) => {
+      const dependencies = await collectRuntimeDependencies(entry, ["node:fs", "node:path"]);
+      const names = [...dependencies].map((file) => path.relative(sourceRoot, file));
+      expect(names).not.toContain("index.ts");
+      expect(names).not.toContain("agent.ts");
+      expect(names.some((name) => name.startsWith("agent/"))).toBe(false);
+      expect(names).not.toContain("catalog.ts");
+      expect(names).not.toContain("agent-store.ts");
+      expect(names).not.toContain("artifact.ts");
+      expect(names).not.toContain("workflow-state-service.ts");
+    }
+  );
+
+  it("keeps the focused agents runtime independent of backends and the root aggregator", async () => {
+    const dependencies = await collectRuntimeDependencies("agents-entry.ts", ["node:fs", "node:path"]);
+    const names = [...dependencies].map((file) => path.relative(sourceRoot, file));
+    expect(names).not.toContain("index.ts");
+    expect(names).not.toContain("catalog.ts");
+    expect(names.some((file) => /^(agent-store|artifact|workflow-state-service)([/.])/.test(file))).toBe(false);
+  });
+
+  it.each(["agent-store", "workflow-state-service", "artifact"].flatMap((family) =>
+    ["memory", "sqlite", "postgres"].map((backend) => `${family}/${backend}.ts`)
+  ))("%s does not load filesystem helpers or another backend", async (entry) => {
+    const dependencies = await collectRuntimeDependencies(entry, ["node:fs", "node:path"]);
+    const family = entry.split("/")[0]!;
+    const backends = [...dependencies].map((file) => path.relative(sourceRoot, file))
+      .filter((file) => file.startsWith(`${family}/`) && /\/(memory|file|sqlite|postgres)\.ts$/.test(file));
+    expect(backends).toEqual([entry]);
   });
 });

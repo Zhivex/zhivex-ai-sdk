@@ -5,3 +5,5 @@ export * from "./reducer.js";
 export * from "./transport.js";
 export * from "./types.js";
 export * from "./use-zhivex-chat.js";
+
+export * from "./input-capabilities.js";

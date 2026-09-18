@@ -113,7 +113,7 @@ them to that exact release source SHA.
 
 ## Prerelease To `next`
 
-Use this flow for prerelease validation. Never use `bun run release` as the publish step for a prerelease unless the command is explicitly changed to publish with the intended tag.
+Use this flow for prerelease validation. Publish only through the protected `release.yml` workflow with channel `next`; local release commands are workflow implementation details.
 
 ```bash
 bunx changeset pre enter next

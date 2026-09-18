@@ -5,7 +5,7 @@ import {
   isCallableToolDefinition,
   readErrorBodyWithLimit,
   type ModelGenerateInput
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 // Vertex's host contract is narrower than Anthropic's direct API.
 const assertVertexClaudeInput = (input: ModelGenerateInput) => {

@@ -112,7 +112,7 @@ import {
   type UploadedFile,
   type VideoGenerationModel,
   type VideoGenerationResult
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/provider";
 
 export interface GeminiProviderOptions {
   apiKey?: string;

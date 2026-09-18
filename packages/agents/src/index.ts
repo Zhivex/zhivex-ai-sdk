@@ -35,7 +35,7 @@ export {
   streamAgent,
   toUIAgentStreamResponse,
   tool
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/agents";
 
 export type {
   AgentCompactionOptions,
@@ -133,6 +133,8 @@ export type {
   ToolOutputGuardrailRequest,
   ToolRuntimeContext,
   ToolSet
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/agents";
 
-export type { AgentTaskOutcome, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "@zhivex-ai/core";
+export type { AgentTaskOutcome, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "@zhivex-ai/core/agents";
+
+export type { AgentRunView, AgentRunUpdateEvent } from "@zhivex-ai/core/agents";

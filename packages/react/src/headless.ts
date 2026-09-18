@@ -5,3 +5,5 @@ export {
   DEFAULT_CHAT_ACTIVITY_LIMIT
 } from "./reducer.js";
 export * from "./types.js";
+
+export * from "./input-capabilities.js";
