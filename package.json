@@ -51,7 +51,8 @@
     "benchmark:agents-gateway": "bun run build && node scripts/benchmarks/agents-gateway.mjs",
     "test:react:browser": "playwright test --config playwright.react.config.ts",
     "benchmark:react": "bun run scripts/benchmarks/react-stream.ts",
-    "smoke:react": "bun run build && bun run scripts/react-package-smoke.ts"
+    "smoke:react": "bun run build && bun run scripts/react-package-smoke.ts",
+    "test:integration:qwen:third-party": "vitest run --config vitest.integration.config.ts packages/qwen/tests/third-party.integration.test.ts"
   },
   "devDependencies": {
     "@ai-sdk/react": "4.0.102",

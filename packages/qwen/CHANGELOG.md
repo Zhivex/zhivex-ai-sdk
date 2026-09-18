@@ -1,5 +1,15 @@
 # @zhivex-ai/qwen
 
+## 0.14.0
+
+### Minor Changes
+
+- Add explicit QwenCloud profiles for DeepSeek V4/V4.1, GLM 5.2/5.3, Kimi K3,
+  and MiniMax M2.5, with model-specific reasoning, protocol routing, vision,
+  JSON output, hosted-tool validation, and preserved reasoning in tool loops.
+  Expand the SDK catalog with the exact hosted model IDs without assuming
+  upstream vendor pricing or region availability.
+
 ## 0.13.0
 
 ### Minor Changes

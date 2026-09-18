@@ -35,10 +35,12 @@ describe("SDK model catalog ownership", () => {
         expect(entry).not.toHaveProperty(field);
       }
     }
-    expect(defaultModelCatalog.find("qwen", "deepseek-v4.1-flash")?.provider).toBe("qwen");
+    for (const id of ["deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-pro-0813", "deepseek-v4-flash-0731", "glm-5.2", "glm-5.3", "ZHIPU/GLM-5.3", "kimi-k3", "MiniMax-M2.5"]) {
+      expect(defaultModelCatalog.find("qwen", id)).toMatchObject({ provider: "qwen", modelId: id });
+    }
     expect(defaultModelCatalog.find("gemini", "gemini-3.8-live-extended-thinking")).toBeDefined();
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(127);
+    expect(entries).toHaveLength(136);
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
       inputCostPer1kTokens: 0.00015,
       cachedInputCostPer1kTokens: 0.00003,
@@ -78,7 +80,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(127);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(136);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-09-12",
       verifiedAt: "2026-09-12",
@@ -95,7 +97,7 @@ describe("SDK model catalog ownership", () => {
       revision: "2026-09-18",
       verifiedAt: "2026-09-18",
       pricingEffectiveAt: "2026-09-18",
-      modelCount: 21
+      modelCount: 30
     });
     expect(Object.isFrozen(fragments[0])).toBe(true);
     expect(Object.isFrozen(fragments[0]?.sources)).toBe(true);

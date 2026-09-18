@@ -6,6 +6,9 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
   verifiedAt: "2026-09-18",
   pricingEffectiveAt: "2026-09-18",
   sources: [
+    "https://docs.qwencloud.com/api-reference/chat/openai-chat",
+    "https://docs.qwencloud.com/api-reference/chat/openai-responses",
+    "https://www.alibabacloud.com/help/en/model-studio/models",
     "https://www.qwencloud.com/models/qwen3.8-omni-flash",
     "https://docs.qwencloud.com/changelog/models",
     "https://www.qwencloud.com/models/qwen3.8-flash",
@@ -21,6 +24,16 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
       recommendedFor: ["chat", "reasoning", "vision", "tools", "speed"]
     },
     { provider: "qwen", modelId: "deepseek-v4.1-flash" },
+    { provider: "qwen", modelId: "deepseek-v4-pro" },
+    { provider: "qwen", modelId: "deepseek-v4-flash" },
+    { provider: "qwen", modelId: "deepseek-v4-pro-0813" },
+    { provider: "qwen", modelId: "deepseek-v4-flash-0731" },
+    { provider: "qwen", modelId: "glm-5.2" },
+    { provider: "qwen", modelId: "glm-5.3" },
+    { provider: "qwen", modelId: "ZHIPU/GLM-5.3" },
+    { provider: "qwen", modelId: "kimi-k3" },
+    { provider: "qwen", modelId: "MiniMax-M2.5" },
+
     {
       "provider": "qwen",
       "modelId": "qwen3.8-max-0902",

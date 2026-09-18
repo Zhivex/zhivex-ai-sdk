@@ -1,3 +1,4 @@
+import { thirdPartyProfile, thirdPartyCapabilities, validateThirdParty, thirdPartyReasoning } from "./third-party.js";
 import { toJSONSchema } from "zod";
 import {
   capabilities,
@@ -652,6 +653,8 @@ const supportsQwenTools = (modelId: string) =>
 const supportsQwenFiles = (modelId: string) => /^qwen3\.5-ocr(?:$|-)/.test(modelFamily(modelId));
 const supportsQwenAudioInput = (modelId: string) => /(omni|audio|asr)/.test(modelFamily(modelId));
 const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
+  const thirdParty = thirdPartyCapabilities(modelId);
+  if (thirdParty) return thirdParty;
   const tools = supportsQwenTools(modelId);
   const omni = isQwenOmniLanguageModel(modelId);
   const omni38 = isQwen38OmniFlash(modelId);
@@ -1145,6 +1148,7 @@ const mapChatReasoning = (
   input: ModelGenerateInput,
   providerOptions: QwenLanguageModelOptions
 ) => {
+  if (thirdPartyProfile(modelId)) return thirdPartyReasoning(modelId, input, providerOptions, "chat");
   if (isQwen38ReasoningModel(modelId)) {
     const rawEffort = input.reasoning?.effort ?? providerOptions.reasoning_effort;
     const thinkingDisabled = rawEffort === "none" || providerOptions.enable_thinking === false;
@@ -1189,6 +1193,7 @@ const mapResponsesReasoning = (
   input: ModelGenerateInput,
   providerOptions: QwenLanguageModelOptions
 ) => {
+  if (thirdPartyProfile(modelId)) return thirdPartyReasoning(modelId, input, providerOptions, "responses");
   const effort = input.reasoning?.effort ?? providerOptions.reasoning_effort;
   const qwen38Effort =
     isQwen38ProductionModel(modelId) &&
@@ -1269,7 +1274,16 @@ const resolveApiMode = (
   }
 
   const omni38 = isQwen38OmniFlash(modelId);
+  // Live QwenCloud GLM 5.2 Responses rejects function-result continuation
+  // internally (function_call.arguments becomes a dict). Chat supports the loop.
+  const glmCallableTools = modelId === "glm-5.2" &&
+    (Object.values(input.tools ?? {}).some(isCallableToolDefinition) ||
+      input.messages.some(message => message.parts.some(part => part.type === "tool-call" || part.type === "tool-result")));
+  if (glmCallableTools && requestedMode === "responses") {
+    throw new UnsupportedFeatureError('QwenCloud glm-5.2 callable tools require apiMode "chat" or "auto" because Responses function continuation is unavailable.');
+  }
   const needsChat =
+    glmCallableTools ||
     input.maxTokens !== undefined ||
     input.reasoning?.budgetTokens !== undefined ||
     providerOptions.thinking_budget !== undefined ||
@@ -1305,7 +1319,7 @@ const resolveApiMode = (
   if (requestedMode === "responses" || requestedMode === "chat") {
     return requestedMode;
   }
-  return needsChat ? "chat" : "responses";
+  return needsChat || thirdPartyProfile(modelId)?.responses === false ? "chat" : "responses";
 };
 
 type QwenToolCallIdClassification =
@@ -1835,7 +1849,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {
-    this.capabilities = { ...qwenLanguageCapabilities(modelId), toolHistory: isQwen38MaxPreview(modelId) || /thinking|qwq/i.test(modelId) ? undefined : "json" };
+    this.capabilities = { ...qwenLanguageCapabilities(modelId), toolHistory: thirdPartyProfile(modelId)?.thinkingOnly || isQwen38MaxPreview(modelId) || /thinking|qwq/i.test(modelId) ? undefined : "json" };
   }
 
   async generate(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<GenerateResult> {
@@ -1845,6 +1859,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       );
     }
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
+    validateThirdParty(this.modelId, input, providerOptions);
     validateQwenToolStream(this.modelId, providerOptions, false);
     if (isQwen38ReasoningModel(this.modelId)) {
       validateQwen38Request(this.modelId, input, providerOptions);
@@ -1863,7 +1878,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       if (apiMode === "responses") {
         const previousResponse = getProviderResponseId(input.messages);
         const baseResponseProviderOptions = stripResponsesRequestOptions(providerOptions);
-        const responseProviderOptions = isQwen38ReasoningModel(this.modelId)
+        const responseProviderOptions = (isQwen38ReasoningModel(this.modelId) || thirdPartyProfile(this.modelId))
           ? stripQwen38ReasoningOptions(baseResponseProviderOptions)
           : baseResponseProviderOptions;
         const messages =
@@ -1910,7 +1925,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       }
 
       const baseChatProviderOptions = stripHeaderOptions(providerOptions);
-      const chatProviderOptions = isQwen38ReasoningModel(this.modelId)
+      const chatProviderOptions = (isQwen38ReasoningModel(this.modelId) || thirdPartyProfile(this.modelId))
         ? stripQwen38ReasoningOptions(baseChatProviderOptions)
         : baseChatProviderOptions;
       const response = await withResponseRetry(
@@ -1928,8 +1943,8 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               tool_choice: mapChatToolChoice(input.toolChoice),
               response_format: mapStructuredOutput(this.modelId, input),
               temperature: input.temperature,
-              max_tokens: isQwen38ReasoningModel(this.modelId) ? undefined : input.maxTokens,
-              max_completion_tokens: isQwen38ReasoningModel(this.modelId) ? input.maxTokens : undefined,
+              max_tokens: (isQwen38ReasoningModel(this.modelId) || thirdPartyProfile(this.modelId)?.completionTokens) ? undefined : input.maxTokens,
+              max_completion_tokens: (isQwen38ReasoningModel(this.modelId) || thirdPartyProfile(this.modelId)?.completionTokens) ? input.maxTokens : undefined,
               stream: false,
               ...mapChatReasoning(this.modelId, input, providerOptions)
             })
@@ -1961,6 +1976,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
 
   async stream(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
+    validateThirdParty(this.modelId, input, providerOptions);
     validateQwenToolStream(this.modelId, providerOptions, true);
     if (isQwen38ReasoningModel(this.modelId)) {
       validateQwen38Request(this.modelId, input, providerOptions);
@@ -1978,7 +1994,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     if (apiMode === "responses") {
       const previousResponse = getProviderResponseId(input.messages);
       const baseResponseProviderOptions = stripResponsesRequestOptions(providerOptions);
-      const responseProviderOptions = isQwen38ReasoningModel(this.modelId)
+      const responseProviderOptions = (isQwen38ReasoningModel(this.modelId) || thirdPartyProfile(this.modelId))
         ? stripQwen38ReasoningOptions(baseResponseProviderOptions)
         : baseResponseProviderOptions;
       const messages =
@@ -2017,7 +2033,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     }
 
     const baseChatProviderOptions = stripHeaderOptions(providerOptions);
-    const chatProviderOptions = isQwen38ReasoningModel(this.modelId)
+    const chatProviderOptions = (isQwen38ReasoningModel(this.modelId) || thirdPartyProfile(this.modelId))
       ? stripQwen38ReasoningOptions(baseChatProviderOptions)
       : baseChatProviderOptions;
     const response = await withResponseRetry(
@@ -2035,8 +2051,8 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             tool_choice: mapChatToolChoice(input.toolChoice),
             response_format: mapStructuredOutput(this.modelId, input),
             temperature: input.temperature,
-            max_tokens: isQwen38ReasoningModel(this.modelId) ? undefined : input.maxTokens,
-            max_completion_tokens: isQwen38ReasoningModel(this.modelId) ? input.maxTokens : undefined,
+            max_tokens: (isQwen38ReasoningModel(this.modelId) || thirdPartyProfile(this.modelId)?.completionTokens) ? undefined : input.maxTokens,
+            max_completion_tokens: (isQwen38ReasoningModel(this.modelId) || thirdPartyProfile(this.modelId)?.completionTokens) ? input.maxTokens : undefined,
             stream: true,
             stream_options: { include_usage: true },
             ...mapChatReasoning(this.modelId, input, providerOptions)
