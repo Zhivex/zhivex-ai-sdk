@@ -1,5 +1,12 @@
 # @zhivex-ai/react
 
+## 0.5.0
+
+### Minor Changes
+
+- Add opt-in cursor replay with authenticated server-side in-memory buffering, bounded native reconnect attempts and explicit background cancellation. Coalesce streaming deltas and avoid duplicate reducer work. Add optional Markdown and variable-height virtualized message entrypoints, plus cancellable attachment preparation, upload adapters, previews, progress, retries and consistent accept validation. Prevent a Stop click from becoming an unintended submit when the button changes state. Add an application-owned AI SDK UI reconnect handler, a runnable Next.js replay example, a reducer benchmark, and Chromium end-to-end coverage.
+- Add sendMessageWithResult and ChatSendResult while preserving the legacy send return contracts. Restore unedited drafts after failed or stopped sends, retain attachments until successful completion, preserve files added during a request, and prevent duplicate Composer submissions. Preserve buffered partial output on transport failure.
+
 ## 0.4.0
 
 ### Minor Changes

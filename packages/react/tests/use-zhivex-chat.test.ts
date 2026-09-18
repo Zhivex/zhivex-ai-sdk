@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useZhivexChat } from "../src/use-zhivex-chat.js";
+import { ChatTransportError } from "../src/transport.js";
 import { ChatBusyError } from "../src/types.js";
 import type {
   ChatStreamChunk,
@@ -129,6 +130,111 @@ afterEach(async () => {
 });
 
 describe("useZhivexChat", () => {
+  it("recovers automatically without a second send or duplicated replay events", async () => {
+    let sends = 0;
+    let reconnects = 0;
+    const onError = vi.fn();
+    const onFinish = vi.fn();
+    const chat = await mountChat({ maxReconnectAttempts: 2, onError, onFinish, transport: {
+      supportsReconnect: true,
+      async *send() {
+        sends++;
+        yield { type: "text-delta", messageId: "a", role: "assistant", textDelta: "one", replay: { streamId: "r", sequence: 1 } };
+        throw new ChatTransportError("offline", { code: "network_error" });
+      },
+      async *reconnect(request) {
+        reconnects++;
+        expect(request.checkpoint).toEqual({ streamId: "r", sequence: 1 });
+        yield { type: "text-delta", messageId: "a", role: "assistant", textDelta: "one", replay: { streamId: "r", sequence: 1 } };
+        yield { type: "text-delta", messageId: "a", role: "assistant", textDelta: "two", replay: { streamId: "r", sequence: 2 } };
+        yield { type: "stream-end", replay: { streamId: "r", sequence: 3 } };
+      }
+    } });
+    await act(async () => {
+      await expect(chat.current.sendMessageWithResult("hello")).resolves.toEqual({ status: "completed" });
+    });
+    expect(textFrom(chat.current, "assistant")).toBe("onetwo");
+    expect(sends).toBe(1);
+    expect(reconnects).toBe(1);
+    expect(onError).not.toHaveBeenCalled();
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    expect(chat.current.canReconnect).toBe(false);
+  });
+
+  it("reports invalid replay from a timed batch without an unhandled timer exception", async () => {
+    const onError = vi.fn();
+    const chat = await mountChat({ streamBatchMs: 1, onError, transport: createTransport(async function* () {
+      yield { type: "text-delta", messageId: "a", role: "assistant", textDelta: "bad", replay: { streamId: "r", sequence: 3 } };
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }) });
+    await act(async () => {
+      expect((await chat.current.sendMessageWithResult("hello")).status).toBe("error");
+    });
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["transport", "stream"] as const)("returns %s failures and restores the draft", async (failure) => {
+    const onError = vi.fn();
+    const chat = await mountChat({
+      onError,
+      transport: createTransport(async function* () {
+        yield { type: "text-delta", messageId: "partial", role: "assistant", textDelta: "partial" };
+        if (failure === "transport") throw new Error("offline");
+        yield { type: "error", error: "server failed" };
+      })
+    });
+    await act(async () => chat.current.setInput("Keep this draft"));
+    await act(async () => {
+      const result = await chat.current.sendMessageWithResult(chat.current.input);
+      expect(result.status).toBe("error");
+    });
+    expect(chat.current.input).toBe("Keep this draft");
+    expect(chat.current.status).toBe("error");
+    expect(textFrom(chat.current, "assistant")).toBe("partial");
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["stop", "edit", "reset", "session", "stop-session"] as const)("preserves draft ownership after %s", async (action) => {
+    const release = createDeferred();
+    const transport = createTransport(async function* () {
+      await release.promise;
+      throw new Error("offline");
+    });
+    const chat = await mountChat({ transport, sessionId: "first" });
+    await act(async () => chat.current.setInput("original"));
+    let pending!: ReturnType<UseZhivexChatResult["sendMessageWithResult"]>;
+    await act(async () => { pending = chat.current.sendMessageWithResult("original"); });
+    expect(chat.current.input).toBe("");
+    if (action === "session" || action === "stop-session") {
+      if (action === "stop-session") await act(async () => chat.current.stop());
+      await chat.rerender({ transport, sessionId: "second" });
+    } else {
+      await act(async () => {
+        if (action === "stop") chat.current.stop();
+        if (action === "edit") chat.current.setInput("new draft");
+        if (action === "reset") chat.current.reset();
+      });
+    }
+    await act(async () => {
+      release.resolve();
+      expect((await pending).status).toBe(action === "edit" ? "error" : "stopped");
+    });
+    expect(chat.current.input).toBe(action === "stop" ? "original" : action === "edit" ? "new draft" : "");
+  });
+
+  it("reports completion and empty input without changing legacy return values", async () => {
+    const chat = await mountChat({ transport: createTransport(async function* () {}) });
+    await act(async () => {
+      await expect(chat.current.sendMessageWithResult("  ")).resolves.toEqual({ status: "skipped", reason: "empty" });
+      chat.current.setInput("draft");
+      await expect(chat.current.sendMessageWithResult("draft")).resolves.toEqual({ status: "completed" });
+    });
+    expect(chat.current.input).toBe("");
+    await act(async () => {
+      await expect(chat.current.sendMessage("legacy")).resolves.toBeUndefined();
+    });
+  });
+
   it("optimistically sends multimodal input and folds a batched stream into final state", async () => {
     const releaseStream = createDeferred();
     let request: ChatTransportRequest | undefined;

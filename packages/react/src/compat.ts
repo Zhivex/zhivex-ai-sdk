@@ -114,6 +114,8 @@ export interface AISDKUIChatTransportOptions
   ) => unknown | Promise<unknown>;
   /** Bounds the serialized POST body before fetch. Defaults to 1 MiB. */
   maxRequestBytes?: number;
+  /** Resume an application-owned AI SDK UI stream; never resubmit messages. */
+  reconnectToStream?: AISDKChatTransport<AISDKUIMessage>["reconnectToStream"];
   /** Opt in only when buildRequestBody targets an idempotent regeneration endpoint. */
   supportsRegenerate?: boolean;
 }
@@ -721,6 +723,7 @@ export const toAISDKUIMessageStream = (
       continue;
     }
     const chunk = rawChunk as Record<string, unknown>;
+    if (chunk.type === "stream-start" || chunk.type === "stream-end") continue;
     yield* ensureStarted(chunk.messageId);
 
     if (chunk.type === "text-delta" && typeof chunk.textDelta === "string") {
@@ -1202,8 +1205,8 @@ export class ZhivexAISDKChatTransport implements AISDKChatTransport<AISDKUIMessa
     });
   }
 
-  async reconnectToStream(): Promise<ReadableStream<AISDKUIMessageChunk> | null> {
-    return null;
+  async reconnectToStream(request: Parameters<AISDKChatTransport<AISDKUIMessage>["reconnectToStream"]>[0]): Promise<ReadableStream<AISDKUIMessageChunk> | null> {
+    return this.options.reconnectToStream?.(request) ?? null;
   }
 }
 

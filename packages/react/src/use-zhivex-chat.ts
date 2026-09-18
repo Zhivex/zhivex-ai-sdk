@@ -9,7 +9,6 @@ import type {
 import {
   useCallback,
   useEffect,
-  useReducer,
   useRef,
   useState
 } from "react";
@@ -18,7 +17,7 @@ import {
   createInitialChatState
 } from "./reducer.js";
 import { selectPendingApproval } from "./approval.js";
-import { createFetchChatTransport } from "./transport.js";
+import { ChatTransportError, createFetchChatTransport } from "./transport.js";
 import { ChatBusyError } from "./types.js";
 import type {
   ChatAction,
@@ -28,6 +27,7 @@ import type {
   ChatMessagesUpdate,
   ChatResetOptions,
   ChatSendInput,
+  ChatSendResult,
   ChatState,
   ChatStreamChunk,
   ChatTransport,
@@ -105,6 +105,7 @@ interface RunRequest {
   messages: readonly ChatMessage[];
   message?: ChatMessage;
   approvals?: readonly AgentApprovalResponse[];
+  reconnect?: boolean;
 }
 
 export const useZhivexChat = (
@@ -112,22 +113,18 @@ export const useZhivexChat = (
 ): UseZhivexChatResult => {
   const controlledSessionId =
     options.sessionId === null ? undefined : options.sessionId;
-  const [state, dispatch] = useReducer(
-    chatReducer,
-    undefined,
-    (): ChatState =>
-      createInitialChatState({
-        messages: normalizeInitialMessages(options.initialMessages),
-        sessionId:
-          options.sessionId === undefined
-            ? options.initialSessionId
-            : controlledSessionId
-      })
-  );
+  const [state, setState] = useState<ChatState>(() => ({
+    ...createInitialChatState({
+      messages: normalizeInitialMessages(options.initialMessages),
+      sessionId: options.sessionId === undefined ? options.initialSessionId : controlledSessionId
+    }),
+    checkpoint: options.initialCheckpoint
+  }));
   const [input, setInputState] = useState("");
 
   const stateRef = useRef(state);
   stateRef.current = state;
+  const draftRevisionRef = useRef(0);
   const inputRef = useRef(input);
   inputRef.current = input;
   const activeRef = useRef<ActiveRequest | undefined>(undefined);
@@ -147,6 +144,8 @@ export const useZhivexChat = (
   metadataRef.current = options.metadata;
   const activityLimitRef = useRef(options.activityLimit);
   activityLimitRef.current = options.activityLimit;
+  const reconnectAttemptsRef = useRef(options.maxReconnectAttempts ?? 0);
+  reconnectAttemptsRef.current = Math.min(5, Math.max(0, Math.floor(options.maxReconnectAttempts ?? 0) || 0));
   const streamBatchMsRef = useRef(options.streamBatchMs);
   streamBatchMsRef.current = options.streamBatchMs;
   const controlledSessionRef = useRef<{
@@ -183,14 +182,14 @@ export const useZhivexChat = (
   const commit = useCallback((action: ChatAction): ChatState => {
     const next = chatReducer(stateRef.current, action);
     stateRef.current = next;
-    dispatch(action);
+    setState(next);
     return next;
   }, []);
 
   const runRequest = useCallback(
-    async (request: RunRequest): Promise<void> => {
+    async (request: RunRequest): Promise<ChatSendResult> => {
       if (activeRef.current) {
-        return;
+        throw new ChatBusyError("send");
       }
 
       const controller = new AbortController();
@@ -199,9 +198,11 @@ export const useZhivexChat = (
         sessionId: stateRef.current.sessionId
       };
       activeRef.current = active;
-      commit({ type: "request-start", messages: request.messages });
+      const transport = transportRef.current;
+      commit(request.reconnect ? { type: "request-reconnect" } : { type: "request-start", messages: request.messages });
 
       let streamReportedError = false;
+      let streamFailure: Error | undefined;
       let pending:
         | {
             chunks: ChatStreamChunk[];
@@ -221,11 +222,17 @@ export const useZhivexChat = (
           return;
         }
         const previousSessionId = stateRef.current.sessionId;
-        const next = commit({
-          type: "stream-chunks",
-          chunks,
-          activityLimit: activityLimitRef.current
-        });
+        let next: ChatState;
+        try {
+          next = commit({ type: "stream-chunks", chunks, activityLimit: activityLimitRef.current });
+        } catch (cause) {
+          streamFailure = cause instanceof Error ? cause : new Error(String(cause));
+          commit({ type: "request-error", error: streamFailure });
+          controller.abort(streamFailure);
+          if (!streamReportedError) callbackRef.current.onError?.(streamFailure);
+          streamReportedError = true;
+          return;
+        }
         if (
           next.sessionId !== previousSessionId &&
           next.sessionId !== undefined
@@ -290,50 +297,66 @@ export const useZhivexChat = (
       active.discardPending = discardPending;
 
       try {
-        for await (const chunk of transportRef.current.send({
-          message: request.message,
-          messages: request.messages,
-          sessionId: active.sessionId,
-          approvals: request.approvals,
-          metadata: metadataRef.current,
-          signal: controller.signal
-        })) {
-          if (!isCurrentRequest()) {
-            return;
-          }
-          enqueueChunk(chunk);
-          if (chunk.type === "error" || chunk.type === "session-finish") {
+        const transportRequest = {
+          message: request.message, messages: request.messages, sessionId: active.sessionId,
+          approvals: request.approvals, metadata: metadataRef.current, signal: controller.signal
+        };
+        let source = request.reconnect
+          ? transport.reconnect!({ ...transportRequest, checkpoint: stateRef.current.checkpoint! })
+          : transport.send(transportRequest);
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            for await (const chunk of source) {
+              if (!isCurrentRequest()) return { status: "stopped" };
+              enqueueChunk(chunk);
+              if (chunk.type === "error" || chunk.type === "session-finish") flushPending();
+            }
+            break;
+          } catch (error) {
             flushPending();
+            const checkpoint = stateRef.current.checkpoint;
+            const retryable = error instanceof ChatTransportError &&
+              (error.code === "network_error" || error.code === "stream_idle_timeout");
+            if (!isCurrentRequest() || controller.signal.aborted || !retryable || !checkpoint ||
+                !transport.supportsReconnect || !transport.reconnect || attempt >= reconnectAttemptsRef.current) throw error;
+            commit({ type: "request-reconnect" });
+            source = transport.reconnect({ ...transportRequest, checkpoint });
           }
         }
 
         if (!isCurrentRequest()) {
-          return;
+          return { status: "stopped" };
         }
         const pendingPromise = pending?.promise;
         flushPending();
         await pendingPromise;
         if (!isCurrentRequest()) {
-          return;
+          return { status: "stopped" };
         }
         const next = commit({ type: "request-finish" });
         callbackRef.current.onFinish?.(next);
+        return next.error && next.status === "error"
+          ? { status: "error", error: next.error }
+          : { status: "completed" };
       } catch (error) {
+        if (streamFailure) return { status: "error", error: streamFailure };
         if (controller.signal.aborted) {
           if (activeRef.current === active) {
             const next = commit({ type: "request-stop" });
             callbackRef.current.onFinish?.(next);
           }
-          return;
+          return { status: "stopped" };
         }
         if (activeRef.current !== active) {
-          return;
+          return { status: "stopped" };
         }
         const normalized =
           error instanceof Error ? error : new Error(String(error));
+        flushPending();
         controller.abort(normalized);
         commit({ type: "request-error", error: normalized });
         callbackRef.current.onError?.(normalized);
+        return { status: "error", error: normalized };
       } finally {
         discardPending();
         if (activeRef.current === active) {
@@ -345,26 +368,46 @@ export const useZhivexChat = (
   );
 
   const setInput = useCallback((value: string) => {
+    draftRevisionRef.current += 1;
     inputRef.current = value;
     setInputState(value);
   }, []);
 
-  const sendMessage = useCallback(
-    async (input: ChatSendInput): Promise<void> => {
+  const sendMessageWithResult = useCallback(
+    async (input: ChatSendInput): Promise<ChatSendResult> => {
       if (activeRef.current) {
         throw new ChatBusyError("send");
       }
       const parts = toInputParts(input);
       if (!hasInputContent(parts)) {
-        return;
+        return { status: "skipped", reason: "empty" };
       }
 
       const message = createUserMessage(input);
       const messages = [...stateRef.current.messages, message];
+      const draft = inputRef.current;
+      const draftSession = controlledSessionRef.current;
       setInput("");
-      await runRequest({ messages, message });
+      const revision = draftRevisionRef.current;
+      const result = await runRequest({ messages, message });
+      if (
+        result.status !== "completed" &&
+        draftRevisionRef.current === revision &&
+        draftSession.enabled === controlledSessionRef.current.enabled &&
+        draftSession.sessionId === controlledSessionRef.current.sessionId
+      ) {
+        setInput(draft);
+      }
+      return result;
     },
     [runRequest, setInput]
+  );
+
+  const sendMessage = useCallback(
+    async (input: ChatSendInput): Promise<void> => {
+      await sendMessageWithResult(input);
+    },
+    [sendMessageWithResult]
   );
 
   const send = useCallback(
@@ -386,9 +429,23 @@ export const useZhivexChat = (
     active.flushPending?.();
     activeRef.current = undefined;
     active.controller.abort();
+    const checkpoint = stateRef.current.checkpoint;
+    if (checkpoint && transportRef.current.cancel) {
+      void transportRef.current.cancel({ checkpoint, messages: stateRef.current.messages,
+        sessionId: active.sessionId, signal: new AbortController().signal
+      }).catch((error: unknown) => callbackRef.current.onError?.(error instanceof Error ? error : new Error(String(error))));
+    }
     const next = commit({ type: "request-stop" });
     callbackRef.current.onFinish?.(next);
   }, [commit]);
+
+  const reconnect = useCallback(async (): Promise<ChatSendResult> => {
+    if (activeRef.current) throw new ChatBusyError("send");
+    if (stateRef.current.replayComplete || !stateRef.current.checkpoint || !transportRef.current.supportsReconnect || !transportRef.current.reconnect) {
+      throw new Error("No resumable chat stream is available.");
+    }
+    return runRequest({ messages: stateRef.current.messages, reconnect: true });
+  }, [runRequest]);
 
   const reload = useCallback(async (): Promise<void> => {
     if (activeRef.current) {
@@ -432,6 +489,7 @@ export const useZhivexChat = (
         active.discardPending?.();
         active.controller.abort();
       }
+      draftRevisionRef.current += 1;
       const next =
         typeof update === "function"
           ? update(stateRef.current.messages)
@@ -495,6 +553,7 @@ export const useZhivexChat = (
 
   useEffect(
     () => () => {
+      draftRevisionRef.current += 1;
       const active = activeRef.current;
       activeRef.current = undefined;
       active?.discardPending?.();
@@ -511,6 +570,7 @@ export const useZhivexChat = (
       options.sessionId === null ? undefined : options.sessionId;
     const active = activeRef.current;
     if (active && active.sessionId !== nextSessionId) {
+      draftRevisionRef.current += 1;
       activeRef.current = undefined;
       active.discardPending?.();
       active.controller.abort();
@@ -535,7 +595,10 @@ export const useZhivexChat = (
     setInput,
     send,
     sendMessage,
+    sendMessageWithResult,
     stop,
+    canReconnect: Boolean(!state.replayComplete && state.checkpoint && transportRef.current.supportsReconnect && transportRef.current.reconnect),
+    reconnect,
     canReload: transportRef.current.supportsReload === true,
     reload,
     setMessages,

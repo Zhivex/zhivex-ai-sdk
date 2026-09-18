@@ -267,6 +267,35 @@ const chat = useZhivexChat({
 });
 ```
 
+### Send outcomes and draft recovery
+
+`send()` and `sendMessage()` retain their `Promise<void>` contract. Use
+`sendMessageWithResult(input)` when a UI needs to distinguish `completed`,
+`error` (with an `Error`), `stopped`, or `skipped` (empty input). Concurrent
+explicit sends still reject with `ChatBusyError`. `completed` means the stream
+finished without a chat error; it does not mean pending tools were approved.
+
+```tsx
+const result = await chat.sendMessageWithResult(chat.input);
+if (result.status === "error") {
+  reportSendError(result.error);
+}
+```
+
+The hook clears the input optimistically, then restores the previous draft on
+failure or cancellation only if it has not been edited or invalidated by a
+reset, session switch, or message replacement. `ZhivexChat` uses the explicit
+result to retain attachments on failure or cancellation and removes only the
+submitted attachments after completion. Files added during a request remain.
+A standalone `Composer` can receive callbacks returning `ChatSendResult`;
+legacy callbacks returning `void` are treated as successful unless they throw.
+Composer reports explicit errors through `onSendError` and ignores duplicate
+submissions while its callback is pending.
+
+Draft recovery does not retry the request, roll back server history, or make a
+repeat send idempotent. Review the current session before resending a failed or
+stopped request that may already have executed tools.
+
 Stream chunks are batched into one React update every 16 ms by default. Set
 `streamBatchMs: 0` only when immediate per-chunk rendering is required.
 Lifecycle `activity` is reset for each request and bounded to 200 entries by
@@ -327,3 +356,157 @@ Completed responses announce a short localized completion message to assistive
 technology instead of replaying the entire response. Set
 `messageListProps.announceResponseText` only when full-response announcements
 are appropriate for the application.
+
+
+## Recover interrupted streams
+
+Native replay is opt-in. Configure the POST endpoint and an authenticated GET
+endpoint that resumes an existing execution:
+
+```tsx
+const transport = createFetchChatTransport({
+  endpoint: "/api/chat/stream?replay=1",
+  reconnectEndpoint: "/api/chat/stream",
+  cancelEndpoint: "/api/chat/stream"
+});
+const chat = useZhivexChat({ transport, maxReconnectAttempts: 2 });
+// After retry exhaustion, chat.canReconnect and chat.reconnect() allow manual recovery.
+```
+
+Each SSE JSON chunk carries `replay: { streamId, sequence }`, starting at 1.
+The final event is `stream-end`, also sequenced. GET receives `streamId` and
+`after` query parameters; it must replay events after that cursor and then tail
+the same execution. The reducer ignores already-applied sequences and rejects
+gaps or a changed stream ID, including duplicate usage/tool events. Early EOF
+is an error on resumable streams. Network and idle failures can trigger up to
+five configured reconnect attempts (default zero); aborts, invalid responses,
+and authorization errors do not trigger retries. A reconnect never POSTs the
+original message or reruns a tool. `reconnecting` is a busy chat status.
+
+`chat.state.checkpoint` can be stored with the corresponding message snapshot
+and supplied as `initialCheckpoint` with `initialMessages`. These must represent
+the same point in the stream. Manual reconnect does not submit or consume the
+current draft. When configured, Stop also sends DELETE to `cancelEndpoint`;
+without it, Stop only detaches the client from the background execution.
+
+The server-only `@zhivex-ai/react/replay` subpath provides
+`InMemoryChatReplayStore`. `create({ ownerId, source })` starts one producer;
+`response({ ownerId, streamId, after, signal })` subscribes to its replay;
+`cancel(streamId, ownerId)` aborts it. Authenticate the owner on **every** POST,
+GET and DELETE; never accept the owner from an untrusted request body.
+`ChatReplayError.status` maps missing/expired streams to 404, invalid cursors
+to 409, and capacity exhaustion to 503. See the executable
+[Next.js route](../../examples/next-runner/app/api/chat/stream/route.ts).
+
+The supplied store is **single-process and in-memory**, with defaults of 32
+retained streams, 10,000 payload events, 8 MiB of encoded characters per stream,
+a 120-second execution deadline, and five-minute retention after completion.
+The budget reserves up to two additional bounded terminal events. Detached
+readers do not stop producers; sources must respect their abort signal.
+Call `dispose()` on shutdown. Restarts lose replay; multiple workers and
+serverless deployments need a shared replay service and execution lifetime
+management. Persistent Runner sessions do not persist this event buffer.
+
+For AI SDK UI, `createAISDKUIChatTransport({ reconnectToStream })` accepts an
+application-owned handler returning an **AI SDK UI** stream (or null if none).
+It receives the original reconnect options, including headers and abort signal,
+and must resume the server's existing AI SDK stream. Native cursor replay and
+AI SDK text-part stream reconstruction are distinct protocols; the compatibility
+adapter does not convert a native mid-message cursor into an AI SDK resume.
+
+## Long conversations
+
+Text deltas are coalesced within each batch without crossing tool or lifecycle
+events. The hook computes state once per commit. Benchmark the reducer with
+`bun run benchmark:react` from the repository root; it verifies identical output
+for 1,000 history messages and 5,000 sequenced deltas.
+
+For variable-height windowing, install the optional peer and use the dedicated
+entrypoint. It is not imported by the default components:
+
+```bash
+bun add @tanstack/react-virtual
+```
+
+```tsx
+import { VirtualizedMessageList } from "@zhivex-ai/react/virtualized";
+
+<ZhivexChat
+  controller={chat}
+  MessageListComponent={VirtualizedMessageList}
+  messageListProps={{ style: { height: 500 } }}
+/>
+```
+
+Standalone `VirtualizedMessageList` also accepts `estimatedMessageHeight` and
+`overscan`. It measures rendered rows, keeps the user at the bottom while
+following, and preserves the scroll position when reading earlier messages.
+It disables smooth scrolling while measuring. Only visible rows plus overscan
+are mounted; browser find and screen readers cannot inspect unmounted history.
+Use the default `MessageList` when full DOM access is required.
+
+## Attachment preparation and uploads
+
+Composer validates `accept`, file count and per-file size for selection, drop
+and paste. It reserves slots before asynchronous work starts, exposes progress,
+shows local image/audio previews, and disables sending until every attachment
+is ready. Removing an attachment aborts its preparation and revokes the preview
+URL; unmount does the same. Failed attachments offer Retry.
+
+By default, files are read into bounded data URLs. To upload to your own storage
+and send references instead, provide `composerProps.uploadAttachment`:
+
+```tsx
+<ZhivexChat controller={chat} composerProps={{
+  accept: ".pdf,image/*",
+  uploadAttachment: async (file, { signal, onProgress }) => {
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch("/api/uploads", { method: "POST", body: form, signal });
+    if (!response.ok) throw new Error("Upload failed");
+    const uploaded = await response.json();
+    onProgress(1);
+    return { type: "file", filename: file.name, mediaType: file.type, data: uploaded.url };
+  }
+}} />
+```
+
+The application owns upload authentication, server-side size/type validation,
+storage access, and deletion of abandoned uploads. The adapter receives an abort
+signal and a progress callback (0–1); cancelling a client upload cannot undo an
+already committed storage write. Return an image, audio, or file content part.
+
+## Optional Markdown
+
+```bash
+bun add react-markdown remark-gfm
+```
+
+```tsx
+import { MarkdownMessagePart } from "@zhivex-ai/react/markdown";
+const renderers = { text: MarkdownMessagePart };
+<ZhivexChat controller={chat} renderers={renderers} />
+```
+
+The renderer supports GFM tables, lists and streaming code fences, with copy
+buttons. `MarkdownContent` also accepts `highlightCode(code, language)` for an
+application-selected highlighter returning React nodes and `onCopyError`.
+Raw HTML is skipped, unsafe link protocols are removed, and images retain the
+package's explicit remote-media policy. Markdown dependencies are optional
+peers loaded only through `/markdown`.
+
+## Browser verification
+
+From the repository root:
+
+```bash
+bunx playwright install chromium
+bun run test:react:browser
+bun run smoke:react
+```
+
+Chromium tests exercise an actual HTTP/SSE server: disconnect/replay without
+rerunning the producer, variable-height virtualization and scroll intent,
+file selection/drop/paste, upload cancellation, IME/keyboard focus, Markdown
+and clipboard copy. CI runs this suite after the unit tests. Browser fixtures
+use deterministic local responses and do not call a model provider.

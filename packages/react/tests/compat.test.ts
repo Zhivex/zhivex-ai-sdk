@@ -40,6 +40,17 @@ const nativeSSE = (chunks: readonly ChatStreamChunk[]): Response =>
   );
 
 describe("AI SDK UI v7 compatibility", () => {
+  it("delegates explicit AI SDK UI reconnects without resubmitting a message", async () => {
+    const calls: unknown[] = [];
+    const stream = new ReadableStream({ start(controller) { controller.close(); } });
+    const transport = createAISDKUIChatTransport({ reconnectToStream: async (request) => {
+      calls.push(request); return stream;
+    } });
+    const request = { chatId: "existing-session", headers: { authorization: "test" } };
+    expect(await transport.reconnectToStream(request)).toBe(stream);
+    expect(calls).toEqual([request]);
+  });
+
   it("keeps the pinned golden stream fixture compatible", async () => {
     expect(fixture.supportedVersions).toEqual({
       ai: "7.0.79",

@@ -930,3 +930,19 @@
     opacity: 0.7;
   }
 }
+
+.zhivex-attachment-preview { width: 4rem; height: 4rem; object-fit: cover; border-radius: .5rem; }
+.zhivex-composer__attachments audio { max-width: 16rem; }
+.zhivex-composer__attachments progress { width: 5rem; }
+.zhivex-markdown { overflow-wrap: anywhere; }
+.zhivex-markdown > :first-child { margin-top: 0; }
+.zhivex-markdown > :last-child { margin-bottom: 0; }
+.zhivex-markdown pre { overflow-x: auto; white-space: pre; padding: 1rem; }
+.zhivex-markdown table { border-collapse: collapse; display: block; overflow-x: auto; }
+.zhivex-markdown th, .zhivex-markdown td { padding: .5rem .75rem; border: 1px solid var(--zhivex-color-border); }
+.zhivex-markdown img { max-width: 100%; }
+.zhivex-code-block { position: relative; border: 1px solid var(--zhivex-color-border); border-radius: var(--zhivex-radius); background: var(--zhivex-color-surface); }
+.zhivex-code-block > button { position: absolute; top: .35rem; right: .35rem; min-block-size: 2rem; padding: .25rem .5rem; }
+.zhivex-code-block pre { margin: 0; padding-top: 3rem; }
+
+.zhivex-virtual-messages .zhivex-message { content-visibility: visible; }

@@ -38,12 +38,17 @@ describe("SDK model catalog ownership", () => {
     expect(defaultModelCatalog.find("qwen", "deepseek-v4.1-flash")?.provider).toBe("qwen");
     expect(defaultModelCatalog.find("gemini", "gemini-3.8-live-extended-thinking")).toBeDefined();
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(126);
+    expect(entries).toHaveLength(127);
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
       inputCostPer1kTokens: 0.00015,
       cachedInputCostPer1kTokens: 0.00003,
       outputCostPer1kTokens: 0.0005,
       recommendedFor: ["chat", "tools", "reasoning", "vision", "speed"]
+    });
+    expect(defaultModelCatalog.find("qwen", "qwen3.8-omni-flash")).toMatchObject({
+      inputCostPer1kTokens: 0.00015,
+      cachedInputCostPer1kTokens: 0.000016,
+      outputCostPer1kTokens: 0.00047
     });
     expect(defaultModelCatalog.find("qwen", "qwen3.8-flash")).toMatchObject({
       inputCostPer1kTokens: 0.00016,
@@ -73,7 +78,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(126);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(127);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-09-12",
       verifiedAt: "2026-09-12",
@@ -87,10 +92,10 @@ describe("SDK model catalog ownership", () => {
       modelCount: 3
     });
     expect(fragments.find((fragment) => fragment.provider === "qwen")).toMatchObject({
-      revision: "2026-09-16",
-      verifiedAt: "2026-09-16",
-      pricingEffectiveAt: "2026-08-26",
-      modelCount: 20
+      revision: "2026-09-18",
+      verifiedAt: "2026-09-18",
+      pricingEffectiveAt: "2026-09-18",
+      modelCount: 21
     });
     expect(Object.isFrozen(fragments[0])).toBe(true);
     expect(Object.isFrozen(fragments[0]?.sources)).toBe(true);

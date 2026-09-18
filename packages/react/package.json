@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/react",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Headless React chat state, streaming transport, and customizable components for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -34,7 +34,19 @@
       "types": "./dist/components.d.ts",
       "import": "./dist/components.js"
     },
-    "./styles.css": "./styles.css"
+    "./styles.css": "./styles.css",
+    "./replay": {
+      "types": "./dist/replay.d.ts",
+      "import": "./dist/replay.js"
+    },
+    "./markdown": {
+      "types": "./dist/markdown.d.ts",
+      "import": "./dist/markdown.js"
+    },
+    "./virtualized": {
+      "types": "./dist/virtualized.d.ts",
+      "import": "./dist/virtualized.js"
+    }
   },
   "files": [
     "dist",
@@ -70,13 +82,25 @@
     "@ai-sdk/react": ">=4.0.0 <5",
     "ai": ">=7.0.0 <8",
     "react": ">=18.2.0 <20",
-    "react-dom": ">=18.2.0 <20"
+    "react-dom": ">=18.2.0 <20",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "@tanstack/react-virtual": "^3.14.13"
   },
   "peerDependenciesMeta": {
     "@ai-sdk/react": {
       "optional": true
     },
     "ai": {
+      "optional": true
+    },
+    "react-markdown": {
+      "optional": true
+    },
+    "remark-gfm": {
+      "optional": true
+    },
+    "@tanstack/react-virtual": {
       "optional": true
     }
   }

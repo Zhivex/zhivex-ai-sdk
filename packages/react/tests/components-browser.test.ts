@@ -6,11 +6,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ApprovalCard,
+  Composer,
   MessageList,
   ZhivexChat,
   type ChatController
 } from "../src/components.js";
-import type { ChatMessage } from "../src/types.js";
+import type { ChatMessage, UseZhivexChatResult } from "../src/types.js";
+import { useZhivexChat } from "../src/use-zhivex-chat.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -389,6 +391,81 @@ describe("@zhivex-ai/react browser components", () => {
         mediaType: "text/plain"
       })
     ]);
+    await act(async () => root.unmount());
+  });
+
+  it.each(["error", "stopped"] as const)("keeps the hook draft and attachments together after %s", async (status) => {
+    const container = document.createElement("div");
+    containers.push(container);
+    document.body.append(container);
+    const root = createRoot(container);
+    let chat!: UseZhivexChatResult;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    function Chat() {
+      chat = useZhivexChat({ transport: {
+        async *send() {
+          await gate;
+          throw new Error("offline");
+        }
+      } });
+      return createElement(ZhivexChat, { controller: chat });
+    }
+    await act(async () => root.render(createElement(Chat)));
+    await act(async () => chat.setInput("Please review"));
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { value: [new File(["data"], "review.txt")] });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await act(async () => {
+      container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(chat.input).toBe("");
+    await act(async () => {
+      if (status === "stopped") chat.stop();
+      release();
+    });
+    expect(chat.input).toBe("Please review");
+    expect(container.querySelector("textarea")?.value).toBe("Please review");
+    expect(container.textContent).toContain("review.txt");
+    await act(async () => root.unmount());
+  });
+
+  it.each(["error", "stopped"] as const)("retains attachments on %s and clears only submitted files on success", async (status) => {
+    const container = document.createElement("div");
+    containers.push(container);
+    document.body.append(container);
+    const root = createRoot(container);
+    const error = new Error("offline");
+    const onSendError = vi.fn();
+    let complete!: (result: { status: "completed" }) => void;
+    const onSendMessage = vi.fn()
+      .mockResolvedValueOnce(status === "error" ? { status, error } : { status })
+      .mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+    await act(async () => root.render(createElement(Composer, {
+      value: "draft", onValueChange: vi.fn(), onSend: vi.fn(), onSendMessage, onSendError
+    })));
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const addFile = async (name: string) => {
+      Object.defineProperty(input, "files", { configurable: true, value: [new File(["data"], name)] });
+      await act(async () => {
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+    };
+    const submit = () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await addFile("original.txt");
+    await act(async () => { submit(); });
+    expect(container.textContent).toContain("original.txt");
+    expect(onSendError).toHaveBeenCalledTimes(status === "error" ? 1 : 0);
+    await act(async () => { submit(); submit(); });
+    expect(onSendMessage).toHaveBeenCalledTimes(2);
+    await addFile("new.txt");
+    await act(async () => complete({ status: "completed" }));
+    expect(container.textContent).not.toContain("original.txt");
+    expect(container.textContent).toContain("new.txt");
     await act(async () => root.unmount());
   });
 

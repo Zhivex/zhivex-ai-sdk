@@ -53,7 +53,7 @@ Zhivex Runner -> OpenAI + SessionService -> UIMessageChunk SSE
 - `lib/server.ts`: lazy server-only provider, `Agent`, `Runner`, budgets, timeout, and local persistence.
 - `lib/http.ts`: bounded request reader, runtime validation helpers, no-store headers, and safe public errors.
 - `app/api/chat/route.ts`: optional non-streaming JSON endpoint.
-- `app/api/chat/stream/route.ts`: React/SSE endpoint with cancellation propagation.
+- `app/api/chat/stream/route.ts`: native replay POST/GET/DELETE endpoints and legacy SSE for the AI SDK fixture.
 - `app/page.tsx`: browser-safe chat UI with bounded fetch/SSE transport.
 - `app/ai-sdk-ui/page.tsx`: version-pinned `useChat` compatibility fixture over the same Runner route.
 - `app/layout.tsx`: imports the default Zhivex React stylesheet.
@@ -80,3 +80,19 @@ bun run smoke:packages
 ```
 
 The package smoke installs candidate tarballs in an isolated consumer and emits a redacted `golden_path_installed_smoke` timing record. Set `ZHIVEX_GOLDEN_PATH_LIVE=1` only when intentionally running the bounded credentialed variant.
+
+
+## Replay lifetime
+
+The native page opts into cursor replay and two automatic reconnect attempts.
+The route authenticates POST, GET and DELETE through `resolveCurrentUserId`.
+Its bounded in-memory replay store keeps a disconnected producer running;
+Stop uses DELETE to abort that execution. Runner collection still finishes
+before the terminal session event is recorded.
+
+This example requires the pending `@zhivex-ai/react` 0.5.0 release for its new
+entrypoints. Its event buffer is single-process and is lost on restart; use a
+shared replay service with suitable execution lifetime management for multiple
+workers or serverless. Session persistence on disk is separate from replay.
+The AI SDK UI page keeps using the legacy POST protocol; AI SDK reconnection
+requires an application-owned `reconnectToStream` handler.

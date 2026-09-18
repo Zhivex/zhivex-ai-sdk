@@ -52,6 +52,8 @@ export interface ChatLabels {
   attachmentLimit?: string;
   attachmentTooLarge?: string;
   attachmentReadError?: string;
+  attachmentTypeError?: string;
+  attachmentPreparing?: string;
   copy?: string;
   copied?: string;
   messagePending?: string;
@@ -79,6 +81,8 @@ export interface ChatLabels {
 export type ResolvedChatLabels = Required<ChatLabels>;
 
 export const defaultChatLabels: ResolvedChatLabels = {
+  attachmentTypeError: "This file type is not accepted.",
+  attachmentPreparing: "Preparing attachment",
   chat: "AI chat",
   empty: "Start a conversation.",
   assistant: "Assistant",
@@ -345,7 +349,7 @@ export const stringMediaSource = (
 };
 
 export const isBusyStatus = (status: ChatStatus): boolean =>
-  status === "submitting" || status === "streaming";
+  status === "submitting" || status === "streaming" || status === "reconnecting";
 
 export const EMPTY_APPROVALS: readonly AgentApprovalRequest[] = [];
 export const EMPTY_ACTIVITY: readonly ChatActivity[] = [];
