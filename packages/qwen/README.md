@@ -358,3 +358,125 @@ Thinking-only models are excluded from the gateway history capability.
 ### Generation retries
 
 Language-model generation and streaming startup validate HTTP failures inside the retry boundary. `maxRetries` applies to HTTP 408, 429 and 5xx responses, with bounded `Retry-After` waits. Other 4xx responses are not retried. Timeout and caller cancellation interrupt retry waits; successful stream bodies remain unread until consumption.
+
+### Third-party models hosted by QwenCloud
+
+Use `createQwen()` with QwenCloud credentials for hosted DeepSeek, GLM, Kimi,
+and MiniMax. The direct `createDeepSeek()`, `createZai()`, and `createKimi()`
+providers target different services and do not configure QwenCloud access.
+IDs are case-sensitive and are sent unchanged, including supplier prefixes.
+
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { createQwen } from "@zhivex-ai/qwen";
+
+const cloud = createQwen({ apiKey: process.env.QWEN_API_KEY });
+const answer = await generateText({
+  model: cloud("deepseek-v4.1-flash"),
+  prompt: "Explain this algorithm.",
+  reasoning: { effort: "high" }
+});
+console.log(answer.text);
+```
+
+The explicit contract snapshot covers these models:
+
+| Model IDs | Protocols | Images | Native JSON Object | Hosted tools |
+| --- | --- | --- | --- | --- |
+| `deepseek-v4-pro`, `deepseek-v4-flash`, `deepseek-v4-pro-0813` | Chat, Responses | No | Yes | Search, extraction, code |
+| `deepseek-v4-flash-0731` | Chat, Responses | No | Not advertised | Search, extraction, code |
+| `deepseek-v4.1-flash` | Chat, Responses | Yes | Yes | Search, extraction, code |
+| `glm-5.2` | Chat, Responses | No | Non-thinking only | Search, extraction, code |
+| `glm-5.3` | Chat, Responses | No | Yes | Not advertised |
+| `ZHIPU/GLM-5.3` | Chat | No | Yes | Not advertised |
+| `kimi-k3` | Chat, Responses | Yes | Yes | Search, extraction, code |
+| `MiniMax-M2.5` | Chat | No | No | No |
+
+All listed models support text, streaming, and callable tools with preserved
+assistant `reasoning_content` in Chat tool continuations. GLM Chat requests
+set `clear_thinking: false` unless explicitly overridden. Thinking-only models
+do not advertise portable non-thinking JSON tool history. File/audio/video,
+remote MCP, file search, explicit parallel tool calls, and the separate
+`tool_stream` option are not advertised for these profiles. Ordinary streaming
+function calls remain supported. Unsupported combinations fail before fetch.
+
+GLM 5.2 callable-tool requests automatically use Chat: the live Responses
+service currently rejects function-result continuation with an internal argument
+validation error, even when replaying full canonical history. Forced Responses
+with callable tools is rejected before fetch. Responses text, streaming and
+hosted-only tools remain available; mixed hosted/callable requests cannot be
+served until the upstream continuation issue is resolved.
+
+`auto` prefers Responses when available; `maxTokens`, thinking budgets, and
+native JSON use Chat under the existing Qwen routing rules. Hosted tools need
+Responses and cannot be combined with those Chat-only controls. Use
+`providerOptions: { apiMode: "chat" }` to select Chat explicitly.
+
+Reasoning is model- and protocol-specific. DeepSeek V4 and GLM 5.2 map lower
+levels to `high`, and `xhigh` to `max`. DeepSeek dated V4 snapshots map `xhigh`
+to `high` in Chat and `max` in Responses. V4.1 maps it to `high` in both.
+GLM 5.3 and Kimi K3 use `low`/`high`/`max`. GLM 5.3 cannot disable thinking;
+MiniMax uses its default reasoning without configurable effort. Only GLM 5.2
+accepts `thinking_budget` among these profiles. Conflicting controls are rejected.
+The Qwen-specific `preserve_thinking` option is not sent to these models.
+
+Native structured output uses JSON Object plus a schema prompt and SDK
+validation, not provider-enforced JSON Schema. GLM 5.2 requires
+`reasoning: { effort: "none" }` for native JSON. Use `mode: "prompted"` when
+native JSON is unavailable. Catalog entries intentionally omit unverified
+prices and automatic recommendations.
+
+Region, workspace access, and Token Plan entitlements are provider-controlled;
+a catalog entry does not grant access. For Token Plan, configure the matching
+key and `QWEN_TOKEN_PLAN_BASE_URL` explicitly and follow the plan's usage terms.
+Supplier-prefixed routes are separate models, not aliases for cloud deployments.
+Other arbitrary model IDs retain the legacy generic adapter behavior; they do
+not inherit these verified contract profiles.
+
+Sources checked 2026-09-18: [Chat contract](https://docs.qwencloud.com/api-reference/chat/openai-chat),
+[Responses contract](https://docs.qwencloud.com/api-reference/chat/openai-responses),
+[JSON modes](https://docs.qwencloud.com/developer-guides/text-generation/structured-output),
+[GLM contract](https://help.aliyun.com/en/model-studio/glm),
+[DeepSeek V4.1](https://www.qwencloud.com/models/deepseek-v4.1-flash),
+[Kimi K3](https://www.qwencloud.com/models/kimi-k3), and
+[GLM 5.2](https://www.qwencloud.com/models/glm-5.2).
+
+Contract tests use mocked HTTP responses. Live certification is separate and
+must be run for each model and configured region. To opt in with a standard
+pay-as-you-go key (the command incurs provider usage):
+
+```bash
+QWEN_THIRD_PARTY_INTEGRATION=1 \
+QWEN_THIRD_PARTY_MODELS=deepseek-v4.1-flash,glm-5.2,kimi-k3,MiniMax-M2.5 \
+bun --env-file=.env run test:integration:qwen:third-party
+```
+
+The live matrix checks text, streaming, usage, and a full callable-tool cycle
+for each selected model/protocol. GLM 5.2 Responses tool continuation is explicitly
+skipped because of the upstream limitation described above. Set
+`QWEN_THIRD_PARTY_EXTENDED=1` to additionally validate native JSON, image input,
+web search, and code interpreter where advertised, using a public Alibaba image
+sample. A skipped run is not provider certification.
+
+Validation snapshot (2026-09-18, local working tree, default Singapore endpoint):
+
+- Unit suite: 2,019 passing tests, including 86 dedicated third-party contract
+  tests. Documentation, typecheck, build, and whitespace checks passed.
+- Live baseline: 50 distinct successful model/protocol checks across the five
+  DeepSeek IDs above, `glm-5.2`, `glm-5.3`, `ZHIPU/GLM-5.3`, and `kimi-k3`,
+  collected across the baseline, post-fix, and activation-recheck runs. GLM 5.2 has five baseline checks; its Responses
+  callable-tool case is excluded for the documented upstream defect.
+- Extended live matrix: 15 distinct passing checks covering JSON on DeepSeek V4.1,
+  GLM 5.2/5.3, `ZHIPU/GLM-5.3`, and Kimi K3; images on DeepSeek V4.1 and Kimi K3 in both protocols;
+  web search and code interpreter on DeepSeek V4.1, GLM 5.2 and Kimi K3.
+- `MiniMax-M2.5`: all three baseline attempts returned `model_not_found` (404),
+  indicating absence or lack of access for the configured credential.
+- `ZHIPU/GLM-5.3`: the initial product-not-activated (400) blocker was cleared
+  after activation. The recheck passed Chat text/usage, streaming, callable-tool
+  continuation, and native JSON. The supplier route remains Chat-only in this
+  adapter; `glm-5.3` is the separate cloud route supporting Responses.
+
+MiniMax remains access-blocked, with contract-test coverage but no live
+certification. Web extraction, alternate regions, Token Plan, and complete
+reasoning-effort permutations were not live-certified by this snapshot.
+These results do not establish npm publication or production deployment.
