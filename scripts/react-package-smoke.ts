@@ -15,14 +15,30 @@ const run = async (cmd: string[], cwd: string) => {
 const corePack = await run(["bun", "pm", "pack", "--destination", packs, "--quiet", "--ignore-scripts"], join(root, "packages/core"));
 const reactPack = await run(["bun", "pm", "pack", "--destination", packs, "--quiet", "--ignore-scripts"], join(root, "packages/react"));
 const resolvePack = (value: string) => value.startsWith("/") ? value : join(packs, value);
+const coreDependency = `file:${resolvePack(corePack)}`;
 const repo = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 await writeFile(join(consumer, "package.json"), JSON.stringify({ name: "react-consumer-smoke", private: true, type: "module", dependencies: {
-  "@zhivex-ai/core": `file:${resolvePack(corePack)}`, "@zhivex-ai/react": `file:${resolvePack(reactPack)}`,
+  "@zhivex-ai/core": coreDependency, "@zhivex-ai/react": `file:${resolvePack(reactPack)}`,
   react: repo.devDependencies.react, "react-dom": repo.devDependencies["react-dom"]
+}, overrides: {
+  // Resolve React's transitive Core dependency from this checkout before publication.
+  "@zhivex-ai/core": coreDependency
 } }));
 await run(["bun", "install", "--ignore-scripts"], consumer);
 await writeFile(join(consumer, "smoke.mjs"), `
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+const reactCore = execFileSync(process.execPath, [
+  "--input-type=module", "-e", 'console.log(import.meta.resolve("@zhivex-ai/core"))'
+], { cwd: dirname(fileURLToPath(import.meta.resolve("@zhivex-ai/react"))), encoding: "utf8" }).trim();
+assert.equal(
+  realpathSync(fileURLToPath(reactCore)),
+  realpathSync(fileURLToPath(import.meta.resolve("@zhivex-ai/core"))),
+  "React must resolve the same locally packed Core as the consumer"
+);
 for (const subpath of ["", "/hooks", "/headless", "/transport", "/components", "/replay", "/realtime", "/realtime-server"]) {
   assert.ok(Object.keys(await import("@zhivex-ai/react" + subpath)).length);
 }
