@@ -100,6 +100,10 @@ promise that every provider will keep every preview model available.
 
 ## Latest Local Evidence
 
+On 2026-09-19, source commit `d1df46e67dff0882fb485c9f7054495749017d47` (with documentation-only edits) ran the full fail-closed gate: **2 passed, 1 failed**. Qwen `qwen3.5-omni-plus-realtime` and OpenAI `gpt-realtime` passed. Gemini `gemini-3.1-flash-live-preview` closed with WebSocket code 1011 and reported depleted prepayment credits. The full realtime matrix is therefore **not recertified**. The deterministic installed-package gate passed with 51 Node entrypoints and `INSTALLED_REALTIME_LIVE_SMOKE_OK`; that result does not replace the failed live gate. Environment: Bun `1.4.0` (below the repository's requested `1.4.2`) and Node `22.21.0`.
+
+### Previous successful evidence
+
 On 2026-08-15, the implementation checkout passed the live gate 3/3 without
 skips using `gemini-3.1-flash-live-preview`,
 `qwen3.5-omni-plus-realtime`, and `gpt-realtime`. The same checkout passed the

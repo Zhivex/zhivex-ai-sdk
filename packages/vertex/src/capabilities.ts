@@ -1,5 +1,7 @@
 import type { ModelCapabilities } from "@zhivex-ai/core/contracts";
 
+export const isVertexLiveTranscribeModel = (modelId: string) => modelId === "gemini-3.5-transcribe-live-preview";
+
 export const isGeminiLiveTranslateModel = (modelId: string) => /^gemini-3\.5-live-translate(?:-preview)?$/i.test(modelId.trim());
 
 export const capabilities: ModelCapabilities = {
@@ -44,6 +46,13 @@ export const transcriptionCapabilities: ModelCapabilities = {
   jsonMode: false,
   toolChoice: false,
   parallelToolCalls: false,
+  vision: false,
+  files: false,
+  urlContext: false,
+  contextCaching: false,
+  batch: false,
+  rawPrediction: false,
+  computerUse: false,
   audioInput: true,
   audioOutput: false,
   embeddings: false,
@@ -157,7 +166,8 @@ export const musicGenerationCapabilities: ModelCapabilities = {
 };
 
 export const realtimeCapabilities = (modelId: string): ModelCapabilities => {
-  const translation = isGeminiLiveTranslateModel(modelId);
+  const transcription = isVertexLiveTranscribeModel(modelId);
+  const translation = isGeminiLiveTranslateModel(modelId) || transcription;
   return {
     ...capabilities,
     streaming: false,
@@ -169,7 +179,7 @@ export const realtimeCapabilities = (modelId: string): ModelCapabilities => {
     vision: !translation,
     files: false,
     audioInput: true,
-    audioOutput: true,
+    audioOutput: !transcription,
     embeddings: false,
     fileSearch: false,
     urlContext: false,
@@ -192,11 +202,10 @@ export const realtimeCapabilities = (modelId: string): ModelCapabilities => {
     realtime: {
       sessions: true,
       audioInput: true,
-      audioOutput: true,
+      audioOutput: !transcription,
       imageInput: !translation,
       tools: !translation,
       browserTokens: false
     }
   };
 };
-

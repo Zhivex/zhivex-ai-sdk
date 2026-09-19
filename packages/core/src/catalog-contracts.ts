@@ -49,6 +49,12 @@ export interface ModelCatalogEntry {
   costPer1kTokens?: number;
   longContextPricing?: LongContextPricing;
   recommendedFor?: ModelCatalogRecommendation[];
+  /** Host-specific lifecycle evidence, captured at the catalog snapshot date. */
+  lifecycle?: {
+    deprecatedAt?: string;
+    retiredAt?: string;
+    source: string;
+  };
 }
 
 export interface ModelCatalog {
@@ -80,7 +86,8 @@ const entryFields = new Set<keyof ModelCatalogEntry>([
   "aliases",
   ...costFields,
   "longContextPricing",
-  "recommendedFor"
+  "recommendedFor",
+  "lifecycle"
 ]);
 
 function assertNonEmptyString(value: unknown, path: string): asserts value is string {
@@ -118,6 +125,7 @@ function assertIsoDate(value: unknown, path: string): asserts value is string {
 const cloneEntry = (entry: ModelCatalogEntry): ModelCatalogEntry => ({
   provider: entry.provider,
   modelId: entry.modelId,
+  ...(entry.lifecycle === undefined ? {} : { lifecycle: { ...entry.lifecycle } }),
   ...(entry.aliases === undefined ? {} : { aliases: [...entry.aliases] }),
   ...(entry.inputCostPer1kTokens === undefined ? {} : { inputCostPer1kTokens: entry.inputCostPer1kTokens }),
   ...(entry.cachedInputCostPer1kTokens === undefined
@@ -141,6 +149,7 @@ const cloneEntry = (entry: ModelCatalogEntry): ModelCatalogEntry => ({
 });
 
 const freezeEntry = (entry: ModelCatalogEntry): ModelCatalogEntry => {
+  entry.lifecycle && Object.freeze(entry.lifecycle);
   entry.aliases && Object.freeze(entry.aliases);
   entry.longContextPricing && Object.freeze(entry.longContextPricing);
   entry.recommendedFor && Object.freeze(entry.recommendedFor);
@@ -170,6 +179,17 @@ const validateEntry = (entry: ModelCatalogEntry, index: number): void => {
 
   assertNonEmptyString(entry.provider, `${path}.provider`);
   assertNonEmptyString(entry.modelId, `${path}.modelId`);
+  if (entry.lifecycle !== undefined) {
+    const lifecycle = entry.lifecycle;
+    if (!lifecycle || typeof lifecycle !== "object" || Array.isArray(lifecycle)) throw new TypeError(`${path}.lifecycle must be an object`);
+    for (const field of Object.keys(lifecycle)) if (!["deprecatedAt", "retiredAt", "source"].includes(field)) throw new TypeError(`${path}.lifecycle.${field} is not supported`);
+    assertNonEmptyString(lifecycle.source, `${path}.lifecycle.source`);
+    let source: URL;
+    try { source = new URL(lifecycle.source); } catch { throw new TypeError(`${path}.lifecycle.source must be an HTTP(S) URL`); }
+    if (!["https:", "http:"].includes(source.protocol) || source.username || source.password) throw new TypeError(`${path}.lifecycle.source must be an HTTP(S) URL without credentials`);
+    for (const field of ["deprecatedAt", "retiredAt"] as const) if (lifecycle[field] !== undefined) assertIsoDate(lifecycle[field], `${path}.lifecycle.${field}`);
+    if (lifecycle.deprecatedAt && lifecycle.retiredAt && Date.parse(lifecycle.retiredAt) < Date.parse(lifecycle.deprecatedAt)) throw new TypeError(`${path}.lifecycle retirement cannot precede deprecation`);
+  }
 
   if (entry.aliases !== undefined) {
     if (!Array.isArray(entry.aliases)) {
@@ -346,4 +366,3 @@ export const createModelCatalog = (
     }
   });
 };
-

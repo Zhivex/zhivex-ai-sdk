@@ -653,13 +653,17 @@ const mapBlockParts = (modelId: string, message: ModelMessage) =>
           type: "tool_use",
           id: part.toolCall.id,
           name: part.toolCall.name,
-          input: part.toolCall.input
+          input: part.toolCall.input,
+          ...(typeof part.toolCall.providerMetadata?.toolset_name === "string" ? { toolset_name: part.toolCall.providerMetadata.toolset_name } : {})
         };
       case "tool-result":
         return {
           type: "tool_result",
           tool_use_id: part.toolResult.toolCallId,
-          content: JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output),
+          content: !part.toolResult.isError && typeof part.toolResult.providerMetadata?.toolset_name === "string"
+            && (typeof part.toolResult.output === "string" || Array.isArray(part.toolResult.output))
+            ? part.toolResult.output : JSON.stringify(part.toolResult.isError ? part.toolResult.error : part.toolResult.output),
+          ...(typeof part.toolResult.providerMetadata?.toolset_name === "string" ? { toolset_name: part.toolResult.providerMetadata.toolset_name } : {}),
           is_error: part.toolResult.isError
         };
       case "provider-data":
@@ -789,6 +793,11 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           };
         }
 
+        if (tool.type === "browser_toolset_20260801") {
+          const config = tool.config && typeof tool.config === "object" && !Array.isArray(tool.config) ? tool.config : {};
+          const { name: _name, type: _type, ...options } = config;
+          return { ...options, type: tool.type };
+        }
         return {
           type: tool.type,
           name: tool.name,
@@ -949,7 +958,8 @@ const parseAssistantMessage = (json: any): ModelMessage => ({
           toolCall: {
             id: block.id,
             name: block.name,
-            input: block.input
+            input: block.input,
+            ...(typeof block.toolset_name === "string" ? { providerMetadata: { toolset_name: block.toolset_name } } : {})
           }
         };
       }
@@ -1387,7 +1397,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
 
     return (async function* () {
       try {
-        const toolBuffers = new Map<number, { id: string; name: string; input: string }>();
+        const toolBuffers = new Map<number, { id: string; name: string; input: string; toolsetName?: string }>();
         let stopReason: string | undefined;
         let usage: GenerateResult["usage"];
 
@@ -1408,6 +1418,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
             toolBuffers.set(json.index, {
               id: json.content_block.id,
               name: json.content_block.name,
+              toolsetName: typeof json.content_block.toolset_name === "string" ? json.content_block.toolset_name : undefined,
               input: ""
             });
           }
@@ -1472,7 +1483,8 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
                 toolCall: {
                   id: current.id,
                   name: current.name,
-                  input: JSON.parse(current.input || "{}")
+                  input: JSON.parse(current.input || "{}"),
+                  ...(current.toolsetName ? { providerMetadata: { toolset_name: current.toolsetName } } : {})
                 }
               } satisfies StreamEvent;
             }

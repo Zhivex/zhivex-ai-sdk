@@ -733,7 +733,8 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
         definition: ToolDefinition,
         call: ToolCall,
         parsedInput: unknown,
-        serializedInput: JsonValue
+        serializedInput: JsonValue,
+        executionSignal: AbortSignal
       ): Promise<ToolExecutionResult> => {
         const idempotencyKey = `${input.idempotencyKey ?? state!.runId}:${call.id}`;
         let journalClaim: AgentToolCallJournalEntry | undefined;
@@ -749,10 +750,10 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
             input: serializedInput,
             updatedAt: Date.now()
           } satisfies AgentToolCallJournalEntry;
-          if (lifetime.signal.aborted) throw abortError(lifetime.signal);
+          if (executionSignal.aborted) throw abortError(executionSignal);
           const claim = await raceWithAbort(
             Promise.resolve(agent.store.claimToolExecution!(candidate)),
-            lifetime.signal
+            executionSignal
           );
           if (!claim.claimed) {
             if (claim.entry.toolName !== call.name || !sameJson(claim.entry.input, serializedInput)) {
@@ -797,11 +798,11 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
                 idempotencyKey
               }),
               (input.toolExecution ?? agent.toolExecution)?.timeoutMs,
-              lifetime.signal
+              executionSignal
             )
           );
           if (journalClaim) {
-            if (lifetime.signal.aborted) throw abortError(lifetime.signal);
+            if (executionSignal.aborted) throw abortError(executionSignal);
             await raceWithAbort(
               Promise.resolve(
                 agent.store!.completeToolExecution!(
@@ -815,18 +816,18 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
                   { expectedRevision: journalClaim.revision }
                 )
               ),
-              lifetime.signal
+              executionSignal
             );
           }
           return { toolCallId: call.id, toolName: call.name, output, isError: false };
         } catch (error) {
           const normalizedError = error instanceof Error ? error : new Error(String(error));
-          if (lifetime.signal.aborted || normalizedError instanceof ToolExecutionTimeoutError) {
+          if (executionSignal.aborted || normalizedError instanceof ToolExecutionTimeoutError) {
             throw normalizedError;
           }
           if (journalClaim) {
             try {
-              if (lifetime.signal.aborted) throw abortError(lifetime.signal);
+              if (executionSignal.aborted) throw abortError(executionSignal);
               await raceWithAbort(
                 Promise.resolve(
                   agent.store!.completeToolExecution!(
@@ -840,7 +841,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
                     { expectedRevision: journalClaim.revision }
                   )
                 ),
-                lifetime.signal
+                executionSignal
               );
             } catch {
               // Preserve the original tool error. A running journal entry blocks unsafe replay.
@@ -910,94 +911,108 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
         }
 
         if (event.type === "realtime-tool-call") {
-          const serializedCallInput = serializeJsonValue(event.toolCall.input);
-          const fingerprint = `${event.toolCall.name}:${canonicalJson(serializedCallInput)}`;
-          const previous = processedToolCalls.get(event.toolCall.id);
-          if (previous) {
-            if (previous.fingerprint !== fingerprint) {
-              throw new ConflictError(`Realtime tool call id "${event.toolCall.id}" was reused with a different payload.`);
+          const cancellationSignal = session!.toolCallSignal?.(event.toolCall.id);
+          const callLifetime = createLifetimeAbort({ abortSignal: lifetime.signal, connectOptions: { signal: cancellationSignal } });
+          try {
+            if (callLifetime.signal.aborted) throw abortError(callLifetime.signal);
+            const serializedCallInput = serializeJsonValue(event.toolCall.input);
+            const fingerprint = `${event.toolCall.name}:${canonicalJson(serializedCallInput)}`;
+            const previous = processedToolCalls.get(event.toolCall.id);
+            if (previous) {
+              if (previous.fingerprint !== fingerprint) {
+                throw new ConflictError(`Realtime tool call id "${event.toolCall.id}" was reused with a different payload.`);
+              }
+              continue;
             }
-            continue;
-          }
-          await publish({ type: "tool-call", toolCall: event.toolCall });
-          waitingForPostToolResponse = true;
-          postToolResponseObserved = false;
-          finalOutputTranscriptObserved = false;
-          terminalResponseCompletionObserved = false;
+            await publish({ type: "tool-call", toolCall: event.toolCall });
+            waitingForPostToolResponse = true;
+            postToolResponseObserved = false;
+            finalOutputTranscriptObserved = false;
+            terminalResponseCompletionObserved = false;
 
-          const definition = resolvedTools[event.toolCall.name];
-          if (!definition) {
-            const result = {
-              toolCallId: event.toolCall.id,
-              toolName: event.toolCall.name,
-              error: { message: `Tool "${event.toolCall.name}" is not registered.` },
-              isError: true
-            } satisfies ToolExecutionResult;
-            await recordToolResult(result, fingerprint);
-            continue;
-          }
+            const definition = resolvedTools[event.toolCall.name];
+            if (!definition) {
+              const result = {
+                toolCallId: event.toolCall.id,
+                toolName: event.toolCall.name,
+                error: { message: `Tool "${event.toolCall.name}" is not registered.` },
+                isError: true
+              } satisfies ToolExecutionResult;
+              await recordToolResult(result, fingerprint);
+              continue;
+            }
 
-          if (!isCallableToolDefinition(definition)) {
-            const result = {
-              toolCallId: event.toolCall.id,
-              toolName: event.toolCall.name,
-              error: { message: `Tool "${event.toolCall.name}" is provider-hosted and cannot be executed locally.` },
-              isError: true
-            } satisfies ToolExecutionResult;
-            await recordToolResult(result, fingerprint);
-            continue;
-          }
+            if (!isCallableToolDefinition(definition)) {
+              const result = {
+                toolCallId: event.toolCall.id,
+                toolName: event.toolCall.name,
+                error: { message: `Tool "${event.toolCall.name}" is provider-hosted and cannot be executed locally.` },
+                isError: true
+              } satisfies ToolExecutionResult;
+              await recordToolResult(result, fingerprint);
+              continue;
+            }
 
-          const parsed = definition.schema.safeParse(event.toolCall.input);
-          if (!parsed.success) {
-            const result = {
-              toolCallId: event.toolCall.id,
-              toolName: event.toolCall.name,
-              error: { message: `Invalid input for tool "${event.toolCall.name}": ${parsed.error.message}` },
-              isError: true
-            } satisfies ToolExecutionResult;
-            await recordToolResult(result, fingerprint);
-            continue;
-          }
+            const parsed = definition.schema.safeParse(event.toolCall.input);
+            if (!parsed.success) {
+              const result = {
+                toolCallId: event.toolCall.id,
+                toolName: event.toolCall.name,
+                error: { message: `Invalid input for tool "${event.toolCall.name}": ${parsed.error.message}` },
+                isError: true
+              } satisfies ToolExecutionResult;
+              await recordToolResult(result, fingerprint);
+              continue;
+            }
 
-          const approval = await raceWithAbort(
-            resolveApproval({
-              agent,
-              input,
-              state,
-              call: event.toolCall,
-              parsedInput: serializeJsonValue(parsed.data),
-              tool: definition,
-              realtimeConfig
-            }),
-            lifetime.signal
-          );
-          if (approval.approvalRequired) {
-            throw new ValidationError(
-              `Tool "${event.toolCall.name}" requested resumable approval, but streamLiveAgent only supports immediate approval decisions.`
+            const approval = await raceWithAbort(
+              resolveApproval({
+                agent,
+                input,
+                state,
+                call: event.toolCall,
+                parsedInput: serializeJsonValue(parsed.data),
+                tool: definition,
+                realtimeConfig
+              }),
+              callLifetime.signal
             );
-          }
-          if (!approval.approved) {
-            const result = {
-              toolCallId: event.toolCall.id,
-              toolName: event.toolCall.name,
-              error: {
-                message: approval.reason ?? `Tool "${event.toolCall.name}" was denied by the approval policy.`
-              },
-              isError: true
-            } satisfies ToolExecutionResult;
+            if (approval.approvalRequired) {
+              throw new ValidationError(
+                `Tool "${event.toolCall.name}" requested resumable approval, but streamLiveAgent only supports immediate approval decisions.`
+              );
+            }
+            if (!approval.approved) {
+              const result = {
+                toolCallId: event.toolCall.id,
+                toolName: event.toolCall.name,
+                error: {
+                  message: approval.reason ?? `Tool "${event.toolCall.name}" was denied by the approval policy.`
+                },
+                isError: true
+              } satisfies ToolExecutionResult;
+              await recordToolResult(result, fingerprint);
+              continue;
+            }
+
+            const result = await executeTool(
+              definition,
+              event.toolCall,
+              parsed.data,
+              serializeJsonValue(parsed.data),
+              callLifetime.signal
+            );
             await recordToolResult(result, fingerprint);
             continue;
+          } catch (error) {
+            if (!lifetime.signal.aborted && cancellationSignal?.aborted) {
+              waitingForPostToolResponse = false;
+              continue;
+            }
+            throw error;
+          } finally {
+            callLifetime.cleanup();
           }
-
-          const result = await executeTool(
-            definition,
-            event.toolCall,
-            parsed.data,
-            serializeJsonValue(parsed.data)
-          );
-          await recordToolResult(result, fingerprint);
-          continue;
         }
 
         if (event.type === "realtime-error") {
@@ -1012,7 +1027,7 @@ export const streamLiveAgent = <TModel extends RealtimeModel>(
         }
 
         if (event.type === "realtime-response-complete") {
-          if (event.reason === "generation-complete") continue;
+          if (event.reason === "generation-complete" || event.reason === "interrupted") continue;
           if (waitingForPostToolResponse && !postToolResponseObserved) continue;
           terminalResponseCompletionObserved = true;
           if (requiresFinalOutputTranscript && !finalOutputTranscriptObserved) continue;

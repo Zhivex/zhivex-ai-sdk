@@ -4,6 +4,7 @@ export const embed = async (options: EmbedOptions): Promise<EmbedOutput> => {
   const values = Array.isArray(options.value) ? options.value : [options.value];
   const response = await options.model.embed({
     values,
+    ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
     abortSignal: options.abortSignal,
     timeoutMs: options.timeoutMs,
     maxRetries: options.maxRetries,

@@ -296,6 +296,12 @@ export interface RealtimeToolCallEvent {
   toolCall: ToolCall;
 }
 
+/** The provider no longer accepts results for these calls. Local side effects are not undone. */
+export interface RealtimeToolCallCancellationEvent {
+  type: "realtime-tool-call-cancellation";
+  toolCallIds: string[];
+}
+
 export interface RealtimeDelegationEvent {
   type: "realtime-delegation";
   /** Opaque provider ID. A delegation does not contain task text or tool arguments. */
@@ -362,6 +368,7 @@ export type RealtimeEvent =
   | RealtimeAudioOutputEvent
   | RealtimeTranscriptEvent
   | RealtimeToolCallEvent
+  | RealtimeToolCallCancellationEvent
   | RealtimeToolResultEvent
   | RealtimeProviderDataEvent
   | RealtimeResponseCompleteEvent
@@ -379,6 +386,8 @@ export interface RealtimeSession {
   sendMedia(frame: MediaFrame): Promise<void>;
   sendText(text: string): Promise<void>;
   sendToolResult(result: ToolExecutionResult): Promise<void>;
+  /** Aborts when the provider cancels this call, independently of event consumption. */
+  toolCallSignal?(toolCallId: string): AbortSignal;
   appendContext?(update: RealtimeContextUpdate): Promise<void>;
   setInputMuted?(muted: boolean): Promise<void>;
   /** Cancel current provider inference without closing the session, when supported. */

@@ -258,6 +258,7 @@ const stableSymbols = [
 ] as const;
 
 const betaSymbols = [
+  "createChatCompletionsModel",
   "reconcileAgentToolExecution",
   "ModelResolutionError",
   "PROVIDER_CONFORMANCE_EVIDENCE_LEVELS",
@@ -300,6 +301,7 @@ const betaSymbols = [
   "getAgentSupportTier",
   "getBatch",
   "getContextCache",
+  "updateContextCache",
   "getFile",
   "getFileSearchStore",
   "getHostedToolClass",

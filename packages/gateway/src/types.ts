@@ -61,7 +61,9 @@ export type GatewayAttemptReasonCode =
   | "request-aborted"
   | "provider-error"
   | "provider-success"
-  | "circuit-open";
+  | "circuit-open"
+  | "admission-denied"
+  | "budget-denied";
 export type GatewayRouteDecisionReasonCode =
   | "routing-speed"
   | "routing-balanced"
@@ -85,6 +87,8 @@ export type GatewayInputMessage = GatewayMessage | ModelMessage;
 export interface GatewayModelTarget {
   provider: GatewayProviderId;
   modelId: string;
+  /** Identifies a separately configured endpoint/region/credential. */
+  deploymentId?: string;
 }
 
 export interface GatewayRequest {
@@ -103,6 +107,14 @@ export interface GatewayRequest {
   routingMode?: GatewayRoutingMode;
   taskIntent?: GatewayTaskIntent;
   abortSignal?: AbortSignal;
+  /** Total operation deadline, including tools, retries and observers. */
+  timeoutMs?: number;
+  /** Trusted application budget scope; never accept directly from an untrusted client. */
+  budgetScope?: string;
+  /** Cache partition, in addition to the configured authentication scope. */
+  cacheScope?: string;
+  /** Stable conversation/prompt-prefix key, scoped by cacheScope and budgetScope. */
+  affinityKey?: string;
   primary: GatewayModelTarget;
   fallbacks?: GatewayModelTarget[];
 }
@@ -138,6 +150,8 @@ export interface GatewayAgentRequest extends Omit<GatewayRequest, "messages" | "
 }
 
 export interface GatewayAttempt {
+  deploymentId?: string;
+  cacheHit?: boolean;
   provider: GatewayProviderId;
   modelId: string;
   ok: boolean;
@@ -167,7 +181,7 @@ export interface GatewayResponse {
     reasonCode?: GatewayRouteDecisionReasonCode;
     reason: string;
     estimatedCosts?: ModelCostValuation[];
-    adaptive?: { policyVersion: string; candidates: GatewayAdaptiveCandidate[] };
+    adaptive?: { policyVersion: string; candidates: GatewayAdaptiveCandidate[]; exploration?: boolean; affinity?: boolean };
   };
   steps: GenerateTextOutput["steps"];
   messages: GenerateTextOutput["messages"];
@@ -222,6 +236,18 @@ export interface GatewayRoutingScoreContext {
 }
 
 export interface GatewayConfig {
+  /** Explicit deployment registrations; unknown IDs never fall back to the default adapter. */
+  deployments?: Record<string, { provider: GatewayProviderId; adapter: ProviderAdapter }>;
+  timeoutMs?: number;
+  affinity?: { ttlMs?: number; maxEntries?: number; maxScoreLoss?: number };
+  admission?: import("./admission.js").GatewayAdmissionController;
+  /** Maximum wait for asynchronous settlement/release before reporting failure. */
+  resourceTimeoutMs?: number;
+  budget?: { store: import("./budget.js").GatewayBudgetStore; currency: string; reserveAmount: number };
+  cache?: { store: import("@zhivex-ai/core").GenerateCache; scope: string; timeoutMs?: number };
+  /** Legacy preserves detached callbacks. Background bounds capacity; await waits per attempt. */
+  observerMode?: "legacy" | "await" | "background";
+  observerQueueCapacity?: number;
   adapters: Partial<Record<GatewayProviderId, ProviderAdapter>>;
   metrics?: GatewayMetricsStore;
   circuitBreaker?: GatewayCircuitBreaker;

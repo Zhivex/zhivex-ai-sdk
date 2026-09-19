@@ -12,11 +12,31 @@ import {
 } from "../src/index.js";
 
 describe("SDK model catalog ownership", () => {
+  it("includes current Vertex open models without inventing retirement dates", () => {
+    for (const modelId of ["zai-org/glm-5.2-maas", "google/gemma-4-26b-a4b-it-maas", "openai/gpt-oss-120b-maas", "meta/llama-4-maverick-17b-128e-instruct-maas", "meta/llama-4-scout-17b-16e-instruct-maas"]) {
+      const entry = defaultModelCatalog.find("vertex", modelId);
+      expect(entry).toMatchObject({ provider: "vertex", modelId });
+      expect(entry?.lifecycle?.retiredAt).toBeUndefined();
+      expect(entry?.inputCostPer1kTokens).toBeUndefined();
+    }
+  });
+  it("records Vertex MaaS retirement without assigning direct-provider pricing", () => {
+    const entry = defaultModelCatalog.find("vertex", "deepseek-ai/deepseek-v3.2-maas");
+    expect(entry?.lifecycle).toMatchObject({ deprecatedAt: "2026-07-21", retiredAt: "2026-10-21" });
+    expect(entry?.inputCostPer1kTokens).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "xai/grok-4.1-fast-reasoning")?.lifecycle?.retiredAt).toBe("2026-08-20");
+    expect(defaultModelCatalog.find("vertex", "xai/grok-4.3")?.lifecycle).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "mistralai/codestral-2")).toBeDefined();
+    expect(defaultModelCatalog.find("vertex", "lyria-3-pro-preview")).toBeDefined();
+    for (const id of ["ai21/jamba-1.5-mini", "ai21/jamba-1.5-large"]) expect(defaultModelCatalog.find("vertex", id)?.lifecycle).toMatchObject({ deprecatedAt: "2025-08-27", retiredAt: "2026-02-27" });
+    for (const id of ["gemini-omni-flash-preview", "gemini-omni-1.1-flash-preview"]) expect(defaultModelCatalog.find("vertex", id)).toBeDefined();
+    expect(coreCompatibilityCatalog.find("vertex", "deepseek-ai/deepseek-v3.2-maas")).toBeUndefined();
+  });
   it("exports the SDK-owned snapshot from both public entrypoints", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-09-16",
+      snapshotVersion: "2026-09-19",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
         version: "2026-09-16",
@@ -40,7 +60,9 @@ describe("SDK model catalog ownership", () => {
     }
     expect(defaultModelCatalog.find("gemini", "gemini-3.8-live-extended-thinking")).toBeDefined();
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(136);
+    expect(entries).toHaveLength(177);
+    expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
+    expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
       inputCostPer1kTokens: 0.00015,
       cachedInputCostPer1kTokens: 0.00003,
@@ -80,7 +102,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(136);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(177);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-09-12",
       verifiedAt: "2026-09-12",
@@ -108,7 +130,7 @@ describe("SDK model catalog ownership", () => {
     expect(entry).toMatchObject({ provider: "vertex", modelId: "claude-sonnet-4-6" });
     expect(entry?.inputCostPer1kTokens).toBeUndefined();
     expect(entry?.recommendedFor).toBeUndefined();
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-09-06");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-09-19");
   });
 
   it("does not derive the release-managed snapshot from the frozen core compatibility copy", () => {

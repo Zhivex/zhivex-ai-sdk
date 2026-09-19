@@ -250,6 +250,7 @@ export {
   getAgentSupportTier,
   getBatch,
   getContextCache,
+  updateContextCache,
   getFile,
   getFileSearchStore,
   getHostedToolClass,
@@ -496,6 +497,7 @@ export type {
   ContentPart,
   CostEstimate,
   ContextCacheCreateInput,
+  ContextCacheUpdateInput,
   ContextCacheDeleteInput,
   ContextCacheGetInput,
   ContextCacheListInput,
@@ -530,6 +532,7 @@ export type {
   FilesClient,
   GetBatchOptions,
   GetContextCacheOptions,
+  UpdateContextCacheOptions,
   GetFileOptions,
   GetFileSearchStoreOptions,
   GetInteractionOptions,
@@ -655,6 +658,7 @@ export type {
   RealtimeTextDeltaEvent,
   RealtimeTokenResult,
   RealtimeToolCallEvent,
+  RealtimeToolCallCancellationEvent,
   RealtimeToolResultEvent,
   RealtimeTranscriptEvent,
   RedactionPolicy,
@@ -841,3 +845,7 @@ export type { AgentTaskOutcome, AgentToolReconciliationEvidence, AgentToolReconc
 export type { AgentRunView, AgentRunUpdateEvent } from "@zhivex-ai/core";
 
 export { imageInputToDataUrl } from "@zhivex-ai/core";
+
+export { createChatCompletionsModel } from "@zhivex-ai/core";
+export type { ChatCompletionsTransportOptions } from "@zhivex-ai/core";
+export type { DocumentExtractionInput, DocumentExtractionPage, DocumentExtractionResult, TextCompletionInput } from "@zhivex-ai/core";

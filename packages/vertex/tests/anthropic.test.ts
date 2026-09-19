@@ -19,6 +19,105 @@ const bodyAt = (fetcher: ReturnType<typeof vi.fn>, index = 0) => JSON.parse(fetc
 afterEach(() => vi.unstubAllEnvs());
 
 describe("Claude on Vertex", () => {
+  it("round-trips browser member calls and native browser results", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ content: [{ type: "tool_use", id: "b1", name: "navigate", toolset_name: "browser", input: { url: "https://example.com" } }], stop_reason: "tool_use" })).mockResolvedValueOnce(response());
+    const model = provider(fetcher)("claude-opus-5");
+    const tools = { browser: hostedTool({ provider: "vertex", type: "browser_toolset_20260801", name: "browser", config: { configs: { read_page: { enabled: true } } } }) };
+    const result = await model.generate({ ...input, tools });
+    expect(bodyAt(fetcher).tools).toEqual([{ type: "browser_toolset_20260801", configs: { read_page: { enabled: true } } }]);
+    const call = result.messages[0].parts.find((part) => part.type === "tool-call")!;
+    expect(call).toMatchObject({ toolCall: { providerMetadata: { toolset_name: "browser" } } });
+    const content = [{ type: "text", text: "Navigated" }, { type: "browser_state", tabs: [{ tab_id: "one", title: "Example", url: "https://example.com", active: true }] }];
+    await model.generate({ ...input, tools, messages: [...input.messages, ...result.messages, { role: "tool", parts: [{ type: "tool-result", toolResult: { toolCallId: "b1", toolName: "navigate", isError: false, output: content, providerMetadata: { toolset_name: "browser" } } }] }] });
+    expect(bodyAt(fetcher, 1).messages[1].content[0].toolset_name).toBe("browser");
+    expect(bodyAt(fetcher, 1).messages[2].content[0]).toMatchObject({ toolset_name: "browser", content });
+    expect(model.capabilities.agentCapabilities?.toolsets).toBe(true);
+  });
+  it("preserves browser toolset metadata in streaming calls", async () => {
+    const data = [
+      ['content_block_start', { index: 0, content_block: { type: 'tool_use', id: 'b1', name: 'read_page', toolset_name: 'browser' } }],
+      ['content_block_delta', { index: 0, delta: { type: 'input_json_delta', partial_json: '{}' } }],
+      ['content_block_stop', { index: 0 }],
+      ['message_delta', { delta: { stop_reason: 'tool_use' } }], ['message_stop', {}]
+    ];
+    const fetcher = vi.fn(async () => new Response(data.map(([event, body]) => `event: ${event}\ndata: ${JSON.stringify(body)}\n\n`).join('')));
+    const events = [];
+    for await (const event of await provider(fetcher)("claude-opus-5").stream(input)) events.push(event);
+    expect(events).toContainEqual({ type: "tool-call", toolCall: { id: "b1", name: "read_page", input: {}, providerMetadata: { toolset_name: "browser" } } });
+  });
+  it("rejects browser toolsets on older Claude models", async () => {
+    const fetcher = vi.fn(async () => response());
+    await expect(provider(fetcher)("claude-sonnet-4-6").generate({ ...input, tools: { browser: hostedTool({ provider: "vertex", type: "browser_toolset_20260801", name: "browser" }) } })).rejects.toThrow("browser toolset");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("preserves automatic compaction blocks when continuing the conversation", async () => {
+    const compact = { type: "compaction", content: "Earlier context summary" };
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ content: [compact, { type: "text", text: "Continue" }], stop_reason: "end_turn" })).mockResolvedValueOnce(response());
+    const model = provider(fetcher)("claude-sonnet-4-6");
+    const result = await model.generate(input);
+    await model.generate({ ...input, messages: [...input.messages, ...result.messages, { role: "user", parts: [{ type: "text", text: "Next" }] }] });
+    expect(bodyAt(fetcher, 1).messages[1].content).toContainEqual(compact);
+  });
+  it("maps automatic compaction and context editing betas into the Vertex body", async () => {
+    const fetcher = vi.fn(async () => response());
+    const context_management = { edits: [{ type: "clear_thinking_20251015", keep: "all" }, { type: "compact_20260112", trigger: { type: "input_tokens", value: 100000 } }] };
+    await provider(fetcher)("claude-sonnet-4-6").generate({ ...input, providerOptions: { context_management } });
+    expect(bodyAt(fetcher).context_management).toEqual(context_management);
+    expect(bodyAt(fetcher).anthropic_beta).toEqual(["context-management-2025-06-27", "compact-2026-01-12"]);
+    expect(new Headers(fetcher.mock.calls[0][1].headers).has("anthropic-beta")).toBe(false);
+  });
+  it("rejects unsupported compaction modes and malformed edit strategies before fetching", async () => {
+    const fetcher = vi.fn(async () => response());
+    const model = provider(fetcher)("claude-sonnet-4-6");
+    await expect(model.generate({ ...input, providerOptions: { compaction: { type: "summarize" } } })).rejects.toThrow("compaction");
+    await expect(model.generate({ ...input, providerOptions: { context_management: { edits: [{ type: "unknown" }] } } })).rejects.toThrow("strategy");
+    await expect(model.generate({ ...input, providerOptions: { context_management: { edits: [{ type: "compact_20260112", trigger: { type: "input_tokens", value: 1 } }] } } })).rejects.toThrow("50000");
+    await expect(provider(fetcher)("claude-haiku-4-5@20251001").generate({ ...input, providerOptions: { context_management: { edits: [{ type: "compact_20260112" }] } } })).rejects.toThrow("does not support automatic");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("sends supported web search with Vertex identity and preserves server results", async () => {
+    const fetcher = vi.fn(async () => Response.json({ content: [
+      { type: "server_tool_use", id: "search1", name: "web_search", input: { query: "weather" } },
+      { type: "web_search_tool_result", tool_use_id: "search1", content: [] },
+      { type: "text", text: "Result", citations: [{ type: "web_search_result_location", url: "https://example.com" }] }
+    ], stop_reason: "end_turn" }));
+    const result = await provider(fetcher)("claude-sonnet-4-6").generate({ ...input,
+      tools: { search: hostedTool({ provider: "vertex", type: "web_search_20250305", name: "web_search", config: { max_uses: 1 } }) }
+    });
+    expect(bodyAt(fetcher).tools).toEqual([{ type: "web_search_20250305", name: "web_search", max_uses: 1 }]);
+    expect(result.messages[0].parts).toContainEqual(expect.objectContaining({ type: "provider-data", data: expect.objectContaining({ type: "web_search_tool_result" }) }));
+  });
+
+  it("maps computer-use beta into the Vertex body and never sends an Anthropic header", async () => {
+    const fetcher = vi.fn(async () => response());
+    await provider(fetcher)("claude-sonnet-4-6").generate({ ...input,
+      tools: { computer: hostedTool({ provider: "vertex", type: "computer_20250124", name: "computer", config: { display_width_px: 1024, display_height_px: 768 } }) }
+    });
+    expect(bodyAt(fetcher).anthropic_beta).toEqual(["computer-use-2025-01-24"]);
+    expect(new Headers(fetcher.mock.calls[0][1].headers).has("anthropic-beta")).toBe(false);
+  });
+
+  it("supports cache TTL and global routing affinity while preserving cache usage", async () => {
+    const fetcher = vi.fn(async () => Response.json({ content: [{ type: "text", text: "cached" }], stop_reason: "end_turn",
+      usage: { input_tokens: 2, output_tokens: 1, cache_creation_input_tokens: 8, cache_read_input_tokens: 16 } }));
+    const result = await provider(fetcher, { location: "global" })("claude-sonnet-4-6").generate({ ...input,
+      providerOptions: { sessionId: "session-1", cache_control: { type: "ephemeral", ttl: "1h" } }
+    });
+    expect(bodyAt(fetcher).cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(bodyAt(fetcher)).not.toHaveProperty("sessionId");
+    expect(new Headers(fetcher.mock.calls[0][1].headers).get("X-Vertex-Ai-Session-Id")).toBe("session-1");
+    expect(result.usage).toMatchObject({ inputTokens: 26, cachedInputTokens: 16, cacheWriteTokens: 8 });
+  });
+
+  it("rejects unsupported source URLs and invalid cache controls locally", async () => {
+    const fetcher = vi.fn();
+    const model = provider(fetcher)("claude-sonnet-4-6");
+    await expect(model.generate({ ...input, messages: [{ role: "user", parts: [{ type: "image", image: "https://example.com/a.png" }] }] } as ModelGenerateInput)).rejects.toThrow("inline");
+    await expect(model.generate({ ...input, providerOptions: { cache_control: { type: "ephemeral", ttl: "2h" } } })).rejects.toThrow("TTL");
+    await expect(model.generate({ ...input, providerOptions: { sessionId: "a\r\nb" } })).rejects.toThrow("single-line");
+    await expect(provider(fetcher)("claude-3-7-sonnet@20250219").generate({ ...input, providerOptions: { cache_control: { type: "ephemeral", ttl: "1h" } } })).rejects.toThrow("1h");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it("uses Google credentials and the Anthropic publisher with no direct API environment leakage", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "unrelated-key");
     vi.stubEnv("ANTHROPIC_BASE_URL", "https://unrelated.example/v1");
@@ -115,12 +214,12 @@ describe("Claude on Vertex", () => {
     { providerOptions: { betas: ["test-beta"] } },
     { providerOptions: { mcp_servers: [] } },
     { providerOptions: { fallbacks: "default" } },
-    { tools: { search: hostedTool({ provider: "anthropic", type: "web_search_20250305", name: "search" }) } },
+    { tools: { search: hostedTool({ provider: "anthropic", type: "web_fetch_20250910", name: "fetch" }) } },
     { messages: [{ role: "user", parts: [{ type: "file", mediaType: "application/pdf", data: "file_abc" }] }] }
   ])("rejects direct-API-only inputs before sending a request: %j", async (extra) => {
     const fetcher = vi.fn();
     const model = provider(fetcher)("claude-sonnet-4-6");
-    expect(model.capabilities.webSearch).toBe(false);
+    expect(model.capabilities.webSearch).toBe(true);
     await expect(model.generate({ ...input, ...extra } as ModelGenerateInput)).rejects.toBeInstanceOf(UnsupportedFeatureError);
     expect(fetcher).not.toHaveBeenCalled();
   });

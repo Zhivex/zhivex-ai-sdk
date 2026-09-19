@@ -11,8 +11,10 @@ const readManifest = async (packageName: string) => JSON.parse(
 // All providers now import the focused Core entrypoints introduced in 1.19.0.
 // Older Core versions do not expose these package subpaths. Image URL adapters
 // additionally require imageInputToDataUrl from 1.20.0; xAI follows OpenAI.
+// Anthropic browser toolsets and Vertex/Qwen's shared realtime transport
+// require the contracts and provider helpers introduced in 1.21.0.
 const reviewedProviderCoreRanges = {
-  anthropic: "^1.20.0",
+  anthropic: "^1.21.0",
   "azure-openai": "^1.20.0",
   bedrock: "^1.19.0",
   deepseek: "^1.19.0",
@@ -22,8 +24,8 @@ const reviewedProviderCoreRanges = {
   ollama: "^1.19.0",
   openai: "^1.20.0",
   openrouter: "^1.20.0",
-  qwen: "^1.20.0",
-  vertex: "^1.19.0",
+  qwen: "^1.21.0",
+  vertex: "^1.21.0",
   xai: "^1.20.0",
   zai: "^1.19.0"
 } as const;

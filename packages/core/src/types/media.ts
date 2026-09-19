@@ -180,11 +180,15 @@ export interface GenerateMusicOutput extends MusicGenerationResult {
 
 export interface EmbedInput {
   values: EmbedValue[];
+  /** Provider-specific embedding configuration. */
+  providerOptions?: ProviderOptions;
 }
 
 export interface EmbedOptions extends RetryOptions {
   model: EmbeddingModel;
   value: EmbedValue | EmbedValue[];
+  /** Provider-specific embedding configuration. */
+  providerOptions?: ProviderOptions;
 }
 
 export interface EmbedOutput extends EmbedResult {

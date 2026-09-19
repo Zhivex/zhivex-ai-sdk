@@ -1,11 +1,84 @@
 # @zhivex-ai/sdk
 
+## 1.24.0
+
+### Minor Changes
+
+- Expose updateContextCache and UpdateContextCacheOptions through the unified SDK. Providers without expiration updates fail with UnsupportedFeatureError.
+- Add the optional context-cache expiration update contract and implement Vertex cache PATCH with explicit field masks, expiry validation, retries and deadlines.
+- Expose source-backed model lifecycle metadata and expand the SDK Vertex catalog to partner chat and specialized models. Enable supported Claude native tools on Vertex, prompt-cache TTL validation and session affinity, while rejecting unsupported image/document sources and beta features locally.
+
+  Enable Vertex-supported automatic Claude compaction and context editing with body beta flags and strategy validation; keep direct-only on-demand compaction rejected.
+
+  Add a dedicated claude.countTokens client with native Claude message blocks, tools and system inputs, OAuth/location guards, bounded responses and normalized input-token counts.
+- Add Vertex to agent scaffolding and doctor. Generate project/location configuration for ADC, preserve publisher-qualified model IDs, and distinguish configuration from verified Google authentication and model access.
+- Expose realtime tool-call cancellation events with correlated IDs. Vertex maps native cancellation messages; callback sessions suppress cancelled call replays and reject late results locally while retaining the connection. Live agents propagate per-call cancellation to approval waits and tool execution through an optional session signal, retaining indeterminate durable claims when effects may still be running. This does not undo local tool side effects.
+- Add a host-neutral Chat Completions transport with tool history, schema output, streaming, reasoning metadata, bounded tool arguments, cancellation and HTTP retries. Expose it as a Beta provider-construction helper.
+
+  Route Vertex publisher/model selectors through Google-authenticated Chat Completions or publisher raw prediction, preserving Vertex provider identity and host-specific reasoning controls. Add explicit chatModel selection for self-deployed endpoints with deployment capability overrides.
+
+  Reject partner selectors on Google-specific factories and include current GLM 5.2, Gemma 4, Llama 4 and gpt-oss 120B MaaS entries in the SDK catalog without inheriting other models' retirement dates or pricing.
+
+  Default GPT OSS and Qwen tool requests to explicit auto choice. Reject GPT OSS required/named choices unsupported by Vertex; this fixes the live host template error when a GPT OSS tool request omits tool_choice.
+
+  Normalize omitted GPT OSS tool descriptions to an empty string, as required by the Vertex Harmony serializer.
+
+  Map required tool choice to the native Mistral publisher value any without changing other publishers.
+
+  Keep self-deployed reasoning capabilities independent of hosted model names. Enforce Chat Completions capability restrictions for native tool-choice, parallel-call and response-format options and streaming. Record Jamba 1.5 retirement metadata in the Vertex catalog.
+
+  Select hosted chat capabilities and thinking controls from exact model profiles instead of publisher/name prefixes. Unknown IDs retain text transport without advertising unverified advanced capabilities.
+- Forward provider-specific embedding controls through the shared embedding API. Add Vertex embedding model validation and batching, Mistral OCR and Codestral FIM clients, and project-scoped Interactions with resumable streaming, metadata listing and Lyria 3 music generation. Export shared document extraction and text completion input types.
+
+  Route E5 publisher embeddings through the bearer-authenticated OpenMaaS embeddings endpoint, validating vector indices and preserving input order.
+
+  Add prompt-based DeepSeek image extraction to Vertex OCR, reject incomplete extractions and conflicting native options, and validate specialized sampling inputs and OCR page identities.
+
+  Reject duplicate Interactions tool identifiers and indices, validate completed tool arguments, and stop/cancel the response after a terminal streaming event.
+
+  Expose the always-present Vertex embeddingModel factory as required in the returned TypeScript type.
+
+  Preserve all Interactions model-output steps so Lyria lyrics and captions are not discarded when the final step contains audio.
+
+  Decode the documented Interactions arguments_delta events and normalize hosted Maps and Vertex Search tools to google_maps and retrieval. Reject unsupported hosted tool types, including Developer API File Search.
+
+  Route Gemini Omni video models through Interactions with text/image input, inline or GCS output, model-specific resolution validation and catalog entries. Preserve Veo prediction-operation routing.
+
+  Advertise image, document and audio input capabilities on Gemini Embedding 2, while preserving text-only capabilities on legacy and E5 embedding models.
+
+### Patch Changes
+
+- Preserve abnormal server WebSocket close codes and reasons in the authenticated realtime transport instead of reporting every server closure as a normal end of stream.
+- Support Gemini 3.5 Transcribe with native language hints, vocabulary, timestamps, diarization and formatting configuration. Preserve complete transcript text and typed native word/speaker details. Add the synchronous model to the Vertex catalog and reject incompatible configuration and Live-model use in the synchronous factory.
+
+  Support the dedicated Live Transcribe model with text-only setup, recognition options, replaceable interim hypotheses, final user transcripts and audio-stream-end/mute handling. Add its catalog entry and reject unsupported conversation controls.
+- Support multimodalembedding@001 text and image embeddings through the unified embedding factory. Add a native multimodalEmbeddings client for combined text/image/video requests, preserving video segment timestamps and individual vectors. Include the model in the Vertex catalog.
+- Pass the previous session configuration to realtime update callbacks. Vertex Live now updates instructions through system client content instead of resending setup, and rejects immutable configuration changes before sending them.
+- Share the authenticated Node/Bun WebSocket transport through core. Vertex Live now connects with OAuth headers without a custom factory; Qwen reuses the same implementation. Keep browser transport selection separate, disable redirects, and handle handshake cancellation/timeout errors without unhandled socket events.
+- Allow Gemini to answer after a forced Vertex tool call completes, while preserving explicit tool disabling. Correct the Kimi Thinking publisher identifier and DeepSeek OCR capability flags. Keep the earlier Kimi publisher spelling as a normalized alias.
+
+  Enable documented DeepSeek R1-0528 function calling and disable the reasoning flag for Grok non-reasoning variants. Add the Vertex-hosted Grok catalog entries with explicit Grok 4.1 retirement metadata.
+- Add a native `virtualTryOn.generate()` client with named person/product images,
+  inline and GCS input, masks and native options, normalized image output and
+  filtering reasons. Include Virtual Try-On in the Vertex catalog and reject
+  routing this specialized model through Gemini generation factories.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.21.0
+
 ## 1.23.0
 
 ### Minor Changes
 
 - Normalize inline base64 image inputs with their MIME type for Qwen, OpenAI, xAI, Azure OpenAI, Meta, and OpenRouter across Chat/Responses generation and streaming. Preserve HTTP(S) and existing base64 image data URLs without mutating history. Use native base64 source blocks for Anthropic. Share the adapter serializer through Core's provider entrypoint, with explicit validation and a required MIME type for bare base64.
-  
+
   Observe streamText's internal final-result rejection for consumers that only iterate eventStream or textStream, while preserving the error event and collect() rejection. Add isolated Node regressions for HTTP, network, mid-stream, cancellation, and provider error events.
 
 ### Patch Changes
@@ -28,17 +101,17 @@
 ### Minor Changes
 
 - Add model-aware React media inputs and video rendering, bounded agent execution summaries and hierarchy, and an optional browser realtime voice hook with PCM audio and a server-owned WebSocket relay. Expose optional realtime interruption and implement Qwen response cancellation. Keep provider credentials and tool execution on the server.
-  
+
   Fix resumed tool approvals so the original tool card completes and the final response remains an assistant message. Include a runnable Qwen Omni/voice example and browser regression coverage for uploads, approvals, replay, microphone capture and interruption.
-  
+
   Refresh chat spacing, composer focus, responsive prompt cards and agent status badges while preserving theme tokens. Modernize the example's voice controls with explicit microphone state, surfaced action errors and a keyboard alternative. Request PCM output in the voice example and avoid idle provider cancellation when only local playback needs clearing.
 
 ### Patch Changes
 
 - Add focused Core agent, generation, provider-helper, and catalog entrypoints. Migrate the Agents root, SDK runtime/catalog, and provider helper imports away from the complete Core aggregation while preserving existing public exports. Qwen also uses the focused provider helpers while retaining its multimodal and realtime behavior.
-  
+
   Separate agent, workflow, and artifact persistence backends and the file generation cache into internal modules without changing schemas, key formats, leases, approvals, or backend behavior. Keep the legacy Core catalog frozen and compatible.
-  
+
   Modularize agent execution helpers and shared type domains behind compatible facades, preserving public signatures and run-view streaming.
 - Updated dependencies
 - Updated dependencies
@@ -68,11 +141,11 @@
 
 - a909491: Add catalog-backed model cost valuation with cache breakdown, long-context pricing, explicit reasoning semantics, provenance and unknown-cost handling. Gateway costAccounting adds opt-in request quotes and per-attempt reported valuations without changing the legacy rate budget or retrying successful calls on accounting errors.
 - 66162f8: Isolate idempotent agent group members by stable identity, reject key collisions, and report pending and cancelled group states instead of premature completion. Existing callers must handle the expanded group status union and reconcile legacy shared group keys before replay.
-  
+
   Preserve complete reported TokenUsage in gateway text/object generation and streaming collection, estimating only missing base counters.
 - 631b733: Add optional FIFO maxConcurrency to agent groups, preserving output order and default parallelism. Cancel queued members before model execution or store claims and drain pending entries after fail-fast cancellation.
 - a909491: Add opt-in local circuit breaking and explainable adaptive gateway routing, portable agent history import, and configured agent composition with durable route binding.
-  
+
   Allow explicitly independent ordinary tools to overlap with subagents configured while keeping serial barriers and journal completion ordering. Reuse validated checkpoint serialization without removing persistence boundaries, and measure the normalized next revision for state limits.
 
 ### Patch Changes

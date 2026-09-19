@@ -457,6 +457,7 @@ export {
   fetchPredictionOperation,
   getBatch,
   getContextCache,
+  updateContextCache,
   getFile,
   getFileSearchStore,
   getInteraction,
@@ -697,3 +698,7 @@ export type { ReconcileAgentToolExecutionOptions } from "./agent-reconciliation.
 export type { AgentTaskOutcome, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "./types.js";
 
 export { imageInputToDataUrl } from "./image-input.js";
+
+export { createChatCompletionsModel } from "./chat-completions.js";
+export type { ChatCompletionsTransportOptions } from "./chat-completions.js";
+export type { DocumentExtractionInput, DocumentExtractionPage, DocumentExtractionResult, TextCompletionInput } from "./types.js";

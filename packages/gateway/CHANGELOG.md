@@ -1,5 +1,30 @@
 # @zhivex-ai/gateway
 
+## 1.4.0
+
+### Minor Changes
+
+- Add optional operation deadlines, bounded destination admission, budget reservations,
+  deployment identity, exact caching with cancellable shared misses, routing affinity,
+  and bounded background attempt observers with explicit flushing. Extend adaptive
+  routing with conservative missing-data penalties, workload presets, minimum health
+  samples, quality floors, cold-destination exploration and TTFT/throughput signals.
+  Preserve legacy adapters/scoring and document process-local versus shared-backend
+  contracts and the distinction between spend reservations and provider billing.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.21.0
+
 ## 1.3.0
 
 ### Minor Changes

@@ -1,3 +1,4 @@
+import { vertexIntegrationCredentials, vertexIntegrationProfile } from "./vertex-integration-profile.js";
 import type { EmbeddingModel, LanguageModel, ReasoningConfig, StructuredOutputMode, ToolChoice } from "../src/index.js";
 import { createAnthropic } from "../../anthropic/src/index.js";
 import { createAzureOpenAI } from "../../azure-openai/src/index.js";
@@ -186,16 +187,14 @@ const ollamaDirectCloud = (() => {
   }
 })();
 
-const vertexAccessToken = process.env.VERTEX_ACCESS_TOKEN ?? process.env.GOOGLE_ACCESS_TOKEN;
-const vertexApiKey = process.env.VERTEX_API_KEY ?? process.env.GOOGLE_API_KEY;
-const vertexProjectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
 const vertexLocation = process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION;
 const vertexBaseURL = process.env.VERTEX_BASE_URL;
 const vertexTextModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-3.7-flash";
 const vertexEmbeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-005";
-const usableVertexAccessToken = vertexAccessToken && (vertexProjectId || vertexBaseURL) ? vertexAccessToken : undefined;
 
-const hasVertexCredentials = Boolean(usableVertexAccessToken || vertexApiKey);
+const vertexProfile = vertexIntegrationProfile(vertexTextModelId);
+const vertexCredentials = vertexIntegrationCredentials(process.env, vertexProfile.requiresBearer);
+const hasVertexCredentials = vertexCredentials.configured;
 
 const providerLogicalEndpoint = (name: string): string => {
   switch (name) {
@@ -213,7 +212,7 @@ const providerLogicalEndpoint = (name: string): string => {
     case "bedrock-converse": return `bedrock:converse:${bedrockRegion ?? "default-region"}`;
     case "bedrock-openai": return "bedrock:openai-compatible";
     case "ollama": return ollamaBaseURL ? "ollama:custom" : "ollama:local-default";
-    case "vertex": return `vertex:${vertexLocation ?? "default-location"}${vertexBaseURL ? ":custom" : ""}`;
+    case "vertex": return `vertex:${vertexProfile.requiresBearer ? "partner" : "gemini"}:${vertexTextModelId}:${vertexLocation ?? "global"}${vertexBaseURL ? ":custom" : ""}`;
     default: return `${name}:default`;
   }
 };
@@ -336,7 +335,7 @@ const ollamaSupports: IntegrationLanguageProvider["supports"] = {
   ...(ollamaDirectCloud || ollamaCloudModel ? {} : { structuredOutputMode: "native" as const }),
   ...(ollamaReasoningEnabled ? { reasoning: { effort: "low" } } : {})
 };
-const vertexSupports: IntegrationLanguageProvider["supports"] = createGeminiSupports(vertexTextModelId);
+const vertexSupports = vertexProfile.supports;
 
 const openAIRequirements = [envRequirement(["OPENAI_API_KEY"])];
 const xaiRequirements = [envRequirement(["XAI_API_KEY"])];
@@ -378,8 +377,7 @@ const ollamaRequirements: CredentialRequirement[] = [
 ];
 const vertexRequirements: CredentialRequirement[] = [
   {
-    label:
-      "(VERTEX_API_KEY or GOOGLE_API_KEY) or ((VERTEX_ACCESS_TOKEN or GOOGLE_ACCESS_TOKEN) and (GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT or VERTEX_BASE_URL))",
+    label: vertexCredentials.requirement,
     satisfied: hasVertexCredentials
   }
 ];
@@ -776,30 +774,16 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
         {
           name: "vertex",
           createModel: () =>
-            createVertex({
-              accessToken: usableVertexAccessToken,
-              apiKey: vertexApiKey,
-              projectId: vertexProjectId,
-              location: vertexLocation,
-              baseURL: vertexBaseURL
-            })(vertexTextModelId),
+            createVertex(vertexCredentials.options)(vertexTextModelId),
           createEmbeddingModel: () =>
-            createVertex({
-              accessToken: usableVertexAccessToken,
-              apiKey: vertexApiKey,
-              projectId: vertexProjectId,
-              location: vertexLocation,
-              baseURL: vertexBaseURL
-            }).embeddingModel(vertexEmbeddingModelId),
-          omitTemperature: /^gemini-3\.(?:6-flash|5-flash-lite)$/.test(vertexTextModelId),
+            createVertex(vertexCredentials.options).embeddingModel(vertexEmbeddingModelId),
+          omitTemperature: vertexProfile.omitTemperature,
           supports: vertexSupports,
-          toolChoiceForTool: (toolName) => ({
-            type: "tool",
-            toolName
-          }),
-          textMaxTokens: 128,
-          toolMaxTokens: 128,
-          reasoningMaxTokens: 256
+          toolChoiceForTool: vertexProfile.toolChoiceForTool,
+          textMaxTokens: vertexProfile.textMaxTokens,
+          toolMaxTokens: vertexProfile.toolMaxTokens,
+          reasoningMaxTokens: vertexProfile.reasoningMaxTokens,
+          omitTemperatureForReasoning: vertexProfile.omitTemperatureForReasoning
         } satisfies IntegrationLanguageProvider
       ]
     : [])

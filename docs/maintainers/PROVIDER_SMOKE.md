@@ -85,7 +85,34 @@ Postgres gate, run `bun run test:integration:agents` as documented in
 | `bedrock-converse` | `AWS_REGION`; AWS credentials are also required by the default provider chain |
 | `bedrock-openai` | `BEDROCK_OPENAI_BASE_URL`, plus `BEDROCK_API_KEY` or `AWS_BEARER_TOKEN_BEDROCK` |
 | `ollama` | `OLLAMA_INTEGRATION=1`; a reachable service is required, with optional `OLLAMA_HOST`, `OLLAMA_INTEGRATION_MODEL`, and `OLLAMA_INTEGRATION_EMBEDDING_MODEL`. Direct `ollama.com` also requires `OLLAMA_API_KEY` and skips structured-output and embedding smoke. Thinking smoke is enabled for recognized Qwen 3/3.5, GPT-OSS, DeepSeek R1/v3.1, and Gemma 4 model IDs. |
-| `vertex` | `VERTEX_API_KEY` or `GOOGLE_API_KEY`; alternatively `VERTEX_ACCESS_TOKEN` or `GOOGLE_ACCESS_TOKEN` plus `GOOGLE_CLOUD_PROJECT`, `GCLOUD_PROJECT`, or `VERTEX_BASE_URL` |
+| `vertex` | Gemini: API key or bearer credentials. Partners: bearer credentials. Configure `VERTEX_ACCESS_TOKEN` / `GOOGLE_ACCESS_TOKEN` with a project/base URL, or opt into ADC using `VERTEX_INTEGRATION_USE_ADC=1` with a project/base URL and no token/API-key environment variables. |
+
+For Vertex ADC testing, the Google authentication library must be able to resolve
+Application Default Credentials (for example, an existing local ADC login or
+`GOOGLE_APPLICATION_CREDENTIALS`). `VERTEX_INTEGRATION_USE_ADC=1` only opts into
+testing that credential chain; it does not certify valid credentials or IAM access.
+Unset `VERTEX_ACCESS_TOKEN`, `GOOGLE_ACCESS_TOKEN`, `VERTEX_API_KEY` and
+`GOOGLE_API_KEY` for that test process: those sources otherwise take precedence
+in the provider. Partner model access must also be enabled for the project.
+
+For a bounded Vertex inference check with ADC, run:
+
+```bash
+VERTEX_INTEGRATION_USE_ADC=1 VERTEX_API_KEY= GOOGLE_API_KEY= \
+VERTEX_ACCESS_TOKEN= GOOGLE_ACCESS_TOKEN= \
+bun run scripts/vertex-live-smoke.ts
+```
+
+This explicitly performs chargeable live requests: streaming, native schema,
+one client tool loop (at most three model steps), and four embedding models.
+E5 uses `us-central1` by default; set `VERTEX_E5_LOCATION=europe-west4` for the
+other documented region. The other scenarios use the configured Vertex location.
+It defaults to gpt-oss 120B for chat; override `VERTEX_INTEGRATION_MODEL` for a
+compatible model. Each SDK operation has a 30-second timeout and no retries.
+It prints only check results, usage and HTTP status, and exits nonzero if any
+check fails. It does not modify `.env` or print credentials or model text.
+The selected location must support each checked model; individual model success
+does not establish full provider certification.
 
 Optional variables such as provider base URLs, model overrides, API versions, and embedding model overrides are read by `packages/core/tests/integration-registry.ts`.
 
@@ -167,3 +194,109 @@ bun run smoke:providers
 ```
 
 For a release confidence note, record the provider report along with whether `test:integration` ran live provider cases or skipped them due to missing credentials.
+
+
+## Vertex batch lifecycle smoke
+
+`scripts/vertex-batch-live-smoke.ts` uses ADC explicitly and a configured
+GOOGLE_CLOUD_PROJECT. Starting it creates a private temporary GCS bucket in
+us-central1, uploads one synthetic JSONL request, and submits one Gemini 2.5
+Flash batch. Obtain authorization for these chargeable temporary resources.
+It disables soft-delete retention on its own bucket so cleanup does not retain
+its test data. State files contain resource identifiers, never tokens.
+
+```bash
+bun run scripts/vertex-batch-live-smoke.ts start /tmp/vertex-batch-state.json
+bun run scripts/vertex-batch-live-smoke.ts status /tmp/vertex-batch-state.json
+bun run scripts/vertex-batch-live-smoke.ts cleanup /tmp/vertex-batch-state.json
+```
+
+Repeat status against the same state file until terminal; never restart because
+a job is queued. Status verifies exactly one expected output on success. Cleanup
+checks the bucket ownership label and object names, refuses active jobs, removes
+its own objects and bucket, and observes the batch deletion operation. Repeat
+cleanup if pendingDeletion is reported. If cancellation is needed, use the
+`cancel` command with the same state file, then observe terminal status before
+cleanup. Keep the state file until cleanup is confirmed. No existing user
+bucket or job is selected automatically.
+
+
+### Vertex OCR content verification
+
+`scripts/vertex-ocr-live-smoke.ts` makes two bounded billable calls using a
+synthetic invoice image checked into the Vertex test fixtures. It requires the
+complete fixture text, not merely HTTP success. It does not log credentials or
+extracted text. DeepSeek defaults to global and Mistral to us-central1; override
+with VERTEX_OCR_LOCATION and VERTEX_MISTRAL_LOCATION respectively.
+
+```bash
+VERTEX_INTEGRATION_USE_ADC=1 VERTEX_API_KEY= GOOGLE_API_KEY= VERTEX_ACCESS_TOKEN= GOOGLE_ACCESS_TOKEN= bun scripts/vertex-ocr-live-smoke.ts
+```
+
+As of the September 19 audit, DeepSeek responded but omitted text from the
+fixture, while Mistral returned 404 (model not found or no access). These are
+unresolved content-quality/access results, not successful OCR certification.
+
+
+### Vertex Live turn
+
+`scripts/vertex-interruption-live-smoke.ts` uses one session with manual VAD,
+requests a long synthetic answer, calls interrupt after its first audio chunk,
+requires a server interrupted event, then verifies a short follow-up answer in
+the same connection. It has a 45-second deadline and uses the same ADC setup as
+the other Live smoke scripts.
+
+`--image` sends the synthetic invoice PNG and asks for its total, requiring
+the expected number, output audio and turn completion. This regression first
+reproduced a server 1007 rejection of the invalid realtimeInput.media field.
+After changing to mediaChunks, immediate image/text sends failed the content
+assertion. With a one-second gap before the question, the same assertion passed
+with four audio chunks. The smoke retains that pacing and expected amount.
+
+`scripts/vertex-realtime-live-smoke.ts` explicitly opens one billable Live session
+and verifies a synthetic text turn produces audio and the expected transcript.
+It uses the default authenticated Node/Bun WebSocket transport, closes the
+session and terminates sockets after 45 seconds. Defaults are
+gemini-live-2.5-flash-native-audio and us-central1; override with VERTEX_LIVE_MODEL
+and VERTEX_LIVE_LOCATION.
+
+```bash
+VERTEX_INTEGRATION_USE_ADC=1 VERTEX_API_KEY= GOOGLE_API_KEY= VERTEX_ACCESS_TOKEN= GOOGLE_ACCESS_TOKEN= bun scripts/vertex-realtime-live-smoke.ts
+```
+
+Add `--tools` to the Vertex Live smoke to require one get_verification_code call,
+return a synthetic randomized code, and verify the spoken transcript contains
+that code. The verifier waits for turn-complete, not generation-complete, because
+a tool call can finish one generation before its follow-up audio is produced.
+A tool-only turn can also complete without audio; the tool smoke requires audio
+and the verified code before accepting the subsequent completed turn.
+
+Add `--audio` (separately from `--tools`) to send the synthetic fixture
+`packages/vertex/tests/fixtures/live-hello-world.pcm`: mono signed 16-bit
+little-endian PCM at 16 kHz saying "Please say hello world." It sends paced
+100 ms chunks followed by silence for voice activity detection, and requires
+both the user transcription and spoken assistant transcription to contain
+"hello world", plus actual output audio and a completed turn. No microphone
+access or recording is used.
+
+`scripts/vertex-resumption-live-smoke.ts` opens two bounded Live connections
+using ADC and a 55-second overall deadline. It remembers a synthetic randomized
+code, obtains a resumable handle, closes the connection, and reconnects with
+`providerOptions.sessionResumption.handle`. The second connection must speak the
+correct code without replaying the original prompt. Handles and content are not
+logged. Invoke with the same ADC environment as the Live turn smoke.
+
+Use `--update` separately on `vertex-realtime-live-smoke.ts` to replace system
+instructions after connection. The synthetic instructions require "hello world"
+while the user asks an arithmetic question, so the expected response is not
+provided in the user turn. The verifier still requires output audio, matching
+transcription and turn completion.
+
+`--translate` sends the synthetic English audio to
+`gemini-3.5-live-translate-preview` in global, targeting Spanish. It requires
+input transcription, translated "hola mundo", output audio and turn completion.
+`VERTEX_LIVE_API_VERSION` can override v1 for preview diagnostics. Current live
+attempts fail before setup acknowledgement: v1 and v1beta1 reject translationConfig
+with close code 1007; global v1alpha fails the WebSocket upgrade. This route is
+not live-certified. `VERTEX_LIVE_DIAGNOSTICS=1` prints the error message for these
+synthetic tests; ordinary mode reports only outcome counters.

@@ -3,34 +3,23 @@ import { z } from "zod";
 
 import { embed, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
 import { createVertex } from "../src/index.js";
+import { vertexIntegrationCredentials } from "../../core/tests/vertex-integration-profile.js";
 
-const accessToken = process.env.VERTEX_ACCESS_TOKEN ?? process.env.GOOGLE_ACCESS_TOKEN;
-const apiKey = process.env.VERTEX_API_KEY ?? process.env.GOOGLE_API_KEY;
-const projectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
-const location = process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION;
-const baseURL = process.env.VERTEX_BASE_URL;
+const credentials = vertexIntegrationCredentials(process.env, false);
 const textModelId = process.env.VERTEX_INTEGRATION_MODEL ?? "gemini-3.7-flash";
 const embeddingModelId = process.env.VERTEX_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-005";
-const usableAccessToken = accessToken && (projectId || baseURL) ? accessToken : undefined;
-
-const hasVertexCredentials = Boolean(usableAccessToken || apiKey);
-const describeIntegration = hasVertexCredentials ? describe : describe.skip;
+const describeIntegration = credentials.configured ? describe : describe.skip;
 
 describeIntegration("vertex adapter integration", () => {
-  const provider = () =>
-    createVertex({
-      accessToken: usableAccessToken,
-      apiKey,
-      projectId,
-      location,
-      baseURL
-    });
+  const provider = () => createVertex(credentials.options);
 
   it("generates text against the real Vertex API", async () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-vertex-ok",
-      maxTokens: 32
+      maxTokens: 256,
+      maxRetries: 0,
+      timeoutMs: 30_000
     });
 
     expect(result.text.toLowerCase()).toContain("integration-vertex-ok");
@@ -41,7 +30,9 @@ describeIntegration("vertex adapter integration", () => {
     const result = streamText({
       model: provider()(textModelId),
       prompt: "Reply with exactly: integration-vertex-stream-ok",
-      maxTokens: 32
+      maxTokens: 256,
+      maxRetries: 0,
+      timeoutMs: 30_000
     });
 
     const chunks: string[] = [];
@@ -59,7 +50,9 @@ describeIntegration("vertex adapter integration", () => {
     const result = await generateText({
       model: provider()(textModelId),
       prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
-      maxTokens: 32,
+      maxTokens: 256,
+      maxRetries: 0,
+      timeoutMs: 30_000,
       maxSteps: 2,
       tools: {
         sum: tool({
@@ -90,7 +83,10 @@ describeIntegration("vertex adapter integration", () => {
         city: z.string(),
         country: z.string()
       }),
-      mode: "native"
+      mode: "native",
+      maxTokens: 256,
+      maxRetries: 0,
+      timeoutMs: 30_000
     });
 
     expect(result.objectMode).toBe("native");
@@ -111,14 +107,13 @@ describeIntegration("vertex adapter integration", () => {
 
 // Opt in independently of Gemini: a passing Google route does not certify Claude.
 const claudeModelId = process.env.VERTEX_CLAUDE_INTEGRATION_MODEL;
-const hasClaudeConfig = Boolean(claudeModelId && (projectId || baseURL));
+const claudeCredentials = vertexIntegrationCredentials(process.env, true);
+const hasClaudeConfig = Boolean(claudeModelId && claudeCredentials.configured);
 const describeClaude = hasClaudeConfig ? describe : describe.skip;
 describeClaude("Claude on Vertex integration", () => {
   const model = () => createVertex({
-    accessToken: usableAccessToken,
-    projectId,
-    location: process.env.VERTEX_CLAUDE_LOCATION ?? location ?? "us-east5",
-    baseURL
+    ...claudeCredentials.options,
+    location: process.env.VERTEX_CLAUDE_LOCATION ?? claudeCredentials.options.location ?? "us-east5"
   })(claudeModelId!);
 
   it("generates text through the Anthropic publisher", async () => {

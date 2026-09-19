@@ -1,5 +1,6 @@
+import { targetKey } from "./target.js";
 import { GatewayError, type GatewayModelTarget } from "./types.js";
-export type GatewayMetricOutcome = "success" | "error" | "cancelled";
+export type GatewayMetricOutcome = "success" | "error" | "cancelled" | "cache";
 export interface GatewayMetricsSnapshot {
   inFlight: number;
   sampleCount: number;
@@ -9,11 +10,12 @@ export interface GatewayMetricsSnapshot {
   p50LatencyMs?: number;
   p95LatencyMs?: number;
   p95TtftMs?: number;
+  p50TokensPerSecond?: number;
   lastCompletedAt?: number;
 }
 export interface GatewayMetricsHandle {
   firstText(): void;
-  end(outcome: GatewayMetricOutcome): void;
+  end(outcome: GatewayMetricOutcome, outputTokens?: number): void;
 }
 export interface GatewayMetricsStore {
   begin(target: GatewayModelTarget): GatewayMetricsHandle | undefined;
@@ -25,7 +27,7 @@ export interface GatewayMetricsOptions {
   maxSamplesPerTarget?: number;
   now?: () => number;
 }
-interface Sample { at: number; latencyMs: number; ttftMs?: number; outcome: GatewayMetricOutcome; }
+interface Sample { at: number; latencyMs: number; ttftMs?: number; outcome: GatewayMetricOutcome; tokensPerSecond?: number; }
 /** Bounded, process-local metrics. New targets are untracked while every capacity slot is active. */
 export const createGatewayMetrics = (options: GatewayMetricsOptions = {}): GatewayMetricsStore => {
   const windowMs = options.windowMs ?? 60_000, maxTargets = options.maxTargets ?? 128, maxSamples = options.maxSamplesPerTarget ?? 256;
@@ -34,9 +36,9 @@ export const createGatewayMetrics = (options: GatewayMetricsOptions = {}): Gatew
   }
   const now = options.now ?? Date.now;
   const entries = new Map<string, { inFlight: number; samples: Sample[]; touched: number }>();
-  const key = (target: GatewayModelTarget) => JSON.stringify([target.provider, target.modelId]);
+  const key = targetKey;
   const expire = (entry: { samples: Sample[] }, at: number) => { entry.samples = entry.samples.filter(x => x.at > at - windowMs); };
-  const percentile = (values: number[], fraction: number) => values.length ? [...values].sort((a, b) => a - b)[Math.ceil(values.length * fraction) - 1] : undefined;
+  const percentile = (sorted: number[], fraction: number) => sorted.length ? sorted[Math.ceil(sorted.length * fraction) - 1] : undefined;
   return {
     begin(target) {
       const id = key(target), started = now();
@@ -53,11 +55,13 @@ export const createGatewayMetrics = (options: GatewayMetricsOptions = {}): Gatew
       let ended = false, ttftMs: number | undefined;
       return {
         firstText() { if (!ended && ttftMs === undefined) ttftMs = Math.max(0, now() - started); },
-        end(outcome) {
+        end(outcome, outputTokens) {
           if (ended) return; ended = true;
           const at = now(); entry!.inFlight--; entry!.touched = at;
           expire(entry!, at);
-          entry!.samples.push({ at, latencyMs: Math.max(0, at - started), ...(ttftMs !== undefined ? { ttftMs } : {}), outcome });
+          const duration = at - started - (ttftMs ?? 0);
+          const tokensPerSecond = outcome === "success" && ttftMs !== undefined && outputTokens !== undefined && Number.isSafeInteger(outputTokens) && outputTokens > 1 && duration > 0 ? (outputTokens - 1) * 1000 / duration : undefined;
+          entry!.samples.push({ ...(tokensPerSecond !== undefined ? { tokensPerSecond } : {}), at, latencyMs: Math.max(0, at - started), ...(ttftMs !== undefined ? { ttftMs } : {}), outcome });
           if (entry!.samples.length > maxSamples) entry!.samples.splice(0, entry!.samples.length - maxSamples);
         }
       };
@@ -67,11 +71,14 @@ export const createGatewayMetrics = (options: GatewayMetricsOptions = {}): Gatew
       expire(entry, now());
       const samples = entry.samples;
       // Cancelled requests never become provider latency/error evidence.
-      const completed = samples.filter(x => x.outcome !== "cancelled");
-      return { inFlight: entry.inFlight, sampleCount: samples.length, successes: samples.filter(x => x.outcome === "success").length,
+      const completed = samples.filter(x => x.outcome !== "cancelled" && x.outcome !== "cache");
+      const latencies = completed.map(x => x.latencyMs).sort((a, b) => a - b);
+      const firstText = completed.flatMap(x => x.ttftMs === undefined ? [] : [x.ttftMs]).sort((a, b) => a - b);
+      const throughput = completed.flatMap(x => x.tokensPerSecond === undefined ? [] : [x.tokensPerSecond]).sort((a, b) => a - b);
+      return { p50TokensPerSecond: percentile(throughput, .5), inFlight: entry.inFlight, sampleCount: samples.length, successes: samples.filter(x => x.outcome === "success").length,
         errors: samples.filter(x => x.outcome === "error").length, cancellations: samples.filter(x => x.outcome === "cancelled").length,
-        p50LatencyMs: percentile(completed.map(x => x.latencyMs), .5), p95LatencyMs: percentile(completed.map(x => x.latencyMs), .95),
-        p95TtftMs: percentile(completed.flatMap(x => x.ttftMs === undefined ? [] : [x.ttftMs]), .95), lastCompletedAt: samples.at(-1)?.at };
+        p50LatencyMs: percentile(latencies, .5), p95LatencyMs: percentile(latencies, .95),
+        p95TtftMs: percentile(firstText, .95), lastCompletedAt: samples.at(-1)?.at };
     }
   };
 };

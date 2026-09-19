@@ -1,5 +1,33 @@
 # @zhivex-ai/gateway
 
+## Vertex partner routing
+
+Register one Vertex adapter with Google Cloud credentials. The publisher stays
+inside `modelId`; the gateway provider remains `vertex` for Google-hosted models.
+
+```ts
+import { createGateway } from "@zhivex-ai/gateway";
+import { createVertex } from "@zhivex-ai/vertex";
+
+const gateway = createGateway({
+  adapters: { vertex: createVertex({
+    projectId: process.env.GOOGLE_CLOUD_PROJECT,
+    location: "global"
+  }) },
+  maxRetries: 0
+});
+
+const result = await gateway.generate({
+  primary: { provider: "vertex", modelId: "openai/gpt-oss-120b-maas" },
+  fallbacks: [{ provider: "vertex", modelId: "gemini-3.7-flash" }],
+  messages: [{ role: "user", content: "Explain a binary search." }]
+});
+```
+
+This requires working ADC or another bearer credential resolved by Vertex.
+Model permissions, regional availability and quotas apply separately to each
+target. See the [Vertex provider](../vertex/README.md) for route-specific limits.
+
 Routing and fallback package for Zhivex AI SDK.
 
 The gateway now supports:
@@ -18,10 +46,10 @@ For agent routing, the gateway can also filter by `agentCapabilities`, such as p
 ## Install
 
 ```bash
-bun add @zhivex-ai/gateway @zhivex-ai/core @zhivex-ai/anthropic @zhivex-ai/openai @zhivex-ai/ollama
+bun add @zhivex-ai/gateway @zhivex-ai/core @zhivex-ai/anthropic @zhivex-ai/openai @zhivex-ai/ollama @zhivex-ai/vertex
 ```
 
-Install the provider packages used by your own adapter map; the examples below use OpenAI, Ollama and Anthropic.
+Install the provider packages used by your own adapter map; these examples use OpenAI, Ollama, Anthropic and Vertex.
 
 ## Usage
 
@@ -75,7 +103,7 @@ The gateway also supports `streamText()`, `generateObject()`, and `streamObject(
 - Requests containing image attachments only route to models that declare `capabilities.vision: true`. The gateway never removes images to make a target appear compatible; if one target cannot accept the original request, it is skipped in favor of a compatible fallback.
 - `scoreTarget(context)` can replace the built-in name-based heuristic with application metrics. It must return a finite number; higher scores route first.
 - Routing amplification is bounded even if a request is assembled from external input: requests accept at most `maxFallbacks` targets (default 8, hard maximum 32), `maxRetries` cannot exceed 5, and `maxTotalAttempts` caps provider calls across the whole routed operation including later agent steps (default 32, hard maximum 128). Model IDs are non-empty, limited to 256 characters, and cannot contain control characters. `maxCostPer1kTokens` and configured/catalog costs must be finite and non-negative.
-- `onAttempt` and `onAgentRoute` are best-effort observers. They receive an `abortSignal` and are allowed `observerTimeoutMs` to finish (default 1 second); rejection, timeout, or request cancellation cannot retry successful provider work or block routing indefinitely.
+- `onAttempt` and `onAgentRoute` are best-effort observers. Legacy callbacks run detached; `observerMode: "await"` explicitly awaits attempt callbacks and `"background"` queues them with bounded capacity. They receive an `abortSignal` and are allowed `observerTimeoutMs` to finish (default 1 second); rejection, timeout, or request cancellation cannot retry successful provider work or block routing indefinitely.
 
 Keep primary/fallback selection and these ceilings under application control when mapping an HTTP request into `GatewayRequest`. `maxCostPer1kTokens` limits model price, not the final invoice; use `maxTotalAttempts`, provider-side spend limits, authentication, and rate limiting for a complete cost boundary.
 
@@ -240,7 +268,7 @@ Cooldown is `min(maxCooldownMs, max(cooldownMs, Retry-After))`, with defaults of
 
 `adaptiveRouting` is an explicit alternative to legacy scoring. Supply a policy version, nonnegative weights for `latency`, `cost`, `quality`, `load`, `errorRate`, positive `latencyScaleMs`/`costScale`, and explicit `coldStart`, `unknownCost`, `missingQuality` policies (`allow`/`reject`). Quality profiles carry a target, task `intent`, score in [0,1] and evaluation version. There are no model-name quality heuristics in this mode.
 
-The score is quality reward minus normalized p95 latency, estimated request cost, in-flight load and observed error rate penalties. Enable `metrics` and `costAccounting` for those signals. Missing signals under `allow` omit that score term and remain listed as missing; `reject` excludes the destination. Expired samples become cold start. Capabilities and circuits are filtered before ordering, and circuits are rechecked atomically before each call. Ties preserve primary/fallback input order. `routeDecision.adaptive` records policy version, signals, profile versions and exclusions. Do not configure both `scoreTarget` and `adaptiveRouting`. These rules are transparent heuristics, not a claim of globally optimal routing.
+The score is quality reward minus normalized p95 latency, estimated request cost, in-flight load and observed error rate penalties. Enable `metrics` and `costAccounting` for those signals. Missing penalty signals under `allow` receive a conservative normalized penalty (default 1), missing quality/throughput receive no reward, and all remain listed as missing; `reject` excludes the destination. Expired samples become cold start. Capabilities and circuits are filtered before ordering, and circuits are rechecked atomically before each call. Ties preserve primary/fallback input order. `routeDecision.adaptive` records policy version, signals, profile versions and exclusions. Do not configure both `scoreTarget` and `adaptiveRouting`. These rules are transparent heuristics, not a claim of globally optimal routing.
 
 ## Composing configured agents
 
@@ -249,3 +277,180 @@ Pass `agent: configuredAgent` to `runAgent` or `streamAgent`. The gateway substi
 Configured gateway runs persist a `gatewayAgentRouteBinding` metadata value for agent ID, primary/fallback targets, routing policy version and harness fingerprint. Resume must retain that binding; changing it fails before provider work. An older direct run without this binding requires a separately designed migration instead of silent adoption. Core still validates harness/environment fingerprints. Reserve `gatewayAgentRouteBinding` and `gatewayPortableHistory` for runtime use.
 
 For canonical history, import a fresh run with `messages` only. Do not combine import with prompt, state, runId, handoff, approvals or idempotencyKey. Resolved historical tools are input, never effects to replay. Then resume with store/runId or state and approvals as needed, without messages. Portable-history capability checks survive store reloads and compaction. Legacy inputs remain supported. Provider-specific approval data stays in durable state; it is not part of the portable history import format.
+
+
+## Production controls
+
+All controls below are optional and compose with text, object and agent routing.
+They do not require provider-specific changes. Existing default adapter maps and
+legacy scoring remain supported. Adaptive missing-data penalties are intentionally
+more conservative than the previous zero-penalty behavior.
+
+```ts
+import {
+  createGateway, createGatewayAdmissionController, createGatewayBudgetStore,
+  createGatewayMetrics, createGatewayRoutingPolicy
+} from "@zhivex-ai/gateway";
+import { createInMemoryGenerateCache, createModelCatalog } from "@zhivex-ai/core";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+// Supply a verified catalog snapshot for your actual models before enabling cost routing.
+const catalog = createModelCatalog([{
+  provider: "openai", modelId: "your-model",
+  inputCostPer1kTokens: 0.001, outputCostPer1kTokens: 0.003
+}], { snapshotVersion: "example-only", pricing: {
+  version: "example-only", currency: "USD", unit: "per_1k_tokens"
+} });
+const budgets = createGatewayBudgetStore({ limit: 20, currency: "USD" });
+const gateway = createGateway({
+  adapters: { openai: createOpenAI() },
+  modelCatalog: catalog,
+  costAccounting: { unknownCostPolicy: "reject", cacheAssumption: "none" },
+  timeoutMs: 20_000,
+  metrics: createGatewayMetrics(),
+  adaptiveRouting: createGatewayRoutingPolicy("interactive"),
+  admission: createGatewayAdmissionController({
+    maxConcurrent: 16, requestsPerMinute: 600, tokensPerMinute: 100_000,
+    maxQueue: 32, queueTimeoutMs: 500
+  }),
+  budget: { store: budgets, currency: "USD", reserveAmount: 0.10 },
+  cache: { store: createInMemoryGenerateCache(), scope: "credential-revision-1" },
+  affinity: { ttlMs: 300_000, maxEntries: 1000, maxScoreLoss: 0.1 },
+  observerMode: "background", observerQueueCapacity: 256
+});
+const result = await gateway.generate({
+  primary: { provider: "openai", modelId: "your-model" },
+  messages: [{ role: "user", content: "Explain binary search." }],
+  maxTokens: 200, budgetScope: "tenant-123:2026-09", cacheScope: "tenant-123",
+  affinityKey: "conversation-456"
+});
+await gateway.flushObservers();
+await gateway.flushControls();
+console.log(result.text, gateway.diagnostics(), budgets.snapshot("tenant-123:2026-09"));
+```
+
+### Deadline and admission
+
+`timeoutMs` covers one invocation, including queueing, retries, backoff, tools,
+observers and streamed output. A request may shorten the configured deadline but
+cannot extend it. Expiration raises `GatewayDeadlineError` and aborts downstream
+signals. Providers/tools must cooperate to stop external effects; ignoring abort
+cannot keep the gateway response pending indefinitely. Durable resumes start a
+new invocation deadline. Normal completion removes timers and signal listeners.
+
+Admission is per provider/model/deployment and happens before every upstream
+call, including retries and later agent steps. Concurrency slots are released on
+completion, abort or stream iterator return. The global queue is bounded and
+waits at most `queueTimeoutMs`; the local implementation polls at up to 10 ms
+intervals and does not promise strict FIFO fairness. Capacity denial skips to an
+eligible fallback without marking the destination unhealthy.
+
+RPM and TPM use fixed 60-second windows. TPM reserves serialized input length / 4
+plus `maxTokens`, and requires `maxTokens`; this is an estimate, not provider token
+parity. Reported total tokens reconcile reservations in the same window; unknown
+usage keeps the reservation. RPM is not refunded after admission. Capacity
+pressure never evicts an unexpired quota window. Set upstream provider limits as
+the final boundary for usage the provider may continue after cancellation.
+
+### Monetary reservations
+
+Each dispatched model attempt reserves `budget.reserveAmount` in the trusted
+`budgetScope`. Successful known usage reconciles that amount against catalog
+pricing; failed, cancelled, partial or unpriceable usage retains the reservation
+as uncertain spend. No reservation is made for an exact cache hit. Budget denial
+stops the operation without retry or fallback. The configured currency must
+match the catalog valuation to release any unused reservation.
+
+This limits **admitted reservations**, not the exact provider invoice. Choose a
+conservative per-attempt reservation alongside `maxTokens`; actual reported cost
+can exceed the reservation and is recorded fully, blocking subsequent work when
+the scope is exhausted. Unknown spend remains blocked until the application
+reconciles its accounting externally. Local scopes never evict or automatically
+reset; use explicit period scopes and bounded `maxScopes`. Do not use arbitrary
+client-supplied scope values. For authoritative billing, implement the store
+against the service's durable ledger.
+
+`GatewayBudgetStore` and `GatewayAdmissionController` are asynchronous injection
+contracts for shared backends. The supplied factories are process-local; they do
+not implement Redis or cross-process coordination. Remote implementations must
+reserve atomically, expire abandoned concurrency leases, honor abort and make
+settlement/release idempotent. Settlement runs outside the provider response path. Failed or timed-out settlement
+cannot retry successful provider work; diagnostics report it and further budgeted dispatches fail closed on that
+gateway instance. Recover the backend/ledger before replacing the instance.
+
+### Adaptive policies and destination identity
+
+`createGatewayRoutingPolicy("interactive" | "economy" | "quality")` returns an
+explicit versioned starting policy. Configure quality profiles for economy and
+quality presets, which reject missing quality. Calibrate costs and latency scales
+on your workload; presets are not measured service-level guarantees.
+
+`latencyMetric: "ttft"` uses first-text latency; `"total"` retains full-attempt
+latency. Optional `weights.throughput` uses measured median output tokens/second
+with `throughputScale` (default 100). Throughput is an approximation using reported
+output tokens minus the first token and elapsed time after first text. Cache hits
+and cancellations do not supply provider latency evidence. `minSamples` prevents
+single samples from being treated as mature health evidence, and `minQuality`
+enforces an evaluated quality floor before ranking.
+
+Allowed missing latency/cost/load/error signals incur `missingSignalPenalty`
+(default 1, minimum 1). They are never represented as measured zero cost/latency.
+`explorationEvery` optionally probes one eligible cold destination every N
+operations; presets use 20. Exploration rotates candidates and cannot bypass
+capability, cost, quality-floor or circuit exclusions. It is local and deterministic,
+not a learned optimal policy.
+
+A target may supply `deploymentId`. Register it in
+`deployments: { "region-a": { provider: "openai", adapter } }` with an adapter
+configured for that endpoint, region and credential. Unknown or mismatched IDs
+are skipped without silently using the default adapter. Deduplication, metrics,
+circuits, quotas, quality profiles, cache partitions and attempt diagnostics
+include deployment identity. Catalog pricing still uses provider/model identity;
+deployment-specific negotiated tariffs require a separate pricing design.
+
+Optional affinity requires adaptive routing and both `cacheScope` and
+`affinityKey`. After a successful attempt, subsequent invocations may reuse that
+destination only if it remains eligible and within `maxScoreLoss` of the best
+score. Expired entries are ignored; capacity evicts the oldest stored affinity.
+Exploration takes precedence. This promotes provider prompt-cache locality; it
+does not prove an upstream cache hit or change provider caching parameters.
+
+### Exact cache and observer lifecycle
+
+Gateway caching reuses Core's canonical cache key middleware and configured store.
+It requires both a configured authentication scope and a per-request `cacheScope`;
+keys additionally include budget scope and deployment. Rotate the configured scope
+when credentials/endpoints change. Store TTL/retention belongs to the selected
+Core cache implementation. No semantic similarity cache is enabled.
+
+Only non-streaming text-only model steps without tools or `providerOptions` are
+eligible. Tool effects, portable tool history, images and provider state bypass
+this cache. Identical simultaneous misses share one upstream call (up to 1024
+active keys). One caller cancelling does not cancel the other subscribers; all
+subscribers leaving aborts the shared call. Cache reads time out after `cache.timeoutMs` (default 50 ms); writes are detached,
+bounded to 256 pending operations and use the same timeout. Cache failures do not
+retry successful provider work. `flushControls()` waits for the current cache-write
+and resource-settlement batch; resource settlements have `resourceTimeoutMs`
+(default 1000 ms). Pending counts and dropped cache writes are available in diagnostics. `attempt.cacheHit` identifies reuse, and detailed attempt valuation
+uses zero new upstream tokens; response usage still describes the reused output.
+A coalesced follower is also a reuse; correlate requests with your application
+ledger when attributing the originating call's cost.
+
+The legacy observer behavior stays detached. `observerMode: "background"` adds a
+bounded FIFO attempt queue, `diagnostics().droppedObservers`, and
+`flushObservers()` for the currently queued batch. Every callback remains bounded
+by `observerTimeoutMs`. `"await"` explicitly awaits attempt observers. None of
+these modes can preempt synchronous CPU work inside a callback. Route-selection
+observers keep their existing detached behavior.
+
+
+### Verification
+
+Run `bun run test packages/gateway/tests` for routing and resource-lifetime
+regressions. After `bun run build`, run
+`bun scripts/benchmarks/gateway-controls.mjs /tmp/gateway-controls.json` to compare
+local default/control overhead and verify exact-cache/shared-miss provider call
+counts. The benchmark asserts correct answers and actual fixture calls, includes
+runtime/source/artifact fingerprints, and explicitly excludes live provider
+performance or competitive claims. Its five measured trials are a smoke baseline,
+not a statistically reliable production tail-latency estimate.

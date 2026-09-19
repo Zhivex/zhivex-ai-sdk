@@ -17,8 +17,9 @@ Required stable root entry points from `@zhivex-ai/agents`:
 - `runAgent`
 - `resumeAgent`
 - `streamAgent`
-- `createRunner` and session services from `@zhivex-ai/sdk`
 - production safety, redaction, budget, approvals, handoffs, subagents, and UI streaming
+
+`createRunner` and session services are Stable companion APIs from `@zhivex-ai/sdk`, not exports of the agents root.
 
 Required stable operations entry points from `@zhivex-ai/agents/ops`:
 
@@ -27,13 +28,15 @@ Required stable operations entry points from `@zhivex-ai/agents/ops`:
 - evaluation fixtures and reports
 - provider-support inspection and matrix reports
 
-Beta entry points from `@zhivex-ai/agents/beta` may remain beta if their docs say so:
+Required stable entry points from `@zhivex-ai/agents/control-plane`:
 
 - control-plane capsules
 - approval queues
 - run ledgers
 - golden traces
 - capability router
+
+`@zhivex-ai/agents/beta` retains these control-plane exports as compatibility aliases. Its remaining harness binding, audit, hosted-tool inspection, and external-effect reconciliation helpers remain Beta; use the dedicated control-plane entry point for Stable contracts.
 
 `streamLiveAgent` is Stable and remains isolated under the dedicated `@zhivex-ai/agents/realtime` entry point so the agent root stays narrow. Deterministic mocks belong under the stable `@zhivex-ai/agents/testing` entry point; neither belongs in the root.
 

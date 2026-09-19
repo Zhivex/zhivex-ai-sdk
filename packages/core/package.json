@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/core",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "description": "Shared contracts and runtime helpers for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -16,6 +16,12 @@
       "browser": "./dist/secure-id.js",
       "node": "./dist/secure-id-node.js",
       "default": "./dist/secure-id.js"
+    },
+    "#realtime-transport": {
+      "types": "./realtime-transport-internal.d.ts",
+      "browser": "./dist/realtime-browser.js",
+      "node": "./dist/realtime-node.js",
+      "default": "./dist/realtime-browser.js"
     }
   },
   "exports": {
@@ -67,7 +73,8 @@
   "files": [
     "dist",
     "secure-id-internal.d.ts",
-    "README.md"
+    "README.md",
+    "realtime-transport-internal.d.ts"
   ],
   "sideEffects": false,
   "repository": {
@@ -90,7 +97,8 @@
     "access": "public"
   },
   "dependencies": {
-    "zod": "^4.6.3"
+    "zod": "^4.6.3",
+    "ws": "^8.21.3"
   },
   "peerDependencies": {
     "@opentelemetry/api": "^1.9.0"
