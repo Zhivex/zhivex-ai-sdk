@@ -13,7 +13,7 @@ const readManifest = async (packageName: string) => JSON.parse(
 // additionally require imageInputToDataUrl from 1.20.0; xAI follows OpenAI.
 // Anthropic browser toolsets and Vertex/Qwen's shared realtime transport
 // require the contracts and provider helpers introduced in 1.21.0.
-// OpenAI's rejected-tool accounting requires ProviderToolCallError.usage in 1.22.0.
+// OpenAI and Qwen rejected-tool accounting requires ProviderToolCallError.usage in 1.22.0.
 const reviewedProviderCoreRanges = {
   anthropic: "^1.21.0",
   "azure-openai": "^1.20.0",
@@ -25,7 +25,7 @@ const reviewedProviderCoreRanges = {
   ollama: "^1.19.0",
   openai: "^1.22.0",
   openrouter: "^1.20.0",
-  qwen: "^1.21.0",
+  qwen: "^1.22.0",
   vertex: "^1.21.0",
   xai: "^1.20.0",
   zai: "^1.19.0"
