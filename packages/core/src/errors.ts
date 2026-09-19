@@ -90,6 +90,8 @@ export class ProviderToolCallError extends ZhivexAIError {
   readonly reason: ProviderToolCallErrorReason;
   readonly retryable: boolean;
   readonly effectsPossible: boolean;
+  /** Validated terminal accounting, independent of whether the tool call was safe. */
+  readonly usage?: Readonly<TokenUsage>;
 
   constructor(options: {
     provider: string;
@@ -98,6 +100,7 @@ export class ProviderToolCallError extends ZhivexAIError {
     reason: ProviderToolCallErrorReason;
     retryable?: boolean;
     effectsPossible?: boolean;
+    usage?: TokenUsage;
     cause?: unknown;
   }) {
     super("Provider tool call could not be materialized safely.", { cause: options.cause });
@@ -107,6 +110,20 @@ export class ProviderToolCallError extends ZhivexAIError {
     this.reason = options.reason;
     this.effectsPossible = options.effectsPossible ?? false;
     this.retryable = this.effectsPossible ? false : (options.retryable ?? false);
+    const supplied = options.usage;
+    if (supplied && [supplied.inputTokens, supplied.outputTokens].every(
+      count => typeof count === "number" && Number.isSafeInteger(count) && count >= 0
+    )) {
+      const copy: TokenUsage = {};
+      let valid = true;
+      for (const key of ["inputTokens", "outputTokens", "cachedInputTokens", "cacheWriteTokens", "reasoningTokens", "totalTokens"] as const) {
+        const count = supplied[key];
+        if (count === undefined) continue;
+        if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) { valid = false; break; }
+        copy[key] = count;
+      }
+      if (valid) this.usage = Object.freeze(copy);
+    }
   }
 }
 

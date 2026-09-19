@@ -357,6 +357,9 @@ Run the opt-in cross-provider image smoke with `INLINE_IMAGE_INTEGRATION=1 bun -
 
 Object generation preserves tool approval policies and lifecycle hooks. Provider stream error events terminate the operation and reject `collect()` before pending tools execute. OpenAI, Anthropic, Gemini and Qwen language-model routes validate HTTP status inside their retry boundary; DeepSeek also cancels retry waits when its timeout expires.
 
+`ProviderToolCallError.usage` optionally carries validated terminal token counts when a rejected OpenAI Responses tool call still has terminal accounting. Incomplete calls remain rejected and are never emitted for execution. Missing or invalid terminal usage stays absent; applications must not estimate billed usage or assume retry safety from the presence of counters. The numeric record is copied, frozen, and excludes provider payloads.
+
+
 The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives from `core`, including:
 
 - `generateText`, `streamText`
