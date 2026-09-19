@@ -26,6 +26,7 @@ import {
 } from "./capabilities.js";
 
 import {
+  imageInputToDataUrl,
   CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
@@ -773,7 +774,7 @@ const mapContentParts = (message: ModelMessage) => {
       const detail = imageDetailForPart(part);
       content.push({
         type: "image_url",
-        image_url: { url: part.image, ...(detail ? { detail } : {}) },
+        image_url: { url: imageInputToDataUrl(part), ...(detail ? { detail } : {}) },
         ...promptCacheBreakpointForContentPart(part)
       });
     } else if (part.type === "file") {
@@ -1816,7 +1817,7 @@ const toResponsesInput = (messages: ModelMessage[], format?: ModelGenerateInput[
           const detail = imageDetailForPart(part);
           content.push({
             type: "input_image",
-            image_url: part.image,
+            image_url: imageInputToDataUrl(part),
             ...(detail ? { detail } : {}),
             ...promptCacheBreakpointForContentPart(part)
           });

@@ -1,6 +1,6 @@
 # @zhivex-ai/meta
 
-Meta Model API adapter for Zhivex AI SDK. `muse-spark-1.2` is the recommended direct Meta model; the official `muse-spark-1.2-contributor` variant and older IDs such as `muse-spark-1.1` remain usable when they are available to your Meta project.
+Meta Model API adapter for Zhivex AI SDK. `muse-spark-1.3` is the recommended direct Meta model; the official `muse-spark-1.2-contributor` variant and older IDs such as `muse-spark-1.1` remain usable when they are available to your Meta project.
 
 ## Install
 
@@ -19,7 +19,7 @@ const meta = createMeta({
 });
 
 const result = await generateText({
-  model: meta("muse-spark-1.2"),
+  model: meta("muse-spark-1.3"),
   prompt: "Explain tool calling in one sentence."
 });
 
@@ -39,7 +39,7 @@ import { createMeta, metaToolSearchTool, metaWebSearchTool } from "@zhivex-ai/me
 const meta = createMeta({ apiKey: process.env.MODEL_API_KEY });
 
 const result = await generateText({
-  model: meta("muse-spark-1.2"),
+  model: meta("muse-spark-1.3"),
   prompt: "Find the current primary source and summarize it.",
   tools: {
     webSearch: metaWebSearchTool(),

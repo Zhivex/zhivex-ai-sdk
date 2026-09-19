@@ -188,6 +188,7 @@ const stableSymbols = [
   "normalizeFinishReason",
   "normalizeAgentRunState",
   "normalizeMessages",
+  "imageInputToDataUrl",
   "normalizeWorkflowRunState",
   "normalizeWorkflowStateRecord",
   "openWebSocketConnection",
