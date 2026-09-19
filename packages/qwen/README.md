@@ -494,5 +494,5 @@ QWEN_IMAGE_INTEGRATION=1 bun --env-file=.env run test:integration packages/qwen/
 Named tool choices may return complete `tool_calls` fragments with a `stop`
 finish reason. The adapter validates the complete batch at normal stream end
 and emits those calls with normalized `tool-calls`, retaining the original
-provider finish reason. Truncated or invalid batches never emit tool calls;
+provider finish reason. Truncated or invalid batches, including explicit provider errors before stream completion, never emit tool calls;
 `ProviderToolCallError` retains terminal token usage when supplied by Qwen.

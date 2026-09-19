@@ -34,3 +34,9 @@ it("does not emit a previously finished call when late fragments invalidate its 
   expect(events.some(e => e.type === "tool-call")).toBe(false);
   expect(error).toBeDefined();
 });
+it("does not emit calls when a provider error arrives after terminal tool fragments", async () => {
+  const { events, error } = await collect("stop", [call()], [{ error: { code: "fixture_error", message: "PRIVATE_PROVIDER_DETAIL" } }]);
+  expect(events.some(e => e.type === "tool-call")).toBe(false);
+  expect(error).toMatchObject({ provider: "qwen", reason: "response_failed", usage: { inputTokens: 12, outputTokens: 8 } });
+  expect(String(error)).not.toContain("PRIVATE_PROVIDER_DETAIL");
+});

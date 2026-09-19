@@ -1873,13 +1873,15 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           fallbackId: string;
           name: string;
           args: string;
-          emitted: boolean;
         }>();
         const seenIds = existingToolCallIds(input.messages);
         const fallbackGeneration = nextFallbackToolCallGeneration("chat", input, seenIds);
 
         let lastFinishReason: string | undefined;
         let lastUsage: any;
+        const failure = (reason: "stream_truncated" | "incomplete_arguments" | "invalid_json" | "inconsistent_metadata" | "response_failed") =>
+          new ProviderToolCallError({ provider: "qwen", transport: "chat", diagnosticCode: "QWEN_CHAT_TOOL_CALL_INVALID",
+            reason, usage: mapChatUsage(lastUsage) });
 
         for await (const event of streamSSE(response)) {
           if (event.data === "[DONE]") {
@@ -1887,6 +1889,10 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           }
 
           const json = JSON.parse(event.data);
+          if (json.error) {
+            if (json.usage) lastUsage = json.usage;
+            throw failure("response_failed");
+          }
           const choice = json.choices?.[0];
           const delta = choice?.delta;
 
@@ -1911,8 +1917,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               id: stableToolCallId(toolCall.id),
               fallbackId: fallbackToolCallId("chat", fallbackGeneration, index),
               name: toolCall.function?.name ?? "",
-              args: "",
-              emitted: false
+              args: ""
             };
             existing.id = stableToolCallId(toolCall.id) ?? existing.id;
             existing.name ||= toolCall.function?.name ?? "";
@@ -1930,9 +1935,6 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
         // stream ends and validate the whole batch before exposing any effects.
         const materialized = [];
         if (toolBuffers.size) {
-          const failure = (reason: "stream_truncated" | "incomplete_arguments" | "invalid_json" | "inconsistent_metadata") =>
-            new ProviderToolCallError({ provider: "qwen", transport: "chat", diagnosticCode: "QWEN_CHAT_TOOL_CALL_INVALID",
-              reason, usage: mapChatUsage(lastUsage) });
           if (!lastFinishReason) throw failure("stream_truncated");
           if (lastFinishReason !== "stop" && lastFinishReason !== "tool_calls") throw failure("incomplete_arguments");
           for (const call of toolBuffers.values()) {
