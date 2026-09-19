@@ -1,5 +1,11 @@
 # @zhivex-ai/qwen
 
+## 0.14.4
+
+### Patch Changes
+
+- 35e2bb4: Preserve complete Chat tool calls when named tool selection ends with `stop`. Validate the entire buffered batch before emission, reject incomplete or invalid calls and late explicit provider errors, and retain reported usage on typed failures. Require Core 1.22.0 for failure usage accounting.
+
 ## 0.14.3
 
 ### Patch Changes
