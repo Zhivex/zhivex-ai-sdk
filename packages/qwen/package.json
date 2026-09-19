@@ -41,7 +41,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^1.21.0",
+    "@zhivex-ai/core": "^1.22.0",
     "zod": "^4.6.3"
   }
 }
