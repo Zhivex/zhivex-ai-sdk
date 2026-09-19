@@ -1,5 +1,24 @@
 # @zhivex-ai/anthropic
 
+## 0.12.0
+
+### Minor Changes
+
+- Support Claude browser toolset declarations and preserve toolset identity in generated/streamed calls and replayed results. Allow native browser result blocks through the shared Anthropic transport. Vertex enables the browser toolset only on supported models.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.21.0
+
 ## 0.11.2
 
 ### Patch Changes

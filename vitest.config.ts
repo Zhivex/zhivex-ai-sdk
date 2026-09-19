@@ -10,6 +10,7 @@ export const workspaceAliases = {
       `@zhivex-ai/core/${subpath.slice(2)}`,
       resolve(import.meta.dirname, "packages/core/src", target.import.replace("./dist/", "").replace(/\.js$/, ".ts"))
     ])),
+  "#realtime-transport": resolve(import.meta.dirname, "packages/core/src/realtime-node.ts"),
   "#secure-id": resolve(import.meta.dirname, "packages/core/src/secure-id-node.ts"),
   "@zhivex-ai/core": resolve(import.meta.dirname, "packages/core/src/index.ts"),
   "@zhivex-ai/openai": resolve(import.meta.dirname, "packages/openai/src/index.ts"),

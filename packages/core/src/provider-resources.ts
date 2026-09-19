@@ -17,6 +17,7 @@ import type {
   FileSearchStore,
   GetBatchOptions,
   GetContextCacheOptions,
+  UpdateContextCacheOptions,
   GetFileOptions,
   GetFileSearchStoreOptions,
   GetInteractionOptions,
@@ -137,6 +138,14 @@ export const getContextCache = async (options: GetContextCacheOptions): Promise<
     throw missingClient(provider, "context caching");
   }
   return provider.caches.get(input);
+};
+
+export const updateContextCache = async (options: UpdateContextCacheOptions): Promise<CachedContent> => {
+  const { provider, ...input } = options;
+  if (!provider.caches?.update) {
+    throw missingClient(provider, "context cache expiration updates");
+  }
+  return provider.caches.update(input);
 };
 
 export const listContextCaches = async (

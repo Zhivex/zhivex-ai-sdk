@@ -969,16 +969,20 @@ describe("azure openai adapter", () => {
   });
 
   it("never puts the Azure API key in a realtime URL", async () => {
-    const provider = createAzureOpenAI({
-      apiKey: "azure-secret",
-      endpoint: "https://example.openai.azure.com",
-      apiVersion: "2025-04-01-preview",
-      fetch: fetchMock as typeof fetch
+    const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
+      expect(url).not.toContain("azure-secret");
+      expect(new URL(url).searchParams.has("api-key")).toBe(false);
+      expect(headers["api-key"]).toBe("azure-secret");
+      return { async sendJson() {}, ...createPendingRealtimeReceiver() };
     });
-
-    await expect(
-      provider.realtimeModel!("gpt-realtime").connect()
-    ).rejects.toThrow("do not support custom headers");
+    const provider = createAzureOpenAI({
+      apiKey: "azure-secret", endpoint: "https://example.openai.azure.com",
+      apiVersion: "2025-04-01-preview", fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const session = await provider.realtimeModel!("gpt-realtime").connect();
+    await session.close();
+    expect(connectionFactory).toHaveBeenCalledOnce();
   });
 
   it("creates Azure realtime browser tokens", async () => {

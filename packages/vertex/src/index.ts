@@ -1,4 +1,30 @@
+import { normalizeVertexTranscriptionConfig, transcriptionRequest, transcriptionResponse, type VertexTranscriptionResult, type VertexTranscriptionModel as VertexTranscriptionModelContract } from "./transcription.js";
+export type { VertexAudioTranscriptionConfig, VertexAudioTranscription, VertexTranscriptionOptions, VertexTranscriptionResult, VertexTranscriptionModel } from "./transcription.js";
+import { createVertexVirtualTryOnClient, type VertexVirtualTryOnClient } from "./virtual-try-on.js";
+import { createVertexEndpointsClient, type VertexEndpointsClient } from "./endpoints.js";
+import { createVertexGrpcClient, type VertexGrpcClient } from "./grpc.js";
+export type { VertexGrpcServerInput, VertexGrpcClient, VertexGrpcRawInput, VertexGrpcTensorInput, VertexGrpcTensorFrame, VertexGrpcTensorOutput } from "./grpc.js";
+export type { VertexTensor, VertexTensorDataType } from "./tensors.js";
+export type { VertexEndpointDirectPredictInput, VertexEndpointDirectPredictResult } from "./endpoints.js";
+export type { VertexEndpointsClient, VertexEndpointRawPredictInput, VertexEndpointRawPredictResult, VertexEndpointStreamEvent, VertexEndpointDirectRawPredictInput, VertexEndpointDirectRawPredictResult, VertexEndpointExplainInput, VertexEndpointExplainResult } from "./endpoints.js";
+export type { VertexVirtualTryOnClient, VertexVirtualTryOnInput, VertexVirtualTryOnResult } from "./virtual-try-on.js";
+import { createVertexResponsesModel } from "./responses.js";
+import type { VertexGeminiClient, VertexGeminiTokenCountInput } from "./token-counting.js";
+export type { VertexGeminiClient, VertexGeminiTokenCountInput, VertexGeminiTokenCountResult } from "./token-counting.js";
+import { VertexLegacyMultimodalEmbeddingModel, type VertexMultimodalEmbeddingInput, type VertexMultimodalEmbeddingClient } from "./multimodal-embeddings.js";
+export type { VertexMultimodalEmbeddingClient, VertexMultimodalEmbeddingInput, VertexMultimodalEmbeddingResult, VertexVideoSegmentConfig } from "./multimodal-embeddings.js";
+import { createVertexInteractionsClient, type VertexInteractionsClient } from "./interactions.js";
+export type { VertexInteractionsClient, VertexInteractionResumeInput } from "./interactions.js";
+export type { VertexClaudeOptions } from "./anthropic.js";
+import { createVertexSpecializedClients, type VertexSpecializedClients } from "./specialized.js";
+export type { VertexOCRClient, VertexFIMClient, VertexSpecializedClients } from "./specialized.js";
+import { VertexEmbeddingModel, VertexOpenEmbeddingModel } from "./embeddings.js";
+export type { VertexEmbeddingOptions } from "./embeddings.js";
+import { createVertexChatModel, isVertexChatModel, type VertexChatModelOptions } from "./chat.js";
+export type { VertexChatModelOptions } from "./chat.js";
 import { createVertexClaudeModel } from "./anthropic.js";
+import { createVertexClaudeClient, type VertexClaudeClient } from "./token-counting.js";
+export type { VertexClaudeClient, VertexClaudeTokenCountInput, VertexClaudeTokenCountResult } from "./token-counting.js";
 import { GoogleAuth } from "google-auth-library";
 import { toJSONSchema } from "zod";
 import {
@@ -6,6 +32,7 @@ import {
   groundedCapabilities,
   imageGenerationCapabilities,
   isGeminiLiveTranslateModel,
+  isVertexLiveTranscribeModel,
   musicGenerationCapabilities,
   realtimeCapabilities,
   speechCapabilities,
@@ -47,13 +74,11 @@ import {
   type CachedContent,
   type CallableProviderAdapter,
   type ContextCacheCreateInput,
+  type ContextCacheUpdateInput,
   type ContextCacheDeleteInput,
   type ContextCacheGetInput,
   type ContextCacheListInput,
   type ContextCachesClient,
-  type EmbedInput,
-  type EmbeddingModel,
-  type EmbedResult,
   type GenerateResult,
   type GeneratedMedia,
   type GroundedGenerateResult,
@@ -81,8 +106,6 @@ import {
   type SpeechModel,
   type SpeechResult,
   type StreamEvent,
-  type TranscriptionModel,
-  type TranscriptionResult,
   type VideoGenerationModel,
   type VideoGenerationResult
 } from "@zhivex-ai/core/provider";
@@ -107,6 +130,20 @@ export interface VertexProviderOptions {
   /** Allow non-HTTPS/private or cross-origin credentialed endpoint overrides. Server-side only. */
   allowUnsafeEndpoints?: boolean;
 }
+
+const vertexApiHost = (location: string) => location === "global"
+  ? "aiplatform.googleapis.com"
+  : location === "us" || location === "eu"
+    ? `aiplatform.${location}.rep.googleapis.com`
+    : `${encodeVertexPathSegment(location, "Vertex location")}-aiplatform.googleapis.com`;
+
+// Resource names returned by Google are already project-qualified.
+const vertexResourceURL = (baseURL: string, name: string) => {
+  const encoded = encodeVertexResourceName(name, "Vertex resource name");
+  return name.startsWith("projects/")
+    ? `${baseURL.replace(/\/projects\/.*$/, "")}/${encoded}`
+    : `${baseURL}/${encoded}`;
+};
 
 const encodeVertexPathSegment = (value: string, label: string) => {
   if (!value || value === "." || value === ".." || /[\\/?#\s]/.test(value)) {
@@ -343,7 +380,7 @@ const normalizeBatchJob = (json: any): BatchJob => ({
   name: json.name ?? "",
   model: json.model,
   state: json.state ?? json.metadata?.state,
-  done: json.done,
+  done: json.done ?? (["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED", "JOB_STATE_PARTIALLY_SUCCEEDED"].includes(json.state ?? json.metadata?.state)),
   createTime: json.createTime ?? json.create_time ?? json.metadata?.createTime,
   updateTime: json.updateTime ?? json.update_time ?? json.metadata?.updateTime,
   rawResponse: json,
@@ -454,20 +491,35 @@ const appendVertexApiKey = (auth: VertexAuth, input: RequestInfo | URL): Request
   return new Request(appendQuery(input.url, { key: auth.apiKey }), input);
 };
 
+const awaitVertexToken = async (getAccessToken: Extract<VertexAuth, { type: "bearer" }>["getAccessToken"], signal?: AbortSignal | null) => {
+  signal?.throwIfAborted();
+  const token = Promise.resolve().then(getAccessToken);
+  const accessToken = signal ? await new Promise<string | null | undefined>((resolve, reject) => {
+    const aborted = () => reject(signal.reason);
+    signal.addEventListener("abort", aborted, { once: true });
+    token.then(resolve, reject).finally(() => signal.removeEventListener("abort", aborted));
+    if (signal.aborted) aborted();
+  }) : await token;
+  signal?.throwIfAborted();
+  if (!accessToken) throw new ConfigurationError("Missing Vertex access token.");
+  return accessToken;
+};
+
 const createVertexAuthenticatedFetch = (fetcher: typeof globalThis.fetch, auth: VertexAuth): typeof globalThis.fetch =>
   (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    signal?.throwIfAborted();
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
     if (init?.headers) {
       new Headers(init.headers).forEach((value, key) => headers.set(key, value));
     }
 
     if (auth.type === "bearer") {
-      const accessToken = await auth.getAccessToken();
-      if (!accessToken) {
-        throw new ConfigurationError("Missing Vertex access token.");
-      }
+      const accessToken = await awaitVertexToken(auth.getAccessToken, signal);
       headers.set("authorization", `Bearer ${accessToken}`);
     }
+
+    signal?.throwIfAborted();
 
     return fetcher(appendVertexApiKey(auth, input), {
       ...init,
@@ -574,7 +626,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           .map((tool) => ({
             name: tool.name,
             description: tool.description,
-            parameters: toJSONSchema(tool.schema)
+            parameters: toVertexSchema(toJSONSchema(tool.schema))
           }));
 
         if (functionDeclarations.length) {
@@ -593,6 +645,9 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
               tool.config && typeof tool.config === "object" && !Array.isArray(tool.config)
                 ? { ...(tool.config as Record<string, JsonValue>) }
                 : {};
+            if (config.enableWidget !== undefined && typeof config.enableWidget !== "boolean") {
+              throw new ConfigurationError("Vertex Google Maps enableWidget must be boolean.");
+            }
             delete config.latitude;
             delete config.longitude;
             mappedTools.push({ googleMaps: config });
@@ -622,8 +677,8 @@ const mapGoogleMapsRetrievalConfig = (tools: ModelGenerateInput["tools"]) => {
   if (latitude === undefined && longitude === undefined) {
     return undefined;
   }
-  if (typeof latitude !== "number" || typeof longitude !== "number") {
-    throw new ConfigurationError('Provider "vertex" Google Maps grounding requires both numeric latitude and longitude.');
+  if (typeof latitude !== "number" || typeof longitude !== "number" || !Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+    throw new ConfigurationError('Provider "vertex" Google Maps grounding requires finite latitude in [-90, 90] and longitude in [-180, 180].');
   }
 
   return {
@@ -634,8 +689,10 @@ const mapGoogleMapsRetrievalConfig = (tools: ModelGenerateInput["tools"]) => {
   };
 };
 
-const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"], tools: ModelGenerateInput["tools"]) => {
+const mapToolConfig = (toolChoice: ModelGenerateInput["toolChoice"], tools: ModelGenerateInput["tools"], messages: ModelMessage[]) => {
   const retrievalConfig = mapGoogleMapsRetrievalConfig(tools);
+  // A forced initial call must not prevent answering after its result arrives.
+  if (messages.at(-1)?.role === "tool" && toolChoice !== "none") return retrievalConfig ? { retrievalConfig } : undefined;
   if (!toolChoice || toolChoice === "auto") {
     return retrievalConfig ? { retrievalConfig } : undefined;
   }
@@ -687,7 +744,7 @@ const vertexRealtimeURL = (
   override?: string
 ) => {
   const candidate = override ?? (typeof providerOptions?.realtime_url === "string" ? providerOptions.realtime_url : undefined);
-  const host = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
+  const host = vertexApiHost(location);
   return candidate || `wss://${host}/ws/google.cloud.aiplatform.${apiVersion}.LlmBidiService/BidiGenerateContent`;
 };
 
@@ -733,8 +790,7 @@ const mapRealtimeTranslationConfig = (config: RealtimeSessionConfig) => {
 
   const translationConfig = {
     ...providerTranslationConfig,
-    ...(config.translation?.targetLanguage ? { targetLanguageCode: config.translation.targetLanguage } : {}),
-    ...(config.translation?.sourceLanguage ? { sourceLanguageCode: config.translation.sourceLanguage } : {})
+    ...(config.translation?.targetLanguage ? { targetLanguageCode: config.translation.targetLanguage } : {})
   };
 
   return Object.keys(translationConfig).length ? translationConfig : undefined;
@@ -757,6 +813,10 @@ const assertVertexRealtimeTranslateConfig = (config: RealtimeSessionConfig, mode
     );
   }
 
+  if (config.translation.sourceLanguage !== undefined) {
+    throw new UnsupportedFeatureError("Vertex Live Translate detects the source language automatically; translation.sourceLanguage is not supported.");
+  }
+
   const tools = toToolSet(config.tools);
   if (tools && Object.keys(tools).length > 0) {
     throw new UnsupportedFeatureError(
@@ -777,8 +837,29 @@ const assertVertexRealtimeTranslateConfig = (config: RealtimeSessionConfig, mode
   }
 };
 
+const liveTranscriptionConfig = (config: RealtimeSessionConfig) => {
+  if (config.inputAudioTranscription === false) throw new UnsupportedFeatureError("Live Transcribe cannot disable input transcription.");
+  const value = normalizeVertexTranscriptionConfig(config.inputAudioTranscription === true ? {} : config.inputAudioTranscription, config.inputTranscription?.language);
+  if (value.wordTimestamp || value.diarization) throw new UnsupportedFeatureError("Live Transcribe does not support word timestamps or diarization.");
+  return value;
+};
+
 const assertVertexRealtimeConfig = (config: RealtimeSessionConfig, modelId: string) => {
   assertVertexRealtimeTranslateConfig(config, modelId);
+  if (isVertexLiveTranscribeModel(modelId)) {
+    if (config.mode !== undefined && config.mode !== "transcription") throw new UnsupportedFeatureError("Live Transcribe requires transcription mode.");
+    for (const key of ["instructions", "voice", "reasoning", "translation", "mediaResolution", "affectiveDialog", "proactiveAudio", "outputAudioMediaType", "outputSampleRateHz", "turnDetection", "noiseReduction", "autoResponse"] as const) {
+      if (config[key] !== undefined) throw new UnsupportedFeatureError(`Live Transcribe does not support ${key}.`);
+    }
+    if (config.outputAudioTranscription) throw new UnsupportedFeatureError("Live Transcribe does not produce output audio transcription.");
+    if (Object.keys(toToolSet(config.tools) ?? {}).length) throw new UnsupportedFeatureError("Live Transcribe does not support tools.");
+    if (config.toolChoice !== undefined && config.toolChoice !== "none") throw new UnsupportedFeatureError("Live Transcribe does not support tool selection.");
+    if (config.inputTranscription && Object.keys(config.inputTranscription).some(key => key !== "language")) throw new UnsupportedFeatureError("Live Transcribe inputTranscription accepts only language; use inputAudioTranscription for native options.");
+    for (const key of ["model", "generationConfig", "generation_config", "inputAudioTranscription", "input_audio_transcription", "systemInstruction", "system_instruction", "tools", "translationConfig", "outputAudioTranscription"]) {
+      if (config.providerOptions?.[key] !== undefined) throw new ConfigurationError(`Live Transcribe does not accept providerOptions.${key}.`);
+    }
+    liveTranscriptionConfig(config);
+  }
   if (config.toolChoice !== undefined && !["auto", "none"].includes(String(config.toolChoice))) {
     throw new UnsupportedFeatureError(
       "Vertex Live supports automatic tool selection or tool disabling, but not required or named tool choice."
@@ -786,9 +867,16 @@ const assertVertexRealtimeConfig = (config: RealtimeSessionConfig, modelId: stri
   }
 };
 
-const vertexRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => ({
+const vertexRealtimeSetup = (config: RealtimeSessionConfig, modelResource: string) => isVertexLiveTranscribeModel(modelResource.split("/").at(-1)!) ? {
   setup: {
-    model: `models/${modelId}`,
+    ...mapRealtimeProviderOptions(config.providerOptions),
+    model: modelResource,
+    generationConfig: { responseModalities: ["TEXT"] },
+    inputAudioTranscription: liveTranscriptionConfig(config)
+  }
+} : ({
+  setup: {
+    model: modelResource,
     generationConfig: {
       ...(config.voice
         ? {
@@ -801,10 +889,11 @@ const vertexRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
             }
           }
         : {}),
-      responseModalities: ["AUDIO"],
+      responseModalities: isGeminiLiveTranslateModel(modelResource.split("/").at(-1)!) && config.outputAudioTranscription
+        ? ["AUDIO", "TEXT"] : ["AUDIO"],
+      ...(mapRealtimeTranslationConfig(config) ? { translationConfig: mapRealtimeTranslationConfig(config) } : {}),
       ...(mapRealtimeThinkingConfig(config) ? { thinkingConfig: mapRealtimeThinkingConfig(config) } : {})
     },
-    ...(mapRealtimeTranslationConfig(config) ? { translationConfig: mapRealtimeTranslationConfig(config) } : {}),
     ...(mapRealtimeTranscriptionConfig(config.inputAudioTranscription ?? (config.inputTranscription ? true : undefined))
       ? {
           inputAudioTranscription: mapRealtimeTranscriptionConfig(
@@ -832,11 +921,44 @@ const vertexRealtimeSetup = (config: RealtimeSessionConfig, modelId: string) => 
   }
 });
 
-const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
+const vertexRealtimeTimeLeftMs = (goAway: Record<string, unknown>): number | undefined => {
+  const milliseconds = goAway.timeLeftMs ?? goAway.time_left_ms;
+  if (typeof milliseconds === "number" && Number.isFinite(milliseconds) && milliseconds >= 0) return milliseconds;
+  const duration = goAway.timeLeft ?? goAway.time_left;
+  if (typeof duration !== "string" || !/^\d+(?:\.\d{1,9})?s$/.test(duration)) return undefined;
+  const value = Number(duration.slice(0, -1)) * 1000;
+  return Number.isFinite(value) && value <= Number.MAX_SAFE_INTEGER ? value : undefined;
+};
+
+const parseVertexRealtimeEvent = (payload: Record<string, unknown>, transcriptionOnly = false) => {
   if ("setupComplete" in payload) {
     return [];
   }
   const providerMetadata = sanitizeMediaResponse(payload) as Record<string, JsonValue>;
+
+  const cancellation = payload.toolCallCancellation ?? payload.tool_call_cancellation;
+  if (cancellation !== undefined) {
+    const ids = cancellation && typeof cancellation === "object" ? (cancellation as Record<string, unknown>).ids : undefined;
+    if (!Array.isArray(ids) || ids.some(id => typeof id !== "string" || !id)) {
+      throw new ConfigurationError("Vertex Live returned invalid tool cancellation IDs.");
+    }
+    return [{ type: "realtime-tool-call-cancellation" as const, toolCallIds: [...new Set(ids as string[])] }];
+  }
+
+  const liveToolCall = payload.toolCall ?? payload.tool_call;
+  if (liveToolCall && typeof liveToolCall === "object") {
+    const calls = (liveToolCall as Record<string, unknown>).functionCalls ?? (liveToolCall as Record<string, unknown>).function_calls;
+    if (!Array.isArray(calls)) throw new ConfigurationError("Vertex Live returned an invalid function calls array.");
+    const ids = new Set<string>();
+    return calls.map((call): RealtimeEvent => {
+      if (!call || typeof call.id !== "string" || !call.id || typeof call.name !== "string" || !call.name
+        || ids.has(call.id) || (call.args !== undefined && (!call.args || typeof call.args !== "object" || Array.isArray(call.args)))) {
+        throw new ConfigurationError("Vertex Live returned an invalid or duplicate function call.");
+      }
+      ids.add(call.id);
+      return { type: "realtime-tool-call", toolCall: { id: call.id, name: call.name, input: (call.args ?? {}) as JsonValue } };
+    });
+  }
 
   const serverContent =
     typeof payload.serverContent === "object" && payload.serverContent
@@ -893,6 +1015,11 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
       }
     }
 
+    const interim = serverContent.interimInputTranscription ?? serverContent.interim_input_transcription;
+    if (transcriptionOnly && interim && typeof interim === "object") {
+      // Interim hypotheses can replace earlier words; they are not text deltas.
+      events.push({ type: "realtime-provider-data" as const, provider: "vertex", data: { type: "vertex_transcription_interim", transcription: sanitizeMediaResponse(interim) as JsonValue } });
+    }
     const inputTranscription =
       typeof serverContent.inputTranscription === "object" && serverContent.inputTranscription
         ? (serverContent.inputTranscription as Record<string, unknown>)
@@ -904,7 +1031,7 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
         type: "realtime-transcript" as const,
         text: inputTranscription.text,
         role: "user" as const,
-        isFinal: Boolean(inputTranscription.finished ?? serverContent.turnComplete ?? serverContent.turn_complete),
+        isFinal: transcriptionOnly || Boolean(inputTranscription.finished ?? serverContent.turnComplete ?? serverContent.turn_complete),
         providerMetadata
       });
     }
@@ -925,6 +1052,13 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
       });
     }
 
+    if (serverContent.interrupted === true) {
+      events.push({
+        type: "realtime-response-complete" as const,
+        reason: "interrupted",
+        providerMetadata
+      });
+    }
     if (serverContent.generationComplete || serverContent.generation_complete) {
       events.push({
         type: "realtime-response-complete" as const,
@@ -975,12 +1109,7 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
     return [
       {
         type: "realtime-go-away" as const,
-        timeLeftMs:
-          typeof goAway.timeLeftMs === "number"
-            ? goAway.timeLeftMs
-            : typeof goAway.time_left_ms === "number"
-              ? goAway.time_left_ms
-              : undefined,
+        timeLeftMs: vertexRealtimeTimeLeftMs(goAway),
         providerMetadata
       }
     ];
@@ -999,12 +1128,15 @@ const parseVertexRealtimeEvent = (payload: Record<string, unknown>) => {
   return [];
 };
 
-const createVertexRealtimeEventParser = () => {
+const createVertexRealtimeEventParser = (transcriptionOnly = false) => {
   let outputTranscript = "";
 
   return (payload: Record<string, unknown>): RealtimeEvent[] => {
     const events: RealtimeEvent[] = [];
-    for (const event of parseVertexRealtimeEvent(payload)) {
+    for (const event of parseVertexRealtimeEvent(payload, transcriptionOnly)) {
+      if (event.type === "realtime-response-complete" && event.reason === "interrupted") {
+        outputTranscript = "";
+      }
       if (event.type === "realtime-transcript" && event.role === "assistant") {
         if (event.isFinal) {
           const completeText = event.text.startsWith(outputTranscript)
@@ -1284,31 +1416,51 @@ class VertexContextCachesClient implements ContextCachesClient {
   }
 
   async create(input: ContextCacheCreateInput): Promise<CachedContent> {
-    this.assertModelLocation(input.modelId);
+    const modelId = input.modelId.replace(/^publishers\/google\/models\//, "");
+    this.assertModelLocation(modelId);
+    if (input.ttl !== undefined && input.expireTime !== undefined) {
+      throw new ConfigurationError("Vertex context caches accept either ttl or expireTime, not both.");
+    }
+    for (const key of ["model", "contents", "systemInstruction", "system_instruction", "tools", "displayName", "display_name", "ttl", "expireTime", "expire_time"]) {
+      if (input.providerOptions?.[key] !== undefined) {
+        throw new ConfigurationError(`Vertex context cache providerOptions.${key} conflicts with a dedicated input field.`);
+      }
+    }
+    const nativeOptions = { ...input.providerOptions };
+    if (nativeOptions.kmsKeyName !== undefined) {
+      if (nativeOptions.encryptionSpec !== undefined || nativeOptions.encryption_spec !== undefined) {
+        throw new ConfigurationError("Vertex cache kmsKeyName conflicts with encryptionSpec.");
+      }
+      if (typeof nativeOptions.kmsKeyName !== "string" || !/^projects\/[^/]+\/locations\/[^/]+\/keyRings\/[^/]+\/cryptoKeys\/[^/]+$/.test(nativeOptions.kmsKeyName)) {
+        throw new ConfigurationError("Vertex cache kmsKeyName must identify a Cloud KMS crypto key.");
+      }
+      nativeOptions.encryptionSpec = { kmsKeyName: nativeOptions.kmsKeyName };
+      delete nativeOptions.kmsKeyName;
+    }
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/cachedContents`, {
             method: "POST",
             headers: this.headers(),
             signal,
             body: JSON.stringify({
-              model: input.modelId.startsWith("projects/")
-                ? input.modelId
-                : `${this.resourceBase()}/publishers/google/models/${input.modelId}`,
+              model: modelId.startsWith("projects/")
+                ? modelId
+                : `${this.resourceBase()}/publishers/google/models/${modelId}`,
               contents: mapMessages(input.contents),
               ...(input.system ? { systemInstruction: { parts: [{ text: input.system }] } } : { systemInstruction: systemInstruction(input.contents) }),
               ...(input.tools ? { tools: mapTools(toToolSet(input.tools)) } : {}),
               ...(input.displayName ? { displayName: input.displayName } : {}),
               ...(input.ttl ? { ttl: input.ttl } : {}),
               ...(input.expireTime ? { expireTime: input.expireTime } : {}),
-              ...(input.providerOptions ?? {})
+              ...nativeOptions
             })
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
-      return normalizeCachedContent(await parseJson(response));
+      return normalizeCachedContent(json);
     } finally {
       cleanup();
     }
@@ -1317,8 +1469,31 @@ class VertexContextCachesClient implements ContextCachesClient {
   async get(input: ContextCacheGetInput): Promise<CachedContent> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${encodeVertexResourceName(input.name, "Vertex cache name")}`, { method: "GET", headers: this.headers(), signal }), input);
-      return normalizeCachedContent(await parseJson(response));
+      const json = await withRetry(() => this.fetcher(vertexResourceURL(this.baseURL, input.name), { method: "GET", headers: this.headers(), signal }).then(parseJson), { ...input, abortSignal: signal });
+      return normalizeCachedContent(json);
+    } finally {
+      cleanup();
+    }
+  }
+
+  async update(input: ContextCacheUpdateInput): Promise<CachedContent> {
+    if ((input.ttl !== undefined) === (input.expireTime !== undefined)) {
+      throw new ConfigurationError("Vertex cache update requires exactly one of ttl or expireTime.");
+    }
+    if (input.ttl !== undefined && (!/^\d+(?:\.\d{1,9})?s$/.test(input.ttl) || Number(input.ttl.slice(0, -1)) <= 0)) {
+      throw new ConfigurationError("Vertex cache ttl must be a positive duration in seconds, such as 3600s.");
+    }
+    if (input.expireTime !== undefined && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(input.expireTime) || !Number.isFinite(Date.parse(input.expireTime)))) {
+      throw new ConfigurationError("Vertex cache expireTime must be an RFC 3339 timestamp.");
+    }
+    const field = input.ttl !== undefined ? "ttl" : "expireTime";
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const json = await withRetry(() => this.fetcher(
+        appendQuery(vertexResourceURL(this.baseURL, input.name), { updateMask: field }),
+        { method: "PATCH", headers: this.headers(), redirect: "error", signal, body: JSON.stringify({ [field]: input[field] }) }
+      ).then(parseJson), { ...input, abortSignal: signal });
+      return normalizeCachedContent(json);
     } finally {
       cleanup();
     }
@@ -1327,16 +1502,15 @@ class VertexContextCachesClient implements ContextCachesClient {
   async list(input: ContextCacheListInput = {}) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(appendQuery(`${this.baseURL}/cachedContents`, { pageSize: input.pageSize, pageToken: input.pageToken }), {
             method: "GET",
             headers: this.headers(),
             signal
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
-      const json = await parseJson(response);
       return {
         caches: (json.cachedContents ?? json.cached_contents ?? []).map(normalizeCachedContent),
         nextPageToken: json.nextPageToken,
@@ -1350,8 +1524,10 @@ class VertexContextCachesClient implements ContextCachesClient {
   async delete(input: ContextCacheDeleteInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${encodeVertexResourceName(input.name, "Vertex cache name")}`, { method: "DELETE", headers: this.headers(), signal }), input);
-      const json = await parseJson(response);
+      const json = await withRetry(async () => {
+        const response = await this.fetcher(vertexResourceURL(this.baseURL, input.name), { method: "DELETE", headers: this.headers(), signal });
+        return response.status === 204 ? {} : await parseJson(response);
+      }, { ...input, abortSignal: signal });
       return { name: input.name, rawResponse: json };
     } finally {
       cleanup();
@@ -1362,120 +1538,100 @@ class VertexContextCachesClient implements ContextCachesClient {
 class VertexBatchesClient implements BatchesClient {
   constructor(
     private readonly baseURL: string,
-    private readonly accessToken: string,
     private readonly fetcher: typeof globalThis.fetch,
-    private readonly assertModelLocation: (modelId: string) => void
+    private readonly assertAccess: () => void
   ) {}
 
-  private headers() {
-    return {
-      "content-type": "application/json"
-    };
+  private async request(path: string, method: string, input: BatchGetInput | BatchListInput | BatchCreateInput, body?: unknown) {
+    this.assertAccess();
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      const response = await withRetry(async () => {
+        const result = await this.fetcher(path, {
+          method, headers: { "content-type": "application/json" }, redirect: "error", signal,
+          ...(body === undefined ? {} : { body: JSON.stringify(body) })
+        });
+        if (!result.ok) await parseJson(result);
+        return result;
+      }, { ...input, abortSignal: signal });
+      // Cancel returns Empty; delete returns a long-running operation.
+      if (response.status === 204) return {};
+      return await parseJson(response);
+    } finally { cleanup(); }
   }
 
   async create(input: BatchCreateInput): Promise<BatchJob> {
-    this.assertModelLocation(input.modelId);
-    const { signal, cleanup } = withTimeoutSignal(input);
-    try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(input.modelId, "Vertex model ID")}:batchGenerateContent`, {
-            method: "POST",
-            headers: this.headers(),
-            signal,
-            body: JSON.stringify({
-              batch: {
-                ...(input.displayName ? { displayName: input.displayName } : {}),
-                inputConfig: input.fileName
-                  ? { fileName: input.fileName }
-                  : {
-                      requests: {
-                        requests: input.requests ?? []
-                      }
-                    },
-                ...(input.providerOptions ?? {})
-              }
-            })
-          }),
-        input
-      );
-      return normalizeBatchJob(await parseJson(response));
-    } finally {
-      cleanup();
+    this.assertAccess();
+    if (input.requests) throw new UnsupportedFeatureError("Vertex batch jobs require Cloud Storage or BigQuery input; upload inline requests first.");
+    const options = input.providerOptions ?? {};
+    if (input.fileName !== undefined && options.inputConfig !== undefined) {
+      throw new ConfigurationError("Vertex batch input requires either fileName or providerOptions.inputConfig, not both.");
     }
+    if (input.fileName?.startsWith("bq://") && !/^bq:\/\/[^.\s/]+\.[^.\s/]+\.[^.\s/]+$/.test(input.fileName)) {
+      throw new ConfigurationError("Vertex batch BigQuery input must use bq://project.dataset.table.");
+    }
+    if (input.fileName && !input.fileName.startsWith("gs://") && !input.fileName.startsWith("bq://")) {
+      throw new ConfigurationError("Vertex batch fileName must be a gs:// or bq:// URI, not a Gemini Files API ID.");
+    }
+    const inputConfig = options.inputConfig ?? (input.fileName?.startsWith("gs://")
+      ? { instancesFormat: "jsonl", gcsSource: { uris: [input.fileName] } }
+      : input.fileName ? { instancesFormat: "bigquery", bigquerySource: { inputUri: input.fileName } } : undefined);
+    if (!inputConfig || !options.outputConfig) throw new ConfigurationError("Vertex batch jobs require inputConfig (or fileName) and providerOptions.outputConfig.");
+    const model = input.modelId.startsWith("projects/")
+      ? (encodeVertexResourceName(input.modelId, "Vertex batch model"), input.modelId)
+      : input.modelId.startsWith("claude-") ? `publishers/anthropic/models/${encodeVertexPathSegment(input.modelId, "Vertex Claude model")}`
+        : vertexPublisherResource(input.modelId);
+    const publisher = model.match(/(?:^|\/)publishers\/([^/]+)\/models\//)?.[1];
+    if (publisher && publisher !== "google" && /\/locations\/global\/?$/.test(new URL(this.baseURL).pathname)) {
+      throw new ConfigurationError("Vertex partner batch jobs require a supported regional endpoint; global is not supported. Configure location for the selected model.");
+    }
+    const json = await this.request(`${this.baseURL}/batchPredictionJobs`, "POST", input, {
+      ...options, displayName: input.displayName ?? "zhivex-batch", model, inputConfig
+    });
+    return normalizeBatchJob(json);
   }
 
   async get(input: BatchGetInput): Promise<BatchJob> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${encodeVertexResourceName(input.name, "Vertex batch name")}`, { method: "GET", headers: this.headers(), signal }), input);
-      return normalizeBatchJob(await parseJson(response));
-    } finally {
-      cleanup();
-    }
+    return normalizeBatchJob(await this.request(vertexResourceURL(this.baseURL, input.name), "GET", input));
   }
 
   async list(input: BatchListInput = {}) {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(appendQuery(`${this.baseURL}/batches`, { pageSize: input.pageSize, pageToken: input.pageToken }), {
-            method: "GET",
-            headers: this.headers(),
-            signal
-          }),
-        input
-      );
-      const json = await parseJson(response);
-      return {
-        batches: (json.batches ?? []).map(normalizeBatchJob),
-        nextPageToken: json.nextPageToken,
-        rawResponse: json
-      };
-    } finally {
-      cleanup();
-    }
+    const json = await this.request(appendQuery(`${this.baseURL}/batchPredictionJobs`, {
+      pageSize: input.pageSize, pageToken: input.pageToken,
+      filter: typeof input.providerOptions?.filter === "string" ? input.providerOptions.filter : undefined
+    }), "GET", input);
+    return { batches: (json.batchPredictionJobs ?? []).map(normalizeBatchJob), nextPageToken: json.nextPageToken, rawResponse: json };
   }
 
   async cancel(input: BatchCancelInput): Promise<BatchJob> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/${encodeVertexResourceName(input.name, "Vertex batch name")}:cancel`, {
-            method: "POST",
-            headers: this.headers(),
-            signal,
-            body: JSON.stringify(input.providerOptions ?? {})
-          }),
-        input
-      );
-      return normalizeBatchJob(await parseJson(response));
-    } finally {
-      cleanup();
-    }
+    await this.request(`${vertexResourceURL(this.baseURL, input.name)}:cancel`, "POST", input, {});
+    // Cancellation is asynchronous; report the actual job state.
+    return this.get(input);
   }
 
   async delete(input: BatchDeleteInput) {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    try {
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/${encodeVertexResourceName(input.name, "Vertex batch name")}:delete`, { method: "POST", headers: this.headers(), signal }), input);
-      const json = await parseJson(response);
-      return { name: input.name, rawResponse: json };
-    } finally {
-      cleanup();
-    }
+    const json = await this.request(vertexResourceURL(this.baseURL, input.name), "DELETE", input);
+    return { name: input.name, rawResponse: json };
   }
 }
 
 const vertexPublisherResource = (modelId: string): string => {
+  if (/^(?:projects\/[^/]+\/locations\/[^/]+\/)?endpoints\/[^/]+$/.test(modelId)) {
+    return encodeVertexResourceName(modelId, "Vertex endpoint");
+  }
+  if (modelId.startsWith("endpoints/") || modelId.startsWith("projects/")) {
+    throw new ConfigurationError("Vertex prediction endpoint must use endpoints/<id> or projects/<project>/locations/<location>/endpoints/<id>.");
+  }
   if (modelId.startsWith("publishers/")) {
     const segments = modelId.split("/");
     if (segments.length !== 4 || segments[2] !== "models") {
       throw new ConfigurationError("Vertex publisher model must use publishers/<publisher>/models/<modelId>.");
     }
     return `publishers/${encodeVertexPathSegment(segments[1], "Vertex publisher")}/models/${encodeVertexPathSegment(segments[3], "Vertex model ID")}`;
+  }
+  if (/^[^/]+\/[^/]+$/.test(modelId)) {
+    const [publisher, model] = modelId.split("/");
+    return `publishers/${encodeVertexPathSegment(publisher, "Vertex publisher")}/models/${encodeVertexPathSegment(model, "Vertex model ID")}`;
   }
   return `publishers/google/models/${encodeVertexPathSegment(modelId, "Vertex model ID")}`;
 };
@@ -1503,14 +1659,24 @@ class VertexPredictionModel implements PredictionModel {
   }
 
   private url(action: string) {
-    return `${this.baseURL}/${vertexPublisherResource(this.modelId)}:${encodeVertexPathSegment(action, "Vertex prediction action")}`;
+    const resource = vertexPublisherResource(this.modelId);
+    const base = this.modelId.startsWith("projects/") ? this.baseURL.replace(/\/projects\/.*$/, "") : this.baseURL;
+    return `${base}/${resource}:${encodeVertexPathSegment(action, "Vertex prediction action")}`;
   }
 
   private body(input: PredictionModelInput) {
-    return input.body ?? {
+    if (input.body !== undefined) return input.body;
+    const nativeOptions = { ...input.providerOptions };
+    delete nativeOptions.action;
+    for (const key of ["instances", "parameters"] as const) {
+      if (input[key] !== undefined && nativeOptions[key] !== undefined) {
+        throw new ConfigurationError(`Vertex prediction providerOptions.${key} conflicts with a dedicated input field.`);
+      }
+    }
+    return {
       ...(input.instances ? { instances: input.instances } : {}),
       ...(input.parameters ? { parameters: input.parameters } : {}),
-      ...(input.providerOptions ?? {})
+      ...nativeOptions
     };
   }
 
@@ -1518,7 +1684,7 @@ class VertexPredictionModel implements PredictionModel {
     const action = typeof input.providerOptions?.action === "string" ? input.providerOptions.action : "predict";
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(this.url(action), {
             method: "POST",
@@ -1526,10 +1692,10 @@ class VertexPredictionModel implements PredictionModel {
             headers: this.headers(),
             signal,
             body: JSON.stringify(this.body(input))
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
-      return normalizePredictionResult(await parseJson(response));
+      return normalizePredictionResult(json);
     } finally {
       cleanup();
     }
@@ -1538,7 +1704,7 @@ class VertexPredictionModel implements PredictionModel {
   async rawPredict(input: PredictionModelInput): Promise<PredictionResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(this.url("rawPredict"), {
             method: "POST",
@@ -1546,10 +1712,10 @@ class VertexPredictionModel implements PredictionModel {
             headers: this.headers(),
             signal,
             body: JSON.stringify(this.body(input))
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
-      return normalizePredictionResult(await parseJson(response));
+      return normalizePredictionResult(json);
     } finally {
       cleanup();
     }
@@ -1558,7 +1724,7 @@ class VertexPredictionModel implements PredictionModel {
   async invoke(input: PredictionModelInput): Promise<PredictionResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(this.url("invoke"), {
             method: "POST",
@@ -1566,10 +1732,10 @@ class VertexPredictionModel implements PredictionModel {
             headers: this.headers(),
             signal,
             body: JSON.stringify(this.body(input))
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
-      return normalizePredictionResult(await parseJson(response));
+      return normalizePredictionResult(json);
     } finally {
       cleanup();
     }
@@ -1578,7 +1744,7 @@ class VertexPredictionModel implements PredictionModel {
   async predictLongRunning(input: PredictionModelInput): Promise<PredictionOperation> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(this.url("predictLongRunning"), {
             method: "POST",
@@ -1586,19 +1752,22 @@ class VertexPredictionModel implements PredictionModel {
             headers: this.headers(),
             signal,
             body: JSON.stringify(this.body(input))
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
-      return normalizeOperation(await parseJson(response));
+      return normalizeOperation(json);
     } finally {
       cleanup();
     }
   }
 
   async fetchPredictionOperation(input: PredictionOperationInput): Promise<PredictionOperation> {
+    if (input.providerOptions?.operationName !== undefined || input.providerOptions?.operation_name !== undefined) {
+      throw new ConfigurationError("Vertex prediction operationName must be supplied through name.");
+    }
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(this.url("fetchPredictOperation"), {
             method: "POST",
@@ -1609,10 +1778,10 @@ class VertexPredictionModel implements PredictionModel {
               operationName: input.name,
               ...(input.providerOptions ?? {})
             })
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
-      return normalizeOperation(await parseJson(response));
+      return normalizeOperation(json);
     } finally {
       cleanup();
     }
@@ -1647,7 +1816,7 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(this.url("generateContent"), {
             method: "POST",
@@ -1658,14 +1827,13 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: mapTools(input.tools),
-              toolConfig: mapToolConfig(input.toolChoice, input.tools),
+              toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
               generationConfig: generationConfig(this.modelId, input)
             })
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
 
-      const json = await parseJson(response);
       const candidate = json.candidates?.[0];
       const assistantMessage = parseAssistantMessage(candidate);
 
@@ -1699,12 +1867,18 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
             contents: mapMessages(input.messages),
             systemInstruction: systemInstruction(input.messages),
             tools: mapTools(input.tools),
-            toolConfig: mapToolConfig(input.toolChoice, input.tools),
+            toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
             generationConfig: generationConfig(this.modelId, input)
           })
+        }).then(async (response) => {
+          if (!response.ok) await parseJson(response);
+          return response;
         }),
-      input
-    );
+      { ...input, abortSignal: signal }
+    ).catch((error) => {
+      cleanup();
+      throw error;
+    });
 
     return (async function* () {
       try {
@@ -1749,64 +1923,7 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
   }
 }
 
-class VertexEmbeddingModel implements EmbeddingModel {
-  readonly provider = "vertex";
-  readonly capabilities = capabilities;
-
-  constructor(
-    readonly modelId: string,
-    private readonly baseURL: string,
-    private readonly accessToken: string,
-    private readonly fetcher: typeof globalThis.fetch
-  ) {}
-
-  private url() {
-    return `${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:predict`;
-  }
-
-  private headers() {
-    return {
-      "content-type": "application/json"
-    };
-  }
-
-  async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    const values = input.values.map((value) => {
-      if (typeof value !== "string") {
-        throw new UnsupportedFeatureError('Provider "vertex" does not support multimodal embedding values.');
-      }
-      return value;
-    });
-
-    try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(this.url(), {
-            method: "POST",
-            headers: this.headers(),
-            signal,
-            body: JSON.stringify({
-              instances: values.map((value) => ({
-                content: value
-              }))
-            })
-          }),
-        input
-      );
-
-      const json = await parseJson(response);
-      return {
-        embeddings: (json.predictions ?? []).map((prediction: any) => prediction.embeddings?.values ?? []),
-        rawResponse: json
-      };
-    } finally {
-      cleanup();
-    }
-  }
-}
-
-class VertexTranscriptionModel implements TranscriptionModel {
+class VertexTranscriptionModel implements VertexTranscriptionModelContract {
   readonly provider = "vertex";
   readonly capabilities = transcriptionCapabilities;
 
@@ -1836,47 +1953,22 @@ class VertexTranscriptionModel implements TranscriptionModel {
     maxRetries?: number;
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
-  }): Promise<TranscriptionResult> {
+  }): Promise<VertexTranscriptionResult> {
+    const body = transcriptionRequest(this.modelId, input, toBase64(input.audio.data));
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(this.url(), {
             method: "POST",
             headers: this.headers(),
             signal,
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    {
-                      inlineData: {
-                        mimeType: input.audio.mediaType,
-                        data: toBase64(input.audio.data)
-                      }
-                    },
-                    {
-                      text:
-                        input.prompt ??
-                        `Transcribe this audio${input.language ? ` in ${input.language}` : ""}. Return only the transcript.`
-                    }
-                  ]
-                }
-              ],
-              ...input.providerOptions
-            })
-          }),
-        input
+            body: JSON.stringify(body)
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
-
-      const json = await parseJson(response);
-      const text = json.candidates?.[0]?.content?.parts?.find((part: any) => typeof part.text === "string")?.text ?? "";
-      return {
-        text,
-        rawResponse: json
-      };
+      return transcriptionResponse(json);
     } finally {
       cleanup();
     }
@@ -1916,7 +2008,7 @@ class VertexSpeechModel implements SpeechModel {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(this.url(), {
             method: "POST",
@@ -1936,11 +2028,9 @@ class VertexSpeechModel implements SpeechModel {
               },
               ...input.providerOptions
             })
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
-
-      const json = await parseJson(response);
       const audioPart = json.candidates?.[0]?.content?.parts?.find((part: any) => part.inlineData?.data);
       return {
         audio: decodeMedia(audioPart?.inlineData?.data ?? "", "models.generateContent"),
@@ -1982,9 +2072,12 @@ class VertexSpeechModel implements SpeechModel {
             },
             ...input.providerOptions
           })
+        }).then(async response => {
+          if (!response.ok) await parseJson(response);
+          return response;
         }),
-      input
-    );
+      { ...input, abortSignal: signal }
+    ).catch(error => { cleanup(); throw error; });
 
     return (async function* () {
       try {
@@ -2047,7 +2140,16 @@ class VertexImageGenerationModel implements ImageGenerationModel {
 
     try {
       if (isImagenModel(this.modelId)) {
-        const response = await withRetry(
+        if (input.images?.length) throw new UnsupportedFeatureError("Imagen text-to-image generation does not accept images; use the native editing referenceImages contract through predictionModel().");
+        const outputOptions = input.providerOptions?.outputOptions;
+        if (input.outputMimeType !== undefined && outputOptions !== undefined &&
+          (!outputOptions || typeof outputOptions !== "object" || Array.isArray(outputOptions))) {
+          throw new ConfigurationError("Imagen providerOptions.outputOptions must be an object.");
+        }
+        const nativeOutputOptions = outputOptions as Record<string, unknown> | undefined;
+        if (input.outputMimeType !== undefined && nativeOutputOptions?.mimeType !== undefined &&
+          nativeOutputOptions.mimeType !== input.outputMimeType) throw new ConfigurationError("Conflicting Imagen output MIME types.");
+        const json = await withRetry(
           () =>
             this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:predict`, {
               method: "POST",
@@ -2060,19 +2162,18 @@ class VertexImageGenerationModel implements ImageGenerationModel {
                   }
                 ],
                 parameters: {
-                  ...(input.negativePrompt ? { negativePrompt: input.negativePrompt, negative_prompt: input.negativePrompt } : {}),
-                  ...(input.count ? { sampleCount: input.count, number_of_images: input.count } : {}),
-                  ...(input.aspectRatio ? { aspectRatio: input.aspectRatio, aspect_ratio: input.aspectRatio } : {}),
-                  ...(input.size ? { sampleImageSize: input.size, sample_image_size: input.size } : {}),
-                  ...(input.outputMimeType ? { outputMimeType: input.outputMimeType, output_mime_type: input.outputMimeType } : {}),
-                  ...input.providerOptions
+                  ...input.providerOptions,
+                  ...(input.negativePrompt ? { negativePrompt: input.negativePrompt } : {}),
+                  ...(input.count ? { sampleCount: input.count } : {}),
+                  ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
+                  ...(input.size ? { sampleImageSize: input.size } : {}),
+                  ...(input.outputMimeType ? { outputOptions: { ...nativeOutputOptions, mimeType: input.outputMimeType } } : {})
                 }
               })
-            }),
-          input
+            }).then(parseJson),
+          { ...input, abortSignal: signal }
         );
 
-        const json = await parseJson(response);
         const images = (Array.isArray(json.predictions) ? json.predictions : [])
           .map((prediction: any) => ({
             data:
@@ -2093,7 +2194,7 @@ class VertexImageGenerationModel implements ImageGenerationModel {
       }
 
       const { generationConfig, providerOptions } = splitGenerationConfig(input.providerOptions);
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:generateContent`, {
             method: "POST",
@@ -2125,11 +2226,10 @@ class VertexImageGenerationModel implements ImageGenerationModel {
                 ...generationConfig
               }
             })
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
 
-      const json = await parseJson(response);
       const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "image/png", "models.generateContent");
       return {
         images: media,
@@ -2150,7 +2250,8 @@ class VertexMusicGenerationModel implements MusicGenerationModel {
     readonly modelId: string,
     private readonly baseURL: string,
     private readonly accessToken: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly interactions?: VertexInteractionsClient
   ) {}
 
   private headers() {
@@ -2170,11 +2271,29 @@ class VertexMusicGenerationModel implements MusicGenerationModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<MusicGenerationResult> {
+    if (this.modelId.startsWith("lyria-3-")) {
+      if (!this.interactions) throw new ConfigurationError("Lyria 3 requires Vertex Interactions.");
+      if (input.negativePrompt || input.outputMimeType) throw new UnsupportedFeatureError("Vertex Lyria 3 does not expose negativePrompt or outputMimeType; describe the desired music in prompt.");
+      const content: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
+      for (const image of input.images ?? []) {
+        if (!image.mediaType.startsWith("image/") || (image.data === undefined) === (image.uri === undefined)) throw new ConfigurationError("Lyria 3 image input requires exactly one data or uri and an image media type.");
+        const part = mediaInputToPart(image);
+        content.push({ type: "image", mime_type: image.mediaType,
+          ...(part.inlineData ? { data: part.inlineData.data } : { uri: image.uri }) });
+      }
+      const result = await this.interactions.create({ ...input, modelId: this.modelId, input: content, background: false });
+      const audio = (result.outputs ?? []).filter((output): output is Record<string, unknown> => !!output && typeof output === "object" && "type" in output && output.type === "audio").map((output) => {
+        if (typeof output.data !== "string") throw new ConfigurationError("Lyria 3 returned audio without inline data; use interactions for asynchronous output.");
+        return { data: decodeMedia(output.data, "interactions"), mediaType: typeof output.mime_type === "string" ? output.mime_type : "audio/mpeg" };
+      });
+      if (result.status !== "completed" || !audio.length) throw new ConfigurationError("Lyria 3 did not return completed audio; use interactions to inspect the operation.");
+      return { audio, text: result.outputText, rawResponse: sanitizeMediaResponse(result.rawResponse) };
+    }
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
       if (this.modelId === "lyria-002") {
-        const response = await withRetry(
+        const json = await withRetry(
           () =>
             this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:predict`, {
               method: "POST",
@@ -2191,11 +2310,10 @@ class VertexMusicGenerationModel implements MusicGenerationModel {
                   ...input.providerOptions
                 }
               })
-            }),
-          input
+            }).then(parseJson),
+          { ...input, abortSignal: signal }
         );
 
-        const json = await parseJson(response);
         return {
           audio: (Array.isArray(json.predictions) ? json.predictions : []).map((prediction: any) => ({
             data: decodeMedia(prediction.audioContent ?? "", "models.predict"),
@@ -2207,7 +2325,7 @@ class VertexMusicGenerationModel implements MusicGenerationModel {
       }
 
       const { generationConfig, providerOptions } = splitGenerationConfig(input.providerOptions);
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:generateContent`, {
             method: "POST",
@@ -2230,11 +2348,10 @@ class VertexMusicGenerationModel implements MusicGenerationModel {
                 ...generationConfig
               }
             })
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
 
-      const json = await parseJson(response);
       const { media, text } = collectInlineMedia(json, input.outputMimeType ?? "audio/mpeg", "models.generateContent");
       return {
         audio: media,
@@ -2255,7 +2372,8 @@ class VertexVideoGenerationModel implements VideoGenerationModel {
     readonly modelId: string,
     private readonly baseURL: string,
     private readonly accessToken: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly interactions?: VertexInteractionsClient
   ) {}
 
   private headers() {
@@ -2279,12 +2397,47 @@ class VertexVideoGenerationModel implements VideoGenerationModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<VideoGenerationResult> {
+    if (this.modelId.startsWith("gemini-omni-")) {
+      if (!this.interactions) throw new ConfigurationError("Gemini Omni video requires Vertex Interactions.");
+      if (input.count !== undefined && input.count !== 1) throw new UnsupportedFeatureError("Gemini Omni generates one video per interaction.");
+      if (input.pollIntervalMs !== undefined) throw new UnsupportedFeatureError("Gemini Omni synchronous generation does not poll; use interactions for asynchronous workflows.");
+      if (input.negativePrompt !== undefined) throw new UnsupportedFeatureError("Gemini Omni does not expose negativePrompt; describe the desired video in prompt.");
+      if (input.durationSeconds !== undefined && (!Number.isInteger(input.durationSeconds) || input.durationSeconds < 3 || input.durationSeconds > 10)) throw new ConfigurationError("Gemini Omni durationSeconds must be an integer from 3 to 10.");
+      if (input.aspectRatio !== undefined && !["16:9", "9:16"].includes(input.aspectRatio)) throw new ConfigurationError("Gemini Omni aspectRatio must be 16:9 or 9:16.");
+      if (input.outputStorageUri !== undefined && !/^gs:\/\/[^/\s]+\/[^\s]*$/.test(input.outputStorageUri)) throw new ConfigurationError("Gemini Omni outputStorageUri must be a gs:// bucket path.");
+      const options = input.providerOptions ?? {};
+      for (const key of Object.keys(options)) if (key !== "resolution") throw new UnsupportedFeatureError(`Gemini Omni video does not expose providerOptions.${key}; use interactions for advanced video workflows.`);
+      const resolutions = this.modelId.startsWith("gemini-omni-1.1-") ? ["360p", "720p", "1080p", "4k"] : ["720p"];
+      if (options.resolution !== undefined && !resolutions.includes(String(options.resolution))) throw new ConfigurationError("Unsupported Gemini Omni video resolution for this model.");
+      const content: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
+      if (input.image) {
+        if (!input.image.mediaType.startsWith("image/") || (input.image.data === undefined) === (input.image.uri === undefined)) throw new ConfigurationError("Gemini Omni image requires an image MIME type and exactly one data or uri.");
+        const part = mediaInputToPart(input.image);
+        content.push({ type: "image", mime_type: input.image.mediaType,
+          ...(part.inlineData ? { data: part.inlineData.data } : { uri: input.image.uri }) });
+      }
+      const result = await this.interactions.create({ modelId: this.modelId, input: content,
+        responseFormat: [{ type: "video", ...(input.outputStorageUri ? { delivery: "uri", gcs_uri: input.outputStorageUri } : {}),
+          ...(input.aspectRatio ? { aspect_ratio: input.aspectRatio } : {}),
+          ...(input.durationSeconds !== undefined ? { duration: `${input.durationSeconds}s` } : {}),
+          ...(options.resolution ? { resolution: String(options.resolution) } : {}) }],
+        generationConfig: { video_config: { task: input.image ? "image_to_video" : "text_to_video" } },
+        background: false, store: false, abortSignal: input.abortSignal, timeoutMs: input.timeoutMs ?? 600_000,
+        maxRetries: input.maxRetries, retryBackoffMs: input.retryBackoffMs });
+      const videos: GeneratedMedia[] = (result.outputs ?? []).filter((output): output is Record<string, unknown> => !!output && typeof output === "object" && "type" in output && output.type === "video").map((output) => ({
+        ...(typeof output.data === "string" ? { data: decodeMedia(output.data, "interactions") } : {}),
+        ...(typeof output.uri === "string" ? { uri: output.uri } : {}),
+        mediaType: typeof output.mime_type === "string" ? output.mime_type : "video/mp4"
+      }));
+      if (result.status !== "completed" || !videos.length || videos.some((video) => !video.data?.length && !video.uri)) throw new ConfigurationError("Gemini Omni did not return completed video; use interactions for asynchronous workflows.");
+      return { videos, rawResponse: sanitizeMediaResponse(result.rawResponse) };
+    }
     const timeoutMs = input.timeoutMs ?? 600_000;
     const { signal, cleanup } = withTimeoutSignal({ ...input, timeoutMs });
     const startedAt = Date.now();
 
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:predictLongRunning`, {
             method: "POST",
@@ -2306,11 +2459,11 @@ class VertexVideoGenerationModel implements VideoGenerationModel {
                 ...input.providerOptions
               }
             })
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
 
-      let operation = await parseJson(response);
+      let operation = json;
       const operationName = operation.name;
       const pollIntervalMs = input.pollIntervalMs ?? 10_000;
 
@@ -2319,7 +2472,7 @@ class VertexVideoGenerationModel implements VideoGenerationModel {
           throw new Error(`Vertex video generation timed out after ${timeoutMs}ms.`);
         }
         await sleep(pollIntervalMs, signal);
-        const pollResponse = await withRetry(
+        const pollResult = await withRetry(
           () =>
             this.fetcher(`${this.baseURL}/publishers/google/models/${encodeVertexPathSegment(this.modelId, "Vertex model ID")}:fetchPredictOperation`, {
               method: "POST",
@@ -2328,10 +2481,10 @@ class VertexVideoGenerationModel implements VideoGenerationModel {
               body: JSON.stringify({
                 operationName
               })
-            }),
-          input
+            }).then(parseJson),
+          { ...input, abortSignal: signal }
         );
-        operation = await parseJson(pollResponse);
+        operation = pollResult;
       }
 
       return {
@@ -2383,7 +2536,7 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const json = await withRetry(
         () =>
           this.fetcher(this.url(), {
             method: "POST",
@@ -2401,11 +2554,10 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
                 reasoning: input.reasoning
               } as ModelGenerateInput)
             })
-          }),
-        input
+          }).then(parseJson),
+        { ...input, abortSignal: signal }
       );
 
-      const json = await parseJson(response);
       const candidate = json.candidates?.[0];
       const assistantMessage = parseAssistantMessage(candidate);
       return {
@@ -2416,6 +2568,7 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
         sources: extractGroundingSources(candidate),
         finishReason: normalizeFinishReason(candidate?.finishReason),
         providerFinishReason: candidate?.finishReason,
+        usage: normalizeGenerateContentUsage(json.usageMetadata ?? json.usage_metadata),
         rawResponse: json
       };
     } finally {
@@ -2435,7 +2588,8 @@ class VertexRealtimeModel implements RealtimeModel {
     private readonly apiVersion: string,
     private readonly connectionFactory?: RealtimeConnectionFactory,
     private readonly realtimeURL?: string,
-    private readonly allowUnsafeEndpoints = false
+    private readonly allowUnsafeEndpoints = false,
+    private readonly projectResource?: string
   ) {
     this.capabilities = realtimeCapabilities(modelId);
   }
@@ -2447,10 +2601,16 @@ class VertexRealtimeModel implements RealtimeModel {
       throw new UnsupportedFeatureError('Provider "vertex" realtime sessions require accessToken or getAccessToken auth.');
     }
 
-    const accessToken = await this.auth.getAccessToken();
-    if (!accessToken) {
-      throw new ConfigurationError("Missing Vertex access token.");
-    }
+    if (!this.projectResource) throw new ConfigurationError("Vertex Live requires a project ID or project-scoped baseURL.");
+    const modelResource = `${this.projectResource}/publishers/google/models/${this.modelId}`;
+    const started = performance.now();
+    const authDeadline = withTimeoutSignal({ timeoutMs: options?.timeoutMs, abortSignal: options?.signal });
+    let accessToken: string;
+    try { accessToken = await awaitVertexToken(this.auth.getAccessToken, authDeadline.signal); }
+    finally { authDeadline.cleanup(); }
+    const remainingTimeout = options?.timeoutMs === undefined ? undefined : Math.floor(options.timeoutMs - (performance.now() - started));
+    if (remainingTimeout !== undefined && remainingTimeout <= 0) throw new DOMException("The operation timed out.", "TimeoutError");
+    options?.signal?.throwIfAborted();
 
     const providerOptions = (config.providerOptions ?? {}) as Record<string, unknown>;
     const expectedRealtimeURL = vertexRealtimeURL(this.location, this.apiVersion, undefined, this.realtimeURL);
@@ -2466,8 +2626,9 @@ class VertexRealtimeModel implements RealtimeModel {
     const connection = await (this.connectionFactory ?? openWebSocketConnection)(
       realtimeEndpoint,
       vertexRealtimeHeaders(accessToken, providerOptions),
-      options
+      { ...options, timeoutMs: remainingTimeout }
     );
+    let inputMuted = false;
     const session = new CallbackRealtimeSession({
       provider: this.provider,
       modelId: this.modelId,
@@ -2476,9 +2637,9 @@ class VertexRealtimeModel implements RealtimeModel {
       connection,
       initializationTimeoutMs: options?.timeoutMs,
       callbacks: {
-        parseEvent: createVertexRealtimeEventParser(),
+        parseEvent: createVertexRealtimeEventParser(isVertexLiveTranscribeModel(this.modelId)),
         isReadyPayload: (payload) => "setupComplete" in payload || "setup_complete" in payload,
-        buildAudioPayloads: (frame) => [
+        buildAudioPayloads: (frame) => inputMuted ? [] : [
           {
             realtimeInput: {
               audio: {
@@ -2489,27 +2650,27 @@ class VertexRealtimeModel implements RealtimeModel {
           }
         ],
         buildMediaPayloads: (frame) => {
-          if (isGeminiLiveTranslateModel(this.modelId)) {
+          if (isGeminiLiveTranslateModel(this.modelId) || isVertexLiveTranscribeModel(this.modelId)) {
             throw new UnsupportedFeatureError(
-              'Model "vertex/gemini-3.5-live-translate-preview" only supports audio input.'
+              `Model "vertex/${this.modelId}" only supports audio input.`
             );
           }
 
           return [
             {
               realtimeInput: {
-                media: {
+                mediaChunks: [{
                   mimeType: frame.mediaType,
                   data: encodeMediaFrame(frame)
-                }
+                }]
               }
             }
           ];
         },
         buildTextPayloads: (text) => {
-          if (isGeminiLiveTranslateModel(this.modelId)) {
+          if (isGeminiLiveTranslateModel(this.modelId) || isVertexLiveTranscribeModel(this.modelId)) {
             throw new UnsupportedFeatureError(
-              'Model "vertex/gemini-3.5-live-translate-preview" only supports audio input.'
+              `Model "vertex/${this.modelId}" only supports audio input.`
             );
           }
 
@@ -2527,7 +2688,15 @@ class VertexRealtimeModel implements RealtimeModel {
             }
           ];
         },
-        buildToolResultPayloads: (result) => [
+        buildInputMutePayloads: (muted) => {
+          if (!isVertexLiveTranscribeModel(this.modelId) && !isGeminiLiveTranslateModel(this.modelId)) throw new UnsupportedFeatureError("Vertex input muting is only exposed for Live Transcribe and Live Translate.");
+          if (inputMuted === muted) return [];
+          inputMuted = muted;
+          return muted ? [{ realtimeInput: { audioStreamEnd: true } }] : [];
+        },
+        buildToolResultPayloads: (result) => {
+          if (isVertexLiveTranscribeModel(this.modelId)) throw new UnsupportedFeatureError("Live Transcribe does not support tool results.");
+          return [
           {
             toolResponse: {
               functionResponses: [
@@ -2539,14 +2708,34 @@ class VertexRealtimeModel implements RealtimeModel {
               ]
             }
           }
-        ],
-        buildUpdatePayloads: (sessionConfig) => {
+          ];
+        },
+        buildInterruptPayloads: (sessionConfig) => {
+          if (isGeminiLiveTranslateModel(this.modelId) || isVertexLiveTranscribeModel(this.modelId)) {
+            throw new UnsupportedFeatureError("This Vertex Live model does not support client-content interruption.");
+          }
+          const inputConfig = sessionConfig.providerOptions?.realtimeInputConfig as { automaticActivityDetection?: { disabled?: boolean } } | undefined;
+          if (inputConfig?.automaticActivityDetection?.disabled !== true) {
+            throw new UnsupportedFeatureError("Vertex explicit interruption requires providerOptions.realtimeInputConfig.automaticActivityDetection.disabled=true; automatic VAD interrupts on user speech.");
+          }
+          return [{ realtimeInput: { activityStart: {} } }, { realtimeInput: { activityEnd: {} } }];
+        },
+        buildUpdatePayloads: (sessionConfig, previousConfig) => {
           assertVertexRealtimeConfig(sessionConfig, this.modelId);
-          return [vertexRealtimeSetup(sessionConfig, this.modelId)];
+          for (const key of new Set([...Object.keys(previousConfig), ...Object.keys(sessionConfig)])) {
+            if (key !== "instructions" && !Object.is(previousConfig[key as keyof RealtimeSessionConfig], sessionConfig[key as keyof RealtimeSessionConfig])) {
+              throw new UnsupportedFeatureError(`Vertex Live cannot update "${key}" after connection; reconnect with the new configuration.`);
+            }
+          }
+          if (sessionConfig.instructions === previousConfig.instructions) return [];
+          if (typeof sessionConfig.instructions !== "string" || !sessionConfig.instructions.trim()) {
+            throw new UnsupportedFeatureError("Vertex Live requires non-empty replacement instructions; reconnect to remove instructions.");
+          }
+          return [{ clientContent: { turns: [{ role: "system", parts: [{ text: sessionConfig.instructions }] }], turnComplete: false } }];
         },
         buildInitialPayloads: (sessionConfig) => {
           assertVertexRealtimeConfig(sessionConfig, this.modelId);
-          return [vertexRealtimeSetup(sessionConfig, this.modelId)];
+          return [vertexRealtimeSetup(sessionConfig, modelResource)];
         }
       }
     });
@@ -2561,8 +2750,18 @@ class VertexRealtimeModel implements RealtimeModel {
 
 export const createVertex = (
   options: VertexProviderOptions = {}
-): CallableProviderAdapter<LanguageModel<VertexLanguageModelOptions>> & {
+): { transcriptionModel: (modelId: string) => VertexTranscriptionModelContract } & CallableProviderAdapter<LanguageModel<VertexLanguageModelOptions>> & VertexSpecializedClients & {
+  caches: ContextCachesClient & { update(input: ContextCacheUpdateInput): Promise<CachedContent> };
+  multimodalEmbeddings: VertexMultimodalEmbeddingClient;
   rawFetch: typeof globalThis.fetch;
+  interactions: VertexInteractionsClient;
+  claude: VertexClaudeClient;
+  gemini: VertexGeminiClient;
+  embeddingModel: (modelId: string) => import("@zhivex-ai/core/provider").EmbeddingModel;
+  chatModel: (modelId: string, options?: VertexChatModelOptions) => LanguageModel;
+  responsesModel: (modelId: string) => LanguageModel;
+  virtualTryOn: VertexVirtualTryOnClient;
+  endpoints: VertexEndpointsClient & VertexGrpcClient;
 } => {
   const auth = resolveVertexAuth(options);
   const projectId = options.projectId ?? process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
@@ -2572,7 +2771,7 @@ export const createVertex = (
 
   const location = options.location ?? process.env.VERTEX_LOCATION ?? process.env.GOOGLE_CLOUD_LOCATION ?? "global";
   const apiVersion = options.apiVersion ?? "v1";
-  const apiHost = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
+  const apiHost = vertexApiHost(location);
   const configuredBaseURL =
     options.baseURL ??
     (auth.type === "api-key"
@@ -2591,15 +2790,22 @@ export const createVertex = (
       : `https://${veoLocation}-aiplatform.googleapis.com/${apiVersion}/projects/${projectId}/locations/${veoLocation}`);
   const rawFetch = options.fetch ?? globalThis.fetch;
   const fetcher = createVertexAuthenticatedFetch(rawFetch, auth);
+  const interactions = createVertexInteractionsClient(baseURL, fetcher, () => {
+    if (auth.type !== "bearer" || !/\/projects\/[^/]+\/locations\/[^/]+$/.test(baseURL)) throw new ConfigurationError("Vertex Interactions requires Google Cloud bearer credentials and a project-scoped endpoint.");
+  });
   const assertModelLocation = (modelId: string) => {
+    if (modelId.replace(/^publishers\/google\/models\//, "").startsWith("virtual-try-on-")) throw new UnsupportedFeatureError("Virtual Try-On requires vertex.virtualTryOn.generate() with person and product images.");
     if (modelId.startsWith("claude-")) {
       throw new UnsupportedFeatureError("Claude on Vertex is available through languageModel(); this Google-specific surface is not supported.");
+    }
+    if (isVertexChatModel(modelId) || /^(?:intfloat\/|publishers\/(?!google\/)|anthropic\/)/.test(modelId)) {
+      throw new UnsupportedFeatureError(`Vertex model "${modelId}" cannot use this Google-specific surface; select its publisher API.`);
     }
     if (options.baseURL || auth.type !== "bearer") {
       return;
     }
     const supportedLocations =
-      modelId === "gemini-3.7-flash" || modelId === "gemini-3.6-flash"
+      modelId === "gemini-3.7-flash" || modelId === "gemini-3.6-flash" || modelId === "gemini-3.5-transcribe-preview" || isVertexLiveTranscribeModel(modelId) || isGeminiLiveTranslateModel(modelId)
         ? ["global"]
         : modelId === "gemini-3.8-flash" || modelId === "gemini-3.5-flash-lite"
           ? ["global", "us", "eu"]
@@ -2615,7 +2821,21 @@ export const createVertex = (
     assertModelLocation(modelId);
     return modelId;
   };
+  const chatModel = (modelId: string, chatOptions?: VertexChatModelOptions) => {
+    if (auth.type !== "bearer") throw new ConfigurationError("Vertex partner chat requires Google Cloud bearer credentials.");
+    return createVertexChatModel(modelId, baseURL, fetcher, chatOptions);
+  };
+  const assertLanguageSurface = (modelId: string) => {
+    if (isVertexLiveTranscribeModel(modelId) || isGeminiLiveTranslateModel(modelId)) {
+      throw new UnsupportedFeatureError(`Vertex model "${modelId}" requires realtimeModel(), not a language model factory.`);
+    }
+    if (modelId === "gemini-3.5-transcribe-preview") {
+      throw new UnsupportedFeatureError(`Vertex model "${modelId}" requires transcriptionModel(), not a language model factory.`);
+    }
+  };
   const languageModel = (modelId: string) => {
+    assertLanguageSurface(modelId);
+    if (isVertexChatModel(modelId)) return chatModel(modelId);
     if (modelId.startsWith("claude-")) {
       const encodedId = encodeVertexPathSegment(modelId, "Vertex Claude model ID");
       if (auth.type !== "bearer") {
@@ -2627,6 +2847,7 @@ export const createVertex = (
     return new VertexLanguageModel(modelId, baseURL, "", fetcher);
   };
   const groundedLanguageModel = (modelId: string) => {
+    assertLanguageSurface(modelId);
     if (modelId.startsWith("claude-")) {
       throw new UnsupportedFeatureError("Claude on Vertex does not support Google grounded generation; use languageModel().");
     }
@@ -2636,14 +2857,86 @@ export const createVertex = (
 
   return createProviderAdapter({
     name: "vertex",
+    endpoints: { ...createVertexEndpointsClient(fetcher, (endpoint, action) => {
+      if (!/^(?:projects\/[^/]+\/locations\/[^/]+\/)?endpoints\/[^/]+$/.test(endpoint)) throw new ConfigurationError("Vertex endpoint must use endpoints/<id> or projects/<project>/locations/<location>/endpoints/<id>.");
+      return `${vertexResourceURL(baseURL, endpoint)}:${action}`;
+    }, () => {
+      if (auth.type !== "bearer") throw new ConfigurationError("Vertex deployed endpoints require Google Cloud bearer credentials.");
+    }, parseJson), ...createVertexGrpcClient(baseURL, (endpoint, allowPublisher) => {
+      const deployed = /^(?:projects\/[^/]+\/locations\/[^/]+\/)?endpoints\/[^/]+$/;
+      const publisher = /^(?:projects\/[^/]+\/locations\/[^/]+\/)?publishers\/[^/]+\/models\/[^/]+$/;
+      if (!deployed.test(endpoint) && !(allowPublisher && publisher.test(endpoint))) throw new ConfigurationError(allowPublisher
+        ? "Vertex serverStreamingPredict requires an endpoint or publisher model resource."
+        : "Vertex gRPC endpoint must be a deployed endpoint resource.");
+      const encoded = new URL(vertexResourceURL(baseURL, endpoint)).pathname.replace(/^\/v1(?:beta1)?\//, "");
+      // gRPC carries a resource name in protobuf, not an escaped HTTP URL path.
+      const resource = decodeURIComponent(encoded);
+      if (!/^projects\/[^/]+\/locations\/[^/]+\//.test(resource) || (!deployed.test(resource) && !(allowPublisher && publisher.test(resource)))) throw new ConfigurationError("Vertex gRPC requires a project-scoped resource.");
+      return resource;
+    }, async signal => {
+      if (auth.type !== "bearer") throw new ConfigurationError("Vertex gRPC requires Google Cloud bearer credentials.");
+      return awaitVertexToken(auth.getAccessToken, signal);
+    }) },
+    virtualTryOn: createVertexVirtualTryOnClient(new VertexPredictionModel("virtual-try-on-001", baseURL, "", fetcher), () => {
+      if (auth.type !== "bearer") throw new ConfigurationError("Virtual Try-On requires Google Cloud bearer credentials.");
+    }, sanitizeMediaResponse),
+    interactions,
+    claude: createVertexClaudeClient(baseURL, fetcher, () => {
+      if (auth.type !== "bearer") throw new ConfigurationError("Vertex Claude token counting requires Google Cloud bearer credentials.");
+      if (!options.baseURL && !["global", "us", "eu", "asia-southeast1"].includes(location)) throw new ConfigurationError("Vertex Claude token counting requires global, us, eu or asia-southeast1.");
+    }),
+    ...createVertexSpecializedClients(baseURL, fetcher, () => {
+      if (auth.type !== "bearer") throw new ConfigurationError("Vertex OCR and FIM require Google Cloud bearer credentials.");
+    }),
     languageModel,
-    embeddingModel: (modelId) => new VertexEmbeddingModel(googleModelId(modelId), baseURL, "", fetcher),
-    transcriptionModel: (modelId) => new VertexTranscriptionModel(googleModelId(modelId), baseURL, "", fetcher),
+    chatModel,
+    responsesModel: (modelId: string) => {
+      if (auth.type !== "bearer") throw new ConfigurationError("Vertex Grok Responses requires Google Cloud bearer credentials.");
+      return createVertexResponsesModel(modelId, baseURL, fetcher, options.allowUnsafeEndpoints);
+    },
+    gemini: {
+      async countTokens(input: VertexGeminiTokenCountInput) {
+        const modelId = googleModelId(input.modelId.replace(/^publishers\/google\/models\//, ""));
+        if (!/^gemini-[a-z0-9@.-]+$/.test(modelId)) throw new ConfigurationError("Vertex Gemini token counting requires a Gemini model ID.");
+        const body = JSON.stringify({ contents: mapMessages(input.messages),
+          systemInstruction: input.system !== undefined ? { parts: [{ text: input.system }] } : systemInstruction(input.messages),
+          tools: input.tools ? mapTools(toToolSet(input.tools)) : undefined,
+          generationConfig: input.generationConfig });
+        const { signal, cleanup } = withTimeoutSignal(input);
+        try {
+          const json = await withRetry(() => fetcher(`${baseURL}/publishers/google/models/${encodeVertexPathSegment(modelId, "Vertex model ID")}:countTokens`, {
+            method: "POST", headers: { "content-type": "application/json" }, body, signal, redirect: "error"
+          }).then(parseJson), { ...input, abortSignal: signal });
+          if (!Number.isSafeInteger(json.totalTokens) || json.totalTokens < 0) throw new ConfigurationError("Vertex returned invalid token count.");
+          if (json.totalBillableCharacters !== undefined && (!Number.isSafeInteger(json.totalBillableCharacters) || json.totalBillableCharacters < 0)) throw new ConfigurationError("Vertex returned invalid billable character count.");
+          return { inputTokens: json.totalTokens, ...(json.totalBillableCharacters !== undefined ? { totalBillableCharacters: json.totalBillableCharacters } : {}), rawResponse: json };
+        } finally { cleanup(); }
+      }
+    },
+    multimodalEmbeddings: { embed: (input: VertexMultimodalEmbeddingInput) => new VertexLegacyMultimodalEmbeddingModel(baseURL, fetcher, () => {
+      if (auth.type !== "bearer") throw new ConfigurationError("Vertex legacy multimodal embeddings require Google Cloud bearer credentials.");
+    }).embedMultimodal(input) },
+    embeddingModel: (modelId) => {
+      if (modelId.replace(/^publishers\/google\/models\//, "") === "multimodalembedding@001") return new VertexLegacyMultimodalEmbeddingModel(baseURL, fetcher, () => {
+        if (auth.type !== "bearer") throw new ConfigurationError("Vertex legacy multimodal embeddings require Google Cloud bearer credentials.");
+      });
+      const openModel = modelId.replace(/^publishers\/intfloat\/models\//, "intfloat/");
+      if (openModel.startsWith("intfloat/")) {
+        if (!/^intfloat\/multilingual-e5-(?:small|large-instruct)-maas$/.test(openModel)) throw new ConfigurationError(`Unsupported Vertex E5 embedding model "${modelId}".`);
+        if (auth.type !== "bearer") throw new ConfigurationError("Vertex E5 embeddings require Google Cloud bearer credentials.");
+        return new VertexOpenEmbeddingModel(openModel, baseURL, fetcher);
+      }
+      return new VertexEmbeddingModel(googleModelId(modelId), baseURL, fetcher);
+    },
+    transcriptionModel: (modelId) => {
+      if (modelId === "gemini-3.5-transcribe-live-preview") throw new UnsupportedFeatureError("The Live transcription model requires a dedicated realtime session, not transcriptionModel().");
+      return new VertexTranscriptionModel(googleModelId(modelId), baseURL, "", fetcher);
+    },
     speechModel: (modelId) => new VertexSpeechModel(googleModelId(modelId), baseURL, "", fetcher),
     imageGenerationModel: (modelId) => new VertexImageGenerationModel(googleModelId(modelId), baseURL, "", fetcher),
     videoGenerationModel: (modelId) =>
-      new VertexVideoGenerationModel(googleModelId(modelId), isVeoModel(modelId) ? veoBaseURL : baseURL, "", fetcher),
-    musicGenerationModel: (modelId) => new VertexMusicGenerationModel(googleModelId(modelId), baseURL, "", fetcher),
+      new VertexVideoGenerationModel(googleModelId(modelId), isVeoModel(modelId) ? veoBaseURL : baseURL, "", fetcher, interactions),
+    musicGenerationModel: (modelId) => new VertexMusicGenerationModel(googleModelId(modelId), baseURL, "", fetcher, interactions),
     realtimeModel: (modelId) =>
       new VertexRealtimeModel(
         googleModelId(modelId),
@@ -2659,11 +2952,14 @@ export const createVertex = (
               allowUnsafe: options.allowUnsafeEndpoints
             }).toString()
           : undefined,
-        options.allowUnsafeEndpoints
+        options.allowUnsafeEndpoints,
+        baseURL.match(/\/(projects\/[^/]+\/locations\/[^/]+)(?:\/|$)/)?.[1] ?? (projectId ? `projects/${projectId}/locations/${location}` : undefined)
       ),
     groundedLanguageModel,
     caches: new VertexContextCachesClient(baseURL, "", fetcher, assertModelLocation),
-    batches: new VertexBatchesClient(baseURL, "", fetcher, assertModelLocation),
+    batches: new VertexBatchesClient(baseURL, fetcher, () => {
+      if (auth.type !== "bearer") throw new ConfigurationError("Vertex batch jobs require Google Cloud bearer credentials and a project-scoped endpoint.");
+    }),
     predictionModel: (modelId) => {
       const resource = vertexPublisherResource(modelId);
       if (modelId.startsWith("claude-")) {

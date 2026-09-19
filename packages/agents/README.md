@@ -65,7 +65,7 @@ Beta APIs may change between minor releases. Provider-specific realtime options 
 - Durable subagents: stores with atomic idempotency claims reuse a completed child after a failed parent checkpoint instead of repeating child tools.
 - Production safety: stable safety policies and budget guards in the root; beta governance policies and audit records under `/beta`.
 - Observability and evaluation from `/ops`: trace collectors, run snapshots, replay, cost estimates, and evaluation fixtures.
-- Provider inspection from `/ops`, with beta capability routing and model selection under `/beta`.
+- Provider inspection from `/ops`, with stable capability routing and model selection under `/control-plane`.
 - Stable control plane from `/control-plane`: capsules, tool policies, approval queue items, ledgers, golden traces, and inspectable run records; `/beta` remains a compatibility path with additional beta governance APIs.
 
 ## Tools

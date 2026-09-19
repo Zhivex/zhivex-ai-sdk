@@ -237,6 +237,12 @@ export interface ContextCacheGetInput<TProviderOptions extends ProviderOptions =
   providerOptions?: TProviderOptions;
 }
 
+/** Update the expiration of an existing cache; content remains immutable. */
+export type ContextCacheUpdateInput = RetryOptions & { name: string } & (
+  | { ttl: string; expireTime?: never }
+  | { expireTime: string; ttl?: never }
+);
+
 export interface ContextCacheListInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
   pageSize?: number;
   pageToken?: string;
@@ -249,6 +255,7 @@ export interface ContextCacheDeleteInput<TProviderOptions extends ProviderOption
 }
 
 export interface ContextCachesClient<TProviderOptions extends ProviderOptions = ProviderOptions> {
+  update?(input: ContextCacheUpdateInput): Promise<CachedContent>;
   create(input: ContextCacheCreateInput<TProviderOptions>): Promise<CachedContent>;
   get(input: ContextCacheGetInput<TProviderOptions>): Promise<CachedContent>;
   list(input?: ContextCacheListInput<TProviderOptions>): Promise<{ caches: CachedContent[]; nextPageToken?: string; rawResponse?: unknown }>;
@@ -360,4 +367,41 @@ export interface PredictionModelInput<TProviderOptions extends ProviderOptions =
 export interface PredictionOperationInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
   name: string;
   providerOptions?: TProviderOptions;
+}
+
+/** Provider-native OCR input. Upload/deployment lifecycle remains provider-specific. */
+export interface DocumentExtractionInput extends RetryOptions {
+  modelId: string;
+  document: import("./media-data.js").MediaInput;
+  /** Extraction instruction for models with a prompt-based OCR contract. */
+  prompt?: string;
+  /** Zero-based page indices. */
+  pages?: number[];
+  includeImages?: boolean;
+  providerOptions?: ProviderOptions;
+}
+
+export interface DocumentExtractionPage {
+  index: number;
+  markdown: string;
+  images?: Array<Record<string, unknown>>;
+  providerMetadata?: Record<string, unknown>;
+}
+
+export interface DocumentExtractionResult {
+  text: string;
+  pages: DocumentExtractionPage[];
+  rawResponse?: unknown;
+}
+
+/** Prefix/suffix completion, distinct from a chat conversation. */
+export interface TextCompletionInput extends RetryOptions {
+  modelId: string;
+  prompt: string;
+  suffix?: string;
+  maxTokens?: number;
+  temperature?: number;
+  topP?: number;
+  stop?: string | string[];
+  providerOptions?: ProviderOptions;
 }

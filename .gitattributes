@@ -1,0 +1,4 @@
+# Fixture byte offsets and audio/image payloads must be preserved exactly.
+packages/vertex/tests/fixtures/*.pdf binary
+packages/vertex/tests/fixtures/*.pcm binary
+packages/vertex/tests/fixtures/*.png binary

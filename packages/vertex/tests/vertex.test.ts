@@ -592,6 +592,31 @@ describe("vertex adapter", () => {
     });
   });
 
+  it("bounds credential acquisition by the request deadline and ignores a late token", async () => {
+    let complete!: (token: string) => void;
+    const getAccessToken = vi.fn(() => new Promise<string>(resolve => { complete = resolve; }));
+    const provider = createVertex({ projectId: "p", getAccessToken, fetch: fetchMock as typeof fetch });
+    await expect(provider.gemini.countTokens({ modelId: "gemini-2.5-flash", messages: [], timeoutMs: 10, maxRetries: 0 })).rejects.toThrow();
+    expect(getAccessToken).toHaveBeenCalledOnce();
+    complete("late-token");
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves caller cancellation while credentials are pending", async () => {
+    const controller = new AbortController();
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const provider = createVertex({ projectId: "p", getAccessToken: () => { started(); return new Promise<string>(() => {}); }, fetch: fetchMock as typeof fetch });
+    const pending = provider.gemini.countTokens({ modelId: "gemini-2.5-flash", messages: [], abortSignal: controller.signal, maxRetries: 0 });
+    const reason = new Error("caller cancelled");
+    const rejected = expect(pending).rejects.toBe(reason);
+    await ready;
+    controller.abort(reason);
+    await rejected;
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("maps generated text into the common contract", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -842,6 +867,32 @@ describe("vertex adapter", () => {
     expect(body.generationConfig.responseMimeType).not.toBe("text/plain");
   });
 
+  it("converts strict callable tool schemas to Vertex parameters", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "ok" }] } }]
+    }));
+    const model = createVertex({ apiKey: "test", fetch: fetchMock as typeof fetch })("gemini-3.7-flash");
+    await generateText({
+      model,
+      prompt: "hello",
+      tools: {
+        certify_add: tool({
+          name: "certify_add",
+          schema: z.object({ values: z.object({ a: z.number().int(), b: z.number().int() }).strict() }).strict(),
+          execute: ({ values }) => values.a + values.b
+        })
+      }
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    const parameters = body.tools[0].functionDeclarations[0].parameters;
+    expect(parameters).not.toHaveProperty("$schema");
+    expect(parameters).not.toHaveProperty("additionalProperties");
+    expect(parameters.properties.values).not.toHaveProperty("additionalProperties");
+    expect(parameters.required).toEqual(["values"]);
+    expect(parameters.properties.values.required).toEqual(["a", "b"]);
+    expect(parameters.properties.values.properties.a.type).toBe("integer");
+  });
+
   it("maps common tool choice to Vertex toolConfig", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -886,6 +937,24 @@ describe("vertex adapter", () => {
         allowedFunctionNames: ["weather"]
       }
     });
+  });
+
+  it("allows a final answer after a forced tool result in generate and stream", async () => {
+    const requests: any[] = [];
+    const model = createVertex({ apiKey: "test", fetch: (async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return Response.json({ candidates: [{ content: { parts: [{ text: "5" }] }, finishReason: "STOP" }] });
+    }) as typeof fetch })("gemini-3.7-flash");
+    const request = {
+      messages: [{ role: "tool" as const, parts: [{ type: "tool-result" as const, toolResult: { toolCallId: "call1", toolName: "sum", output: { total: 5 } } }] }],
+      toolChoice: { type: "tool" as const, toolName: "sum" }
+    };
+    await model.generate(request);
+    await model.stream!(request);
+    expect(requests[0].toolConfig?.functionCallingConfig).toBeUndefined();
+    expect(requests[1].toolConfig?.functionCallingConfig).toBeUndefined();
+    await model.generate({ ...request, toolChoice: "none" });
+    expect(requests[2].toolConfig.functionCallingConfig.mode).toBe("NONE");
   });
 
   it("preserves Gemini thought signatures and ids across local tool loops", async () => {
@@ -1101,6 +1170,12 @@ describe("vertex adapter", () => {
     expect(body.tools).toEqual([{ urlContext: {} }, { computerUse: { environment: "browser" } }]);
   });
 
+  it.each([{ latitude: 91, longitude: 0 }, { latitude: 0, longitude: -181 }, { latitude: NaN, longitude: 0 }, { latitude: 0 }, { enableWidget: "yes" }])("rejects invalid Maps configuration before fetching", async (config) => {
+    const model = createVertex({ accessToken: "test", projectId: "p", fetch: fetchMock as typeof fetch }).languageModel("gemini-3.7-flash");
+    await expect(model.generate({ messages: [], tools: { maps: hostedTool({ name: "maps", type: "googleMaps", config }) } })).rejects.toThrow(/Google Maps/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("maps Google Maps grounding and coordinates to the Vertex request schema", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -1139,6 +1214,105 @@ describe("vertex adapter", () => {
         }
       }
     });
+  });
+
+  it.each(["get", "list"] as const)("retries context cache %s while preserving pagination and identity", async (operation) => {
+    const name = "projects/p/locations/us-central1/cachedContents/cache-1";
+    fetchMock.mockResolvedValueOnce(new Response("busy", { status: 503 }));
+    fetchMock.mockResolvedValueOnce(Response.json(operation === "get" ? { name } : { cachedContents: [{ name }], nextPageToken: "next" }));
+    const provider = createVertex({ projectId: "p", location: "us-central1", accessToken: "test", fetch: fetchMock as typeof fetch });
+    if (operation === "get") expect((await provider.caches!.get({ name, maxRetries: 1, retryBackoffMs: 1 })).name).toBe(name);
+    else {
+      const result = await provider.caches!.list({ pageSize: 2, pageToken: "current", maxRetries: 1, retryBackoffMs: 1 });
+      expect(result.caches[0]?.name).toBe(name);
+      expect(result.nextPageToken).toBe("next");
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain("pageToken=current");
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["get", "list"] as const)("bounds cache %s retries by the deadline", async (operation) => {
+    fetchMock.mockImplementation(async () => new Response("busy", { status: 503 }));
+    const provider = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch });
+    await expect(provider.caches![operation]({ name: "cachedContents/cache-1", maxRetries: 3, retryBackoffMs: 1000, timeoutMs: 10 })).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects contradictory cache expiry and reserved native overrides before fetching", async () => {
+    const provider = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch });
+    const input = { modelId: "gemini-2.5-flash", contents: [] };
+    await expect(provider.caches!.create({ ...input, ttl: "60s", expireTime: "2026-09-20T00:00:00Z" })).rejects.toThrow("not both");
+    for (const key of ["model", "contents", "systemInstruction", "system_instruction", "tools", "displayName", "display_name", "ttl", "expireTime", "expire_time"]) {
+      await expect(provider.caches!.create({ ...input, providerOptions: { [key]: "override" } })).rejects.toThrow("dedicated input field");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([{ ttl: "3600s" }, { expireTime: "2026-09-20T12:00:00Z" }])("updates cache expiration with its field mask: %j", async (expiry) => {
+    const name = "projects/p/locations/us-central1/cachedContents/one";
+    fetchMock.mockResolvedValueOnce(Response.json({ name, expireTime: "2026-09-20T12:00:00Z" }));
+    const provider = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch });
+    const result = await provider.caches.update({ name, ...expiry });
+    const [url, request] = fetchMock.mock.calls[0]!;
+    expect(new URL(String(url)).searchParams.get("updateMask")).toBe(Object.keys(expiry)[0]);
+    expect(String(url)).toContain("/v1/projects/p/locations/us-central1/cachedContents/one?");
+    expect(request?.method).toBe("PATCH");
+    expect(JSON.parse(String(request?.body))).toEqual(expiry);
+    expect(result.expireTime).toBe("2026-09-20T12:00:00Z");
+  });
+
+  it("rejects absent, conflicting or malformed cache expiration before fetching", async () => {
+    const provider = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch });
+    for (const expiry of [{}, { ttl: "60s", expireTime: "2026-09-20T00:00:00Z" }, { ttl: "-1s" }, { ttl: "0s" }, { ttl: "1 hour" }, { expireTime: "tomorrow" }]) {
+      await expect(provider.caches.update({ name: "cachedContents/one", ...expiry } as Parameters<typeof provider.caches.update>[0])).rejects.toThrow();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("retries cache update HTTP errors within the deadline", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("busy", { status: 503 }));
+    fetchMock.mockResolvedValueOnce(Response.json({ name: "cachedContents/one" }));
+    const provider = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch });
+    await provider.caches.update({ name: "cachedContents/one", ttl: "60s", maxRetries: 1, retryBackoffMs: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fetchMock.mockClear().mockImplementation(async () => new Response("busy", { status: 503 }));
+    await expect(provider.caches.update({ name: "cachedContents/one", ttl: "60s", maxRetries: 3, retryBackoffMs: 1000, timeoutMs: 10 })).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves native cache encryption options with dedicated content fields", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ name: "cachedContents/one" }));
+    const provider = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch });
+    await provider.caches!.create({ modelId: "gemini-2.5-flash", contents: [], ttl: "60s", providerOptions: { kmsKeyName: "projects/p/locations/us/keyRings/r/cryptoKeys/k" } });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({ ttl: "60s", contents: [], encryptionSpec: { kmsKeyName: "projects/p/locations/us/keyRings/r/cryptoKeys/k" } });
+    expect(body).not.toHaveProperty("kmsKeyName");
+    expect(body.model).toContain("/publishers/google/models/gemini-2.5-flash");
+  });
+
+  it.each(["publishers/google/models/gemini-2.5-flash", "projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash"])("normalizes cache model resource %s without duplicating publisher paths", async (modelId) => {
+    fetchMock.mockResolvedValueOnce(Response.json({ name: "cachedContents/one" }));
+    const provider = createVertex({ projectId: "p", location: "us-central1", accessToken: "test", fetch: fetchMock as typeof fetch });
+    await provider.caches!.create({ modelId, contents: [] });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).model).toBe("projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash");
+  });
+
+  it("rejects conflicting or malformed cache encryption aliases before fetching", async () => {
+    const provider = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch });
+    for (const providerOptions of [
+      { kmsKeyName: "not-a-key" },
+      { kmsKeyName: "projects/p/locations/us/keyRings/r/cryptoKeys/k", encryptionSpec: {} },
+      { kmsKeyName: "projects/p/locations/us/keyRings/r/cryptoKeys/k", encryption_spec: {} }
+    ]) await expect(provider.caches!.create({ modelId: "gemini-2.5-flash", contents: [], providerOptions })).rejects.toThrow(/kmsKeyName/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves a native cache encryptionSpec", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ name: "cachedContents/one" }));
+    const provider = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch });
+    const encryptionSpec = { kmsKeyName: "projects/p/locations/us/keyRings/r/cryptoKeys/k" };
+    await provider.caches!.create({ modelId: "gemini-2.5-flash", contents: [], providerOptions: { encryptionSpec } });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).encryptionSpec).toEqual(encryptionSpec);
   });
 
   it("creates Vertex context caches with full model resource paths", async () => {
@@ -1184,13 +1358,14 @@ describe("vertex adapter", () => {
       provider,
       modelId: "gemini-2.0-flash",
       displayName: "Batch",
-      fileName: "files/batch-input"
+      fileName: "gs://bucket/batch-input.jsonl",
+      providerOptions: { outputConfig: { predictionsFormat: "jsonl", gcsDestination: { outputUriPrefix: "gs://bucket/output" } } }
     });
 
     const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(String(requestInit.body));
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/publishers/google/models/gemini-2.0-flash:batchGenerateContent");
-    expect(body.batch.inputConfig.fileName).toBe("files/batch-input");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/batchPredictionJobs");
+    expect(body.inputConfig.gcsSource.uris).toEqual(["gs://bucket/batch-input.jsonl"]);
     expect(batch.name).toBe("batches/1");
   });
 
@@ -1227,7 +1402,7 @@ describe("vertex adapter", () => {
 
     expect(provider.files).toBeUndefined();
     expect(provider.fileSearchStores).toBeUndefined();
-    expect(provider.interactions).toBeUndefined();
+    expect(provider.interactions.create).toBeTypeOf("function");
   });
 
   it("builds callable tools from an MCP client", async () => {
@@ -1477,6 +1652,9 @@ describe("vertex adapter", () => {
     expect(() => regionalProvider("gemini-3.7-flash")).toThrow(
       'Vertex model "gemini-3.7-flash" is not available in location "us-central1". Use "global"'
     );
+    expect(() => regionalProvider.realtimeModel!("gemini-3.5-live-translate-preview")).toThrow(
+      'Vertex model "gemini-3.5-live-translate-preview" is not available in location "us-central1". Use "global"'
+    );
     expect(() => regionalProvider("gemini-3.6-flash")).toThrow(
       'Vertex model "gemini-3.6-flash" is not available in location "us-central1". Use "global"'
     );
@@ -1496,7 +1674,7 @@ describe("vertex adapter", () => {
         modelId: "gemini-3.5-flash-lite",
         requests: [{ request: { contents: [{ parts: [{ text: "hello" }] }] } }]
       })
-    ).rejects.toThrow('Vertex model "gemini-3.5-flash-lite" is not available in location "us-central1".');
+    ).rejects.toThrow("Vertex batch jobs require Cloud Storage or BigQuery input");
 
     const usProvider = createVertex({
       accessToken: "test",
@@ -1717,10 +1895,30 @@ describe("vertex adapter", () => {
     const body = JSON.parse(String(requestInit.body));
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(":predict");
     expect(body.instances[0].prompt).toBe("draw a banana");
-    expect(body.parameters.number_of_images).toBe(2);
+    expect(body.parameters.sampleCount).toBe(2);
+    expect(body.parameters.outputOptions).toEqual({ mimeType: "image/png" });
+    expect(body.parameters.number_of_images).toBeUndefined();
+    expect(body.parameters.outputMimeType).toBeUndefined();
+    expect(body.parameters.output_mime_type).toBeUndefined();
     expect(Array.from(result.images[0]?.data ?? [])).toEqual([4, 5, 6]);
     expect(JSON.stringify(result.images[0]?.providerMetadata)).not.toContain("BAUG");
     expect(JSON.stringify(result.rawResponse)).not.toContain("BAUG");
+  });
+
+  it("merges Imagen JPEG options and sends only canonical generation fields", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ predictions: [{ bytesBase64Encoded: "BAUG", mimeType: "image/jpeg" }] }));
+    const model = createVertex({ projectId: "p", location: "us-central1", accessToken: "test", fetch: fetchMock as typeof fetch }).imageGenerationModel!("imagen-4.0-generate-001");
+    const result = await model.generateImage({ prompt: "a circle", count: 1, aspectRatio: "1:1", size: "1K", outputMimeType: "image/jpeg", providerOptions: { outputOptions: { compressionQuality: 85 } } });
+    expect(JSON.parse(String(fetchMock.mock.lastCall![1]!.body)).parameters).toEqual({ sampleCount: 1, aspectRatio: "1:1", sampleImageSize: "1K", outputOptions: { compressionQuality: 85, mimeType: "image/jpeg" } });
+    expect(result.images[0].mediaType).toBe("image/jpeg");
+  });
+
+  it("rejects conflicting Imagen formats and unsupported images before network access", async () => {
+    const model = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch }).imageGenerationModel!("imagen-4.0-generate-001");
+    await expect(model.generateImage({ prompt: "a circle", outputMimeType: "image/jpeg", providerOptions: { outputOptions: { mimeType: "image/png" } } })).rejects.toThrow("Conflicting");
+    await expect(model.generateImage({ prompt: "a circle", outputMimeType: "image/jpeg", providerOptions: { outputOptions: "bad" } })).rejects.toThrow("must be an object");
+    await expect(model.generateImage({ prompt: "edit", images: [{ data: new Uint8Array([1]), mediaType: "image/png" }] })).rejects.toThrow("referenceImages");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("generates Vertex Lyria audio through predict", async () => {
@@ -1790,6 +1988,54 @@ describe("vertex adapter", () => {
     expect(result.videos[0]?.uri).toBe("https://example.test/video.mp4");
   });
 
+  it.each(["generate", "stream"] as const)("retries initial HTTP failures for %s", async (operation) => {
+    fetchMock.mockResolvedValueOnce(new Response("busy", { status: 503 }));
+    const payload = { candidates: [{ content: { parts: [{ text: "recovered" }] }, finishReason: "STOP" }] };
+    fetchMock.mockResolvedValueOnce(operation === "generate" ? Response.json(payload) : new Response(`data: ${JSON.stringify(payload)}\n\n`, { headers: { "content-type": "text/event-stream" } }));
+    const model = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch }).languageModel("gemini-2.5-flash");
+    const input = { messages: [], maxRetries: 1, retryBackoffMs: 1 };
+    if (operation === "generate") expect((await model.generate(input)).text).toBe("recovered");
+    else {
+      const events = [];
+      for await (const event of await model.stream!(input)) events.push(event);
+      expect(events).toContainEqual({ type: "text-delta", textDelta: "recovered" });
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["generate", "stream"] as const)("bounds %s backoff by the request deadline", async (operation) => {
+    fetchMock.mockImplementation(async () => new Response("busy", { status: 503 }));
+    const model = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch }).languageModel("gemini-2.5-flash");
+    await expect(model[operation]!({ messages: [], maxRetries: 2, retryBackoffMs: 1000, timeoutMs: 10 })).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a stream after delivering partial output", async () => {
+    fetchMock.mockResolvedValueOnce(new Response('data: {"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}\n\ndata: invalid-json\n\n', { headers: { "content-type": "text/event-stream" } }));
+    const model = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch }).languageModel("gemini-2.5-flash");
+    const iterator = (await model.stream!({ messages: [], maxRetries: 2 }))[Symbol.asyncIterator]();
+    expect((await iterator.next()).value).toEqual({ type: "text-delta", textDelta: "partial" });
+    await expect(iterator.next()).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries grounded HTTP failures and returns normalized token usage", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("busy", { status: 503 }));
+    fetchMock.mockResolvedValueOnce(Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "answer" }] } }],
+      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 4, totalTokenCount: 14 } }));
+    const model = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch }).groundedLanguageModel!("gemini-2.5-flash");
+    const result = await model.generate({ messages: [{ role: "user", parts: [{ type: "text", text: "search" }] }], maxRetries: 1, retryBackoffMs: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.usage).toMatchObject({ inputTokens: 10, outputTokens: 4, totalTokens: 14 });
+  });
+
+  it("stops grounded retries when the request deadline expires", async () => {
+    fetchMock.mockImplementation(async () => new Response("busy", { status: 503 }));
+    const model = createVertex({ projectId: "p", accessToken: "test", fetch: fetchMock as typeof fetch }).groundedLanguageModel!("gemini-2.5-flash");
+    await expect(model.generate({ messages: [], maxRetries: 3, retryBackoffMs: 1000, timeoutMs: 10 })).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("generates grounded text with sources", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
@@ -1828,6 +2074,127 @@ describe("vertex adapter", () => {
     expect(result.sources[0]?.url).toBe("https://example.com/vertex");
   });
 
+  it.each(["camel", "snake"])("maps native Live tool calls and sends their correlated results (%s)", async (style) => {
+    const sent: Record<string, unknown>[] = [];
+    let reads = 0;
+    let release: (() => void) | undefined;
+    const pending = new Promise<undefined>(resolve => { release = () => resolve(undefined); });
+    const calls = [{ id: "call-1", name: "lookup", args: { item: "test" } }, { id: "call-2", name: "lookup", args: {} }];
+    const provider = createVertex({ accessToken: "test", projectId: "demo-project", realtimeConnectionFactory: async () => ({
+      async sendJson(payload) { sent.push(payload); },
+      async recvJson() {
+        if (reads++ === 0) return { setupComplete: {} };
+        if (reads === 2) return style === "camel" ? { toolCall: { functionCalls: calls } } : { tool_call: { function_calls: calls } };
+        return pending;
+      },
+      async close() { release?.(); }
+    }) });
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect();
+    const seen: string[] = [];
+    try {
+      for await (const event of session.eventStream()) {
+        if (event.type !== "realtime-tool-call") continue;
+        seen.push(event.toolCall.id);
+        await session.sendToolResult({ toolCallId: event.toolCall.id, toolName: event.toolCall.name, output: { code: "violet" }, isError: false });
+        if (seen.length === 2) break;
+      }
+      expect(seen).toEqual(["call-1", "call-2"]);
+      expect(sent.slice(1)).toMatchObject(calls.map(call => ({ toolResponse: { functionResponses: [{ id: call.id, name: "lookup" }] } })));
+    } finally { await session.close(); }
+  });
+
+  it.each(["camel", "snake"])("preserves Live interruption and duration lifecycle events (%s)", async (style) => {
+    const content = (value: Record<string, unknown>) => style === "camel" ? { serverContent: value } : { server_content: value };
+    const messages: Record<string, unknown>[] = [
+      { setupComplete: {} },
+      content({ outputTranscription: { text: "abandoned fragment" } }),
+      content({ interrupted: true, turnComplete: true }),
+      content({ outputTranscription: { text: "new answer" }, turnComplete: true }),
+      style === "camel" ? { goAway: { timeLeft: "60.250s" } } : { go_away: { time_left: "60.250s" } },
+      { goAway: { timeLeft: "invalid" } }
+    ];
+    let release: (() => void) | undefined;
+    const pending = new Promise<undefined>(resolve => { release = () => resolve(undefined); });
+    const provider = createVertex({ accessToken: "test", projectId: "demo-project", realtimeConnectionFactory: async () => ({
+      async sendJson() {}, async recvJson() { return messages.shift() ?? pending; }, async close() { release?.(); }
+    }) });
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect();
+    const finals: string[] = [], reasons: string[] = [], durations: (number | undefined)[] = [];
+    try {
+      for await (const event of session.eventStream()) {
+        if (event.type === "realtime-transcript" && event.isFinal) finals.push(event.text);
+        if (event.type === "realtime-response-complete") reasons.push(event.reason!);
+        if (event.type === "realtime-go-away") { durations.push(event.timeLeftMs); if (durations.length === 2) break; }
+      }
+      expect(finals).toEqual(["new answer"]);
+      expect(reasons).toEqual(["interrupted", "turn-complete", "turn-complete"]);
+      expect(durations).toEqual([60250, undefined]);
+    } finally { await session.close(); }
+  });
+
+  it("updates Live instructions without sending another setup and rejects immutable changes locally", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const provider = createVertex({ accessToken: "test", projectId: "demo-project", realtimeConnectionFactory: async () => ({
+      async sendJson(payload) { sent.push(payload); }, ...createPendingRealtimeReceiver()
+    }) });
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({ instructions: "Original", voice: "Kore" });
+    try {
+      await session.update({ instructions: "Replacement" });
+      await session.update({ instructions: "Replacement" });
+      await session.update({});
+      await expect(session.update({ voice: "Puck" })).rejects.toThrow("reconnect");
+      await expect(session.update({ instructions: undefined })).rejects.toThrow("reconnect");
+      await session.sendText("Still connected");
+      expect(sent).toHaveLength(3);
+      expect(sent[1]).toEqual({ clientContent: { turns: [{ role: "system", parts: [{ text: "Replacement" }] }], turnComplete: false } });
+      expect(sent.filter(payload => "setup" in payload)).toHaveLength(1);
+    } finally { await session.close(); }
+  });
+
+  it("interrupts a Live response without inserting a prompt or starting a new turn", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const provider = createVertex({ accessToken: "test", projectId: "demo-project", realtimeConnectionFactory: async () => ({
+      async sendJson(payload) { sent.push(payload); }, ...createPendingRealtimeReceiver()
+    }) });
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({ providerOptions: { realtimeInputConfig: { automaticActivityDetection: { disabled: true } } } });
+    try {
+      await session.interrupt!();
+      expect(sent.slice(1)).toEqual([{ realtimeInput: { activityStart: {} } }, { realtimeInput: { activityEnd: {} } }]);
+    } finally { await session.close(); }
+    const translation = await provider.realtimeModel!("gemini-3.5-live-translate-preview").connect({ translation: { targetLanguage: "es" } });
+    try {
+      await expect(translation.interrupt!()).rejects.toThrow("client-content interruption");
+      expect(sent).toHaveLength(4);
+    } finally { await translation.close(); }
+    const automatic = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect();
+    try {
+      await expect(automatic.interrupt!()).rejects.toThrow("automaticActivityDetection.disabled=true");
+      expect(sent).toHaveLength(5);
+    } finally { await automatic.close(); }
+  });
+
+  it.each(["toolCallCancellation", "tool_call_cancellation"])("preserves %s IDs and rejects late results without closing the session", async (key) => {
+    const sent: Record<string, unknown>[] = [];
+    const messages: Record<string, unknown>[] = [{ setupComplete: {} }, { [key]: { ids: ["call-1", "call-1", "call-2"] } }];
+    let release: (() => void) | undefined;
+    const pending = new Promise<undefined>(resolve => { release = () => resolve(undefined); });
+    const provider = createVertex({ accessToken: "test", projectId: "demo-project", realtimeConnectionFactory: async () => ({
+      async sendJson(payload) { sent.push(payload); }, async recvJson() { return messages.shift() ?? pending; }, async close() { release?.(); }
+    }) });
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect();
+    try {
+      for await (const event of session.eventStream()) {
+        if (event.type !== "realtime-tool-call-cancellation") continue;
+        expect(event.toolCallIds).toEqual(["call-1", "call-2"]);
+        await expect(session.sendToolResult({ toolCallId: "call-1", toolName: "lookup", output: {}, isError: false })).rejects.toThrow("cancelled");
+        await session.sendText("Continue");
+        expect(sent).toHaveLength(2);
+        expect(sent[1]).toHaveProperty("clientContent");
+        break;
+      }
+    } finally { await session.close(); }
+  });
+
   it("defaults Vertex Live sessions to the global v1 LlmBidiService endpoint", async () => {
     const connectionFactory = vi.fn(async (url: string) => {
       expect(url).toBe(
@@ -1849,6 +2216,16 @@ describe("vertex adapter", () => {
     await session.close();
 
     expect(connectionFactory).toHaveBeenCalledOnce();
+  });
+
+  it("uses the project-scoped baseURL resource for Live setup", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const provider = createVertex({ accessToken: "test", projectId: "ignored-project", location: "us-central1",
+      baseURL: "https://us-central1-aiplatform.googleapis.com/v1/projects/target-project/locations/us-central1",
+      realtimeConnectionFactory: async () => ({ async sendJson(payload) { sent.push(payload); }, ...createPendingRealtimeReceiver() }) });
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect();
+    await session.close();
+    expect(sent[0]).toMatchObject({ setup: { model: "projects/target-project/locations/us-central1/publishers/google/models/gemini-live-2.5-flash-native-audio" } });
   });
 
   it("preserves the explicit Vertex Live endpoint override", async () => {
@@ -1946,7 +2323,7 @@ describe("vertex adapter", () => {
     expect(connectionFactory).toHaveBeenCalledOnce();
     expect(sent[0]).toMatchObject({
       setup: expect.objectContaining({
-        model: "models/gemini-live-2.5-flash-native-audio",
+        model: "projects/demo-project/locations/us-central1/publishers/google/models/gemini-live-2.5-flash-native-audio",
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         mediaResolution: "MEDIA_RESOLUTION_LOW",
@@ -1959,10 +2336,10 @@ describe("vertex adapter", () => {
     });
     expect(sent[1]).toMatchObject({
       realtimeInput: {
-        media: {
+        mediaChunks: [{
           mimeType: "image/jpeg",
           data: "vertex-image"
-        }
+        }]
       }
     });
     expect(sent[2]).toMatchObject({
@@ -2016,7 +2393,7 @@ describe("vertex adapter", () => {
     const sent: Record<string, unknown>[] = [];
     const connectionFactory = vi.fn(async (url: string, headers: Record<string, string>) => {
       expect(url).toBe(
-        "wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1alpha.LlmBidiService/BidiGenerateContent"
+        "wss://aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent"
       );
       expect(headers).toMatchObject({
         authorization: "Bearer test"
@@ -2047,8 +2424,8 @@ describe("vertex adapter", () => {
     const provider = createVertex({
       accessToken: "test",
       projectId: "demo-project",
-      location: "us-central1",
-      apiVersion: "v1alpha",
+      location: "global",
+      apiVersion: "v1",
       fetch: fetchMock as typeof fetch,
       realtimeConnectionFactory: connectionFactory
     });
@@ -2063,7 +2440,6 @@ describe("vertex adapter", () => {
     const session = await model.connect({
       mode: "translation",
       translation: {
-        sourceLanguage: "en",
         targetLanguage: "pl"
       },
       inputAudioTranscription: true,
@@ -2083,19 +2459,19 @@ describe("vertex adapter", () => {
     expect(connectionFactory).toHaveBeenCalledOnce();
     expect(sent[0]).toMatchObject({
       setup: {
-        model: "models/gemini-3.5-live-translate-preview",
+        model: "projects/demo-project/locations/global/publishers/google/models/gemini-3.5-live-translate-preview",
         generationConfig: {
-          responseModalities: ["AUDIO"]
-        },
-        translationConfig: {
-          sourceLanguageCode: "en",
-          targetLanguageCode: "pl",
-          echoTargetLanguage: true
+          responseModalities: ["AUDIO", "TEXT"],
+          translationConfig: {
+            targetLanguageCode: "pl",
+            echoTargetLanguage: true
+          }
         },
         inputAudioTranscription: {},
         outputAudioTranscription: {}
       }
     });
+    expect((sent[0] as { setup: Record<string, unknown> }).setup).not.toHaveProperty("translationConfig");
     expect(sent[1]).toMatchObject({
       realtimeInput: {
         audio: {
@@ -2123,8 +2499,8 @@ describe("vertex adapter", () => {
     const provider = createVertex({
       accessToken: "test",
       projectId: "demo-project",
-      location: "us-central1",
-      apiVersion: "v1alpha",
+      location: "global",
+      apiVersion: "v1",
       fetch: fetchMock as typeof fetch,
       realtimeConnectionFactory: connectionFactory
     });
@@ -2132,6 +2508,9 @@ describe("vertex adapter", () => {
     await expect(provider.realtimeModel!("gemini-3.5-live-translate-preview").connect()).rejects.toThrow(
       'Model "vertex/gemini-3.5-live-translate-preview" requires "translation.targetLanguage".'
     );
+    await expect(provider.realtimeModel!("gemini-3.5-live-translate-preview").connect({
+      translation: { targetLanguage: "es", sourceLanguage: "en" }
+    })).rejects.toThrow("detects the source language automatically");
     await expect(
       provider.realtimeModel!("gemini-3.5-live-translate-preview").connect({
         translation: { targetLanguage: "pl" },
@@ -2162,6 +2541,14 @@ describe("vertex adapter", () => {
       'Model "vertex/gemini-3.5-live-translate-preview" only supports audio input.'
     );
     expect(sent).toHaveLength(1);
+    await session.setInputMuted(true);
+    await session.setInputMuted(true);
+    await session.sendAudio({ data: "muted", mediaType: "audio/pcm" });
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual({ realtimeInput: { audioStreamEnd: true } });
+    await session.setInputMuted(false);
+    await session.sendAudio({ data: "resumed", mediaType: "audio/pcm" });
+    expect(sent).toHaveLength(3);
     await session.close();
   });
 
@@ -2202,6 +2589,30 @@ describe("vertex adapter", () => {
     await session.close();
 
     expect(authClient.getAccessToken).toHaveBeenCalledOnce();
+    expect(connectionFactory).toHaveBeenCalledOnce();
+  });
+
+  it("times out Vertex Live credential acquisition without opening a late socket", async () => {
+    let complete!: (token: string) => void;
+    const connectionFactory = vi.fn();
+    const provider = createVertex({ projectId: "p", getAccessToken: () => new Promise<string>(resolve => { complete = resolve; }), realtimeConnectionFactory: connectionFactory });
+    await expect(provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({}, { timeoutMs: 10 })).rejects.toMatchObject({ name: "TimeoutError" });
+    complete("late-token");
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(connectionFactory).not.toHaveBeenCalled();
+  });
+
+  it("subtracts credential latency from the Live transport deadline and retains the caller signal", async () => {
+    const signal = new AbortController().signal;
+    const connectionFactory = vi.fn(async (_url, _headers, options) => {
+      expect(options.signal).toBe(signal);
+      expect(options.timeoutMs).toBeGreaterThan(0);
+      expect(options.timeoutMs).toBeLessThan(1000);
+      return { async sendJson() {}, ...createPendingRealtimeReceiver() };
+    });
+    const provider = createVertex({ projectId: "p", getAccessToken: async () => { await new Promise(resolve => setTimeout(resolve, 10)); return "token"; }, realtimeConnectionFactory: connectionFactory });
+    const session = await provider.realtimeModel!("gemini-live-2.5-flash-native-audio").connect({}, { timeoutMs: 1000, signal });
+    await session.close();
     expect(connectionFactory).toHaveBeenCalledOnce();
   });
 

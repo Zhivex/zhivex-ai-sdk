@@ -10,6 +10,7 @@ import type {
   ContextCacheCreateInput,
   ContextCacheDeleteInput,
   ContextCacheGetInput,
+  ContextCacheUpdateInput,
   ContextCacheListInput,
   FileDeleteInput,
   FileGetInput,
@@ -93,6 +94,9 @@ export type GetContextCacheOptions<TProvider extends ProviderAdapter = ProviderA
   ContextCacheGetInput & {
     provider: TProvider;
   };
+
+export type UpdateContextCacheOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
+  ContextCacheUpdateInput & { provider: TProvider };
 
 export type ListContextCachesOptions<TProvider extends ProviderAdapter = ProviderAdapter> =
   ContextCacheListInput & {

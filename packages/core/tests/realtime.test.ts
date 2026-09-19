@@ -79,6 +79,56 @@ const collectRealtimeEvents = async (session: RealtimeSession) => {
 };
 
 describe("realtime helpers", () => {
+  it("suppresses cancelled tool-call replays and rejects cancelled results locally", async () => {
+    let finish: (() => void) | undefined;
+    const pending = new Promise<undefined>(resolve => { finish = () => resolve(undefined); });
+    const incoming = [{ cancel: true }, { call: true }, { done: true }];
+    const sent: Record<string, unknown>[] = [];
+    const session = new CallbackRealtimeSession({
+      provider: "test", modelId: "test", capabilities: realtimeCapabilities, config: {},
+      connection: { async sendJson(value) { sent.push(value); }, async recvJson() { return incoming.shift() ?? pending; }, async close() { finish?.(); } },
+      callbacks: createRealtimeCallbacks({ parseEvent(value) {
+        if (value.cancel) return [{ type: "realtime-tool-call-cancellation", toolCallIds: ["cancelled"] }];
+        if (value.call) return [{ type: "realtime-tool-call", toolCall: { id: "cancelled", name: "lookup", input: {} } }];
+        return [{ type: "realtime-response-complete" }];
+      } })
+    });
+    await session.initialize();
+    const seen: string[] = [];
+    try {
+      for await (const event of session.eventStream()) { seen.push(event.type); if (event.type === "realtime-response-complete") break; }
+      expect(seen).not.toContain("realtime-tool-call");
+      expect(session.toolCallSignal("cancelled").aborted).toBe(true);
+      expect(session.toolCallSignal("another-call").aborted).toBe(false);
+      await expect(session.sendToolResult({ toolCallId: "cancelled", toolName: "lookup", output: {}, isError: false })).rejects.toThrow("cancelled");
+      expect(sent).toEqual([]);
+      await session.sendText("next");
+      expect(sent).toEqual([{ type: "text", text: "next" }]);
+    } finally { await session.close(); }
+  });
+
+  it("passes committed configuration to update callbacks and preserves it after rejected updates", async () => {
+    let finish: (() => void) | undefined;
+    const pending = new Promise<undefined>(resolve => { finish = () => resolve(undefined); });
+    const previous: (string | undefined)[] = [];
+    const session = new CallbackRealtimeSession({
+      provider: "test", modelId: "test", capabilities: realtimeCapabilities, config: { instructions: "first" },
+      connection: { async sendJson() {}, async recvJson() { return pending; }, async close() { finish?.(); } },
+      callbacks: createRealtimeCallbacks({ buildUpdatePayloads(next, current) {
+        previous.push(current.instructions);
+        if (next.instructions === "invalid") throw new Error("rejected");
+        return [];
+      } })
+    });
+    await session.initialize();
+    try {
+      await session.update({ instructions: "second" });
+      await expect(session.update({ instructions: "invalid" })).rejects.toThrow("rejected");
+      await session.update({ instructions: "third" });
+      expect(previous).toEqual(["first", "second", "second"]);
+    } finally { await session.close(); }
+  });
+
   it("broadcasts callback realtime session events and sent payloads", async () => {
     const sent: Record<string, unknown>[] = [];
     const received = [
@@ -1007,6 +1057,61 @@ describe("realtime helpers", () => {
       expect.objectContaining({ type: "error" }),
       expect.objectContaining({ type: "agent-run-finish", status: "timed_out" })
     ]));
+  });
+
+  it.each(["execution", "approval"] as const)("handles provider cancellation during %s without sending a result or declaring effects reverted", async (phase) => {
+    let started!: () => void;
+    const toolStarted = new Promise<void>(resolve => { started = resolve; });
+    let stop!: () => void;
+    const pending = new Promise<undefined>(resolve => { stop = () => resolve(undefined); });
+    let reads = 0;
+    let executionSignal: AbortSignal | undefined;
+    const sent: Record<string, unknown>[] = [];
+    const store = createInMemoryAgentRunStore();
+    const execute = vi.fn(async (_input, context) => {
+      executionSignal = context.abortSignal;
+      started();
+      return new Promise<never>(() => {}); // Simulate a side effect that ignores abort.
+    });
+    const model: RealtimeModel = {
+      provider: "test", modelId: "live-model", capabilities: liveCapabilities,
+      async connect(config = {}) {
+        const session = new CallbackRealtimeSession({ provider: "test", modelId: "live-model", capabilities: liveCapabilities, config,
+          connection: {
+            async sendJson(value) { sent.push(value); },
+            async recvJson() {
+              if (++reads === 1) return { call: true };
+              if (reads === 2) { await toolStarted; return { cancel: true }; }
+              if (reads === 3) return { answer: true };
+              return pending;
+            }, async close() { stop(); }
+          }, callbacks: createRealtimeCallbacks({ parseEvent(value) {
+            if (value.call) return [{ type: "realtime-tool-call", toolCall: { id: "cancel-me", name: "effect", input: {} } }];
+            if (value.cancel) return [{ type: "realtime-tool-call-cancellation", toolCallIds: ["cancel-me"] }];
+            return [{ type: "realtime-text-delta", textDelta: "Continuing after cancellation" }, { type: "realtime-response-complete", reason: "turn-complete" }];
+          } })
+        });
+        await session.initialize();
+        return session;
+      }
+    };
+    const toolApprovalPolicy = phase === "approval" ? async () => {
+      started();
+      return new Promise<boolean>(() => {});
+    } : undefined;
+    const result = await streamLiveAgent({ model, store, toolApprovalPolicy, tools: { effect: tool({ name: "effect", schema: z.object({}), execute }) } },
+      { runId: "cancelled-live-tool", prompt: "go", timeoutMs: 2000 }).collect();
+    if (phase === "execution") {
+      expect(execute).toHaveBeenCalledOnce();
+      expect(executionSignal?.aborted).toBe(true);
+    } else {
+      expect(execute).not.toHaveBeenCalled();
+    }
+    expect(result.outputText).toBe("Continuing after cancellation");
+    expect(sent.some(value => value.type === "tool-result")).toBe(false);
+    const journal = await store.listToolCalls!("cancelled-live-tool");
+    if (phase === "execution") expect(journal).toMatchObject([{ toolCallId: "cancel-me", status: "running" }]);
+    else expect(journal).toEqual([]);
   });
 
   it("leaves a timed-out side effect indeterminate and never sends a tool result", async () => {

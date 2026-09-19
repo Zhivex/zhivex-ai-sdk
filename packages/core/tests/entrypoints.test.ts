@@ -80,6 +80,10 @@ const collectRuntimeDependencies = async (entry: string, forbiddenBuiltins = ["n
       if (forbiddenBuiltins.some((prefix) => specifier.startsWith(prefix))) {
         throw new Error(`${path.relative(sourceRoot, filePath)} imports ${specifier}`);
       }
+      if (specifier === "#realtime-transport") {
+        await visit(path.join(sourceRoot, "realtime-browser.ts"));
+        continue;
+      }
       if (specifier === "#secure-id") {
         await visit(path.join(sourceRoot, "secure-id.ts"));
         continue;
@@ -163,6 +167,12 @@ describe("core public entrypoints", () => {
       default: "./dist/secure-id.js"
     });
     expect(pkg.files).toContain("secure-id-internal.d.ts");
+    expect(pkg.imports["#realtime-transport"]).toEqual({
+      types: "./realtime-transport-internal.d.ts", browser: "./dist/realtime-browser.js",
+      node: "./dist/realtime-node.js", default: "./dist/realtime-browser.js"
+    });
+    expect(pkg.files).toContain("realtime-transport-internal.d.ts");
+    expect(await readFile(path.join(sourceRoot, "realtime-browser.ts"), "utf8")).not.toContain('"ws"');
     expect(webSource).not.toContain("node:");
     expect(nodeSource).toContain('from "node:crypto"');
   });

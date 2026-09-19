@@ -20,6 +20,20 @@ Use `zhivex-ai --help` for the current summary. `zhivex-ai --version` and `zhive
 
 ## Compatibility Contract
 
+### Vertex projects
+
+```bash
+zhivex-ai init agent --dir ./vertex-agent --provider vertex --model openai/gpt-oss-120b-maas
+zhivex-ai doctor --dir ./vertex-agent --provider vertex
+```
+
+The scaffold uses `createVertex`, `GOOGLE_CLOUD_PROJECT` and `VERTEX_LOCATION`
+(default `global`). Configure Google ADC before running it; project and location
+alone do not authenticate. Partner models require bearer credentials and an
+appropriate region. Doctor reports a warning because it does not call Google to
+verify credentials, permissions or model availability. A publisher-qualified ID
+is passed intact to Vertex; it does not select the author's direct API provider.
+
 - Commands use long flags in either `--name value` or `--name=value` form.
 - Unknown flags, duplicate flags, unexpected positionals, and values supplied to boolean flags fail closed.
 - Successful data commands write one pretty-printed JSON value to stdout and return exit code `0`.

@@ -1,5 +1,21 @@
 # @zhivex-ai/qwen
 
+## 0.14.3
+
+### Patch Changes
+
+- Share the authenticated Node/Bun WebSocket transport through core. Vertex Live now connects with OAuth headers without a custom factory; Qwen reuses the same implementation. Keep browser transport selection separate, disable redirects, and handle handshake cancellation/timeout errors without unhandled socket events.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.21.0
+
 ## 0.14.2
 
 ### Patch Changes

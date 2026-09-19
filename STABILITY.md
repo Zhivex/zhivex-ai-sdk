@@ -149,3 +149,9 @@ Provider support tiers are documented in [SUPPORT.md](./SUPPORT.md) and summariz
 The shared realtime/live contract is Stable, while individual provider model IDs and upstream preview availability remain provider-scoped. Production releases must rerun the fail-closed Gemini/Qwen/OpenAI live gate and the installed-tarball smoke described in [the maintainer certification guide](./docs/maintainers/AGENT_REALTIME_CERTIFICATION.md).
 
 Provider-native Beta additions for September 16, 2026: `createOpenAI().agents` / `OpenAIAgentsClient`, `createAnthropic().managedAgents` / `AnthropicManagedAgentsClient`, and `AnthropicCompactionConfig`. They retain provider-specific payloads and are separate from the stable local agent/runtime contract.
+
+`createChatCompletionsModel` is a Beta provider-construction helper available from
+Core, SDK and `@zhivex-ai/core/provider`. It implements the shared Chat Completions
+wire contract; the adapter supplies authentication, the endpoint, and model
+capability policy. It does not imply that an arbitrary OpenAI-compatible host
+supports OpenAI-specific features.

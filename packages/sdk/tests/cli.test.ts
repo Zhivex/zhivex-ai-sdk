@@ -296,6 +296,26 @@ export const failingSuite = {
     expect(agentSource).toContain('model: provider("gemini-3.6-flash")');
   });
 
+  it("scaffolds Vertex partner IDs and diagnoses configuration without certifying credentials", async () => {
+    const directory = path.join(await tempDir("zhivex-cli-vertex-"), "vertex-agent");
+    const capture = createCapture();
+    const model = "openai/gpt-oss-120b-maas";
+    expect(await runCli(["init", "agent", "--dir", directory, "--provider", "vertex", "--model", model], capture.io)).toBe(0);
+    expect(JSON.parse(capture.stdout[0]!)).toMatchObject({ provider: "vertex", model });
+    const source = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
+    expect(source).toContain('from "@zhivex-ai/vertex"');
+    expect(source).toContain(`model: provider("${model}")`);
+    expect(source).toContain("projectId: process.env.GOOGLE_CLOUD_PROJECT");
+    expect(source).not.toContain("apiKey:");
+    expect(await fs.readFile(path.join(directory, ".env"), "utf8")).toContain("VERTEX_LOCATION=global");
+    const doctor = createCapture();
+    expect(await runCli(["doctor", "--dir", directory, "--provider", "vertex"], doctor.io)).toBe(0);
+    expect(JSON.parse(doctor.stdout[0]!).checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "vertex-dependency", status: "pass" }),
+      expect.objectContaining({ name: "vertex-env", status: "warn" })
+    ]));
+  });
+
   it("scaffolds and diagnoses a DeepSeek V4 agent project", async () => {
     const directory = path.join(await tempDir("zhivex-cli-deepseek-init-"), "deepseek-agent");
     const capture = createCapture();

@@ -1,3 +1,4 @@
+import { targetKey } from "./target.js";
 import { GatewayError, type GatewayModelTarget } from "./types.js";
 export type GatewayCircuitState = "closed" | "open" | "half-open";
 export interface GatewayCircuitSnapshot { state: GatewayCircuitState; failures: number; inFlight: number; openUntil?: number; }
@@ -28,7 +29,7 @@ export const createGatewayCircuitBreaker = (options: GatewayCircuitOptions = {})
   const now = options.now ?? Date.now;
   type Entry = GatewayCircuitSnapshot & { epoch: number; touched: number };
   const entries = new Map<string, Entry>();
-  const key = (target: GatewayModelTarget) => JSON.stringify([target.provider, target.modelId]);
+  const key = targetKey;
   const transition = (entry: Entry, target: GatewayModelTarget, to: GatewayCircuitState) => {
     const from = entry.state; entry.state = to; entry.epoch++;
     if (from === to || !options.onStateChange) return;

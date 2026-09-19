@@ -9,6 +9,20 @@ import {
 } from "../src/catalog.js";
 
 describe("model catalog stable snapshot contract", () => {
+  it("preserves lifecycle evidence in defensive copies and rejects invalid schedules", () => {
+    const lifecycle = { deprecatedAt: "2026-07-21", retiredAt: "2026-10-21", source: "https://example.com/lifecycle" };
+    const catalog = createModelCatalog([{ provider: "vertex", modelId: "test", lifecycle }]);
+    lifecycle.retiredAt = "2027-01-01";
+    const result = catalog.find("vertex", "test")!;
+    expect(result.lifecycle?.retiredAt).toBe("2026-10-21");
+    result.lifecycle!.retiredAt = "2028-01-01";
+    expect(catalog.list()[0].lifecycle?.retiredAt).toBe("2026-10-21");
+    for (const invalid of [
+      { ...lifecycle, retiredAt: "2026-02-30" },
+      { ...lifecycle, retiredAt: "2026-01-01" },
+      { ...lifecycle, source: "javascript:alert(1)" }
+    ]) expect(() => createModelCatalog([{ provider: "vertex", modelId: "test", lifecycle: invalid }])).toThrow();
+  });
   it("preserves the one-argument API with pinned custom metadata", () => {
     const catalog = createModelCatalog([
       { provider: "openai", modelId: "gpt-test", aliases: ["test"], costPer1kTokens: 0.5 }

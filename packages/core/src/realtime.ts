@@ -1,3 +1,4 @@
+import { openAuthenticatedWebSocketConnection } from "#realtime-transport";
 import { BoundedReplayBroadcast, StreamBufferOverflowError } from "./bounded-broadcast.js";
 import { ConfigurationError, ConflictError, UnsupportedFeatureError, ValidationError } from "./errors.js";
 import type {
@@ -89,6 +90,8 @@ export class CallbackRealtimeSession implements RealtimeSession {
   private readonly initializationTimeoutMs?: number;
   private readonly broadcast = new BoundedReplayBroadcast<RealtimeEvent>();
   private readonly seenToolCalls = new Map<string, string>();
+  private readonly cancelledToolCalls = new Set<string>();
+  private readonly toolCallControllers = new Map<string, AbortController>();
   private state: CallbackRealtimeSessionState = "new";
   private initializationPromise?: Promise<void>;
   private terminationPromise?: Promise<void>;
@@ -184,8 +187,23 @@ export class CallbackRealtimeSession implements RealtimeSession {
     await this.sendBuiltPayloads(() => this.callbacks.buildTextPayloads(text, this.config));
   }
 
+  toolCallSignal(toolCallId: string): AbortSignal {
+    let controller = this.toolCallControllers.get(toolCallId);
+    if (!controller) {
+      controller = new AbortController();
+      this.toolCallControllers.set(toolCallId, controller);
+    }
+    if (this.cancelledToolCalls.has(toolCallId) && !controller.signal.aborted) {
+      controller.abort(new DOMException("The provider cancelled this tool call.", "AbortError"));
+    }
+    return controller.signal;
+  }
+
   async sendToolResult(result: ToolExecutionResult) {
     this.assertOpen();
+    if (this.cancelledToolCalls.has(result.toolCallId)) {
+      throw new ConfigurationError(`Realtime tool call "${result.toolCallId}" was cancelled by the provider.`);
+    }
     const payloads = this.callbacks.buildToolResultPayloads(result, this.config);
     try {
       await this.sendPayloads(payloads);
@@ -227,7 +245,7 @@ export class CallbackRealtimeSession implements RealtimeSession {
       ...this.config,
       ...config
     };
-    await this.sendBuiltPayloads(() => this.callbacks.buildUpdatePayloads(nextConfig, nextConfig));
+    await this.sendBuiltPayloads(() => this.callbacks.buildUpdatePayloads(nextConfig, this.config));
     this.config = nextConfig;
   }
 
@@ -376,7 +394,14 @@ export class CallbackRealtimeSession implements RealtimeSession {
           this.resolveReady?.();
         }
         for (const event of this.callbacks.parseEvent(record)) {
+          if (event.type === "realtime-tool-call-cancellation") {
+            for (const id of event.toolCallIds) {
+              this.cancelledToolCalls.add(id);
+              this.toolCallControllers.get(id)?.abort(new DOMException("The provider cancelled this tool call.", "AbortError"));
+            }
+          }
           if (event.type === "realtime-tool-call") {
+            if (this.cancelledToolCalls.has(event.toolCall.id)) continue;
             const fingerprint = realtimeToolCallFingerprint(event);
             const previous = this.seenToolCalls.get(event.toolCall.id);
             if (previous !== undefined) {
@@ -761,9 +786,7 @@ const waitForOpen = (socket: WebSocketLike, signal?: AbortSignal, timeoutMs?: nu
 
 export const openWebSocketConnection: RealtimeConnectionFactory = async (url, headers, options) => {
   if (Object.keys(headers).length > 0) {
-    throw new ConfigurationError(
-      'Default realtime WebSocket connections do not support custom headers. Provide a "realtimeConnectionFactory" from your runtime when auth headers are required.'
-    );
+    return openAuthenticatedWebSocketConnection(url, headers, options);
   }
 
   const WebSocketCtor = (globalThis as { WebSocket?: WebSocketCtor }).WebSocket;
