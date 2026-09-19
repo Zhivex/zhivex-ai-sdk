@@ -1,5 +1,13 @@
 # @zhivex-ai/openai
 
+## 0.13.3
+
+### Patch Changes
+
+- 62539ac: Preserve validated terminal usage on rejected Responses tool calls without emitting unsafe calls.
+- Updated dependencies [62539ac]
+  - @zhivex-ai/core@1.22.0
+
 ## 0.13.2
 
 ### Patch Changes

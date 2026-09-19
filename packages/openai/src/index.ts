@@ -2050,6 +2050,17 @@ const normalizeResponsesFinishReason = (
   return normalizeFinishReason(status);
 };
 
+const attachTerminalUsage = (error: ProviderToolCallError, raw: unknown) => new ProviderToolCallError({
+  provider: error.provider,
+  transport: error.transport,
+  diagnosticCode: error.diagnosticCode,
+  reason: error.reason,
+  retryable: error.retryable,
+  effectsPossible: error.effectsPossible,
+  cause: error.cause,
+  usage: mapResponsesUsage(raw)
+});
+
 const mapResponsesUsage = (usage: any) =>
   usage
     ? {
@@ -2129,6 +2140,7 @@ const streamResponses = async function* (
   let sawToolCalls = false;
   let sawRefusal = false;
   let sawTerminalResponse = false;
+  let deferredToolError: ProviderToolCallError | undefined;
   let nextToolOrder = 0;
 
   const recordHostedImageBytes = (image: GeneratedMedia) => {
@@ -2315,6 +2327,12 @@ const streamResponses = async function* (
       throw error;
     }
     const type = json.type as string | undefined;
+    if (deferredToolError) {
+      if (type === "response.completed" || type === "response.failed" || type === "response.incomplete") {
+        throw attachTerminalUsage(deferredToolError, json.response?.usage);
+      }
+      continue;
+    }
 
     if (sawTerminalResponse) {
       continue;
@@ -2388,10 +2406,11 @@ const streamResponses = async function* (
         typeof item.status === "string" &&
         item.status !== "completed"
       ) {
-        throw openAIResponsesToolCallError(
+        deferredToolError = openAIResponsesToolCallError(
           item.status === "failed" ? "response_failed" : "incomplete_arguments",
           sawToolCalls
         );
+        continue;
       }
 
       if (item?.type === "image_generation_call" && type === "response.output_item.done") {
@@ -2534,9 +2553,13 @@ const streamResponses = async function* (
       sawTerminalResponse = true;
 
       if (responseStatus === "completed") {
-        for (const toolCallEvent of materializeToolCalls()) {
-          yield toolCallEvent;
+        let materialized: StreamEvent[];
+        try { materialized = materializeToolCalls(); }
+        catch (error) {
+          if (error instanceof ProviderToolCallError) throw attachTerminalUsage(error, responseData.usage);
+          throw error;
         }
+        for (const toolCallEvent of materialized) yield toolCallEvent;
         if (pendingExecutableEvents.length > 0) {
           sawToolCalls = true;
           for (const toolCallEvent of pendingExecutableEvents) {
@@ -2550,10 +2573,10 @@ const streamResponses = async function* (
         (responseStatus === "failed" || responseStatus === "incomplete") &&
         (toolBuffers.size > 0 || pendingExecutableEvents.length > 0 || sawToolCalls)
       ) {
-        throw openAIResponsesToolCallError(
+        throw attachTerminalUsage(openAIResponsesToolCallError(
           responseStatus === "failed" ? "response_failed" : "response_incomplete",
           sawToolCalls
-        );
+        ), responseData.usage);
       }
 
       if (typeof responseData.id === "string") {
@@ -2575,7 +2598,7 @@ const streamResponses = async function* (
 
   if (
     !sawTerminalResponse &&
-    (toolBuffers.size > 0 || pendingExecutableEvents.length > 0 || sawToolCalls)
+    (deferredToolError || toolBuffers.size > 0 || pendingExecutableEvents.length > 0 || sawToolCalls)
   ) {
     throw openAIResponsesToolCallError("stream_truncated", sawToolCalls);
   }

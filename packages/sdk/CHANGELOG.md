@@ -1,5 +1,16 @@
 # @zhivex-ai/sdk
 
+## 1.25.0
+
+### Minor Changes
+
+- 62539ac: Preserve validated terminal usage on rejected Responses tool calls without emitting unsafe calls.
+
+### Patch Changes
+
+- Updated dependencies [62539ac]
+  - @zhivex-ai/core@1.22.0
+
 ## 1.24.0
 
 ### Minor Changes
