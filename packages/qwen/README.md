@@ -480,3 +480,11 @@ MiniMax remains access-blocked, with contract-test coverage but no live
 certification. Web extraction, alternate regions, Token Plan, and complete
 reasoning-effort permutations were not live-certified by this snapshot.
 These results do not establish npm publication or production deployment.
+
+### Inline image regression smoke
+
+A bounded smoke sends a synthetic red PNG through Chat generation and streaming with `qwen3.8-flash`, a 512-token budget, and no retries. It requires non-empty text, the expected color, and `finishReason: "stop"`. It honors the existing workspace/region/base URL settings.
+
+```bash
+QWEN_IMAGE_INTEGRATION=1 bun --env-file=.env run test:integration packages/qwen/tests/image-input.integration.test.ts
+```

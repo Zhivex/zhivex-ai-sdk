@@ -11,6 +11,7 @@ import {
 } from "./capabilities.js";
 
 import {
+  imageInputToDataUrl,
   CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
@@ -363,7 +364,7 @@ const mapContentParts = (message: ModelMessage) => {
     ...imageParts.map((part) => ({
       type: "image_url",
       image_url: {
-        url: part.image
+        url: imageInputToDataUrl(part)
       }
     }))
   ];
@@ -913,7 +914,7 @@ const toResponsesInput = (messages: ModelMessage[]) => {
           content.push({ type: "input_text", text: part.text });
           break;
         case "image":
-          content.push({ type: "input_image", image_url: part.image });
+          content.push({ type: "input_image", image_url: imageInputToDataUrl(part) });
           break;
         case "tool-call":
           if (message.role === "assistant") {

@@ -61,3 +61,5 @@ export type * from "./types.js";
 export type { AudioResponseLimits } from "./response.js";
 export type * from "./mcp.js";
 export type * from "./realtime.js";
+
+export { imageInputToDataUrl } from "./image-input.js";

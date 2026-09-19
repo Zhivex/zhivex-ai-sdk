@@ -40,7 +40,9 @@ export interface TextPart {
 
 export interface ImagePart {
   type: "image";
+  /** Base64 image bytes, or a URL/data URL where supported by the provider. */
   image: string;
+  /** Supply the actual image MIME type for base64 input (for example image/png). */
   mediaType?: string;
   providerMetadata?: Record<string, JsonValue>;
 }

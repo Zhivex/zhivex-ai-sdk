@@ -839,3 +839,5 @@ export type { ReconcileAgentToolExecutionOptions } from "@zhivex-ai/core";
 export type { AgentTaskOutcome, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "@zhivex-ai/core";
 
 export type { AgentRunView, AgentRunUpdateEvent } from "@zhivex-ai/core";
+
+export { imageInputToDataUrl } from "@zhivex-ai/core";

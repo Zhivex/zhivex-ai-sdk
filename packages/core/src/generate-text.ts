@@ -1338,6 +1338,9 @@ export const streamText = <
     }
     throw contextualizedError;
   });
+  // eventStream/textStream consumers need not call collect(). Observe the
+  // rejection immediately while preserving the original promise for collect().
+  void finalResultPromise.catch(() => {});
 
   return {
     eventStream: createEventStream(),

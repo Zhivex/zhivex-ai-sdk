@@ -11,6 +11,7 @@ import {
 import type { AnthropicConfig } from "@anthropic-ai/sdk/core/credentials";
 
 import {
+  imageInputToDataUrl,
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
@@ -630,14 +631,21 @@ const mapBlockParts = (modelId: string, message: ModelMessage) =>
     switch (part.type) {
       case "text":
         return { type: "text", text: part.text };
-      case "image":
+      case "image": {
+        const image = imageInputToDataUrl(part);
+        if (/^https?:\/\//i.test(image)) {
+          return { type: "image", source: { type: "url", url: image } };
+        }
+        const comma = image.indexOf(",");
         return {
           type: "image",
           source: {
-            type: "url",
-            url: part.image
+            type: "base64",
+            media_type: image.slice(5, image.indexOf(";")),
+            data: image.slice(comma + 1)
           }
         };
+      }
       case "file":
         return mapFilePart(modelId, part);
       case "tool-call":

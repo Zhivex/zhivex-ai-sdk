@@ -1,5 +1,15 @@
 # @zhivex-ai/openrouter
 
+## 0.5.20
+
+### Patch Changes
+
+- Normalize inline base64 image inputs with their MIME type for Qwen, OpenAI, xAI, Azure OpenAI, Meta, and OpenRouter across Chat/Responses generation and streaming. Preserve HTTP(S) and existing base64 image data URLs without mutating history. Use native base64 source blocks for Anthropic. Share the adapter serializer through Core's provider entrypoint, with explicit validation and a required MIME type for bare base64.
+  
+  Observe streamText's internal final-result rejection for consumers that only iterate eventStream or textStream, while preserving the error event and collect() rejection. Add isolated Node regressions for HTTP, network, mid-stream, cancellation, and provider error events.
+- Updated dependencies
+  - @zhivex-ai/core@1.20.0
+
 ## 0.5.19
 
 ### Patch Changes

@@ -12,6 +12,7 @@ import {
 import type { RawData } from "ws";
 
 import {
+  imageInputToDataUrl,
   CallbackRealtimeSession,
   ConfigurationError,
   decodeBase64WithLimit,
@@ -771,7 +772,7 @@ const mapContentParts = (message: ModelMessage, modelId?: string) => {
       return [{ type: "text", text: part.text }];
     }
     if (part.type === "image") {
-      return [{ type: "image_url", image_url: { url: part.image } }];
+      return [{ type: "image_url", image_url: { url: imageInputToDataUrl(part) } }];
     }
     if (part.type === "audio") {
       return [{
@@ -1495,7 +1496,7 @@ const toResponsesInput = (messages: ModelMessage[], format?: ModelGenerateInput[
           content.push({ type: "input_text", text: part.text });
           break;
         case "image":
-          content.push({ type: "input_image", image_url: part.image });
+          content.push({ type: "input_image", image_url: imageInputToDataUrl(part) });
           break;
         case "audio":
           if (modelId && isQwen38OmniFlash(modelId)) {
@@ -1570,10 +1571,20 @@ const parseResponsesProviderData = (item: unknown) => {
   return item as JsonValue;
 };
 
+class QwenResponseError extends Error {
+  readonly diagnosticCode = "QWEN_RESPONSE_FAILED" as const;
+
+  constructor() {
+    super("Qwen Responses generation failed.");
+    this.name = "QwenResponseError";
+  }
+}
+
 const parseResponsesAssistantMessage = (
   json: any,
   input: ModelGenerateInput<QwenLanguageModelOptions>
 ): ModelMessage => {
+  if (json.status === "failed" || json.error) throw new QwenResponseError();
   const parts: ModelMessage["parts"] = [];
   const seenIds = existingToolCallIds(input.messages);
   const fallbackGeneration = nextFallbackToolCallGeneration("responses", input, seenIds);
@@ -1717,6 +1728,10 @@ const streamResponses = async function* (
     const json = JSON.parse(event.data);
     const type = json.type as string | undefined;
 
+    if (type === "error" || type === "response.failed" || json.response?.status === "failed" || json.error) {
+      throw new QwenResponseError();
+    }
+
     if (type === "response.output_text.delta" && typeof json.delta === "string") {
       yield { type: "text-delta", textDelta: json.delta } satisfies StreamEvent;
       continue;
@@ -1820,7 +1835,7 @@ const streamResponses = async function* (
       continue;
     }
 
-    if (type === "response.completed" || type === "response.failed" || type === "response.incomplete") {
+    if (type === "response.completed" || type === "response.incomplete") {
       const responseData = json.response ?? {};
       if (typeof responseData.id === "string") {
         yield {

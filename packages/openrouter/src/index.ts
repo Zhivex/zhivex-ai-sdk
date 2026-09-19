@@ -1,6 +1,7 @@
 import { toJSONSchema } from "zod";
 
 import {
+  imageInputToDataUrl,
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
@@ -132,7 +133,7 @@ const mapContentParts = (message: ModelMessage) => {
     ...imageParts.map((part) => ({
       type: "image_url",
       image_url: {
-        url: part.image
+        url: imageInputToDataUrl(part)
       }
     }))
   ];

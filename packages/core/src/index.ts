@@ -695,3 +695,5 @@ export type { ModelCostInput, ModelCostValuation } from "./model-cost.js";
 export { reconcileAgentToolExecution } from "./agent-reconciliation.js";
 export type { ReconcileAgentToolExecutionOptions } from "./agent-reconciliation.js";
 export type { AgentTaskOutcome, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "./types.js";
+
+export { imageInputToDataUrl } from "./image-input.js";
