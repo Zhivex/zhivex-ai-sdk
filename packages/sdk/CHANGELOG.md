@@ -1,5 +1,13 @@
 # @zhivex-ai/sdk
 
+## 1.25.1
+
+### Patch Changes
+
+- Add a model-specific Qwen 3.8 LiveTranslate realtime contract with automatic translation, language and audio validation, glossary and explicit cloning-option forwarding, source transcript deltas, preserved provider events, acknowledged setup and graceful close. Add the model to the SDK-owned catalog. Cloning availability and voice enrollment remain subject to the documented upstream limitations.
+  
+  Expose native Qwen voice enrollment, listing and deletion with explicit target selection, bounded responses and no automatic mutation retries. Add a reproducible audio comparison and optional create/use/delete audit; the exact LiveTranslate 3.8 enrollment target and create/use/delete lifecycle are verified live in Singapore.
+
 ## 1.25.0
 
 ### Minor Changes

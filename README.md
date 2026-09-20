@@ -432,3 +432,5 @@ CI scans version-controlled candidate files for recognized credential signatures
 ## License
 
 MIT
+
+Qwen 3.8 LiveTranslate is available through `realtimeModel("qwen3.8-livetranslate-flash-realtime")`; see [configuration, voice cloning limitations, and live verification](./packages/qwen/README.md#qwen-38-livetranslate).

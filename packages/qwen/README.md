@@ -496,3 +496,96 @@ finish reason. The adapter validates the complete batch at normal stream end
 and emits those calls with normalized `tool-calls`, retaining the original
 provider finish reason. Truncated or invalid batches, including explicit provider errors before stream completion, never emit tool calls;
 `ProviderToolCallError` retains terminal token usage when supplied by Qwen.
+
+## Qwen 3.8 LiveTranslate
+
+Use `qwen.realtimeModel("qwen3.8-livetranslate-flash-realtime")` for continuous speech translation over WebSocket. Standard credentials and regional workspace routing apply; availability depends on the account/region. This is not a Chat Completions model.
+
+```ts
+const session = await qwen.realtimeModel("qwen3.8-livetranslate-flash-realtime").connect({
+  mode: "translation",
+  translation: { targetLanguage: "es" },
+  outputAudioMediaType: "audio/pcm", // Omit for text-only output.
+  providerOptions: {
+    translation: { corpus: { phrases: { Zhivex: "Zhivex" } } }
+  }
+});
+const receive = (async () => {
+  for await (const event of session.eventStream()) {
+    if (event.type === "realtime-transcript") console.log(event.role, event.text, event.isFinal);
+    // Consume realtime-audio-output for playback and realtime-text-delta for text-only output.
+  }
+})();
+// Stream mono PCM16LE audio in paced chunks using session.sendAudio({
+//   data: pcmBytes, mediaType: "audio/pcm", sampleRateHz: 16000, channels: 1
+// }). Output audio is mono PCM16 at 24000 Hz.
+await session.close(); // Sends session.finish and waits for all final results and session.finished.
+await receive;
+```
+
+The adapter waits for `session.updated`, maps `output_modalities` and nested `audio` settings, and uses automatic `speaker_detection`. `isFinal` on an audio frame does not commit a manual turn or create a response; call `close()` after the final audio. Source transcription is always enabled. Source/translation events retain item/response IDs and complete provider metadata. Unmapped events, including speaker/turn lifecycle payloads, are exposed as `realtime-provider-data`; no undocumented speaker-ID schema is assumed.
+
+All 60 documented target language codes are validated; 29 allow audio output. Text-only targets such as `el` and `yue` reject audio output. Glossaries accept up to 1000 nonempty source/translation pairs. JPEG frames require preceding audio, are limited to 500 KiB and two frames per rolling second; applications should follow the upstream maximum 1080p recommendation. Tools, text-message input, interruption commands, manual responses, legacy session fields and `same_language_skip_options` are rejected.
+
+### Voice cloning status
+
+The exported `QwenLiveTranslateProviderOptions` type describes native session options. Cloning controls can be explicitly forwarded with `providerOptions.enable_voice_clone: true`, `providerOptions.voice_clone_options: { frequency: "once" | "always" | "never" }`, and `voice`. For `once`/`always`, set `voice: "default"`; for `never`, supply the opaque voice ID returned by enrollment. Audio output is required. The SDK validates these combinations and maps the voice under `audio.output.voice`.
+
+**Live evidence (2026-09-20):** the Singapore default endpoint completed English-to-Spanish translation with source transcription, translated text, audio and acknowledged close. Both `once` and `always` requests completed; the `always` run also asserted that `session.updated` retained the cloning flag and frequency. This verifies protocol acceptance and generation, not perceptual voice similarity or multi-speaker quality. A subsequent live run created a voice with the exact `qwen3.8-livetranslate-flash-realtime` target, confirmed that `never` selected its opaque ID, received source transcripts, Spanish translation and 17.28 seconds of unclipped audio, and confirmed deletion of the temporary voice. This establishes the create/use/delete protocol for the tested Singapore account, not universal regional availability or perceptual voice fidelity.
+
+The adapter explicitly selects `Tina` when no voice is supplied: live testing found that the server otherwise selected `Chelsie` and subsequently rejected it.
+
+Sources: [model guide](https://www.alibabacloud.com/help/en/model-studio/qwen3-5-livetranslate-flash-realtime), [client events](https://www.alibabacloud.com/help/en/model-studio/live-translator-client-events), [server events](https://www.alibabacloud.com/help/en/model-studio/live-translator-server-events).
+
+### Live verification
+
+Provide a non-sensitive, mono 16 kHz PCM16LE file of at most 30 seconds:
+
+```bash
+QWEN_LIVETRANSLATE_INTEGRATION=1 QWEN_LIVETRANSLATE_PCM_FILE=/absolute/path/speech.pcm bun --env-file=.env run test:integration packages/qwen/tests/live-translate.integration.test.ts
+```
+
+The test requires real source transcripts, translated text, audio and acknowledged completion. Set `QWEN_LIVETRANSLATE_EXPECT_TEXT` to check expected Spanish text, or `QWEN_LIVETRANSLATE_CLONE=once` / `always` to test server acceptance of cloning settings (voice similarity still requires audio evaluation). Skipped tests are not live evidence.
+
+
+### Voice management and reproducible audit
+
+`qwen.voices.create()`, `.list()` and `.delete()` implement the native `qwen-voice-enrollment` HTTP contract. Enrollment always requires an explicit `targetModel`; the client does not silently substitute 3.5 for 3.8. It accepts HTTPS audio URLs or audio data URIs, preserves opaque voice IDs and fallback-quality metadata, does not retry creation, and blocks credentialed redirects. This client is separate from the older `voice-enrollment`/CosyVoice API.
+
+```ts
+const voice = await qwen.voices.create({
+  targetModel: "qwen3.8-livetranslate-flash-realtime",
+  preferredName: "translationdemo",
+  audio: "data:audio/wav;base64,...", // Supply a real audio fixture.
+  language: "en"
+});
+try {
+  // Use voice.voice with frequency: "never" and outputAudioMediaType: "audio/pcm".
+} finally {
+  await qwen.voices.delete({ voice: voice.voice });
+}
+```
+
+Creation is a persistent account mutation and the target must be available in your region. The exact 3.8 target and create/use/delete lifecycle were verified live on 2026-09-20 in Singapore. [Official enrollment API](https://www.alibabacloud.com/help/en/model-studio/voice-clone-design-http-api).
+
+The repository audit generates baseline/once/always WAVs, a JSON report and an HTML listening comparison in `.release/qwen-live-translate-audit/`:
+
+```bash
+QWEN_LIVETRANSLATE_ENROLL=0 QWEN_LIVETRANSLATE_PCM_FILE=/absolute/path/synthetic.pcm bun --env-file=.env scripts/qwen-live-translate-audit.ts
+```
+
+Setting `QWEN_LIVETRANSLATE_ENROLL=1` additionally creates a temporary voice for the explicit 3.8 target, tests `never`, and deletes only that new voice in `finally`. Set `QWEN_LIVETRANSLATE_AUDIT_MODES=never` for a focused enrollment check. Run that option only when creation is authorized. A private `created-voice.json` recovery file identifies the voice if cleanup fails; cleanup failure fails the audit. If a create request times out without an ID, inspect your account before retrying because server-side creation may have succeeded.
+
+Signal duration, amplitude, clipping, returned transcripts and session acknowledgements are recorded separately from perceptual voice similarity. The report never equates nonempty audio or accepted cloning options with preservation of voice identity; compare the WAVs to evaluate that property.
+
+An optional qualitative model review can compare the generated clips:
+
+```bash
+bun --env-file=.env scripts/qwen-live-translate-audio-review.ts
+```
+
+It uses `qwen3.8-omni-flash`, writes `model-audio-review.json`, and labels its conclusions as model evaluation rather than human certification. The initial short English-to-Spanish synthetic sample produced intelligible, unclipped audio, but its qualitative review did not establish consistent timbre preservation for both cloning modes. Use `QWEN_LIVETRANSLATE_TARGET_LANGUAGE=en` and a longer fixture for a same-language control; use `QWEN_LIVETRANSLATE_AUDIT_DIR` to keep separate runs. Do not treat this small synthetic sample as a population-level voice-cloning benchmark.
+
+The longer same-language synthetic control also completed baseline/once/always with acknowledged cloning and output audio. Its model evaluator preferred the cloned prosody but still did not confirm source-timbre fidelity, and some source-voice descriptions were inconsistent across evaluations. Therefore these automated assessments are retained as limited evidence, not a passing perceptual certification. Enrollment and `never` subsequently passed the live create/use/delete check for the exact 3.8 target.
+
+The focused `never` run also received a favorable qualitative timbre assessment from Qwen Omni, with the same limitations as the earlier model-based reviews. A post-cleanup inventory check confirmed that neither of the two temporary voices created during enrollment validation remained in the account.

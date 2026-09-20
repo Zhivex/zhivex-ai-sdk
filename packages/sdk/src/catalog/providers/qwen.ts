@@ -2,10 +2,11 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const qwenCatalogFragment = defineModelCatalogFragment({
   provider: "qwen",
-  revision: "2026-09-18",
-  verifiedAt: "2026-09-18",
+  revision: "2026-09-20",
+  verifiedAt: "2026-09-20",
   pricingEffectiveAt: "2026-09-18",
   sources: [
+    "https://www.alibabacloud.com/help/en/model-studio/qwen3-5-livetranslate-flash-realtime",
     "https://docs.qwencloud.com/api-reference/chat/openai-chat",
     "https://docs.qwencloud.com/api-reference/chat/openai-responses",
     "https://www.alibabacloud.com/help/en/model-studio/models",
@@ -15,6 +16,7 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
     "https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models"
   ],
   entries: [
+    { provider: "qwen", modelId: "qwen3.8-livetranslate-flash-realtime", recommendedFor: ["vision", "speed"] },
     {
       provider: "qwen",
       modelId: "qwen3.8-omni-flash",

@@ -1,3 +1,7 @@
+import { createQwenVoicesClient, type QwenVoicesClient } from "./voices.js";
+export type { QwenVoice, QwenVoiceCreateInput, QwenVoiceRequestOptions, QwenVoicesClient } from "./voices.js";
+export type { QwenLiveTranslateProviderOptions } from "./live-translate.js";
+import { isLiveTranslate38, liveTranslateSession } from "./live-translate.js";
 import { thirdPartyProfile, thirdPartyCapabilities, validateThirdParty, thirdPartyReasoning } from "./third-party.js";
 import { toJSONSchema } from "zod";
 import {
@@ -176,6 +180,7 @@ export type QwenProvider = CallableProviderAdapter<LanguageModel<QwenLanguageMod
   rerankModel(modelId: string): QwenRerankModel;
   multimodalEmbeddingModel(modelId: string): QwenMultimodalEmbeddingModel;
   tasks: QwenTasksClient;
+  voices: QwenVoicesClient;
 };
 
 const qwenTaskBaseURLFrom = (baseURL: string) => {
@@ -2759,7 +2764,8 @@ class QwenTasksClientImpl implements QwenTasksClient {
 const parseRealtimeEvent = (
   payload: Record<string, unknown>,
   fallbackRealtimeToolCallId: () => string,
-  seenToolCallIds: Set<string>
+  seenToolCallIds: Set<string>,
+  liveTranslate = false
 ): RealtimeEvent[] => {
   const type = String(payload.type ?? "");
   const metadata = payload as Record<string, JsonValue>;
@@ -2792,7 +2798,7 @@ const parseRealtimeEvent = (
     return [{ type: "realtime-transcript", text: payload.transcript, role: "assistant", isFinal: true, itemId, responseId, providerMetadata: metadata }];
   }
   if (type === "conversation.item.input_audio_transcription.delta") {
-    const text = `${typeof payload.text === "string" ? payload.text : ""}${typeof payload.stash === "string" ? payload.stash : ""}`;
+    const text = typeof payload.delta === "string" ? payload.delta : `${typeof payload.text === "string" ? payload.text : ""}${typeof payload.stash === "string" ? payload.stash : ""}`;
     return [{ type: "realtime-transcript", text, role: "user", isFinal: false, itemId, providerMetadata: metadata }];
   }
   if (type === "conversation.item.input_audio_transcription.completed" && typeof payload.transcript === "string") {
@@ -2827,7 +2833,10 @@ const parseRealtimeEvent = (
       providerMetadata: metadata
     }];
   }
-  return [];
+  if (liveTranslate && type === "response.text.done" && typeof payload.text === "string") {
+    return [{ type: "realtime-transcript", text: payload.text, role: "assistant", isFinal: true, itemId, responseId, providerMetadata: metadata }];
+  }
+  return liveTranslate ? [{ type: "realtime-provider-data", provider: "qwen", data: metadata }] : [];
 };
 
 const mapRealtimeTools = (config: RealtimeSessionConfig) => {
@@ -2893,7 +2902,10 @@ const encodeRealtimeData = (data: string | Uint8Array | ArrayBuffer) => {
 
 class QwenRealtimeModel implements RealtimeModel {
   readonly provider = "qwen";
-  readonly capabilities = realtimeCapabilities;
+  get capabilities() {
+    if (!isLiveTranslate38(this.modelId)) return realtimeCapabilities;
+    return { ...realtimeCapabilities, tools: false, realtime: { ...realtimeCapabilities.realtime!, tools: false } };
+  }
 
   constructor(
     readonly modelId: string,
@@ -2903,7 +2915,12 @@ class QwenRealtimeModel implements RealtimeModel {
   ) {}
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
-    assertQwenRealtimeConfig(config);
+    const liveTranslate = isLiveTranslate38(this.modelId);
+    const mapSession = liveTranslate ? liveTranslateSession : mapRealtimeSession;
+    mapSession(config);
+    let audioSent = false;
+    const imageTimes: number[] = [];
+    const unsupported = () => { throw new UnsupportedFeatureError("LiveTranslate accepts streaming audio and images, not conversation commands."); };
     const url = appendQuery(this.realtimeURL, { model: this.modelId });
     const connection = await (this.connectionFactory ?? openWebSocketConnection)(
       url,
@@ -2918,35 +2935,59 @@ class QwenRealtimeModel implements RealtimeModel {
       capabilities: this.capabilities,
       config,
       connection,
+      initializationTimeoutMs: liveTranslate ? (options?.timeoutMs ?? 15000) : undefined,
       callbacks: {
+        ...(liveTranslate ? {
+          isReadyPayload: (payload: Record<string, unknown>) => payload.type === "session.updated",
+          isCloseAcknowledgementPayload: (payload: Record<string, unknown>) => payload.type === "session.finished"
+        } : {}),
         parseEvent: (payload) => parseRealtimeEvent(
           payload,
           () => `qwen-realtime-tool-${fallbackRealtimeToolCallIndex++}`,
-          seenRealtimeToolCallIds
+          seenRealtimeToolCallIds, liveTranslate
         ),
-        buildInitialPayloads: (value) => [{ type: "session.update", session: mapRealtimeSession(value) }],
-        buildAudioPayloads: (frame: AudioFrame, sessionConfig) => [
-          { type: "input_audio_buffer.append", audio: encodeRealtimeData(frame.data) },
-          ...(frame.isFinal ? [{ type: "input_audio_buffer.commit" }] : []),
-          ...(frame.isFinal && (sessionConfig.autoResponse ?? true) ? [{ type: "response.create" }] : [])
-        ],
+        buildInitialPayloads: (value) => [{ type: "session.update", session: mapSession(value) }],
+        buildAudioPayloads: (frame: AudioFrame, sessionConfig) => {
+          if (liveTranslate) {
+            if (frame.mediaType !== "audio/pcm" || (frame.sampleRateHz !== undefined && frame.sampleRateHz !== 16000) || (frame.channels !== undefined && frame.channels !== 1)) throw new ConfigurationError("LiveTranslate input must be mono 16000 Hz PCM16.");
+            const audio = encodeRealtimeData(frame.data);
+            const bytes = decodeBase64WithLimit(audio, { maxBytes: QWEN_REALTIME_MAX_MESSAGE_BYTES, provider: "qwen", endpoint: "realtime" });
+            if (!bytes.length || bytes.length % 2) throw new ConfigurationError("LiveTranslate audio requires nonempty PCM16 samples.");
+            audioSent = true;
+            return [{ type: "input_audio_buffer.append", audio }];
+          }
+          return [
+            { type: "input_audio_buffer.append", audio: encodeRealtimeData(frame.data) },
+            ...(frame.isFinal ? [{ type: "input_audio_buffer.commit" }] : []),
+            ...(frame.isFinal && (sessionConfig.autoResponse ?? true) ? [{ type: "response.create" }] : [])
+          ];
+        },
         buildMediaPayloads: (frame: MediaFrame) => {
           if (!/^image\/(jpeg|jpg)$/i.test(frame.mediaType)) {
             throw new UnsupportedFeatureError("Qwen realtime media frames must be JPEG images.");
           }
-          return [{ type: "input_image_buffer.append", image: encodeRealtimeData(frame.data) }];
+          const image = encodeRealtimeData(frame.data);
+          if (liveTranslate) {
+            if (!audioSent) throw new ConfigurationError("Send audio before LiveTranslate image frames.");
+            decodeBase64WithLimit(image, { maxBytes: 500 * 1024, provider: "qwen", endpoint: "realtime" });
+            const now = performance.now();
+            while (imageTimes.length && now - imageTimes[0]! >= 1000) imageTimes.shift();
+            if (imageTimes.length >= 2) throw new ConfigurationError("LiveTranslate accepts at most two images per second.");
+            imageTimes.push(now);
+          }
+          return [{ type: "input_image_buffer.append", image }];
         },
-        buildTextPayloads: (text, sessionConfig) => [
+        buildTextPayloads: (text, sessionConfig) => liveTranslate ? unsupported() : [
           { type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text }] } },
           ...((sessionConfig.autoResponse ?? true) ? [{ type: "response.create" }] : [])
         ],
-        buildToolResultPayloads: (result: ToolExecutionResult, sessionConfig) => [
+        buildToolResultPayloads: (result: ToolExecutionResult, sessionConfig) => liveTranslate ? unsupported() : [
           { type: "conversation.item.create", item: { type: "function_call_output", call_id: result.toolCallId, output: JSON.stringify(result.isError ? result.error : result.output ?? null) } },
           ...((sessionConfig.autoResponse ?? true) ? [{ type: "response.create" }] : [])
         ],
-        buildUpdatePayloads: (value) => [{ type: "session.update", session: mapRealtimeSession(value) }],
-        buildInterruptPayloads: () => [{ type: "response.cancel" }],
-        buildClosePayloads: () => []
+        buildUpdatePayloads: (value) => [{ type: "session.update", session: mapSession(value) }],
+        buildInterruptPayloads: () => liveTranslate ? unsupported() : [{ type: "response.cancel" }],
+        buildClosePayloads: () => liveTranslate ? [{ type: "session.finish" }] : []
       }
     });
     await session.initialize();
@@ -3004,7 +3045,10 @@ export const createQwen = (
 
   return createProviderAdapter({
     name: "qwen",
-    languageModel: (modelId) => new QwenLanguageModel(modelId, apiKey, baseURL, fetcher),
+    languageModel: (modelId) => {
+      if (isLiveTranslate38(modelId)) throw new UnsupportedFeatureError("Qwen 3.8 LiveTranslate requires realtimeModel(), not languageModel().");
+      return new QwenLanguageModel(modelId, apiKey, baseURL, fetcher);
+    },
     embeddingModel: (modelId) => new QwenEmbeddingModel(modelId, apiKey, baseURL, fetcher),
     transcriptionModel: (modelId) => new QwenTranscriptionModel(modelId, apiKey, baseURL, fetcher, responseLimits),
     speechModel: (modelId) =>
@@ -3026,6 +3070,7 @@ export const createQwen = (
     multimodalEmbeddingModel: (modelId: string) =>
       new QwenMultimodalEmbeddingModelImpl(modelId, apiKey, taskBaseURL, fetcher),
     tasks: new QwenTasksClientImpl(apiKey, taskBaseURL, fetcher),
+    voices: createQwenVoicesClient(apiKey, taskBaseURL, fetcher),
     rawFetch: fetcher
   }) as QwenProvider;
 };
