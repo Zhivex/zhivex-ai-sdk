@@ -36,10 +36,10 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-09-20",
+      snapshotVersion: "2026-09-22",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-09-16",
+        version: "2026-09-22",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
@@ -60,7 +60,7 @@ describe("SDK model catalog ownership", () => {
     }
     expect(defaultModelCatalog.find("gemini", "gemini-3.8-live-extended-thinking")).toBeDefined();
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(178);
+    expect(entries).toHaveLength(181);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
@@ -102,12 +102,12 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(178);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(181);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
-      revision: "2026-09-12",
-      verifiedAt: "2026-09-12",
-      pricingEffectiveAt: "2026-08-16",
-      sources: ["https://developers.openai.com/api/docs/models/gpt-6-astra", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
+      revision: "2026-09-22",
+      verifiedAt: "2026-09-22",
+      pricingEffectiveAt: "2026-09-22",
+      sources: ["https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
     });
     expect(fragments.find((fragment) => fragment.provider === "zai")).toMatchObject({
       revision: "2026-08-26",

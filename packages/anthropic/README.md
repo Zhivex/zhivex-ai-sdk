@@ -2,6 +2,16 @@
 
 Anthropic adapter for Zhivex AI SDK, with first-class Claude Opus 5 support.
 
+## Claude Opus 5.5
+
+Use `createAnthropic()("claude-opus-5-5")`. Adaptive thinking is always on; omit thinking configuration or use `thinking.type: "adaptive"`. Supported reasoning efforts are `low`, `medium` (provider default), `high`, `xhigh`, and `max`. Disabling thinking, manual token budgets, and forced tool choice (`required` or a named tool, including native `any`/`tool`) fail locally. Use `auto` or `none` tool choice and native structured output for schema-constrained responses.
+
+Progress between tools arrives in thinking blocks. Set `providerOptions.thinking.display: "updates"` to receive progress, and optionally `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` when editing earlier context. The adapter adds the corresponding beta headers and preserves opaque thinking blocks in generation history; keep history append-only when replaying signatures.
+
+On the direct API, replace `computer_20251124` with a generic `hostedTool` whose provider is `anthropic` and type is `computer_toolset_20260801`. The adapter emits the toolset without a `name` field. Your application must handle member tool calls, batch actions, and `toolset_name`; this does not install a computer executor. Old computer tool requests fail locally on Opus 5.5. Existing Opus 5 behavior is preserved.
+
+See the official [Opus 5.5 overview](https://platform.claude.com/docs/en/models/opus-5-5/overview) and [breaking changes](https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5).
+
 ## Install
 
 ```bash

@@ -8,7 +8,7 @@ const apiKey = process.env.OPENAI_API_KEY;
 const baseURL = process.env.OPENAI_BASE_URL;
 const textModelId = process.env.OPENAI_INTEGRATION_MODEL ?? "gpt-5.6-luna";
 const embeddingModelId = process.env.OPENAI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-3-small";
-const usesOpenAIGpt56Controls = /^gpt-5\.6(?:$|-)/i.test(textModelId);
+const usesOpenAIGpt56Controls = /^(?:gpt-5\.6|gpt-6-(?:astra|sol|luna))(?:$|-)/i.test(textModelId);
 const deterministicTemperature = usesOpenAIGpt56Controls ? {} : { temperature: 0 };
 const generationMaxTokens = usesOpenAIGpt56Controls ? 128 : 32;
 

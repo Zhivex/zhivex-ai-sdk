@@ -16,6 +16,7 @@ import {
   inferOpenAIRealtimeMode,
   supportsOpenAIModernResponses,
   isOpenAIAstraModel,
+  isOpenAISolLunaModel,
   modelCapabilities,
   openAIRealtimeSupportsImageInput,
   realtimeCapabilities,
@@ -2682,6 +2683,22 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
   }
 
   private usesResponsesAPI(input: ModelGenerateInput, options: ReturnType<typeof resolveOpenAILanguageRequestOptions>) {
+    if (isOpenAISolLunaModel(this.modelId)) {
+      const raw = options.bodyOptions;
+      const effort = input.reasoning?.effort ?? (raw.reasoning as { effort?: string } | undefined)?.effort ?? raw.reasoning_effort;
+      if (effort !== undefined && !["none", "low", "medium", "high", "xhigh", "max"].includes(String(effort))) {
+        throw new UnsupportedFeatureError(`GPT-6 Sol/Luna does not support reasoning effort "${effort}".`);
+      }
+      if (effort !== "none") {
+        if (input.temperature !== undefined || raw.temperature !== undefined || raw.top_p !== undefined || raw.top_logprobs !== undefined ||
+            (options.apiMode === "chat" && raw.logprobs !== undefined) || raw.include?.includes("message.output_text.logprobs")) {
+          throw new UnsupportedFeatureError('GPT-6 Sol/Luna sampling and logprobs controls require reasoning effort "none".');
+        }
+        if (options.apiMode === "chat" && Object.keys(input.tools ?? {}).length) {
+          throw new UnsupportedFeatureError('GPT-6 Sol/Luna tool calling with reasoning requires the Responses API; Chat Completions requires effort "none".');
+        }
+      }
+    }
     if (isOpenAIAstraModel(this.modelId)) {
       const raw = options.bodyOptions;
       const effort = input.reasoning?.effort ?? (raw.reasoning as { effort?: string } | undefined)?.effort ?? raw.reasoning_effort;

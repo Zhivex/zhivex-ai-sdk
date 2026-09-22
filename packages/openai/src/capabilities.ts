@@ -43,8 +43,11 @@ export const isOpenAIGpt56Model = (modelId: string) =>
 export const isOpenAIAstraModel = (modelId: string) =>
   /^gpt-6-astra(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
 
+export const isOpenAISolLunaModel = (modelId: string) =>
+  /^gpt-6-(?:sol|luna)(?:$|-\d{4}-\d{2}-\d{2}$)/.test(normalizeModelId(modelId));
+
 export const supportsOpenAIModernResponses = (modelId: string) =>
-  isOpenAIGpt56Model(modelId) || isOpenAIAstraModel(modelId);
+  isOpenAIGpt56Model(modelId) || isOpenAIAstraModel(modelId) || isOpenAISolLunaModel(modelId);
 
 const isOpenAIGpt55BaseModel = (modelId: string) =>
   /^gpt-5\.5(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));

@@ -1921,7 +1921,7 @@ describe("anthropic adapter", () => {
         }
       })
     ).rejects.toThrow(
-      'Provider "anthropic" does not support "thinking.disabled" for Claude Fable 5 or Claude Mythos 5; omit "thinking" or use "thinking.display" with adaptive thinking.'
+      'Provider "anthropic" does not support "thinking.disabled" for Claude Fable 5, Claude Mythos 5, or Claude Opus 5.5; omit "thinking" or use "thinking.display" with adaptive thinking.'
     );
 
     await expect(

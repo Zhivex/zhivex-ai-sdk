@@ -1643,7 +1643,7 @@ describe("openai adapter", () => {
     ).rejects.toThrow('Provider "openai" does not support "reasoning.budgetTokens".');
   });
 
-  it.each(["gpt-6-astra", "gpt-6-astra-2026-09-04"])("routes %s tools and streaming through Responses", async (modelId) => {
+  it.each(["gpt-6-astra", "gpt-6-astra-2026-09-04", "gpt-6-sol", "gpt-6-luna", "gpt-6-sol-2026-09-22", "gpt-6-luna-2026-09-22"])("routes %s tools and streaming through Responses", async (modelId) => {
     const output = [{ type: "message", content: [{ type: "output_text", text: "ok" }] }];
     fetchMock.mockResolvedValueOnce(Response.json({ id: "resp_astra", status: "completed", output }));
     fetchMock.mockResolvedValueOnce(responsesSse(
@@ -1681,7 +1681,7 @@ describe("openai adapter", () => {
   it("reports the current GPT-5.6, GPT-5.5, and GPT-5.4 tool capability matrix", () => {
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
-    for (const modelId of ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    for (const modelId of ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna"]) {
       const model = provider(modelId);
       expect(model.capabilities).toMatchObject({
         files: true,
