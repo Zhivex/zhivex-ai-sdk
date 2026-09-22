@@ -5,10 +5,10 @@ import { createAnthropic } from "../src/index.js";
 const block = { type: "compaction", content: "Keep the agreed recipe schema.", signature: "opaque-signature" };
 const messages = [{ role: "user" as const, parts: [{ type: "text" as const, text: "Summarize our work" }] }];
 
-describe("Anthropic on-demand compaction", () => {
+describe.each(["claude-opus-5", "claude-opus-5-5"])("Anthropic on-demand compaction: %s", (modelId) => {
   it("summarizes a completed assistant turn without treating it as a prefill", async () => {
     const fetcher = vi.fn(async () => Response.json({ content: [block], stop_reason: "compaction" }));
-    const model = createAnthropic({ apiKey: "test", fetch: fetcher as typeof fetch })("claude-opus-5");
+    const model = createAnthropic({ apiKey: "test", fetch: fetcher as typeof fetch })(modelId);
     const history = [...messages, { role: "assistant" as const, parts: [{ type: "text" as const, text: "Use Recipe and Ingredient entities." }] }];
     await expect(model.generate({ messages: history })).rejects.toThrow("prefill");
     await expect(model.generate({ messages: history, providerOptions: { compaction: { type: "summarize" } } })).resolves.toMatchObject({ providerFinishReason: "compaction" });
@@ -19,7 +19,7 @@ describe("Anthropic on-demand compaction", () => {
     const fetcher = vi.fn(async () => Response.json({ content: [block], stop_reason: "compaction", usage: {
       input_tokens: 0, output_tokens: 0, iterations: [{ type: "compaction", input_tokens: 144, output_tokens: 276 }]
     } }));
-    const model = createAnthropic({ apiKey: "test", fetch: fetcher as typeof fetch })("claude-opus-5");
+    const model = createAnthropic({ apiKey: "test", fetch: fetcher as typeof fetch })(modelId);
     const result = await model.generate({ messages, providerOptions: { compaction: { type: "summarize" } } });
     expect(result.providerFinishReason).toBe("compaction");
     expect(result.text).toBe("");
@@ -34,7 +34,7 @@ describe("Anthropic on-demand compaction", () => {
 
   it("rejects misplaced blocks and incompatible compaction options before I/O", async () => {
     const fetcher = vi.fn();
-    const model = createAnthropic({ apiKey: "test", fetch: fetcher })("claude-opus-5");
+    const model = createAnthropic({ apiKey: "test", fetch: fetcher })(modelId);
     await expect(model.generate({ messages: [...messages, { role: "assistant", parts: [providerDataPart("anthropic", block)] }] })).rejects.toThrow("first block");
     for (const incompatible of [{ context_management: {} }, { stop_sequences: [] }, { output_config: { format: { type: "json_schema", schema: {} } } }]) {
       await expect(model.generate({ messages, providerOptions: { compaction: { type: "summarize" }, ...incompatible } })).rejects.toThrow("cannot combine");
@@ -51,7 +51,7 @@ describe("Anthropic on-demand compaction", () => {
       { type: "message_stop" }
     ];
     const fetcher = vi.fn(async () => new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("")));
-    const model = createAnthropic({ apiKey: "test", fetch: fetcher as typeof fetch })("claude-opus-5");
+    const model = createAnthropic({ apiKey: "test", fetch: fetcher as typeof fetch })(modelId);
     const received = [];
     for await (const event of await model.stream({ messages, providerOptions: { compaction: { type: "summarize" } } })) received.push(event);
     expect(received).toContainEqual(expect.objectContaining({ type: "provider-data", data: block }));

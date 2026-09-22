@@ -1,5 +1,11 @@
 # @zhivex-ai/openai
 
+## 0.13.4
+
+### Patch Changes
+
+- Support GPT-6 Sol and Luna with automatic Responses routing, current capabilities, and Chat Completions/sampling validation. Support Claude Opus 5.5 always-on thinking, automatic tool selection, thinking display and binding controls, and the computer toolset migration. Add all three models and their direct-provider pricing to the SDK catalog.
+
 ## 0.13.3
 
 ### Patch Changes

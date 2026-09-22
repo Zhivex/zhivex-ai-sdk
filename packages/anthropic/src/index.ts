@@ -185,9 +185,13 @@ const isClaudeMythos5Model = (modelId: string) => /^claude-mythos-5(?:[-@]|$)/.t
 
 const isClaude51Model = (modelId: string) => /^claude-(?:fable|mythos)-5-1(?:[-@]|$)/.test(normalizeModelId(modelId));
 
+const isClaudeOpus55Model = (modelId: string) => /^claude-opus-5-5(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const supportsBoundThinking = (modelId: string) => isClaude51Model(modelId) || isClaudeOpus55Model(modelId);
+
 const isClaudeMythosClass5Model = (modelId: string) => isClaudeFable5Model(modelId) || isClaudeMythos5Model(modelId);
 
-const requiresAnthropicAdaptiveThinking = (modelId: string) => isClaudeMythosClass5Model(modelId);
+const requiresAnthropicAdaptiveThinking = (modelId: string) => isClaudeMythosClass5Model(modelId) || isClaudeOpus55Model(modelId);
 
 const supportsAnthropicModernControls = (modelId: string) =>
   isClaudeOpus47OrLaterModel(modelId) || isClaudeSonnet5Model(modelId) || isClaudeMythosClass5Model(modelId);
@@ -205,7 +209,7 @@ const supportsMidConversationSystemMessages = (modelId: string) =>
 const anthropicReasoningEfforts = (
   modelId: string
 ): NonNullable<ModelCapabilities["reasoningEfforts"]> | undefined => {
-  if (isClaudeMythosClass5Model(modelId)) {
+  if (requiresAnthropicAdaptiveThinking(modelId)) {
     return ["low", "medium", "high", "xhigh", "max"];
   }
 
@@ -793,7 +797,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           };
         }
 
-        if (tool.type === "browser_toolset_20260801") {
+        if (tool.type === "browser_toolset_20260801" || tool.type === "computer_toolset_20260801") {
           const config = tool.config && typeof tool.config === "object" && !Array.isArray(tool.config) ? tool.config : {};
           const { name: _name, type: _type, ...options } = config;
           return { ...options, type: tool.type };
@@ -894,7 +898,7 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput): MappedAnthrop
 
     if (requiresAnthropicAdaptiveThinking(modelId)) {
       throw new UnsupportedFeatureError(
-        'Provider "anthropic" does not support disabling thinking for Claude Fable 5 or Claude Mythos 5.'
+        'Provider "anthropic" does not support disabling thinking for Claude Fable 5, Claude Mythos 5, or Claude Opus 5.5.'
       );
     }
 
@@ -989,7 +993,7 @@ const assertAnthropicRequestCompatibility = (
 
   if (requiresAnthropicAdaptiveThinking(modelId) && thinking?.type === "disabled") {
     throw new UnsupportedFeatureError(
-      'Provider "anthropic" does not support "thinking.disabled" for Claude Fable 5 or Claude Mythos 5; omit "thinking" or use "thinking.display" with adaptive thinking.'
+      'Provider "anthropic" does not support "thinking.disabled" for Claude Fable 5, Claude Mythos 5, or Claude Opus 5.5; omit "thinking" or use "thinking.display" with adaptive thinking.'
     );
   }
 
@@ -999,11 +1003,11 @@ const assertAnthropicRequestCompatibility = (
     );
   }
 
-  if (thinking?.display === "updates" && !isClaude51Model(modelId)) {
-    throw new UnsupportedFeatureError('Thinking display "updates" requires Claude Fable/Mythos 5.1.');
+  if (thinking?.display === "updates" && !supportsBoundThinking(modelId)) {
+    throw new UnsupportedFeatureError('Thinking display "updates" requires Claude Fable/Mythos 5.1 or Opus 5.5.');
   }
-  if (thinking?.block_binding && !isClaude51Model(modelId)) {
-    throw new UnsupportedFeatureError("Thinking block binding controls require Claude Fable/Mythos 5.1.");
+  if (thinking?.block_binding && !supportsBoundThinking(modelId)) {
+    throw new UnsupportedFeatureError("Thinking block binding controls require Claude Fable/Mythos 5.1 or Opus 5.5.");
   }
   const effort = outputConfig?.effort;
   const supportedEfforts = anthropicReasoningEfforts(modelId);
@@ -1150,14 +1154,19 @@ interface PreparedAnthropicRequest {
 
 const prepareAnthropicRequest = (
   modelId: string,
-  input: ModelGenerateInput
+  input: ModelGenerateInput,
+  provider = "anthropic"
 ): PreparedAnthropicRequest => {
   const providerOptions = { ...(input.providerOptions ?? {}) } as AnthropicLanguageModelOptions;
-  if (isClaude51Model(modelId) && (
+  if (supportsBoundThinking(modelId) && (
     input.toolChoice === "required" || typeof input.toolChoice === "object" ||
     providerOptions.tool_choice?.type === "any" || providerOptions.tool_choice?.type === "tool"
   )) {
     throw new UnsupportedFeatureError(`Provider "anthropic" model "${modelId}" supports only automatic or disabled tool choice.`);
+  }
+  if (isClaudeOpus55Model(modelId) && provider !== "bedrock" &&
+      mapTools(input.tools)?.some((tool) => "type" in tool && tool.type === "computer_20251124")) {
+    throw new UnsupportedFeatureError('Claude Opus 5.5 requires computer_toolset_20260801 instead of computer_20251124 on this host.');
   }
   const signedBlocks = input.messages.filter((message) => message.role !== "system").flatMap((message, messageIndex) =>
     message.parts.flatMap((part, partIndex) => part.type === "provider-data" && part.provider === "anthropic" &&
@@ -1324,7 +1333,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const mcpServers = mapMcpServers(input.tools);
-    const { providerOptions, thinking, outputConfig, extraBetas } = prepareAnthropicRequest(this.modelId, input);
+    const { providerOptions, thinking, outputConfig, extraBetas } = prepareAnthropicRequest(this.modelId, input, this.provider);
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
@@ -1371,7 +1380,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const mcpServers = mapMcpServers(input.tools);
-    const { providerOptions, thinking, outputConfig, extraBetas } = prepareAnthropicRequest(this.modelId, input);
+    const { providerOptions, thinking, outputConfig, extraBetas } = prepareAnthropicRequest(this.modelId, input, this.provider);
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );

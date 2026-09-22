@@ -2,13 +2,53 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const openaiCatalogFragment = defineModelCatalogFragment({
   provider: "openai",
-  revision: "2026-09-12",
-  verifiedAt: "2026-09-12",
-  pricingEffectiveAt: "2026-08-16",
+  revision: "2026-09-22",
+  verifiedAt: "2026-09-22",
+  pricingEffectiveAt: "2026-09-22",
   sources: [
+    "https://developers.openai.com/api/docs/models/gpt-6-sol",
+    "https://developers.openai.com/api/docs/models/gpt-6-luna",
     "https://developers.openai.com/api/docs/models/gpt-6-astra", "catalog-release:2026-08-16",
     "https://developers.openai.com/api/docs/guides/live"],
   entries: [
+    {
+      "provider": "openai",
+      "modelId": "gpt-6-sol",
+      "inputCostPer1kTokens": 0.002,
+      "cachedInputCostPer1kTokens": 0.0002,
+      "cacheWriteCostPer1kTokens": 0.0025,
+      "outputCostPer1kTokens": 0.01,
+      "longContextPricing": {
+        "inputTokenThreshold": 272000,
+        "inputMultiplier": 2,
+        "outputMultiplier": 1.5
+      },
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
+    {
+      "provider": "openai",
+      "modelId": "gpt-6-luna",
+      "inputCostPer1kTokens": 0.0001,
+      "cachedInputCostPer1kTokens": 1e-05,
+      "cacheWriteCostPer1kTokens": 0.000125,
+      "outputCostPer1kTokens": 0.0005,
+      "longContextPricing": {
+        "inputTokenThreshold": 272000,
+        "inputMultiplier": 2,
+        "outputMultiplier": 1.5
+      },
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
     {
       "provider": "openai",
       "modelId": "gpt-live-1"

@@ -4,6 +4,8 @@ Zhivex AI SDK is a TypeScript monorepo for Bun and Node that provides a unified,
 
 It is designed around a small shared contract in `@zhivex-ai/core` and thin provider adapters on top of it, so application code can stay stable while models and vendors change underneath.
 
+The direct providers support `gpt-6-sol`, `gpt-6-luna`, and `claude-opus-5-5`. GPT-6 Sol/Luna default to Responses; Chat Completions function calling requires reasoning effort `none`. Opus 5.5 uses always-on adaptive thinking and accepts only automatic or disabled tool choice. See the [OpenAI adapter](./packages/openai/README.md) and [Anthropic adapter](./packages/anthropic/README.md) for migration details. The SDK catalog includes their direct-provider token and cache prices.
+
 ## Stability And Support
 
 The SDK now documents its public contract and release expectations more explicitly:

@@ -2,12 +2,27 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const anthropicCatalogFragment = defineModelCatalogFragment({
   provider: "anthropic",
-  revision: "2026-09-04",
-  verifiedAt: "2026-09-04",
-  pricingEffectiveAt: "2026-08-16",
+  revision: "2026-09-22",
+  verifiedAt: "2026-09-22",
+  pricingEffectiveAt: "2026-09-22",
   sources: [
+    "https://platform.claude.com/docs/en/models/opus-5-5/overview",
     "https://platform.claude.com/docs/en/models/fable-5-1/overview","catalog-release:2026-08-16"],
   entries: [
+    {
+      "provider": "anthropic",
+      "modelId": "claude-opus-5-5",
+      "inputCostPer1kTokens": 0.004,
+      "cachedInputCostPer1kTokens": 0.0002,
+      "cacheWriteCostPer1kTokens": 0.005,
+      "outputCostPer1kTokens": 0.02,
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
     {
       "provider": "anthropic",
       "modelId": "claude-fable-5-1",
