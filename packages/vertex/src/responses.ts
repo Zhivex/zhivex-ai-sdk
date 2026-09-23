@@ -38,13 +38,8 @@ const prepare = (input: ModelGenerateInput): ModelGenerateInput => {
       throw new UnsupportedFeatureError("Vertex Grok Responses does not support hosted tool outputs.");
     }
   }
-  return { ...input, messages: input.messages.map(message => {
-    const mapped = remap(message, "vertex", "openai");
-    // The transport recognizes OpenAI built-ins by name. On Vertex every local
-    // result is a function_call_output, even functions named shell or computer.
-    return { ...mapped, parts: mapped.parts.map(part => part.type === "tool-result"
-      ? { ...part, toolResult: { ...part.toolResult, toolName: "vertex_function" } } : part) };
-  }), providerOptions: { ...options, apiMode: "responses", store: false } };
+  return { ...input, messages: input.messages.map(message => remap(message, "vertex", "openai")),
+    providerOptions: { ...options, apiMode: "responses", store: false } };
 };
 const rethrow = (error: unknown): never => {
   if (error instanceof ProviderHTTPError) throw new ProviderHTTPError(`Vertex Responses request failed with status ${error.status}.`, error.status, {

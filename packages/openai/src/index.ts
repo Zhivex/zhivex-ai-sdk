@@ -80,6 +80,7 @@ import {
   type SpeechModel,
   type SpeechResult,
   type StreamEvent,
+  type ToolCall,
   type ToolDefinition,
   type ToolExecutionResult,
   type TranscriptionModel,
@@ -1540,12 +1541,27 @@ const getProviderResponseId = (messages: ModelMessage[]) => {
   return undefined;
 };
 
-const serializeToolOutput = (message: ModelMessage, format?: ModelGenerateInput["toolResultFormat"]) =>
+const serializeToolOutput = (
+  message: ModelMessage,
+  format: ModelGenerateInput["toolResultFormat"],
+  calls: Map<string, ToolCall>
+) =>
   message.parts
     .filter((part): part is Extract<ModelMessage["parts"][number], { type: "tool-result" }> => part.type === "tool-result")
     .map((part) => {
-      const responsesToolType = part.toolResult.providerMetadata?.responsesToolType;
-      if ((format !== "envelope" && part.toolResult.toolName === "shell") || responsesToolType === "shell") {
+      const resultType = part.toolResult.providerMetadata?.responsesToolType;
+      const call = calls.get(part.toolResult.toolCallId);
+      const callType = call?.providerMetadata?.responsesToolType;
+      const responsesToolType = resultType ?? callType;
+      if (
+        (responsesToolType !== undefined &&
+          (typeof responsesToolType !== "string" || !["shell", "apply_patch", "computer"].includes(responsesToolType))) ||
+        (call && resultType !== undefined && resultType !== callType) ||
+        (call && part.toolResult.toolName !== undefined && part.toolResult.toolName !== call.name)
+      ) {
+        throw new ConfigurationError("OpenAI Responses tool result has inconsistent call metadata.");
+      }
+      if (responsesToolType === "shell") {
         const rawOutput = part.toolResult.output;
         const rawOutputs = Array.isArray(rawOutput)
           ? rawOutput
@@ -1593,7 +1609,7 @@ const serializeToolOutput = (message: ModelMessage, format?: ModelGenerateInput[
         };
       }
 
-      if ((format !== "envelope" && part.toolResult.toolName === "apply_patch") || responsesToolType === "apply_patch") {
+      if (responsesToolType === "apply_patch") {
         const output = part.toolResult.output;
         const outputRecord =
           output && typeof output === "object" && !Array.isArray(output)
@@ -1607,7 +1623,7 @@ const serializeToolOutput = (message: ModelMessage, format?: ModelGenerateInput[
         };
       }
 
-      if ((format !== "envelope" && part.toolResult.toolName === "computer") || responsesToolType === "computer") {
+      if (responsesToolType === "computer") {
         if (part.toolResult.isError) {
           throw new Error(
             `OpenAI computer action execution failed: ${part.toolResult.error?.message ?? "unknown error"}`
@@ -1785,12 +1801,24 @@ const extractMessageText = (message: ModelMessage) =>
     })
     .join("");
 
-const toResponsesInput = (messages: ModelMessage[], format?: ModelGenerateInput["toolResultFormat"]) => {
+const toResponsesInput = (
+  messages: ModelMessage[],
+  format?: ModelGenerateInput["toolResultFormat"],
+  history: ModelMessage[] = messages
+) => {
+  // Keep the original call available even when previous_response_id trims the wire history.
+  const calls = new Map<string, ToolCall>();
+  for (const message of history) {
+    if (message.role !== "assistant") continue;
+    for (const part of message.parts) {
+      if (part.type === "tool-call") calls.set(part.toolCall.id, part.toolCall);
+    }
+  }
   const input: Array<Record<string, unknown>> = [];
 
   for (const message of messages) {
     if (message.role === "tool") {
-      input.push(...serializeToolOutput(message, format));
+      input.push(...serializeToolOutput(message, format, calls));
       continue;
     }
 
@@ -2739,7 +2767,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
         ? input.messages.slice(previousResponse.index + 1)
         : input.messages;
     let nextPreviousResponseId = previousResponse?.responseId;
-    let nextInput = messages.length ? toResponsesInput(messages, input.toolResultFormat) : [];
+    let nextInput = messages.length ? toResponsesInput(messages, input.toolResultFormat, input.messages) : [];
     let accumulatedUsage: ReturnType<typeof mapResponsesUsage>;
     let statelessInternalOutputs: Array<Record<string, unknown>> = [];
 
@@ -2923,7 +2951,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               ...responseBodyOptions,
               model: this.modelId,
               ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-              ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat) } : {}),
+              ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat, input.messages) } : {}),
               tools: mapResponsesTools(input.tools),
               ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
               text: mapResponsesStructuredOutput(input),
