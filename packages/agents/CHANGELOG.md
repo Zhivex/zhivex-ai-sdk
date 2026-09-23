@@ -1,5 +1,13 @@
 # @zhivex-ai/agents
 
+## 1.9.0-next.1
+
+### Patch Changes
+
+- 15cd12e: Preserve failed subagent links and confirmed usage across terminal errors and durable recovery. Aggregate nested descendants once by run ID, expose unknown usage run IDs in budget diagnostics, and prevent replay of failed idempotent delegations. Preserve the primary execution error when saving its failure or notifying subagent completion also fails.
+- Updated dependencies [15cd12e]
+  - @zhivex-ai/core@1.23.0-next.1
+
 ## 1.9.0-next.0
 
 ### Minor Changes

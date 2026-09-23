@@ -444,3 +444,23 @@ Qwen 3.8 LiveTranslate is available through `realtimeModel("qwen3.8-livetranslat
 Text/object generation and agents accept `streamBuffer: { maxHistory, maxSubscriberQueue, replayOverflow }`. Full replay remains the default and fails beyond 4,096 retained events; explicitly use `replayOverflow: "drop-oldest"` for long responses with bounded tail replay. Active subscribers receive ordered events with backpressure, late subscribers receive the retained tail, and `collect()` returns the full result. Await `collect()` after reading `textStream` to detect failures; for agents also inspect the terminal status.
 
 `maxSteps` rejects non-positive, fractional, non-finite, or unsafe integers with `ValidationError`. Agent context schemas infer separate raw input and parsed output types, including Zod transforms and defaults. Operational errors including `ConflictError` and `ValidationError` are available directly from `@zhivex-ai/agents`.
+
+### Failed subagent accounting
+
+Native subagents retain their `parentRunId` from creation and their summaries in
+`state.childRuns` across success, failure, timeout, and cancellation. Stores with
+`findByParentRunId` reconcile missing links within the same scope on execution or
+resume and checkpoints, without running tools or models. Failed idempotent
+subagent invocations are not reexecuted when the parent recovers.
+
+`getAgentBudgetStatus(state, { includeChildRuns: true })` sums confirmed usage
+from descendants once per run ID; `includeChildRuns: false` reports only the
+parent. Each child summary keeps its own `usage` and optional nested `childRuns`.
+`unknownUsageRunIds` identifies runs without reported usage: numeric consumption
+is confirmed usage, not a claim that those runs were free. Preflight reservations
+remain separate from confirmed consumption and are not added to these totals.
+
+`createSubAgentTool({ onFinish })` also notifies thrown failures once a child
+state exists. Errors from that notification or from saving the failed state do
+not replace the primary execution error. If storage is unavailable, durability
+cannot be guaranteed; reconciliation can recover only states actually saved.

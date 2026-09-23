@@ -1,3 +1,4 @@
+import { observeChildState, reconcileChildRuns } from "./children.js";
 import {
   refreshAgentTaskOutcome
 } from "../agent-reconciliation.js";
@@ -118,6 +119,7 @@ export const claimAgentExecution = async <TModel extends LanguageModel>(
   state: AgentRunState
 ) => {
   state.status = "running";
+  observeChildState(agent, state);
   state.updatedAt = Date.now();
   const serialized = assertStateSize(agent, agent.store ? normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }) : state);
   if (agent.store) {
@@ -150,6 +152,8 @@ export const persistState = async <TModel extends LanguageModel>(
   policy?: AgentRunPolicy
 ) => {
   state.updatedAt = Date.now();
+  observeChildState(agent, state);
+  await reconcileChildRuns(state, agent.store);
   await refreshAgentTaskOutcome(state, agent.store);
   const serialized = assertStateSize(agent, agent.store ? normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }) : state, policy);
   if (agent.store) {

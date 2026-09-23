@@ -173,6 +173,8 @@ export interface AgentChildRun {
   toolCalls: number;
   toolErrors: number;
   usage?: TokenUsage;
+  /** Descendant summaries; usage above remains this run's own confirmed usage. */
+  childRuns?: AgentChildRun[];
   startedAt?: number;
   updatedAt?: number;
   error?: AgentRunError;
