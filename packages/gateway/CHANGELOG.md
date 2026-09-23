@@ -1,5 +1,14 @@
 # @zhivex-ai/gateway
 
+## 1.4.1
+
+### Patch Changes
+
+- Updated dependencies [f35fafe]
+- Updated dependencies [4f51d78]
+- Updated dependencies [e705a21]
+  - @zhivex-ai/core@1.23.0
+
 ## 1.4.1-next.0
 
 ### Patch Changes
