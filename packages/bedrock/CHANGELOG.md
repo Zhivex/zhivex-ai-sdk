@@ -1,5 +1,14 @@
 # @zhivex-ai/bedrock
 
+## 2.0.2
+
+### Patch Changes
+
+- Updated dependencies [f35fafe]
+- Updated dependencies [4f51d78]
+- Updated dependencies [e705a21]
+  - @zhivex-ai/core@1.23.0
+
 ## 2.0.2-next.0
 
 ### Patch Changes

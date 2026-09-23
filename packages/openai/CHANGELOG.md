@@ -1,5 +1,17 @@
 # @zhivex-ai/openai
 
+## 0.13.5
+
+### Patch Changes
+
+- e3f1444: Preserve Responses function results named apply_patch, shell, or computer. Select native output protocols from explicit call/result metadata rather than tool names, reject conflicting metadata, and retain receipt payloads across persisted and stateless continuations.
+  
+  Remove the obsolete Vertex Responses tool-name workaround so canonical call/result names remain consistent.
+- Updated dependencies [f35fafe]
+- Updated dependencies [4f51d78]
+- Updated dependencies [e705a21]
+  - @zhivex-ai/core@1.23.0
+
 ## 0.13.5-next.1
 
 ### Patch Changes

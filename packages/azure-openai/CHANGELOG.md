@@ -1,5 +1,14 @@
 # @zhivex-ai/azure-openai
 
+## 0.7.4
+
+### Patch Changes
+
+- Updated dependencies [f35fafe]
+- Updated dependencies [4f51d78]
+- Updated dependencies [e705a21]
+  - @zhivex-ai/core@1.23.0
+
 ## 0.7.4-next.0
 
 ### Patch Changes

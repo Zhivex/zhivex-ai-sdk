@@ -3,6 +3,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { compareVersions } from "./check-release-readiness";
+
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const readManifest = async (packageName: string) => JSON.parse(
   await readFile(path.join(repoRoot, "packages", packageName, "package.json"), "utf8")
@@ -31,6 +33,19 @@ const reviewedProviderCoreRanges = {
   zai: "^1.19.0"
 } as const;
 
+// Changesets can raise a provider's minimum when graduating a prerelease.
+// Keep explicit stable caret ranges within the reviewed major, at or above
+// the helper floor, and no newer than the Core version in this checkout.
+const acceptsCoreStable = (version: string, range: string | undefined, reviewedRange: string): boolean => {
+  const stableVersion = /^[1-9]\d*\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+  const minimum = range?.startsWith("^") ? range.slice(1) : "";
+  const reviewedMinimum = reviewedRange.slice(1);
+  if (![version, minimum, reviewedMinimum].every(value => stableVersion.test(value))) return false;
+  const major = version.split(".")[0];
+  return minimum.split(".")[0] === major && reviewedMinimum.split(".")[0] === major &&
+    compareVersions(minimum, reviewedMinimum) >= 0 && compareVersions(version, minimum) >= 0;
+};
+
 // A provider can retain an earlier next revision when Changesets only bumps
 // Core: ^1.23.0-next.0 accepts 1.23.0-next.1. Keep the same release tuple
 // and channel so this does not admit unrelated or future prerelease floors.
@@ -42,6 +57,29 @@ const acceptsCorePrerelease = (version: string, range: string | undefined): bool
 };
 
 describe("internal Core dependency ranges", () => {
+  it.each([
+    ["1.23.0", "^1.21.0", "^1.21.0", true],
+    ["1.23.0", "^1.23.0", "^1.21.0", true],
+    ["1.23.2", "^1.23.1", "^1.21.0", true],
+    ["1.23.0", "^1.20.0", "^1.21.0", false],
+    ["1.23.2", "^1.23.0", "^1.23.1", false],
+    ["1.23.0", "^1.9.0", "^1.21.0", false],
+    ["1.23.0", "^1.24.0", "^1.21.0", false],
+    ["1.23.0", "^1.23.1", "^1.21.0", false],
+    ["2.0.0", "^1.23.0", "^1.21.0", false],
+    ["2.0.0", "^2.0.0", "^1.21.0", false],
+    ["1.23.0", "^1.23.0-next.0", "^1.21.0", false],
+    ["1.23.0-next.1", "^1.23.0", "^1.21.0", false],
+    ["1.23.0", "~1.23.0", "^1.21.0", false],
+    ["1.23.0", "1.23.0", "^1.21.0", false],
+    ["1.23.0", ">=1.21.0", "^1.21.0", false],
+    ["1.23.0", "^1.21.0 || ^2.0.0", "^1.21.0", false],
+    ["1.23.0", "*", "^1.21.0", false],
+    ["1.23.0", undefined, "^1.21.0", false]
+  ])("checks stable compatibility for %s against %s with floor %s", (version, range, reviewedRange, expected) => {
+    expect(acceptsCoreStable(version!, range, reviewedRange!)).toBe(expected);
+  });
+
   it.each([
     ["1.23.0-next.1", "^1.23.0-next.0", true],
     ["1.23.0-next.1", "^1.23.0-next.1", true],
@@ -65,7 +103,9 @@ describe("internal Core dependency ranges", () => {
       if (core.version.includes("-")) {
         expect(acceptsCorePrerelease(core.version, range), `${packageName}: ${range} must accept ${core.version}`).toBe(true);
       } else {
-        expect(range, packageName).toBe(expectedRange);
+        expect(acceptsCoreStable(core.version, range, expectedRange),
+          `${packageName}: ${range} must accept ${core.version} without admitting Core below ${expectedRange}`
+        ).toBe(true);
       }
     }
   });

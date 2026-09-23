@@ -1,5 +1,20 @@
 # @zhivex-ai/agents
 
+## 1.9.0
+
+### Minor Changes
+
+- e705a21: Add configurable streaming replay retention and queue limits, including opt-in bounded tail replay for long text, object, and agent streams. Preserve full replay and text-only error behavior by default and document collect-based completion checks. Separate raw agent context input from parsed schema output in class and functional APIs. Expose operational error constructors through the agents facade and reject invalid maxSteps before generation.
+
+### Patch Changes
+
+- f35fafe: Persist terminal agent output redaction across successful runs and later guardrail rejection. Sanitize final state, message/step text, tool result payloads, structured output and metadata while preserving durable execution controls. Document the boundary for live streams, intermediate checkpoints and historical records.
+- 4f51d78: Preserve failed subagent links and confirmed usage across terminal errors and durable recovery. Aggregate nested descendants once by run ID, expose unknown usage run IDs in budget diagnostics, and prevent replay of failed idempotent delegations. Preserve the primary execution error when saving its failure or notifying subagent completion also fails.
+- Updated dependencies [f35fafe]
+- Updated dependencies [4f51d78]
+- Updated dependencies [e705a21]
+  - @zhivex-ai/core@1.23.0
+
 ## 1.9.0-next.2
 
 ### Patch Changes
