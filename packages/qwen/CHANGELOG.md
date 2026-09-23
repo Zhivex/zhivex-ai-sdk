@@ -1,5 +1,12 @@
 # @zhivex-ai/qwen
 
+## 0.15.1-next.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.23.0-next.0
+
 ## 0.15.0
 
 ### Minor Changes

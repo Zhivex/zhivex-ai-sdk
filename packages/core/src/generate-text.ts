@@ -1,3 +1,4 @@
+import { validateMaxSteps } from "./validate-max-steps.js";
 import { createHash } from "node:crypto";
 
 import { normalizeMessages as buildMessages } from "./normalize-messages.js";
@@ -837,7 +838,7 @@ export const generateText = async <
 >(
   options: GenerateTextOptions<TModel, TContext>
 ): Promise<GenerateTextOutput> => {
-  const maxSteps = Math.max(1, options.maxSteps ?? 1);
+  const maxSteps = validateMaxSteps(options.maxSteps);
   const allMessages = buildMessages(options);
   const steps: GenerateTextOutput["steps"] = [];
   const tools = toToolSet(options.tools);
@@ -1028,7 +1029,7 @@ export const streamText = <
 >(
   options: GenerateTextOptions<TModel, TContext>
 ): StreamTextResult => {
-  const maxSteps = Math.max(1, options.maxSteps ?? 1);
+  const maxSteps = validateMaxSteps(options.maxSteps);
   const baseMessages = buildMessages(options);
   const tools = toToolSet(options.tools);
   const resolvedTools = tools ?? {};
@@ -1049,7 +1050,7 @@ export const streamText = <
     throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
   }
 
-  const broadcast = new BoundedReplayBroadcast<StreamEvent>();
+  const broadcast = new BoundedReplayBroadcast<StreamEvent>(options.streamBuffer);
   let finalResultPromise: Promise<GenerateTextOutput> | undefined;
   let effectsPossible = false;
 

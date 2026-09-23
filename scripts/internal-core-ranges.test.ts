@@ -33,9 +33,13 @@ const reviewedProviderCoreRanges = {
 
 describe("internal Core dependency ranges", () => {
   it("requires the reviewed Core release for each provider helper surface", async () => {
+    const core = await readManifest("core");
     for (const [packageName, expectedRange] of Object.entries(reviewedProviderCoreRanges)) {
       const manifest = await readManifest(packageName);
-      expect(manifest.dependencies?.["@zhivex-ai/core"], packageName).toBe(expectedRange);
+      // Changesets aligns every provider with the exact prerelease batch.
+      expect(manifest.dependencies?.["@zhivex-ai/core"], packageName).toBe(
+        core.version.includes("-") ? `^${core.version}` : expectedRange
+      );
     }
   });
 
@@ -44,6 +48,10 @@ describe("internal Core dependency ranges", () => {
     const sdk = await readManifest("sdk");
     const [major, minor, patch] = core.version.split(".");
     const range = sdk.dependencies?.["@zhivex-ai/core"] ?? "";
+    if (core.version.includes("-")) {
+      expect(range, "SDK must pin the exact Core prerelease batch").toBe(`~${core.version}`);
+      return;
+    }
     const minimum = range.match(/^~(\d+)\.(\d+)\.(\d+)$/);
     expect(minimum, "SDK must pin Core to a minor with a tilde range").not.toBeNull();
     expect(minimum?.[1]).toBe(major);

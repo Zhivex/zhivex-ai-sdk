@@ -436,3 +436,9 @@ CI scans version-controlled candidate files for recognized credential signatures
 MIT
 
 Qwen 3.8 LiveTranslate is available through `realtimeModel("qwen3.8-livetranslate-flash-realtime")`; see [configuration, voice cloning limitations, and live verification](./packages/qwen/README.md#qwen-38-livetranslate).
+
+### Generation DX: stream retention, context, and errors
+
+Text/object generation and agents accept `streamBuffer: { maxHistory, maxSubscriberQueue, replayOverflow }`. Full replay remains the default and fails beyond 4,096 retained events; explicitly use `replayOverflow: "drop-oldest"` for long responses with bounded tail replay. Active subscribers receive ordered events with backpressure, late subscribers receive the retained tail, and `collect()` returns the full result. Await `collect()` after reading `textStream` to detect failures; for agents also inspect the terminal status.
+
+`maxSteps` rejects non-positive, fractional, non-finite, or unsafe integers with `ValidationError`. Agent context schemas infer separate raw input and parsed output types, including Zod transforms and defaults. Operational errors including `ConflictError` and `ValidationError` are available directly from `@zhivex-ai/agents`.

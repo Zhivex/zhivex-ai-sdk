@@ -1,5 +1,12 @@
 # @zhivex-ai/meta
 
+## 0.2.7-next.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.23.0-next.0
+
 ## 0.2.6
 
 ### Patch Changes

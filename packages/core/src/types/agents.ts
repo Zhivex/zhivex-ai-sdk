@@ -1,3 +1,4 @@
+import type { BoundedReplayBroadcastOptions } from "../bounded-broadcast.js";
 import type {
   z
 } from "zod";
@@ -345,16 +346,19 @@ export interface AgentHookFailurePolicy {
 export interface AgentDefinition<
   TModel extends LanguageModel = LanguageModel,
   TContext = any,
-  TOutput = any
+  TOutput = any,
+  TContextInput = TContext
 > {
   id?: string;
   /** Human-readable, low-cardinality name. `id` remains the stable definition identifier. */
   name?: string;
   model: TModel;
   instructions?: string;
-  contextSchema?: z.ZodType<TContext>;
+  contextSchema?: z.ZodType<TContext, TContextInput>;
   tools?: ToolCollection;
   maxSteps?: number;
+  /** Explicit streaming replay and subscriber limits. */
+  streamBuffer?: BoundedReplayBroadcastOptions;
   temperature?: number;
   maxTokens?: number;
   reasoning?: ReasoningConfig;
@@ -402,7 +406,8 @@ export interface LiveAgentDefinition<TModel extends RealtimeModel = RealtimeMode
 
 export type AgentRunInput<
   TModel extends LanguageModel = LanguageModel,
-  TContext = any
+  TContext = any,
+  TContextInput = TContext
 > = RetryOptions &
   GenerateInputSource & {
     runId?: string;
@@ -410,7 +415,7 @@ export type AgentRunInput<
     scope?: AgentStoreScope;
     idempotencyKey?: string;
     /** Ephemeral application context. Callers must provide it again when resuming a run. */
-    context?: TContext;
+    context?: TContextInput;
     state?: AgentRunState;
     approvals?: AgentApprovalResponse[];
     handoff?: AgentHandoff;
@@ -423,7 +428,10 @@ export type AgentRunInput<
     executionEnvironment?: AgentExecutionEnvironment<TContext>;
     /** Pass false to disable the agent default for this invocation. */
     compaction?: AgentCompactionOptions<TContext> | false;
+    /** Positive safe integer. Defaults to one for new runs. */
     maxSteps?: number;
+    /** Explicit streaming replay and subscriber limits. */
+    streamBuffer?: BoundedReplayBroadcastOptions;
     temperature?: number;
     maxTokens?: number;
     reasoning?: ReasoningConfig;
@@ -549,6 +557,7 @@ export interface LiveAgentRunOutput {
 
 export interface AgentStreamResult<TOutput = unknown> {
   eventStream: AsyncIterable<AgentStreamEvent>;
+  /** Text only; await collect() to verify the terminal run status and failures. */
   textStream: AsyncIterable<string>;
   collect: () => Promise<AgentRunOutput<TOutput>>;
 }
@@ -557,6 +566,7 @@ export type AgentLiveEvent = AgentStreamEvent | RealtimeEvent;
 
 export interface AgentLiveStreamResult {
   eventStream: AsyncIterable<AgentLiveEvent>;
+  /** Text only; await collect() to verify the terminal run status and failures. */
   textStream: AsyncIterable<string>;
   session: Promise<RealtimeSession>;
   collect: () => Promise<LiveAgentRunOutput>;

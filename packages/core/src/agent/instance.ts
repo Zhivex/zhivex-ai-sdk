@@ -24,27 +24,29 @@ import {
 export class Agent<
   TModel extends LanguageModel = LanguageModel,
   TContext = unknown,
-  TOutput = unknown
-> implements AgentDefinition<TModel, TContext, TOutput> {
+  TOutput = unknown,
+  TContextInput = TContext
+> implements AgentDefinition<TModel, TContext, TOutput, TContextInput> {
   id?: string;
   name?: string;
   model: TModel;
   instructions?: string;
-  contextSchema?: z.ZodType<TContext>;
+  contextSchema?: z.ZodType<TContext, TContextInput>;
   tools?: AgentDefinition<TModel>["tools"];
   maxSteps?: number;
+  streamBuffer?: AgentDefinition<TModel>["streamBuffer"];
   temperature?: number;
   maxTokens?: number;
   reasoning?: AgentDefinition<TModel>["reasoning"];
   outputSchema?: z.ZodType<TOutput>;
-  outputMode?: AgentDefinition<TModel, TContext, TOutput>["outputMode"];
+  outputMode?: AgentDefinition<TModel, TContext, TOutput, TContextInput>["outputMode"];
   outputName?: string;
   outputDescription?: string;
   toolExecution?: AgentDefinition<TModel>["toolExecution"];
-  toolApprovalPolicy?: AgentDefinition<TModel, TContext, TOutput>["toolApprovalPolicy"];
+  toolApprovalPolicy?: AgentDefinition<TModel, TContext, TOutput, TContextInput>["toolApprovalPolicy"];
   toolApprovalSigner?: AgentDefinition<TModel>["toolApprovalSigner"];
-  inputGuardrails?: AgentDefinition<TModel, TContext, TOutput>["inputGuardrails"];
-  outputGuardrails?: AgentDefinition<TModel, TContext, TOutput>["outputGuardrails"];
+  inputGuardrails?: AgentDefinition<TModel, TContext, TOutput, TContextInput>["inputGuardrails"];
+  outputGuardrails?: AgentDefinition<TModel, TContext, TOutput, TContextInput>["outputGuardrails"];
   providerOptions?: AgentDefinition<TModel>["providerOptions"];
   subagents?: AgentDefinition<TModel>["subagents"];
   harness?: AgentDefinition<TModel>["harness"];
@@ -57,13 +59,13 @@ export class Agent<
   onTelemetryEvent?: AgentDefinition<TModel>["onTelemetryEvent"];
   hookFailurePolicy?: AgentDefinition<TModel>["hookFailurePolicy"];
 
-  constructor(definition: AgentDefinition<TModel, TContext, TOutput>) {
+  constructor(definition: AgentDefinition<TModel, TContext, TOutput, TContextInput>) {
     Object.assign(this, createAgent(definition));
     this.model = definition.model;
   }
 
-  toDefinition(): AgentDefinition<TModel, TContext, TOutput> {
-    return createAgent<TModel, TContext, TOutput>({
+  toDefinition(): AgentDefinition<TModel, TContext, TOutput, TContextInput> {
+    return createAgent<TModel, TContext, TOutput, TContextInput>({
       id: this.id,
       name: this.name,
       model: this.model,
@@ -71,6 +73,7 @@ export class Agent<
       contextSchema: this.contextSchema,
       tools: this.tools,
       maxSteps: this.maxSteps,
+      streamBuffer: this.streamBuffer,
       temperature: this.temperature,
       maxTokens: this.maxTokens,
       reasoning: this.reasoning,
@@ -97,17 +100,17 @@ export class Agent<
     });
   }
 
-  run(input: AgentRunInput<TModel, TContext> = {}): Promise<AgentRunOutput<TOutput>> {
-    return runAgent<TModel, TContext, TOutput>(this.toDefinition(), input);
+  run(input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>> = {}): Promise<AgentRunOutput<TOutput>> {
+    return runAgent<TModel, TContext, TOutput, TContextInput>(this.toDefinition(), input);
   }
 
   resume(
-    input: AgentRunInput<TModel, TContext> & { state: AgentRunState }
+    input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>> & { state: AgentRunState }
   ): Promise<AgentRunOutput<TOutput>> {
-    return resumeAgent<TModel, TContext, TOutput>(this.toDefinition(), input);
+    return resumeAgent<TModel, TContext, TOutput, TContextInput>(this.toDefinition(), input);
   }
 
-  stream(input: AgentRunInput<TModel, TContext> = {}): AgentStreamResult<TOutput> {
-    return streamAgent<TModel, TContext, TOutput>(this.toDefinition(), input);
+  stream(input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>> = {}): AgentStreamResult<TOutput> {
+    return streamAgent<TModel, TContext, TOutput, TContextInput>(this.toDefinition(), input);
   }
 }

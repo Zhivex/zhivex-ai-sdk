@@ -15,6 +15,7 @@ export class StreamBufferOverflowError extends Error {
 type PublishedValue<T> = {
   sequence: number;
   value: T;
+  terminal: boolean;
 };
 
 type Subscriber<T> = {
@@ -26,6 +27,8 @@ type Subscriber<T> = {
 
 export interface BoundedReplayBroadcastOptions {
   maxHistory?: number;
+  /** Keep full replay and fail at the limit (default), or retain only the latest events. */
+  replayOverflow?: "error" | "drop-oldest";
   maxSubscriberQueue?: number;
   maxTerminalHistory?: number;
 }
@@ -48,11 +51,12 @@ const positiveInteger = (value: number | undefined, fallback: number, name: stri
  * A bounded multicast stream with deterministic replay.
  *
  * Active slow consumers apply backpressure to publishers once their private
- * queue reaches `maxSubscriberQueue`. Retained replay never silently drops an
- * event: exceeding `maxHistory` fails the broadcast and its iterators.
+ * queue reaches `maxSubscriberQueue`. Full replay fails at `maxHistory` by default.
+ * Explicit `drop-oldest` retention keeps a bounded tail for late subscribers.
  */
 export class BoundedReplayBroadcast<T> {
   private readonly maxHistory: number;
+  private readonly replayOverflow: "error" | "drop-oldest";
   private readonly maxSubscriberQueue: number;
   private readonly maxTerminalHistory: number;
   private readonly history: PublishedValue<T>[] = [];
@@ -63,6 +67,8 @@ export class BoundedReplayBroadcast<T> {
   private failure: unknown;
 
   constructor(options: BoundedReplayBroadcastOptions = {}) {
+    this.replayOverflow = options.replayOverflow ?? "error";
+    if (!["error", "drop-oldest"].includes(this.replayOverflow)) throw new RangeError("Invalid replayOverflow policy.");
     this.maxHistory = positiveInteger(options.maxHistory, DEFAULT_STREAM_REPLAY_LIMIT, "maxHistory");
     this.maxSubscriberQueue = positiveInteger(
       options.maxSubscriberQueue,
@@ -84,9 +90,14 @@ export class BoundedReplayBroadcast<T> {
     this.assertWritable();
 
     if (options.replay !== false && !options.terminal && this.history.length - this.terminalHistory >= this.maxHistory) {
-      const error = new StreamBufferOverflowError(this.maxHistory);
-      this.fail(error);
-      throw error;
+      if (this.replayOverflow === "drop-oldest") {
+        const index = this.history.findIndex(item => !item.terminal);
+        this.history.splice(index, 1);
+      } else {
+        const error = new StreamBufferOverflowError(this.maxHistory);
+        this.fail(error);
+        throw error;
+      }
     }
 
     if (options.terminal && this.terminalHistory >= this.maxTerminalHistory) {
@@ -95,7 +106,7 @@ export class BoundedReplayBroadcast<T> {
       throw error;
     }
 
-    const item = { sequence: this.sequence, value } satisfies PublishedValue<T>;
+    const item = { sequence: this.sequence, value, terminal: options.terminal === true } satisfies PublishedValue<T>;
     this.sequence += 1;
     if (options.replay !== false) {
       this.history.push(item);
@@ -158,7 +169,7 @@ export class BoundedReplayBroadcast<T> {
       }
 
       try {
-        for (const item of self.history) {
+        for (const item of [...self.history]) {
           if (item.sequence >= replayThrough) {
             break;
           }

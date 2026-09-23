@@ -1,3 +1,14 @@
+export {
+  ZhivexAIError,
+  ConflictError,
+  ValidationError,
+  UnsupportedFeatureError,
+  GuardrailTriggeredError,
+  ToolNotRegisteredError,
+  ProviderHTTPError,
+  ProviderToolCallError,
+  ParseError
+} from "./errors.js";
 /** Focused server-side agent runtime, without storage backends or the default catalog. */
 export {
   agentApprovalResponsePart,

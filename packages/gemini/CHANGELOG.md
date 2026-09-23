@@ -1,5 +1,12 @@
 # @zhivex-ai/gemini
 
+## 0.12.2-next.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.23.0-next.0
+
 ## 0.12.1
 
 ### Patch Changes

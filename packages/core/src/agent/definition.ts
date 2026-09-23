@@ -10,10 +10,11 @@ import {
 export const createAgent = <
   TModel extends AgentDefinition["model"],
   TContext = unknown,
-  TOutput = unknown
+  TOutput = unknown,
+  TContextInput = TContext
 >(
-  definition: AgentDefinition<TModel, TContext, TOutput>
-): AgentDefinition<TModel, TContext, TOutput> => ({
+  definition: AgentDefinition<TModel, TContext, TOutput, TContextInput>
+): AgentDefinition<TModel, TContext, TOutput, TContextInput> => ({
   ...definition,
   metadata: cloneMetadata(definition.metadata)
 });
