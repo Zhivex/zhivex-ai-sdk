@@ -11,6 +11,9 @@ const execFileAsync = promisify(execFile);
 try {
   // Only complete, runnable snippets belong here. Recipes may deliberately use app-owned variables.
   const inputs = [
+    { file: "packages/core/README.md", section: "## Usage" },
+    { file: "packages/sdk/README.md", section: "## Quick Start" },
+    { file: "packages/agents/README.md", section: "## Quick Start" },
     { file: "README.md", section: "## Quick Start" },
     { file: "docs/QUICKSTART.md", section: "## 2. Get The First Response" },
     { file: "docs/QUICKSTART.md", section: "## 3. Add A Persistent Agent" }
@@ -36,6 +39,7 @@ try {
   const core = JSON.parse(await readFile(path.join(repoRoot, "packages/core/package.json"), "utf8"));
   const paths = Object.fromEntries(Object.entries(base.compilerOptions.paths as Record<string, string[]>)
     .map(([name, targets]) => [name, targets.map((target) => path.resolve(repoRoot, target))]));
+  paths["@zhivex-ai/agents"] = [path.join(repoRoot, "packages/agents/src/index.ts")];
   for (const [subpath, target] of Object.entries(core.exports) as Array<[string, { import: string }]>) {
     if (subpath === ".") continue;
     paths[`@zhivex-ai/core/${subpath.slice(2)}`] = [path.join(repoRoot, "packages/core/src", target.import.replace("./dist/", "").replace(/\.js$/, ".ts"))];

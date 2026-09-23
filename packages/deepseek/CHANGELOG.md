@@ -1,5 +1,12 @@
 # @zhivex-ai/deepseek
 
+## 0.5.6-next.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.23.0-next.0
+
 ## 0.5.5
 
 ### Patch Changes

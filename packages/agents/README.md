@@ -246,3 +246,11 @@ Use `@zhivex-ai/agents` when you want a narrow stable runtime, and opt into `/op
 ## React execution summaries
 
 `streamAgent()` now emits `agent-run-update` summaries for the root and nested subagent runs. `AgentRunView` contains identity, parent relationship, lifecycle, usage and budget counters without internal messages or tool arguments. `toUIMessageStream()` forwards these summaries; `@zhivex-ai/react` consumes them in its bounded execution panel. Existing lifecycle and terminal events remain supported. See the [React guide](../react/README.md#agent-execution-views).
+
+## Typed context and operational errors
+
+`contextSchema` distinguishes raw input from parsed output. For example, with `z.object({ count: z.string().transform(Number) })`, pass `context: { count: "42" }` to `run`, `stream`, and `resume`; policies and guardrails receive the parsed numeric count. Supply raw context again when resuming. Existing explicit `Agent<TModel, TContext, TOutput>` generics remain available; a fourth `TContextInput` generic describes differing input when needed.
+
+Import runtime errors such as `ConflictError`, `ValidationError`, `GuardrailTriggeredError`, and `ProviderHTTPError` directly from `@zhivex-ai/agents`. They are the same constructors exported by core, so `instanceof` works across facades.
+
+Set `streamBuffer: { maxHistory: 4096, replayOverflow: "drop-oldest" }` on the agent or invocation to support long streams with bounded tail replay. Active subscribers retain ordered delivery and backpressure; late subscribers see only the retained tail. The default preserves full replay and errors when its limit is exceeded. `policy.maxStreamEvents` takes precedence over `streamBuffer.maxHistory` for the agent event stream. After consuming `textStream`, await `collect()` and inspect the returned status; text completion alone does not establish run success. `maxSteps` must be a positive safe integer.

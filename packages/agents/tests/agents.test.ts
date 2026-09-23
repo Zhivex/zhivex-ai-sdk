@@ -18,6 +18,15 @@ const expectStability = (value: object, stability: ApiStabilityLevel) => {
 describe("agents package public surface", () => {
   it("keeps the root focused on the stable application runtime", () => {
     expect(sortedKeys(agents)).toEqual([
+      "ZhivexAIError",
+      "ConflictError",
+      "ValidationError",
+      "UnsupportedFeatureError",
+      "GuardrailTriggeredError",
+      "ToolNotRegisteredError",
+      "ProviderHTTPError",
+      "ProviderToolCallError",
+      "ParseError",
       "AGENT_RUN_STATE_SCHEMA_VERSION",
       "Agent",
       "agentApprovalResponsePart",

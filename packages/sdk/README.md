@@ -81,3 +81,19 @@ runtime symbols with `getApiStability()` and review
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+## Reliable streaming
+
+For long responses, opt into bounded tail replay:
+
+```ts
+const stream = streamText({
+  model,
+  prompt: "Explain the design in detail.",
+  streamBuffer: { maxHistory: 4096, replayOverflow: "drop-oldest" }
+});
+for await (const text of stream.textStream) process.stdout.write(text);
+const result = await stream.collect(); // Rejects on provider failure.
+```
+
+Import `streamText` from `@zhivex-ai/sdk`; `model` is your provider-backed model. Active consumers receive ordered events; late subscribers receive only the retained tail. The default `replayOverflow: "error"` preserves full replay and fails beyond 4,096 retained events. `collect()` returns the complete result in either mode. The same `streamBuffer` options apply to object generation and agents. `maxSteps` must be a positive safe integer and defaults to one.

@@ -1,3 +1,4 @@
+import { validateMaxSteps } from "../validate-max-steps.js";
 import {
   createAgentHandoffMessage
 } from "../agent-handoff-contracts.js";
@@ -265,17 +266,18 @@ const validateHarnessBinding = (binding: AgentDefinition["harness"]) => {
 export const resolveContext = async <
   TModel extends LanguageModel,
   TContext,
-  TOutput
+  TOutput,
+  TContextInput
 >(
-  agent: AgentDefinition<TModel, TContext, TOutput>,
-  input: AgentRunInput<TModel, TContext>
+  agent: AgentDefinition<TModel, TContext, TOutput, TContextInput>,
+  input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>>
 ) => {
   validateHarnessBinding(agent.harness);
   const executionEnvironment = input.executionEnvironment ?? agent.executionEnvironment;
   const executionEnvironmentBinding = executionEnvironment
     ? createAgentExecutionEnvironmentBinding(executionEnvironment.manifest)
     : undefined;
-  let parsedContext = input.context;
+  let parsedContext = input.context as unknown as TContext | undefined;
   if (agent.contextSchema) {
     const result = await agent.contextSchema.safeParseAsync(input.context);
     if (!result.success) {
@@ -298,7 +300,7 @@ export const resolveContext = async <
 
   if (!loadedState && input.idempotencyKey) {
     const runId = input.runId ?? randomId("run");
-    const maxSteps = Math.max(1, input.maxSteps ?? agent.maxSteps ?? 1);
+    const maxSteps = validateMaxSteps(input.maxSteps ?? agent.maxSteps);
     const metadata = cloneMetadata(agent.metadata, input.metadata, input.handoff?.metadata);
     const prepared = await prepareFreshMessages(agent, input, runId);
     const candidate = createBaseState(
@@ -351,7 +353,7 @@ export const resolveContext = async <
       throw new ConflictError("Agent group idempotency key belongs to a different member or agent.");
     }
     bindDurableRuntime(agent, input, loadedState, executionEnvironmentBinding);
-    const maxSteps = input.maxSteps ?? loadedState.maxSteps;
+    const maxSteps = validateMaxSteps(input.maxSteps ?? loadedState.maxSteps);
     const resumed = await applyApprovalResponses(
       loadedState.messages,
       input.approvals,
@@ -387,7 +389,7 @@ export const resolveContext = async <
   }
 
   const runId = input.runId ?? randomId("run");
-  const maxSteps = Math.max(1, input.maxSteps ?? agent.maxSteps ?? 1);
+  const maxSteps = validateMaxSteps(input.maxSteps ?? agent.maxSteps);
   const prepared = await prepareFreshMessages(agent, input, runId);
 
   return {

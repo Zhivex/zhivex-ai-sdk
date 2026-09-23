@@ -263,8 +263,8 @@ export const streamObject = <TSchema extends ZodTypeAny>(options: GenerateObject
     Partial<GenerateObjectOutput<TSchema>["object"]>
   >;
   type PartialObject = Partial<GenerateObjectOutput<TSchema>["object"]>;
-  const broadcast = new BoundedReplayBroadcast<ObjectEvent>();
-  const partialBroadcast = new BoundedReplayBroadcast<PartialObject>();
+  const broadcast = new BoundedReplayBroadcast<ObjectEvent>(options.streamBuffer);
+  const partialBroadcast = new BoundedReplayBroadcast<PartialObject>(options.streamBuffer);
 
   const createEventStream = () => broadcast.stream();
   const createPartialStream = () => partialBroadcast.stream();

@@ -5,6 +5,15 @@
  * and test doubles live in explicit package subpaths.
  */
 export {
+  ZhivexAIError,
+  ConflictError,
+  ValidationError,
+  UnsupportedFeatureError,
+  GuardrailTriggeredError,
+  ToolNotRegisteredError,
+  ProviderHTTPError,
+  ProviderToolCallError,
+  ParseError,
   AGENT_RUN_STATE_SCHEMA_VERSION,
   Agent,
   agentApprovalResponsePart,

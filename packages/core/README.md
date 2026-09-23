@@ -121,3 +121,11 @@ Object generation forwards the same tool approval policies, tool choice, context
 ### Recovering invalid tool arguments
 
 `generateText`, `streamText`, and `Agent` accept `toolExecution: { validationErrorMode: "tool-result" }` to return schema errors for bounded model correction. Set `maxSteps`; agents can additionally set `policy.budget.maxToolErrors`. The default is `"throw"`, regardless of `stopOnError: false`. Invalid calls receive correlated `isError` results with `error.code: "TOOL_INPUT_VALIDATION_ERROR"` and issue codes/paths, without schema messages or received values. They never execute or request approval. Corrected calls follow the normal checks. Tools with input-dependent `isEnabled` remain strict; `stopOnError: true`, guardrails, unavailable tools and cancellation are not relaxed.
+
+## Streaming retention and step limits
+
+`maxSteps` must be a positive safe integer; invalid values throw `ValidationError` before generation. The default remains one step.
+
+Text, object, and agent streams accept `streamBuffer: { maxHistory, maxSubscriberQueue, replayOverflow }`. Defaults retain 4,096 replay events and queue up to 256 events per active subscriber, with `replayOverflow: "error"`. Full replay can therefore reach its limit even with an active reader. For long responses, explicitly select `replayOverflow: "drop-oldest"`: active subscribers keep ordered delivery with backpressure, while readers starting later receive only the retained tail. `collect()` still returns the complete generated result. Retention limits count events, not tokens or bytes.
+
+`textStream` exposes text only. Always await `collect()` after consuming it to detect provider failures; a normally ended text iterator alone does not establish success. `eventStream` exposes error events.

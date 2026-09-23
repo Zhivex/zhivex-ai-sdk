@@ -82,3 +82,22 @@ describe("BoundedReplayBroadcast", () => {
     expect(await iterator.next()).toEqual({ done: true, value: undefined });
   });
 });
+
+
+it("rolling replay preserves a slow subscriber snapshot and ordered live events", async () => {
+  const broadcast = new BoundedReplayBroadcast<number>({ maxHistory: 2, maxSubscriberQueue: 2, replayOverflow: "drop-oldest" });
+  await broadcast.publish(1);
+  await broadcast.publish(2);
+  const iterator = broadcast.stream()[Symbol.asyncIterator]();
+  expect((await iterator.next()).value).toBe(1);
+  await broadcast.publish(3);
+  await broadcast.publish(4);
+  expect((await iterator.next()).value).toBe(2);
+  expect((await iterator.next()).value).toBe(3);
+  expect((await iterator.next()).value).toBe(4);
+  broadcast.close();
+  expect((await iterator.next()).done).toBe(true);
+  const late = [];
+  for await (const value of broadcast.stream()) late.push(value);
+  expect(late).toEqual([3, 4]);
+});

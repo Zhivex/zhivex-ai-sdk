@@ -1,3 +1,4 @@
+import { validateMaxSteps } from "../validate-max-steps.js";
 import {
   createRunViewSink,
   runViewSink,
@@ -314,11 +315,12 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
 const createGenerateOptions = <
   TModel extends LanguageModel,
   TContext,
-  TOutput
+  TOutput,
+  TContextInput
 >(
-  agent: AgentDefinition<TModel, TContext, TOutput>,
+  agent: AgentDefinition<TModel, TContext, TOutput, TContextInput>,
   state: AgentRunState,
-  input: AgentRunInput<TModel, TContext>,
+  input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>>,
   messages: ModelMessage[],
   maxSteps: number,
   context: TContext | undefined,
@@ -601,6 +603,7 @@ const createGenerateOptions = <
       }
     },
     maxSteps,
+    streamBuffer: input.streamBuffer ?? agent.streamBuffer,
     temperature: input.temperature ?? agent.temperature,
     maxTokens,
     reasoning: input.reasoning ?? agent.reasoning,
@@ -628,10 +631,11 @@ const emptyAsyncIterable = async function* () {
 export const runAgent = async <
   TModel extends LanguageModel,
   TContext = unknown,
-  TOutput = unknown
+  TOutput = unknown,
+  TContextInput = TContext
 >(
-  agent: AgentDefinition<TModel, TContext, TOutput>,
-  input: AgentRunInput<TModel, TContext> = {}
+  agent: AgentDefinition<TModel, TContext, TOutput, TContextInput>,
+  input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>> = {}
 ): Promise<AgentRunOutput<TOutput>> => {
   const invocationStartedAt = Date.now();
   const telemetryRunId = input.runId ?? input.state?.runId ?? randomId("run");
@@ -654,7 +658,7 @@ export const runAgent = async <
     agent,
     telemetryRunId,
     invocationStartedAt,
-    Math.max(1, input.maxSteps ?? input.state?.maxSteps ?? agent.maxSteps ?? 1)
+    validateMaxSteps(input.maxSteps ?? input.state?.maxSteps ?? agent.maxSteps)
   );
 
   try {
@@ -866,10 +870,11 @@ export const runAgent = async <
 export const streamAgent = <
   TModel extends LanguageModel,
   TContext = unknown,
-  TOutput = unknown
+  TOutput = unknown,
+  TContextInput = TContext
 >(
-  agent: AgentDefinition<TModel, TContext, TOutput>,
-  input: AgentRunInput<TModel, TContext> = {}
+  agent: AgentDefinition<TModel, TContext, TOutput, TContextInput>,
+  input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>> = {}
 ): AgentStreamResult<TOutput> => {
   const invocationStartedAt = Date.now();
   const telemetryRunId = input.runId ?? input.state?.runId ?? randomId("run");
@@ -878,7 +883,8 @@ export const streamAgent = <
     : { ...input, runId: telemetryRunId };
   const policy = resolveRunPolicy(agent, input);
   const broadcast = new BoundedReplayBroadcast<AgentStreamEvent>({
-    maxHistory: policy?.maxStreamEvents ?? 4096
+    ...(input.streamBuffer ?? agent.streamBuffer),
+    maxHistory: policy?.maxStreamEvents ?? input.streamBuffer?.maxHistory ?? agent.streamBuffer?.maxHistory ?? 4096
   });
   let viewReady = false;
   const pendingViews = new Map<string, import("../types.js").AgentRunView>();
@@ -911,7 +917,7 @@ export const streamAgent = <
       agent,
       telemetryRunId,
       invocationStartedAt,
-      Math.max(1, input.maxSteps ?? input.state?.maxSteps ?? agent.maxSteps ?? 1)
+      validateMaxSteps(input.maxSteps ?? input.state?.maxSteps ?? agent.maxSteps)
     );
     const context = await resolveContext(agent, invocationInput);
     const currentStatus = normalizeApprovalStatus(context.state.status);
@@ -1329,8 +1335,9 @@ export const streamAgent = <
 export const resumeAgent = async <
   TModel extends LanguageModel,
   TContext = unknown,
-  TOutput = unknown
+  TOutput = unknown,
+  TContextInput = TContext
 >(
-  agent: AgentDefinition<TModel, TContext, TOutput>,
-  input: AgentRunInput<TModel, TContext> & { state: AgentRunState }
-): Promise<AgentRunOutput<TOutput>> => runAgent<TModel, TContext, TOutput>(agent, input);
+  agent: AgentDefinition<TModel, TContext, TOutput, TContextInput>,
+  input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>> & { state: AgentRunState }
+): Promise<AgentRunOutput<TOutput>> => runAgent<TModel, TContext, TOutput, TContextInput>(agent, input);

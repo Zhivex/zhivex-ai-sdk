@@ -1,5 +1,12 @@
 # @zhivex-ai/kimi
 
+## 0.7.9-next.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.23.0-next.0
+
 ## 0.7.8
 
 ### Patch Changes
