@@ -367,6 +367,9 @@ const childRun = (value: unknown, path: string) => {
   if (current.updatedAt !== undefined) finiteNumber(current.updatedAt, `${path}.updatedAt`, 0);
   if (current.error !== undefined) agentRunError(current.error, `${path}.error`);
   optionalMetadata(current.metadata, `${path}.metadata`);
+  if (current.childRuns !== undefined) {
+    array(current.childRuns, `${path}.childRuns`).forEach((entry, index) => childRun(entry, `${path}.childRuns[${index}]`));
+  }
   if (current.resumeState !== undefined) {
     jsonValue(current.resumeState, `${path}.resumeState`, true);
     normalizeAgentRunState(current.resumeState);

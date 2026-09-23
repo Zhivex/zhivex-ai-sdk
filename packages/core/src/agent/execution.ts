@@ -1,3 +1,4 @@
+import { childStateObserver, loadFailureState, runCheckpoints, observeChildState, projectChildRun, reconcileChildRuns, upsertChildRun } from "./children.js";
 import { validateMaxSteps } from "../validate-max-steps.js";
 import {
   createRunViewSink,
@@ -49,7 +50,6 @@ import {
   z
 } from "zod";
 import type {
-  AgentChildRun,
   AgentCompactionRecord,
   AgentApprovalRequest,
   AgentDefinition,
@@ -75,8 +75,6 @@ import {
   approvalsFromEvents,
   cloneMetadata,
   cloneState,
-  countToolCallsInSteps,
-  countToolErrors,
   createFailedState,
   createTerminalState,
   joinInstructions,
@@ -190,6 +188,7 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
         childMetadata.parentAgentId = options.parentAgentId;
       }
       const toolCallId = executionContext?.toolCall.id;
+      if (toolCallId) childMetadata.subagentToolCallId = toolCallId;
       const childIdempotencyKey =
         options.parentRunId &&
         toolCallId &&
@@ -222,60 +221,50 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
               reason: resolution.reason
             }))
         : [];
-      const output = checkpoint?.resumeState
-        ? await resumeAgent(options.agent, {
+      let latestState: AgentRunState | undefined;
+      const observedAgent = {
+        ...options.agent,
+        [childStateObserver]: (childState: AgentRunState) => {
+          latestState = childState;
+          if (runtimeState) upsertChildRun(runtimeState, projectChildRun(childState));
+        }
+      };
+      let output: AgentRunOutput;
+      try {
+        output = checkpoint?.resumeState
+        ? await resumeAgent(observedAgent, {
             state: checkpoint.resumeState,
             approvals: childApprovalResponses,
             scope: options.scope,
             context: executionContext?.context,
+            abortSignal: executionContext?.abortSignal,
             maxSteps: options.maxSteps
           })
-        : await runAgent(options.agent, {
+        : await runAgent(observedAgent, {
             prompt: input.prompt,
             system: joinInstructions(options.system, input.system),
             parentRunId: options.parentRunId,
             idempotencyKey: childIdempotencyKey,
             scope: options.scope,
             context: executionContext?.context,
+            abortSignal: executionContext?.abortSignal,
             maxSteps: options.maxSteps,
             metadata: cloneMetadata(options.metadata, childMetadata)
           });
-      const childRun: AgentChildRun = {
-        runId: output.state.runId,
-        status: output.status,
-        outputText: output.outputText,
-        steps: output.state.currentStep,
-        toolCalls: countToolCallsInSteps(output.steps),
-        toolErrors: countToolErrors(output.toolResults)
-      };
-      if (toolCallId) {
-        childRun.toolCallId = toolCallId;
+      } catch (error) {
+        if (latestState) {
+          if (latestState.status === "running") {
+            latestState = createFailedState(latestState, error);
+            try { await persistState(observedAgent, latestState); } catch { /* preserve primary error */ }
+          }
+          // Terminal notification must never replace the original execution error.
+          try { await options.onFinish?.(projectChildRun(latestState)); } catch { /* preserve primary error */ }
+        }
+        throw error;
       }
-      if (output.state.agentId) {
-        childRun.agentId = output.state.agentId;
-      }
-      if (options.parentRunId) {
-        childRun.parentRunId = options.parentRunId;
-      }
+      const childRun = projectChildRun(output.state);
       childRun.toolName = toolName;
-      if (output.usage) {
-        childRun.usage = output.usage;
-      }
-      if (output.state.startedAt !== undefined) {
-        childRun.startedAt = output.state.startedAt;
-      }
-      if (output.state.updatedAt !== undefined) {
-        childRun.updatedAt = output.state.updatedAt;
-      }
-      if (output.error) {
-        childRun.error = output.error;
-      }
-      if (output.state.metadata) {
-        childRun.metadata = output.state.metadata;
-      }
-      if (output.status === "waiting_approval" && output.state.pendingApprovals.length) {
-        childRun.resumeState = output.state;
-      }
+      childRun.toolCallId = toolCallId;
       await options.onFinish?.(childRun);
       if (childRun.resumeState) {
         const approvals = childRun.resumeState.pendingApprovals.map((approval) => {
@@ -329,6 +318,7 @@ const createGenerateOptions = <
   onCompaction?: (record: AgentCompactionRecord) => void | Promise<void>
 ): GenerateTextOptions<TModel, TContext> => {
   const tools = { ...(toToolSet(input.tools ?? agent.tools) ?? {}) };
+  state.childRuns ??= [];
   for (const subagent of agent.subagents ?? []) {
     const subagentTool = createSubAgentTool({
       ...subagent,
@@ -361,14 +351,7 @@ const createGenerateOptions = <
         });
       },
       onFinish: async (childRun) => {
-        state.childRuns = [
-          ...(state.childRuns ?? []).filter(
-            (existing) => childRun.toolCallId
-              ? existing.toolCallId !== childRun.toolCallId
-              : existing.runId !== childRun.runId
-          ),
-          childRun
-        ];
+        upsertChildRun(state, childRun);
         await emitTelemetryEvent(agent, {
           type: "subagent-finish",
           runId: state.runId,
@@ -545,6 +528,8 @@ const createGenerateOptions = <
         error: undefined,
         updatedAt: Date.now()
       };
+      runCheckpoints.set(state, checkpointState);
+      observeChildState(agent, checkpointState);
       if (agent.store) {
         await persistState(agent, checkpointState, runPolicy);
         state.revision = checkpointState.revision;
@@ -570,6 +555,8 @@ const createGenerateOptions = <
         toolResults: [...checkpointState.toolResults, ...toolResults],
         updatedAt: Date.now()
       };
+      runCheckpoints.set(state, checkpointState);
+      observeChildState(agent, checkpointState);
       if (agent.store) {
         await persistState(agent, checkpointState, runPolicy);
         state.revision = checkpointState.revision;
@@ -663,7 +650,12 @@ export const runAgent = async <
 
   try {
   const context = await resolveContext(agent, invocationInput);
+  await reconcileChildRuns(context.state, agent.store);
+  observeChildState(agent, context.state);
   const currentStatus = normalizeApprovalStatus(context.state.status);
+  if (!context.fresh && currentStatus === "failed" && input.idempotencyKey && childStateObserver in agent) {
+    throw new Error(context.state.error?.message ?? "Subagent previously failed.");
+  }
   const policy = resolveRunPolicy(agent, input);
 
   if (
@@ -833,9 +825,7 @@ export const runAgent = async <
     if (error instanceof AgentPolicyTimeoutError || abortContext.isTimedOut()) {
       const status = policy?.onTimeout === "cancel-requested" ? "cancel_requested" : "timed_out";
       const message = error instanceof Error ? error.message : `Agent run timed out after ${policy?.timeoutMs}ms.`;
-      const durableState = agent.store
-        ? normalizeAgentRunState((await agent.store.load(context.state.runId, context.state.scope)) ?? context.state)
-        : context.state;
+      const durableState = await loadFailureState(context.state, agent.store);
       const timedOutState = createTerminalState(durableState, status, message);
       await persistState(agent, timedOutState, policy);
       await emitRunFinishTelemetry(agent, timedOutState);
@@ -843,11 +833,9 @@ export const runAgent = async <
       return returnInvocationOutput(toOutput(timedOutState));
     }
 
-    const durableState = agent.store
-      ? normalizeAgentRunState((await agent.store.load(context.state.runId, context.state.scope)) ?? context.state)
-      : context.state;
+    const durableState = await loadFailureState(context.state, agent.store);
     const failedState = createFailedState(durableState, error);
-    await persistState(agent, failedState, policy);
+    try { await persistState(agent, failedState, policy); } catch { /* preserve primary error */ }
     await emitRunFinishTelemetry(agent, failedState);
     executionEnvironmentStatus = failedState.status;
     throw error;
@@ -920,6 +908,8 @@ export const streamAgent = <
       validateMaxSteps(input.maxSteps ?? input.state?.maxSteps ?? agent.maxSteps)
     );
     const context = await resolveContext(agent, invocationInput);
+    await reconcileChildRuns(context.state, agent.store);
+    observeChildState(agent, context.state);
     const currentStatus = normalizeApprovalStatus(context.state.status);
 
     const supportsLeases = Boolean(
@@ -1253,9 +1243,7 @@ export const streamAgent = <
         if (error instanceof AgentPolicyTimeoutError || abortContext.isTimedOut()) {
           const status = policy?.onTimeout === "cancel-requested" ? "cancel_requested" : "timed_out";
           const message = error instanceof Error ? error.message : `Agent run timed out after ${policy?.timeoutMs}ms.`;
-          const durableState = agent.store
-            ? normalizeAgentRunState((await agent.store.load(context.state.runId, context.state.scope)) ?? context.state)
-            : context.state;
+          const durableState = await loadFailureState(context.state, agent.store);
           const timedOutState = createTerminalState(durableState, status, message);
           await persistState(agent, timedOutState, policy);
           await emitRunFinishTelemetry(agent, timedOutState);
@@ -1273,11 +1261,9 @@ export const streamAgent = <
           return toOutput(timedOutState);
         }
 
-        const durableState = agent.store
-          ? normalizeAgentRunState((await agent.store.load(context.state.runId, context.state.scope)) ?? context.state)
-          : context.state;
+        const durableState = await loadFailureState(context.state, agent.store);
         const failedState = createFailedState(durableState, error);
-        await persistState(agent, failedState, policy);
+        try { await persistState(agent, failedState, policy); } catch { /* preserve primary error */ }
         await emitRunFinishTelemetry(agent, failedState);
         await publish({
           type: "error",

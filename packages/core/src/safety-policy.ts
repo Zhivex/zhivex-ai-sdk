@@ -79,6 +79,8 @@ export interface AgentBudgetStatus {
   consumption: AgentBudgetConsumption;
   remaining: AgentBudgetRemaining;
   includeChildRuns: boolean;
+  /** Runs without reported usage; numeric consumption is confirmed usage, not an estimate or a reservation. */
+  unknownUsageRunIds: string[];
 }
 
 export interface AgentBudgetPreflightOptions {
@@ -393,7 +395,17 @@ export const getAgentBudgetStatus = (
   output?: { usage?: AgentRunOutput["usage"] }
 ): AgentBudgetStatus => {
   const includeChildRuns = limits.includeChildRuns ?? true;
-  const childRuns = includeChildRuns ? state.childRuns ?? [] : [];
+  const childRuns: NonNullable<AgentRunState["childRuns"]> = [];
+  const seen = new Set([state.runId]);
+  const collect = (children: NonNullable<AgentRunState["childRuns"]>) => {
+    for (const child of children) {
+      if (seen.has(child.runId)) continue;
+      seen.add(child.runId);
+      childRuns.push(child);
+      collect(child.childRuns ?? []);
+    }
+  };
+  if (includeChildRuns) collect(state.childRuns ?? []);
   const usage = childRuns.reduce((total, childRun) => addUsage(total, childRun.usage), output?.usage ?? state.usage);
   const toolErrors = state.toolResults.filter((result) => result.isError).length + childRuns.reduce((total, childRun) => total + childRun.toolErrors, 0);
   const toolCalls = countToolCalls(state) + childRuns.reduce((total, childRun) => total + childRun.toolCalls, 0);
@@ -419,7 +431,11 @@ export const getAgentBudgetStatus = (
       outputTokens: remaining(limits.maxOutputTokens, outputTokens),
       totalTokens: remaining(limits.maxTotalTokens, totalTokens)
     },
-    includeChildRuns
+    includeChildRuns,
+    unknownUsageRunIds: [
+      ...((output?.usage ?? state.usage) ? [] : [state.runId]),
+      ...childRuns.filter(child => !child.usage).map(child => child.runId)
+    ]
   };
 };
 

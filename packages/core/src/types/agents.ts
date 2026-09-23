@@ -478,6 +478,7 @@ export interface CreateSubAgentToolOptions<TModel extends LanguageModel = Langua
   scope?: AgentStoreScope;
   toolName?: string;
   onStart?: (request: { toolName: string; childAgentId?: string; parentRunId?: string }) => void | Promise<void>;
+  /** Called for returned outcomes and thrown failures after a child state exists. On failure, callback errors do not replace the execution error. */
   onFinish?: (childRun: AgentChildRun) => void | Promise<void>;
 }
 
