@@ -31,15 +31,42 @@ const reviewedProviderCoreRanges = {
   zai: "^1.19.0"
 } as const;
 
+// A provider can retain an earlier next revision when Changesets only bumps
+// Core: ^1.23.0-next.0 accepts 1.23.0-next.1. Keep the same release tuple
+// and channel so this does not admit unrelated or future prerelease floors.
+const acceptsCorePrerelease = (version: string, range: string | undefined): boolean => {
+  const current = /^(\d+\.\d+\.\d+)-next\.(0|[1-9]\d*)$/.exec(version);
+  const minimum = /^\^(\d+\.\d+\.\d+)-next\.(0|[1-9]\d*)$/.exec(range ?? "");
+  return Boolean(current && minimum && current[1] === minimum[1] &&
+    BigInt(minimum[2]!) <= BigInt(current[2]!));
+};
+
 describe("internal Core dependency ranges", () => {
+  it.each([
+    ["1.23.0-next.1", "^1.23.0-next.0", true],
+    ["1.23.0-next.1", "^1.23.0-next.1", true],
+    ["1.23.0-next.10", "^1.23.0-next.2", true],
+    ["1.23.0-next.1", "^1.23.0-next.2", false],
+    ["1.23.0-next.1", "^1.22.0-next.0", false],
+    ["1.23.0-next.1", "^1.23.1-next.0", false],
+    ["1.23.0-next.1", "^1.23.0-rc.0", false],
+    ["1.23.0-next.1", "^1.23.0", false],
+    ["1.23.0-next.1", "*", false],
+    ["1.23.0-next.1", undefined, false]
+  ])("checks prerelease compatibility for %s against %s", (version, range, expected) => {
+    expect(acceptsCorePrerelease(version!, range)).toBe(expected);
+  });
+
   it("requires the reviewed Core release for each provider helper surface", async () => {
     const core = await readManifest("core");
     for (const [packageName, expectedRange] of Object.entries(reviewedProviderCoreRanges)) {
       const manifest = await readManifest(packageName);
-      // Changesets aligns every provider with the exact prerelease batch.
-      expect(manifest.dependencies?.["@zhivex-ai/core"], packageName).toBe(
-        core.version.includes("-") ? `^${core.version}` : expectedRange
-      );
+      const range = manifest.dependencies?.["@zhivex-ai/core"];
+      if (core.version.includes("-")) {
+        expect(acceptsCorePrerelease(core.version, range), `${packageName}: ${range} must accept ${core.version}`).toBe(true);
+      } else {
+        expect(range, packageName).toBe(expectedRange);
+      }
     }
   });
 
