@@ -4,6 +4,20 @@ import * as sdk from "../src/index.js";
 import * as evals from "../src/evals.js";
 
 describe("sdk public surface", () => {
+  it("persists redaction through the public agent facade after rejection", async () => {
+    const text = "token: synthetic_sdk_fixture";
+    const store = sdk.createInMemoryAgentRunStore();
+    const agent = sdk.createAgent({
+      store,
+      model: sdk.createMockLanguageModel({ responses: [{ text, messages: [sdk.createTextMessage("assistant", text)], finishReason: "stop" }] }),
+      outputGuardrails: [sdk.createRedactionPolicy().outputGuardrail, () => ({ triggered: true, reason: "Rejected" })]
+    });
+    const result = await sdk.runAgent(agent, { prompt: "Reply" });
+    expect(result.status).toBe("failed");
+    expect(result.outputText).toBe("[REDACTED]");
+    expect(JSON.stringify(await store.load(result.state.runId)).includes("synthetic_sdk_fixture")).toBe(false);
+  });
+
   it("exports the shared helpers from core", () => {
     expect(sdk.Agent).toBeTypeOf("function");
     expect(sdk.generateText).toBeTypeOf("function");

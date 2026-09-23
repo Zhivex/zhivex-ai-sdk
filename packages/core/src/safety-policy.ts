@@ -12,7 +12,8 @@ import type {
   ToolApprovalDecision,
   ToolApprovalPolicy,
   ToolApprovalRequest,
-  ToolExecutionOptions
+  ToolExecutionOptions,
+  ToolExecutionResult
 } from "./types.js";
 
 export type SafetyPolicyPreset = "permissive" | "review-sensitive" | "locked-down";
@@ -329,6 +330,41 @@ export const createRedactionPolicy = (options: RedactionPolicyOptions = {}): Red
 
   const redactMessages = (messages: ModelMessage[]): ModelMessage[] => redactUnknown(cloneJson(messages)) as ModelMessage[];
 
+  const redactToolResult = (result: ToolExecutionResult): ToolExecutionResult => ({
+    ...result,
+    output: redactJson(result.output),
+    error: result.error ? { ...result.error, message: redactText(result.error.message) } : undefined
+  });
+
+  // Output history can be resumed: retain call identity, executable inputs and
+  // provider control payloads (including approvals) verbatim.
+  const redactOutputMessages = (messages: ModelMessage[]): ModelMessage[] => messages.map(message => ({
+    ...message,
+    parts: message.parts.map(part => {
+      if (part.type === "text") return { ...part, text: redactText(part.text) };
+      if (part.type === "tool-result") return { ...part, toolResult: redactToolResult(part.toolResult) };
+      return part;
+    })
+  }));
+
+  const redactState = (state: AgentRunState) => {
+    state.outputText = redactText(state.outputText);
+    state.messages = redactOutputMessages(state.messages);
+    state.finalOutput = redactJson(state.finalOutput);
+    state.metadata = redactJson(state.metadata);
+    state.toolResults = state.toolResults.map(redactToolResult);
+    // Keep step objects shared with the runner's finalized telemetry/events.
+    for (const step of state.steps) {
+      step.request.messages = redactOutputMessages(step.request.messages);
+      if (step.response) {
+        step.response.messages = redactOutputMessages(step.response.messages);
+        if (step.response.text !== undefined) step.response.text = redactText(step.response.text);
+      }
+      step.toolResults = step.toolResults.map(redactToolResult);
+      if (step.error) step.error = { ...step.error, message: redactText(step.error.message) };
+    }
+  };
+
   return {
     rules,
     redactText,
@@ -341,13 +377,23 @@ export const createRedactionPolicy = (options: RedactionPolicyOptions = {}): Red
       }
     },
     outputGuardrail: (request) => {
-      request.state.messages = redactMessages(request.state.messages);
-      request.output.messages = redactMessages(request.output.messages);
-      request.output.outputText = redactText(request.output.outputText);
-      request.state.outputText = redactText(request.state.outputText);
-      if (request.state.metadata) {
-        request.state.metadata = redactJson(request.state.metadata);
+      // The runner passes request.state as a defensive snapshot. Sanitize the
+      // authoritative state explicitly; never merge arbitrary snapshot edits.
+      const state = request.output.state;
+      redactState(state);
+      request.state.messages = state.messages;
+      request.state.outputText = state.outputText;
+      request.state.finalOutput = state.finalOutput;
+      request.state.metadata = state.metadata;
+      request.state.steps = state.steps;
+      request.state.toolResults = state.toolResults;
+      request.output.messages = state.messages;
+      request.output.outputText = state.outputText;
+      if ("steps" in request.output) {
+        request.output.finalOutput = state.status === "completed" ? state.finalOutput : undefined;
+        request.output.steps = state.steps;
       }
+      request.output.toolResults = state.toolResults;
     }
   };
 };

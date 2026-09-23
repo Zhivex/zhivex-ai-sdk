@@ -785,6 +785,8 @@ export const runAgent = async <
     }
     const newSteps = mapSteps(result.steps, context.state.currentStep, result.toolResults);
     let output = finalizeState(agent, context.state, result, newSteps, result.toolResults);
+    // Failure recovery must retain terminal guardrail transformations too.
+    runCheckpoints.set(context.state, output.state);
 
     const outputGuardrail = await runGuardrails(agent, output.state, "output", agent.outputGuardrails, () => ({
       runId: output.state.runId,
@@ -1175,6 +1177,7 @@ export const streamAgent = <
         }
         const newSteps = mapSteps(final.steps, context.state.currentStep, final.toolResults);
         let result = finalizeState(agent, context.state, final, newSteps, final.toolResults);
+        runCheckpoints.set(context.state, result.state);
 
         const outputGuardrail = await runGuardrails(agent, result.state, "output", agent.outputGuardrails, () => ({
           runId: result.state.runId,
