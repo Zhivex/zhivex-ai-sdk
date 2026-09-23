@@ -367,6 +367,26 @@ retain their existing raw output format by default. See the
 [gateway history contract](../gateway/README.md#continuing-canonical-tool-history)
 for routing, exclusions and the isolated-consumer verification command.
 
+### Responses function receipts and native history migration
+
+Function names are not protocol identifiers. Functions named `apply_patch`, `shell`,
+`computer`, or any other name produce `function_call_output` with their complete
+JSON result. Errors retain the existing raw error object by default; select
+`toolResultFormat: "envelope"` to explicitly distinguish output from error.
+
+Native outputs require `providerMetadata.responsesToolType` (`"apply_patch"`,
+`"shell"`, or `"computer"`) on the original call or result. The built-in native
+helpers and parsed native calls already preserve this metadata. Native outputs
+retain their native schema even when envelope formatting is requested.
+
+For manually persisted legacy native histories that relied only on the name,
+restore this metadata from the original native call on both the call and result,
+and retain OpenAI provider-data items for stateless replay. Do not mark ordinary
+functions as native. Without native metadata, results use the lossless function
+protocol. Conflicting call/result names or protocol metadata fail locally with a
+sanitized configuration error, including when `previous_response_id` omits the
+original call from the outgoing request. Serialization never executes a tool.
+
 ### Generation retries
 
 Language-model generation and streaming startup validate HTTP failures inside the retry boundary. `maxRetries` applies to HTTP 408, 429 and 5xx responses, with bounded `Retry-After` waits. Other 4xx responses are not retried. Timeout and caller cancellation interrupt retry waits; successful stream bodies remain unread until consumption.

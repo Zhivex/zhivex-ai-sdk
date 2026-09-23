@@ -288,6 +288,26 @@ assert.equal(OTEL_GENAI_CONTRACT_VERSION, 1);
 assert.equal(OTEL_GENAI_SEMCONV_REVISION, "a685613a207a580163353b8e48a7ad88967e7b42");
 const installedSdk = await import("@zhivex-ai/sdk");
 const installedOpenAI = await import("@zhivex-ai/openai");
+// Exercise the receipt contract from installed tarballs, never source aliases.
+for (const streaming of [false, true]) for (const toolName of ["apply_patch", "shell", "computer", "inspect"]) {
+  let receiptBody;
+  const receipt = { schemaVersion: 1, kind: "patch-result", result: { changes: [{ path: "fixture.txt" }] } };
+  const model = installedOpenAI.createOpenAI({ apiKey: "synthetic", fetch: async (_url, init) => {
+    receiptBody = JSON.parse(init.body);
+    const response = { id: "receipt_done", status: "completed", output: [] };
+    return streaming
+      ? new Response("data: " + JSON.stringify({ type: "response.completed", response }) + "\\n\\ndata: [DONE]\\n\\n", { headers: { "content-type": "text/event-stream" } })
+      : Response.json(response);
+  } })("gpt-6-luna");
+  const input = { messages: [
+    { role: "assistant", parts: [{ type: "tool-call", toolCall: { id: "receipt_call", name: toolName, input: {} } }] },
+    { role: "tool", parts: [{ type: "tool-result", toolResult: { toolCallId: "receipt_call", toolName, isError: false, output: receipt } }] }
+  ] };
+  if (streaming) { for await (const event of await model.stream(input)) {} }
+  else await model.generate(input);
+  assert.deepEqual(receiptBody.input.at(-1), { type: "function_call_output", call_id: "receipt_call", output: JSON.stringify(receipt) });
+}
+console.log("INSTALLED_OPENAI_FUNCTION_RECEIPTS_OK");
 const installedQwen = await import("@zhivex-ai/qwen");
 assert.equal(installedSdk.ProviderToolCallError, ProviderToolCallError);
 assert.equal(installedOpenAI.OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE, "OPENAI_RESPONSES_TOOL_CALL_INVALID");
