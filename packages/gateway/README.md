@@ -235,8 +235,8 @@ TypeScript compilation and generation/streaming on all six transport variants
 candidate core/gateway/provider tarballs without checkout links. Add
 `--live --provider=openai` (or `deepseek`, `qwen`, `anthropic`) to require an
 authorized credential and perform two bounded live calls for one provider. A missing credential is a blocked live check, not
-a passing certification. Publication evidence and the actual version are recorded
-in [the delivery record](../../docs/GATEWAY_TOOL_HISTORY_DELIVERY.md).
+a passing certification. Original candidate-artifact checks and their publication limits are recorded
+in [the historical delivery record](../../docs/history/GATEWAY_TOOL_HISTORY_DELIVERY.md).
 
 ## Usage accounting
 

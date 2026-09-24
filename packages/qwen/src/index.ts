@@ -107,7 +107,12 @@ export interface QwenProviderOptions {
 export type QwenSpeechAudioURLValidator = (url: URL) => boolean | Promise<boolean>;
 
 export const QWEN_TOKEN_PLAN_BASE_URL =
-  "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
+  "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1";
+
+const QWEN_TOKEN_PLAN_ORIGINS = new Set([
+  new URL(QWEN_TOKEN_PLAN_BASE_URL).origin,
+  "https://token-plan.ap-southeast-1.maas.aliyuncs.com"
+]);
 
 export interface QwenLanguageModelOptions {
   apiMode?: "auto" | "responses" | "chat";
@@ -379,9 +384,8 @@ const isQwen38ReasoningModel = (modelId: string) =>
   isQwen38ProductionModel(modelId) || isQwen38MaxPreview(modelId);
 const isQwenTokenPlanURL = (url: URL) => {
   const path = url.pathname.replace(/\/+$/, "");
-  const tokenPlanURL = new URL(QWEN_TOKEN_PLAN_BASE_URL);
   return (
-    url.origin === tokenPlanURL.origin &&
+    QWEN_TOKEN_PLAN_ORIGINS.has(url.origin) &&
     !url.username &&
     !url.password &&
     !url.search &&
@@ -412,9 +416,10 @@ const validateQwen38ProductionBaseURL = (modelId: string, baseURL: string) => {
   } catch {
     return;
   }
-  if (isQwenTokenPlanURL(url)) {
+  // Plan access is model-specific; do not infer entitlement for Omni or dated snapshots.
+  if (isQwenTokenPlanURL(url) && modelId !== "qwen3.8-max" && modelId !== "qwen3.8-flash") {
     throw new ConfigurationError(
-      `Qwen ${modelId} uses standard Model Studio credentials and endpoints; QWEN_TOKEN_PLAN_BASE_URL is reserved for qwen3.8-max-preview.`
+      `Qwen ${modelId} requires standard Model Studio credentials and endpoints; use an explicitly supported model such as qwen3.8-max or qwen3.8-flash with Token Plan.`
     );
   }
 };
