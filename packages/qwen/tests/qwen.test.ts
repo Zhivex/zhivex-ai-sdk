@@ -588,23 +588,6 @@ describe("qwen adapter", () => {
       })
     ).rejects.toThrow("does not process maxTokens, audio/video input");
 
-    const tokenPlanProvider = createQwen({
-      apiKey: "token-plan-key",
-      baseURL: QWEN_TOKEN_PLAN_BASE_URL,
-      fetch: fetchMock as typeof fetch
-    });
-    await expect(
-      generateText({
-        model: tokenPlanProvider("qwen3.8-max"),
-        prompt: "hello"
-      })
-    ).rejects.toThrow("QWEN_TOKEN_PLAN_BASE_URL is reserved for qwen3.8-max-preview");
-    await expect(
-      generateText({
-        model: tokenPlanProvider("qwen3.8-flash"),
-        prompt: "hello"
-      })
-    ).rejects.toThrow("QWEN_TOKEN_PLAN_BASE_URL is reserved for qwen3.8-max-preview");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -815,7 +798,7 @@ describe("qwen adapter", () => {
 
   it("rejects the pay-as-you-go endpoint for qwen3.8-max-preview before fetch", async () => {
     expect(QWEN_TOKEN_PLAN_BASE_URL).toBe(
-      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+      "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1"
     );
     const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
 

@@ -5,3 +5,4 @@ These reports describe observations at their recorded dates. They are not curren
 - [September dependency update](./DEPENDENCY_UPGRADE_2026_09.md)
 - [September model refresh](./MODEL_REFRESH_2026_09.md)
 - [September Gateway benchmark](../benchmarks/2026-09-14/README.md)
+- [September Gateway tool-history delivery](./GATEWAY_TOOL_HISTORY_DELIVERY.md)

@@ -11,7 +11,7 @@ const tokenPlanApiKey = process.env.QWEN_TOKEN_PLAN_API_KEY;
 const qwen = tokenPlanApiKey
   ? createQwen({
       apiKey: tokenPlanApiKey,
-      baseURL: QWEN_TOKEN_PLAN_BASE_URL
+      baseURL: process.env.QWEN_TOKEN_PLAN_BASE_URL ?? QWEN_TOKEN_PLAN_BASE_URL
     })
   : createQwen({
       apiKey: requiredEnv("QWEN_API_KEY"),
@@ -20,7 +20,7 @@ const qwen = tokenPlanApiKey
     });
 
 const result = await generateText({
-  model: qwen(tokenPlanApiKey ? "qwen3.8-max-preview" : "qwen3.8-max"),
+  model: qwen("qwen3.8-max"),
   prompt: "Say hello from the Qwen adapter."
 });
 

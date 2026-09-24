@@ -1,5 +1,11 @@
 # @zhivex-ai/qwen
 
+## 0.15.2
+
+### Patch Changes
+
+- Update the Token Plan endpoint to the current QwenCloud domain while retaining explicit legacy Singapore endpoint compatibility. Allow qwen3.8-max and qwen3.8-flash on Token Plan in generation and streaming, preserve preview endpoint validation, and update examples to recommend the final Max model instead of the retired preview. Plan availability remains provider-controlled and separate from offline contract coverage.
+
 ## 0.15.1
 
 ### Patch Changes
