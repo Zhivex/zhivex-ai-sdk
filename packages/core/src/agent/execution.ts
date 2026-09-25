@@ -196,6 +196,8 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
         // Earlier approval segments have already settled their confirmed usage
         // in the root pool. Reserve only this child's remaining lifetime allowance;
         // its persistent subpool retains the original identity and full limits.
+        // These are independent ceilings: provider total usage may exceed the
+        // input/output sum, leaving a tighter total ceiling after subtraction.
         const remainingAllocation = {
           inputTokens: Math.max(0, allocation.inputTokens - (previousChildUsage?.inputTokens ?? 0)),
           outputTokens: Math.max(0, allocation.outputTokens - (previousChildUsage?.outputTokens ?? 0)),

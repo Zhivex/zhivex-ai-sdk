@@ -8,17 +8,21 @@ const done = () => ({ text: "done", messages: [createTextMessage("assistant", "d
 const call = (id: string, name: string, input: Record<string, string> = {}) => ({ messages: [{ role: "assistant" as const, parts: [{ type: "tool-call" as const, toolCall: { id, name, input } }] }], finishReason: "tool-calls" as const, usage: unit });
 
 describe("PR114 shared budget recovery", () => {
-  it.each([false, true])("reserves only remaining child allowance across repeated approval resumes (late failure=%s)", async fail => {
+  it.each([
+    { fail: false, childTotal: 10 }, { fail: true, childTotal: 10 },
+    { fail: false, childTotal: 11 }, { fail: true, childTotal: 11 }
+  ])("reserves only remaining child allowance across repeated approval resumes ($fail, total=$childTotal)", async ({ fail, childTotal }) => {
+    const childUsage = { ...unit, totalTokens: childTotal };
     const store = createInMemoryAgentRunStore();
     const coordinator = createAgentBudgetCoordinator({ store, budgetId: `approval-${fail}`, limits: { inputTokens: 48, outputTokens: 12, totalTokens: 60 } });
     let childCalls = 0; let toolCalls = 0;
     const child = createAgent({ id: "child", store, maxSteps: 3,
-      policy: { budget: { maxInputTokens: 40, maxOutputTokens: 10, maxTotalTokens: 50 }, modelReservation: unit },
+      policy: { budget: { maxInputTokens: 40, maxOutputTokens: 10, maxTotalTokens: 50 }, modelReservation: childUsage },
       tools: { work: tool({ name: "work", schema: z.object({}), requiresApproval: true, approvalMode: "interrupt", execute: () => { toolCalls++; return "worked"; } }) },
       model: { ...createMockLanguageModel(), generate: async () => {
         childCalls++;
         if (fail && childCalls === 2) throw new Error("unknown provider consumption");
-        return childCalls <= 2 ? call(`work-${childCalls}`, "work") : done();
+        return { ...(childCalls <= 2 ? call(`work-${childCalls}`, "work") : done()), usage: childUsage };
       } }
     });
     const parent = new Agent({ store, maxSteps: 2, subagents: [{ name: "delegate", agent: child }], policy: { budgetCoordinator: coordinator, modelReservation: unit }, model: createMockLanguageModel({ responses: [call("delegate-1", "delegate", { prompt: "work" }), done()] }) });
@@ -29,7 +33,7 @@ describe("PR114 shared budget recovery", () => {
     if (fail) {
       await resume().catch(() => undefined);
       expect(childCalls).toBe(2);
-      // Main 10, confirmed child 10, and its remaining unknown allowance 40.
+      // Confirmed main and child usage plus the unknown remainder still hold all 60 tokens.
       await expect(coordinator.reserve("unsafe-reuse", unit)).rejects.toThrow("exceeds");
       return;
     }
@@ -44,7 +48,7 @@ describe("PR114 shared budget recovery", () => {
     expect(result.status).toBe("completed");
     expect(childCalls).toBe(3);
     expect(toolCalls).toBe(2);
-    await expect(coordinator.reserve("remaining-ten", unit)).resolves.toBeUndefined();
+    await expect(coordinator.reserve("remaining", { inputTokens: 8, outputTokens: 2, totalTokens: 60 - 20 - 3 * childTotal })).resolves.toBeUndefined();
     await expect(coordinator.reserve("too-much", unit)).rejects.toThrow("exceeds");
   });
 

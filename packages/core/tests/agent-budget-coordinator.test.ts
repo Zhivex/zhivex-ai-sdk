@@ -4,6 +4,34 @@ import { Agent, createInMemoryAgentRunStore, createTextMessage } from "../src/in
 import { createMockLanguageModel } from "../src/testing.js";
 const tokens = { inputTokens: 100, outputTokens: 20, totalTokens: 120 };
 describe("CAS shared token admission", () => {
+  it("persists independent remainder ceilings while validating receipts and retaining unknown usage", async () => {
+    const store = createInMemoryAgentRunStore();
+    const limits = { inputTokens: 40, outputTokens: 10, totalTokens: 50 };
+    const reopen = () => createAgentBudgetCoordinator({ store, budgetId: "remainder", limits });
+    const budget = reopen();
+    await budget.reserve("first", { inputTokens: 8, outputTokens: 2, totalTokens: 11 });
+    await budget.settle("first", { inputTokens: 8, outputTokens: 2, totalTokens: 11 });
+    const remaining = { inputTokens: 32, outputTokens: 8, totalTokens: 39 };
+    await budget.reserve("remaining", remaining);
+    await expect(reopen().settle("remaining", remaining)).rejects.toThrow("ceilings");
+    await expect(reopen().settle("remaining")).rejects.toThrow("unknown");
+    for (const dimension of ["inputTokens", "outputTokens", "totalTokens"] as const) {
+      await expect(reopen().reserve(`over-${dimension}`, {
+        inputTokens: 0, outputTokens: 0, totalTokens: 0, [dimension]: 1
+      })).rejects.toThrow(`exceeds ${dimension}`);
+    }
+    await reopen().settle("remaining", { inputTokens: 8, outputTokens: 2, totalTokens: 11 });
+    await reopen().reserve("released", { inputTokens: 24, outputTokens: 6, totalTokens: 28 });
+    await expect(reopen().reserve("over-total", { inputTokens: 0, outputTokens: 0, totalTokens: 1 })).rejects.toThrow("exceeds totalTokens");
+  });
+
+  it.each([-1, 0.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1])("rejects invalid ceilings (%s)", async invalid => {
+    const budget = createAgentBudgetCoordinator({ store: createInMemoryAgentRunStore(), budgetId: "invalid", limits: tokens });
+    for (const dimension of ["inputTokens", "outputTokens", "totalTokens"] as const) {
+      await expect(budget.reserve(dimension, { ...tokens, [dimension]: invalid })).rejects.toThrow("ceilings");
+    }
+  });
+
   it("admits only one competing reservation across independent coordinators", async () => {
     const store = createInMemoryAgentRunStore();
     const a = createAgentBudgetCoordinator({ store, budgetId: "race", limits: tokens });

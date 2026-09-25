@@ -1,7 +1,7 @@
 {
   "advanced-tool-registry.d.ts": "c80d53abd9d62d00e9a0da63cd44aea117bdd7a93d8104671e1efde7331a1ed5",
   "agent-approval.d.ts": "afad2c57e7ac61ff6199df434cd4fbd7079d3581030582e573dcb1540d4d29fb",
-  "agent-budget-coordinator.d.ts": "3624c4ad6e957de9fb428b8ed8f775b6ee6c4c59936d484c79411f7775e4a3e9",
+  "agent-budget-coordinator.d.ts": "eb54a605ac7a143bc6aa1c95217808e3b2b4200aa64ddb1734019696861d266e",
   "agent-control-plane.d.ts": "b295b32574c94fac09dae7fb21b7c15f9f41debe711a6c38bcbb41af49f4312d",
   "agent-evaluation.d.ts": "45e83edd0dc76b31c4faecbb1bf39a60f3f8f6a1ed92a9e65131bf785c6c30ab",
   "agent-handoff-contracts.d.ts": "53c4b9128d5a8e8b669e5f6c2dfcf8744ccc9c27f7f2094217c687992751735d",
