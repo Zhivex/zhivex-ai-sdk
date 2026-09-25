@@ -1,5 +1,13 @@
 # @zhivex-ai/agents
 
+## 1.10.0-next.1
+
+### Patch Changes
+
+- 2fa183b: Reserve only a child's remaining token allowance when resuming approvals, preserving its shared budget identity and lifetime limits. Forward only pending approval decisions across repeated resumes. Release an auxiliary allocation as confirmed zero consumption when its initial checkpoint fails before dispatch, while retaining the operation ID to block unsafe retries.
+- Updated dependencies [2fa183b]
+  - @zhivex-ai/core@1.24.0-next.1
+
 ## 1.10.0-next.0
 
 ### Minor Changes
