@@ -44,7 +44,11 @@ automatically on resume. The same attempt ID cannot be dispatched again, includi
 when a confirmed response contained a rejected summary. Unknown usage is never
 reported as confirmed zero. A receipt-save failure retains the in-memory receipt;
 if all later persistence attempts fail, the durable in-flight record remains the
-safe recovery boundary. External receipt reconciliation is host-owned; this release
+safe recovery boundary. If saving the initial attempt fails before the compactor
+is dispatched, the runtime records confirmed zero consumption and returns the
+unused shared allocation. This includes a store that commits and then throws.
+The operation ID remains consumed, so this cleanup cannot authorize another paid
+attempt. If budget cleanup also fails, the allocation stays reserved conservatively. External receipt reconciliation is host-owned; this release
 does not provide an authenticated reconciliation API for compaction attempts.
 
 The reservation is a conservative caller contract, not an enforcement mechanism
@@ -78,7 +82,11 @@ const policy = {
 Every primary model call reserves `modelReservation`; every auxiliary call reserves
 its route allocation. Each child must declare all three finite budget ceilings in
 its own `policy.budget`. The parent reserves the entire child allocation before
-launch, and the child receives a separate CAS-backed subpool. This avoids double
+launch, and the child receives a separate CAS-backed subpool. After a child pauses
+for approval, confirmed consumption settles in the parent pool. Each resumed segment
+reserves only the child's remaining lifetime allowance; the subpool identity and
+original limits stay unchanged. Only currently pending child approval decisions
+are forwarded on repeated resumes. This avoids double
 charging child model receipts to the shared root while admitting competing children
 and auxiliary calls atomically. Each child may override `modelReservation` or inherit
 its parent's explicit reservation. Unused child allocation is released after a known

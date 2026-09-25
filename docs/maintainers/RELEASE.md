@@ -115,6 +115,15 @@ them to that exact release source SHA.
 
 Use this flow for prerelease validation. Publish only through the protected `release.yml` workflow with channel `next`; local release commands are workflow implementation details.
 
+This repository uses Changesets 3. Its generated `pre.json` contains `mode` and
+`tag`; the older `initialVersions` and `changesets` fields are no longer required.
+New changesets belong directly in `.changeset/`. After `version`, Changesets moves
+consumed changesets to `.changeset/pre/` and retains them for the eventual stable
+changelog. Do not move those consumed files back or reconstruct the v2 state.
+See the [Changesets prerelease guide](https://changesets.dev/guide/prereleases#manage-prerelease-changesets).
+`scripts/prerelease-lifecycle.test.ts` verifies `next.0` → `next.1` → stable using
+the installed CLI in a temporary workspace, without publishing anything.
+
 ```bash
 bunx changeset pre enter next
 bun run version-packages
