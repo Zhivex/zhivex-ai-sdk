@@ -1,5 +1,20 @@
 # @zhivex-ai/core
 
+## 1.24.0
+
+### Minor Changes
+
+- 29ae47c: Add optional per-field context limits and primary-source evidence, separate curated compaction candidates from evaluation artifacts, and expose deterministic opt-in auxiliary model recommendations with freshness, route, credentials, context and cost explanations. Preserve unknown costs and long-context pricing. Add verified GPT-4o mini limits to the SDK-owned catalog.
+- 29ae47c: Add explicit paid-compaction route binding, durable reservations and attempt receipts. Preserve confirmed auxiliary consumption even when summary validation or persistence fails, block retries with unknown consumption, and recompute model output ceilings after compaction.
+  
+  Add a Beta CAS-backed shared token budget coordinator with primary-call reservations, child allotments and auxiliary-call admission, retaining unknown allocations and isolating budget ledgers from ordinary run retention.
+- 29ae47c: Add optional MCP resources, resource templates and prompts contracts, and an opt-in HTTP entry with bounded Streamable HTTP transport, public-client OAuth PKCE discovery, host-owned credentials, typed authentication and indeterminate execution errors. Existing tools-only clients and tool approval defaults remain compatible.
+
+### Patch Changes
+
+- be12ce8: Allow shared budget reservations to represent independent remaining input, output, and total ceilings when resuming approval-paused subagents. Preserve all dimension limits, strict confirmed-usage validation, and unknown-usage reservations when provider totals exceed the input/output sum.
+- 9e5715a: Reserve only a child's remaining token allowance when resuming approvals, preserving its shared budget identity and lifetime limits. Forward only pending approval decisions across repeated resumes. Release an auxiliary allocation as confirmed zero consumption when its initial checkpoint fails before dispatch, while retaining the operation ID to block unsafe retries.
+
 ## 1.24.0-next.1
 
 ### Patch Changes
