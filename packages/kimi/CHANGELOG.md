@@ -1,5 +1,16 @@
 # @zhivex-ai/kimi
 
+## 0.7.10
+
+### Patch Changes
+
+- Updated dependencies [be12ce8]
+- Updated dependencies [29ae47c]
+- Updated dependencies [29ae47c]
+- Updated dependencies [9e5715a]
+- Updated dependencies [29ae47c]
+  - @zhivex-ai/core@1.24.0
+
 ## 0.7.10-next.0
 
 ### Patch Changes
