@@ -24,6 +24,10 @@ import type {
 export type AgentStepStatus = "running" | "completed" | "suspended" | "waiting_approval" | "failed";
 
 export interface AgentRunPolicy {
+  /** Shared CAS-backed admission for model, auxiliary and child allocations. */
+  budgetCoordinator?: import("../agent-budget-coordinator.js").AgentBudgetCoordinator;
+  /** Required with budgetCoordinator. A conservative bound for each primary model call. */
+  modelReservation?: import("../agent-budget-coordinator.js").AgentTokenReservation;
   timeoutMs?: number;
   onTimeout?: "fail" | "cancel-requested";
   /** Explicit migration escape hatch for pre-fingerprint durable states. */
@@ -86,6 +90,29 @@ export type AgentCompactor<TContext = any> = (
   request: AgentCompactionRequest<TContext>
 ) => AgentCompactionResult | Promise<AgentCompactionResult>;
 
+/** Explicit identity and conservative token reservation for a paid summarizer. */
+export interface AgentCompactionAuxiliaryRoute {
+  provider: string;
+  modelId: string;
+  /** Include endpoint, prompt version and pricing revision; never credentials. */
+  fingerprint: string;
+  priceRevision?: string;
+  /** Conservative uncached rates; valuation is an estimate, not an invoice. */
+  pricing?: { currency: string; inputCostPer1kTokens: number; outputCostPer1kTokens: number };
+  reservation: { inputTokens: number; outputTokens: number; totalTokens: number };
+}
+
+export interface AgentCompactionAttempt {
+  id: string;
+  beforeStep: number;
+  sourceDigest: string;
+  route: AgentCompactionAuxiliaryRoute;
+  status: "in-flight" | "confirmed" | "unknown";
+  estimatedCost?: { amount: number; currency: string };
+  createdAt: number;
+  usage?: TokenUsage;
+}
+
 export interface AgentCompactionOptions<TContext = any> {
   /** Compaction runs when either configured threshold is exceeded. */
   maxMessages?: number;
@@ -94,6 +121,8 @@ export interface AgentCompactionOptions<TContext = any> {
   keepRecentMessages?: number;
   estimateTokens?: (messages: readonly ModelMessage[]) => number;
   compactor: AgentCompactor<TContext>;
+  /** Opt in for paid calls. The callback must obey the reservation and use no tools. */
+  auxiliary?: AgentCompactionAuxiliaryRoute;
 }
 
 export interface AgentCompactionRecord {
@@ -173,6 +202,8 @@ export interface AgentChildRun {
   toolCalls: number;
   toolErrors: number;
   usage?: TokenUsage;
+  /** Auxiliary calls whose usage remains unknown or in flight. */
+  unknownCompactionUsage?: boolean;
   /** Descendant summaries; usage above remains this run's own confirmed usage. */
   childRuns?: AgentChildRun[];
   startedAt?: number;
@@ -253,6 +284,9 @@ export interface AgentRunState {
   approvalHistory?: AgentApprovalResolution[];
   childRuns?: AgentChildRun[];
   compactions?: AgentCompactionRecord[];
+  compactionAttempts?: AgentCompactionAttempt[];
+  compactionRouteFingerprint?: string;
+  budgetCoordinatorId?: string;
   metadata?: Record<string, JsonValue>;
   handoff?: AgentHandoff;
   startedAt?: number;

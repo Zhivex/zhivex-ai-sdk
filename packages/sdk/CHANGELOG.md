@@ -1,5 +1,22 @@
 # @zhivex-ai/sdk
 
+## 1.27.0-next.0
+
+### Minor Changes
+
+- Add optional per-field context limits and primary-source evidence, separate curated compaction candidates from evaluation artifacts, and expose deterministic opt-in auxiliary model recommendations with freshness, route, credentials, context and cost explanations. Preserve unknown costs and long-context pricing. Add verified GPT-4o mini limits to the SDK-owned catalog.
+- Add explicit paid-compaction route binding, durable reservations and attempt receipts. Preserve confirmed auxiliary consumption even when summary validation or persistence fails, block retries with unknown consumption, and recompute model output ceilings after compaction.
+  
+  Add a Beta CAS-backed shared token budget coordinator with primary-call reservations, child allotments and auxiliary-call admission, retaining unknown allocations and isolating budget ledgers from ordinary run retention.
+- Add optional MCP resources, resource templates and prompts contracts, and an opt-in HTTP entry with bounded Streamable HTTP transport, public-client OAuth PKCE discovery, host-owned credentials, typed authentication and indeterminate execution errors. Existing tools-only clients and tool approval defaults remain compatible.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.24.0-next.0
+
 ## 1.26.0
 
 ### Minor Changes

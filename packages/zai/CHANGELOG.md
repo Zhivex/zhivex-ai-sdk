@@ -1,5 +1,14 @@
 # @zhivex-ai/zai
 
+## 0.2.4-next.0
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.24.0-next.0
+
 ## 0.2.3
 
 ### Patch Changes

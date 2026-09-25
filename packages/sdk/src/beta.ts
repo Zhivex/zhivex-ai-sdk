@@ -20,6 +20,7 @@ export {
   createMcpToolRegistry,
   createModelJudgeScorer,
   createModelResolver,
+  recommendAuxiliaryModel,
   createMergedAbortSignal,
   createProviderAdapter,
   createRegexScorer,
@@ -118,3 +119,6 @@ export type {
   VideoGenerationModelCapabilityFeature,
   VideoGenerationModelCapabilityProfile
 } from "@zhivex-ai/core";
+
+export { createAgentBudgetCoordinator } from "@zhivex-ai/core";
+export type { AgentBudgetCoordinator, AgentBudgetCoordinatorOptions, AgentTokenReservation } from "@zhivex-ai/core";

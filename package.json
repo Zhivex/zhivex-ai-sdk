@@ -52,7 +52,8 @@
     "test:react:browser": "playwright test --config playwright.react.config.ts",
     "benchmark:react": "bun run scripts/benchmarks/react-stream.ts",
     "smoke:react": "bun run build && bun run scripts/react-package-smoke.ts",
-    "test:integration:qwen:third-party": "vitest run --config vitest.integration.config.ts packages/qwen/tests/third-party.integration.test.ts"
+    "test:integration:qwen:third-party": "vitest run --config vitest.integration.config.ts packages/qwen/tests/third-party.integration.test.ts",
+    "smoke:packages:harness": "bun run build && bun run scripts/harness-sdk-package-smoke.ts"
   },
   "devDependencies": {
     "@ai-sdk/react": "4.0.114",

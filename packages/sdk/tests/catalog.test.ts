@@ -36,7 +36,7 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-09-22",
+      snapshotVersion: "2026-09-24",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
         version: "2026-09-22",
@@ -104,10 +104,10 @@ describe("SDK model catalog ownership", () => {
     expect(fragments).toHaveLength(14);
     expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(181);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
-      revision: "2026-09-22",
+      revision: "2026-09-24",
       verifiedAt: "2026-09-22",
       pricingEffectiveAt: "2026-09-22",
-      sources: ["https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
+      sources: ["https://developers.openai.com/api/docs/models/gpt-4o-mini", "https://developers.openai.com/api/docs/guides/conversation-state", "https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
     });
     expect(fragments.find((fragment) => fragment.provider === "zai")).toMatchObject({
       revision: "2026-08-26",

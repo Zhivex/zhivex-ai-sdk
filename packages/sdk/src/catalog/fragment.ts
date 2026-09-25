@@ -49,22 +49,21 @@ export const defineModelCatalogFragment = (
   if (!Array.isArray(fragment.entries) || fragment.entries.length === 0) {
     throw new TypeError("fragment.entries must contain at least one model");
   }
-  const entries = fragment.entries.map((entry, index) => {
+  const entries = fragment.entries.map((entry: ModelCatalogEntry, index: number) => {
     if (entry.provider !== fragment.provider) {
       throw new TypeError(
         `fragment.entries[${index}].provider must be ${JSON.stringify(fragment.provider)}`
       );
     }
-    return Object.freeze({
-      ...entry,
-      ...(entry.aliases ? { aliases: Object.freeze([...entry.aliases]) } : {}),
-      ...(entry.longContextPricing
-        ? { longContextPricing: Object.freeze({ ...entry.longContextPricing }) }
-        : {}),
-      ...(entry.recommendedFor
-        ? { recommendedFor: Object.freeze([...entry.recommendedFor]) }
-        : {})
-    });
+    const snapshot = structuredClone(entry);
+    const freeze = (value: object): void => {
+      for (const child of Object.values(value)) {
+        if (child !== null && typeof child === "object") freeze(child);
+      }
+      Object.freeze(value);
+    };
+    freeze(snapshot);
+    return snapshot;
   });
   return Object.freeze({
     provider: fragment.provider,

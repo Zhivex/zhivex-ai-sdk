@@ -71,6 +71,9 @@ Use these guides when adopting the SDK in a real app:
 - [Workflows Guide](./docs/WORKFLOWS.md): deterministic multi-step agent workflows, durable state, replay, and workflow evaluations.
 - [Artifact Service Contract](./docs/ARTIFACTS.md): bounded payloads, integrity, backend semantics, maintenance, and release evidence.
 - [Model Catalog Contract](./docs/MODEL_CATALOG.md): immutable snapshots, data-update policy, pricing metadata, and capability boundaries.
+- [Context Limits and Auxiliary Recommendations](./docs/CATALOG_COMPACTION.md): per-datum evidence and opt-in compaction model selection.
+- [Durable Compaction](./docs/DURABLE_COMPACTION.md): paid auxiliary calls, usage receipts and recovery boundaries.
+- [MCP HTTP and OAuth](./docs/MCP_HTTP.md): opt-in transport, resources, prompts and host-owned credentials.
 - [AI SDK UI Compatibility](./docs/AI_SDK_UI_COMPAT.md): version-pinned `useChat` transport, message adapters, stream protocol, limits, and part matrix.
 - [Optional Model Resolver](./docs/MODEL_RESOLVER.md): Beta `provider/model` resolution through an explicit, instance-local registry.
 - [CLI Contract](./docs/CLI.md): command compatibility, JSON and exit behavior, local execution, and safety boundaries.

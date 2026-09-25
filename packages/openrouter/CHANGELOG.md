@@ -1,5 +1,14 @@
 # @zhivex-ai/openrouter
 
+## 0.5.22-next.0
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.24.0-next.0
+
 ## 0.5.21
 
 ### Patch Changes

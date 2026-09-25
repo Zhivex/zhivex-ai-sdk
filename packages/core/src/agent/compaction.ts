@@ -14,6 +14,7 @@ import type {
   AgentCompactionOptions,
   AgentCompactionReason,
   AgentCompactionRecord,
+  AgentCompactionResult,
   AgentRunState,
   ModelMessage
 } from "../types.js";
@@ -51,7 +52,12 @@ export const compactAgentMessages = async <TContext>(
   messages: readonly ModelMessage[],
   beforeStep: number,
   context: TContext | undefined,
-  abortSignal: AbortSignal | undefined
+  abortSignal: AbortSignal | undefined,
+  lifecycle?: {
+    before: (id: string, sourceDigest: string) => Promise<void>;
+    returned: (result: AgentCompactionResult) => Promise<void>;
+    failed: () => Promise<void>;
+  }
 ): Promise<{ messages: ModelMessage[]; record: AgentCompactionRecord } | undefined> => {
   validateCompactionOptions(options);
   if (state.pendingApprovals.length) {
@@ -130,7 +136,10 @@ export const compactAgentMessages = async <TContext>(
   const id = `cmp_${createHash("sha256")
     .update(`${state.runId}\0${beforeStep}\0${sourceDigest}`)
     .digest("hex")}`;
-  const result = await options.compactor({
+  await lifecycle?.before(id, sourceDigest);
+  let result: AgentCompactionResult;
+  try {
+    result = await options.compactor({
     runId: state.runId,
     agentId: state.agentId,
     scope: state.scope,
@@ -144,7 +153,12 @@ export const compactAgentMessages = async <TContext>(
     idempotencyKey: id,
     metadata: state.metadata,
     abortSignal
-  });
+    });
+  } catch (error) {
+    await lifecycle?.failed();
+    throw error;
+  }
+  await lifecycle?.returned(result);
   const summary = result.summary.trim();
   if (!summary) {
     throw new ValidationError("Agent compactor returned an empty summary.");

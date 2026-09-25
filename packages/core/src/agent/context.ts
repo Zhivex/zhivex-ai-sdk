@@ -3,7 +3,8 @@ import {
   createAgentHandoffMessage
 } from "../agent-handoff-contracts.js";
 import {
-  createAgentExecutionEnvironmentBinding
+  createAgentExecutionEnvironmentBinding,
+  fingerprintAgentHarness
 } from "../agent-harness.js";
 import {
   AGENT_RUN_STATE_SCHEMA_VERSION,
@@ -202,6 +203,19 @@ const bindDurableRuntime = (
     ...(agent.policy ?? {}),
     ...(input.policy ?? {})
   };
+  if (state.budgetCoordinatorId && state.budgetCoordinatorId !== policy.budgetCoordinator?.id) {
+    throw new ConflictError("Cannot resume with a different shared budget coordinator.");
+  }
+  if (policy.budgetCoordinator) state.budgetCoordinatorId = policy.budgetCoordinator.id;
+  const compaction = input.compaction === false ? undefined : input.compaction ?? agent.compaction;
+  const routeFingerprint = compaction?.auxiliary ? fingerprintAgentHarness(compaction.auxiliary) : undefined;
+  if (state.compactionRouteFingerprint && state.compactionRouteFingerprint !== routeFingerprint) {
+    throw new ConflictError("Cannot resume with a different auxiliary compaction route.");
+  }
+  if (routeFingerprint) state.compactionRouteFingerprint = routeFingerprint;
+  if (state.compactionAttempts?.some(attempt => attempt.status !== "confirmed")) {
+    throw new ConflictError("Auxiliary compaction consumption is unknown; reconcile the durable attempt before resuming.");
+  }
   if (state.harness && !agent.harness) {
     throw new ConflictError(
       `Agent run "${state.runId}" is bound to harness "${state.harness.id}", but the current agent has no harness binding.`
@@ -319,6 +333,7 @@ export const resolveContext = async <
       agent.harness,
       executionEnvironmentBinding
     ) as AgentRunState & { idempotencyKey: string };
+    bindDurableRuntime(agent, input, candidate, executionEnvironmentBinding);
     const claim = await agent.store!.claimIdempotencyKey!(candidate);
     if (claim.claimed) {
       return {
@@ -392,8 +407,7 @@ export const resolveContext = async <
   const maxSteps = validateMaxSteps(input.maxSteps ?? agent.maxSteps);
   const prepared = await prepareFreshMessages(agent, input, runId);
 
-  return {
-    state: createBaseState(
+  const state = createBaseState(
       agent.model.provider,
       agent.model.modelId,
       prepared.messages,
@@ -408,7 +422,10 @@ export const resolveContext = async <
       resolveAgentOutputMode(agent),
       agent.harness,
       executionEnvironmentBinding
-    ),
+    );
+  bindDurableRuntime(agent, input, state, executionEnvironmentBinding);
+  return {
+    state,
     messages: prepared.messages,
     remainingSteps: maxSteps,
     memoryMessages: prepared.memoryMessages,

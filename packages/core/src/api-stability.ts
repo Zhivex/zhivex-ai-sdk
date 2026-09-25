@@ -258,6 +258,8 @@ const stableSymbols = [
 ] as const;
 
 const betaSymbols = [
+  "createAgentBudgetCoordinator",
+  "recommendAuxiliaryModel",
   "createChatCompletionsModel",
   "reconcileAgentToolExecution",
   "ModelResolutionError",

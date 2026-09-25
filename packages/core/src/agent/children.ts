@@ -25,6 +25,7 @@ export const projectChildRun = (state: AgentRunState): AgentChildRun => ({
   toolErrors: countToolErrors(state.toolResults),
   usage: state.usage,
   childRuns: state.childRuns,
+  unknownCompactionUsage: state.compactionAttempts?.some(attempt => attempt.status !== "confirmed") ?? false,
   startedAt: state.startedAt,
   updatedAt: state.updatedAt,
   error: state.error,
