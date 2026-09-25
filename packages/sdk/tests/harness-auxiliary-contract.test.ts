@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   Agent,
+  createAgentBudgetCoordinator,
   createInMemoryAgentRunStore,
   createMcpToolSet,
   createMockLanguageModel,
@@ -19,6 +20,17 @@ const mainModel = () => createMockLanguageModel({ responses: [{ text: "done", me
 const route: AgentCompactionAuxiliaryRoute = { provider: "fixture", modelId: "summarizer", fingerprint: "summarizer-prompt-v1", reservation: { inputTokens: 40, outputTokens: 5, totalTokens: 45 } };
 
 describe("Harness-facing SDK public contracts", () => {
+  it("preserves independent shared budget ceilings through the public SDK", async () => {
+    const coordinator = createAgentBudgetCoordinator({
+      store: createInMemoryAgentRunStore(), budgetId: "sdk-remainder",
+      limits: { inputTokens: 32, outputTokens: 8, totalTokens: 39 }
+    });
+    await coordinator.reserve("child", { inputTokens: 32, outputTokens: 8, totalTokens: 39 });
+    await expect(coordinator.reserve("competitor", { inputTokens: 0, outputTokens: 0, totalTokens: 1 })).rejects.toThrow("exceeds totalTokens");
+    await coordinator.settle("child", { inputTokens: 8, outputTokens: 2, totalTokens: 11 });
+    await coordinator.reserve("released", { inputTokens: 24, outputTokens: 6, totalTokens: 28 });
+  });
+
   it("preserves optional catalog metadata and makes recommendation an explicit operation", () => {
     const evidence: ModelCatalogDatumEvidence = { source: "https://fixture.example/models/summarizer", sourceType: "primary", verifiedAt: "2026-09-24" };
     const catalog = createModelCatalog([

@@ -7,6 +7,7 @@ export interface AgentTokenReservation { inputTokens: number; outputTokens: numb
 export interface AgentBudgetCoordinator {
   /** Stable non-secret identity, bound to run resumes. */
   id: string;
+  /** Independent ceilings; total may constrain input and output below their combined ceilings. */
   reserve(id: string, tokens: AgentTokenReservation): Promise<void>;
   /** Missing usage retains the full allocation and blocks reuse of this operation. */
   settle(id: string, usage?: TokenUsage): Promise<void>;
@@ -18,6 +19,11 @@ export interface AgentBudgetCoordinatorOptions {
   limits: AgentTokenReservation;
 }
 type Allocation = { status: "reserved" | "confirmed" | "unknown"; tokens: AgentTokenReservation };
+const assertTokenCeilings = (tokens: AgentTokenReservation): void => {
+  if (![tokens.inputTokens, tokens.outputTokens, tokens.totalTokens].every(value => Number.isSafeInteger(value) && value >= 0)) {
+    throw new ValidationError("A token reservation requires finite nonnegative input, output and total ceilings.");
+  }
+};
 export const assertAgentTokenReservation = (tokens: AgentTokenReservation): void => {
   if (![tokens.inputTokens, tokens.outputTokens, tokens.totalTokens].every(value => Number.isSafeInteger(value) && value >= 0) || tokens.totalTokens < tokens.inputTokens + tokens.outputTokens) {
     throw new ValidationError("A token reservation requires finite nonnegative input, output and total ceilings.");
@@ -48,7 +54,10 @@ export const createAgentBudgetCoordinator = (options: AgentBudgetCoordinatorOpti
       if (!allocations || typeof allocations !== "object" || Array.isArray(allocations)) throw new ValidationError("Invalid shared budget ledger.");
       for (const entry of Object.values(allocations)) {
         if (!entry || !["reserved", "confirmed", "unknown"].includes(entry.status) || !entry.tokens) throw new ValidationError("Invalid shared budget allocation.");
-        assertAgentTokenReservation(entry.tokens);
+        // Reservations are independent upper bounds; confirmed receipts are usage.
+        // A resumed child's remaining total can be below its component sum.
+        if (entry.status === "confirmed") assertAgentTokenReservation(entry.tokens);
+        else assertTokenCeilings(entry.tokens);
       }
       mutate(allocations);
       const revision = current?.revision ?? 0;
@@ -67,7 +76,7 @@ export const createAgentBudgetCoordinator = (options: AgentBudgetCoordinatorOpti
   return {
     id: identity,
     reserve: async (id, tokens) => {
-      assertAgentTokenReservation(tokens);
+      assertTokenCeilings(tokens);
       tokens = { ...tokens };
       const key = fingerprintAgentHarness(id);
       await update(allocations => {

@@ -472,6 +472,12 @@ parent. Each child summary keeps its own `usage` and optional nested `childRuns`
 is confirmed usage, not a claim that those runs were free. Preflight reservations
 remain separate from confirmed consumption and are not added to these totals.
 
+Shared budget coordinator reservations enforce input, output, and total ceilings
+independently. Approval resumes reserve only the child's remaining allowance,
+even when reported total usage exceeds the input/output sum. Confirmed receipts
+still require total usage to cover input plus output; unknown usage retains all
+reserved ceilings until reconciliation.
+
 `createSubAgentTool({ onFinish })` also notifies thrown failures once a child
 state exists. Errors from that notification or from saving the failed state do
 not replace the primary execution error. If storage is unavailable, durability
