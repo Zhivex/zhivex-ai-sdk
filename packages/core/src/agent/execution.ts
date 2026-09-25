@@ -177,6 +177,11 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
     metadata: cloneMetadata(metadata, options.metadata),
     execute: async (input: SubAgentToolInput, executionContext) => {
       const coordinator = parentPolicy?.budgetCoordinator;
+      const toolCallId = executionContext?.toolCall.id;
+      const checkpoint = runtimeState?.childRuns?.find(
+        (childRun) => childRun.toolCallId === toolCallId && childRun.resumeState
+      );
+      const previousChildUsage = checkpoint?.resumeState ? getAgentBudgetStatus(checkpoint.resumeState, {}).consumption : undefined;
       const childBudgetId = `child:${options.parentRunId}:${executionContext?.step}:${executionContext?.toolCall.id}`;
       const allocationId = `${childBudgetId}:${runtimeState?.revision ?? 0}`;
       let childPolicy = options.agent.policy;
@@ -188,7 +193,15 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
         const modelReservation = childPolicy?.modelReservation ?? parentPolicy?.modelReservation;
         if (!modelReservation) throw new ValidationError("Shared child budgets require modelReservation.");
         assertAgentTokenReservation(modelReservation);
-        await coordinator.reserve(allocationId, allocation);
+        // Earlier approval segments have already settled their confirmed usage
+        // in the root pool. Reserve only this child's remaining lifetime allowance;
+        // its persistent subpool retains the original identity and full limits.
+        const remainingAllocation = {
+          inputTokens: Math.max(0, allocation.inputTokens - (previousChildUsage?.inputTokens ?? 0)),
+          outputTokens: Math.max(0, allocation.outputTokens - (previousChildUsage?.outputTokens ?? 0)),
+          totalTokens: Math.max(0, allocation.totalTokens - (previousChildUsage?.totalTokens ?? 0))
+        };
+        await coordinator.reserve(allocationId, remainingAllocation);
         childPolicy = { ...childPolicy, modelReservation, budgetCoordinator: createAgentBudgetCoordinator({
           store: options.agent.store, scope: options.scope, budgetId: `${coordinator.id}:${childBudgetId}`, limits: allocation
         }) };
@@ -207,7 +220,6 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
       if (options.parentAgentId) {
         childMetadata.parentAgentId = options.parentAgentId;
       }
-      const toolCallId = executionContext?.toolCall.id;
       if (toolCallId) childMetadata.subagentToolCallId = toolCallId;
       const childIdempotencyKey =
         options.parentRunId &&
@@ -222,9 +234,7 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
               serializeJsonValue(input)
             )}`
           : undefined;
-      const checkpoint = runtimeState?.childRuns?.find(
-        (childRun) => childRun.toolCallId === toolCallId && childRun.resumeState
-      );
+
       const childApprovalResponses = checkpoint
         ? (runtimeState?.approvalHistory ?? [])
             .filter(
@@ -232,7 +242,10 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
                 resolution.kind === "subagent" &&
                 resolution.toolCallId === toolCallId &&
                 resolution.childRunId === checkpoint.runId &&
-                resolution.childApprovalRequestId
+                resolution.childApprovalRequestId &&
+                checkpoint.resumeState!.pendingApprovals.some(approval =>
+                  approval.id === resolution.childApprovalRequestId && approval.provider === resolution.provider
+                )
             )
             .map((resolution) => ({
               provider: resolution.provider,
@@ -241,7 +254,7 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
               reason: resolution.reason
             }))
         : [];
-      const previousChildUsage = checkpoint?.resumeState ? getAgentBudgetStatus(checkpoint.resumeState, {}).consumption : undefined;
+
       const settleChild = async (childState: AgentRunState | undefined) => {
         if (!coordinator) return;
         const status = childState ? getAgentBudgetStatus(childState, {}) : undefined;
@@ -518,7 +531,19 @@ const createGenerateOptions = <
                 await coordinator?.reserve(id, route.reservation);
                 attempt = { id, beforeStep: step, sourceDigest, route: structuredClone(route), status: "in-flight", createdAt: Date.now() };
                 checkpointState.compactionAttempts = [...(checkpointState.compactionAttempts ?? []), attempt];
-                await saveAttempt();
+                try {
+                  await saveAttempt();
+                } catch (error) {
+                  // The compactor is called only after this hook returns. Even a
+                  // store that committed before throwing cannot have dispatched it.
+                  // Keep the operation ID spent, but return its unused allocation.
+                  const noDispatchUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+                  attempt.status = "confirmed";
+                  attempt.usage = noDispatchUsage;
+                  state.compactionAttempts = structuredClone(checkpointState.compactionAttempts);
+                  try { await coordinator?.settle(id, noDispatchUsage); } catch { /* Retain allocation if cleanup fails; preserve checkpoint error. */ }
+                  throw error;
+                }
               },
               returned: async result => {
                 if (attempt) {
