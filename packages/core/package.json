@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/core",
-  "version": "1.23.0",
+  "version": "1.24.0-next.0",
   "description": "Shared contracts and runtime helpers for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -62,12 +62,16 @@
       "import": "./dist/provider-entry.js"
     },
     "./catalog": {
-      "types": "./dist/catalog-contracts.d.ts",
-      "import": "./dist/catalog-contracts.js"
+      "types": "./dist/catalog-entry.d.ts",
+      "import": "./dist/catalog-entry.js"
     },
     "./agents": {
       "types": "./dist/agents-entry.d.ts",
       "import": "./dist/agents-entry.js"
+    },
+    "./mcp-http": {
+      "types": "./dist/mcp-http.d.ts",
+      "import": "./dist/mcp-http.js"
     }
   },
   "files": [

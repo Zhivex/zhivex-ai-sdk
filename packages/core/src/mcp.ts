@@ -49,7 +49,47 @@ export interface McpCallToolOptions {
   idempotencyKey?: string;
 }
 
+export interface McpResource {
+  uri: string;
+  name: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+}
+export interface McpResourceTemplate {
+  uriTemplate: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+export interface McpResourceContents {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+}
+export interface McpPrompt {
+  name: string;
+  description?: string;
+  arguments?: Array<{ name: string; description?: string; required?: boolean }>;
+}
+export interface McpPromptResult {
+  description?: string;
+  messages: Array<{ role: "user" | "assistant"; content: JsonValue }>;
+}
+export interface McpServerCapabilities {
+  tools?: { listChanged?: boolean };
+  resources?: { subscribe?: boolean; listChanged?: boolean };
+  prompts?: { listChanged?: boolean };
+}
+
 export interface McpClient {
+  readonly capabilities?: McpServerCapabilities;
+  listResources?(input?: McpListToolsRequest, options?: McpCallToolOptions): Promise<{ resources: McpResource[]; nextCursor?: string }>;
+  listResourceTemplates?(input?: McpListToolsRequest, options?: McpCallToolOptions): Promise<{ resourceTemplates: McpResourceTemplate[]; nextCursor?: string }>;
+  readResource?(input: { uri: string }, options?: McpCallToolOptions): Promise<{ contents: McpResourceContents[] }>;
+  listPrompts?(input?: McpListToolsRequest, options?: McpCallToolOptions): Promise<{ prompts: McpPrompt[]; nextCursor?: string }>;
+  getPrompt?(input: { name: string; arguments?: Record<string, string> }, options?: McpCallToolOptions): Promise<McpPromptResult>;
   listTools(input?: McpListToolsRequest, options?: McpCallToolOptions): Promise<McpListToolsResponse | McpListedTool[]>;
   callTool(input: McpCallToolRequest, options?: McpCallToolOptions): Promise<JsonValue | McpCallToolResponse>;
 }

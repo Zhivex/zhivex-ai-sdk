@@ -47,6 +47,8 @@ export {
 } from "@zhivex-ai/core/agents";
 
 export type {
+  AgentCompactionAuxiliaryRoute,
+  AgentCompactionAttempt,
   AgentCompactionOptions,
   AgentCompactionEvent,
   AgentCompactionReason,

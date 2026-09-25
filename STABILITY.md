@@ -100,6 +100,8 @@ The stable surface is intentionally narrower than the total number of exported s
 
 ## Beta
 
+The opt-in `recommendAuxiliaryModel` and `createAgentBudgetCoordinator` helpers and the `@zhivex-ai/core/mcp-http` / `@zhivex-ai/sdk/mcp-http` transport and OAuth entry points are Beta. Catalog context limits and per-datum evidence are additive; a documented compaction candidate is not a quality certification.
+
 These APIs are supported and documented, but they may still change between minor releases as the SDK matures:
 
 - Agent telemetry event details and observer patterns

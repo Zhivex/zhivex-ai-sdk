@@ -363,6 +363,7 @@ const childRun = (value: unknown, path: string) => {
   integer(current.toolCalls, `${path}.toolCalls`);
   integer(current.toolErrors, `${path}.toolErrors`);
   usage(current.usage, `${path}.usage`);
+  if (current.unknownCompactionUsage !== undefined && typeof current.unknownCompactionUsage !== "boolean") invalid(`${path}.unknownCompactionUsage`, "must be a boolean");
   if (current.startedAt !== undefined) finiteNumber(current.startedAt, `${path}.startedAt`, 0);
   if (current.updatedAt !== undefined) finiteNumber(current.updatedAt, `${path}.updatedAt`, 0);
   if (current.error !== undefined) agentRunError(current.error, `${path}.error`);
@@ -502,6 +503,47 @@ export const normalizeAgentRunState = (value: unknown): AgentRunState => {
   }
   if (state.childRuns !== undefined) {
     array(state.childRuns, "childRuns").forEach((entry, index) => childRun(entry, `childRuns[${index}]`));
+  }
+  optionalString(state.budgetCoordinatorId, "budgetCoordinatorId");
+  optionalString(state.compactionRouteFingerprint, "compactionRouteFingerprint");
+  if (state.compactionAttempts !== undefined) {
+    const ids = new Set<string>();
+    array(state.compactionAttempts, "compactionAttempts").forEach((entry, index) => {
+      const path = `compactionAttempts[${index}]`;
+      const current = record(entry, path);
+      const id = string(current.id, `${path}.id`);
+      if (ids.has(id)) invalid(path, "duplicate attempt id");
+      ids.add(id);
+      integer(current.beforeStep, `${path}.beforeStep`, 1);
+      sha256(current.sourceDigest, `${path}.sourceDigest`);
+      finiteNumber(current.createdAt, `${path}.createdAt`, 0);
+      if (!["in-flight", "confirmed", "unknown"].includes(string(current.status, `${path}.status`))) invalid(path, "unsupported attempt status");
+      const route = record(current.route, `${path}.route`);
+      string(route.provider, `${path}.route.provider`);
+      string(route.modelId, `${path}.route.modelId`);
+      string(route.fingerprint, `${path}.route.fingerprint`);
+      optionalString(route.priceRevision, `${path}.route.priceRevision`);
+      if (route.pricing !== undefined) {
+        const pricing = record(route.pricing, `${path}.route.pricing`);
+        string(pricing.currency, `${path}.route.pricing.currency`);
+        finiteNumber(pricing.inputCostPer1kTokens, `${path}.route.pricing.inputCostPer1kTokens`, 0);
+        finiteNumber(pricing.outputCostPer1kTokens, `${path}.route.pricing.outputCostPer1kTokens`, 0);
+      }
+      if (current.estimatedCost !== undefined) {
+        const cost = record(current.estimatedCost, `${path}.estimatedCost`);
+        string(cost.currency, `${path}.estimatedCost.currency`);
+        finiteNumber(cost.amount, `${path}.estimatedCost.amount`, 0);
+      }
+      const reserved = record(route.reservation, `${path}.route.reservation`);
+      for (const key of ["inputTokens", "outputTokens", "totalTokens"]) integer(reserved[key], `${path}.route.reservation.${key}`);
+      if ((reserved.totalTokens as number) < (reserved.inputTokens as number) + (reserved.outputTokens as number)) invalid(path, "reservation total is smaller than input plus output");
+      usage(current.usage, `${path}.usage`);
+      if (current.status === "confirmed") {
+        const confirmed = record(current.usage, `${path}.usage`);
+        for (const key of ["inputTokens", "outputTokens", "totalTokens"]) integer(confirmed[key], `${path}.usage.${key}`);
+        if ((confirmed.totalTokens as number) < (confirmed.inputTokens as number) + (confirmed.outputTokens as number)) invalid(path, "confirmed total is smaller than input plus output");
+      }
+    });
   }
   if (state.compactions !== undefined) {
     array(state.compactions, "compactions").forEach((entry, index) => compaction(entry, `compactions[${index}]`));

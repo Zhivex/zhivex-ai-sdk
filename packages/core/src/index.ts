@@ -438,6 +438,7 @@ export {
 export { generateSpeech, streamSpeech, transcribeAudio } from "./audio.js";
 export { embed, embedMany } from "./embed.js";
 export * from "./catalog.js";
+export * from "./catalog-recommendation.js";
 export * from "./errors.js";
 export * from "./fetch.js";
 export * from "./model-resolver.js";
@@ -488,6 +489,12 @@ export type {
   McpCallToolRequest,
   McpCallToolResponse,
   McpClient,
+  McpResource,
+  McpResourceTemplate,
+  McpResourceContents,
+  McpPrompt,
+  McpPromptResult,
+  McpServerCapabilities,
   McpListedTool,
   McpListToolsRequest,
   McpListToolsResponse,
@@ -702,3 +709,6 @@ export { imageInputToDataUrl } from "./image-input.js";
 export { createChatCompletionsModel } from "./chat-completions.js";
 export type { ChatCompletionsTransportOptions } from "./chat-completions.js";
 export type { DocumentExtractionInput, DocumentExtractionPage, DocumentExtractionResult, TextCompletionInput } from "./types.js";
+
+export { createAgentBudgetCoordinator } from "./agent-budget-coordinator.js";
+export type { AgentBudgetCoordinator, AgentBudgetCoordinatorOptions, AgentTokenReservation } from "./agent-budget-coordinator.js";

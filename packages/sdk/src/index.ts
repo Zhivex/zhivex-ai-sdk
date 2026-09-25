@@ -121,6 +121,7 @@ export {
   createPostgresAgentMemoryStore,
   createPostgresAgentRunStore,
   createModelCatalog,
+  recommendAuxiliaryModel,
   createSqliteAgentMemoryStore,
   createSqliteAgentRunStore,
   createTextMessage,
@@ -376,6 +377,8 @@ export type {
   AgentApprovalRequest,
   AgentApprovalResolution,
   AgentApprovalResponse,
+  AgentCompactionAuxiliaryRoute,
+  AgentCompactionAttempt,
   AgentCompactionOptions,
   AgentCompactionEvent,
   AgentCompactionReason,
@@ -582,6 +585,12 @@ export type {
   McpCallToolRequest,
   McpCallToolResponse,
   McpClient,
+  McpResource,
+  McpResourceTemplate,
+  McpResourceContents,
+  McpPrompt,
+  McpPromptResult,
+  McpServerCapabilities,
   McpListedTool,
   McpListToolsRequest,
   McpListToolsResponse,
@@ -591,6 +600,14 @@ export type {
   ModelGenerateInput,
   ModelCatalog,
   ModelCatalogEntry,
+  ModelCatalogDatumEvidence,
+  ModelCatalogContextWindowType,
+  ModelCatalogEvidenceField,
+  ModelCatalogCompactionEvidence,
+  AuxiliaryModelRoute,
+  RecommendAuxiliaryModelOptions,
+  AuxiliaryModelRecommendationCandidate,
+  AuxiliaryModelRecommendationResult,
   ModelCatalogPolicy,
   ModelCatalogPricingSnapshotMetadata,
   ModelCatalogRecommendation,
@@ -849,3 +866,6 @@ export { imageInputToDataUrl } from "@zhivex-ai/core";
 export { createChatCompletionsModel } from "@zhivex-ai/core";
 export type { ChatCompletionsTransportOptions } from "@zhivex-ai/core";
 export type { DocumentExtractionInput, DocumentExtractionPage, DocumentExtractionResult, TextCompletionInput } from "@zhivex-ai/core";
+
+export { createAgentBudgetCoordinator } from "@zhivex-ai/core";
+export type { AgentBudgetCoordinator, AgentBudgetCoordinatorOptions, AgentTokenReservation } from "@zhivex-ai/core";

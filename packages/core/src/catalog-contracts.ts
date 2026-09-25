@@ -5,7 +5,7 @@ export type CatalogProviderId = string;
 export const MODEL_CATALOG_SCHEMA_VERSION = 1 as const;
 export const MODEL_CATALOG_CONTRACT_VERSION = "1" as const;
 
-export type ModelCatalogRecommendation = "chat" | "reasoning" | "speed" | "vision" | "tools";
+export type ModelCatalogRecommendation = "chat" | "reasoning" | "speed" | "vision" | "tools" | "compaction";
 
 export interface ModelCatalogPolicy {
   /** Whether the data is permanently pinned or can change when a new immutable snapshot is created. */
@@ -38,10 +38,35 @@ export interface CreateModelCatalogOptions {
   pricing?: ModelCatalogPricingSnapshotMetadata;
 }
 
+/** Evidence belongs to the individual datum, never implicitly to the whole snapshot. */
+export interface ModelCatalogDatumEvidence {
+  source: string;
+  sourceType: "primary";
+  verifiedAt: string;
+  /** Host-defined conditions that must all match the requested route. */
+  conditions?: string[];
+}
+
+export type ModelCatalogContextWindowType = "combined" | "input";
+export type ModelCatalogEvidenceField = "contextWindowTokens" | "contextWindowType" | "maxInputTokens" | "maxOutputTokens"
+  | "inputCostPer1kTokens" | "outputCostPer1kTokens" | "longContextPricing";
+export interface ModelCatalogCompactionEvidence {
+  status: "candidate" | "evaluated";
+  /** Evaluation artifacts are distinct from provider capability documentation. */
+  evaluation?: { source: string; fixture: string; version: string; evaluatedAt: string; passed: boolean };
+}
+
 export interface ModelCatalogEntry {
   provider: CatalogProviderId;
   modelId: string;
   aliases?: string[];
+  /** Missing limits mean unknown, never an unlimited window. */
+  contextWindowTokens?: number;
+  contextWindowType?: ModelCatalogContextWindowType;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+  evidence?: Partial<Record<ModelCatalogEvidenceField, ModelCatalogDatumEvidence>>;
+  compaction?: ModelCatalogCompactionEvidence;
   inputCostPer1kTokens?: number;
   cachedInputCostPer1kTokens?: number;
   cacheWriteCostPer1kTokens?: number;
@@ -69,7 +94,8 @@ const recommendations = new Set<ModelCatalogRecommendation>([
   "reasoning",
   "speed",
   "vision",
-  "tools"
+  "tools",
+  "compaction"
 ]);
 
 const costFields = [
@@ -87,7 +113,8 @@ const entryFields = new Set<keyof ModelCatalogEntry>([
   ...costFields,
   "longContextPricing",
   "recommendedFor",
-  "lifecycle"
+  "lifecycle",
+  "contextWindowTokens", "contextWindowType", "maxInputTokens", "maxOutputTokens", "evidence", "compaction"
 ]);
 
 function assertNonEmptyString(value: unknown, path: string): asserts value is string {
@@ -122,9 +149,25 @@ function assertIsoDate(value: unknown, path: string): asserts value is string {
   }
 }
 
+function assertRecord(value: unknown, path: string): asserts value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${path} must be an object`);
+}
+function assertFields(value: object, fields: string[], path: string): void {
+  for (const field of Object.keys(value)) if (!fields.includes(field)) throw new TypeError(`${path}.${field} is not supported`);
+}
+function assertSource(value: unknown, path: string): void {
+  assertNonEmptyString(value, path);
+  let source: URL;
+  try { source = new URL(value); } catch { throw new TypeError(`${path} must be an HTTPS URL`); }
+  if (source.protocol !== "https:" || source.username || source.password) throw new TypeError(`${path} must be an HTTPS URL without credentials`);
+}
+
 const cloneEntry = (entry: ModelCatalogEntry): ModelCatalogEntry => ({
   provider: entry.provider,
   modelId: entry.modelId,
+  ...Object.fromEntries(["contextWindowTokens", "contextWindowType", "maxInputTokens", "maxOutputTokens"].filter(key => entry[key as keyof ModelCatalogEntry] !== undefined).map(key => [key, entry[key as keyof ModelCatalogEntry]])),
+  ...(entry.evidence === undefined ? {} : { evidence: structuredClone(entry.evidence) }),
+  ...(entry.compaction === undefined ? {} : { compaction: structuredClone(entry.compaction) }),
   ...(entry.lifecycle === undefined ? {} : { lifecycle: { ...entry.lifecycle } }),
   ...(entry.aliases === undefined ? {} : { aliases: [...entry.aliases] }),
   ...(entry.inputCostPer1kTokens === undefined ? {} : { inputCostPer1kTokens: entry.inputCostPer1kTokens }),
@@ -149,6 +192,17 @@ const cloneEntry = (entry: ModelCatalogEntry): ModelCatalogEntry => ({
 });
 
 const freezeEntry = (entry: ModelCatalogEntry): ModelCatalogEntry => {
+  if (entry.evidence) {
+    for (const evidence of Object.values(entry.evidence)) {
+      if (evidence.conditions) Object.freeze(evidence.conditions);
+      Object.freeze(evidence);
+    }
+    Object.freeze(entry.evidence);
+  }
+  if (entry.compaction) {
+    if (entry.compaction.evaluation) Object.freeze(entry.compaction.evaluation);
+    Object.freeze(entry.compaction);
+  }
   entry.lifecycle && Object.freeze(entry.lifecycle);
   entry.aliases && Object.freeze(entry.aliases);
   entry.longContextPricing && Object.freeze(entry.longContextPricing);
@@ -177,6 +231,49 @@ const validateEntry = (entry: ModelCatalogEntry, index: number): void => {
     }
   }
 
+  const limits = ["contextWindowTokens", "maxInputTokens", "maxOutputTokens"] as const;
+  for (const field of limits) {
+    if (entry[field] !== undefined && (!Number.isSafeInteger(entry[field]) || entry[field]! <= 0)) throw new TypeError(`${path}.${field} must be a positive safe integer`);
+  }
+  if (entry.contextWindowType !== undefined && !["combined", "input"].includes(entry.contextWindowType)) throw new TypeError(`${path}.contextWindowType is not supported`);
+  if ((entry.contextWindowTokens === undefined) !== (entry.contextWindowType === undefined)) throw new TypeError(`${path} requires both contextWindowTokens and contextWindowType`);
+  if (entry.contextWindowTokens !== undefined && entry.maxInputTokens !== undefined && entry.maxInputTokens > entry.contextWindowTokens) throw new TypeError(`${path}.maxInputTokens exceeds contextWindowTokens`);
+  if (entry.contextWindowType === "combined" && entry.maxOutputTokens !== undefined && entry.maxOutputTokens > entry.contextWindowTokens!) throw new TypeError(`${path}.maxOutputTokens exceeds combined contextWindowTokens`);
+  if (entry.evidence !== undefined) {
+    assertRecord(entry.evidence, `${path}.evidence`);
+    for (const [field, evidence] of Object.entries(entry.evidence)) {
+      if (![...limits, "contextWindowType", "inputCostPer1kTokens", "outputCostPer1kTokens", "longContextPricing"].includes(field)) throw new TypeError(`${path}.evidence.${field} is not supported`);
+      if (entry[field as keyof ModelCatalogEntry] === undefined) throw new TypeError(`${path}.evidence.${field} has no associated datum`);
+      assertRecord(evidence, `${path}.evidence.${field}`);
+      assertFields(evidence, ["source", "sourceType", "verifiedAt", "conditions"], `${path}.evidence.${field}`);
+      assertSource(evidence.source, `${path}.evidence.${field}.source`);
+      if (evidence.sourceType !== "primary") throw new TypeError(`${path}.evidence.${field}.sourceType must be primary`);
+      assertIsoDate(evidence.verifiedAt, `${path}.evidence.${field}.verifiedAt`);
+      if (evidence.conditions !== undefined) {
+        if (!Array.isArray(evidence.conditions)) throw new TypeError(`${path}.evidence.${field}.conditions must be an array`);
+        evidence.conditions.forEach((condition, i) => assertNonEmptyString(condition, `${path}.evidence.${field}.conditions[${i}]`));
+      }
+    }
+  }
+  for (const field of [...limits, "contextWindowType"] as const) {
+    if (entry[field] !== undefined && entry.evidence?.[field] === undefined) throw new TypeError(`${path}.${field} requires per-datum evidence`);
+  }
+  if (entry.compaction !== undefined) {
+    assertRecord(entry.compaction, `${path}.compaction`);
+    assertFields(entry.compaction, ["status", "evaluation"], `${path}.compaction`);
+    if (!["candidate", "evaluated"].includes(entry.compaction.status)) throw new TypeError(`${path}.compaction.status is not supported`);
+    const evaluation = entry.compaction.evaluation;
+    if (entry.compaction.status === "evaluated" && evaluation === undefined) throw new TypeError(`${path}.compaction evaluated status requires evaluation evidence`);
+    if (evaluation !== undefined) {
+      assertRecord(evaluation, `${path}.compaction.evaluation`);
+      assertFields(evaluation, ["source", "fixture", "version", "evaluatedAt", "passed"], `${path}.compaction.evaluation`);
+      assertSource(evaluation.source, `${path}.compaction.evaluation.source`);
+      assertNonEmptyString(evaluation.fixture, `${path}.compaction.evaluation.fixture`);
+      assertNonEmptyString(evaluation.version, `${path}.compaction.evaluation.version`);
+      assertIsoDate(evaluation.evaluatedAt, `${path}.compaction.evaluation.evaluatedAt`);
+      if (typeof evaluation.passed !== "boolean") throw new TypeError(`${path}.compaction.evaluation.passed must be boolean`);
+    }
+  }
   assertNonEmptyString(entry.provider, `${path}.provider`);
   assertNonEmptyString(entry.modelId, `${path}.modelId`);
   if (entry.lifecycle !== undefined) {

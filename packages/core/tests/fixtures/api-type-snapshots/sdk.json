@@ -1,6 +1,6 @@
 {
-  "beta.d.ts": "4bbc189288923fca24cb8bc7d03e8eb14ba25b9b1d858ee9638eacb751e75f3b",
-  "catalog.d.ts": "5b1c5860253ba8591fdeec5ba59dd080f5c11fa6b13fb707cb9144a0aeb9e433",
+  "beta.d.ts": "16649763f0d43ec5983abca27ef8c0c492567b6c2fc3241e622065852554e4d9",
+  "catalog.d.ts": "fdcb0311bc05ba4d88f48c92704703b4293bbbe1abf3b103c081275adf833557",
   "catalog/fragment.d.ts": "65f1341b35eda2e77f120828341c74038590e6190d56ef86c00898b4b59c9a23",
   "catalog/fragments.d.ts": "72eb2f241853bc50bd992e385c06d41e5b93a79861749214b0c8e1826ed1717b",
   "catalog/providers/anthropic.d.ts": "224ed9ddd684883f9233e45b44d68f8664b86108f0e15cb600e29397d688aa00",
@@ -20,7 +20,8 @@
   "cli.d.ts": "fc31d996538a1b3071e3a17c47daadfec60f6aaaca49b15425a87f807064b6e1",
   "evals.d.ts": "14dbe0ff4f73a21d99d2924b268d03201e007558875650558aaa64628c1c5bb9",
   "experimental.d.ts": "2c09b1eb3672f4ce52eeb175903e03c9b2725786c7c16f99f8207b21cb02375d",
-  "index.d.ts": "5b442aab4517e309aff6eac50bdf0f6b741be42076cb1a7a8f9c3f1cc5514ec6",
+  "index.d.ts": "370cc2d2bbf5bbedfb34d711df24bc9db3a91b7c6e89f7b819dfa491003ec053",
+  "mcp-http.d.ts": "1fc87fdf9a0f8d938b8a1447b9af01f391cace4b520662b0c9beb83e99a2d20d",
   "runtime.d.ts": "47308048ac9c00bb2a73c3d8ae4a9ca2287611aeacf01dd8636f93c1443edb17",
   "ui.d.ts": "596782b28057907121a3ceada8ed3783cee4bb287b5d9f6a7b2b8e8f1fbaac62",
   "workflows.d.ts": "2b3eeea3c58a20d5d2de5a21f96ca06f2568775ffcdd26ca6031f4c6b5d3260d"

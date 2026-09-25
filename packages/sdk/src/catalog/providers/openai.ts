@@ -2,10 +2,12 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const openaiCatalogFragment = defineModelCatalogFragment({
   provider: "openai",
-  revision: "2026-09-22",
+  revision: "2026-09-24",
   verifiedAt: "2026-09-22",
   pricingEffectiveAt: "2026-09-22",
   sources: [
+    "https://developers.openai.com/api/docs/models/gpt-4o-mini",
+    "https://developers.openai.com/api/docs/guides/conversation-state",
     "https://developers.openai.com/api/docs/models/gpt-6-sol",
     "https://developers.openai.com/api/docs/models/gpt-6-luna",
     "https://developers.openai.com/api/docs/models/gpt-6-astra", "catalog-release:2026-08-16",
@@ -172,6 +174,14 @@ export const openaiCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "openai",
       "modelId": "gpt-4o-mini",
+
+      "contextWindowTokens": 128000,
+      "contextWindowType": "combined",
+      "maxOutputTokens": 16384,
+      "inputCostPer1kTokens": 0.00015,
+      "outputCostPer1kTokens": 0.0006,
+      "compaction": {"status": "candidate"},
+      "evidence": {"contextWindowTokens": {"source": "https://developers.openai.com/api/docs/models/gpt-4o-mini", "sourceType": "primary", "verifiedAt": "2026-09-24"}, "contextWindowType": {"source": "https://developers.openai.com/api/docs/guides/conversation-state", "sourceType": "primary", "verifiedAt": "2026-09-24"}, "maxOutputTokens": {"source": "https://developers.openai.com/api/docs/models/gpt-4o-mini", "sourceType": "primary", "verifiedAt": "2026-09-24"}, "inputCostPer1kTokens": {"source": "https://developers.openai.com/api/docs/models/gpt-4o-mini", "sourceType": "primary", "verifiedAt": "2026-09-24"}, "outputCostPer1kTokens": {"source": "https://developers.openai.com/api/docs/models/gpt-4o-mini", "sourceType": "primary", "verifiedAt": "2026-09-24"}},
       "costPer1kTokens": 0.0006,
       "recommendedFor": [
         "chat",

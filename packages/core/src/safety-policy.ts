@@ -479,8 +479,8 @@ export const getAgentBudgetStatus = (
     },
     includeChildRuns,
     unknownUsageRunIds: [
-      ...((output?.usage ?? state.usage) ? [] : [state.runId]),
-      ...childRuns.filter(child => !child.usage).map(child => child.runId)
+      ...((output?.usage ?? state.usage) && !state.compactionAttempts?.some(attempt => attempt.status !== "confirmed") ? [] : [state.runId]),
+      ...childRuns.filter(child => !child.usage || child.unknownCompactionUsage).map(child => child.runId)
     ]
   };
 };

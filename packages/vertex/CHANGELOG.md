@@ -1,5 +1,16 @@
 # @zhivex-ai/vertex
 
+## 1.1.2-next.0
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.24.0-next.0
+  - @zhivex-ai/anthropic@0.12.3-next.0
+  - @zhivex-ai/openai@0.13.6-next.0
+
 ## 1.1.1
 
 ### Patch Changes

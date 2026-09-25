@@ -19,8 +19,8 @@ export const listDefaultModelCatalogFragments = (): ModelCatalogProviderSnapshot
 export const defaultModelCatalog = createModelCatalog(
   defaultModelCatalogFragments.flatMap((fragment) => fragment.entries),
   {
-    snapshotVersion: "2026-09-22",
-    publishedAt: "2026-09-22T00:00:00.000Z",
+    snapshotVersion: "2026-09-24",
+    publishedAt: "2026-09-24T00:00:00.000Z",
     policy: {
       data: "rolling",
       updates: "package-release"
@@ -34,3 +34,6 @@ export const defaultModelCatalog = createModelCatalog(
     }
   }
 );
+
+export { recommendAuxiliaryModel } from "@zhivex-ai/core/catalog";
+export type { AuxiliaryModelRoute, RecommendAuxiliaryModelOptions, AuxiliaryModelRecommendationCandidate, AuxiliaryModelRecommendationResult, ModelCatalogDatumEvidence, ModelCatalogContextWindowType, ModelCatalogEvidenceField, ModelCatalogCompactionEvidence } from "@zhivex-ai/core/catalog";

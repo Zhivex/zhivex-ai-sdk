@@ -1,5 +1,14 @@
 # @zhivex-ai/react
 
+## 0.6.2-next.0
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.24.0-next.0
+
 ## 0.6.1
 
 ### Patch Changes

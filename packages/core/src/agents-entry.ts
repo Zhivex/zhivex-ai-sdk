@@ -82,6 +82,8 @@ export {
 } from "./stream.js";
 export {
   type AgentChildRun,
+  type AgentCompactionAuxiliaryRoute,
+  type AgentCompactionAttempt,
   type AgentCompactionOptions,
   type AgentCompactionReason,
   type AgentCompactionRecord,

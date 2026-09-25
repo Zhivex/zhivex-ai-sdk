@@ -31,3 +31,6 @@ export type {
 
 export { reconcileAgentToolExecution } from "@zhivex-ai/core";
 export type { ReconcileAgentToolExecutionOptions, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "@zhivex-ai/core";
+
+export { createAgentBudgetCoordinator } from "@zhivex-ai/core";
+export type { AgentBudgetCoordinator, AgentBudgetCoordinatorOptions, AgentTokenReservation } from "@zhivex-ai/core";

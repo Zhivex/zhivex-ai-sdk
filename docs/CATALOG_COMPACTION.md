@@ -1,0 +1,15 @@
+# Context limits and auxiliary recommendations
+
+`ModelCatalogEntry` accepts optional `contextWindowTokens`, `contextWindowType` (`combined` or `input`), `maxInputTokens` and `maxOutputTokens`. Missing values mean unknown. Each supplied limit requires its own `evidence` entry with a primary HTTPS source and `verifiedAt`. `contextWindowTokens` and its interpretation must be supplied together. Combined windows include output; callers must budget reasoning and protocol overhead in their token estimates.
+
+The SDK-owned inventory contains independently verified GPT-4o mini limits. Other entries retain unknown limits until verified. Its `compaction.status: "candidate"` is SDK curation, not proof of summary quality. `evaluated` additionally requires an artifact URL, fixture/dataset identity, model/evaluation version, date and pass/fail result. Provider documentation is not evaluation evidence.
+
+Import `recommendAuxiliaryModel` from `@zhivex-ai/sdk` or `@zhivex-ai/sdk/catalog`. Supply a catalog, explicit available routes with credential availability booleans, input/output token estimates, `now`, and `maxEvidenceAgeMs`. The helper performs no I/O and makes no credential or provider availability assumptions. It returns the selected candidate, if any, and reasons and exclusions for every supplied route. It does not automatically change an agent model. `explicitRoute` prevents fallback to another model; unavailable or unsafe explicit routes return no selection. Aliases resolve within their provider.
+
+Per-field `conditions` are host-defined exact labels such as `region:eu` and `tier:paid`; all must be present on the route. Stale, future-dated, absent or unmatched evidence cannot establish a usable limit. Prices require separate current input/output evidence and a catalog currency. Long-context pricing requires its own evidence and retains existing threshold/multiplier semantics. A conditional price is only estimated when its conditions match. This schema does not infer alternative regional or tier price schedules.
+
+Known prices rank before unknown prices; equal estimates use provider/model identity as a deterministic tie break. Unknown price is never zero, and `maxCost` excludes unknown estimates. `maxCost` uses the catalog's currency. `requireEvaluated` excludes unevaluated candidates; failed or stale evaluations are excluded. Retired routes are excluded and deprecated routes carry a reason.
+
+Custom catalogs and old entries remain accepted. Catalog reads return isolated deep copies; SDK provider fragments freeze nested evidence, lifecycle and evaluation metadata. No existing pricing fallback, lifecycle evidence or curation is removed. Importers should preserve these fields and continue their host validation rather than treating catalog recommendations as authorization.
+
+Sources for the initial managed datum: [GPT-4o mini model](https://developers.openai.com/api/docs/models/gpt-4o-mini), [context-window semantics](https://developers.openai.com/api/docs/guides/conversation-state), verified September 24, 2026. No live compaction evaluation is claimed.

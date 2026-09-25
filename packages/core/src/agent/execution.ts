@@ -1,3 +1,4 @@
+import { createAgentBudgetCoordinator, assertAgentTokenReservation } from "../agent-budget-coordinator.js";
 import { childStateObserver, loadFailureState, runCheckpoints, observeChildState, projectChildRun, reconcileChildRuns, upsertChildRun } from "./children.js";
 import { validateMaxSteps } from "../validate-max-steps.js";
 import {
@@ -58,6 +59,7 @@ import type {
   AgentRunInput,
   AgentRunOutput,
   AgentRunState,
+  AgentRunPolicy,
   AgentStep,
   AgentStatus,
   AgentStreamEvent,
@@ -150,6 +152,7 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
   const runtimeState = (
     options as CreateSubAgentToolOptions<TModel> & { runtimeState?: AgentRunState }
   ).runtimeState;
+  const parentPolicy = (options as CreateSubAgentToolOptions<TModel> & { parentPolicy?: AgentRunPolicy }).parentPolicy;
   const toolName = options.toolName ?? options.name ?? defaultSubAgentToolName(options.agent);
   const metadata: Record<string, JsonValue> = {
     type: "subagent"
@@ -173,6 +176,23 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
     requiresApproval: options.requiresApproval,
     metadata: cloneMetadata(metadata, options.metadata),
     execute: async (input: SubAgentToolInput, executionContext) => {
+      const coordinator = parentPolicy?.budgetCoordinator;
+      const childBudgetId = `child:${options.parentRunId}:${executionContext?.step}:${executionContext?.toolCall.id}`;
+      const allocationId = `${childBudgetId}:${runtimeState?.revision ?? 0}`;
+      let childPolicy = options.agent.policy;
+      if (coordinator) {
+        const limits = childPolicy?.budget;
+        const allocation = { inputTokens: limits?.maxInputTokens!, outputTokens: limits?.maxOutputTokens!, totalTokens: limits?.maxTotalTokens! };
+        assertAgentTokenReservation(allocation);
+        if (!options.agent.store) throw new ValidationError("Shared child budgets require a durable run store.");
+        const modelReservation = childPolicy?.modelReservation ?? parentPolicy?.modelReservation;
+        if (!modelReservation) throw new ValidationError("Shared child budgets require modelReservation.");
+        assertAgentTokenReservation(modelReservation);
+        await coordinator.reserve(allocationId, allocation);
+        childPolicy = { ...childPolicy, modelReservation, budgetCoordinator: createAgentBudgetCoordinator({
+          store: options.agent.store, scope: options.scope, budgetId: `${coordinator.id}:${childBudgetId}`, limits: allocation
+        }) };
+      }
       await options.onStart?.({
         toolName,
         childAgentId: options.agent.id,
@@ -221,9 +241,20 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
               reason: resolution.reason
             }))
         : [];
+      const previousChildUsage = checkpoint?.resumeState ? getAgentBudgetStatus(checkpoint.resumeState, {}).consumption : undefined;
+      const settleChild = async (childState: AgentRunState | undefined) => {
+        if (!coordinator) return;
+        const status = childState ? getAgentBudgetStatus(childState, {}) : undefined;
+        await coordinator.settle(allocationId, status && !status.unknownUsageRunIds.length ? {
+          inputTokens: status.consumption.inputTokens - (previousChildUsage?.inputTokens ?? 0),
+          outputTokens: status.consumption.outputTokens - (previousChildUsage?.outputTokens ?? 0),
+          totalTokens: status.consumption.totalTokens - (previousChildUsage?.totalTokens ?? 0)
+        } : undefined);
+      };
       let latestState: AgentRunState | undefined;
       const observedAgent = {
         ...options.agent,
+        policy: childPolicy,
         [childStateObserver]: (childState: AgentRunState) => {
           latestState = childState;
           if (runtimeState) upsertChildRun(runtimeState, projectChildRun(childState));
@@ -252,6 +283,7 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
             metadata: cloneMetadata(options.metadata, childMetadata)
           });
       } catch (error) {
+        try { await settleChild(undefined); } catch { /* Unknown allocations remain reserved; preserve original failure. */ }
         if (latestState) {
           if (latestState.status === "running") {
             latestState = createFailedState(latestState, error);
@@ -262,6 +294,7 @@ export const createSubAgentTool = <TModel extends LanguageModel>(
         }
         throw error;
       }
+      await settleChild(output.state);
       const childRun = projectChildRun(output.state);
       childRun.toolName = toolName;
       childRun.toolCallId = toolCallId;
@@ -341,6 +374,7 @@ const createGenerateOptions = <
       parentAgentId: state.agentId,
       scope: state.scope,
       runtimeState: state,
+      parentPolicy: resolveRunPolicy(agent, input),
       onStart: async ({ toolName, childAgentId }) => {
         await emitTelemetryEvent(agent, {
           type: "subagent-start",
@@ -377,10 +411,18 @@ const createGenerateOptions = <
   }
   const finalTools = Object.keys(tools).length ? tools : undefined;
   const budget = input.policy?.budget ?? agent.policy?.budget;
-  const runPolicy = resolveRunPolicy(agent, input);
+  const runPolicy = resolveRunPolicy(agent, input) ?? {};
+  const coordinator = runPolicy.budgetCoordinator;
+  if (coordinator) {
+    if (!runPolicy.modelReservation) throw new ValidationError("budgetCoordinator requires an explicit modelReservation.");
+    assertAgentTokenReservation(runPolicy.modelReservation);
+    state.budgetCoordinatorId = coordinator.id;
+  }
+  let primaryReservationId: string | undefined;
   const compaction = input.compaction === false
     ? undefined
     : input.compaction ?? agent.compaction;
+  if (compaction?.auxiliary) state.compactionRouteFingerprint = fingerprintAgentHarness(compaction.auxiliary);
   let checkpointState = cloneState(state);
   let liveUsage = state.usage;
   const liveToolResults = [...state.toolResults];
@@ -394,6 +436,9 @@ const createGenerateOptions = <
   ].filter((value): value is number => value !== undefined);
   const maxTokens = tokenCeilings.length ? Math.min(...tokenCeilings) : undefined;
   const requestedToolExecution = input.toolExecution ?? agent.toolExecution;
+  if (compaction?.auxiliary && agent.subagents?.length && requestedToolExecution?.parallel && !coordinator) {
+    throw new ValidationError("Paid compaction with parallel subagents requires a shared atomic budget coordinator; use serial subagent execution.");
+  }
   const toolExecution = agent.subagents?.length && !(requestedToolExecution?.parallel && requestedToolExecution.independentOnly)
     ? {
         ...requestedToolExecution,
@@ -425,13 +470,90 @@ const createGenerateOptions = <
     },
     prepareModelMessages: compaction
       ? async ({ messages: activeMessages, step }) => {
+          let attempt: NonNullable<AgentRunState["compactionAttempts"]>[number] | undefined;
+          const saveAttempt = async () => {
+            state.compactionAttempts = structuredClone(checkpointState.compactionAttempts);
+            runCheckpoints.set(state, checkpointState);
+            await persistState(agent, checkpointState, runPolicy);
+            state.revision = checkpointState.revision;
+          };
           const compacted = await compactAgentMessages(
             compaction,
             checkpointState,
             activeMessages,
             step,
             context,
-            abortSignal
+            abortSignal,
+            {
+              before: async (id, sourceDigest) => {
+                const route = compaction.auxiliary;
+                if (!route) return;
+                if (!agent.store) throw new ValidationError("Paid auxiliary compaction requires an AgentRunStore for durable reservations.");
+                if (!route.provider || !route.modelId || !route.fingerprint ||
+                    Object.values(route.reservation).some(value => !Number.isSafeInteger(value) || value < 0) ||
+                    !Number.isSafeInteger(route.reservation.inputTokens) ||
+                    !Number.isSafeInteger(route.reservation.outputTokens) ||
+                    !Number.isSafeInteger(route.reservation.totalTokens) ||
+                    route.reservation.totalTokens < route.reservation.inputTokens + route.reservation.outputTokens) {
+                  throw new ValidationError("Auxiliary compaction requires an explicit route and a complete conservative token reservation.");
+                }
+                if (route.pricing && (!route.pricing.currency || !route.priceRevision ||
+                  !Number.isFinite(route.pricing.inputCostPer1kTokens) || route.pricing.inputCostPer1kTokens < 0 ||
+                  !Number.isFinite(route.pricing.outputCostPer1kTokens) || route.pricing.outputCostPer1kTokens < 0)) {
+                  throw new ValidationError("Auxiliary pricing requires finite rates, currency and priceRevision.");
+                }
+                if (checkpointState.compactionAttempts?.some(entry => entry.id === id || entry.status !== "confirmed")) {
+                  throw new ValidationError("Auxiliary compaction already attempted; automatic paid retries are unsafe.");
+                }
+                if (budget) {
+                  const status = getAgentBudgetStatus({ ...state, usage: liveUsage, toolResults: liveToolResults }, budget);
+                  for (const dimension of ["inputTokens", "outputTokens", "totalTokens"] as const) {
+                    const available = status.remaining[dimension];
+                    if (available !== undefined && route.reservation[dimension] > available) {
+                      throw new ValidationError(`Auxiliary compaction reservation exceeds remaining ${dimension} budget.`);
+                    }
+                  }
+                }
+                abortSignal?.throwIfAborted();
+                await coordinator?.reserve(id, route.reservation);
+                attempt = { id, beforeStep: step, sourceDigest, route: structuredClone(route), status: "in-flight", createdAt: Date.now() };
+                checkpointState.compactionAttempts = [...(checkpointState.compactionAttempts ?? []), attempt];
+                await saveAttempt();
+              },
+              returned: async result => {
+                if (attempt) {
+                  const complete = result.usage && [result.usage.inputTokens, result.usage.outputTokens, result.usage.totalTokens]
+                    .every(value => typeof value === "number" && Number.isSafeInteger(value) && value >= 0) &&
+                    result.usage.totalTokens! >= result.usage.inputTokens! + result.usage.outputTokens!;
+                  attempt.status = complete ? "confirmed" : "unknown";
+                  attempt.usage = complete ? result.usage : undefined;
+                  if (complete && attempt.route.pricing) {
+                    const pricing = attempt.route.pricing;
+                    const amount = ((result.usage!.inputTokens! * pricing.inputCostPer1kTokens) + (result.usage!.outputTokens! * pricing.outputCostPer1kTokens)) / 1000;
+                    if (Number.isFinite(amount)) attempt.estimatedCost = { amount, currency: pricing.currency };
+                  }
+                }
+                // A provider receipt is independent of accepting or saving its summary.
+                const confirmedUsage = attempt ? attempt.usage : result.usage;
+                checkpointState.usage = aggregateTokenUsage([checkpointState.usage, confirmedUsage]);
+                state.usage = aggregateTokenUsage([state.usage, confirmedUsage]);
+                liveUsage = aggregateTokenUsage([liveUsage, confirmedUsage]);
+                await saveAttempt();
+                if (attempt) await coordinator?.settle(attempt.id, attempt.usage);
+                if (attempt?.status === "unknown") throw new ValidationError("Auxiliary compaction returned unknown token consumption; reconcile before continuing.");
+                if (attempt && ["inputTokens", "outputTokens", "totalTokens"].some(key => {
+                  const dimension = key as "inputTokens" | "outputTokens" | "totalTokens";
+                  return (attempt!.usage?.[dimension] ?? 0) > attempt!.route.reservation[dimension];
+                })) throw new ValidationError("Auxiliary compaction exceeded its reservation; confirmed usage has been recorded.");
+              },
+              failed: async () => {
+                if (attempt) {
+                  attempt.status = "unknown";
+                  await saveAttempt();
+                  await coordinator?.settle(attempt.id);
+                }
+              }
+            }
           );
           if (!compacted) {
             return undefined;
@@ -439,10 +561,6 @@ const createGenerateOptions = <
           checkpointState = {
             ...checkpointState,
             messages: compacted.messages,
-            usage: aggregateTokenUsage([
-              checkpointState.usage,
-              compacted.record.usage
-            ]),
             compactions: [
               ...(checkpointState.compactions ?? []).filter(
                 (existing) => existing.id !== compacted.record.id
@@ -452,10 +570,6 @@ const createGenerateOptions = <
             updatedAt: Date.now()
           };
           state.messages = compacted.messages;
-          // Finalization adds this invocation's model usage. Only add the
-          // compactor here; checkpoint usage already includes model responses.
-          state.usage = aggregateTokenUsage([state.usage, compacted.record.usage]);
-          liveUsage = aggregateTokenUsage([liveUsage, compacted.record.usage]);
           state.compactions = checkpointState.compactions;
           await persistState(agent, checkpointState, runPolicy);
           state.revision = checkpointState.revision;
@@ -463,12 +577,15 @@ const createGenerateOptions = <
           return compacted.messages;
         }
       : undefined,
-    onBeforeModelStep: async ({ step }) => {
+    onBeforeModelStep: async ({ step, request }) => {
       if (budget) {
+        const remaining = getAgentBudgetStatus({ ...state, usage: liveUsage, toolResults: liveToolResults }, budget).remaining;
+        const ceilings = [requestedMaxTokens, remaining.outputTokens, remaining.totalTokens].filter((value): value is number => value !== undefined);
+        if (ceilings.length) request.maxTokens = Math.min(...ceilings);
         const trigger = evaluateAgentBudgetPreflight({ ...state, usage: liveUsage, toolResults: liveToolResults }, budget, {
           operation: "model",
           requiredSteps: Math.max(1, step - state.currentStep),
-          requestedOutputTokens: maxTokens
+          requestedOutputTokens: request.maxTokens
         });
         if (trigger) {
           throw new GuardrailTriggeredError("input", trigger.reason ?? "Agent model budget preflight failed.", {
@@ -477,6 +594,11 @@ const createGenerateOptions = <
         }
       }
 
+      if (coordinator) {
+        primaryReservationId = `model:${state.runId}:${step}`;
+        await coordinator.reserve(primaryReservationId, runPolicy.modelReservation!);
+        request.maxTokens = Math.min(request.maxTokens ?? Number.POSITIVE_INFINITY, runPolicy.modelReservation!.outputTokens);
+      }
       await emitTelemetryEvent(agent, {
         type: "step-start",
         runId: state.runId,
@@ -530,6 +652,7 @@ const createGenerateOptions = <
       };
       runCheckpoints.set(state, checkpointState);
       observeChildState(agent, checkpointState);
+      if (coordinator && primaryReservationId) await coordinator.settle(primaryReservationId, response.usage);
       if (agent.store) {
         await persistState(agent, checkpointState, runPolicy);
         state.revision = checkpointState.revision;

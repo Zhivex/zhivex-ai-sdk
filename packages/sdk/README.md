@@ -41,6 +41,7 @@ Focused entrypoints are available for smaller and more explicit imports:
 - `@zhivex-ai/sdk/runtime` for generation and runtime helpers
 - `@zhivex-ai/sdk/workflows` for declarative workflows and state services
 - `@zhivex-ai/sdk/ui` for UI message and SSE contracts
+- `@zhivex-ai/sdk/mcp-http` for opt-in Beta MCP HTTP transport and OAuth with host-owned token storage
 - `@zhivex-ai/sdk/evals` for agent, workflow, and Beta comparative model evaluations
 - `@zhivex-ai/agents` for the dedicated agent-first facade
 

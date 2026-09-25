@@ -138,8 +138,9 @@ describe("core public entrypoints", () => {
       "./testing": { types: "./dist/testing.d.ts", import: "./dist/testing.js" },
       "./generation": { types: "./dist/generation-entry.d.ts", import: "./dist/generation-entry.js" },
       "./provider": { types: "./dist/provider-entry.d.ts", import: "./dist/provider-entry.js" },
-      "./catalog": { types: "./dist/catalog-contracts.d.ts", import: "./dist/catalog-contracts.js" },
-      "./agents": { types: "./dist/agents-entry.d.ts", import: "./dist/agents-entry.js" }
+      "./catalog": { types: "./dist/catalog-entry.d.ts", import: "./dist/catalog-entry.js" },
+      "./agents": { types: "./dist/agents-entry.d.ts", import: "./dist/agents-entry.js" },
+      "./mcp-http": { types: "./dist/mcp-http.d.ts", import: "./dist/mcp-http.js" }
     });
   });
 
