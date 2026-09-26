@@ -145,9 +145,9 @@
     },
     "packages/qwen": {
       "name": "@zhivex-ai/qwen",
-      "version": "0.16.1",
+      "version": "0.16.2",
       "dependencies": {
-        "@zhivex-ai/core": "^1.22.0",
+        "@zhivex-ai/core": "^1.25.0",
         "zod": "^4.6.3",
       },
     },
