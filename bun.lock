@@ -34,23 +34,23 @@
     },
     "packages/agents": {
       "name": "@zhivex-ai/agents",
-      "version": "1.8.0",
+      "version": "1.10.0",
       "dependencies": {
         "@zhivex-ai/core": "^1.19.0",
       },
     },
     "packages/anthropic": {
       "name": "@zhivex-ai/anthropic",
-      "version": "0.12.1",
+      "version": "0.12.3",
       "dependencies": {
-        "@anthropic-ai/sdk": "0.125.0",
-        "@zhivex-ai/core": "^1.21.0",
+        "@anthropic-ai/sdk": "0.127.0",
+        "@zhivex-ai/core": "^1.24.0",
         "zod": "^4.6.3",
       },
     },
     "packages/azure-openai": {
       "name": "@zhivex-ai/azure-openai",
-      "version": "0.7.3",
+      "version": "0.7.5",
       "dependencies": {
         "@zhivex-ai/core": "^1.20.0",
         "zod": "^4.6.3",
@@ -58,7 +58,7 @@
     },
     "packages/bedrock": {
       "name": "@zhivex-ai/bedrock",
-      "version": "2.0.1",
+      "version": "2.0.3",
       "dependencies": {
         "@aws-sdk/client-bedrock-runtime": "^3.1131.0",
         "@zhivex-ai/core": "^1.19.0",
@@ -67,7 +67,7 @@
     },
     "packages/core": {
       "name": "@zhivex-ai/core",
-      "version": "1.22.0",
+      "version": "1.25.0",
       "dependencies": {
         "ws": "^8.21.3",
         "zod": "^4.6.3",
@@ -81,7 +81,7 @@
     },
     "packages/deepseek": {
       "name": "@zhivex-ai/deepseek",
-      "version": "0.5.5",
+      "version": "0.5.7",
       "dependencies": {
         "@zhivex-ai/core": "^1.19.0",
         "zod": "^4.6.3",
@@ -89,7 +89,7 @@
     },
     "packages/gateway": {
       "name": "@zhivex-ai/gateway",
-      "version": "1.4.0",
+      "version": "1.4.2",
       "dependencies": {
         "@zhivex-ai/core": "^1.21.0",
         "zod": "^4.6.3",
@@ -97,7 +97,7 @@
     },
     "packages/gemini": {
       "name": "@zhivex-ai/gemini",
-      "version": "0.12.1",
+      "version": "0.12.3",
       "dependencies": {
         "@zhivex-ai/core": "^1.19.0",
         "zod": "^4.6.3",
@@ -105,7 +105,7 @@
     },
     "packages/kimi": {
       "name": "@zhivex-ai/kimi",
-      "version": "0.7.8",
+      "version": "0.7.10",
       "dependencies": {
         "@zhivex-ai/core": "^1.19.0",
         "zod": "^4.6.3",
@@ -113,7 +113,7 @@
     },
     "packages/meta": {
       "name": "@zhivex-ai/meta",
-      "version": "0.2.6",
+      "version": "0.2.8",
       "dependencies": {
         "@zhivex-ai/core": "^1.20.0",
         "zod": "^4.6.3",
@@ -121,7 +121,7 @@
     },
     "packages/ollama": {
       "name": "@zhivex-ai/ollama",
-      "version": "0.5.4",
+      "version": "0.5.6",
       "dependencies": {
         "@zhivex-ai/core": "^1.19.0",
         "zod": "^4.6.3",
@@ -129,7 +129,7 @@
     },
     "packages/openai": {
       "name": "@zhivex-ai/openai",
-      "version": "0.13.4",
+      "version": "0.13.6",
       "dependencies": {
         "@zhivex-ai/core": "^1.22.0",
         "zod": "^4.6.3",
@@ -137,7 +137,7 @@
     },
     "packages/openrouter": {
       "name": "@zhivex-ai/openrouter",
-      "version": "0.5.20",
+      "version": "0.5.22",
       "dependencies": {
         "@zhivex-ai/core": "^1.20.0",
         "zod": "^4.6.3",
@@ -145,7 +145,7 @@
     },
     "packages/qwen": {
       "name": "@zhivex-ai/qwen",
-      "version": "0.15.0",
+      "version": "0.16.0",
       "dependencies": {
         "@zhivex-ai/core": "^1.22.0",
         "zod": "^4.6.3",
@@ -153,7 +153,7 @@
     },
     "packages/react": {
       "name": "@zhivex-ai/react",
-      "version": "0.6.0",
+      "version": "0.6.2",
       "dependencies": {
         "@zhivex-ai/core": "^1.19.0",
       },
@@ -176,7 +176,7 @@
     },
     "packages/sdk": {
       "name": "@zhivex-ai/sdk",
-      "version": "1.25.2",
+      "version": "1.27.1",
       "bin": {
         "zhivex-ai": "dist/cli.js",
       },
@@ -186,7 +186,7 @@
     },
     "packages/vertex": {
       "name": "@zhivex-ai/vertex",
-      "version": "1.1.0",
+      "version": "1.1.2",
       "dependencies": {
         "@google-cloud/aiplatform": "^7.4.0",
         "@zhivex-ai/anthropic": "^0.12.0",
@@ -198,7 +198,7 @@
     },
     "packages/xai": {
       "name": "@zhivex-ai/xai",
-      "version": "0.2.6",
+      "version": "0.2.8",
       "dependencies": {
         "@zhivex-ai/core": "^1.20.0",
         "@zhivex-ai/openai": "^0.13.2",
@@ -206,7 +206,7 @@
     },
     "packages/zai": {
       "name": "@zhivex-ai/zai",
-      "version": "0.2.2",
+      "version": "0.2.4",
       "dependencies": {
         "@zhivex-ai/core": "^1.19.0",
         "zod": "^4.6.3",
@@ -230,7 +230,7 @@
 
     "@ai-sdk/react": ["@ai-sdk/react@4.0.114", "", { "dependencies": { "@ai-sdk/mcp": "2.0.55", "@ai-sdk/provider": "4.0.17", "@ai-sdk/provider-utils": "5.0.45", "ai": "7.0.111", "swr": "^2.4.1", "throttleit": "2.1.0" }, "peerDependencies": { "react": "^18 || ~19.0.1 || ~19.1.2 || ^19.2.1" } }, "sha512-BdCr6tnr/iExtRqkKJOhQk6Fi5NG5z9VvHgrnrlQLRuC+bee8MjTIWoZMDo1VwqkwNCA4uQiRfDzDY3hnOqXoQ=="],
 
-    "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.125.0", "", { "dependencies": { "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-Hq5wYlXupzJ9M1Fzqjqa3hObcuigEXVZJqSYDgeZGM3wF4qrNERM5Z1OOAeoT9rlod8awJ3uYyJjbQXp1ckIGg=="],
+    "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.127.0", "", { "dependencies": { "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-OKiVbG9LHCxjn4fBJZJFy/Bz3hqE1RYpwaeSEDNheQnvz0XNKmGT/Lhkz2Sf1a27Ldt3vVv+BkU81I0U/8EpoQ=="],
 
     "@aws-sdk/client-bedrock-runtime": ["@aws-sdk/client-bedrock-runtime@3.1131.0", "", { "dependencies": { "@aws-sdk/core": "^3.978.0", "@aws-sdk/credential-provider-node": "^3.972.83", "@aws-sdk/eventstream-handler-node": "^3.972.34", "@aws-sdk/middleware-eventstream": "^3.972.29", "@aws-sdk/middleware-websocket": "^3.972.53", "@aws-sdk/token-providers": "3.1131.0", "@aws-sdk/types": "^3.974.5", "@smithy/core": "^3.33.3", "@smithy/fetch-http-handler": "^5.7.2", "@smithy/node-http-handler": "^4.11.3", "@smithy/types": "^4.17.2", "tslib": "^2.6.2" } }, "sha512-q0MTJy3yknOJDt7RfX156CZ/RMkp9X0dWUNBkhEaPU3l+rLV5VYkjsbucF1397UD4eKu1AiMKfP62yE08zblBg=="],
 
