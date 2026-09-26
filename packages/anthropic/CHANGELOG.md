@@ -1,5 +1,11 @@
 # @zhivex-ai/anthropic
 
+## 0.12.4
+
+### Patch Changes
+
+- cab08fd: Update the Anthropic SDK dependency to 0.127.0, including upstream client retry and beta-header fixes while preserving the adapter's credential and Managed Agents integration.
+
 ## 0.12.3
 
 ### Patch Changes
