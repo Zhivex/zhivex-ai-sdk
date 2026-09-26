@@ -1,5 +1,11 @@
 # @zhivex-ai/qwen
 
+## 0.16.1
+
+### Patch Changes
+
+- cab08fd: Keep browser RTC connectors independent of server-only imports by isolating SDP exchange, and normalize Decision and ASR endpoint suffixes in linear time.
+
 ## 0.16.0
 
 ### Minor Changes
