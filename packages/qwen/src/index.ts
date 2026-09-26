@@ -1423,6 +1423,51 @@ class QwenResponseError extends Error {
   }
 }
 
+// Never retain provider arguments or parser causes in diagnostics.
+const qwenResponsesToolCallError = (
+  reason: ConstructorParameters<typeof ProviderToolCallError>[0]["reason"],
+  usage?: ReturnType<typeof mapResponsesUsage>,
+  effectsPossible = false
+) => new ProviderToolCallError({
+  provider: "qwen", transport: "responses", diagnosticCode: "QWEN_RESPONSES_TOOL_CALL_INVALID",
+  reason, usage, effectsPossible, retryable: false
+});
+
+class QwenStreamEventError extends Error {
+  readonly provider = "qwen";
+  readonly diagnosticCode = "QWEN_SSE_EVENT_INVALID";
+  readonly retryable = false;
+  constructor(readonly transport: "responses" | "chat", readonly reason: "invalid_json" | "invalid_event") {
+    super("Qwen stream event could not be parsed safely.");
+    this.name = "QwenStreamEventError";
+  }
+}
+
+const parseQwenStreamEvent = (data: string, transport: "responses" | "chat") => {
+  let event: any;
+  try { event = JSON.parse(data); }
+  catch { throw new QwenStreamEventError(transport, "invalid_json"); }
+  if (!event || typeof event !== "object" || Array.isArray(event) || (transport === "responses" && typeof event.type !== "string")) {
+    throw new QwenStreamEventError(transport, "invalid_event");
+  }
+  return event;
+};
+
+const parseQwenResponsesArguments = (
+  raw: unknown,
+  usage?: ReturnType<typeof mapResponsesUsage>,
+  effectsPossible = false
+): Record<string, JsonValue> => {
+  const failure = (reason: ConstructorParameters<typeof ProviderToolCallError>[0]["reason"]) =>
+    qwenResponsesToolCallError(reason, usage, effectsPossible);
+  if (typeof raw !== "string") throw failure("incomplete_arguments");
+  if (!raw.trim()) throw failure("empty_arguments");
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { throw failure("invalid_json"); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw failure("invalid_json");
+  return value as Record<string, JsonValue>;
+};
+
 const parseResponsesAssistantMessage = (
   json: any,
   input: ModelGenerateInput<QwenLanguageModelOptions>
@@ -1432,6 +1477,11 @@ const parseResponsesAssistantMessage = (
   const seenIds = existingToolCallIds(input.messages);
   const fallbackGeneration = nextFallbackToolCallGeneration("responses", input, seenIds);
 
+  const usage = mapResponsesUsage(json.usage);
+  const effectsPossible = Object.values(input.tools ?? {}).some(tool => !isCallableToolDefinition(tool)) || (json.output ?? []).some((item: any) => parseResponsesProviderData(item) !== undefined);
+  if (json.status === "incomplete" && (json.output ?? []).some((item: any) => item?.type === "function_call")) {
+    throw qwenResponsesToolCallError("response_incomplete", usage, effectsPossible);
+  }
   for (const [index, item] of (json.output ?? []).entries()) {
     if (item?.type === "message") {
       for (const content of item.content ?? []) {
@@ -1443,6 +1493,9 @@ const parseResponsesAssistantMessage = (
     }
 
     if (item?.type === "function_call") {
+      if (typeof item.name !== "string" || !item.name.trim()) {
+        throw qwenResponsesToolCallError("inconsistent_metadata", usage, effectsPossible);
+      }
       const providerCallId = qwenResponsesProviderCallId(item.call_id);
       const id = resolveToolCallId(
         [item.call_id, item.id],
@@ -1454,7 +1507,7 @@ const parseResponsesAssistantMessage = (
         toolCall: {
           id,
           name: item.name,
-          input: JSON.parse(item.arguments ?? "{}"),
+          input: parseQwenResponsesArguments(item.arguments, usage, effectsPossible),
           ...(providerCallId !== undefined && providerCallId !== id
             ? { providerMetadata: { qwenResponsesCallId: providerCallId } }
             : {})
@@ -1509,12 +1562,14 @@ const streamResponses = async function* (
     fallbackId: string;
     name: string;
     args: string;
-    emitted: boolean;
+    done: boolean;
   }>();
   const toolBufferAliases = new Map<string, string>();
   const seenIds = existingToolCallIds(input.messages);
   const fallbackGeneration = nextFallbackToolCallGeneration("responses", input, seenIds);
-  let sawToolCalls = false;
+  let terminal: any;
+  let effectsPossible = Object.values(input.tools ?? {}).some(tool => !isCallableToolDefinition(tool));
+  let invalidMetadata = false;
 
   const bufferKey = (
     outputIndex: unknown,
@@ -1541,34 +1596,12 @@ const streamResponses = async function* (
     return `fallback:${fallbackId}`;
   };
 
-  const emitToolCall = (key: string) => {
-    const toolCall = toolBuffers.get(key);
-    if (!toolCall || toolCall.emitted || !toolCall.name) {
-      return undefined;
-    }
-
-    toolCall.emitted = true;
-    sawToolCalls = true;
-    const id = resolveToolCallId([toolCall.callId], toolCall.fallbackId, seenIds);
-    return {
-      type: "tool-call",
-      toolCall: {
-        id,
-        name: toolCall.name,
-        input: JSON.parse(toolCall.args || "{}"),
-        ...(toolCall.providerCallId !== undefined && toolCall.providerCallId !== id
-          ? { providerMetadata: { qwenResponsesCallId: toolCall.providerCallId } }
-          : {})
-      }
-    } satisfies StreamEvent;
-  };
-
   for await (const event of streamSSE(response)) {
     if (event.data === "[DONE]") {
-      return;
+      break;
     }
 
-    const json = JSON.parse(event.data);
+    const json = parseQwenStreamEvent(event.data, "responses");
     const type = json.type as string | undefined;
 
     if (type === "error" || type === "response.failed" || json.response?.status === "failed" || json.error) {
@@ -1607,8 +1640,14 @@ const streamResponses = async function* (
           fallbackId,
           name: item.name ?? "",
           args: "",
-          emitted: false
+          done: false
         };
+        if (item.arguments !== undefined && typeof item.arguments !== "string") invalidMetadata = true;
+        if (existing.done && (
+          (typeof item.arguments === "string" && item.arguments !== existing.args) ||
+          (item.name !== undefined && item.name !== existing.name) ||
+          (existing.providerCallId !== undefined && item.call_id !== undefined && item.call_id !== existing.providerCallId)
+        )) invalidMetadata = true;
         existing.callId = stableToolCallId(item.call_id) ?? existing.callId;
         existing.providerCallId = qwenResponsesProviderCallId(item.call_id) ?? existing.providerCallId;
         existing.name ||= item.name ?? "";
@@ -1618,14 +1657,12 @@ const streamResponses = async function* (
         toolBuffers.set(key, existing);
 
         if (type === "response.output_item.done") {
-          const emitted = emitToolCall(key);
-          if (emitted) {
-            yield emitted;
-          }
+          existing.done = true;
         }
       }
 
       const providerData = parseResponsesProviderData(item);
+      if (providerData) effectsPossible = true;
       if (providerData && type === "response.output_item.done") {
         yield {
           type: "provider-data",
@@ -1646,9 +1683,11 @@ const streamResponses = async function* (
         fallbackId,
         name: "",
         args: "",
-        emitted: false
+        done: false
       };
       existing.providerCallId = qwenResponsesProviderCallId(json.call_id) ?? existing.providerCallId;
+      if (existing.done) invalidMetadata = true;
+      if (typeof json.delta !== "string") invalidMetadata = true;
       existing.args += typeof json.delta === "string" ? json.delta : "";
       toolBuffers.set(key, existing);
       continue;
@@ -1664,37 +1703,93 @@ const streamResponses = async function* (
         fallbackId,
         name: "",
         args: "",
-        emitted: false
+        done: false
       };
       existing.providerCallId = qwenResponsesProviderCallId(json.call_id) ?? existing.providerCallId;
+      if (json.arguments !== undefined && typeof json.arguments !== "string") invalidMetadata = true;
+      if (existing.done && typeof json.arguments === "string" && json.arguments !== existing.args) invalidMetadata = true;
       if (typeof json.arguments === "string") {
         existing.args = json.arguments;
       }
+      existing.done = true;
       toolBuffers.set(key, existing);
-      const emitted = emitToolCall(key);
-      if (emitted) {
-        yield emitted;
-      }
       continue;
     }
 
     if (type === "response.completed" || type === "response.incomplete") {
-      const responseData = json.response ?? {};
-      if (typeof responseData.id === "string") {
-        yield {
-          type: "provider-data",
-          provider: "qwen",
-          data: { responseId: responseData.id }
-        } satisfies StreamEvent;
-      }
-      yield {
-        type: "finish",
-        finishReason: normalizeResponsesFinishReason(responseData.status, sawToolCalls),
-        providerFinishReason: responseData.status,
-        usage: mapResponsesUsage(responseData.usage)
-      } satisfies StreamEvent;
+      if (terminal) invalidMetadata = true;
+      terminal = json.response ?? {};
+      terminal = { ...terminal, status: type === "response.incomplete" ? "incomplete" : terminal.status };
     }
   }
+
+  // Some servers supply the final items only in the terminal snapshot. When
+  // both forms exist, neither may silently overwrite a contradictory call.
+  if (Array.isArray(terminal?.output)) {
+    const terminalKeys = new Set<string>();
+    for (const [index, item] of terminal.output.entries()) {
+      if (parseResponsesProviderData(item)) effectsPossible = true;
+      if (item?.type !== "function_call") continue;
+      const fallbackId = fallbackToolCallId("responses", fallbackGeneration, index);
+      const priorKey = [item.id, item.call_id]
+        .map(stableToolCallId)
+        .filter((id): id is string => id !== undefined)
+        .map(id => toolBufferAliases.get(`id:${id}`) ?? `id:${id}`)
+        .find(key => toolBuffers.has(key));
+      const key = priorKey ?? bufferKey(index, [item.id, item.call_id], fallbackId);
+      terminalKeys.add(key);
+      const existing = toolBuffers.get(key);
+      if (existing?.done && (existing.args !== item.arguments || existing.name !== item.name ||
+        (existing.providerCallId !== undefined && existing.providerCallId !== item.call_id))) {
+        invalidMetadata = true;
+      }
+      if (item.arguments !== undefined && typeof item.arguments !== "string") invalidMetadata = true;
+      toolBuffers.set(key, {
+        callId: stableToolCallId(item.call_id) ?? existing?.callId ?? stableToolCallId(item.id),
+        providerCallId: qwenResponsesProviderCallId(item.call_id) ?? existing?.providerCallId,
+        fallbackId: existing?.fallbackId ?? fallbackId,
+        name: item.name,
+        args: typeof item.arguments === "string" ? item.arguments : "",
+        done: true
+      });
+    }
+    if ([...toolBuffers.keys()].some(key => !terminalKeys.has(key))) invalidMetadata = true;
+  }
+
+  // No callable event escapes until the full response batch has been checked.
+  // Text/provider events may already have been observed; hosted effects cannot be undone.
+  input.abortSignal?.throwIfAborted();
+  const usage = mapResponsesUsage(terminal?.usage);
+  const failure = (reason: ConstructorParameters<typeof ProviderToolCallError>[0]["reason"]) =>
+    qwenResponsesToolCallError(reason, usage, effectsPossible);
+  if (!terminal) throw failure("stream_truncated");
+  if (invalidMetadata) throw failure("inconsistent_metadata");
+  if (toolBuffers.size && terminal.status !== "completed") throw failure("response_incomplete");
+  const materialized: StreamEvent[] = [];
+  for (const call of toolBuffers.values()) {
+    if (!call.done) throw failure("incomplete_arguments");
+    if (typeof call.name !== "string" || !call.name.trim()) throw failure("inconsistent_metadata");
+    const args = parseQwenResponsesArguments(call.args, usage, effectsPossible);
+    const id = resolveToolCallId([call.callId], call.fallbackId, seenIds);
+    materialized.push({ type: "tool-call", toolCall: {
+      id, name: call.name, input: args,
+      ...(call.providerCallId !== undefined && call.providerCallId !== id
+        ? { providerMetadata: { qwenResponsesCallId: call.providerCallId } } : {})
+    } });
+  }
+  for (const event of materialized) {
+    input.abortSignal?.throwIfAborted();
+    yield event;
+  }
+  if (typeof terminal.id === "string") {
+    yield { type: "provider-data", provider: "qwen", data: { responseId: terminal.id } };
+  }
+  yield {
+    type: "finish",
+    finishReason: normalizeResponsesFinishReason(terminal.status, materialized.length > 0),
+    providerFinishReason: terminal.status,
+    usage
+  };
 };
 
 class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
@@ -1885,7 +1980,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
 
       return (async function* () {
         try {
-          yield* streamResponses(response, input);
+          yield* streamResponses(response, { ...input, abortSignal: signal });
         } finally {
           cleanup();
         }
@@ -1946,7 +2041,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             break;
           }
 
-          const json = JSON.parse(event.data);
+          const json = parseQwenStreamEvent(event.data, "chat");
           if (json.error) {
             if (json.usage) lastUsage = json.usage;
             throw failure("response_failed");

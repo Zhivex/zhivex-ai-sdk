@@ -604,3 +604,37 @@ The provider exposes `decisionModel().decide()`, `textEmbeddingModel().embedNati
 See the [support matrix, usage and validation boundaries](../../docs/QWEN_CLOUD_SUPPORT.md), [Decision model with a small measured comparison](../../docs/QWEN_CLOUD_DECISION.md), and [native ASR contract](../../docs/QWEN_CLOUD_ASR.md). Public Cloud-specific types are exported from this package. Live tests are opt-in and favor tiny requests and Flash/Lite models.
 
 Detailed contracts: [audio and realtime](../../docs/QWEN_CLOUD_AUDIO.md), [embeddings](../../docs/QWEN_CLOUD_EMBEDDINGS.md), and [media and worlds](../../docs/QWEN_CLOUD_MEDIA.md). Use `qwen.temporaryKeys.create({ expiresInSeconds: 60 })` on your server to issue short-lived tokens for client SDKs; the returned token inherits the primary key permissions. `inferenceURL` explicitly overrides binary speech transport when using a custom gateway.
+
+### Responses argument and stream errors
+
+Responses function arguments must be JSON objects. Both `generate` and `stream`
+reject invalid, empty or missing arguments with `ProviderToolCallError`, provider
+`qwen`, transport `responses`, and diagnostic code
+`QWEN_RESPONSES_TOOL_CALL_INVALID`. Reasons use the shared finite error contract;
+non-object JSON uses `invalid_json`. Errors contain a fixed message, no raw
+arguments or parser cause, and only validated terminal token accounting when
+available. They are not automatically retried or repaired.
+
+The streaming adapter buffers function calls until the response terminates and
+validates the entire batch before emitting any `tool-call`. A malformed member,
+incomplete response, truncated stream or contradictory completion rejects the
+batch. Matching duplicate completion events materialize a call only once. Valid
+call IDs and Qwen receipt metadata are preserved. Text and provider events may
+already have been emitted; this does not undo prior steps or hosted effects.
+`effectsPossible` is conservative when provider-side items have been observed;
+the shared runtime additionally accounts for effects in prior local steps.
+Cancellation keeps its original error instead of becoming a parser failure.
+
+Malformed SSE JSON in Responses or Chat throws a separate bounded
+`QwenStreamEventError` (`QWEN_SSE_EVENT_INVALID`, reason `invalid_json` or
+`invalid_event`, explicit transport). It never retains the event body or a
+sensitive `SyntaxError` cause. This diagnostic fix does not establish the cause
+of historical Harness failures or certify model behavior.
+
+Offline regression: `bun run test packages/qwen/tests/responses-invalid-arguments.test.ts`.
+For an installed-artifact check, build and pack Core/Qwen with `bun pm pack`,
+install both tarballs into an isolated consumer with a Core override pointing to
+the same local tarball, copy `scripts/qwen-responses-packed-smoke.mjs` into that
+consumer and run it with Bun. The smoke covers ten valid/invalid generate,
+stream and SSE cases without provider credentials. Local tarball results do not
+constitute registry publication or a live Harness matrix.
