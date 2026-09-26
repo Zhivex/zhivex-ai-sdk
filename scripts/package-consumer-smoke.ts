@@ -309,6 +309,19 @@ for (const streaming of [false, true]) for (const toolName of ["apply_patch", "s
 }
 console.log("INSTALLED_OPENAI_FUNCTION_RECEIPTS_OK");
 const installedQwen = await import("@zhivex-ai/qwen");
+const installedCloudQwen = installedQwen.createQwen({ apiKey: "installed-qwen-smoke", baseURL: installedQwen.QWEN_CLOUD_BASE_URL });
+assert.equal(typeof installedCloudQwen.decisionModel().decide, "function");
+assert.equal(typeof installedCloudQwen.textEmbeddingModel("qwen3.7-text-embedding").embedNative, "function");
+assert.equal(typeof installedCloudQwen.temporaryKeys.create, "function");
+assert.equal(typeof installedCloudQwen.imageTranslationModel().translate, "function");
+assert.equal(typeof installedQwen.createQwenWorldRTC, "function");
+const installedQwenBrowser = await import("@zhivex-ai/qwen/browser");
+assert.equal(typeof installedQwenBrowser.connectQwenWebRTC, "function");
+assert.equal(typeof installedQwenBrowser.connectQwenAOQ, "function");
+assert.equal(typeof installedQwenBrowser.createQwenWorldRTC, "function");
+assert.equal(typeof installedQwen.createQwenSDPExchange, "function");
+console.log("INSTALLED_QWEN_CLOUD_FACTORIES_OK");
+
 assert.equal(installedSdk.ProviderToolCallError, ProviderToolCallError);
 assert.equal(installedOpenAI.OPENAI_RESPONSES_TOOL_CALL_ERROR_CODE, "OPENAI_RESPONSES_TOOL_CALL_INVALID");
 const installedProviderToolCallError = new ProviderToolCallError({

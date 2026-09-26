@@ -53,6 +53,37 @@ describe("authenticated runtime WebSocket transport", () => {
       await expect(openWebSocketConnection(`ws://127.0.0.1:${address.port}`, { authorization: "Bearer synthetic" }, { timeoutMs: 30 })).rejects.toThrow("timed out");
     } finally { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); }
   });
+  it("preserves binary frames alongside JSON without changing recvJson semantics", async () => {
+    const fixture = await start();
+    fixture.server.on("connection", socket => socket.on("message", (data, binary) => {
+      socket.send(JSON.stringify({ binary }));
+      socket.send(data, { binary: true });
+    }));
+    try {
+      const connection = await openWebSocketConnection(fixture.url, { authorization: "Bearer synthetic" });
+      await connection.sendBinary!(new Uint8Array([0, 255, 1, 128]));
+      expect(await connection.recvFrame!()).toEqual({ binary: true });
+      expect(await connection.recvFrame!()).toEqual(new Uint8Array([0, 255, 1, 128]));
+      await connection.sendJson({ hello: true });
+      expect(await connection.recvJson()).toEqual({ binary: false });
+      await expect(connection.recvJson()).rejects.toThrow("received binary data");
+      await connection.close();
+    } finally { await fixture.close(); }
+  });
+  it("bounds cumulative binary queue bytes before the message count limit", async () => {
+    const fixture = await start();
+    fixture.server.on("connection", socket => socket.on("message", () => {
+      const frame = Buffer.alloc(1024 * 1024);
+      for (let index = 0; index < 33; index++) socket.send(frame, { binary: true });
+    }));
+    try {
+      const connection = await openWebSocketConnection(fixture.url, { authorization: "Bearer synthetic" });
+      await connection.sendJson({ start: true });
+      await new Promise(resolve => setTimeout(resolve, 150));
+      await expect(connection.recvFrame!()).rejects.toThrow("receive buffer exceeded");
+      await connection.close();
+    } finally { await fixture.close(); }
+  });
   it("keeps bearer-header sessions unsupported in browsers", async () => {
     await expect(browserConnection("wss://example.test", { authorization: "Bearer synthetic" })).rejects.toThrow("Browser WebSocket");
   });

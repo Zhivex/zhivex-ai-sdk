@@ -99,7 +99,7 @@ describe("release workflow", () => {
       expect(reference).toMatch(/@[a-f0-9]{40}$/);
     }
     expect(codeqlWorkflow).toContain(
-      "github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938"
+      "github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd"
     );
     expect(workflow).toContain(
       "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"

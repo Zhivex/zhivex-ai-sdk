@@ -1,3 +1,26 @@
+export { createQwenSDPExchange } from "./sdp-exchange.js";
+export { connectQwenWebRTC, connectQwenAOQ } from "./browser-realtime.js";
+export type * from "./browser-realtime.js";
+import { createQwenTemporaryKeysClient, type QwenTemporaryKeysClient } from "./temporary-keys.js";
+export type { QwenTemporaryKey, QwenTemporaryKeyOptions, QwenTemporaryKeysClient } from "./temporary-keys.js";
+import { createQwenNativeTranscriptionModel, createQwenFileTranscriptionModel, type QwenFileTranscriptionModel } from "./native-asr.js";
+export type * from "./native-asr.js";
+export { createQwenWorldRTC } from "./world-rtc.js";
+export type * from "./world-rtc.js";
+import type { QwenCloudRealtimeSession } from "./cloud-realtime.js";
+export type { QwenCloudRealtimeOptions, QwenRealtimeMCPServer, QwenCloudRealtimeSession } from "./cloud-realtime.js";
+import { createQwenImageTranslationModel, validateWan30, validateQwenImage30, validateHappyHorse, prepareViduVideo, validateViduImage, type QwenImageTranslationModel } from "./cloud-media.js";
+export type * from "./cloud-media.js";
+import { createQwenWorldsClient, type QwenWorldsClient, type QwenWorldModelId } from "./worlds.js";
+export type * from "./worlds.js";
+import { QwenCloudSpeechModel, QwenCloudStreamingASRModel, isQwenCloudSpeech, isQwenCloudStreamingASR } from "./inference-audio.js";
+export type { QwenCloudSpeechOptions, QwenCloudASROptions, QwenASRTranscript } from "./inference-audio.js";
+import { isQwenCloudRealtime, isQwenAudioRealtime, isQwenOmni38Realtime, mapQwenCloudRealtimeSession, validateQwenCloudAudioFrame, qwenCloudAudioEvent, extendQwenCloudRealtimeSession } from "./cloud-realtime.js";
+import { createQwenDecisionModel, type QwenDecisionModel } from "./decision.js";
+export type * from "./decision.js";
+import { assertQwenLanguageModel, isQwenTranslation, isQwenCharacter, isQwen38Open, validateQwenSpecializedText } from "./text-profiles.js";
+import { createQwenTextEmbeddingModel, type QwenTextEmbeddingModel } from "./embeddings.js";
+export type { QwenEmbeddingOptions, QwenSparseEmbedding, QwenNativeEmbeddingResult, QwenTextEmbeddingModel } from "./embeddings.js";
 import { createQwenVoicesClient, type QwenVoicesClient } from "./voices.js";
 export type { QwenVoice, QwenVoiceCreateInput, QwenVoiceRequestOptions, QwenVoicesClient } from "./voices.js";
 export type { QwenLiveTranslateProviderOptions } from "./live-translate.js";
@@ -94,7 +117,11 @@ export interface QwenProviderOptions {
   region?: QwenRegion;
   baseURL?: string;
   taskBaseURL?: string;
+  /** Explicit endpoint for the separately deployed decision preview. */
+  decisionBaseURL?: string;
   realtimeURL?: string;
+  /** Inference WebSocket for binary TTS/ASR; separate from conversational realtime. */
+  inferenceURL?: string;
   realtimeConnectionFactory?: RealtimeConnectionFactory;
   fetch?: typeof globalThis.fetch;
   responseLimits?: AudioResponseLimits;
@@ -105,6 +132,9 @@ export interface QwenProviderOptions {
 }
 
 export type QwenSpeechAudioURLValidator = (url: URL) => boolean | Promise<boolean>;
+
+export const QWEN_CLOUD_BASE_URL = "https://maas.qwencloudapi.com/compatible-mode/v1";
+export const QWEN_DECISION_PREVIEW_BASE_URL = "https://trial.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 
 export const QWEN_TOKEN_PLAN_BASE_URL =
   "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1";
@@ -180,8 +210,20 @@ export interface QwenTasksClient {
   cancel(input: { name: string; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<PredictionOperation>;
 }
 
-export type QwenProvider = CallableProviderAdapter<LanguageModel<QwenLanguageModelOptions>> & {
+export interface QwenRealtimeModelAdapter extends RealtimeModel {
+  connect(config?: RealtimeSessionConfig, options?: RealtimeConnectOptions): Promise<QwenCloudRealtimeSession>;
+}
+export type QwenProvider = Omit<CallableProviderAdapter<LanguageModel<QwenLanguageModelOptions>>, "realtimeModel"> &
+  ((modelId: string) => LanguageModel<QwenLanguageModelOptions>) & {
+  realtimeModel(modelId: string): QwenRealtimeModelAdapter;
+  fileTranscriptionModel(modelId: string): QwenFileTranscriptionModel;
   rawFetch: typeof globalThis.fetch;
+  temporaryKeys: QwenTemporaryKeysClient;
+  textEmbeddingModel(modelId: string): QwenTextEmbeddingModel;
+  decisionModel(modelId?: string): QwenDecisionModel;
+  imageTranslationModel(modelId?: string): QwenImageTranslationModel;
+  worlds(modelId: QwenWorldModelId): QwenWorldsClient;
+  streamingASRModel(modelId: string): QwenCloudStreamingASRModel;
   rerankModel(modelId: string): QwenRerankModel;
   multimodalEmbeddingModel(modelId: string): QwenMultimodalEmbeddingModel;
   tasks: QwenTasksClient;
@@ -372,7 +414,7 @@ const stripResponsesRequestOptions = (providerOptions: Record<string, unknown> |
 
 const modelFamily = (modelId: string) => {
   const normalized = modelId.toLowerCase();
-  return normalized.replace(/^(qwen3\.8-(?:max|flash))-\d{4}$/, "$1");
+  return normalized.replace(/^(qwen3\.8-(?:max|flash))-(?:\d{4}|\d{4}-\d{2}-\d{2})$/, "$1");
 };
 const isQwen38OmniFlash = (modelId: string) => modelId.toLowerCase() === "qwen3.8-omni-flash";
 const isQwen38Max = (modelId: string) => modelFamily(modelId) === "qwen3.8-max";
@@ -444,12 +486,13 @@ const supportsQwenVision = (modelId: string) => {
     model.includes("vision") ||
     isQwen38ProductionModel(modelId) ||
     isQwen38MaxPreview(modelId) ||
-    /^qwen3\.7-plus(?:$|-)/.test(model) ||
+    isQwen38Open(modelId) ||
+    /^qwen3\.7-(?:plus|flash)(?:$|-)/.test(model) ||
     /^qwen3\.6-flash(?:$|-)/.test(model)
   );
 };
 const supportsQwenTools = (modelId: string) =>
-  !/(embedding|rerank|asr|tts|image|realtime|ocr|translation|character|long-context)/.test(modelFamily(modelId));
+  !isQwenTranslation(modelId) && !/(embedding|rerank|asr|tts|image|realtime|ocr|translation|character|long-context)/.test(modelFamily(modelId));
 const supportsQwenFiles = (modelId: string) => /^qwen3\.5-ocr(?:$|-)/.test(modelFamily(modelId));
 const supportsQwenAudioInput = (modelId: string) => /(omni|audio|asr)/.test(modelFamily(modelId));
 const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
@@ -471,8 +514,8 @@ const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
     jsonMode: tools && !omni && !omni38 && !qwen38MaxPreview,
     toolChoice: tools,
     parallelToolCalls: qwen38Production && !omni38,
-    webSearch: tools && !omni,
-    files: supportsQwenFiles(modelId) || qwen38Production,
+    webSearch: tools && !omni || ["qwen-plus-character", "qwen-flash-character"].includes(modelId),
+    files: supportsQwenFiles(modelId) || qwen38Production || isQwen38Open(modelId),
     audioInput: supportsQwenAudioInput(modelId),
     reasoning,
     reasoningEfforts: qwen38Production
@@ -1066,8 +1109,9 @@ const resolveApiMode = (
   input: ModelGenerateInput,
   providerOptions: QwenLanguageModelOptions
 ): "responses" | "chat" => {
+  if (isQwenTranslation(modelId) || isQwenCharacter(modelId)) return "chat";
   const videoInput = hasVideoInput(input.messages);
-  if (videoInput && !isQwen38ProductionModel(modelId)) {
+  if (videoInput && !isQwen38ProductionModel(modelId) && !isQwen38Open(modelId)) {
     throw new UnsupportedFeatureError(
       `Qwen model "${modelId}" does not support video FilePart input through this adapter.`
     );
@@ -1674,6 +1718,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     }
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
     validateThirdParty(this.modelId, input, providerOptions);
+    validateQwenSpecializedText(this.modelId, input);
     validateQwenToolStream(this.modelId, providerOptions, false);
     if (isQwen38ReasoningModel(this.modelId)) {
       validateQwen38Request(this.modelId, input, providerOptions);
@@ -1791,6 +1836,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
   async stream(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const providerOptions = { ...(input.providerOptions ?? {}) } as QwenLanguageModelOptions;
     validateThirdParty(this.modelId, input, providerOptions);
+    validateQwenSpecializedText(this.modelId, input);
     validateQwenToolStream(this.modelId, providerOptions, true);
     if (isQwen38ReasoningModel(this.modelId)) {
       validateQwen38Request(this.modelId, input, providerOptions);
@@ -1876,6 +1922,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
       "Qwen"
     ).catch((error) => { cleanup(); throw error; });
 
+    const cumulativeTranslation = /^(?:qwen-mt-plus|qwen-mt-turbo)$/.test(this.modelId);
     return (async function* () {
       try {
         const toolBuffers = new Map<number, {
@@ -1887,6 +1934,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
         const seenIds = existingToolCallIds(input.messages);
         const fallbackGeneration = nextFallbackToolCallGeneration("chat", input, seenIds);
 
+        let translationText = "";
         let lastFinishReason: string | undefined;
         let lastUsage: any;
         const failure = (reason: "stream_truncated" | "incomplete_arguments" | "invalid_json" | "inconsistent_metadata" | "response_failed") =>
@@ -1918,7 +1966,11 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
           }
 
           if (delta?.content) {
-            yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;
+            const content = String(delta.content);
+            if (cumulativeTranslation && !content.startsWith(translationText)) throw new ValidationError("Qwen translation replaced already streamed text.");
+            const textDelta = cumulativeTranslation ? content.slice(translationText.length) : content;
+            translationText = content;
+            if (textDelta) yield { type: "text-delta", textDelta } satisfies StreamEvent;
           }
 
           for (const toolCall of delta?.tool_calls ?? []) {
@@ -1971,55 +2023,6 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
   }
 }
 
-class QwenEmbeddingModel implements EmbeddingModel {
-  readonly provider = "qwen";
-  readonly capabilities = embeddingCapabilities;
-
-  constructor(
-    readonly modelId: string,
-    private readonly apiKey: string,
-    private readonly baseURL: string,
-    private readonly fetcher: typeof globalThis.fetch
-  ) {}
-
-  async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    const values = input.values.map((value) => {
-      if (typeof value !== "string") {
-        throw new UnsupportedFeatureError('Provider "qwen" does not support multimodal embedding values.');
-      }
-      return value;
-    });
-
-    try {
-      const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/embeddings`, {
-            method: "POST",
-            headers: jsonHeaders(this.apiKey),
-            signal,
-            body: JSON.stringify({
-              model: this.modelId,
-              input: values
-            })
-          }),
-        input
-      );
-
-      const json = await parseJson(response);
-      return {
-        embeddings: json.data.map((entry: any) => entry.embedding),
-        usage: {
-          inputTokens: json.usage?.prompt_tokens,
-          totalTokens: json.usage?.total_tokens
-        },
-        rawResponse: json
-      };
-    } finally {
-      cleanup();
-    }
-  }
-}
 
 const toMultimodalEmbeddingContent = (value: QwenRerankValue) => {
   if (typeof value === "string") {
@@ -2524,7 +2527,6 @@ class QwenImageGenerationModel implements ImageGenerationModel {
   ) {}
 
   async generateImage(input: { prompt: string; images?: MediaInput[]; count?: number; aspectRatio?: string; size?: string; negativePrompt?: string; outputMimeType?: string; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<ImageGenerationResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const providerOptions = { ...(input.providerOptions ?? {}) };
     delete providerOptions.endpoint;
     const nestedParameters =
@@ -2534,20 +2536,38 @@ class QwenImageGenerationModel implements ImageGenerationModel {
     delete providerOptions.parameters;
     delete providerOptions.model;
     delete providerOptions.input;
-    const endpoint = `${this.taskBaseURL}/services/aigc/multimodal-generation/generation`;
-    const sizeFromAspectRatio: Record<string, string> = {
+    const vidu = this.modelId === "vidu/vidu-image_reference2image";
+    const endpoint = `${this.taskBaseURL}/services/aigc/${vidu ? "image-generation" : "multimodal-generation"}/generation`;
+    const sizeFromAspectRatio: Record<string, string> = vidu ? {
+      "1:1": "1024*1024", "16:9": "1920*1088", "9:16": "1088*1920", "4:3": "1024*768", "3:4": "768*1024"
+    } : {
       "1:1": "2048*2048",
       "16:9": "1664*928",
       "9:16": "928*1664",
       "4:3": "1472*1104",
       "3:4": "1104*1472"
     };
+    const parameters: Record<string, unknown> = { ...providerOptions, ...nestedParameters };
+    if (input.count !== undefined) parameters.n = input.count;
+    if (input.size !== undefined) parameters.size = input.size;
+    else if (input.aspectRatio) {
+      if (!sizeFromAspectRatio[input.aspectRatio]) throw new ConfigurationError("Unsupported image aspect ratio.");
+      parameters.size = sizeFromAspectRatio[input.aspectRatio];
+    }
+    if (input.negativePrompt !== undefined) parameters.negative_prompt = input.negativePrompt;
+    if (/^qwen-image-3\.0(?:$|-)/.test(this.modelId)) validateQwenImage30(input, parameters);
+    if (vidu) {
+      parameters.n ??= 1;
+      validateViduImage(input, parameters);
+    }
+    const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const response = await withRetry(
         () =>
           this.fetcher(endpoint, {
             method: "POST",
-            headers: jsonHeaders(this.apiKey),
+            headers: { ...jsonHeaders(this.apiKey), ...(vidu ? { "X-DashScope-Async": "enable" } : {}) },
+            redirect: "error",
             signal,
             body: JSON.stringify({
               model: this.modelId,
@@ -2562,27 +2582,25 @@ class QwenImageGenerationModel implements ImageGenerationModel {
                   }
                 ]
               },
-              parameters: {
-                ...providerOptions,
-                ...nestedParameters,
-                n: input.count,
-                size: input.size ?? (input.aspectRatio ? sizeFromAspectRatio[input.aspectRatio] : undefined),
-                negative_prompt: input.negativePrompt
-              }
+              parameters
             })
           }),
-        input
+        { ...input, maxRetries: input.maxRetries ?? 0 }
       );
       const json = await parseJson(response);
+      if (json.code || json.output?.task_status === "FAILED") throw new ProviderHTTPError("Qwen media generation failed.", response.status, { responseBody: { code: json.code ?? json.output?.code } });
       const data =
         json.output?.choices?.flatMap((choice: any) => choice.message?.content ?? []) ??
         json.output?.results ??
         json.output?.images ??
         json.data ??
         [];
+      if (vidu && (typeof json.output?.task_id !== "string" || !json.output.task_id)) throw new ValidationError("Vidu image submission returned no task ID.");
+      if (/^qwen-image-3\.0(?:$|-)/.test(this.modelId) && (!Array.isArray(data) || !data.length)) throw new ValidationError("Qwen Image 3.0 returned no images.");
       return {
         images: data.map((item: any) => normalizeGeneratedMedia(item, input.outputMimeType ?? "image/png")),
         text: json.output?.text,
+        ...(vidu ? { operationName: json.output?.task_id } : {}),
         rawResponse: json
       };
     } finally {
@@ -2603,7 +2621,6 @@ class QwenVideoGenerationModel implements VideoGenerationModel {
   ) {}
 
   async generateVideo(input: { prompt: string; image?: MediaInput; count?: number; aspectRatio?: string; negativePrompt?: string; durationSeconds?: number; outputStorageUri?: string; pollIntervalMs?: number; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<VideoGenerationResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const providerOptions = { ...(input.providerOptions ?? {}) };
     delete providerOptions.endpoint;
     const nestedInput =
@@ -2617,43 +2634,57 @@ class QwenVideoGenerationModel implements VideoGenerationModel {
     delete providerOptions.input;
     delete providerOptions.parameters;
     delete providerOptions.model;
-    const isWan27 = /^wan2\.7(?:$|-)/i.test(this.modelId);
+    const happyHorseEdit = /^happyhorse-.*-video-edit$/.test(this.modelId);
+    const media = input.image
+      ? happyHorseEdit
+        ? [...(Array.isArray(nestedInput.media) ? nestedInput.media : []), { type: "reference_image", url: mediaValue(input.image) }]
+        : [{ type: this.modelId.startsWith("vidu/") ? "image" : "first_frame", url: mediaValue(input.image) }]
+      : nestedInput.media;
+    let parameters: Record<string, unknown> = { ...providerOptions, ...nestedParameters };
+    if (input.aspectRatio !== undefined) parameters.ratio = input.aspectRatio;
+    if (input.durationSeconds !== undefined) parameters.duration = input.durationSeconds;
+    if (input.count !== undefined) parameters.n = input.count;
+    if (input.outputStorageUri !== undefined) parameters.output_storage_uri = input.outputStorageUri;
+    const usesMedia = /^(?:wan(?:2\.7|3\.0)(?:$|-)|happyhorse-|vidu\/)/i.test(this.modelId);
+    if (/^happyhorse-/.test(this.modelId)) validateHappyHorse(this.modelId, media, parameters);
+    if (/^wan3\.0-/.test(this.modelId)) validateWan30(media, parameters);
+    if (this.modelId.startsWith("vidu/")) parameters = prepareViduVideo(this.modelId, media, parameters);
+    const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const response = await withRetry(
         () =>
           this.fetcher(`${this.taskBaseURL}/services/aigc/video-generation/video-synthesis`, {
             method: "POST",
             headers: { ...jsonHeaders(this.apiKey), "X-DashScope-Async": "enable" },
+            redirect: "error",
             signal,
             body: JSON.stringify({
               model: this.modelId,
               input: {
                 ...nestedInput,
                 prompt: input.prompt,
-                negative_prompt: input.negativePrompt,
+                negative_prompt: input.negativePrompt ?? nestedInput.negative_prompt,
                 ...(input.image
-                  ? isWan27
-                    ? { media: [{ type: "first_frame", url: mediaValue(input.image) }] }
+                  ? usesMedia
+                    ? { media }
                     : { img_url: mediaValue(input.image) }
                   : {})
               },
-              parameters: {
-                ...providerOptions,
-                ...nestedParameters,
-                ratio: input.aspectRatio,
-                duration: input.durationSeconds,
-                n: input.count,
-                output_storage_uri: input.outputStorageUri
-              }
+              parameters
             })
           }),
-        input
+        { ...input, maxRetries: input.maxRetries ?? 0 }
       );
       const json = await parseJson(response);
+      if (json.code || json.output?.task_status === "FAILED") throw new ProviderHTTPError("Qwen media generation failed.", response.status, { responseBody: { code: json.code ?? json.output?.code } });
       const items =
         json.output?.results ??
         json.output?.videos ??
         (json.output?.video_url ? [{ url: json.output.video_url }] : []);
+      if (/^(?:wan3\.0-|happyhorse-|vidu\/)/.test(this.modelId) && !items.length &&
+        (typeof (json.output?.task_id ?? json.task_id) !== "string" || !(json.output?.task_id ?? json.task_id))) {
+        throw new ValidationError("Qwen video submission returned neither output nor a task ID.");
+      }
       return {
         videos: items.map((item: any) => normalizeGeneratedMedia(item, "video/mp4")),
         operationName: json.output?.task_id ?? json.task_id,
@@ -2908,6 +2939,11 @@ const encodeRealtimeData = (data: string | Uint8Array | ArrayBuffer) => {
 class QwenRealtimeModel implements RealtimeModel {
   readonly provider = "qwen";
   get capabilities() {
+    if (isQwenCloudRealtime(this.modelId)) return {
+      ...realtimeCapabilities, vision: !isQwenAudioRealtime(this.modelId), webSearch: true,
+      agentCapabilities: { ...realtimeCapabilities.agentCapabilities!, hostedWebSearch: true, remoteMcp: isQwenOmni38Realtime(this.modelId) },
+      realtime: { ...realtimeCapabilities.realtime!, imageInput: !isQwenAudioRealtime(this.modelId) }
+    };
     if (!isLiveTranslate38(this.modelId)) return realtimeCapabilities;
     return { ...realtimeCapabilities, tools: false, realtime: { ...realtimeCapabilities.realtime!, tools: false } };
   }
@@ -2921,9 +2957,14 @@ class QwenRealtimeModel implements RealtimeModel {
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
     const liveTranslate = isLiveTranslate38(this.modelId);
-    const mapSession = liveTranslate ? liveTranslateSession : mapRealtimeSession;
+    const cloudRealtime = isQwenCloudRealtime(this.modelId);
+    const mapSession = liveTranslate ? liveTranslateSession : cloudRealtime
+      ? (value: RealtimeSessionConfig) => mapQwenCloudRealtimeSession(this.modelId, value, mapRealtimeSession(value))
+      : mapRealtimeSession;
     mapSession(config);
     let audioSent = false;
+    let responseActive = false;
+    const pendingMcpApprovals = new Set<string>();
     const imageTimes: number[] = [];
     const unsupported = () => { throw new UnsupportedFeatureError("LiveTranslate accepts streaming audio and images, not conversation commands."); };
     const url = appendQuery(this.realtimeURL, { model: this.modelId });
@@ -2940,19 +2981,36 @@ class QwenRealtimeModel implements RealtimeModel {
       capabilities: this.capabilities,
       config,
       connection,
-      initializationTimeoutMs: liveTranslate ? (options?.timeoutMs ?? 15000) : undefined,
+      initializationTimeoutMs: liveTranslate || cloudRealtime ? (options?.timeoutMs ?? 15000) : undefined,
       callbacks: {
         ...(liveTranslate ? {
           isReadyPayload: (payload: Record<string, unknown>) => payload.type === "session.updated",
           isCloseAcknowledgementPayload: (payload: Record<string, unknown>) => payload.type === "session.finished"
         } : {}),
-        parseEvent: (payload) => parseRealtimeEvent(
-          payload,
-          () => `qwen-realtime-tool-${fallbackRealtimeToolCallIndex++}`,
-          seenRealtimeToolCallIds, liveTranslate
-        ),
+        ...(cloudRealtime ? { isReadyPayload: (payload: Record<string, unknown>) => payload.type === "session.updated" } : {}),
+        parseEvent: (payload) => {
+          if (payload.type === "response.created") responseActive = true;
+          if (payload.type === "response.done") responseActive = false;
+          const item = payload.item as Record<string, unknown> | undefined;
+          if (cloudRealtime && payload.type === "conversation.item.created" && item?.type === "mcp_approval_request" && typeof item.id === "string") pendingMcpApprovals.add(item.id);
+          return (cloudRealtime ? qwenCloudAudioEvent(payload, session.config) : undefined) ?? parseRealtimeEvent(
+            payload,
+            () => `qwen-realtime-tool-${fallbackRealtimeToolCallIndex++}`,
+            seenRealtimeToolCallIds, liveTranslate || cloudRealtime
+          );
+        },
         buildInitialPayloads: (value) => [{ type: "session.update", session: mapSession(value) }],
         buildAudioPayloads: (frame: AudioFrame, sessionConfig) => {
+          if (cloudRealtime) {
+            validateQwenCloudAudioFrame(frame, sessionConfig);
+            audioSent = true;
+            const manual = sessionConfig.turnDetection === null;
+            return [
+              { type: "input_audio_buffer.append", audio: encodeRealtimeData(frame.data) },
+              ...(frame.isFinal && manual ? [{ type: "input_audio_buffer.commit" }] : []),
+              ...(frame.isFinal && manual && (sessionConfig.autoResponse ?? true) ? [{ type: "response.create" }] : [])
+            ];
+          }
           if (liveTranslate) {
             if (frame.mediaType !== "audio/pcm" || (frame.sampleRateHz !== undefined && frame.sampleRateHz !== 16000) || (frame.channels !== undefined && frame.channels !== 1)) throw new ConfigurationError("LiveTranslate input must be mono 16000 Hz PCM16.");
             const audio = encodeRealtimeData(frame.data);
@@ -2968,6 +3026,7 @@ class QwenRealtimeModel implements RealtimeModel {
           ];
         },
         buildMediaPayloads: (frame: MediaFrame) => {
+          if (isQwenAudioRealtime(this.modelId)) throw new UnsupportedFeatureError("Qwen Audio Realtime does not accept image or video frames.");
           if (!/^image\/(jpeg|jpg)$/i.test(frame.mediaType)) {
             throw new UnsupportedFeatureError("Qwen realtime media frames must be JPEG images.");
           }
@@ -2990,13 +3049,24 @@ class QwenRealtimeModel implements RealtimeModel {
           { type: "conversation.item.create", item: { type: "function_call_output", call_id: result.toolCallId, output: JSON.stringify(result.isError ? result.error : result.output ?? null) } },
           ...((sessionConfig.autoResponse ?? true) ? [{ type: "response.create" }] : [])
         ],
-        buildUpdatePayloads: (value) => [{ type: "session.update", session: mapSession(value) }],
+        buildUpdatePayloads: (value) => {
+          if (cloudRealtime && responseActive && JSON.stringify(value.providerOptions?.mcpServers) !== JSON.stringify(session.config.providerOptions?.mcpServers)) throw new ConfigurationError("MCP configuration cannot change during an active response.");
+          if (cloudRealtime && audioSent && (
+            JSON.stringify(value.turnDetection) !== JSON.stringify(session.config.turnDetection) ||
+            JSON.stringify(value.providerOptions?.audio) !== JSON.stringify(session.config.providerOptions?.audio) ||
+            JSON.stringify(value.providerOptions?.video) !== JSON.stringify(session.config.providerOptions?.video) ||
+            value.channels !== session.config.channels || value.inputSampleRateHz !== session.config.inputSampleRateHz ||
+            value.outputSampleRateHz !== session.config.outputSampleRateHz || value.outputAudioMediaType !== session.config.outputAudioMediaType
+          )) throw new ConfigurationError("Qwen realtime audio/video formats and turn detection must be set before audio starts.");
+          if (isQwenAudioRealtime(this.modelId) && value.voice !== session.config.voice) throw new ConfigurationError("Qwen Audio Realtime voice is fixed after the initial session update.");
+          return [{ type: "session.update", session: mapSession(value) }];
+        },
         buildInterruptPayloads: () => liveTranslate ? unsupported() : [{ type: "response.cancel" }],
         buildClosePayloads: () => liveTranslate ? [{ type: "session.finish" }] : []
       }
     });
     await session.initialize();
-    return session;
+    return extendQwenCloudRealtimeSession(session, connection, pendingMcpApprovals);
   }
 }
 
@@ -3031,7 +3101,7 @@ export const createQwen = (
   const realtimeURL = assertTrustedEndpoint(
     options.realtimeURL ??
     workspaceURLs?.realtimeURL ??
-    "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime",
+    `${new URL(baseURL).protocol === "https:" ? "wss:" : "ws:"}//${new URL(baseURL).host}/api-ws/v1/realtime`,
     {
       label: "Qwen realtimeURL",
       protocols: ["wss"],
@@ -3041,6 +3111,13 @@ export const createQwen = (
       allowUnsafe: options.allowUnsafeEndpoints
     }
   ).toString();
+  const realtimeEndpoint = new URL(realtimeURL);
+  const inferenceURL = assertTrustedEndpoint(options.inferenceURL ??
+    (/\/realtime$/.test(realtimeEndpoint.pathname)
+      ? `${realtimeEndpoint.origin}${realtimeEndpoint.pathname.replace(/\/realtime$/, "/inference")}`
+      : `${realtimeEndpoint.origin}/api-ws/v1/inference`), {
+    label: "Qwen inferenceURL", protocols: ["wss"], allowedHosts: [new URL(baseURL).hostname], allowUnsafe: options.allowUnsafeEndpoints
+  }).toString();
   const fetcher = options.fetch ?? globalThis.fetch;
   const responseLimits = resolveAudioResponseLimits(options.responseLimits);
   const speechAudioMaxRedirects = options.speechAudioMaxRedirects ?? 3;
@@ -3051,13 +3128,25 @@ export const createQwen = (
   return createProviderAdapter({
     name: "qwen",
     languageModel: (modelId) => {
+      assertQwenLanguageModel(modelId);
       if (isLiveTranslate38(modelId)) throw new UnsupportedFeatureError("Qwen 3.8 LiveTranslate requires realtimeModel(), not languageModel().");
       return new QwenLanguageModel(modelId, apiKey, baseURL, fetcher);
     },
-    embeddingModel: (modelId) => new QwenEmbeddingModel(modelId, apiKey, baseURL, fetcher),
-    transcriptionModel: (modelId) => new QwenTranscriptionModel(modelId, apiKey, baseURL, fetcher, responseLimits),
-    speechModel: (modelId) =>
-      new QwenSpeechModel(
+    embeddingModel: (modelId) => createQwenTextEmbeddingModel(modelId, apiKey, baseURL, taskBaseURL, fetcher),
+    decisionModel: (modelId = "decision-model-preview") => createQwenDecisionModel(modelId, { apiKey, baseURL: options.decisionBaseURL ?? baseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints }),
+    textEmbeddingModel: (modelId: string) => createQwenTextEmbeddingModel(modelId, apiKey, baseURL, taskBaseURL, fetcher),
+    fileTranscriptionModel: (modelId: string) => createQwenFileTranscriptionModel(modelId, { apiKey, taskBaseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints }),
+    transcriptionModel: (modelId) => {
+      if (/filetrans/.test(modelId)) throw new UnsupportedFeatureError("Use fileTranscriptionModel() for asynchronous file transcription.");
+      if (modelId === "qwen-audio-3.0-asr-flash") return createQwenNativeTranscriptionModel(modelId, { apiKey, taskBaseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints });
+      return isQwenCloudStreamingASR(modelId)
+        ? new QwenCloudStreamingASRModel(modelId, apiKey, inferenceURL, options.realtimeConnectionFactory)
+        : new QwenTranscriptionModel(modelId, apiKey, baseURL, fetcher, responseLimits);
+    },
+    streamingASRModel: (modelId: string) => new QwenCloudStreamingASRModel(modelId, apiKey, inferenceURL, options.realtimeConnectionFactory),
+    speechModel: (modelId) => isQwenCloudSpeech(modelId)
+      ? new QwenCloudSpeechModel(modelId, apiKey, inferenceURL, options.realtimeConnectionFactory)
+      : new QwenSpeechModel(
         modelId,
         apiKey,
         taskBaseURL,
@@ -3076,6 +3165,9 @@ export const createQwen = (
       new QwenMultimodalEmbeddingModelImpl(modelId, apiKey, taskBaseURL, fetcher),
     tasks: new QwenTasksClientImpl(apiKey, taskBaseURL, fetcher),
     voices: createQwenVoicesClient(apiKey, taskBaseURL, fetcher),
+    imageTranslationModel: (modelId = "qwen-mt-image-2.0") => createQwenImageTranslationModel(modelId, apiKey, taskBaseURL, fetcher),
+    worlds: (modelId: QwenWorldModelId) => createQwenWorldsClient(modelId, apiKey, taskBaseURL, fetcher),
+    temporaryKeys: createQwenTemporaryKeysClient(apiKey, taskBaseURL, fetcher),
     rawFetch: fetcher
   }) as QwenProvider;
 };

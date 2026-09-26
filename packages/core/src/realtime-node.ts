@@ -3,6 +3,7 @@ import { ValidationError } from "./errors.js";
 import type { RealtimeConnection, RealtimeConnectionFactory } from "./realtime.js";
 
 const REALTIME_QUEUE_LIMIT = 256;
+const REALTIME_QUEUE_BYTES_LIMIT = 32 * 1024 * 1024;
 
 const nodeWebSocketDataToText = (data: RawData) => {
   if (Array.isArray(data)) {
@@ -87,9 +88,10 @@ export const openAuthenticatedWebSocketConnection: RealtimeConnectionFactory = a
     options?.signal?.addEventListener("abort", onAbort, { once: true });
   });
 
-  const queue: string[] = [];
+  const queue: Array<string | Uint8Array> = [];
+  let queuedBytes = 0;
   const readers: Array<{
-    resolve: (value: unknown) => void;
+    resolve: (value: string | Uint8Array | undefined) => void;
     reject: (reason?: unknown) => void;
   }> = [];
   let closed = false;
@@ -121,7 +123,8 @@ export const openAuthenticatedWebSocketConnection: RealtimeConnectionFactory = a
     options?.signal?.addEventListener("abort", onSessionAbort, { once: true });
   }
 
-  socket.on("message", (data) => {
+  socket.on("message", (data, isBinary) => {
+    if (connectionError || closed) return;
     const frameBytes = nodeWebSocketDataByteLength(data);
     if (frameBytes > maxIncomingFrameBytes) {
       connectionError = new ValidationError(
@@ -131,26 +134,25 @@ export const openAuthenticatedWebSocketConnection: RealtimeConnectionFactory = a
       socket.close();
       return;
     }
-    const text = nodeWebSocketDataToText(data);
+    const text = isBinary
+      ? new Uint8Array(Array.isArray(data) ? Buffer.concat(data) : data instanceof ArrayBuffer ? new Uint8Array(data) : data)
+      : nodeWebSocketDataToText(data);
     const reader = readers.shift();
     if (reader) {
-      try {
-        reader.resolve(JSON.parse(text));
-      } catch (error) {
-        reader.reject(error);
-      }
+      reader.resolve(text);
       return;
     }
 
-    if (queue.length >= REALTIME_QUEUE_LIMIT) {
+    if (queue.length >= REALTIME_QUEUE_LIMIT || queuedBytes + frameBytes > REALTIME_QUEUE_BYTES_LIMIT) {
       connectionError = new Error(
-        `Realtime receive buffer exceeded ${REALTIME_QUEUE_LIMIT} messages.`
+        `Realtime receive buffer exceeded ${REALTIME_QUEUE_LIMIT} messages or ${REALTIME_QUEUE_BYTES_LIMIT} bytes.`
       );
       connectionError.name = "StreamBufferOverflowError";
       socket.close();
       return;
     }
     queue.push(text);
+    queuedBytes += frameBytes;
   });
   socket.on("error", (error) => {
     connectionError = error;
@@ -187,17 +189,25 @@ export const openAuthenticatedWebSocketConnection: RealtimeConnectionFactory = a
         });
       });
     },
+    async sendBinary(payload) {
+      if (connectionError) throw connectionError;
+      if (closed) throw new Error("Realtime connection is closed.");
+      await new Promise<void>((resolve, reject) => {
+        socket.send(payload, { binary: true }, (error) => error ? reject(error) : resolve());
+      });
+    },
+    async recvFrame() {
+      if (connectionError) throw connectionError;
+      const wasQueued = queue.length > 0;
+      const frame = wasQueued ? queue.shift() : closed ? undefined
+        : await new Promise<string | Uint8Array | undefined>((resolve, reject) => readers.push({ resolve, reject }));
+      if (wasQueued && frame !== undefined) queuedBytes -= typeof frame === "string" ? Buffer.byteLength(frame) : frame.byteLength;
+      return typeof frame === "string" ? JSON.parse(frame) : frame;
+    },
     async recvJson() {
-      if (connectionError) {
-        throw connectionError;
-      }
-      if (queue.length > 0) {
-        return JSON.parse(queue.shift()!);
-      }
-      if (closed) {
-        return undefined;
-      }
-      return new Promise((resolve, reject) => readers.push({ resolve, reject }));
+      const frame = await connection.recvFrame!();
+      if (frame instanceof Uint8Array) throw new ValidationError("Expected a JSON WebSocket frame, received binary data.");
+      return frame;
     },
     async close() {
       if (closed) {
