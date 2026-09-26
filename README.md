@@ -271,6 +271,7 @@ Status shorthand:
 Compatibility notes:
 
 - `structured output` means the SDK can use the shared `generateObject()` / `streamObject()` contract. `native` means schema-aware provider support; `prompted` means SDK fallback prompting instead of provider-native schema enforcement.
+- Qwen Responses validates complete tool-call batches and reports sanitized argument/SSE errors; see [Responses error semantics](./packages/qwen/README.md#responses-argument-and-stream-errors).
 - Qwen structured output uses Chat Completions JSON-object mode plus a schema system prompt, followed by SDK-side schema validation. DashScope does not currently expose strict JSON Schema enforcement for this API.
 - `Realtime sessions` means the provider package exposes `realtimeModel().connect()` through the shared `RealtimeSession` contract. `Browser tokens` means the provider also exposes `realtimeModel().createBrowserToken()` for short-lived client-side credentials.
 - Gemini, Vertex, Azure OpenAI, and the current OpenAI `gpt-realtime`, `gpt-realtime-2`, `gpt-realtime-2.1`, `gpt-realtime-mini`, and `gpt-realtime-2.1-mini` models support `session.sendMedia()` for image inputs such as `image/jpeg`, which is useful for browser camera-frame loops. Older OpenAI realtime preview models such as `gpt-4o-realtime-preview` and `gpt-4o-mini-realtime-preview` do not currently support image input.
