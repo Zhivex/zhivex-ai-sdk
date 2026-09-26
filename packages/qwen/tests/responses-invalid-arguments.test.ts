@@ -145,3 +145,47 @@ it("validates terminal snapshots before any buffered call escapes", async () => 
     expect(result.events).toEqual([]);
   }
 });
+
+it.each(["0", "shared_item"])("correlates terminal parallel calls by position when item IDs repeat: %s", async sharedId => {
+  const output = [0, 1].map(index => ({ ...item(JSON.stringify({ value: index }), index), id: sharedId, call_id: sharedId === "0" ? "0" : `call_${index}` }));
+  const result = await collect([
+    ...output.map((call, output_index) => ({ type: "response.output_item.done", output_index, item: call })),
+    { ...terminal, response: { ...terminal.response, output } }
+  ]);
+  expect(result.error).toBeUndefined();
+  expect(result.events.filter(event => event.type === "tool-call")).toEqual(output.map((_, index) => ({
+    type: "tool-call", toolCall: { id: sharedId === "0" ? `qwen-responses-tool-1-${index}` : `call_${index}`, name: "fixture", input: { value: index }, ...(sharedId === "0" ? { providerMetadata: { qwenResponsesCallId: "0" } } : {}) }
+  })));
+});
+
+it.each([
+  { name: "other_tool" },
+  { call_id: "other_call" },
+  { id: "other_item" }
+])("rejects metadata changes before the first done: %j", async changed => {
+  const result = await collect([
+    { type: "response.output_item.added", output_index: 0, item: item("") },
+    { ...done(), item: { ...item(), ...changed } }, terminal
+  ]);
+  expect(result.error).toMatchObject({ reason: "inconsistent_metadata" });
+  expect(result.events).toEqual([]);
+});
+
+it.each(["response.function_call_arguments.delta", "response.function_call_arguments.done"])("rejects receipt changes in %s", async type => {
+  const result = await collect([
+    { type: "response.output_item.added", output_index: 0, item: item("") },
+    { type, output_index: 0, item_id: "fc_0", call_id: "other_call", delta: '{"value":1}', arguments: '{"value":1}' },
+    done(), terminal
+  ]);
+  expect(result.error).toMatchObject({ reason: "inconsistent_metadata" });
+  expect(result.events).toEqual([]);
+});
+
+it("rejects metadata changes from added directly to the terminal snapshot", async () => {
+  const result = await collect([
+    { type: "response.output_item.added", output_index: 0, item: item("") },
+    { ...terminal, response: { ...terminal.response, output: [{ ...item(), name: "other_tool" }] } }
+  ]);
+  expect(result.error).toMatchObject({ reason: "inconsistent_metadata" });
+  expect(result.events).toEqual([]);
+});

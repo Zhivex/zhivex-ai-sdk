@@ -1,11 +1,5 @@
 # @zhivex-ai/qwen
 
-## 0.16.2
-
-### Patch Changes
-
-- Reject invalid Qwen Responses function arguments with sanitized ProviderToolCallError diagnostics. Validate the complete streamed call batch before exposing executable calls, preserve validated terminal usage and cancellation, and classify malformed Responses/Chat SSE separately without retaining sensitive parser causes.
-
 ## 0.16.1
 
 ### Patch Changes

@@ -1556,20 +1556,37 @@ const streamResponses = async function* (
   response: Response,
   input: ModelGenerateInput<QwenLanguageModelOptions>
 ): AsyncGenerator<StreamEvent, void, undefined> {
-  const toolBuffers = new Map<string, {
+  type ToolBuffer = {
+    itemId?: string;
     callId?: string;
     providerCallId?: string;
     fallbackId: string;
     name: string;
     args: string;
     done: boolean;
-  }>();
+  };
+  const toolBuffers = new Map<string, ToolBuffer>();
   const toolBufferAliases = new Map<string, string>();
   const seenIds = existingToolCallIds(input.messages);
   const fallbackGeneration = nextFallbackToolCallGeneration("responses", input, seenIds);
   let terminal: any;
   let effectsPossible = Object.values(input.tools ?? {}).some(tool => !isCallableToolDefinition(tool));
   let invalidMetadata = false;
+
+  const mergeMetadata = (buffer: ToolBuffer, itemId: unknown, callId: unknown, name?: unknown) => {
+    const nextItemId = qwenResponsesProviderCallId(itemId);
+    const nextCallId = qwenResponsesProviderCallId(callId);
+    const nextName = typeof name === "string" && name.trim() ? name : undefined;
+    if ((buffer.itemId !== undefined && nextItemId !== undefined && buffer.itemId !== nextItemId) ||
+      (buffer.providerCallId !== undefined && nextCallId !== undefined && buffer.providerCallId !== nextCallId) ||
+      (buffer.name && nextName !== undefined && buffer.name !== nextName) ||
+      (name !== undefined && typeof name !== "string")) invalidMetadata = true;
+    buffer.itemId ??= nextItemId;
+    buffer.providerCallId ??= nextCallId;
+    buffer.name ||= nextName ?? "";
+    // A receipt ID may arrive after the item ID used as the initial fallback.
+    buffer.callId = stableToolCallId(callId) ?? buffer.callId;
+  };
 
   const bufferKey = (
     outputIndex: unknown,
@@ -1643,14 +1660,8 @@ const streamResponses = async function* (
           done: false
         };
         if (item.arguments !== undefined && typeof item.arguments !== "string") invalidMetadata = true;
-        if (existing.done && (
-          (typeof item.arguments === "string" && item.arguments !== existing.args) ||
-          (item.name !== undefined && item.name !== existing.name) ||
-          (existing.providerCallId !== undefined && item.call_id !== undefined && item.call_id !== existing.providerCallId)
-        )) invalidMetadata = true;
-        existing.callId = stableToolCallId(item.call_id) ?? existing.callId;
-        existing.providerCallId = qwenResponsesProviderCallId(item.call_id) ?? existing.providerCallId;
-        existing.name ||= item.name ?? "";
+        if (existing.done && typeof item.arguments === "string" && item.arguments !== existing.args) invalidMetadata = true;
+        mergeMetadata(existing, item.id ?? json.item_id, item.call_id, item.name);
         if (typeof item.arguments === "string") {
           existing.args = item.arguments;
         }
@@ -1685,7 +1696,7 @@ const streamResponses = async function* (
         args: "",
         done: false
       };
-      existing.providerCallId = qwenResponsesProviderCallId(json.call_id) ?? existing.providerCallId;
+      mergeMetadata(existing, json.item_id, json.call_id);
       if (existing.done) invalidMetadata = true;
       if (typeof json.delta !== "string") invalidMetadata = true;
       existing.args += typeof json.delta === "string" ? json.delta : "";
@@ -1705,7 +1716,7 @@ const streamResponses = async function* (
         args: "",
         done: false
       };
-      existing.providerCallId = qwenResponsesProviderCallId(json.call_id) ?? existing.providerCallId;
+      mergeMetadata(existing, json.item_id, json.call_id);
       if (json.arguments !== undefined && typeof json.arguments !== "string") invalidMetadata = true;
       if (existing.done && typeof json.arguments === "string" && json.arguments !== existing.args) invalidMetadata = true;
       if (typeof json.arguments === "string") {
@@ -1736,15 +1747,17 @@ const streamResponses = async function* (
         .filter((id): id is string => id !== undefined)
         .map(id => toolBufferAliases.get(`id:${id}`) ?? `id:${id}`)
         .find(key => toolBuffers.has(key));
-      const key = priorKey ?? bufferKey(index, [item.id, item.call_id], fallbackId);
+      const positionalKey = `output:${index}`;
+      const key = toolBuffers.has(positionalKey) ? positionalKey : priorKey ?? bufferKey(index, [item.id, item.call_id], fallbackId);
       terminalKeys.add(key);
       const existing = toolBuffers.get(key);
-      if (existing?.done && (existing.args !== item.arguments || existing.name !== item.name ||
-        (existing.providerCallId !== undefined && existing.providerCallId !== item.call_id))) {
-        invalidMetadata = true;
+      if (existing) {
+        if (existing.done && existing.args !== item.arguments) invalidMetadata = true;
+        mergeMetadata(existing, item.id, item.call_id, item.name);
       }
       if (item.arguments !== undefined && typeof item.arguments !== "string") invalidMetadata = true;
       toolBuffers.set(key, {
+        itemId: existing?.itemId ?? qwenResponsesProviderCallId(item.id),
         callId: stableToolCallId(item.call_id) ?? existing?.callId ?? stableToolCallId(item.id),
         providerCallId: qwenResponsesProviderCallId(item.call_id) ?? existing?.providerCallId,
         fallbackId: existing?.fallbackId ?? fallbackId,
