@@ -22,6 +22,9 @@ import type {
 export interface RealtimeConnection {
   sendJson(payload: Record<string, unknown>): Promise<void>;
   recvJson(): Promise<unknown>;
+  /** Optional binary transport for protocols with mixed JSON and binary frames. Do not mix receive methods concurrently. */
+  recvFrame?(): Promise<unknown | Uint8Array>;
+  sendBinary?(payload: Uint8Array): Promise<void>;
   close(): Promise<void>;
 }
 

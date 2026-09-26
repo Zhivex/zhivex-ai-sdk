@@ -482,3 +482,8 @@ reserved ceilings until reconciliation.
 state exists. Errors from that notification or from saving the failed state do
 not replace the primary execution error. If storage is unavailable, durability
 cannot be guaranteed; reconciliation can recover only states actually saved.
+
+
+### Qwen Cloud specialized APIs
+
+Qwen Cloud adds typed Decision Preview, native dense/sparse embeddings, binary speech synthesis and streaming recognition, asynchronous file transcription, image translation and world sessions. See the [Qwen Cloud support matrix](./docs/QWEN_CLOUD_SUPPORT.md) for factory selection, endpoint configuration and the distinction between implemented contracts and live validation. The [Decision guide](./docs/QWEN_CLOUD_DECISION.md) includes a measured, small comparison with Qwen Flash.

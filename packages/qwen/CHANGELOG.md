@@ -1,5 +1,16 @@
 # @zhivex-ai/qwen
 
+## 0.16.0
+
+### Minor Changes
+
+- Add typed Qwen Cloud decision, advanced text embedding, audio inference, file transcription, image translation and world session APIs. Extend Qwen model-specific media/realtime handling and the SDK discovery catalog, preserve translation stream deltas, and derive realtime endpoints from the configured host. Core authenticated WebSockets support optional bounded binary frames for speech protocols while preserving JSON consumers.
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.25.0
+
 ## 0.15.3
 
 ### Patch Changes

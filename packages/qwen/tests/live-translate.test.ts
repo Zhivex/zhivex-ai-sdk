@@ -96,6 +96,7 @@ describe("Qwen 3.8 LiveTranslate", () => {
   it("rejects conversation commands, invalid audio and image ordering/size/rate", async () => {
     const f = fixture(); const session = await f.model.connect();
     await expect(session.sendText("hello")).rejects.toThrow();
+    await expect(session.createResponse()).rejects.toThrow("conversation model");
     await expect(session.sendAudio({ ...frame, sampleRateHz: 48000 })).rejects.toThrow();
     const image = { data: new Uint8Array([1, 2]), mediaType: "image/jpeg" };
     await expect(session.sendMedia(image)).rejects.toThrow(/before/);

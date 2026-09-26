@@ -339,7 +339,7 @@ Repository and full documentation:
 
 ## Qwen 3.8 snapshots
 
-`qwen3.8-max-0902` preserves its exact upstream ID while inheriting the `qwen3.8-max` validation, vision, tools, and token-limit request mapping. Dated four-digit Max/Flash snapshots are recognized separately from Token Plan previews. `qwen3.8-2.4t-a95b` is listed for discovery without automatic recommendations; its specialized behavior has not been live-certified.
+`qwen3.8-max-0902` preserves its exact upstream ID while inheriting the `qwen3.8-max` validation, vision, tools, and token-limit request mapping. Dated four-digit Max/Flash snapshots are recognized separately from Token Plan previews. `qwen3.8-2.4t-a95b` is listed without automatic recommendations and supports image/video mapping; its specialized behavior has not been live-certified. The full `qwen3.8-max-2026-09-02` alias inherits the Max profile as well.
 
 See the [QwenCloud model inventory](https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models).
 
@@ -593,3 +593,14 @@ It uses `qwen3.8-omni-flash`, writes `model-audio-review.json`, and labels its c
 The longer same-language synthetic control also completed baseline/once/always with acknowledged cloning and output audio. Its model evaluator preferred the cloned prosody but still did not confirm source-timbre fidelity, and some source-voice descriptions were inconsistent across evaluations. Therefore these automated assessments are retained as limited evidence, not a passing perceptual certification. Enrollment and `never` subsequently passed the live create/use/delete check for the exact 3.8 target.
 
 The focused `never` run also received a favorable qualitative timbre assessment from Qwen Omni, with the same limitations as the earlier model-based reviews. A post-cleanup inventory check confirmed that neither of the two temporary voices created during enrollment validation remained in the account.
+
+
+## Qwen Cloud specialized models
+
+Configure `baseURL: QWEN_CLOUD_BASE_URL` to use Qwen Cloud with standard credentials. Task and realtime hosts follow that endpoint. `QWEN_DECISION_PREVIEW_BASE_URL` can be supplied explicitly as `decisionBaseURL` for the separately deployed Decision preview.
+
+The provider exposes `decisionModel().decide()`, `textEmbeddingModel().embedNative()`, `streamingASRModel()`, `fileTranscriptionModel()`, `imageTranslationModel()` and `worlds()` alongside the portable text, embedding, image, video, speech and realtime factories. Dedicated models reject accidental use through the chat factory. Cloud Audio TTS/streaming ASR use binary inference WebSockets; optional binary methods extend the existing connection factory contract.
+
+See the [support matrix, usage and validation boundaries](../../docs/QWEN_CLOUD_SUPPORT.md), [Decision model with a small measured comparison](../../docs/QWEN_CLOUD_DECISION.md), and [native ASR contract](../../docs/QWEN_CLOUD_ASR.md). Public Cloud-specific types are exported from this package. Live tests are opt-in and favor tiny requests and Flash/Lite models.
+
+Detailed contracts: [audio and realtime](../../docs/QWEN_CLOUD_AUDIO.md), [embeddings](../../docs/QWEN_CLOUD_EMBEDDINGS.md), and [media and worlds](../../docs/QWEN_CLOUD_MEDIA.md). Use `qwen.temporaryKeys.create({ expiresInSeconds: 60 })` on your server to issue short-lived tokens for client SDKs; the returned token inherits the primary key permissions. `inferenceURL` explicitly overrides binary speech transport when using a custom gateway.
