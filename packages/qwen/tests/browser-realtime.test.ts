@@ -1,5 +1,6 @@
+import { createQwenSDPExchange } from "../src/sdp-exchange.js";
 import { describe, expect, it, vi } from "vitest";
-import { connectQwenWebRTC, createQwenSDPExchange, connectQwenAOQ } from "../src/browser-realtime.js";
+import { connectQwenWebRTC, connectQwenAOQ } from "../src/browser-realtime.js";
 
 const rtcFixture = () => {
   const clone = { enabled: true, stop: vi.fn(), kind: "audio" };

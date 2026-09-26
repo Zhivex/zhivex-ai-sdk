@@ -1,3 +1,4 @@
+import { trimTrailingSlashes } from "./url-path.js";
 import { Buffer } from "node:buffer";
 import { ConfigurationError, ValidationError, ProviderHTTPError, assertTrustedEndpoint, readJsonWithLimit, withTimeoutSignal, type TranscriptionModel } from "@zhivex-ai/core/provider";
 import { transcriptionCapabilities } from "./capabilities.js";
@@ -33,7 +34,7 @@ const nonempty = (v: unknown): v is string => typeof v === "string" && v.trim().
 const invalid = (message: string): never => { throw new ValidationError(`Qwen ASR: ${message}`); };
 function client(options: QwenNativeASROptions) {
   if (!nonempty(options.apiKey)) throw new ConfigurationError("Qwen ASR requires an API key.");
-  const base = options.taskBaseURL.replace(/\/+$/, "");
+  const base = trimTrailingSlashes(options.taskBaseURL);
   assertTrustedEndpoint(base, { protocols: ["https:"], allowUnsafe: options.allowUnsafeEndpoints, label: "Qwen ASR endpoint" });
   return async (path: string, body: unknown, input: QwenASRRequestOptions, asyncTask = false) => {
     let serialized: string | undefined;

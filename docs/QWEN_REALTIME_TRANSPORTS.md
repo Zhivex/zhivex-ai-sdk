@@ -72,3 +72,5 @@ The bridge disables upstream media before connecting, sends configuration on con
 Deterministic tests cover SDP headers/normalization, media gating, caller-track preservation, stalled signaling cleanup, rejection of manual WebRTC mode, AOQ acknowledgement gating, and timeout disconnection. Browser ICE/media exchange and native AOQ calls have not been live-certified in this environment. The authenticated live evidence in [Qwen Cloud audio](QWEN_CLOUD_AUDIO.md) covers WebSocket routes separately.
 
 Sources: [official WebRTC guide](https://docs.qwencloud.com/developer-guides/tutorials/realtime/webrtc-omni-realtime), [official AOQ guide](https://docs.qwencloud.com/developer-guides/tutorials/realtime/aoq-omni-realtime).
+
+The browser entry follows only browser-safe Core runtime imports, including the WorldRTC bridge. The server-side SDP exchange is isolated from that module graph. A regression checks static imports and barrel re-exports without relying on tree shaking or Node polyfills.

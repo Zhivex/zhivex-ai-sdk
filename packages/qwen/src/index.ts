@@ -1,4 +1,5 @@
-export { createQwenSDPExchange, connectQwenWebRTC, connectQwenAOQ } from "./browser-realtime.js";
+export { createQwenSDPExchange } from "./sdp-exchange.js";
+export { connectQwenWebRTC, connectQwenAOQ } from "./browser-realtime.js";
 export type * from "./browser-realtime.js";
 import { createQwenTemporaryKeysClient, type QwenTemporaryKeysClient } from "./temporary-keys.js";
 export type { QwenTemporaryKey, QwenTemporaryKeyOptions, QwenTemporaryKeysClient } from "./temporary-keys.js";

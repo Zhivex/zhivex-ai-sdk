@@ -1,3 +1,4 @@
+import { trimTrailingSlashes } from "./url-path.js";
 import { ConfigurationError, ValidationError, ProviderHTTPError, assertTrustedEndpoint, readJsonWithLimit, withRetry, withTimeoutSignal, type JsonValue } from "@zhivex-ai/core/provider";
 
 export interface QwenDecisionChoiceQuestion { type: "choice"; instructions: string; criteria: Record<string, string> }
@@ -92,7 +93,7 @@ function parse<Q extends QwenDecisionQuestions>(value: unknown, questions: Q, mo
 export function createQwenDecisionModel(modelId: string, options: QwenDecisionModelOptions): QwenDecisionModel {
   if (modelId !== "decision-model-preview") throw new ConfigurationError("Qwen decisionModel currently supports decision-model-preview only.");
   if (!text(options.apiKey)) throw new ConfigurationError("Qwen decisionModel requires an API key.");
-  const endpoint = `${options.baseURL.replace(/\/+$/, "")}/systemone`;
+  const endpoint = `${trimTrailingSlashes(options.baseURL)}/systemone`;
   assertTrustedEndpoint(endpoint, { protocols: ["https:"], allowUnsafe: options.allowUnsafeEndpoints, label: "Qwen decision endpoint" });
   const fetcher = options.fetch ?? globalThis.fetch;
   return {

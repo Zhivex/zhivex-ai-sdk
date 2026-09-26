@@ -1,4 +1,4 @@
-import { ConfigurationError } from "@zhivex-ai/core/provider";
+import { ConfigurationError } from "@zhivex-ai/core/runtime";
 import type { QwenWorldModelId } from "./worlds.js";
 /** Structural bridge to @happy-oyster/js-sdk; the application owns its optional browser dependency. */
 export interface QwenWorldRTCTravel { start(): Promise<unknown>; end(): Promise<unknown> }
