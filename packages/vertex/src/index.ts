@@ -1890,7 +1890,7 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
 
     return (async function* () {
       try {
-        yield* streamVertexGenerateContent(response, input.messages, normalizeGenerateContentUsage);
+        yield* streamVertexGenerateContent(response, input.messages, normalizeGenerateContentUsage, signal);
       } finally {
         cleanup();
       }

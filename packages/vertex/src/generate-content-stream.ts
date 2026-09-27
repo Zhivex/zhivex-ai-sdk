@@ -136,7 +136,8 @@ export const validateVertexGenerateContent = (candidate: any, messages: ModelMes
 export async function* streamVertexGenerateContent(
   response: Response,
   messages: ModelMessage[],
-  normalizeUsage: (value: unknown) => TokenUsage | undefined
+  normalizeUsage: (value: unknown) => TokenUsage | undefined,
+  signal: AbortSignal
 ): AsyncGenerator<StreamEvent> {
   const buffer = new VertexToolBuffer();
   let terminalReason: string | undefined;
@@ -191,6 +192,7 @@ export async function* streamVertexGenerateContent(
     for (const toolCall of calls) yield { type: "tool-call", toolCall };
     yield { type: "finish", finishReason: normalizedReason, providerFinishReason: terminalReason, usage };
   } catch (error) {
+    signal.throwIfAborted();
     if (error instanceof ProviderToolCallError || error instanceof ProviderHTTPError) throw error;
     throw toolError("VERTEX_STREAM_TOOL_TRUNCATED", "stream_truncated", usage);
   } finally {
