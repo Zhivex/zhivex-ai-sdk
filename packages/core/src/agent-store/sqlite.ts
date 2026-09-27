@@ -224,8 +224,10 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
         const existingRow = findIdempotencyStatement.get([dbKey(state.idempotencyKey, scope)]);
         const existingJson = getRecordField(existingRow, ["state_json", "stateJson"]);
         if (typeof existingJson === "string") {
+          // Hydrate before releasing the lock so history matches this checkpoint.
+          const existingState = deserialize(existingJson);
           options.db.exec("COMMIT");
-          return { claimed: false, state: deserialize(existingJson) };
+          return { claimed: false, state: existingState };
         }
 
         const normalized = normalizeAgentRunState({ ...state, ...(scope ? { scope } : {}) });

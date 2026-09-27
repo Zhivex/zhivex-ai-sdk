@@ -152,4 +152,33 @@ describe("incremental SQLite agent history", () => {
     db.close(); writerDb.close();
   });
 
+  it("hydrates an existing idempotency claim before releasing its transaction", async () => {
+    const root = mkdtempSync(join(tmpdir(), "agent-history-claim-")); roots.push(root);
+    const filename = join(root, "runs.sqlite");
+    const db = new DatabaseSync(filename); db.exec("PRAGMA journal_mode=WAL");
+    const writerDb = new DatabaseSync(filename);
+    try {
+      const writer = createSqliteAgentRunStore({ db: adapter(writerDb), history: "incremental" });
+      const initial = { ...state(), idempotencyKey: "claim", toolResults: [result(0)] };
+      await writer.save(initial);
+      const before = (await writer.load("run"))!;
+      const after = { ...before, revision: before.revision! + 1, toolResults: [{ ...result(0), output: { text: "y".repeat(24000) } }] };
+      const base = adapter(db);
+      let writes = 0;
+      const reader = createSqliteAgentRunStore({ history: "incremental", db: {
+        ...base,
+        exec: sql => {
+          base.exec(sql);
+          // A second connection can commit as soon as the claim releases its lock.
+          if (sql === "COMMIT" && writes++ === 0) writer.save(after, { expectedRevision: before.revision });
+        }
+      } });
+      expect(await reader.claimIdempotencyKey!(initial)).toEqual({ claimed: false, state: before });
+      expect(writes).toBe(1);
+      expect(await writer.load("run")).toEqual(after);
+    } finally {
+      db.close(); writerDb.close();
+    }
+  });
+
 });
