@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/vertex",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Vertex AI adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",

@@ -1,5 +1,11 @@
 # @zhivex-ai/vertex
 
+## 1.2.1
+
+### Patch Changes
+
+- abbe1c1: Preserve caller cancellation reasons and timeout errors while reading Vertex GenerateContent streams instead of converting them into truncated tool-response errors.
+
 ## 1.2.0
 
 ### Minor Changes
