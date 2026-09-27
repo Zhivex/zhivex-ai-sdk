@@ -44,7 +44,7 @@ export interface AgentRunPolicy {
   cancellationPollMs?: number;
   /** Maximum retained events for agent stream replay. Defaults to 4096. */
   maxStreamEvents?: number;
-  /** Maximum serialized durable state size. Defaults to 4 MiB. */
+  /** Maximum serialized durable checkpoint size. Defaults to 4 MiB. Stores with incremental history exclude archived records. */
   maxStateBytes?: number;
   /** Optional preflight limits enforced before model and tool operations. */
   budget?: {

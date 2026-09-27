@@ -1,5 +1,13 @@
 # @zhivex-ai/agents
 
+## 1.10.1
+
+### Patch Changes
+
+- Add opt-in incremental SQLite run history, deduplicated large text artifacts and paginated history reads. Measure the active durable checkpoint separately from archived history while preserving hydrated state contracts. Persist a bounded terminal update on state-size failures so interrupted runs do not remain running.
+- Updated dependencies
+  - @zhivex-ai/core@1.26.0
+
 ## 1.10.0
 
 ### Minor Changes

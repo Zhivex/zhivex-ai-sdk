@@ -136,8 +136,9 @@ const assertStateSize = <TModel extends LanguageModel>(
   if (!Number.isSafeInteger(limit) || limit < 1) {
     throw new ValidationError('Agent policy "maxStateBytes" must be a positive integer.');
   }
-  const serialized = JSON.stringify(state);
-  const bytes = new TextEncoder().encode(serialized).byteLength;
+  const serialized = agent.store?.checkpointBytes ? undefined : JSON.stringify(state);
+  const bytes = agent.store?.checkpointBytes ? agent.store.checkpointBytes(state) : new TextEncoder().encode(serialized!).byteLength;
+  if (!Number.isSafeInteger(bytes) || bytes < 0) throw new ValidationError("Invalid durable checkpoint size.");
   if (bytes > limit) {
     throw new ValidationError(
       `Agent run state is ${bytes} bytes and exceeds maxStateBytes=${limit}. Offload large tool outputs to artifacts or raise the explicit limit.`
@@ -181,4 +182,24 @@ export const persistState = async <TModel extends LanguageModel>(
       : undefined,
     undefined
   );
+};
+
+/** Emergency terminal update has a 4 KiB allowance above the last durable
+ * checkpoint, never above the failed in-memory payload. Preserve evidence and
+ * the original error; do not retry any tool execution here. */
+export const persistFailureState = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>, state: AgentRunState, policy?: AgentRunPolicy
+) => {
+  try { await persistState(agent, state, policy); }
+  catch (error) {
+    if (!(error instanceof ValidationError) || !/^Agent run state is \d+ bytes and exceeds maxStateBytes=\d+\./.test(error.message) || !agent.store) throw error;
+    const durable = await agent.store.load(state.runId, state.scope);
+    if (!durable || durable.revision !== state.revision || durable.status === "completed" || durable.status === "cancelled") throw error;
+    const failure = { ...durable, ...(state.usage ? { usage: state.usage } : {}), status: "failed" as const, updatedAt: Date.now(),
+      error: { message: (state.error?.message ?? error.message).slice(0, 1024), diagnosticCode: "AGENT_STATE_LIMIT" } };
+    const size = (value: AgentRunState) => agent.store!.checkpointBytes?.(value) ?? new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    if (size(failure) > size(durable) + 4096) throw error;
+    await saveStateWithRevision(agent.store, failure);
+    Object.assign(state, failure);
+  }
 };
