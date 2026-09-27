@@ -1,5 +1,16 @@
 # @zhivex-ai/azure-openai
 
+## 0.7.6
+
+### Patch Changes
+
+- Expose the shared Chat Completions stream assembler and reuse it in OpenAI and Azure OpenAI. Preserve forced tool calls that complete with a provider `stop` reason, normalizing the SDK finish reason to `tool-calls`. Assemble fragmented parallel tool calls by index, retain trailing usage, reject incomplete or malformed tool streams, and cancel the response body when consumption ends. Consolidate Azure language and embedding implementations and clean up timeout resources when streaming requests fail.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.27.0
+
 ## 0.7.5
 
 ### Patch Changes

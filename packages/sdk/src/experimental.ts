@@ -17,6 +17,6 @@ export {
   runToolTestFixture,
   testToolDefinition,
   testToolRegistry
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/experimental";
 
-export type { ExperimentalRawProviderOptions } from "@zhivex-ai/core";
+export type { ExperimentalRawProviderOptions } from "@zhivex-ai/core/experimental";

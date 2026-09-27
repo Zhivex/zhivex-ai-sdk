@@ -1,5 +1,25 @@
 # @zhivex-ai/sdk
 
+## 1.28.0
+
+### Minor Changes
+
+- Allow bounded Qwen Responses hosted search on documented model families, validate output limits, and report incomplete responses as length-limited. Preserve public URL citations across Responses streaming events and terminal snapshots without duplicate citations or replaying citation metadata as API input.
+  
+  Preserve Google Search grounding metadata, citation indices, queries and attribution in Gemini GenerateContent streaming through bounded, deduplicated provider-data snapshots. Document the distinct Interactions contract.
+  
+  Expose typed internal hosted-tool metering snapshots and per-route limit evidence. Preserve Qwen search counters, derive Gemini search units without emitting query text in public grounding snapshots, and reject unverified max_tool_calls limits. No prices or credit accounting are added.
+- Expose the shared Chat Completions stream assembler and reuse it in OpenAI and Azure OpenAI. Preserve forced tool calls that complete with a provider `stop` reason, normalizing the SDK finish reason to `tool-calls`. Assemble fragmented parallel tool calls by index, retain trailing usage, reject incomplete or malformed tool streams, and cancel the response body when consumption ends. Consolidate Azure language and embedding implementations and clean up timeout resources when streaming requests fail.
+
+### Patch Changes
+
+- Expose focused evaluation, realtime, control-plane, operations, beta, and experimental core entrypoints. Route SDK and agent subpaths and gateway runtime imports through focused surfaces while preserving existing implementation identities and public APIs. Add focused generation cache/prompt and catalog pricing exports.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.27.0
+
 ## 1.27.2
 
 ### Patch Changes

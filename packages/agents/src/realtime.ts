@@ -1,7 +1,7 @@
 /** Stable live/realtime agent APIs. */
-export { streamLiveAgent } from "@zhivex-ai/core";
-export { runRealtimeDelegations } from "@zhivex-ai/core";
-export type { RealtimeDelegationContext, RealtimeDelegationOptions } from "@zhivex-ai/core";
+export { streamLiveAgent } from "@zhivex-ai/core/realtime";
+export { runRealtimeDelegations } from "@zhivex-ai/core/realtime";
+export type { RealtimeDelegationContext, RealtimeDelegationOptions } from "@zhivex-ai/core/realtime";
 
 export type {
   AgentLiveEvent,
@@ -9,4 +9,4 @@ export type {
   LiveAgentDefinition,
   LiveAgentRunInput,
   LiveAgentRunOutput
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/realtime";

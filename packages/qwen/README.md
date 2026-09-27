@@ -52,7 +52,7 @@ const result = await generateText({
 });
 ```
 
-- Auto mode permits audio/video on Responses, including with hosted web search. Chat is selected for `maxTokens`, thinking budgets, or `tool_stream`; explicit incompatible combinations are rejected.
+- Auto mode permits audio/video on Responses, including with hosted web search. Chat is selected for ordinary requests with `maxTokens` alone, thinking budgets, or `tool_stream`; explicit incompatible combinations are rejected.
 - Audio uses `AudioPart` (URL, base64, or bytes), with format inferred from the MIME type or overridden by `format`. Set `AudioPart.providerMetadata.use_multichannel: true` for two/four-channel spatial audio. Video uses a `video/*` `FilePart`. Audio/video is restricted to user messages; document files are rejected.
 - Chat maps media to `input_audio` and `video_url`; Responses maps it to `input_audio.audio_url` and `input_video.video_url`.
 - Thinking defaults to upstream `xhigh`. All seven shared efforts are accepted; Chat maps `minimal` to `low`, `high`/`max` to `xhigh`, and `none` disables thinking. Chat preserves thinking history. Effort and budget cannot be combined.
@@ -141,7 +141,7 @@ Token Plan terms limit these credentials to interactive use in programming and a
 The default `apiMode: "auto"` selects the protocol required by the request:
 
 - Responses for hosted tools, Qwen OCR file URLs, and `previous_response_id` continuation.
-- Chat Completions for structured output, audio/video input (except Omni 3.8, which also supports Responses), `maxTokens`, `reasoning.budgetTokens`, or `providerOptions.tool_stream`.
+- Chat Completions for structured output, audio/video input (except Omni 3.8, which also supports Responses), ordinary requests with `maxTokens` alone, `reasoning.budgetTokens`, or `providerOptions.tool_stream`. Hosted search supports bounded Responses on documented families; see [output limits](#bounded-responses-search-and-citations).
 - Either path for ordinary text and local function tools; automatic mode prefers Responses.
 
 Use `providerOptions: { apiMode: "responses" }` or `{ apiMode: "chat" }` only when you need to force a compatible path. Unsupported combinations fail before the network request instead of silently dropping fields.
@@ -638,3 +638,66 @@ the same local tarball, copy `scripts/qwen-responses-packed-smoke.mjs` into that
 consumer and run it with Bun. The smoke covers ten valid/invalid generate,
 stream and SSE cases without provider credentials. Local tarball results do not
 constitute registry publication or a live Harness matrix.
+
+### Bounded Responses search and citations
+
+For documented Qwen 3.5/3.6/3.7/3.8 Responses model IDs, Qwen3-Max and supported
+DeepSeek/GLM/Kimi Responses profiles, `maxTokens` maps to `max_output_tokens` when
+using Responses, including hosted `qwenWebSearchTool()`. The limit must be a safe
+integer of at least 16. A `providerOptions.max_output_tokens` limit is also
+validated; conflicting limits are rejected. Unknown families cannot silently
+ignore a requested limit. Automatic mode retains Chat for ordinary requests with
+`maxTokens` alone; hosted search or explicit `apiMode: "responses"` uses Responses.
+Thinking budgets and other Chat-only options remain incompatible with hosted tools.
+In Qwen 3.8 the limit includes reasoning plus answer tokens; the other documented
+families limit answer tokens. `incomplete` responses finish with `length`, preserving
+usage; incomplete callable batches still raise the existing typed error.
+
+Streaming emits public URL annotations from `response.content_part.done`,
+`response.output_item.done` and terminal snapshots as:
+
+```json
+{"type":"provider-data","provider":"qwen","data":{"type":"response.annotations","itemId":"msg_1","outputIndex":0,"contentIndex":0,"annotations":[{"type":"url_citation","url":"https://example.com","title":"Source","start_index":0,"end_index":5}]}}
+```
+
+Append these annotation deltas per output/content index; identical citations are
+emitted once per response. Message IDs and character indices are retained when
+available. Empty annotations do not produce fabricated sources. Only public URL
+citation fields are forwarded, not message bodies, logprobs or arbitrary metadata.
+Limits: 1024 annotations per part, 4096 distinct citations per response, 8192 URL
+characters, 16384 title characters and 1024 ID characters. Invalid/unsupported
+annotations and fields beyond these bounds are omitted. Non-streaming messages
+carry the same data part; citation parts are never replayed as Responses input.
+Partial citations already delivered remain available if the stream fails.
+
+The [Responses contract](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-responses)
+notes that annotations are usually empty. This transport support does not certify
+that every model/region returns citations, nor does token usage include hosted-search
+charges. Consumers must certify their chosen route before enabling it.
+
+### Internal search counters and limits
+
+`generate()` message parts and streaming `provider-data` preserve
+`usage.x_tools.web_search.count` as Core/SDK `HostedToolUsage` data:
+
+```json
+{"type":"hosted-tool-usage","audience":"internal","provider":"qwen","route":"responses","tool":"web_search","attemptId":"sdk-invocation-id","responseId":"upstream-id","unit":"call","quantity":2,"source":"usage.x_tools.web_search.count","aggregation":"snapshot","completeness":"complete","terminal":true}
+```
+
+A nonnegative safe integer is reported, including zero. Missing/invalid counts
+produce `completeness: "unknown"` with no quantity, even if citations are empty.
+Search-enabled streams start with an unknown nonterminal record; their terminal
+record replaces it. Identical terminal snapshots are not double-counted.
+IDs are bounded to 1024 characters. No raw queries or message payloads are added.
+They are not replayed into provider input. Follow the
+[shared metering contract](../../docs/OBSERVABILITY.md#hosted-search-metering)
+for snapshot aggregation, retries, budgeting and UI filtering.
+
+`model.capabilities.hostedTools` describes Responses metering as `provider-counter`
+and its effective hosted-search limit as `unverified`. `max_tool_calls` and
+`web_search` config limits `max_tool_calls`/`max_uses` are rejected rather than
+silently relying on OpenAI compatibility. `maxTokens` limits output tokens only.
+The documented limit on Qwen's separate Anthropic-compatible route does not
+certify Responses and is not exposed by this adapter.
+
+Counter evidence: [Model Studio web search](https://www.alibabacloud.com/help/en/model-studio/web-search).

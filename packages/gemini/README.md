@@ -38,16 +38,13 @@ import {
   generateSpeech,
   generateText,
   generateVideo,
-  googleFileSearchTool,
-  googleMapsTool,
-  googleUrlContextTool,
   predictRaw,
   resumeInteraction,
   streamSpeech,
   transcribeAudio,
   uploadFile
 } from "@zhivex-ai/core";
-import { createGemini } from "@zhivex-ai/gemini";
+import { createGemini, googleFileSearchTool, googleMapsTool, googleUrlContextTool } from "@zhivex-ai/gemini";
 
 const gemini = createGemini({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -258,3 +255,67 @@ The standard model accepts no reasoning effort or token budget. Extended Thinkin
 `session.sendText()` sends an explicit user turn with `turnComplete: true`, which interrupts generation. Tool results retain call IDs. Extended Thinking may finish intermediate spoken fragments while still working: the adapter only reports response completion after `interactionStatus: "IDLE"`. Status and thought summaries are preserved as `realtime-provider-data`, and audio, text and tool calls are all consumed. No scheduling or blocking override is exposed for Extended Thinking.
 
 The [September live evidence report](../../docs/maintainers/WEEKLY_PROVIDER_LIVE_2026_09_16.md) covers text input, a local tool result, output audio, and Extended Thinking returning to `IDLE`. It does not certify microphone input or production latency. See [Google Live capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities) and [background thinking](https://ai.google.dev/gemini-api/docs/live-api/thinking).
+
+### Google Search sources in streaming
+
+`streamText()` with `googleSearchTool()` on GenerateContent emits
+`provider-data` with provider `gemini` and data
+`{ type: "grounding-metadata", candidateIndex: 0, groundingMetadata: { ... } }`.
+It preserves public web `groundingChunks`, `groundingSupports` (segment offsets,
+chunk indices and confidence scores) and
+`searchEntryPoint.renderedContent`. Metadata arriving only in the last chunk is
+emitted before `finish`. Identical snapshots are suppressed; fields supplied in
+separate chunks are merged. Consumers **replace** their stored snapshot per
+candidate rather than appending its arrays, and leave chunk ordering unchanged.
+Invalid/non-web chunks keep an empty placeholder to preserve citation indices.
+
+This is an allowlist, not a raw response: unknown fields are omitted. Bounds are
+1024 chunks, 4096 supports, 1024 indices/scores per support, 16384 characters
+per string and 262144 characters for attribution HTML. Oversized/invalid fields
+are omitted and arrays are capped without reindexing. No sources are invented
+when the provider omits grounding. Cancellation stops further emission; already
+received snapshots remain usable for a partial answer.
+
+Show inline citations by mapping each support's `groundingChunkIndices` to the
+unchanged `groundingChunks` array. Show the required Google Search Suggestions
+from `searchEntryPoint.renderedContent` according to the official
+[grounding and attribution requirements](https://ai.google.dev/gemini-api/docs/generate-content/google-search).
+Treat provider HTML as untrusted content and use an isolated rendering surface;
+never inject arbitrary provider-data into the application DOM. An example consumer
+is in [search-sources.ts](../../examples/search-sources.ts).
+
+Interactions is a separate API: `provider.interactions.stream()` retains its
+native step/source events as provider-data, not the GenerateContent snapshot
+shape. Test and certify the chosen API separately. Hosted search charges are
+separate from generated token usage.
+
+### Internal hosted-search metering
+
+GenerateContent emits `HostedToolUsage` records in `provider-data`. Follow the
+[shared metering contract](../../docs/OBSERVABILITY.md#hosted-search-metering)
+for snapshot aggregation, retries, budgeting and UI filtering.
+
+For Gemini 3, quantity counts exact distinct nonempty `webSearchQueries` strings
+(whitespace-only entries are empty; case and other whitespace are not normalized).
+For Gemini 2.5 and earlier, a nonempty query list establishes one grounded prompt;
+an empty list alone does not establish zero billed prompts. Unrecognized model
+families use unknown units/quantity. Query text is held only while counting; it is
+not included in metering or the public `grounding-metadata` snapshot. Raw provider
+responses and native Interactions provider-data remain server-only objects.
+
+An explicit valid terminal list is complete reported evidence; earlier observations
+are partial. Missing, invalid or oversized lists never imply zero. Limits are
+1024 queries and 16384 characters per query; incomplete data has unknown quantity.
+A valid empty terminal list in Gemini 3 reports zero observed queries.
+
+`model.capabilities.hostedTools` declares GenerateContent metering as `derived`
+and Interactions metering as `unverified`. Both declare `limit: "unverified"`;
+`max_tool_calls` is rejected. No prompt, output-token cap, client abort or timeout
+is an effective hosted-search call limit. Interactions needs separate normalized
+metering certification before a consumer can use it for budgeting.
+
+Cancellation/truncation leaves the latest snapshot partial/unknown.
+
+### Google hosted-tool ownership
+
+Import Google hosted-tool helpers from this package for new code; Core/SDK imports remain compatible. See [ownership and support boundaries](../../docs/ARCHITECTURE.md#provider-implementation-boundaries).

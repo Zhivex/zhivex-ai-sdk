@@ -1,5 +1,21 @@
 # @zhivex-ai/vertex
 
+## 1.2.0
+
+### Minor Changes
+
+- Expose existing Google hosted-tool helpers from Gemini and Vertex through a focused Core compatibility bridge. Existing Core and SDK imports preserve their function identities and wire formats.
+
+### Patch Changes
+
+- Validate GenerateContent tool calls against the terminal provider state before exposing executable calls. Reject malformed, truncated, duplicate-ID and unfinished responses with sanitized typed errors. Generate collision-safe tool IDs across chunks and retained history, preserve thought signatures and final usage, and release streamed response bodies on early termination.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.27.0
+  - @zhivex-ai/openai@0.13.7
+
 ## 1.1.2
 
 ### Patch Changes

@@ -3,3 +3,5 @@ export * from "./runtime-entry.js";
 export { generateText, streamText } from "./generate-text.js";
 export { generateObject, streamObject } from "./generate-object.js";
 export { wrapLanguageModel } from "./middleware-runtime.js";
+export { createStructuredOutputPrompt } from "./structured-output-prompt.js";
+export { createCachedGenerateMiddleware } from "./middleware-runtime.js";

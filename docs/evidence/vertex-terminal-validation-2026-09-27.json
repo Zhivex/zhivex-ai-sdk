@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "scope": "Vertex GenerateContent terminal validation, generation and streaming",
+  "checkedAt": "2026-09-27T17:09:03.890Z",
+  "validation": {
+    "docs": "passed",
+    "typecheck": "passed",
+    "build": "passed",
+    "tests": {
+      "passed": 3069,
+      "skipped": 4,
+      "filesPassed": 222,
+      "filesSkipped": 3
+    },
+    "installedConsumerTypecheck": "passed",
+    "secretScan": "passed"
+  },
+  "artifact": {
+    "package": "@zhivex-ai/vertex",
+    "version": "1.1.2",
+    "sha256": "6e91483ae1799560ef3e00c0c743d82ed5e8bff7e5c1a24fde62005b9c143ac0",
+    "source": "local packed build, not published"
+  },
+  "live": {
+    "schemaVersion": 1,
+    "checkedAt": "2026-09-27T17:09:03.890Z",
+    "evidence": "installed-package-live",
+    "limits": {
+      "timeoutMs": 30000,
+      "maxTokens": 128,
+      "maxRetries": 0,
+      "maxSteps": 1
+    },
+    "records": [
+      {
+        "attempt": 1,
+        "model": "gemini-2.5-flash-lite",
+        "wireToolCalls": 1,
+        "providerFinishReasons": [
+          "STOP"
+        ],
+        "status": "passed",
+        "emittedToolCalls": 1,
+        "executions": 1,
+        "uniqueIds": 1,
+        "finishReason": "tool-calls",
+        "usage": {
+          "inputTokens": 19,
+          "outputTokens": 5,
+          "totalTokens": 24
+        }
+      },
+      {
+        "attempt": 2,
+        "model": "gemini-2.5-flash-lite",
+        "wireToolCalls": 7,
+        "providerFinishReasons": [
+          "MALFORMED_FUNCTION_CALL"
+        ],
+        "status": "protected_provider_failure",
+        "emittedToolCalls": 0,
+        "executions": 0,
+        "uniqueIds": 0,
+        "diagnosticCode": "VERTEX_STREAM_TOOL_RESPONSE_FAILED",
+        "reason": "response_failed",
+        "usage": {
+          "inputTokens": 19,
+          "outputTokens": 35,
+          "totalTokens": 54
+        }
+      },
+      {
+        "attempt": 3,
+        "model": "gemini-2.5-flash-lite",
+        "wireToolCalls": 1,
+        "providerFinishReasons": [
+          "STOP"
+        ],
+        "status": "passed",
+        "emittedToolCalls": 1,
+        "executions": 1,
+        "uniqueIds": 1,
+        "finishReason": "tool-calls",
+        "usage": {
+          "inputTokens": 19,
+          "outputTokens": 14,
+          "totalTokens": 33
+        }
+      }
+    ]
+  },
+  "preflight": {
+    "requests": 4,
+    "outcome": "HTTP errors before generation; diagnostic request HTTP 400",
+    "diagnostic": {
+      "schemaVersion": 1,
+      "checkedAt": "2026-09-27T17:08:09.405Z",
+      "evidence": "installed-package-live",
+      "limits": {
+        "timeoutMs": 30000,
+        "maxTokens": 128,
+        "maxRetries": 0,
+        "maxSteps": 1
+      },
+      "records": [
+        {
+          "attempt": 1,
+          "model": "gemini-2.5-flash-lite",
+          "status": "failed",
+          "emittedToolCalls": 0,
+          "executions": 0,
+          "uniqueIds": 0,
+          "httpStatus": 400,
+          "errorType": "ProviderHTTPError"
+        }
+      ]
+    },
+    "resolution": "Changed synthetic smoke schema from z.literal to z.string to match the existing provider smoke. No adapter change for this schema limitation."
+  },
+  "interpretation": "Two successful STOP responses each executed one tool. One native MALFORMED_FUNCTION_CALL response contained seven wire calls, but emitted and executed zero tools; usage retained. Provider failure is protected, not model success.",
+  "limitations": [
+    "Live evidence covers Gemini GenerateContent streaming over Vertex API-key authentication; other Vertex routes are not certified by these calls.",
+    "Non-streaming failure boundary, duplicate IDs, truncation, history collisions and resource limits are covered by deterministic tests."
+  ]
+}

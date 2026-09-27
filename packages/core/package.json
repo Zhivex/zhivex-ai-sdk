@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/core",
-  "version": "1.26.0",
+  "version": "1.27.0",
   "description": "Shared contracts and runtime helpers for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -72,6 +72,34 @@
     "./mcp-http": {
       "types": "./dist/mcp-http.d.ts",
       "import": "./dist/mcp-http.js"
+    },
+    "./evals": {
+      "types": "./dist/evals-entry.d.ts",
+      "import": "./dist/evals-entry.js"
+    },
+    "./realtime": {
+      "types": "./dist/realtime-entry.d.ts",
+      "import": "./dist/realtime-entry.js"
+    },
+    "./control-plane": {
+      "types": "./dist/control-plane-entry.d.ts",
+      "import": "./dist/control-plane-entry.js"
+    },
+    "./ops": {
+      "types": "./dist/ops-entry.d.ts",
+      "import": "./dist/ops-entry.js"
+    },
+    "./beta": {
+      "types": "./dist/beta-entry.d.ts",
+      "import": "./dist/beta-entry.js"
+    },
+    "./experimental": {
+      "types": "./dist/experimental-entry.d.ts",
+      "import": "./dist/experimental-entry.js"
+    },
+    "./provider-google": {
+      "types": "./dist/provider-google.d.ts",
+      "import": "./dist/provider-google.js"
     }
   },
   "files": [

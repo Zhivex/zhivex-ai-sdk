@@ -1,5 +1,16 @@
 # @zhivex-ai/gateway
 
+## 1.4.3
+
+### Patch Changes
+
+- Expose focused evaluation, realtime, control-plane, operations, beta, and experimental core entrypoints. Route SDK and agent subpaths and gateway runtime imports through focused surfaces while preserving existing implementation identities and public APIs. Add focused generation cache/prompt and catalog pricing exports.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.27.0
+
 ## 1.4.2
 
 ### Patch Changes

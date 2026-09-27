@@ -65,7 +65,7 @@ export {
   streamInteraction,
   uploadFile,
   uploadToFileSearchStore
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/beta";
 
 export type {
   AgentCapabilityDetails,
@@ -118,7 +118,9 @@ export type {
   TranscriptionModelCapabilityProfile,
   VideoGenerationModelCapabilityFeature,
   VideoGenerationModelCapabilityProfile
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/beta";
 
-export { createAgentBudgetCoordinator } from "@zhivex-ai/core";
-export type { AgentBudgetCoordinator, AgentBudgetCoordinatorOptions, AgentTokenReservation } from "@zhivex-ai/core";
+export { createAgentBudgetCoordinator } from "@zhivex-ai/core/beta";
+export type { AgentBudgetCoordinator, AgentBudgetCoordinatorOptions, AgentTokenReservation } from "@zhivex-ai/core/beta";
+
+export { streamChatCompletions } from "@zhivex-ai/core/beta";

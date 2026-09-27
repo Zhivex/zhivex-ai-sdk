@@ -184,6 +184,7 @@ describe("vertex adapter", () => {
         Response.json({
           candidates: [
             {
+              finishReason: "STOP",
               content: {
                 parts: [
                   {

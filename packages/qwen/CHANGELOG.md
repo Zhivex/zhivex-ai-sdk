@@ -1,5 +1,20 @@
 # @zhivex-ai/qwen
 
+## 0.16.3
+
+### Patch Changes
+
+- Allow bounded Qwen Responses hosted search on documented model families, validate output limits, and report incomplete responses as length-limited. Preserve public URL citations across Responses streaming events and terminal snapshots without duplicate citations or replaying citation metadata as API input.
+  
+  Preserve Google Search grounding metadata, citation indices, queries and attribution in Gemini GenerateContent streaming through bounded, deduplicated provider-data snapshots. Document the distinct Interactions contract.
+  
+  Expose typed internal hosted-tool metering snapshots and per-route limit evidence. Preserve Qwen search counters, derive Gemini search units without emitting query text in public grounding snapshots, and reject unverified max_tool_calls limits. No prices or credit accounting are added.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.27.0
+
 ## 0.16.2
 
 ### Patch Changes

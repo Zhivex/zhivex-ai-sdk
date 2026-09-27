@@ -65,4 +65,5 @@ export type * from "./realtime.js";
 export { imageInputToDataUrl } from "./image-input.js";
 
 export { createChatCompletionsModel } from "./chat-completions.js";
+export { streamChatCompletions } from "./chat-completions-stream.js";
 export type { ChatCompletionsTransportOptions } from "./chat-completions.js";

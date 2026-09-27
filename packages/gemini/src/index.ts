@@ -1,3 +1,5 @@
+import { createGeminiSearchUsage } from "./search-usage.js";
+import { createGroundingCollector } from "./grounding.js";
 import { toJSONSchema } from "zod";
 import {
   capabilities,
@@ -1385,6 +1387,12 @@ const assertCurrentGeminiGenerateInput = (
   modelId: string,
   input: ModelGenerateInput
 ) => {
+  if (input.providerOptions?.max_tool_calls !== undefined) throw new UnsupportedFeatureError("Gemini max_tool_calls is not verified as an effective hosted-tool limit.");
+
+  for (const tool of Object.values(input.tools ?? {})) {
+    if (isHostedToolDefinition(tool) && ["googleSearch", "google_search"].includes(tool.type) && tool.config && typeof tool.config === "object" &&
+      ("max_tool_calls" in tool.config || "max_uses" in tool.config)) throw new UnsupportedFeatureError("Gemini Google Search tool-call limits are not verified.");
+  }
   if (!usesCurrentGeminiRequestRules(modelId)) {
     return;
   }
@@ -2072,6 +2080,7 @@ class GeminiInteractionsClient implements InteractionsClient {
       ...(stream ? { stream: true } : {}),
       ...(input.providerOptions ?? {})
     };
+    if (input.providerOptions?.max_tool_calls !== undefined) throw new UnsupportedFeatureError("Gemini Interactions max_tool_calls is not verified as an effective hosted-tool limit.");
     assertCurrentGeminiInteractionBody(body);
     return body;
   }
@@ -2461,7 +2470,10 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {
-    this.capabilities = modelCapabilities(modelId);
+    this.capabilities = { ...modelCapabilities(modelId), hostedTools: [
+      { route: "generate-content", tool: "google_search", limit: "unverified", metering: "derived" },
+      { route: "interactions", tool: "google_search", limit: "unverified", metering: "unverified" }
+    ] };
   }
 
   private url(action: string) {
@@ -2496,6 +2508,9 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
       const json = await parseJson(response);
       const candidate = json.candidates?.[0];
       const assistantMessage = parseAssistantMessage(candidate);
+      if (Object.values(input.tools ?? {}).some(t => isHostedToolDefinition(t) && ["googleSearch", "google_search"].includes(t.type)) || candidate?.groundingMetadata !== undefined) {
+        assistantMessage.parts.push({ type: "provider-data", provider: "gemini", data: createGeminiSearchUsage(this.modelId, globalThis.crypto.randomUUID())(json) });
+      }
 
       return {
         messages: [assistantMessage],
@@ -2535,9 +2550,15 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
       "Gemini"
     ).catch((error) => { cleanup(); throw error; });
 
+    const searchEnabled = Object.values(input.tools ?? {}).some(t => isHostedToolDefinition(t) && ["googleSearch", "google_search"].includes(t.type));
+    const meter = createGeminiSearchUsage(this.modelId, globalThis.crypto.randomUUID());
     return (async function* () {
+      let previousUsage = "";
+      const collectGrounding = createGroundingCollector();
       try {
+        if (searchEnabled) { const data = meter(); previousUsage = JSON.stringify(data); yield { type: "provider-data", provider: "gemini", data } satisfies StreamEvent; }
         for await (const event of streamSSE(response)) {
+          signal.throwIfAborted();
           const json = JSON.parse(event.data);
           const candidate = json.candidates?.[0];
           const parts = candidate?.content?.parts ?? [];
@@ -2562,7 +2583,17 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
             }
           }
 
+          if (searchEnabled || candidate?.groundingMetadata !== undefined) {
+            const data = meter(json);
+            const key = JSON.stringify(data);
+            if (key !== previousUsage) { previousUsage = key; yield { type: "provider-data", provider: "gemini", data } satisfies StreamEvent; }
+          }
+          signal.throwIfAborted();
+          const grounding = collectGrounding(candidate?.groundingMetadata, candidate?.index ?? 0);
+          if (grounding) yield { type: "provider-data", provider: "gemini", data: grounding } satisfies StreamEvent;
+
           if (candidate?.finishReason) {
+            signal.throwIfAborted();
             yield {
               type: "finish",
               finishReason: normalizeFinishReason(candidate.finishReason),
@@ -3462,3 +3493,11 @@ export const createGemini = (
 };
 
 export const geminiMcpTools = createMcpToolSet;
+export {
+  googleCodeExecutionTool,
+  googleComputerUseTool,
+  googleFileSearchTool,
+  googleMapsTool,
+  googleSearchTool,
+  googleUrlContextTool
+} from "@zhivex-ai/core/provider-google";

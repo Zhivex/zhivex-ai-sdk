@@ -1,3 +1,4 @@
+import { streamVertexGenerateContent, validateVertexGenerateContent } from "./generate-content-stream.js";
 import { normalizeVertexTranscriptionConfig, transcriptionRequest, transcriptionResponse, type VertexTranscriptionResult, type VertexTranscriptionModel as VertexTranscriptionModelContract } from "./transcription.js";
 export type { VertexAudioTranscriptionConfig, VertexAudioTranscription, VertexTranscriptionOptions, VertexTranscriptionResult, VertexTranscriptionModel } from "./transcription.js";
 import { createVertexVirtualTryOnClient, type VertexVirtualTryOnClient } from "./virtual-try-on.js";
@@ -1835,7 +1836,14 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
       );
 
       const candidate = json.candidates?.[0];
+      const usage = normalizeGenerateContentUsage(json.usageMetadata ?? json.usage_metadata);
+      const validated = validateVertexGenerateContent(candidate, input.messages, usage, json.promptFeedback?.blockReason);
+      // Replace only function-call parts; retain text, images and other existing message mapping.
+      let nextCall = 0;
       const assistantMessage = parseAssistantMessage(candidate);
+      assistantMessage.parts = assistantMessage.parts.map((part) => part.type === "tool-call"
+        ? { type: "tool-call", toolCall: validated.calls[nextCall++]! }
+        : part);
 
       return {
         messages: [assistantMessage],
@@ -1843,9 +1851,9 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
           .filter((part) => part.type === "text")
           .map((part) => part.text)
           .join(""),
-        finishReason: normalizeFinishReason(candidate?.finishReason),
-        providerFinishReason: candidate?.finishReason,
-        usage: normalizeGenerateContentUsage(json.usageMetadata ?? json.usage_metadata),
+        finishReason: validated.finishReason,
+        providerFinishReason: validated.providerFinishReason,
+        usage,
         rawResponse: json
       };
     } finally {
@@ -1882,40 +1890,7 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
 
     return (async function* () {
       try {
-        for await (const event of streamSSE(response)) {
-          const json = JSON.parse(event.data);
-          const candidate = json.candidates?.[0];
-          const parts = candidate?.content?.parts ?? [];
-
-          for (const [index, part] of parts.entries()) {
-            if (part.text) {
-              yield { type: "text-delta", textDelta: part.text } satisfies StreamEvent;
-            }
-
-            if (part.functionCall) {
-              yield {
-                type: "tool-call",
-                toolCall: {
-                  id: part.functionCall.id ?? `${part.functionCall.name}-${index}`,
-                  name: part.functionCall.name,
-                  input: part.functionCall.args ?? {},
-                  ...(typeof part.thoughtSignature === "string"
-                    ? { providerMetadata: { geminiThoughtSignature: part.thoughtSignature } }
-                    : {})
-                }
-              } satisfies StreamEvent;
-            }
-          }
-
-          if (candidate?.finishReason) {
-            yield {
-              type: "finish",
-              finishReason: normalizeFinishReason(candidate.finishReason),
-              providerFinishReason: candidate.finishReason,
-              usage: normalizeGenerateContentUsage(json.usageMetadata ?? json.usage_metadata)
-            } satisfies StreamEvent;
-          }
-        }
+        yield* streamVertexGenerateContent(response, input.messages, normalizeGenerateContentUsage);
       } finally {
         cleanup();
       }
@@ -2975,3 +2950,11 @@ export const createVertex = (
 };
 
 export const vertexMcpTools = createMcpToolSet;
+export {
+  googleCodeExecutionTool,
+  googleComputerUseTool,
+  googleFileSearchTool,
+  googleMapsTool,
+  googleSearchTool,
+  googleUrlContextTool
+} from "@zhivex-ai/core/provider-google";
