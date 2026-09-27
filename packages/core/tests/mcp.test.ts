@@ -139,6 +139,25 @@ describe("mcp helpers", () => {
     expect(weather.requiresApproval).toBe(false);
   });
 
+  it("enforces enum and const JSON literals, including structured values", async () => {
+    const cases = [
+      { schema: { enum: ["safe", "fast"] }, valid: ["safe", "fast"], invalid: ["invalid", 1, null] },
+      { schema: { enum: [1, true, null] }, valid: [1, true, null], invalid: [0, false, "1"] },
+      { schema: { enum: ["only"] }, valid: ["only"], invalid: ["other"] },
+      { schema: { enum: [] }, valid: [], invalid: [null, "anything"] },
+      { schema: { enum: [{ a: 1, b: 2 }, [1, 2]] }, valid: [{ b: 2, a: 1 }, [1, 2]], invalid: [{ a: 1 }, { a: 1, b: 2, c: 3 }, [2, 1]] },
+      { schema: { const: { a: [1, null] } }, valid: [{ a: [1, null] }], invalid: [{ a: [1] }, null] }
+    ];
+    for (const { schema, valid, invalid } of cases) {
+      const tools = await createMcpToolSet({
+        listTools: async () => [{ name: "choose", inputSchema: schema }],
+        callTool: async () => ({ content: [] })
+      });
+      for (const value of valid) expect(tools.choose.schema.safeParse(value).success).toBe(true);
+      for (const value of invalid) expect(tools.choose.schema.safeParse(value).success).toBe(false);
+    }
+  });
+
   it("uses safe unknown-schema fallbacks for unsupported MCP schemas", async () => {
     const tools = await createMcpToolSet({
       async listTools() {

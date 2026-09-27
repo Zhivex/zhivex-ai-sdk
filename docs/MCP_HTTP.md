@@ -1,7 +1,14 @@
-# Opt-in MCP HTTP and OAuth
+# Stable opt-in MCP HTTP and OAuth
 
 Import `createMcpHttpClient`, `createMcpOAuthProvider`, `collectMcpPages`, and
 `McpHttpError` from `@zhivex-ai/sdk/mcp-http` or `@zhivex-ai/core/mcp-http`.
+The runtime exports `createMcpHttpClient`, `createMcpOAuthProvider`,
+`collectMcpPages`, `McpHttpError`, and `MCP_HTTP_API_STABILITY_MANIFEST`, together
+with the types exported by these entrypoints, are Stable. The frozen entrypoint
+manifest is separate from the root `API_STABILITY_MANIFEST`; contract tests enforce
+exhaustive classification and Core/SDK parity, and declaration snapshots protect
+types. `createMcpToolRegistry` remains Beta and is not part of this promotion.
+
 The root MCP tools adapter keeps accepting existing tools-only clients. Resources,
 resource templates and prompts are optional additions to `McpClient`.
 
@@ -97,17 +104,48 @@ must not be logged as credentials or used without destination validation.
 
 ## Interoperability evidence
 
-`packages/core/tests/mcp-http.test.ts` covers negotiation, byte limits, cancellation,
+The deterministic unit suites cover negotiation, byte limits, cancellation,
 OAuth binding, state, singleflight refresh, session expiration, and credential races.
-`scripts/verify-mcp-http-interop.ts` exercises the official MCP TypeScript SDK
-1.27.1 server in both JSON and SSE modes: tools, resource lists, templates, text,
-binary and prompts. Install that server in a temporary directory using Bun, then:
+The official MCP TypeScript SDK **1.27.1** is a pinned development dependency;
+it is not shipped as a runtime dependency of the SDK.
 
 ```sh
-bun scripts/verify-mcp-http-interop.ts /path/to/node_modules/@modelcontextprotocol/sdk/dist/esm
+bun run test:mcp:interop
+bun run smoke:packages:mcp
 ```
 
-This verifies in-process protocol interoperability, not a deployed OAuth server,
-DNS policy, registry publication or Harness migration. Harness should consume a
-published version and validate its credential-store and approval integration
-before removing its local transport.
+The first command tests the official server in-process in JSON and SSE modes.
+The second builds and packs Core and SDK with Bun, installs the candidate tarballs
+in a temporary consumer, and runs both public entrypoints under Node and Bun
+against an actual loopback HTTPS server. TLS certificate verification stays enabled
+using a temporary private test CA. The fixture checks:
+
+- tools, resources, resource templates, text/binary contents and prompts;
+- public-client authorization code, server-verified S256 PKCE, single-use callbacks,
+  exact issuer/resource/client binding and rotating singleflight refresh;
+- agent approval interrupt/resume before a remote effect;
+- expired MCP sessions, rejected credentials and explicit reinitialization;
+- cancellation and a lost tool response with `INDETERMINATE`, without replay.
+
+CI runs the installed certification on Node 22.12 and 24 and Bun 1.4.2. Local
+execution uses the runtimes on PATH. These fixtures need no model API keys or
+external accounts and exercise real sockets, not an injected fetch implementation.
+
+This certifies the bounded client contract, not an arbitrary deployed identity
+provider, deployment-specific DNS policy, npm publication, or Harness migration.
+Hosts still own network isolation, credential storage, browser consent and remote
+effect reconciliation. Harness should consume a published version and validate
+its credential-store and approval integration before removing its local transport.
+
+## Compatibility boundary
+
+Stable applies to the pinned MCP 2025-11-25 subset documented above. It does not
+promise complete JSON Schema validation or every MCP extension. The tools adapter
+supports the documented primitive/object/array constraints and enum/const JSON
+values; unsupported schema constructs retain the existing permissive fallback.
+Servers must validate arguments themselves. Local schema validation does not grant
+approval. Resources and prompts remain explicitly requested untrusted data.
+
+Protocol upgrades and additional capabilities require their own tests and release
+notes. Existing error codes, no-replay behavior, approval defaults, host-owned
+credentials, and local-only `close()` semantics are compatibility commitments.

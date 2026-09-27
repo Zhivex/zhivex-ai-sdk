@@ -66,6 +66,9 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Certify installed Stable MCP HTTP and OAuth
+        run: bun run scripts/mcp-package-smoke.ts
+
       - name: Verify packed packages with Node
         run: bun run scripts/package-consumer-smoke.ts
 

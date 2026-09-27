@@ -30,6 +30,7 @@ bun run typecheck
 bun run test
 bun run build
 bun run smoke:packages
+bun run smoke:packages:mcp
 ```
 
 Run provider smoke before meaningful stable or prerelease publishes:
