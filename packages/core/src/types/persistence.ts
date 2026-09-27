@@ -93,6 +93,11 @@ export interface AgentRunClaimResult {
 }
 
 export interface AgentRunStore {
+  /** Actual durable checkpoint size, excluding separately persisted history.
+   * Implementations must atomically persist that history with save(). */
+  checkpointBytes?(state: AgentRunState): number;
+  /** Paged access without hydrating the entire run. */
+  loadHistory?(runId: string, options: { field: "steps" | "toolResults" | "compactions"; offset?: number; limit?: number }, scope?: AgentStoreScope): Promise<unknown[]> | unknown[];
   /** Lease ownership is checked atomically with reconciliation writes. */
   reconciliationFencing?: boolean;
   load(runId: string, scope?: AgentStoreScope): Promise<AgentRunState | undefined> | AgentRunState | undefined;
@@ -167,6 +172,9 @@ export interface SqliteDatabaseLike {
 }
 
 export interface SqliteAgentRunStoreOptions {
+  /** Store history incrementally with deduplicated large text artifacts.
+   * load() still returns a complete state; checkpointBytes measures the active checkpoint. */
+  history?: "incremental";
   db: SqliteDatabaseLike;
   tableName?: string;
   scope?: AgentStoreScope;

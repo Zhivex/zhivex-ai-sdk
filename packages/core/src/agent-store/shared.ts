@@ -91,7 +91,7 @@ const decodeCursor = (cursor: string | undefined): readonly [number, string] | u
   }
 };
 
-export const listStates = (states: Iterable<AgentRunState>, options: AgentRunListOptions = {}): AgentRunPage => {
+export const listStates = (states: Iterable<AgentRunState>, options: AgentRunListOptions = {}, hydrate: (state: AgentRunState) => AgentRunState = cloneState): AgentRunPage => {
   const limit = normalizeLimit(options.limit);
   const cursor = decodeCursor(options.cursor);
   const filtered = [...states]
@@ -104,7 +104,7 @@ export const listStates = (states: Iterable<AgentRunState>, options: AgentRunLis
     .filter((state) => !cursor || (state.updatedAt ?? state.startedAt ?? 0) < cursor[0] || ((state.updatedAt ?? state.startedAt ?? 0) === cursor[0] && state.runId < cursor[1]));
   const page = filtered.slice(0, limit);
   return {
-    items: page.map(cloneState),
+    items: page.map(hydrate),
     ...(filtered.length > limit && page.at(-1) ? { nextCursor: encodeCursor(page.at(-1)!) } : {})
   };
 };

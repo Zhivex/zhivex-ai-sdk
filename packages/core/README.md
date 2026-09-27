@@ -130,3 +130,13 @@ Object generation forwards the same tool approval policies, tool choice, context
 Text, object, and agent streams accept `streamBuffer: { maxHistory, maxSubscriberQueue, replayOverflow }`. Defaults retain 4,096 replay events and queue up to 256 events per active subscriber, with `replayOverflow: "error"`. Full replay can therefore reach its limit even with an active reader. For long responses, explicitly select `replayOverflow: "drop-oldest"`: active subscribers keep ordered delivery with backpressure, while readers starting later receive only the retained tail. `collect()` still returns the complete generated result. Retention limits count events, not tokens or bytes.
 
 `textStream` exposes text only. Always await `collect()` after consuming it to detect provider failures; a normally ended text iterator alone does not establish success. `eventStream` exposes error events.
+
+### Incremental SQLite agent history
+
+`createSqliteAgentRunStore({ db, history: "incremental" })` keeps the active checkpoint separate from `steps`, `toolResults`, and `compactions`. History is stored in scoped per-run rows in the same CAS transaction. Repeated text larger than 16,384 characters is stored once per run in SHA-256-addressed artifact rows. Unchanged historical rows are not rewritten. Deleting a run removes its history and artifacts.
+
+`policy.maxStateBytes` limits the active checkpoint for this store. It still includes messages, pending approvals, metadata, usage and control state; model context compaction remains necessary. Other stores retain the full-state limit. The SQLite database and hydrated in-memory state can grow with history: this option bounds checkpoints, not total RAM or disk usage. Applications should retain their run-retention policy.
+
+`load()`, list and resume keep returning complete states for compatibility. For bounded inspection use `store.loadHistory(runId, { field: "toolResults", offset: 0, limit: 50 }, scope)` (maximum page size: 1,000). Existing inline rows are migrated on the next save. Read incremental rows with this option enabled; older SDKs cannot read that storage format. Export hydrated states for portable backups rather than copying checkpoint JSON without its history tables.
+
+On a state-size failure the runtime can persist a terminal diagnostic on the last durable checkpoint with at most 4 KiB of emergency overhead. The last unsaved payload is not presented as durable. Tool journal receipts remain available for reconciliation; the recovery path never re-executes a tool.

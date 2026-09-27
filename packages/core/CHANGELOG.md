@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.26.0
+
+### Minor Changes
+
+- Add opt-in incremental SQLite run history, deduplicated large text artifacts and paginated history reads. Measure the active durable checkpoint separately from archived history while preserving hydrated state contracts. Persist a bounded terminal update on state-size failures so interrupted runs do not remain running.
+
 ## 1.25.0
 
 ### Minor Changes

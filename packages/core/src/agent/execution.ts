@@ -100,6 +100,7 @@ import {
 import {
   claimAgentExecution,
   finalizeState,
+  persistFailureState,
   persistState
 } from "./state.js";
 import {
@@ -987,7 +988,7 @@ export const runAgent = async <
 
     const durableState = await loadFailureState(context.state, agent.store);
     const failedState = createFailedState(durableState, error);
-    try { await persistState(agent, failedState, policy); } catch { /* preserve primary error */ }
+    try { await persistFailureState(agent, failedState, policy); } catch { /* preserve primary error */ }
     await emitRunFinishTelemetry(agent, failedState);
     executionEnvironmentStatus = failedState.status;
     throw error;
@@ -1416,7 +1417,7 @@ export const streamAgent = <
 
         const durableState = await loadFailureState(context.state, agent.store);
         const failedState = createFailedState(durableState, error);
-        try { await persistState(agent, failedState, policy); } catch { /* preserve primary error */ }
+        try { await persistFailureState(agent, failedState, policy); } catch { /* preserve primary error */ }
         await emitRunFinishTelemetry(agent, failedState);
         await publish({
           type: "error",

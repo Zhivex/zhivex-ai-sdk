@@ -1,3 +1,4 @@
+import { historyCheckpoint, sqliteHistory } from "./sqlite-history.js";
 import { normalizeAgentRunState } from "../agent-state.js";
 import { ConflictError, ValidationError } from "../errors.js";
 import type {
@@ -55,6 +56,7 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
   const parentTableName = `${tableName}_parents`;
   const leaseTableName = `${tableName}_leases`;
   const journalTableName = `${tableName}_tool_journal`;
+  const history = options.history === "incremental" ? sqliteHistory(options.db, tableName) : undefined;
   const dbKey = (value: string, scope?: AgentStoreScope) => scopedKey(resolveScope(options.scope, scope), value);
   initializeSqliteTable(
     options.db,
@@ -151,29 +153,69 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
   const insertJournalStatement = prepareSqliteStatement(options.db, `INSERT INTO ${journalTableName} (run_key, tool_call_id, entry_json, revision, updated_at_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_key, tool_call_id) DO NOTHING`);
   const saveJournalStatement = prepareSqliteStatement(options.db, `INSERT INTO ${journalTableName} (run_key, tool_call_id, entry_json, revision, updated_at_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_key, tool_call_id) DO UPDATE SET entry_json = excluded.entry_json, revision = excluded.revision, updated_at_ms = excluded.updated_at_ms`);
 
+  const deserialize = (json: string): AgentRunState => {
+    const state = JSON.parse(json) as ReturnType<typeof historyCheckpoint>;
+    if (state.checkpointHistory && !history) throw new ValidationError("This run requires incremental history storage.");
+    return normalizeAgentRunState(history ? history.hydrate(dbKey(state.runId, state.scope), state) : state);
+  };
+  const serialize = (state: AgentRunState) => JSON.stringify(history ? history.save(dbKey(state.runId, state.scope), state) : state);
+  // A checkpoint and its history must be read from the same WAL snapshot,
+  // including when another process commits a new revision during hydration.
+  const readSnapshot = <T>(read: () => T): T => {
+    if (!history) return read();
+    options.db.exec("SAVEPOINT zhivex_history_read");
+    try {
+      const result = read();
+      options.db.exec("RELEASE zhivex_history_read");
+      return result;
+    } catch (error) {
+      options.db.exec("ROLLBACK TO zhivex_history_read");
+      options.db.exec("RELEASE zhivex_history_read");
+      throw error;
+    }
+  };
+
   return {
+    ...(history ? {
+      checkpointBytes: (state: AgentRunState) => new TextEncoder().encode(JSON.stringify(historyCheckpoint(state))).byteLength,
+      loadHistory: (runId: string, page: { field: "steps" | "toolResults" | "compactions"; offset?: number; limit?: number }, scope?: AgentStoreScope) =>
+        readSnapshot(() => {
+          const key = dbKey(runId, scope);
+          const values = history.page(key, page.field, page.offset ?? 0, page.limit ?? 50).map(row => row.value);
+          const row = loadStatement.get([key]);
+          const json = getRecordField(row, ["state_json", "stateJson"]);
+          if (typeof json !== "string") return [];
+          const checkpoint = JSON.parse(json) as ReturnType<typeof historyCheckpoint>;
+          return checkpoint.checkpointHistory ? values : (normalizeAgentRunState(checkpoint)[page.field] ?? []).slice(page.offset ?? 0, (page.offset ?? 0) + (page.limit ?? 50));
+        })
+    } : {}),
     load(runId, scope) {
-      const row = loadStatement.get([dbKey(runId, scope)]);
-      const stateJson = getRecordField(row, ["state_json", "stateJson"]);
-      return typeof stateJson === "string" ? normalizeAgentRunState(JSON.parse(stateJson) as AgentRunState) : undefined;
+      return readSnapshot(() => {
+        const row = loadStatement.get([dbKey(runId, scope)]);
+        const stateJson = getRecordField(row, ["state_json", "stateJson"]);
+        return typeof stateJson === "string" ? deserialize(stateJson) : undefined;
+      });
     },
     findByIdempotencyKey(idempotencyKey, scope) {
-      const row = findIdempotencyStatement.get([dbKey(idempotencyKey, scope)]);
-      const stateJson = getRecordField(row, ["state_json", "stateJson"]);
-      return typeof stateJson === "string" ? normalizeAgentRunState(JSON.parse(stateJson) as AgentRunState) : undefined;
+      return readSnapshot(() => {
+        const row = findIdempotencyStatement.get([dbKey(idempotencyKey, scope)]);
+        const stateJson = getRecordField(row, ["state_json", "stateJson"]);
+        return typeof stateJson === "string" ? deserialize(stateJson) : undefined;
+      });
     },
     findByParentRunId(parentRunId, scope) {
-      const rows = findParentStatement.all?.([dbKey(parentRunId, scope)]);
-      if (Array.isArray(rows)) {
-        return rows.flatMap((row) => {
-          const stateJson = getRecordField(row, ["state_json", "stateJson"]);
-          return typeof stateJson === "string" ? [normalizeAgentRunState(JSON.parse(stateJson) as AgentRunState)] : [];
-        });
-      }
-
-      const row = findParentStatement.get([dbKey(parentRunId, scope)]);
-      const stateJson = getRecordField(row, ["state_json", "stateJson"]);
-      return typeof stateJson === "string" ? [normalizeAgentRunState(JSON.parse(stateJson) as AgentRunState)] : [];
+      return readSnapshot(() => {
+        const rows = findParentStatement.all?.([dbKey(parentRunId, scope)]);
+        if (Array.isArray(rows)) {
+          return rows.flatMap((row) => {
+            const stateJson = getRecordField(row, ["state_json", "stateJson"]);
+            return typeof stateJson === "string" ? [deserialize(stateJson)] : [];
+          });
+        }
+        const row = findParentStatement.get([dbKey(parentRunId, scope)]);
+        const stateJson = getRecordField(row, ["state_json", "stateJson"]);
+        return typeof stateJson === "string" ? [deserialize(stateJson)] : [];
+      });
     },
     claimIdempotencyKey(state) {
       options.db.exec("BEGIN IMMEDIATE");
@@ -183,12 +225,12 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
         const existingJson = getRecordField(existingRow, ["state_json", "stateJson"]);
         if (typeof existingJson === "string") {
           options.db.exec("COMMIT");
-          return { claimed: false, state: normalizeAgentRunState(JSON.parse(existingJson) as AgentRunState) };
+          return { claimed: false, state: deserialize(existingJson) };
         }
 
         const normalized = normalizeAgentRunState({ ...state, ...(scope ? { scope } : {}) });
         const updatedAt = Date.now();
-        saveStatement.run([dbKey(normalized.runId, scope), JSON.stringify(normalized), updatedAt]);
+        saveStatement.run([dbKey(normalized.runId, scope), serialize(normalized), updatedAt]);
         saveIdempotencyStatement.run([dbKey(state.idempotencyKey, scope), dbKey(normalized.runId, scope), updatedAt]);
         if (normalized.parentRunId) {
           saveParentStatement.run([dbKey(normalized.runId, scope), dbKey(normalized.parentRunId, scope), updatedAt]);
@@ -207,7 +249,7 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
         const currentRow = loadStatement.get([dbKey(state.runId, scope)]);
         const currentJson = getRecordField(currentRow, ["state_json", "stateJson"]);
         const current = typeof currentJson === "string"
-          ? normalizeAgentRunState(JSON.parse(currentJson) as AgentRunState)
+          ? JSON.parse(currentJson) as AgentRunState
           : undefined;
         assertExpectedRevision(current, saveOptions?.expectedRevision);
 
@@ -216,7 +258,7 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
           const ownerRow = findIdempotencyStatement.get([dbKey(normalized.idempotencyKey, scope)]);
           const ownerJson = getRecordField(ownerRow, ["state_json", "stateJson"]);
           const owner = typeof ownerJson === "string"
-            ? normalizeAgentRunState(JSON.parse(ownerJson) as AgentRunState)
+            ? JSON.parse(ownerJson) as AgentRunState
             : undefined;
           if (owner && owner.runId !== normalized.runId) {
             throw new ConflictError("AgentRunState idempotency key conflict.");
@@ -225,7 +267,7 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
 
         const updatedAt = Date.now();
         const stored = { ...normalized, ...(scope ? { scope } : {}) };
-        saveStatement.run([dbKey(normalized.runId, scope), JSON.stringify(stored), updatedAt]);
+        saveStatement.run([dbKey(normalized.runId, scope), serialize(stored), updatedAt]);
         if (normalized.idempotencyKey) {
           saveIdempotencyStatement.run([dbKey(normalized.idempotencyKey, scope), dbKey(normalized.runId, scope), updatedAt]);
         }
@@ -248,6 +290,7 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
         deleteParentStatement.run([key]);
         deleteRunLeaseStatement.run([key]);
         deleteRunJournalStatement.run([key]);
+        history?.delete(key);
         options.db.exec("COMMIT");
       } catch (error) {
         options.db.exec("ROLLBACK");
@@ -255,15 +298,17 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
       }
     },
     list(listOptions, scope) {
-      const rows = listStatement.all?.([]) ?? [];
-      const prefix = scopePrefix(resolveScope(options.scope, scope));
-      const states = rows.flatMap((row) => {
-        const value = getRecordField(row, ["state_json", "stateJson"]);
-        if (typeof value !== "string") return [];
-        const state = normalizeAgentRunState(JSON.parse(value) as AgentRunState);
-        return scopedKey(state.scope, state.runId).startsWith(prefix) ? [state] : [];
+      return readSnapshot(() => {
+        const rows = listStatement.all?.([]) ?? [];
+        const prefix = scopePrefix(resolveScope(options.scope, scope));
+        const states = rows.flatMap((row) => {
+          const value = getRecordField(row, ["state_json", "stateJson"]);
+          if (typeof value !== "string") return [];
+          const state = JSON.parse(value) as AgentRunState;
+          return scopedKey(state.scope, state.runId).startsWith(prefix) ? [state] : [];
+        });
+        return listStates(states, listOptions, state => deserialize(JSON.stringify(state)));
       });
-      return listStates(states, listOptions);
     },
     deleteExpired(retention, scope) {
       const page = this.list?.({ statuses: retention.statuses, updatedBefore: retention.before, limit: retention.limit ?? 1_000 }, scope) as AgentRunPage;
