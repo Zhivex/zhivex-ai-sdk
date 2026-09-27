@@ -14,14 +14,10 @@ import {
   GuardrailTriggeredError,
   ProviderHTTPError,
   ValidationError,
-  createAgent,
-  calculateModelCost,
   createStructuredOutputPrompt,
   createTextMessage,
   generateObject,
   generateText,
-  runAgent,
-  streamAgent,
   streamObject,
   streamText,
   type AgentRunOutput,
@@ -38,7 +34,9 @@ import {
   type StreamObjectResult,
   type StreamTextResult,
   type TokenUsage
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/generation";
+import { createAgent, runAgent, streamAgent } from "@zhivex-ai/core/agents";
+import { calculateModelCost } from "@zhivex-ai/core/catalog";
 import type { ZodTypeAny } from "zod";
 import { GatewayCircuitOpenError } from "./circuit-breaker.js";
 import { scoreAdaptiveTarget, validateAdaptivePolicy } from "./adaptive-routing.js";

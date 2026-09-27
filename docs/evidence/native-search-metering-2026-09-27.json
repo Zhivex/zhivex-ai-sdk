@@ -1,0 +1,68 @@
+{
+  "recordedAt": "2026-09-27T14:47:57.130803+00:00",
+  "scope": "SDK hosted search metering and limit evidence; local uncommitted source, not a release",
+  "baseCommit": "a51058e75477f2d1d2982d62bd1e3d30d1e46db0",
+  "implemented": [
+    "Core/SDK HostedToolUsage and HostedToolSupport types; per-route ModelCapabilities.hostedTools",
+    "Qwen generate/stream preserves valid usage.x_tools.web_search.count including zero; missing or invalid counts remain unknown",
+    "Identical terminal snapshots deduplicated; per-invocation identity and optional response identity retained",
+    "Gemini GenerateContent counts exact unique nonempty query strings for Gemini 3; older models use grounded-prompt evidence; unknown/partial states preserved",
+    "Raw queries removed from public grounding snapshots; normalized metering never contains queries",
+    "Core UI message and stream adapters filter internal metering",
+    "Qwen and Gemini max_tool_calls rejected because effective enforcement is unverified; Qwen separate Anthropic route is not inherited"
+  ],
+  "validation": {
+    "testsPassed": 2972,
+    "testsSkipped": 4,
+    "testFilesPassed": 216,
+    "command": "bun run test --maxWorkers=2",
+    "typecheck": "passed",
+    "build": "passed",
+    "docs": "passed",
+    "changeset": "core/sdk minor; qwen/gemini patch",
+    "installedConsumerRuntime": "passed scripts/fixtures/search-sources-consumer.mjs",
+    "installedSDKTypes": "passed HostedToolUsage/HostedToolSupport consumer"
+  },
+  "artifacts": [
+    {
+      "file": "zhivex-ai-core-1.26.0.tgz",
+      "sha256": "a1fc421f46175848c8528ded84c7ecd14677719db4a33de565410941420b7db9",
+      "source": "local pack with unchanged manifest version; not npm release"
+    },
+    {
+      "file": "zhivex-ai-gemini-0.12.3.tgz",
+      "sha256": "b05b823f1f33f891554791d21a00fc936fe96139ae44154dfcb4d0e41ddb1da4",
+      "source": "local pack with unchanged manifest version; not npm release"
+    },
+    {
+      "file": "zhivex-ai-qwen-0.16.2.tgz",
+      "sha256": "affa12059ac215456be386030a97c85d1a20d9adad161afa24ad868a1540ccd7",
+      "source": "local pack with unchanged manifest version; not npm release"
+    },
+    {
+      "file": "zhivex-ai-sdk-1.27.2.tgz",
+      "sha256": "d751f632dd4af8f59844e125df0ba48b5de7dae4bef86d53f45e8396fea0abb2",
+      "source": "local pack with unchanged manifest version; not npm release"
+    }
+  ],
+  "live": {
+    "newCalls": 0,
+    "limitations": [
+      "Counter and unit behavior verified with synthetic fixtures, not provider billing reports.",
+      "Gemini authentication failure from prior smoke has not been retested.",
+      "Effective search-call limits are unverified for Qwen Responses, Gemini GenerateContent and Gemini Interactions.",
+      "Normalized Interactions metering remains unverified; native provider-data must stay server-side."
+    ]
+  },
+  "consumerResponsibilities": [
+    "Do not add cumulative snapshots; replace by attemptId/provider/route/tool and reconcile using responseId.",
+    "Missing records, cancellation, partial/unknown state do not imply zero cost.",
+    "Use maxRetries=0 for budgeted SDK invocations; reserve and track each external retry/continuation separately.",
+    "Gateway/Chat owns host/region/model rates, quotas, credits and decisions to disable unbounded production routes."
+  ],
+  "delivery": {
+    "committed": false,
+    "pushed": false,
+    "published": false
+  }
+}

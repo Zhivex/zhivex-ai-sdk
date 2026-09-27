@@ -1,5 +1,24 @@
 # @zhivex-ai/gemini
 
+## 0.13.0
+
+### Minor Changes
+
+- Expose existing Google hosted-tool helpers from Gemini and Vertex through a focused Core compatibility bridge. Existing Core and SDK imports preserve their function identities and wire formats.
+
+### Patch Changes
+
+- Allow bounded Qwen Responses hosted search on documented model families, validate output limits, and report incomplete responses as length-limited. Preserve public URL citations across Responses streaming events and terminal snapshots without duplicate citations or replaying citation metadata as API input.
+  
+  Preserve Google Search grounding metadata, citation indices, queries and attribution in Gemini GenerateContent streaming through bounded, deduplicated provider-data snapshots. Document the distinct Interactions contract.
+  
+  Expose typed internal hosted-tool metering snapshots and per-route limit evidence. Preserve Qwen search counters, derive Gemini search units without emitting query text in public grounding snapshots, and reject unverified max_tool_calls limits. No prices or credit accounting are added.
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+- Updated dependencies
+  - @zhivex-ai/core@1.27.0
+
 ## 0.12.3
 
 ### Patch Changes

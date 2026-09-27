@@ -34,7 +34,7 @@ export {
   runModelEvaluation,
   runWorkflowEvaluation,
   runWorkflowEvaluationFixture
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/evals";
 
 export type {
   AgentEvaluationCase,
@@ -92,4 +92,4 @@ export type {
   WorkflowEvaluationJudge,
   WorkflowEvaluationReport,
   WorkflowEvaluationResult
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/evals";

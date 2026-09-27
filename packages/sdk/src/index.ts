@@ -864,8 +864,11 @@ export type { AgentRunView, AgentRunUpdateEvent } from "@zhivex-ai/core";
 export { imageInputToDataUrl } from "@zhivex-ai/core";
 
 export { createChatCompletionsModel } from "@zhivex-ai/core";
+export { streamChatCompletions } from "@zhivex-ai/core";
 export type { ChatCompletionsTransportOptions } from "@zhivex-ai/core";
 export type { DocumentExtractionInput, DocumentExtractionPage, DocumentExtractionResult, TextCompletionInput } from "@zhivex-ai/core";
 
 export { createAgentBudgetCoordinator } from "@zhivex-ai/core";
 export type { AgentBudgetCoordinator, AgentBudgetCoordinatorOptions, AgentTokenReservation } from "@zhivex-ai/core";
+
+export type { HostedToolUsage, HostedToolSupport } from "@zhivex-ai/core";

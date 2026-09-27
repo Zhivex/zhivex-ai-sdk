@@ -32,6 +32,7 @@ import {
   isHostedToolDefinition,
   normalizeFinishReason,
   streamSSE,
+  streamChatCompletions,
   toToolSet,
   toolResultPayload,
   withRetry,
@@ -1218,24 +1219,71 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly resolveURL: (modelId: string, path: AzurePath) => string
   ) {
     this.capabilities = modelCapabilities(modelId);
   }
 
   async generate(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
-
     try {
+      if (useAzureResponses(this.modelId, input)) {
+        assertResponsesToolsSupported(this.modelId, input.tools);
+        const previousResponse = getProviderResponseId(input.messages);
+        const messages =
+          previousResponse && previousResponse.index < input.messages.length - 1
+            ? input.messages.slice(previousResponse.index + 1)
+            : input.messages;
+        const response = await withRetry(
+          () =>
+            this.fetcher(this.resolveURL(this.modelId, "responses"), {
+              method: "POST",
+              headers: jsonHeaders(this.apiKey),
+              signal,
+              body: JSON.stringify({
+                ...azureResponsesBodyOptions(input),
+                model: this.baseURL.endsWith("/openai/v1") ? this.modelId : undefined,
+                ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
+                ...(messages.length ? { input: toResponsesInput(messages) } : {}),
+                tools: mapResponsesTools(input.tools),
+                tool_choice: typeof input.toolChoice === "object" ? { type: "function", name: input.toolChoice.toolName } : mapToolChoice(input.toolChoice),
+                text: mapResponsesStructuredOutput(input),
+                temperature: input.temperature,
+                max_output_tokens: input.maxTokens,
+                ...mapAzureResponsesReasoning(input)
+              })
+            }),
+          { ...input, abortSignal: signal }
+        );
+
+        const json = await parseJson(response);
+        const assistantMessage = parseResponsesAssistantMessage(json);
+        const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
+
+        return {
+          messages: [assistantMessage],
+          text: assistantMessage.parts.filter((part) => part.type === "text").map((part) => part.text).join(""),
+          finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls),
+          providerFinishReason: json.status,
+          usage: {
+            inputTokens: json.usage?.input_tokens,
+            outputTokens: json.usage?.output_tokens,
+            totalTokens: json.usage?.total_tokens
+          },
+          rawResponse: json
+        };
+      }
+
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/chat/completions`, {
+          this.fetcher(this.resolveURL(this.modelId, "chat/completions"), {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
-              ...input.providerOptions,
-              model: this.modelId,
+              ...azureBodyOptions(input),
+              model: this.baseURL.endsWith("/openai/v1") ? this.modelId : undefined,
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
               tool_choice: mapToolChoice(input.toolChoice),
@@ -1245,9 +1293,9 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
               ...mapReasoning(input),
               stream: false
             })
-	                    }),
-	                    input
-	                  );
+          }),
+        { ...input, abortSignal: signal }
+      );
 
       const json = await parseJson(response);
       const choice = json.choices?.[0];
@@ -1256,10 +1304,7 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
 
       return {
         messages: [assistantMessage],
-        text: assistantMessage.parts
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join(""),
+        text: assistantMessage.parts.filter((part) => part.type === "text").map((part) => part.text).join(""),
         finishReason: normalizeFinishReason(choice?.finish_reason),
         providerFinishReason: choice?.finish_reason,
         usage: {
@@ -1276,84 +1321,75 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
 
   async stream(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
-    const response = await withRetry(
-      () =>
-        this.fetcher(`${this.baseURL}/chat/completions`, {
-          method: "POST",
-          headers: jsonHeaders(this.apiKey),
-          signal,
-          body: JSON.stringify({
-            ...input.providerOptions,
-            model: this.modelId,
-            messages: mapMessages(input.messages),
-            tools: mapTools(input.tools),
-            tool_choice: mapToolChoice(input.toolChoice),
-            response_format: mapStructuredOutput(input),
-            temperature: input.temperature,
-            ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-            ...mapReasoning(input),
-            stream: true,
-            stream_options: { include_usage: true }
-          })
-        }),
-      input
-    );
+    try {
+      if (useAzureResponses(this.modelId, input)) {
+        assertResponsesToolsSupported(this.modelId, input.tools);
+        const response = await withRetry(
+          () =>
+            this.fetcher(this.resolveURL(this.modelId, "responses"), {
+              method: "POST",
+              headers: jsonHeaders(this.apiKey),
+              signal,
+              body: JSON.stringify({
+                ...azureResponsesBodyOptions(input),
+                model: this.baseURL.endsWith("/openai/v1") ? this.modelId : undefined,
+                input: toResponsesInput(input.messages),
+                tools: mapResponsesTools(input.tools),
+                tool_choice: typeof input.toolChoice === "object" ? { type: "function", name: input.toolChoice.toolName } : mapToolChoice(input.toolChoice),
+                text: mapResponsesStructuredOutput(input),
+                temperature: input.temperature,
+                max_output_tokens: input.maxTokens,
+                ...mapAzureResponsesReasoning(input),
+                stream: true
+              })
+            }),
+          { ...input, abortSignal: signal }
+        );
 
-    return (async function* () {
-      try {
-        const toolBuffers = new Map<string, { name: string; args: string }>();
-
-        for await (const event of streamSSE(response)) {
-          if (event.data === "[DONE]") {
-            return;
+        return (async function* () {
+          try {
+            yield* streamResponses(response);
+          } finally {
+            await response.body?.cancel().catch(() => {});
+            cleanup();
           }
-
-          const json = JSON.parse(event.data);
-          const choice = json.choices?.[0];
-          const delta = choice?.delta;
-
-          if (delta?.content) {
-            yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;
-          }
-
-          for (const toolCall of delta?.tool_calls ?? []) {
-            const id = toolCall.id ?? `${toolCall.index}`;
-            const existing = toolBuffers.get(id) ?? { name: "", args: "" };
-            existing.name ||= toolCall.function?.name ?? "";
-            existing.args += toolCall.function?.arguments ?? "";
-            toolBuffers.set(id, existing);
-
-            if (choice?.finish_reason === "tool_calls") {
-              yield {
-                type: "tool-call",
-                toolCall: {
-                  id,
-                  name: existing.name,
-                  input: JSON.parse(existing.args || "{}")
-                }
-              } satisfies StreamEvent;
-            }
-          }
-
-          if (choice?.finish_reason) {
-            yield {
-              type: "finish",
-              finishReason: normalizeFinishReason(choice.finish_reason),
-              providerFinishReason: choice.finish_reason,
-              usage: json.usage
-                ? {
-                    inputTokens: json.usage.prompt_tokens,
-                    outputTokens: json.usage.completion_tokens,
-                    totalTokens: json.usage.total_tokens
-                  }
-                : undefined
-            } satisfies StreamEvent;
-          }
-        }
-      } finally {
-        cleanup();
+        })();
       }
-    })();
+
+      const response = await withRetry(
+        () =>
+          this.fetcher(this.resolveURL(this.modelId, "chat/completions"), {
+            method: "POST",
+            headers: jsonHeaders(this.apiKey),
+            signal,
+            body: JSON.stringify({
+              ...azureBodyOptions(input),
+              model: this.baseURL.endsWith("/openai/v1") ? this.modelId : undefined,
+              messages: mapMessages(input.messages),
+              tools: mapTools(input.tools),
+              tool_choice: mapToolChoice(input.toolChoice),
+              response_format: mapStructuredOutput(input),
+              temperature: input.temperature,
+              ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
+              ...mapReasoning(input),
+              stream: true,
+              stream_options: { include_usage: true }
+            })
+          }),
+        { ...input, abortSignal: signal }
+      );
+
+      return (async function* () {
+        try {
+          yield* streamChatCompletions(response, "azure-openai");
+        } finally {
+          cleanup();
+        }
+      })();
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
   }
 }
 
@@ -1365,11 +1401,11 @@ class AzureOpenAIEmbeddingModel implements EmbeddingModel {
     readonly modelId: string,
     private readonly apiKey: string,
     private readonly baseURL: string,
-    private readonly fetcher: typeof globalThis.fetch
+    private readonly fetcher: typeof globalThis.fetch,
+    private readonly resolveURL: (modelId: string, path: AzurePath) => string
   ) {}
 
   async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const values = input.values.map((value) => {
       if (typeof value !== "string") {
         throw new UnsupportedFeatureError('Provider "azure-openai" does not support multimodal embedding values.');
@@ -1377,19 +1413,20 @@ class AzureOpenAIEmbeddingModel implements EmbeddingModel {
       return value;
     });
 
+    const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.baseURL}/embeddings`, {
+          this.fetcher(this.resolveURL(this.modelId, "embeddings"), {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
             body: JSON.stringify({
-              model: this.modelId,
+              model: this.baseURL.endsWith("/openai/v1") ? this.modelId : undefined,
               input: values
             })
           }),
-        input
+        { ...input, abortSignal: signal }
       );
 
       const json = await parseJson(response);
@@ -1842,257 +1879,9 @@ export const createAzureOpenAI = (
   return createProviderAdapter({
     name: "azure-openai",
     languageModel: (modelId) =>
-      new (class extends AzureOpenAILanguageModel {
-        async generate(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<GenerateResult> {
-          const { signal, cleanup } = withTimeoutSignal(input);
-          try {
-            if (useAzureResponses(modelId, input)) {
-              assertResponsesToolsSupported(modelId, input.tools);
-              const previousResponse = getProviderResponseId(input.messages);
-              const messages =
-                previousResponse && previousResponse.index < input.messages.length - 1
-                  ? input.messages.slice(previousResponse.index + 1)
-                  : input.messages;
-              const response = await withRetry(
-                () =>
-                  fetcher(resolveURL(modelId, "responses"), {
-                    method: "POST",
-                    headers: jsonHeaders(apiKey),
-                    signal,
-                    body: JSON.stringify({
-                      ...azureResponsesBodyOptions(input),
-                      model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
-                      ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-                      ...(messages.length ? { input: toResponsesInput(messages) } : {}),
-                      tools: mapResponsesTools(input.tools),
-                      tool_choice: typeof input.toolChoice === "object" ? { type: "function", name: input.toolChoice.toolName } : mapToolChoice(input.toolChoice),
-                      text: mapResponsesStructuredOutput(input),
-                      temperature: input.temperature,
-                      max_output_tokens: input.maxTokens,
-                      ...mapAzureResponsesReasoning(input)
-                    })
-                  }),
-                input
-              );
-
-              const json = await parseJson(response);
-              const assistantMessage = parseResponsesAssistantMessage(json);
-              const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
-
-              return {
-                messages: [assistantMessage],
-                text: assistantMessage.parts.filter((part) => part.type === "text").map((part) => part.text).join(""),
-                finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls),
-                providerFinishReason: json.status,
-                usage: {
-                  inputTokens: json.usage?.input_tokens,
-                  outputTokens: json.usage?.output_tokens,
-                  totalTokens: json.usage?.total_tokens
-                },
-                rawResponse: json
-              };
-            }
-
-            const response = await withRetry(
-              () =>
-                fetcher(resolveURL(modelId, "chat/completions"), {
-                  method: "POST",
-                  headers: jsonHeaders(apiKey),
-                  signal,
-                  body: JSON.stringify({
-                    ...azureBodyOptions(input),
-                    model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
-                    messages: mapMessages(input.messages),
-                    tools: mapTools(input.tools),
-                    tool_choice: mapToolChoice(input.toolChoice),
-                    response_format: mapStructuredOutput(input),
-                    temperature: input.temperature,
-                    ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-                    ...mapReasoning(input),
-                    stream: false
-                  })
-                }),
-              input
-            );
-
-            const json = await parseJson(response);
-            const choice = json.choices?.[0];
-            const message = choice?.message ?? {};
-            const assistantMessage = parseAssistantMessage(message);
-
-            return {
-              messages: [assistantMessage],
-              text: assistantMessage.parts.filter((part) => part.type === "text").map((part) => part.text).join(""),
-              finishReason: normalizeFinishReason(choice?.finish_reason),
-              providerFinishReason: choice?.finish_reason,
-              usage: {
-                inputTokens: json.usage?.prompt_tokens,
-                outputTokens: json.usage?.completion_tokens,
-                totalTokens: json.usage?.total_tokens
-              },
-              rawResponse: json
-            };
-          } finally {
-            cleanup();
-          }
-        }
-
-        async stream(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
-          if (useAzureResponses(modelId, input)) {
-            assertResponsesToolsSupported(modelId, input.tools);
-            const { signal, cleanup } = withTimeoutSignal(input);
-            const response = await withRetry(
-              () =>
-                fetcher(resolveURL(modelId, "responses"), {
-                  method: "POST",
-                  headers: jsonHeaders(apiKey),
-                  signal,
-                  body: JSON.stringify({
-                    ...azureResponsesBodyOptions(input),
-                    model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
-                    input: toResponsesInput(input.messages),
-                    tools: mapResponsesTools(input.tools),
-                    tool_choice: typeof input.toolChoice === "object" ? { type: "function", name: input.toolChoice.toolName } : mapToolChoice(input.toolChoice),
-                    text: mapResponsesStructuredOutput(input),
-                    temperature: input.temperature,
-                    max_output_tokens: input.maxTokens,
-                    ...mapAzureResponsesReasoning(input),
-                    stream: true
-                  })
-                }),
-              input
-            );
-
-            return (async function* () {
-              try {
-                yield* streamResponses(response);
-              } finally {
-                cleanup();
-              }
-            })();
-          }
-
-          const { signal, cleanup } = withTimeoutSignal(input);
-          const response = await withRetry(
-            () =>
-              fetcher(resolveURL(modelId, "chat/completions"), {
-                method: "POST",
-                headers: jsonHeaders(apiKey),
-                signal,
-                body: JSON.stringify({
-                  ...azureBodyOptions(input),
-                  model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
-                  messages: mapMessages(input.messages),
-                  tools: mapTools(input.tools),
-                  tool_choice: mapToolChoice(input.toolChoice),
-                  response_format: mapStructuredOutput(input),
-                  temperature: input.temperature,
-                  ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-                  ...mapReasoning(input),
-                  stream: true,
-                  stream_options: { include_usage: true }
-                })
-              }),
-            input
-          );
-
-          return (async function* () {
-            try {
-              const toolBuffers = new Map<string, { name: string; args: string }>();
-
-              for await (const event of streamSSE(response)) {
-                if (event.data === "[DONE]") {
-                  return;
-                }
-
-                const json = JSON.parse(event.data);
-                const choice = json.choices?.[0];
-                const delta = choice?.delta;
-
-                if (delta?.content) {
-                  yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;
-                }
-
-                for (const toolCall of delta?.tool_calls ?? []) {
-                  const id = toolCall.id ?? `${toolCall.index}`;
-                  const existing = toolBuffers.get(id) ?? { name: "", args: "" };
-                  existing.name ||= toolCall.function?.name ?? "";
-                  existing.args += toolCall.function?.arguments ?? "";
-                  toolBuffers.set(id, existing);
-
-                  if (choice?.finish_reason === "tool_calls") {
-                    yield {
-                      type: "tool-call",
-                      toolCall: {
-                        id,
-                        name: existing.name,
-                        input: JSON.parse(existing.args || "{}")
-                      }
-                    } satisfies StreamEvent;
-                  }
-                }
-
-                if (choice?.finish_reason) {
-                  yield {
-                    type: "finish",
-                    finishReason: normalizeFinishReason(choice.finish_reason),
-                    providerFinishReason: choice.finish_reason,
-                    usage: json.usage
-                      ? {
-                          inputTokens: json.usage.prompt_tokens,
-                          outputTokens: json.usage.completion_tokens,
-                          totalTokens: json.usage.total_tokens
-                        }
-                      : undefined
-                  } satisfies StreamEvent;
-                }
-              }
-            } finally {
-              cleanup();
-            }
-          })();
-        }
-      })(modelId, apiKey, baseURL, fetcher),
+      new AzureOpenAILanguageModel(modelId, apiKey, baseURL, fetcher, resolveURL),
     embeddingModel: (modelId) =>
-      new (class extends AzureOpenAIEmbeddingModel {
-        async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
-          const { signal, cleanup } = withTimeoutSignal(input);
-          const values = input.values.map((value) => {
-            if (typeof value !== "string") {
-              throw new UnsupportedFeatureError('Provider "azure-openai" does not support multimodal embedding values.');
-            }
-            return value;
-          });
-
-          try {
-            const response = await withRetry(
-              () =>
-                fetcher(resolveURL(modelId, "embeddings"), {
-                  method: "POST",
-                  headers: jsonHeaders(apiKey),
-                  signal,
-                  body: JSON.stringify({
-                    model: baseURL.endsWith("/openai/v1") ? modelId : undefined,
-                    input: values
-                  })
-                }),
-              input
-            );
-
-            const json = await parseJson(response);
-            return {
-              embeddings: json.data.map((entry: any) => entry.embedding),
-              usage: {
-                inputTokens: json.usage?.prompt_tokens,
-                totalTokens: json.usage?.total_tokens
-              },
-              rawResponse: json
-            };
-          } finally {
-            cleanup();
-          }
-        }
-      })(modelId, apiKey, baseURL, fetcher),
+      new AzureOpenAIEmbeddingModel(modelId, apiKey, baseURL, fetcher, resolveURL),
     transcriptionModel: (modelId) => new AzureOpenAITranscriptionModel(modelId, apiKey, resolveURL, fetcher, responseLimits),
     speechModel: (modelId) => new AzureOpenAISpeechModel(modelId, apiKey, resolveURL, fetcher, responseLimits),
     realtimeModel: (modelId) =>

@@ -12,6 +12,12 @@ Provider adapters translate external protocols into Core contracts. Core does no
 | `@zhivex-ai/core/agents` | Agent runtime and safety | Server-side; no storage backends or default catalog |
 | `@zhivex-ai/core/generation` | Generation and model wrapping | Server-side; no persistence, agent orchestration, or default catalog |
 | `@zhivex-ai/core/catalog` | Catalog contracts and factory | No default inventory |
+| `@zhivex-ai/core/evals` | Evaluation helpers | No persistence backends or default inventory |
+| `@zhivex-ai/core/realtime` | Live agent runtime | No persistence backends or default inventory |
+| `@zhivex-ai/core/control-plane` | Agent governance | Explicit control-plane surface |
+| `@zhivex-ai/core/ops` | Persistence, tracing and operational helpers | Server-side; includes backends intentionally |
+| `@zhivex-ai/core/beta` / `experimental` | Existing maturity cohorts | Compatibility surfaces without root aggregation |
+| `@zhivex-ai/core/provider-google` | Legacy Google hosted-tool bridge | Shared by Gemini and Vertex; no new native policy |
 | `@zhivex-ai/sdk/catalog` | Release-managed catalog | SDK-owned provider fragments |
 | `@zhivex-ai/core` / `node` | Compatibility aggregation | Complete server surface |
 
@@ -36,6 +42,14 @@ The legacy Core default catalog stays frozen until the documented major-version 
 `types.ts` is a type-only compatibility facade over `types/`. Domains separate common values, messages, stream events, media, provider resources, generation, persisted agent state, persistence contracts, agent definitions, middleware, and UI. Mutually recursive model/tool/realtime contracts stay together in `model-tools.ts`; this keeps domain dependencies acyclic without weakening types or changing public signatures. These internal paths are not supported consumer deep imports.
 
 Dependency and facade-identity tests guard these boundaries. All public root and focused imports retain their existing names and schemas.
+
+## Provider implementation boundaries
+
+Core, OpenAI and Azure share `streamChatCompletions` for stream parsing and tool assembly. Authentication, endpoints, model capabilities and request mapping remain adapter-owned. See the [stream contract](../packages/openai/README.md#chat-completions-stream-contract) for terminal usage and tool validation. Internal implementation modules are not public deep imports.
+
+The existing Google hosted-tool helpers are available from Gemini and Vertex. Core keeps their original implementation and exports as a compatibility bridge so function identity and both hosts remain supported without a reverse dependency. The helpers retain their Experimental classification and host/model limitations; exports alone do not establish model support. New native helpers and configurations belong to provider packages. Removing the legacy bridge requires a separately planned compatibility boundary.
+
+Dependency tests traverse static and literal dynamic imports, check external dependency edges explicitly, and validate focused consumer facades. A dynamically loaded storage driver remains an allowed operational dependency, not proof of browser portability.
 
 ## Documentation ownership
 

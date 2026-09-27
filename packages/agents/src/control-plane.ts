@@ -24,7 +24,7 @@ export {
   normalizeAgentRunLedger,
   promoteAgentGoldenTrace,
   selectAgentModel
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/control-plane";
 
 export type {
   AgentApprovalQueueItem,
@@ -58,4 +58,4 @@ export type {
   AgentToolPolicyOptions,
   AgentToolRiskLevel,
   CreateAgentCapsuleOptions
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/control-plane";

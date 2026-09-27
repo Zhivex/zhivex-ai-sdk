@@ -58,10 +58,14 @@ const toUIMessageGeneratedMedia = (media: GeneratedMedia): UIMessageGeneratedMed
   providerMetadata: toJsonSafeMetadata(media.providerMetadata)
 });
 
+// Metering belongs to the server-side ledger, not the public conversation.
+const isInternalToolUsage = (data: JsonValue) => data !== null && typeof data === "object" && !Array.isArray(data) &&
+  data.type === "hosted-tool-usage" && data.audience === "internal";
+
 export const toUIMessage = (message: ModelMessage, id: string = randomId()): UIMessage => ({
   id,
   role: message.role,
-  parts: message.parts
+  parts: message.parts.filter(part => !(part.type === "provider-data" && isInternalToolUsage(part.data)))
 });
 
 export const toUIMessages = (messages: ModelMessage[]): UIMessage[] => messages.map((message) => toUIMessage(message));
@@ -127,6 +131,7 @@ export const toUIMessageStream = (
       }
 
       if (event.type === "provider-data") {
+        if (isInternalToolUsage(event.data)) continue;
         yield {
           type: "provider-data",
           messageId,

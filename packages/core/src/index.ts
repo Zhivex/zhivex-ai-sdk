@@ -707,6 +707,7 @@ export type { AgentTaskOutcome, AgentToolReconciliationEvidence, AgentToolReconc
 export { imageInputToDataUrl } from "./image-input.js";
 
 export { createChatCompletionsModel } from "./chat-completions.js";
+export { streamChatCompletions } from "./chat-completions-stream.js";
 export type { ChatCompletionsTransportOptions } from "./chat-completions.js";
 export type { DocumentExtractionInput, DocumentExtractionPage, DocumentExtractionResult, TextCompletionInput } from "./types.js";
 

@@ -31,7 +31,7 @@ export {
   runAgentEvaluation,
   runAgentEvaluationFixture,
   summarizeAgentTrace
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/ops";
 
 export type {
   AgentCapabilities,
@@ -110,4 +110,4 @@ export type {
   SqliteAgentMemoryStoreOptions,
   SqliteAgentRunStoreOptions,
   TokenPricing
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/ops";

@@ -261,6 +261,7 @@ const betaSymbols = [
   "createAgentBudgetCoordinator",
   "recommendAuxiliaryModel",
   "createChatCompletionsModel",
+  "streamChatCompletions",
   "reconcileAgentToolExecution",
   "ModelResolutionError",
   "PROVIDER_CONFORMANCE_EVIDENCE_LEVELS",

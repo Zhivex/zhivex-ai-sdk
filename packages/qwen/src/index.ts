@@ -1,3 +1,5 @@
+import { qwenSearchUsage } from "./search-usage.js";
+import { createAnnotationCollector } from "./annotations.js";
 export { createQwenSDPExchange } from "./sdp-exchange.js";
 export { connectQwenWebRTC, connectQwenAOQ } from "./browser-realtime.js";
 export type * from "./browser-realtime.js";
@@ -1103,12 +1105,41 @@ const hasNonVideoFileInput = (messages: ModelMessage[]) =>
     )
   );
 
+// Only documented Responses families may send a bounded output request.
+const responsesOutputLimitFamilies = new Set([
+  "qwen3.8-max", "qwen3.8-flash", "qwen3.8-omni-flash", "qwen3.8-2.4t-a95b", "qwen3.8-27b",
+  "qwen3.7-max", "qwen3.7-max-preview", "qwen3.7-plus", "qwen3.7-flash",
+  "qwen3.6-plus", "qwen3.6-flash", "qwen3.6-35b-a3b", "qwen3-max",
+  "qwen3.5-plus", "qwen3.5-flash", "qwen3.5-397b-a17b", "qwen3.5-122b-a10b", "qwen3.5-27b", "qwen3.5-35b-a3b"
+]);
+const supportsResponsesOutputLimit = (modelId: string) =>
+  responsesOutputLimitFamilies.has(modelId.toLowerCase().replace(/-\d{4}(?:-\d{2}-\d{2})?$/, "")) ||
+  thirdPartyProfile(modelId)?.responses === true;
+
+const responsesOutputLimit = (modelId: string, input: ModelGenerateInput, options: QwenLanguageModelOptions) => {
+  const value = input.maxTokens ?? options.max_output_tokens;
+  if (input.maxTokens !== undefined && options.max_output_tokens !== undefined && input.maxTokens !== options.max_output_tokens) {
+    throw new ConfigurationError("Qwen maxTokens and max_output_tokens must agree.");
+  }
+  if (value === undefined) return undefined;
+  if (!supportsResponsesOutputLimit(modelId)) throw new UnsupportedFeatureError(`Qwen Responses output limits are not supported for model "${modelId}".`);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 16) {
+    throw new ConfigurationError("Qwen Responses maxTokens/max_output_tokens must be a safe integer of at least 16.");
+  }
+  return value;
+};
+
 const resolveApiMode = (
   modelId: string,
   requestedMode: QwenLanguageModelOptions["apiMode"],
   input: ModelGenerateInput,
   providerOptions: QwenLanguageModelOptions
 ): "responses" | "chat" => {
+  if (providerOptions.max_tool_calls !== undefined) throw new UnsupportedFeatureError("Qwen max_tool_calls is not verified as an effective hosted-tool limit.");
+  for (const tool of Object.values(input.tools ?? {})) {
+    if (!isCallableToolDefinition(tool) && tool.type === "web_search" && tool.config && typeof tool.config === "object" &&
+      ("max_tool_calls" in tool.config || "max_uses" in tool.config)) throw new UnsupportedFeatureError("Qwen web_search tool-call limits are not verified on Responses.");
+  }
   if (isQwenTranslation(modelId) || isQwenCharacter(modelId)) return "chat";
   const videoInput = hasVideoInput(input.messages);
   if (videoInput && !isQwen38ProductionModel(modelId) && !isQwen38Open(modelId)) {
@@ -1128,17 +1159,18 @@ const resolveApiMode = (
   }
   const needsChat =
     glmCallableTools ||
-    input.maxTokens !== undefined ||
+    (input.maxTokens !== undefined && (!supportsResponsesOutputLimit(modelId) ||
+      (requestedMode === "auto" && !hasHostedTools(input.tools) && !hasNonVideoFileInput(input.messages) && providerOptions.max_output_tokens === undefined))) ||
     input.reasoning?.budgetTokens !== undefined ||
     providerOptions.thinking_budget !== undefined ||
     providerOptions.tool_stream === true ||
     input.structuredOutput?.mode === "native" ||
     (!omni38 && (hasMessagePart(input.messages, "audio") || videoInput));
-  const needsResponses = hasHostedTools(input.tools) || hasNonVideoFileInput(input.messages);
+  const needsResponses = hasHostedTools(input.tools) || hasNonVideoFileInput(input.messages) || providerOptions.max_output_tokens !== undefined;
 
   if (needsChat && needsResponses) {
     throw new UnsupportedFeatureError(
-      "Qwen cannot combine Responses-only hosted/file inputs with Chat-only maxTokens, audio, video, reasoning budgets, structured output, or tool streaming."
+      "Qwen cannot combine Responses-only hosted/file inputs with Chat-only options (including maxTokens on unsupported models), audio, video, reasoning budgets, structured output, or tool streaming."
     );
   }
 
@@ -1382,7 +1414,8 @@ const toResponsesInput = (messages: ModelMessage[], format?: ModelGenerateInput[
             part.provider === "qwen" &&
             part.data &&
             typeof part.data === "object" &&
-            typeof (part.data as Record<string, unknown>).type === "string"
+            typeof (part.data as Record<string, unknown>).type === "string" &&
+            !["response.annotations", "hosted-tool-usage"].includes(String((part.data as Record<string, unknown>).type))
           ) {
             input.push(part.data as Record<string, unknown>);
           }
@@ -1482,9 +1515,12 @@ const parseResponsesAssistantMessage = (
   if (json.status === "incomplete" && (json.output ?? []).some((item: any) => item?.type === "function_call")) {
     throw qwenResponsesToolCallError("response_incomplete", usage, effectsPossible);
   }
+  const collectAnnotations = createAnnotationCollector();
   for (const [index, item] of (json.output ?? []).entries()) {
     if (item?.type === "message") {
-      for (const content of item.content ?? []) {
+      for (const [contentIndex, content] of (item.content ?? []).entries()) {
+        const data = collectAnnotations(content, index, contentIndex, item.id);
+        if (data) parts.push(providerDataPart("qwen", data));
         if (typeof content?.text === "string" && content.text) {
           parts.push({ type: "text", text: content.text });
         }
@@ -1545,6 +1581,8 @@ const normalizeResponsesFinishReason = (status: string | undefined, hasToolCalls
     return "stop" as const;
   }
 
+  if (status === "incomplete") return "length" as const;
+
   if (status === "failed") {
     return "error" as const;
   }
@@ -1565,6 +1603,10 @@ const streamResponses = async function* (
     args: string;
     done: boolean;
   };
+  const attemptId = globalThis.crypto.randomUUID();
+  const searchEnabled = Object.values(input.tools ?? {}).some(t => !isCallableToolDefinition(t) && t.type === "web_search");
+  if (searchEnabled) yield { type: "provider-data", provider: "qwen", data: qwenSearchUsage(attemptId) };
+  const collectAnnotations = createAnnotationCollector();
   const toolBuffers = new Map<string, ToolBuffer>();
   const toolBufferAliases = new Map<string, string>();
   const seenIds = existingToolCallIds(input.messages);
@@ -1645,8 +1687,22 @@ const streamResponses = async function* (
       continue;
     }
 
+    input.abortSignal?.throwIfAborted();
+    if (type === "response.content_part.done") {
+      const data = collectAnnotations(json.part, json.output_index, json.content_index, json.item_id);
+      if (data) yield { type: "provider-data", provider: "qwen", data };
+      continue;
+    }
+
     if (type === "response.output_item.added" || type === "response.output_item.done") {
       const item = json.item;
+      if (type === "response.output_item.done" && item?.type === "message" && Array.isArray(item.content)) {
+        for (const [contentIndex, part] of item.content.entries()) {
+          input.abortSignal?.throwIfAborted();
+          const data = collectAnnotations(part, json.output_index, contentIndex, item.id);
+          if (data) yield { type: "provider-data", provider: "qwen", data };
+        }
+      }
       if (item?.type === "function_call") {
         const outputIndex = json.output_index ?? toolBuffers.size;
         const fallbackId = fallbackToolCallId("responses", fallbackGeneration, outputIndex);
@@ -1728,9 +1784,9 @@ const streamResponses = async function* (
     }
 
     if (type === "response.completed" || type === "response.incomplete") {
-      if (terminal) invalidMetadata = true;
-      terminal = json.response ?? {};
-      terminal = { ...terminal, status: type === "response.incomplete" ? "incomplete" : terminal.status };
+      const next = { ...(json.response ?? {}), status: type === "response.incomplete" ? "incomplete" : json.response?.status };
+      if (terminal && JSON.stringify(terminal) !== JSON.stringify(next)) invalidMetadata = true;
+      terminal = next;
     }
   }
 
@@ -1739,6 +1795,14 @@ const streamResponses = async function* (
   if (Array.isArray(terminal?.output)) {
     const terminalKeys = new Set<string>();
     for (const [index, item] of terminal.output.entries()) {
+      input.abortSignal?.throwIfAborted();
+      if (item?.type === "message" && Array.isArray(item.content)) {
+        for (const [contentIndex, part] of item.content.entries()) {
+          input.abortSignal?.throwIfAborted();
+          const data = collectAnnotations(part, index, contentIndex, item.id);
+          if (data) yield { type: "provider-data", provider: "qwen", data };
+        }
+      }
       if (parseResponsesProviderData(item)) effectsPossible = true;
       if (item?.type !== "function_call") continue;
       const fallbackId = fallbackToolCallId("responses", fallbackGeneration, index);
@@ -1777,6 +1841,7 @@ const streamResponses = async function* (
     qwenResponsesToolCallError(reason, usage, effectsPossible);
   if (!terminal) throw failure("stream_truncated");
   if (invalidMetadata) throw failure("inconsistent_metadata");
+  if (searchEnabled || terminal.usage?.x_tools?.web_search !== undefined) yield { type: "provider-data", provider: "qwen", data: qwenSearchUsage(attemptId, terminal) };
   if (toolBuffers.size && terminal.status !== "completed") throw failure("response_incomplete");
   const materialized: StreamEvent[] = [];
   for (const call of toolBuffers.values()) {
@@ -1815,7 +1880,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch
   ) {
-    this.capabilities = { ...qwenLanguageCapabilities(modelId), toolHistory: thirdPartyProfile(modelId)?.thinkingOnly || isQwen38MaxPreview(modelId) || /thinking|qwq/i.test(modelId) ? undefined : "json" };
+    this.capabilities = { ...qwenLanguageCapabilities(modelId), hostedTools: qwenLanguageCapabilities(modelId).webSearch ? [{ route: "responses", tool: "web_search", limit: "unverified", metering: "provider-counter" }] : [], toolHistory: thirdPartyProfile(modelId)?.thinkingOnly || isQwen38MaxPreview(modelId) || /thinking|qwq/i.test(modelId) ? undefined : "json" };
   }
 
   async generate(input: ModelGenerateInput<QwenLanguageModelOptions>): Promise<GenerateResult> {
@@ -1839,6 +1904,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     }
     const apiMode = resolveApiMode(this.modelId, providerOptions.apiMode ?? "auto", input, providerOptions);
     delete providerOptions.apiMode;
+    const outputLimit = apiMode === "responses" ? responsesOutputLimit(this.modelId, input, providerOptions) : undefined;
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
@@ -1860,6 +1926,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               signal,
               body: JSON.stringify({
                 ...responseProviderOptions,
+                max_output_tokens: outputLimit,
                 model: this.modelId,
                 ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
                 ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat, this.modelId) } : {}),
@@ -1876,6 +1943,9 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
 
         const json = await parseJson(response);
         const assistantMessage = parseResponsesAssistantMessage(json, input);
+        if (Object.values(input.tools ?? {}).some(t => !isCallableToolDefinition(t) && t.type === "web_search") || json.usage?.x_tools?.web_search !== undefined) {
+          assistantMessage.parts.push(providerDataPart("qwen", qwenSearchUsage(globalThis.crypto.randomUUID(), json)));
+        }
         const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
 
         return {
@@ -1957,6 +2027,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
     }
     const apiMode = resolveApiMode(this.modelId, providerOptions.apiMode ?? "auto", input, providerOptions);
     delete providerOptions.apiMode;
+    const outputLimit = apiMode === "responses" ? responsesOutputLimit(this.modelId, input, providerOptions) : undefined;
     const { signal, cleanup } = withTimeoutSignal(input);
 
     if (apiMode === "responses") {
@@ -1977,6 +2048,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             signal,
             body: JSON.stringify({
               ...responseProviderOptions,
+              max_output_tokens: outputLimit,
               model: this.modelId,
               ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
               ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat, this.modelId) } : {}),

@@ -58,3 +58,12 @@ Repository and full documentation:
 `azure("gpt-6-astra")` selects Responses by default for generation, structured output, callable tools, and streaming. For an opaque deployment name, select `providerOptions: { apiMode: "responses" }` explicitly; model-specific capability validation can only recognize the model ID supplied to the factory. Responses uses native `reasoning.effort` and flat named-function tool choices. Astra rejects unsupported reasoning efforts, temperature, and `top_p` before fetch. Azure deployment availability, API versions, and quotas remain account-specific.
 
 See [Microsoft's model contracts](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure). Azure pricing is not copied from OpenAI's direct API.
+
+### Chat Completions streaming guarantees
+
+Chat Completions streams assemble parallel tool calls by their stream index and
+emit validated calls after the terminal finish reason. The final `finish` event
+includes usage even when Azure sends it in a separate trailing chunk. Streams
+that end without a finish reason fail explicitly; length-limited or filtered
+responses do not emit partial tool calls. Stopping stream iteration releases the
+response body.

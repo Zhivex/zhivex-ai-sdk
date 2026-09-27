@@ -28,6 +28,9 @@ Focused published entrypoints are also supported: `@zhivex-ai/core/contracts`,
 `@zhivex-ai/core/runtime`, `@zhivex-ai/core/workflows`, `@zhivex-ai/core/ui`,
 `@zhivex-ai/core/node`, `@zhivex-ai/core/testing`,
 `@zhivex-ai/core/agents`, `@zhivex-ai/core/generation`, `@zhivex-ai/core/provider`, `@zhivex-ai/core/catalog`,
+`@zhivex-ai/core/evals`, `@zhivex-ai/core/realtime`, `@zhivex-ai/core/control-plane`,
+`@zhivex-ai/core/ops`, `@zhivex-ai/core/beta`, `@zhivex-ai/core/experimental`,
+`@zhivex-ai/core/provider-google`,
 `@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/workflows`, `@zhivex-ai/sdk/ui`,
 `@zhivex-ai/sdk/evals`, `@zhivex-ai/sdk/catalog`, `@zhivex-ai/sdk/beta`, and
 `@zhivex-ai/sdk/experimental`. The package roots remain backward compatible.
@@ -157,3 +160,12 @@ Core, SDK and `@zhivex-ai/core/provider`. It implements the shared Chat Completi
 wire contract; the adapter supplies authentication, the endpoint, and model
 capability policy. It does not imply that an arbitrary OpenAI-compatible host
 supports OpenAI-specific features.
+
+`streamChatCompletions` is a Beta transport parser exported from Core, SDK,
+their Beta entrypoints and `@zhivex-ai/core/provider`. It assembles streamed
+tools by index and retains terminal usage; it does not select authentication,
+endpoints or model capabilities.
+
+Google hosted-tool helpers may also be imported from `@zhivex-ai/gemini` and
+`@zhivex-ai/vertex`. Their existing Experimental classification and host/model
+limitations still apply. Core and SDK exports remain compatibility aliases.

@@ -1013,14 +1013,14 @@ describe("qwen adapter", () => {
 
     const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
     await generateText({
-      model: provider("qwen-plus"),
+      model: provider("qwen3.8-flash"),
       prompt: "hello",
       providerOptions: {
         apiMode: "responses",
         model: "override-model",
         input: "override-input",
         stream: true,
-        max_output_tokens: 1,
+        max_output_tokens: 16,
         custom_flag: "kept"
       }
     });
@@ -1033,10 +1033,10 @@ describe("qwen adapter", () => {
       max_output_tokens?: number;
       custom_flag?: string;
     };
-    expect(body.model).toBe("qwen-plus");
+    expect(body.model).toBe("qwen3.8-flash");
     expect(body.input).not.toBe("override-input");
     expect(body.stream).toBe(false);
-    expect(body.max_output_tokens).toBeUndefined();
+    expect(body.max_output_tokens).toBe(16);
     expect(body.custom_flag).toBe("kept");
   });
 

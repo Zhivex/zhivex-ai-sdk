@@ -1,0 +1,93 @@
+{
+  "recordedAt": "2026-09-27T14:00:24.930649+00:00",
+  "baseCommit": "a51058e75477f2d1d2982d62bd1e3d30d1e46db0",
+  "scope": "Local uncommitted implementation of three native-search SDK stories; not a published release",
+  "validation": {
+    "docs": "passed",
+    "typecheck": "passed",
+    "build": "passed",
+    "tests": {
+      "command": "bun run test --maxWorkers=2",
+      "passed": 2948,
+      "skipped": 4,
+      "filesPassed": 212,
+      "filesSkipped": 3,
+      "note": "Initial unconstrained run failed one existing WebSocket queue timing assertion; isolated retry and final full run passed."
+    },
+    "installedConsumer": "passed: scripts/fixtures/search-sources-consumer.mjs",
+    "exampleTypecheck": "passed against installed local tarballs"
+  },
+  "artifacts": [
+    {
+      "file": "zhivex-ai-core-1.26.0.tgz",
+      "sha256": "02325086e9a390d768f7c84e9ca47e2f97ad876ec64d94a4767eb341d8d101bb",
+      "origin": "locally packed with existing version; not registry release"
+    },
+    {
+      "file": "zhivex-ai-gemini-0.12.3.tgz",
+      "sha256": "e45f50b0d7b9890d8f17e3d90ad6924d86a4f75685861a0f728c5c4ca99ebdd0",
+      "origin": "locally packed with existing version; not registry release"
+    },
+    {
+      "file": "zhivex-ai-qwen-0.16.2.tgz",
+      "sha256": "4675acb742759a7484da6774fb32c7c4716e1a7c8768be6fab484ad447e69f76",
+      "origin": "locally packed with existing version; not registry release"
+    }
+  ],
+  "live": [
+    {
+      "name": "qwen-responses-generate",
+      "status": "passed",
+      "model": "qwen3.8-flash",
+      "finishReason": "stop",
+      "usage": {
+        "inputTokens": 1235,
+        "cachedInputTokens": 0,
+        "outputTokens": 40,
+        "reasoningTokens": 0,
+        "totalTokens": 1275
+      },
+      "citationParts": 0
+    },
+    {
+      "name": "qwen-responses-stream",
+      "status": "passed",
+      "model": "qwen3.8-flash",
+      "finishReason": "stop",
+      "usage": {
+        "inputTokens": 1838,
+        "cachedInputTokens": 0,
+        "outputTokens": 46,
+        "reasoningTokens": 0,
+        "totalTokens": 1884
+      },
+      "citationParts": 0
+    },
+    {
+      "name": "gemini-generate-content-stream",
+      "status": "failed",
+      "errorType": "ProviderHTTPError",
+      "httpStatus": 401
+    }
+  ],
+  "liveConstraints": {
+    "maxOutputTokensPerCall": 512,
+    "maxRetries": 0,
+    "timeoutMsPerCall": 45000,
+    "calls": 3,
+    "limitations": [
+      "Qwen responses returned zero message annotations; citation preservation is verified with synthetic fixtures only.",
+      "Qwen smoke confirms requests with web_search and max_output_tokens were accepted; tool execution was not separately asserted.",
+      "Gemini HTTP 401 blocks live grounding certification.",
+      "Gemini Interactions source transport tested offline separately; no Interactions live call.",
+      "Publication, CI, Gateway/Chat consumer deployment and regional/model matrix certification remain pending."
+    ]
+  },
+  "delivery": {
+    "changeset": ".changeset/qwen-gemini-search-sources.md",
+    "notionStatus": "En revisi\u00f3n",
+    "published": false,
+    "committed": false,
+    "pushed": false
+  }
+}

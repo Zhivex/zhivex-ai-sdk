@@ -4,10 +4,10 @@ import { imageInputToDataUrl } from "./image-input.js";
 import { normalizeFinishReason } from "./messages.js";
 import { readErrorBodyWithLimit, readJsonWithLimit } from "./response.js";
 import { withRetry, withTimeoutSignal } from "./runtime.js";
-import { streamSSE } from "./stream.js";
+import { chatCompletionsArguments as argumentsValue, chatCompletionsUsage as usage, streamChatCompletions } from "./chat-completions-stream.js";
 import { toolResultPayload } from "./realtime.js";
 import { isCallableToolDefinition } from "./messages.js";
-import type { GenerateResult, JsonValue, LanguageModel, ModelCapabilities, ModelGenerateInput, ModelMessage, StreamEvent, TokenUsage } from "./types.js";
+import type { GenerateResult, LanguageModel, ModelCapabilities, ModelGenerateInput, ModelMessage, StreamEvent } from "./types.js";
 
 /** Transport-only Chat Completions implementation. Callers own host/model policy and authentication. */
 export interface ChatCompletionsTransportOptions {
@@ -17,22 +17,6 @@ export interface ChatCompletionsTransportOptions {
   send: (body: Record<string, unknown>, signal?: AbortSignal) => Promise<Response>;
   prepare?: (input: ModelGenerateInput) => ModelGenerateInput;
 }
-
-const usage = (value: any): TokenUsage | undefined => value ? {
-  inputTokens: value.prompt_tokens,
-  outputTokens: value.completion_tokens,
-  totalTokens: value.total_tokens,
-  cachedInputTokens: value.prompt_tokens_details?.cached_tokens ?? value.cachedContentTokenCount,
-  reasoningTokens: value.completion_tokens_details?.reasoning_tokens ?? value.reasoning_tokens
-} : undefined;
-
-const argumentsValue = (value: unknown): JsonValue => {
-  if (typeof value !== "string" || !value.trim() || value.length > 1024 * 1024) {
-    throw new ConfigurationError("Invalid or oversized Chat Completions tool arguments.");
-  }
-  try { return JSON.parse(value) as JsonValue; }
-  catch { throw new ConfigurationError("Chat Completions returned malformed tool arguments."); }
-};
 
 const mapMessages = (input: ModelGenerateInput, provider: string): Record<string, unknown>[] => input.messages.flatMap<Record<string, unknown>>((message) => {
   if (message.role === "tool") return message.parts.filter((part) => part.type === "tool-result").map((part) => ({
@@ -125,42 +109,8 @@ export const createChatCompletionsModel = (options: ChatCompletionsTransportOpti
       try { response = await send(body, input, signal); }
       catch (error) { cleanup(); throw error; }
       return (async function* () {
-        const calls = new Map<number, { id: string; name: string; args: string }>();
-        let finish: string | undefined;
-        let lastUsage: TokenUsage | undefined;
         try {
-          for await (const event of streamSSE(response)) {
-            if (event.data === "[DONE]") break;
-            const json = JSON.parse(event.data);
-            if (json.error) throw new ConfigurationError(`${options.provider} reported a Chat Completions stream error.`);
-            if (json.usage) lastUsage = usage(json.usage);
-            const choice = json.choices?.find((item: any) => item.index === 0) ?? json.choices?.[0];
-            const delta = choice?.delta;
-            if (typeof delta?.content === "string") yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;
-            if (typeof delta?.reasoning_content === "string") yield { type: "provider-data", provider: options.provider, data: { type: "reasoning_content", reasoningContent: delta.reasoning_content } } satisfies StreamEvent;
-            for (const call of delta?.tool_calls ?? []) {
-              if (!Number.isInteger(call.index) || call.index < 0 || call.index >= 128) throw new ConfigurationError("Invalid Chat Completions tool index.");
-              const current = calls.get(call.index) ?? { id: "", name: "", args: "" };
-              if (call.id && current.id && current.id !== call.id) throw new ConfigurationError("Conflicting Chat Completions tool IDs.");
-              current.id ||= call.id ?? "";
-              current.name += call.function?.name ?? "";
-              current.args += call.function?.arguments ?? "";
-              if (current.args.length > 1024 * 1024) throw new ConfigurationError("Oversized Chat Completions tool arguments.");
-              calls.set(call.index, current);
-            }
-            if (choice?.finish_reason) finish = choice.finish_reason;
-          }
-          if (!finish) throw new ConfigurationError("Chat Completions stream ended without a finish reason.");
-          // Do not execute partial tool calls from truncated or interrupted streams.
-          if (finish === "tool_calls" || finish === "function_call") {
-            const completed = [...calls.values()].map((call) => {
-              if (!call.id || !call.name) throw new ConfigurationError("Incomplete Chat Completions tool call.");
-              return { id: call.id, name: call.name, input: argumentsValue(call.args) };
-            });
-            if (new Set(completed.map((call) => call.id)).size !== completed.length) throw new ConfigurationError("Duplicate Chat Completions tool IDs.");
-            for (const toolCall of completed) yield { type: "tool-call", toolCall } satisfies StreamEvent;
-          }
-          yield { type: "finish", finishReason: normalizeFinishReason(finish), providerFinishReason: finish, usage: lastUsage } satisfies StreamEvent;
+          yield* streamChatCompletions(response, options.provider);
         } finally { cleanup(); }
       })();
     }

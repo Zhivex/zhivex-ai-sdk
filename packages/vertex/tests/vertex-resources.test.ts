@@ -94,7 +94,7 @@ describe("Vertex resource contracts", () => {
   });
   it.each(["us", "eu"])("uses the %s jurisdictional endpoint", async (location) => {
     const { provider, fetch } = setup(location);
-    fetch.mockResolvedValue(Response.json({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
+    fetch.mockResolvedValue(Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "ok" }] } }] }));
     await provider("gemini-3.8-flash").generate({ messages: [{ role: "user", parts: [{ type: "text", text: "Hi" }] }] });
     expect(String(fetch.mock.calls[0][0])).toBe(`https://aiplatform.${location}.rep.googleapis.com/v1/projects/test-project/locations/${location}/publishers/google/models/gemini-3.8-flash:generateContent`);
   });

@@ -19,6 +19,34 @@ export type FinishReason = "stop" | "length" | "tool-calls" | "content-filter" |
 
 export type StructuredOutputMode = "auto" | "native" | "prompted";
 
+/** Internal metering snapshot carried in provider-data. Never forward as public UI telemetry.
+ * Replace snapshots by attemptId/provider/route/tool; do not add cumulative quantities.
+ * Complete means complete reported evidence, not a reconciled invoice. Missing is never zero.
+ */
+export type HostedToolUsage = {
+  type: "hosted-tool-usage";
+  audience: "internal";
+  provider: string;
+  route: string;
+  tool: string;
+  attemptId: string;
+  responseId?: string;
+  unit: "call" | "query" | "grounded-prompt" | "unknown";
+  quantity?: number;
+  source: string;
+  aggregation: "snapshot";
+  completeness: "complete" | "partial" | "unknown";
+  terminal: boolean;
+};
+
+/** Evidence for the specific host route, not the model author's other APIs. */
+export type HostedToolSupport = {
+  route: string;
+  tool: string;
+  limit: "supported" | "unsupported" | "unverified";
+  metering: "provider-counter" | "derived" | "unverified";
+};
+
 export interface TokenUsage {
   inputTokens?: number;
   cachedInputTokens?: number;
@@ -30,6 +58,7 @@ export interface TokenUsage {
 }
 
 export interface ModelCapabilities {
+  hostedTools?: HostedToolSupport[];
   /** Preserves complete callable tool history, including multiple results and error state.
    * json adapters must honor ModelGenerateInput.toolResultFormat = "envelope".
    */

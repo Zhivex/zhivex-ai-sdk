@@ -232,6 +232,33 @@ Failed spans record the exception, set `error.type`, and use OTEL `ERROR` status
 
 Prompt text, messages, system instructions, tool arguments, tool results, and model output are never attached by these helpers. Guardrail event metadata is restricted to a bounded scalar allowlist under `zhivex.guardrail.metadata.*`; arbitrary keys, nested objects, and `gen_ai.*` injection are discarded. Upstream's `gen_ai.client.inference.operation.details` content event is opt-in and is not emitted. `gen_ai.evaluation.result` is also not synthesized automatically; evaluation reports remain app-owned and can be exported explicitly by the application's event/log pipeline.
 
+## Hosted Search Metering
+
+Gemini GenerateContent and Qwen Responses emit Core/SDK `HostedToolUsage` data
+with `type: "hosted-tool-usage"` and `audience: "internal"`. Records contain
+`attemptId`, optional `responseId`, `provider`, `route`, `tool`, `unit`, optional
+`quantity`, `source`, `terminal`, `aggregation: "snapshot"` and `completeness`.
+See [Gemini](../packages/gemini/README.md#internal-hosted-search-metering) and
+[Qwen](../packages/qwen/README.md#internal-search-counters-and-limits) for route-specific counters, units and limits.
+
+Replace snapshots by `(attemptId, provider, route, tool)`; do not sum them.
+Retain response IDs for reconciliation. Missing records, cancellation, timeouts
+or truncation never establish zero consumption. Complete reported or derived
+quantity does not establish invoice reconciliation; hosted-search charges are
+separate from citations and `TokenUsage`.
+
+Each SDK invocation gets a fresh attempt ID. Automatic HTTP retries can incur
+charges absent from the final response. Budgeted callers should use
+`maxRetries: 0`, reserve each retry/continuation externally and retain uncertain
+reservations for reconciliation. Gateway/Chat owns trusted host/region/model
+pricing, shared quotas and credits. Prompts, output-token caps, aborts and timeouts
+do not establish a hosted-search call limit. Routes requiring hard search budgets
+need an independently verified limit or a controlled execution alternative.
+
+Keep these records server-side. Core `toUIMessage()` and `toUIMessageStream()`
+omit them automatically; server-side `eventStream` and collected assistant
+message parts retain them. Custom SSE serializers must apply the same filter.
+
 ## Recommended Pipeline
 
 1. Persist `AgentRunState` in an app-owned store.

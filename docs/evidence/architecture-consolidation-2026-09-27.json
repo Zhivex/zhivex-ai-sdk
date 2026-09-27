@@ -1,0 +1,458 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-09-27T16:50:05.827087+00:00",
+  "source": {
+    "baseCommit": "a51058e75477f2d1d2982d62bd1e3d30d1e46db0",
+    "includesUncommittedChanges": true
+  },
+  "scope": "Architecture consolidation; local artifacts, not publication or release certification",
+  "validation": {
+    "docs": "passed",
+    "typecheck": "passed",
+    "build": "passed",
+    "tests": {
+      "passed": 3040,
+      "skipped": 4,
+      "filesPassed": 219,
+      "filesSkipped": 3
+    },
+    "distEntrypoints": "core/sdk/agents passed",
+    "installedEntrypoints": 39,
+    "secretScan": "passed"
+  },
+  "consumer": {
+    "packages": 8,
+    "installation": "Bun pack and install --ignore-scripts; local tarball overrides pin unpublished workspace dependencies",
+    "liveMaxTokens": 128,
+    "liveMaxRetries": 0,
+    "liveTimeoutMs": 30000
+  },
+  "finalArtifacts": [
+    {
+      "name": "@zhivex-ai/core",
+      "version": "1.26.0",
+      "sha256": "4bd91cb314a2db294cdfbdebaacc90a06f924a319a0674a2b8d57f287c12cf96"
+    },
+    {
+      "name": "@zhivex-ai/sdk",
+      "version": "1.27.2",
+      "sha256": "19a6c8e1395d0d3f74c1668c7cf281308176e60ff3f641aafd53ca5746b9dae5"
+    },
+    {
+      "name": "@zhivex-ai/agents",
+      "version": "1.10.1",
+      "sha256": "aac21c99f4b24f36b01b96d8002085979675da9abf2976c9d12165fd3dc4e56a"
+    },
+    {
+      "name": "@zhivex-ai/gateway",
+      "version": "1.4.2",
+      "sha256": "69bbe51a12c13a42ba87a6a32df8efa54ba260da1aa6639d76b3d0a9ade23f78"
+    },
+    {
+      "name": "@zhivex-ai/openai",
+      "version": "0.13.6",
+      "sha256": "e5e78736aaf505a1bdb0d50811b3e4fe961cb949120bf39c5fe4a7497c885fd9"
+    },
+    {
+      "name": "@zhivex-ai/azure-openai",
+      "version": "0.7.5",
+      "sha256": "2e8ce8cf1ddf289116aae339e9744b9649ec223ebad9adebbe40c02857a64b13"
+    },
+    {
+      "name": "@zhivex-ai/gemini",
+      "version": "0.12.3",
+      "sha256": "2dbc4a323663d9f0f69fcd593f4f64a99f055b308322d4e3df7452979d62057f"
+    },
+    {
+      "name": "@zhivex-ai/vertex",
+      "version": "1.1.2",
+      "sha256": "89bb7955764788179e5c08ea7b1a0705a42f6fdc18471e58f96419475c2b9c94"
+    }
+  ],
+  "finalLiveRuns": [
+    {
+      "schemaVersion": 1,
+      "checkedAt": "2026-09-27T16:47:22.015Z",
+      "evidence": "installed-package-live-smoke",
+      "limits": {
+        "timeoutMs": 30000,
+        "maxRetries": 0,
+        "maxTokens": 128
+      },
+      "records": [
+        {
+          "name": "openai-chat-stream",
+          "model": "gpt-6-luna",
+          "status": "passed",
+          "toolCalls": 1,
+          "finishReason": "tool-calls",
+          "usage": {
+            "inputTokens": 131,
+            "outputTokens": 17,
+            "totalTokens": 148,
+            "cachedInputTokens": 0,
+            "reasoningTokens": 0,
+            "cacheWriteTokens": 0
+          }
+        },
+        {
+          "name": "openai-responses-stream",
+          "model": "gpt-6-luna",
+          "status": "passed",
+          "toolCalls": 1,
+          "finishReason": "tool-calls",
+          "usage": {
+            "inputTokens": 49,
+            "cachedInputTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 18,
+            "reasoningTokens": 0,
+            "totalTokens": 67
+          }
+        },
+        {
+          "name": "openai-generate",
+          "model": "gpt-6-luna",
+          "status": "passed",
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 10,
+            "cachedInputTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 5,
+            "reasoningTokens": 0,
+            "totalTokens": 15
+          }
+        },
+        {
+          "name": "shared-chat-transport-stream",
+          "model": "gpt-6-luna",
+          "status": "passed",
+          "toolCalls": 1,
+          "finishReason": "tool-calls",
+          "usage": {
+            "inputTokens": 131,
+            "outputTokens": 17,
+            "totalTokens": 148,
+            "cachedInputTokens": 0,
+            "reasoningTokens": 0,
+            "cacheWriteTokens": 0
+          }
+        },
+        {
+          "name": "openai-embedding",
+          "model": "text-embedding-3-small",
+          "status": "passed",
+          "dimensions": 1536,
+          "usage": {
+            "inputTokens": 1,
+            "totalTokens": 1
+          }
+        },
+        {
+          "name": "vertex-tool-stream",
+          "model": "gemini-2.5-flash-lite",
+          "status": "failed",
+          "errorType": "Error",
+          "checks": {
+            "toolCalls": 7,
+            "finishes": 1,
+            "correctTool": true,
+            "correctInput": true,
+            "finishReason": "unknown",
+            "hasTerminalUsage": true
+          }
+        },
+        {
+          "name": "azure-chat-stream",
+          "model": "unconfigured",
+          "status": "skipped_missing_credentials"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "checkedAt": "2026-09-27T16:47:37.252Z",
+      "evidence": "installed-package-live-smoke",
+      "limits": {
+        "timeoutMs": 30000,
+        "maxRetries": 0,
+        "maxTokens": 128
+      },
+      "records": [
+        {
+          "name": "openai-chat-stream",
+          "model": "gpt-5.6-luna",
+          "status": "passed",
+          "toolCalls": 1,
+          "finishReason": "tool-calls",
+          "usage": {
+            "inputTokens": 131,
+            "outputTokens": 17,
+            "totalTokens": 148,
+            "cachedInputTokens": 0,
+            "reasoningTokens": 0,
+            "cacheWriteTokens": 0
+          }
+        },
+        {
+          "name": "openai-responses-stream",
+          "model": "gpt-5.6-luna",
+          "status": "passed",
+          "toolCalls": 1,
+          "finishReason": "tool-calls",
+          "usage": {
+            "inputTokens": 49,
+            "cachedInputTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 18,
+            "reasoningTokens": 0,
+            "totalTokens": 67
+          }
+        },
+        {
+          "name": "openai-generate",
+          "model": "gpt-5.6-luna",
+          "status": "passed",
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 10,
+            "cachedInputTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 5,
+            "reasoningTokens": 0,
+            "totalTokens": 15
+          }
+        },
+        {
+          "name": "shared-chat-transport-stream",
+          "model": "gpt-5.6-luna",
+          "status": "passed",
+          "toolCalls": 1,
+          "finishReason": "tool-calls",
+          "usage": {
+            "inputTokens": 131,
+            "outputTokens": 17,
+            "totalTokens": 148,
+            "cachedInputTokens": 0,
+            "reasoningTokens": 0,
+            "cacheWriteTokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "checkedAt": "2026-09-27T16:48:52.696Z",
+      "evidence": "installed-package-live-smoke",
+      "limits": {
+        "timeoutMs": 30000,
+        "maxRetries": 0,
+        "maxTokens": 128
+      },
+      "records": [
+        {
+          "name": "vertex-tool-stream",
+          "model": "gemini-2.5-flash-lite",
+          "status": "passed",
+          "toolCalls": 1,
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 19,
+            "outputTokens": 14,
+            "totalTokens": 33
+          }
+        }
+      ]
+    }
+  ],
+  "initialArtifacts": [
+    {
+      "name": "@zhivex-ai/core",
+      "version": "1.26.0",
+      "sha256": "fcd210f7dec64b1a23ee1a58d9098a35f266b21733ec7b771d8afce931d6a261"
+    },
+    {
+      "name": "@zhivex-ai/sdk",
+      "version": "1.27.2",
+      "sha256": "19a6c8e1395d0d3f74c1668c7cf281308176e60ff3f641aafd53ca5746b9dae5"
+    },
+    {
+      "name": "@zhivex-ai/agents",
+      "version": "1.10.1",
+      "sha256": "aac21c99f4b24f36b01b96d8002085979675da9abf2976c9d12165fd3dc4e56a"
+    },
+    {
+      "name": "@zhivex-ai/gateway",
+      "version": "1.4.2",
+      "sha256": "69bbe51a12c13a42ba87a6a32df8efa54ba260da1aa6639d76b3d0a9ade23f78"
+    },
+    {
+      "name": "@zhivex-ai/openai",
+      "version": "0.13.6",
+      "sha256": "1cc09bcb17bcd0f878919c1c1629374f16c37cb3992cedfde17c4bf53cc10855"
+    },
+    {
+      "name": "@zhivex-ai/azure-openai",
+      "version": "0.7.5",
+      "sha256": "2e8ce8cf1ddf289116aae339e9744b9649ec223ebad9adebbe40c02857a64b13"
+    },
+    {
+      "name": "@zhivex-ai/gemini",
+      "version": "0.12.3",
+      "sha256": "2dbc4a323663d9f0f69fcd593f4f64a99f055b308322d4e3df7452979d62057f"
+    },
+    {
+      "name": "@zhivex-ai/vertex",
+      "version": "1.1.2",
+      "sha256": "89bb7955764788179e5c08ea7b1a0705a42f6fdc18471e58f96419475c2b9c94"
+    }
+  ],
+  "initialLiveRuns": [
+    {
+      "schemaVersion": 1,
+      "checkedAt": "2026-09-27T16:37:39.880Z",
+      "evidence": "installed-package-live-smoke",
+      "limits": {
+        "timeoutMs": 30000,
+        "maxRetries": 0,
+        "maxTokens": 128
+      },
+      "records": [
+        {
+          "name": "openai-chat-stream",
+          "model": "gpt-4.1-nano",
+          "status": "failed",
+          "errorType": "Error"
+        },
+        {
+          "name": "openai-responses-stream",
+          "model": "gpt-4.1-nano",
+          "status": "passed",
+          "toolCalls": 1,
+          "finishReason": "tool-calls",
+          "usage": {
+            "inputTokens": 52,
+            "cachedInputTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 7,
+            "reasoningTokens": 0,
+            "totalTokens": 59
+          }
+        },
+        {
+          "name": "openai-generate",
+          "model": "gpt-4.1-nano",
+          "status": "passed",
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 11,
+            "cachedInputTokens": 0,
+            "outputTokens": 1,
+            "reasoningTokens": 0,
+            "totalTokens": 12
+          }
+        },
+        {
+          "name": "shared-chat-transport-stream",
+          "model": "gpt-4.1-nano",
+          "status": "failed",
+          "errorType": "Error"
+        },
+        {
+          "name": "openai-embedding",
+          "model": "text-embedding-3-small",
+          "status": "passed",
+          "dimensions": 1536,
+          "usage": {
+            "inputTokens": 1,
+            "totalTokens": 1
+          }
+        },
+        {
+          "name": "gemini-tool-stream",
+          "model": "gemini-2.5-flash-lite",
+          "status": "failed",
+          "errorType": "ProviderHTTPError",
+          "httpStatus": 401
+        },
+        {
+          "name": "azure-chat-stream",
+          "model": "unconfigured",
+          "status": "skipped_missing_credentials"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "checkedAt": "2026-09-27T16:38:58.661Z",
+      "evidence": "installed-package-live-smoke",
+      "limits": {
+        "timeoutMs": 30000,
+        "maxRetries": 0,
+        "maxTokens": 128
+      },
+      "records": [
+        {
+          "name": "openai-chat-stream",
+          "model": "gpt-4.1-nano",
+          "status": "failed",
+          "errorType": "Error",
+          "checks": {
+            "toolCalls": 0,
+            "finishes": 1,
+            "correctTool": false,
+            "correctInput": false,
+            "hasTerminalUsage": true
+          }
+        },
+        {
+          "name": "shared-chat-transport-stream",
+          "model": "gpt-4.1-nano",
+          "status": "failed",
+          "errorType": "Error",
+          "checks": {
+            "toolCalls": 0,
+            "finishes": 1,
+            "correctTool": false,
+            "correctInput": false,
+            "hasTerminalUsage": true
+          }
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "checkedAt": "2026-09-27T16:40:50.947Z",
+      "evidence": "installed-package-live-smoke",
+      "limits": {
+        "timeoutMs": 30000,
+        "maxRetries": 0,
+        "maxTokens": 128
+      },
+      "records": [
+        {
+          "name": "vertex-tool-stream",
+          "model": "gemini-2.5-flash-lite",
+          "status": "passed",
+          "toolCalls": 1,
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 19,
+            "outputTokens": 14,
+            "totalTokens": 33
+          }
+        }
+      ]
+    }
+  ],
+  "observations": [
+    "Primary OpenAI evidence uses GPT-6 Luna and GPT-5.6 Luna with reasoning effort none. GPT-4.1 nano was used only in the initial investigation before the requested model-family correction.",
+    "Raw bounded OpenAI diagnostic confirmed complete tool deltas followed by finish_reason stop. Added shared Core/Azure/OpenAI regression and normalized complete tools to tool-calls while preserving providerFinishReason.",
+    "Gemini direct returned HTTP 401; no credential values or upstream response bodies were logged. This route is not live-verified.",
+    "Azure credentials/model were not configured; only deterministic tests cover Azure.",
+    "Vertex tool-stream initially passed, one final-artifact attempt returned seven tool calls with normalized finishReason unknown, and one bounded diagnostic repetition passed. Do not treat this as consistent live certification. The failing attempt did not record providerFinishReason; its cause is not established.",
+    "Static follow-up found pre-existing Vertex per-chunk fallback tool IDs and immediate tool emission; broader Vertex stream hardening is outside these architecture changes.",
+    "A packaging attempt overlapped tests rebuilding Core declarations and produced an incomplete artifact. It was discarded before model calls; final artifacts were rebuilt and packed after test completion, then all 39 imports were verified."
+  ]
+}

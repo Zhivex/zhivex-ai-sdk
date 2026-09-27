@@ -50,12 +50,10 @@ import {
   generateMusic,
   generateText,
   generateVideo,
-  googleMapsTool,
-  googleUrlContextTool,
   predictRaw,
   streamSpeech
 } from "@zhivex-ai/core";
-import { createVertex } from "@zhivex-ai/vertex";
+import { createVertex, googleMapsTool, googleUrlContextTool } from "@zhivex-ai/vertex";
 
 const vertex = createVertex({
   apiKey: process.env.GOOGLE_API_KEY
@@ -937,6 +935,21 @@ sources and attribution metadata. The latest live check on gemini-3.7-flash/glob
 passed with two Maps places and four attribution supports. An earlier 429 was
 transient in the tested project; availability elsewhere is not implied.
 
+### GenerateContent tool validation
+
+The language adapter validates the complete tool batch against the terminal
+GenerateContent status before exposing executable calls, in both `generate()`
+and `stream()`. Streams may emit text immediately, but tools require a successful
+`STOP`. Malformed, truncated, unfinished or failed tool responses throw a sanitized
+`ProviderToolCallError`; they do not execute tools through `generateText()` or
+`streamText()`. Terminal usage is retained when supplied, including usage-only
+stream chunks. Provider errors remain distinct from successful model responses.
+
+Fallback tool IDs are unique across chunks and retained message history. Native
+IDs and thought signatures are preserved, and duplicate IDs are rejected before
+any tool in the response is exposed. Pending calls are bounded to avoid unbounded
+buffering. Early stream termination releases the response body.
+
 ## Context caching
 
 Cache creation and deletion honor explicit `maxRetries`, with backoff bounded by
@@ -1180,3 +1193,7 @@ local package cohort into an isolated consumer and uses synthetic responses;
 release dependency resolution and live model access are separate checks.
 
 Repository: <https://github.com/Zhivex/zhivex-ai-sdk>
+
+### Google hosted-tool ownership
+
+Import Google hosted-tool helpers from this package for new code; Core/SDK imports remain compatible. See [ownership and support boundaries](../../docs/ARCHITECTURE.md#provider-implementation-boundaries).

@@ -181,6 +181,14 @@ const toolAudit = createToolAuditRecords(result.state, { redaction });
 
 `createReadOnlyToolApprovalPolicy()` blocks write/side-effect-looking tools by default and can be used directly as an agent or request `toolApprovalPolicy`. Audit records omit full tool input/output unless explicitly included.
 
+### Durable Agent Output Redaction
+
+`createRedactionPolicy().outputGuardrail` sanitizes the authoritative final agent state before persistence and before subsequent output guardrails run. Returned output, stored state, and failures reconstructed after a later guardrail rejection retain the same redacted content. This covers `outputText`, text message parts (including step request/response history), step response text, tool result outputs/error messages, `finalOutput`, and run metadata. Finalized step events and memory saves use this sanitized content too. Structured output is redacted after schema validation; replacements can change domain-specific string constraints.
+
+The policy preserves run identity, scope, approvals, usage/budget controls, tool call IDs/names/inputs, provider control data and provider metadata, and non-text media. It does not copy arbitrary guardrail snapshot mutations back into the durable state. Apply the policy to each subagent to sanitize its own store and results before the parent receives them.
+
+This is a terminal output policy: live stream chunks, earlier tool/telemetry events, intermediate checkpoints, external artifacts, and historical store revisions are not retroactively sanitized. A reopened final checkpoint retains redaction; resuming a checkpoint written before the terminal guardrail still requires appropriate input policies and protected storage. Child control records, compaction/handoff records, and reconciliation evidence are not rewritten by this policy. Configure trace/export redaction separately, and use storage access controls and retention rules for execution records. An output guardrail is not a guarantee of censorship before streaming.
+
 ## Observability Export Path
 
 Agent runs already produce enough SDK data for production dashboards without adding a required telemetry backend. Keep observability server-side, attach a collector or OTEL observer to the agent, and export only redacted records to your log, queue, warehouse, or tracing vendor.

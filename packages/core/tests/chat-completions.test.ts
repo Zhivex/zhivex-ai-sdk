@@ -1,3 +1,4 @@
+import { runChatCompletionsStreamContract } from "./chat-completions-contract.js";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createChatCompletionsModel } from "../src/chat-completions.js";
@@ -70,6 +71,15 @@ describe("hosted Chat Completions transport", () => {
     expect(events[0]).toMatchObject({ type: "provider-data", provider: "host" });
   });
 
+  it("does not mix other choice indexes into the selected first choice", async () => {
+    const { model, send } = setup();
+    send.mockResolvedValue(sse(
+      { choices: [{ index: 1, delta: { content: "other" }, finish_reason: "stop" }] },
+      { choices: [{ index: 0, delta: { content: "selected" }, finish_reason: "stop" }] }, "[DONE]"));
+    const events = await collect(await model.stream!(input));
+    expect(events.filter((event) => event.type === "text-delta")).toEqual([{ type: "text-delta", textDelta: "selected" }]);
+  });
+
   it("never executes truncated tool arguments", async () => {
     const { model, send } = setup();
     send.mockResolvedValue(sse({ choices: [{ delta: { tool_calls: [{ index: 0, id: "a", function: { name: "lookup", arguments: '{"x":' } }] }, finish_reason: "length" }] }, "[DONE]"));
@@ -106,4 +116,10 @@ describe("hosted Chat Completions transport", () => {
     expect(send.mock.calls[0][1].aborted).toBe(true);
   });
 
+});
+
+runChatCompletionsStreamContract(async (response) => {
+  const { model, send } = setup();
+  send.mockResolvedValue(response);
+  return model.stream!(input);
 });

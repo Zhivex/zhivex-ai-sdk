@@ -18,7 +18,7 @@ export {
   getAgentCapabilities,
   getAgentSupportTier,
   getHostedToolClass
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/beta";
 
 export type {
   AgentAuditRecord,
@@ -27,10 +27,10 @@ export type {
   SensitiveDataPolicyOptions,
   ToolAuditRecord,
   ToolAuditRecordOptions
-} from "@zhivex-ai/core";
+} from "@zhivex-ai/core/beta";
 
-export { reconcileAgentToolExecution } from "@zhivex-ai/core";
-export type { ReconcileAgentToolExecutionOptions, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "@zhivex-ai/core";
+export { reconcileAgentToolExecution } from "@zhivex-ai/core/beta";
+export type { ReconcileAgentToolExecutionOptions, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "@zhivex-ai/core/beta";
 
-export { createAgentBudgetCoordinator } from "@zhivex-ai/core";
-export type { AgentBudgetCoordinator, AgentBudgetCoordinatorOptions, AgentTokenReservation } from "@zhivex-ai/core";
+export { createAgentBudgetCoordinator } from "@zhivex-ai/core/beta";
+export type { AgentBudgetCoordinator, AgentBudgetCoordinatorOptions, AgentTokenReservation } from "@zhivex-ai/core/beta";

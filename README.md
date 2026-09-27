@@ -4,17 +4,13 @@ Zhivex AI SDK is a TypeScript monorepo for Bun and Node that provides a unified,
 
 It is designed around a small shared contract in `@zhivex-ai/core` and thin provider adapters on top of it, so application code can stay stable while models and vendors change underneath.
 
-The direct providers support `gpt-6-sol`, `gpt-6-luna`, and `claude-opus-5-5`. GPT-6 Sol/Luna default to Responses; Chat Completions function calling requires reasoning effort `none`. Opus 5.5 uses always-on adaptive thinking and accepts only automatic or disabled tool choice. See the [OpenAI adapter](./packages/openai/README.md) and [Anthropic adapter](./packages/anthropic/README.md) for migration details. The SDK catalog includes their direct-provider token and cache prices.
+Use focused imports such as `@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/evals`, and `@zhivex-ai/agents/realtime` to avoid the complete Core aggregation. Operational stores remain explicit in `@zhivex-ai/agents/ops`. See [architecture boundaries](./docs/ARCHITECTURE.md).
 
-OpenAI Responses preserves function receipts even when a function is named `apply_patch`, `shell`, or `computer`. Native protocols require explicit metadata; see [receipt handling and legacy history migration](./packages/openai/README.md#responses-function-receipts-and-native-history-migration).
+The direct providers support `gpt-6-sol`, `gpt-6-luna`, and `claude-opus-5-5`. GPT-6 Sol/Luna default to Responses; Chat Completions function calling requires reasoning effort `none`. Opus 5.5 uses always-on adaptive thinking and accepts only automatic or disabled tool choice. See the [OpenAI adapter](./packages/openai/README.md) and [Anthropic adapter](./packages/anthropic/README.md) for migration details. The SDK catalog includes their direct-provider token and cache prices.
 
 ## Durable Agent Output Redaction
 
-`createRedactionPolicy().outputGuardrail` sanitizes the authoritative final agent state before persistence and before subsequent output guardrails run. Returned output, stored state, and failures reconstructed after a later guardrail rejection retain the same redacted content. This covers `outputText`, text message parts (including step request/response history), step response text, tool result outputs/error messages, `finalOutput`, and run metadata. Finalized step events and memory saves use this sanitized content too. Structured output is redacted after schema validation; replacements can change domain-specific string constraints.
-
-The policy preserves run identity, scope, approvals, usage/budget controls, tool call IDs/names/inputs, provider control data and provider metadata, and non-text media. It does not copy arbitrary guardrail snapshot mutations back into the durable state. Apply the policy to each subagent to sanitize its own store and results before the parent receives them.
-
-This is a terminal output policy: live stream chunks, earlier tool/telemetry events, intermediate checkpoints, external artifacts, and historical store revisions are not retroactively sanitized. A reopened final checkpoint retains redaction; resuming a checkpoint written before the terminal guardrail still requires appropriate input policies and protected storage. Child control records, compaction/handoff records, and reconciliation evidence are not rewritten by this policy. Configure trace/export redaction separately, and use storage access controls and retention rules for execution records. An output guardrail is not a guarantee of censorship before streaming.
+`createRedactionPolicy().outputGuardrail` sanitizes final agent state before persistence. It does not retroactively sanitize live streams or earlier checkpoints. See [scope and limitations](./docs/PRODUCTION.md#durable-agent-output-redaction).
 
 ## Stability And Support
 
@@ -271,6 +267,7 @@ Status shorthand:
 Compatibility notes:
 
 - `structured output` means the SDK can use the shared `generateObject()` / `streamObject()` contract. `native` means schema-aware provider support; `prompted` means SDK fallback prompting instead of provider-native schema enforcement.
+- Native search preserves [Gemini streaming grounding and attribution](./packages/gemini/README.md#google-search-sources-in-streaming) and [Qwen Responses output limits and citations](./packages/qwen/README.md#bounded-responses-search-and-citations). Internal search measurement is separate from citations and token usage; Core/SDK expose `HostedToolUsage` and per-route `capabilities.hostedTools`. Unverified hosted-call limits are not budget guarantees. Model/route live certification remains separate from transport support.
 - Qwen Responses validates complete tool-call batches and reports sanitized argument/SSE errors; see [Responses error semantics](./packages/qwen/README.md#responses-argument-and-stream-errors).
 - Qwen structured output uses Chat Completions JSON-object mode plus a schema system prompt, followed by SDK-side schema validation. DashScope does not currently expose strict JSON Schema enforcement for this API.
 - `Realtime sessions` means the provider package exposes `realtimeModel().connect()` through the shared `RealtimeSession` contract. `Browser tokens` means the provider also exposes `realtimeModel().createBrowserToken()` for short-lived client-side credentials.
