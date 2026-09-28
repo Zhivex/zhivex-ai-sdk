@@ -146,12 +146,26 @@ const mcpErrorMessage = (toolName: string, response: Record<string, JsonValue>):
     : `MCP tool "${toolName}" returned an error response.`;
 };
 
-const toZodLiteral = (value: JsonValue) => {
+const equalJsonValue = (left: unknown, right: JsonValue): boolean => {
+  if (left === right) return true;
+  if (Array.isArray(right)) {
+    return Array.isArray(left) && left.length === right.length &&
+      right.every((value, index) => equalJsonValue(left[index], value));
+  }
+  if (isRecord(right)) {
+    return isRecord(left) && Object.keys(left).length === Object.keys(right).length &&
+      Object.entries(right).every(([key, value]) =>
+        Object.hasOwn(left, key) && equalJsonValue(left[key], value));
+  }
+  return false;
+};
+
+const toZodLiteral = (value: JsonValue): z.ZodTypeAny => {
   if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return z.literal(value);
   }
 
-  return z.unknown();
+  return z.json().refine((candidate) => equalJsonValue(candidate, value), "Expected the declared JSON literal.");
 };
 
 const toZodUnion = (schemas: JsonValue[] | undefined): z.ZodTypeAny => {
@@ -219,8 +233,11 @@ const jsonSchemaToZod = (schema: JsonValue | undefined): z.ZodTypeAny => {
     return toZodLiteral(jsonSchema.const);
   }
 
-  if (Array.isArray(jsonSchema.enum) && jsonSchema.enum.length > 0) {
-    return toZodUnion(jsonSchema.enum);
+  if (Array.isArray(jsonSchema.enum)) {
+    const literals = jsonSchema.enum.map(toZodLiteral);
+    if (literals.length === 0) return z.never();
+    if (literals.length === 1) return literals[0];
+    return z.union(literals as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
   }
 
   if (Array.isArray(jsonSchema.oneOf)) {

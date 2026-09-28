@@ -1,5 +1,24 @@
 # @zhivex-ai/sdk
 
+## 1.29.0
+
+### Minor Changes
+
+- Promote the opt-in MCP HTTP/OAuth entrypoints to Stable for the documented MCP
+  2025-11-25 subset. Export a frozen MCP_HTTP_API_STABILITY_MANIFEST covering the
+  entrypoint runtime surface; preserve host-owned credentials, explicit approvals,
+  bounded requests, local-only close and no automatic tool replay.
+  
+  Fix MCP input enum validation accepting undeclared values, including structured
+  JSON enum/const values. Add installed Core/SDK certification against the official
+  MCP server over HTTPS with OAuth PKCE, refresh, approval/resume and recovery on
+  Node and Bun. createMcpToolRegistry remains Beta.
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.28.0
+
 ## 1.28.0
 
 ### Minor Changes

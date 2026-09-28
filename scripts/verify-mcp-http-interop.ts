@@ -1,11 +1,10 @@
-/** Run with: bun scripts/verify-mcp-http-interop.ts /path/to/official-sdk/dist/esm */
+/** Run with bun run test:mcp:interop; optionally pass another official SDK dist/esm directory. */
 import assert from "node:assert/strict";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { createMcpHttpClient } from "../packages/core/src/mcp-http.js";
 
-const root = process.argv[2];
-if (!root) throw new Error("Pass the installed official @modelcontextprotocol/sdk dist/esm directory.");
+const root = process.argv[2] ?? fileURLToPath(new URL("../", import.meta.resolve("@modelcontextprotocol/sdk/server/mcp.js")));
 const { McpServer, ResourceTemplate } = await import(pathToFileURL(resolve(root, "server/mcp.js")).href);
 const { WebStandardStreamableHTTPServerTransport } = await import(pathToFileURL(resolve(root, "server/webStandardStreamableHttp.js")).href);
 for (const enableJsonResponse of [true, false]) {

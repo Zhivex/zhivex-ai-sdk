@@ -5,6 +5,15 @@ export { McpHttpError } from "./mcp-http-common.js";
 export type { McpHttpAuthProvider, McpHttpErrorCode, McpDestinationPolicy, McpDestinationPurpose, McpAuthorizationChallenge } from "./mcp-http-common.js";
 export * from "./mcp-oauth.js";
 
+/** Stable exports of the opt-in MCP HTTP entrypoint; separate from the root manifest. */
+export const MCP_HTTP_API_STABILITY_MANIFEST = Object.freeze({
+  MCP_HTTP_API_STABILITY_MANIFEST: "stable",
+  McpHttpError: "stable",
+  collectMcpPages: "stable",
+  createMcpHttpClient: "stable",
+  createMcpOAuthProvider: "stable"
+} as const);
+
 export interface McpHttpClientOptions {
   url: string;
   fetch?: typeof globalThis.fetch;

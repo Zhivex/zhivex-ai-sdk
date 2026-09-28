@@ -69,7 +69,7 @@ Use these guides when adopting the SDK in a real app:
 - [Model Catalog Contract](./docs/MODEL_CATALOG.md): immutable snapshots, data-update policy, pricing metadata, and capability boundaries.
 - [Context Limits and Auxiliary Recommendations](./docs/CATALOG_COMPACTION.md): per-datum evidence and opt-in compaction model selection.
 - [Durable Compaction](./docs/DURABLE_COMPACTION.md): paid auxiliary calls, usage receipts and recovery boundaries.
-- [MCP HTTP and OAuth](./docs/MCP_HTTP.md): opt-in transport, resources, prompts and host-owned credentials.
+- [MCP HTTP and OAuth](./docs/MCP_HTTP.md): Stable opt-in Streamable HTTP transport, resources, prompts and host-owned OAuth credentials.
 - [AI SDK UI Compatibility](./docs/AI_SDK_UI_COMPAT.md): version-pinned `useChat` transport, message adapters, stream protocol, limits, and part matrix.
 - [Optional Model Resolver](./docs/MODEL_RESOLVER.md): Beta `provider/model` resolution through an explicit, instance-local registry.
 - [CLI Contract](./docs/CLI.md): command compatibility, JSON and exit behavior, local execution, and safety boundaries.

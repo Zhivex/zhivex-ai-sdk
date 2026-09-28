@@ -30,7 +30,8 @@ Focused published entrypoints are also supported: `@zhivex-ai/core/contracts`,
 `@zhivex-ai/core/agents`, `@zhivex-ai/core/generation`, `@zhivex-ai/core/provider`, `@zhivex-ai/core/catalog`,
 `@zhivex-ai/core/evals`, `@zhivex-ai/core/realtime`, `@zhivex-ai/core/control-plane`,
 `@zhivex-ai/core/ops`, `@zhivex-ai/core/beta`, `@zhivex-ai/core/experimental`,
-`@zhivex-ai/core/provider-google`,
+`@zhivex-ai/core/provider-google`, `@zhivex-ai/core/mcp-http`,
+`@zhivex-ai/sdk/mcp-http`,
 `@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/workflows`, `@zhivex-ai/sdk/ui`,
 `@zhivex-ai/sdk/evals`, `@zhivex-ai/sdk/catalog`, `@zhivex-ai/sdk/beta`, and
 `@zhivex-ai/sdk/experimental`. The package roots remain backward compatible.
@@ -92,7 +93,7 @@ These APIs are the supported public contract for application code and production
 - Typed failures: `ProviderToolCallError` and its sanitized durable `AgentRunError` projection
 - Provider parity helpers: `inspectProviderAgentSupport`, `createProviderSupportMatrix`, `renderProviderSupportMatrix`, and `createProviderSupportDriftReport`
 - Default agent stores: in-memory, file-backed, SQLite, and Postgres run and memory stores
-- MCP integration: `createMcpToolSet`
+- MCP integration: `createMcpToolSet`, plus the opt-in HTTP/OAuth entrypoints described in [MCP HTTP](docs/MCP_HTTP.md). `MCP_HTTP_API_STABILITY_MANIFEST` classifies every runtime export of those entrypoints; their exported types are Stable and covered by declaration snapshots.
 - Gateway: `createGateway` and its documented request/response surface
 - Middleware helpers for caching, circuit breaking, telemetry, and model wrapping
 - UI and SSE helpers exported from `@zhivex-ai/sdk` and `@zhivex-ai/core`
@@ -103,7 +104,7 @@ The stable surface is intentionally narrower than the total number of exported s
 
 ## Beta
 
-The opt-in `recommendAuxiliaryModel` and `createAgentBudgetCoordinator` helpers and the `@zhivex-ai/core/mcp-http` / `@zhivex-ai/sdk/mcp-http` transport and OAuth entry points are Beta. Catalog context limits and per-datum evidence are additive; a documented compaction candidate is not a quality certification.
+The opt-in `recommendAuxiliaryModel` and `createAgentBudgetCoordinator` helpers and `createMcpToolRegistry` are Beta. Catalog context limits and per-datum evidence are additive; a documented compaction candidate is not a quality certification.
 
 These APIs are supported and documented, but they may still change between minor releases as the SDK matures:
 

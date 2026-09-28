@@ -218,3 +218,48 @@ describe("MCP bounds and message validation", () => {
     expect(replied).toBe(true);
   });
 });
+
+describe("Stable MCP failure boundary", () => {
+  it("rejects protocol revisions outside the stable subset", async () => {
+    const client = createMcpHttpClient({ url: "https://mcp.test/mcp", fetch: (async (_url, init) => {
+      const request = JSON.parse(init!.body as string);
+      return json({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: "2099-01-01", capabilities: {} } });
+    }) as typeof fetch });
+    await expect(client.initialize()).rejects.toMatchObject({ code: "PROTOCOL_ERROR" });
+    client.close();
+  });
+  it("rejects oversized tool arguments before dispatch without claiming an effect", async () => {
+    const fixture = server(() => { throw new Error("unexpected"); });
+    const client = createMcpHttpClient({ url: "https://mcp.test/mcp", fetch: fixture.fetcher, maxRequestBytes: 512 });
+    await client.initialize();
+    await expect(client.callTool({ name: "write", arguments: { value: "x".repeat(1024) } })).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+    expect(fixture.calls.filter(call => call.body.method === "tools/call")).toHaveLength(0);
+    client.close();
+  });
+  it("treats oversized or mismatched tool replies as indeterminate without replay", async () => {
+    for (const result of ["oversized", "wrong-id"]) {
+      const fixture = server(req => json({ jsonrpc: "2.0", id: result === "wrong-id" ? req.id + 1 : req.id, result: { content: [{ type: "text", text: "x".repeat(result === "oversized" ? 2048 : 1) }] } }));
+      const client = createMcpHttpClient({ url: "https://mcp.test/mcp", fetch: fixture.fetcher, maxResponseBytes: 1024 });
+      await expect(client.callTool({ name: "write" })).rejects.toMatchObject({ code: "INDETERMINATE" });
+      expect(fixture.calls.filter(call => call.body.method === "tools/call")).toHaveLength(1);
+      client.close();
+    }
+  });
+  it.each(["http://127.0.0.1/mcp", "https://user:password@mcp.test/mcp", "https://mcp.test/mcp#fragment"])("rejects unsafe endpoint %s before retrieving credentials", async url => {
+    let tokens = 0;
+    const client = createMcpHttpClient({ url, auth: { getAccessToken: async () => { tokens++; return "secret"; } } });
+    await expect(client.initialize()).rejects.toMatchObject({ code: "DESTINATION_REJECTED" });
+    expect(tokens).toBe(0);
+    client.close();
+  });
+  it("does not retry a consumed authorization code after token persistence fails", async () => {
+    const fixture = oauthFixture();
+    const auth = createMcpOAuthProvider({ ...fixture.options, tokenStore: { ...fixture.options.tokenStore, save: async () => { throw new Error("store unavailable"); } } });
+    const start = await auth.beginAuthorization();
+    const callback = `${fixture.options.redirectUri}?code=code&state=${start.state}`;
+    await expect(auth.completeAuthorization(callback)).rejects.toThrow("store unavailable");
+    await expect(auth.completeAuthorization(callback)).rejects.toMatchObject({ code: "AUTH_REJECTED" });
+    expect(fixture.calls.filter(call => call.url.endsWith("/token"))).toHaveLength(1);
+    expect(fixture.getTokens()).toBeUndefined();
+  });
+});
