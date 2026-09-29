@@ -1,5 +1,15 @@
 # @zhivex-ai/vertex
 
+## 1.2.2
+
+### Patch Changes
+
+- e9b7fc8: Support Claude Sonnet 5.5 with typed between-tools thinking, shared none-effort mapping, progress/binding controls, default server fallback, and local validation of incompatible thinking, forced tools, computer tools, and advisor pairings. Preserve Sonnet 5 behavior and opaque conversation history.
+  
+  Expose Sonnet 5.5 thinking controls and computer/browser toolsets on Vertex with host-specific beta transport. Add separate Anthropic and Vertex catalog entries, verified direct API token/cache pricing, migration documentation, regression coverage, and an opt-in direct API smoke.
+- Updated dependencies [e9b7fc8]
+  - @zhivex-ai/anthropic@0.13.0
+
 ## 1.2.1
 
 ### Patch Changes

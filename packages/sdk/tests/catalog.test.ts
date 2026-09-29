@@ -36,10 +36,10 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-09-24",
+      snapshotVersion: "2026-09-28",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-09-22",
+        version: "2026-09-28",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
@@ -60,7 +60,7 @@ describe("SDK model catalog ownership", () => {
     }
     expect(defaultModelCatalog.find("gemini", "gemini-3.8-live-extended-thinking")).toBeDefined();
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(225);
+    expect(entries).toHaveLength(227);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
@@ -102,7 +102,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(225);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(227);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-09-24",
       verifiedAt: "2026-09-22",
@@ -130,7 +130,7 @@ describe("SDK model catalog ownership", () => {
     expect(entry).toMatchObject({ provider: "vertex", modelId: "claude-sonnet-4-6" });
     expect(entry?.inputCostPer1kTokens).toBeUndefined();
     expect(entry?.recommendedFor).toBeUndefined();
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-09-19");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-09-28");
   });
 
   it("does not derive the release-managed snapshot from the frozen core compatibility copy", () => {

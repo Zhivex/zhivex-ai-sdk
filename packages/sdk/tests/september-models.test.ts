@@ -4,6 +4,7 @@ import { defaultModelCatalog } from "../src/index.js";
 it.each([
   ["openai", "gpt-6-sol", 0.002, 0.0002, 0.0025, 0.01],
   ["openai", "gpt-6-luna", 0.0001, 0.00001, 0.000125, 0.0005],
+  ["anthropic", "claude-sonnet-5-5", 0.002, 0.0002, 0.0025, 0.01],
   ["anthropic", "claude-opus-5-5", 0.004, 0.0002, 0.005, 0.02],
 ] as const)("publishes verified per-1k pricing for %s/%s", (provider, modelId, input, cached, write, output) => {
   expect(defaultModelCatalog.find(provider, modelId)).toMatchObject({
@@ -13,4 +14,10 @@ it.each([
   if (provider === "openai") {
     expect(defaultModelCatalog.find(provider, modelId)?.longContextPricing).toEqual({ inputTokenThreshold: 272000, inputMultiplier: 2, outputMultiplier: 1.5 });
   }
+});
+
+it("keeps Sonnet 5.5 cloud pricing distinct and retains Sonnet 5", () => {
+  expect(defaultModelCatalog.find("vertex", "claude-sonnet-5-5")).toMatchObject({ provider: "vertex", modelId: "claude-sonnet-5-5" });
+  expect(defaultModelCatalog.find("vertex", "claude-sonnet-5-5")?.inputCostPer1kTokens).toBeUndefined();
+  expect(defaultModelCatalog.find("anthropic", "claude-sonnet-5")?.modelId).toBe("claude-sonnet-5");
 });

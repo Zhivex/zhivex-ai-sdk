@@ -245,3 +245,64 @@ describe("Claude on Vertex", () => {
     expect(() => vertex.predictionModel!("publishers/anthropic/models/a/b")).toThrow(ConfigurationError);
   });
 });
+
+describe("Sonnet 5.5 on Vertex", () => {
+  it.each(["claude-sonnet-5-5", "claude-sonnet-5-5@20260928"])("routes %s with between_tools and preserves Google identity", async (id) => {
+    const fetcher = vi.fn(async () => response());
+    const model = provider(fetcher)(id);
+    await model.generate({ ...input, reasoning: { effort: "none" } });
+    expect(model.provider).toBe("vertex");
+    expect(fetcher.mock.calls[0][0]).toContain(`/publishers/anthropic/models/${encodeURIComponent(id)}:rawPredict`);
+    expect(bodyAt(fetcher)).toMatchObject({ thinking: { type: "between_tools" }, anthropic_version: "vertex-2023-10-16" });
+    expect(bodyAt(fetcher)).not.toHaveProperty("model");
+    expect(bodyAt(fetcher)).not.toHaveProperty("anthropic_beta");
+  });
+
+  it("maps thinking betas into the body and serializes the computer toolset", async () => {
+    const fetcher = vi.fn(async () => response());
+    const model = provider(fetcher)("claude-sonnet-5-5");
+    await model.generate({ ...input,
+      tools: { computer: hostedTool({ provider: "vertex", type: "computer_toolset_20260801", name: "computer" }) },
+      providerOptions: { thinking: { type: "adaptive", display: "updates", block_binding: { prefix_mismatch_behavior: "drop_block" } } }
+    });
+    expect(model.capabilities.agentCapabilities?.toolsets).toBe(true);
+    expect(bodyAt(fetcher).tools).toEqual([{ type: "computer_toolset_20260801" }]);
+    expect(bodyAt(fetcher).anthropic_beta).toEqual(["thinking-display-updates-2026-08-18", "thinking-binding-controls-2026-08-01"]);
+    expect(new Headers(fetcher.mock.calls[0][1].headers).has("anthropic-beta")).toBe(false);
+  });
+
+  it("rejects forced tools and incompatible thinking/computer options before Google fetch", async () => {
+    const fetcher = vi.fn();
+    const model = provider(fetcher)("claude-sonnet-5-5");
+    const invalid: Partial<ModelGenerateInput>[] = [
+      { reasoning: { budgetTokens: 1024 } },
+      { providerOptions: { thinking: { type: "disabled" } } },
+      { providerOptions: { thinking: { type: "between_tools" }, output_config: { effort: "max" } } },
+      { toolChoice: "required" },
+      { toolChoice: { toolName: "sum" } },
+      { tools: { computer: hostedTool({ provider: "vertex", type: "computer_20250124", name: "computer" }) } },
+      { tools: { computer: hostedTool({ provider: "vertex", type: "computer_20251124", name: "computer" }) } },
+    ];
+    for (const options of invalid) {
+      await expect(model.generate({ ...input, ...options })).rejects.toThrow();
+      await expect(model.stream({ ...input, ...options })).rejects.toThrow();
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("streams with between_tools using streamRawPredict", async () => {
+    const data = [
+      ["content_block_start", { index: 0, content_block: { type: "thinking", thinking: "", signature: "" } }],
+      ["content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: "Checking." } }],
+      ["content_block_delta", { index: 0, delta: { type: "signature_delta", signature: "opaque" } }],
+      ["content_block_stop", { index: 0 }],
+      ["message_delta", { delta: { stop_reason: "end_turn" } }], ["message_stop", {}],
+    ];
+    const fetcher = vi.fn(async () => new Response(data.map(([event, body]) => `event: ${event}\ndata: ${JSON.stringify(body)}\n\n`).join("")));
+    const received = [];
+    for await (const event of await provider(fetcher)("claude-sonnet-5-5").stream({ ...input, reasoning: { effort: "none" } })) received.push(event);
+    expect(fetcher.mock.calls[0][0]).toContain(":streamRawPredict");
+    expect(bodyAt(fetcher).thinking).toEqual({ type: "between_tools" });
+    expect(received).toContainEqual(expect.objectContaining({ type: "provider-data", data: { type: "signature_delta", signature: "opaque" } }));
+  });
+});

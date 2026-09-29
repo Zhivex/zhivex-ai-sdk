@@ -186,6 +186,8 @@ Schema metadata and `additionalProperties`, including nested schemas.
 
 ## Claude on Vertex
 
+`vertex("claude-sonnet-5-5")` shares the Sonnet 5.5 thinking and forced-tool validation with the Anthropic adapter. Shared effort `none` sends `between_tools`; adaptive thinking accepts progress and binding controls, whose beta flags are placed in `anthropic_beta` in the Google request body. The model supports the `computer_toolset_20260801` and browser toolsets through this adapter; old computer tools fail locally. Automatic context compaction remains available. Direct-API server fallbacks, advisor tools, on-demand compaction, and mid-conversation tool-change options remain outside this host adapter's exposed contract. See the [Sonnet migration notes](../anthropic/README.md#claude-sonnet-55) and [Google's model page](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/sonnet-5-5). Contract coverage does not certify live access to Google Cloud.
+
 The package, factory, and provider identity remain `@zhivex-ai/vertex`, `createVertex()`, and `vertex`. Claude uses Google's bearer authentication and billing, with the Anthropic Messages protocol at `publishers/anthropic`; no Anthropic API key is needed.
 
 ```ts

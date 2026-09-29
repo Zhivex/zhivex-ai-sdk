@@ -1,6 +1,39 @@
 # @zhivex-ai/anthropic
 
-Anthropic adapter for Zhivex AI SDK, with first-class Claude Opus 5 support.
+Anthropic adapter for Zhivex AI SDK, with model-specific Claude thinking and tool controls.
+
+## Claude Sonnet 5.5
+
+Sonnet 5.5 and its dated variants advertise `computerUse: true` through the shared agent capability helpers, matching support for `computer_toolset_20260801`.
+
+Use `createAnthropic()("claude-sonnet-5-5")`. Adaptive thinking is on by default with API effort `high`; shared `reasoning.effort` accepts `low`, `medium`, `high`, `xhigh`, and `max`. Shared `reasoning.effort: "none"` maps to `thinking: { type: "between_tools" }`: it turns off up-front thinking, while progress between tools may still appear as signed thinking blocks. This is the model's lowest thinking setting, not a promise of no thinking blocks.
+
+```ts
+import { generateText } from "@zhivex-ai/core";
+import { createAnthropic } from "@zhivex-ai/anthropic";
+
+const result = await generateText({
+  model: createAnthropic()("claude-sonnet-5-5"),
+  prompt: "Reply with one short greeting.",
+  reasoning: { effort: "none" },
+  maxTokens: 1024,
+});
+console.log(result.text);
+```
+
+Alternatively, set `providerOptions.thinking: { type: "between_tools" }` with effort `low`, `medium`, or `high`. This mode takes no other thinking fields: `display`, `budget_tokens`, and `block_binding` are rejected, as are `xhigh`/`max` effort. Raw `thinking.disabled`, manual budgets, forced tool choice (`required`, named tools, native `any`/`tool`), assistant prefill, and non-default sampling controls fail locally before generation or streaming. Use automatic tools and native structured output for schemas. Sonnet 5 retains its existing disabled-thinking and forced-tool behavior.
+
+With adaptive thinking, `display: "updates"` and `block_binding: { prefix_mismatch_behavior: "drop_block" }` use the corresponding beta headers. Generation preserves signed blocks and streaming exposes thinking/signature deltas as provider data. Replay returned history unchanged and append new turns: thinking is bound to the model, account, and conversation. With `between_tools`, binding controls are unavailable; applications editing history must remove affected thinking blocks themselves.
+
+On the direct API, use `computer_toolset_20260801`; `computer_20250124` and `computer_20251124` are rejected. The toolset declaration omits `name`, and member calls/results retain `toolset_name`. A native `advisor_20260301` tool must select an Opus 5/5.5, Fable 5/5.1, Mythos 5/5.1, or Sonnet 5.5 advisor; rejected legacy pairings fail locally. `providerOptions.fallbacks: "default"` is accepted with its beta header. On-demand compaction uses the existing `compaction` option. Per-message effort and inline tool definitions do not yet have dedicated shared helpers.
+
+The SDK-owned catalog includes direct API input/output and cache pricing; Vertex has a separate entry without inferred prices. This does not certify Bedrock or other hosts. The opt-in direct smoke covers text/usage, streaming, native JSON, a tool loop, and progress/binding controls with history replay:
+
+```bash
+ZHIVEX_SONNET55_LIVE=1 bun --env-file=.env run test:integration packages/anthropic/tests/sonnet55.integration.test.ts
+```
+
+Missing credentials skip these tests and do not constitute live certification. The [September 28 validation report](../../docs/maintainers/SONNET_55_SUPPORT_2026_09_28.md) records the five passing direct live checks and their scope. Sources: [Sonnet 5.5 specifications](https://platform.claude.com/docs/en/models/sonnet-5-5/overview), [breaking changes](https://platform.claude.com/docs/en/models/sonnet-5-5/whats-new-sonnet-5-5).
 
 ## Claude Opus 5.5
 
