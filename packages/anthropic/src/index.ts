@@ -98,7 +98,7 @@ export interface AnthropicLanguageModelOptions {
 }
 
 export interface AnthropicThinkingConfig {
-  type: "adaptive" | "disabled" | "enabled";
+  type: "adaptive" | "between_tools" | "disabled" | "enabled";
   budget_tokens?: number;
   display?: "omitted" | "summarized" | "updates";
   block_binding?: { prefix_mismatch_behavior: "error" | "drop_block" };
@@ -187,7 +187,10 @@ const isClaude51Model = (modelId: string) => /^claude-(?:fable|mythos)-5-1(?:[-@
 
 const isClaudeOpus55Model = (modelId: string) => /^claude-opus-5-5(?:[-@]|$)/.test(normalizeModelId(modelId));
 
-const supportsBoundThinking = (modelId: string) => isClaude51Model(modelId) || isClaudeOpus55Model(modelId);
+const isClaudeSonnet55Model = (modelId: string) => /^claude-sonnet-5-5(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const supportsBoundThinking = (modelId: string) =>
+  isClaude51Model(modelId) || isClaudeOpus55Model(modelId) || isClaudeSonnet55Model(modelId);
 
 const isClaudeMythosClass5Model = (modelId: string) => isClaudeFable5Model(modelId) || isClaudeMythos5Model(modelId);
 
@@ -285,7 +288,7 @@ const mergeThinkingConfig = (
   override?: AnthropicThinkingConfig
 ): AnthropicThinkingConfig | undefined => {
   const merged = mergeOptionalObjects(base, override);
-  if (merged && merged.type !== "enabled") {
+  if (merged && merged.type !== "enabled" && merged.type !== "between_tools") {
     delete merged.budget_tokens;
   }
   return merged;
@@ -905,7 +908,8 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput): MappedAnthrop
     return supportsAdaptiveThinking(modelId)
       ? {
           thinking: {
-            type: "disabled"
+            // Sonnet 5.5 has no fully disabled mode; this omits up-front thinking.
+            type: isClaudeSonnet55Model(modelId) ? "between_tools" : "disabled"
           } satisfies AnthropicThinkingConfig
         }
       : undefined;
@@ -997,6 +1001,22 @@ const assertAnthropicRequestCompatibility = (
     );
   }
 
+  if (isClaudeSonnet55Model(modelId) && thinking?.type === "disabled") {
+    throw new UnsupportedFeatureError('Claude Sonnet 5.5 requires thinking.type="between_tools" instead of "disabled".');
+  }
+
+  if (thinking?.type === "between_tools") {
+    if (!isClaudeSonnet55Model(modelId)) {
+      throw new UnsupportedFeatureError('Thinking type "between_tools" requires Claude Sonnet 5.5.');
+    }
+    if (Object.entries(thinking).some(([key, value]) => key !== "type" && value !== undefined)) {
+      throw new ValidationError('Thinking type "between_tools" takes no display, budget_tokens, block_binding, or other fields.');
+    }
+    if (outputConfig?.effort === "xhigh" || outputConfig?.effort === "max") {
+      throw new ValidationError('Thinking type "between_tools" supports only low, medium, or high effort.');
+    }
+  }
+
   if (thinking?.type === "disabled" && thinking.display !== undefined) {
     throw new ValidationError(
       'Provider "anthropic" cannot combine "thinking.disabled" with "thinking.display".'
@@ -1004,10 +1024,10 @@ const assertAnthropicRequestCompatibility = (
   }
 
   if (thinking?.display === "updates" && !supportsBoundThinking(modelId)) {
-    throw new UnsupportedFeatureError('Thinking display "updates" requires Claude Fable/Mythos 5.1 or Opus 5.5.');
+    throw new UnsupportedFeatureError('Thinking display "updates" requires Claude Fable/Mythos 5.1, Opus 5.5, or Sonnet 5.5.');
   }
   if (thinking?.block_binding && !supportsBoundThinking(modelId)) {
-    throw new UnsupportedFeatureError("Thinking block binding controls require Claude Fable/Mythos 5.1 or Opus 5.5.");
+    throw new UnsupportedFeatureError("Thinking block binding controls require Claude Fable/Mythos 5.1, Opus 5.5, or Sonnet 5.5.");
   }
   const effort = outputConfig?.effort;
   const supportedEfforts = anthropicReasoningEfforts(modelId);
@@ -1094,9 +1114,9 @@ const assertAnthropicRequestCompatibility = (
   }
 
   const fallbacks = providerOptions.fallbacks;
-  if (fallbacks === "default" && !isClaudeOpus5Model(modelId)) {
+  if (fallbacks === "default" && !isClaudeOpus5Model(modelId) && !isClaudeSonnet55Model(modelId)) {
     throw new UnsupportedFeatureError(
-      'Provider "anthropic" only supports managed "fallbacks=default" for Claude Opus 5.'
+      'Provider "anthropic" only supports managed "fallbacks=default" for Claude Opus 5 or Sonnet 5.5.'
     );
   }
 
@@ -1164,9 +1184,21 @@ const prepareAnthropicRequest = (
   )) {
     throw new UnsupportedFeatureError(`Provider "anthropic" model "${modelId}" supports only automatic or disabled tool choice.`);
   }
-  if (isClaudeOpus55Model(modelId) && provider !== "bedrock" &&
-      mapTools(input.tools)?.some((tool) => "type" in tool && tool.type === "computer_20251124")) {
-    throw new UnsupportedFeatureError('Claude Opus 5.5 requires computer_toolset_20260801 instead of computer_20251124 on this host.');
+  if (isClaudeOpus55Model(modelId) || isClaudeSonnet55Model(modelId)) {
+    for (const tool of mapTools(input.tools) ?? []) {
+      if (!("type" in tool)) continue;
+      if (provider !== "bedrock" && tool.type === "computer_20251124") {
+        throw new UnsupportedFeatureError(`Model "${modelId}" requires computer_toolset_20260801 instead of computer_20251124 on this host.`);
+      }
+      if (isClaudeSonnet55Model(modelId) && tool.type === "computer_20250124") {
+        throw new UnsupportedFeatureError('Claude Sonnet 5.5 does not support computer_20250124.');
+      }
+      if (isClaudeSonnet55Model(modelId) && tool.type === "advisor_20260301" &&
+          !("model" in tool && typeof tool.model === "string" &&
+            /^(?:claude-(?:opus|fable|mythos)-5|claude-sonnet-5-5)(?:[-@]|$)/.test(normalizeModelId(tool.model)))) {
+        throw new UnsupportedFeatureError('Claude Sonnet 5.5 requires an Opus 5/5.5, Fable 5/5.1, Mythos 5/5.1, or Sonnet 5.5 advisor.');
+      }
+    }
   }
   const signedBlocks = input.messages.filter((message) => message.role !== "system").flatMap((message, messageIndex) =>
     message.parts.flatMap((part, partIndex) => part.type === "provider-data" && part.provider === "anthropic" &&

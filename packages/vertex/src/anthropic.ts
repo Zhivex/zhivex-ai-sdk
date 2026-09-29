@@ -17,7 +17,7 @@ export interface VertexClaudeOptions extends AnthropicLanguageModelOptions {
 const nativeTools = new Set([
   "web_search_20250305", "bash_20250124", "text_editor_20250124",
   "text_editor_20250429", "text_editor_20250728", "memory_20250818",
-  "computer_20250124", "tool_search_tool_regex_20251119", "tool_search_tool_bm25_20251119", "browser_toolset_20260801"
+  "computer_toolset_20260801", "computer_20250124", "tool_search_tool_regex_20251119", "tool_search_tool_bm25_20251119", "browser_toolset_20260801"
 ]);
 const vertexBetas = new Set(["computer-use-2025-01-24", "context-management-2025-06-27", "compact-2026-01-12"]);
 
@@ -56,7 +56,8 @@ const validateWireRequest = (request: any, modelId: string) => {
 };
 
 export const createVertexClaudeModel = (modelId: string, endpoint: string, fetcher: typeof globalThis.fetch) => {
-  const browserToolset = /^claude-(?:opus-4-8|(?:opus|sonnet|fable|mythos)-5(?:-1)?)(?:@|$)/.test(modelId);
+  const sonnet55 = /^claude-sonnet-5-5(?:[-@]|$)/.test(modelId);
+  const browserToolset = sonnet55 || /^claude-(?:opus-4-8|(?:opus|sonnet|fable|mythos)-5(?:-1)?)(?:@|$)/.test(modelId);
   const model = createAnthropicMessagesModel({
     modelId,
     provider: "vertex",
@@ -78,13 +79,14 @@ export const createVertexClaudeModel = (modelId: string, endpoint: string, fetch
     },
     transport: {
       async send(body, signal, withMcpToolset, withFilesApi, betas) {
-        if (withMcpToolset || withFilesApi || betas.some((beta) => !vertexBetas.has(beta))) {
+        if (withMcpToolset || withFilesApi || betas.some((beta) => !vertexBetas.has(beta) && !(sonnet55 && ["thinking-binding-controls-2026-08-01", "thinking-display-updates-2026-08-18"].includes(beta)))) {
           throw new UnsupportedFeatureError("Claude on Vertex does not expose this beta feature, remote MCP, or Files API IDs.");
         }
         const { model: _model, sessionId, ...request } = JSON.parse(body);
         if (sessionId !== undefined && (typeof sessionId !== "string" || !sessionId.trim() || /[\r\n]/.test(sessionId))) throw new ConfigurationError("Vertex Claude sessionId must be a nonempty single-line string.");
         validateWireRequest(request, modelId);
         if (!browserToolset && request.tools?.some((tool: any) => tool.type === "browser_toolset_20260801")) throw new UnsupportedFeatureError(`Vertex Claude model "${modelId}" does not support the browser toolset.`);
+        if (!sonnet55 && request.tools?.some((tool: any) => tool.type === "computer_toolset_20260801")) throw new UnsupportedFeatureError("The Vertex computer toolset is currently exposed for Claude Sonnet 5.5 only.");
         const betaFeatures = new Set(betas);
         if (request.context_management !== undefined) {
           const edits = request.context_management?.edits;
@@ -96,7 +98,7 @@ export const createVertexClaudeModel = (modelId: string, endpoint: string, fetch
             seen.add(edit.type);
             if (edit.type === "clear_thinking_20251015" && index !== 0) throw new ConfigurationError("Claude thinking clearing must precede other context edits.");
             if (edit.type === "compact_20260112") {
-              if (!/^claude-(?:(?:opus|sonnet)-4-[6-8]|(?:opus|sonnet|fable|mythos)-5(?:-1)?)(?:@|$)/.test(modelId)) throw new UnsupportedFeatureError(`Vertex Claude model "${modelId}" does not support automatic compaction.`);
+              if (!sonnet55 && !/^claude-(?:(?:opus|sonnet)-4-[6-8]|(?:opus|sonnet|fable|mythos)-5(?:-1)?)(?:@|$)/.test(modelId)) throw new UnsupportedFeatureError(`Vertex Claude model "${modelId}" does not support automatic compaction.`);
               if (edit.trigger !== undefined && (edit.trigger.type !== "input_tokens" || !Number.isInteger(edit.trigger.value) || edit.trigger.value < 50_000)) throw new ConfigurationError("Claude compaction trigger requires at least 50000 input tokens.");
               betaFeatures.add("compact-2026-01-12");
             } else betaFeatures.add("context-management-2025-06-27");

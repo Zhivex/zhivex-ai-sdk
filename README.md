@@ -6,7 +6,7 @@ It is designed around a small shared contract in `@zhivex-ai/core` and thin prov
 
 Use focused imports such as `@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/evals`, and `@zhivex-ai/agents/realtime` to avoid the complete Core aggregation. Operational stores remain explicit in `@zhivex-ai/agents/ops`. See [architecture boundaries](./docs/ARCHITECTURE.md).
 
-The direct providers support `gpt-6-sol`, `gpt-6-luna`, and `claude-opus-5-5`. GPT-6 Sol/Luna default to Responses; Chat Completions function calling requires reasoning effort `none`. Opus 5.5 uses always-on adaptive thinking and accepts only automatic or disabled tool choice. See the [OpenAI adapter](./packages/openai/README.md) and [Anthropic adapter](./packages/anthropic/README.md) for migration details. The SDK catalog includes their direct-provider token and cache prices.
+The direct providers support `gpt-6-sol`, `gpt-6-luna`, `claude-opus-5-5`, and `claude-sonnet-5-5`. GPT-6 Sol/Luna default to Responses; Chat Completions function calling requires reasoning effort `none`. Opus 5.5 uses always-on adaptive thinking and accepts only automatic or disabled tool choice. See the [OpenAI adapter](./packages/openai/README.md) and [Anthropic adapter](./packages/anthropic/README.md) for migration details. Sonnet 5.5 maps reasoning effort `none` to `between_tools` and rejects forced tools, disabled/manual thinking, and incompatible effort settings before sending requests. The SDK catalog includes their direct-provider token and cache prices; Sonnet 5.5 on Vertex has a separate entry without inferred pricing.
 
 ## Durable Agent Output Redaction
 
