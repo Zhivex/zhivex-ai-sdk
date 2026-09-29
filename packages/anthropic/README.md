@@ -4,6 +4,8 @@ Anthropic adapter for Zhivex AI SDK, with model-specific Claude thinking and too
 
 ## Claude Sonnet 5.5
 
+Sonnet 5.5 and its dated variants advertise `computerUse: true` through the shared agent capability helpers, matching support for `computer_toolset_20260801`.
+
 Use `createAnthropic()("claude-sonnet-5-5")`. Adaptive thinking is on by default with API effort `high`; shared `reasoning.effort` accepts `low`, `medium`, `high`, `xhigh`, and `max`. Shared `reasoning.effort: "none"` maps to `thinking: { type: "between_tools" }`: it turns off up-front thinking, while progress between tools may still appear as signed thinking blocks. This is the model's lowest thinking setting, not a promise of no thinking blocks.
 
 ```ts

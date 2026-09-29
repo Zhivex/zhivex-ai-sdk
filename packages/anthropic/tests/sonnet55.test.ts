@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { hostedTool, providerDataPart, type ModelGenerateInput } from "@zhivex-ai/core";
+import { getAgentCapabilities, hostedTool, inspectProviderAgentSupport, providerDataPart, type ModelGenerateInput } from "@zhivex-ai/core";
 import { createAnthropic, createAnthropicMessagesModel } from "../src/index.js";
 
 const messages = [{ role: "user" as const, parts: [{ type: "text" as const, text: "hello" }] }];
@@ -9,6 +9,12 @@ const bodyAt = (fetcher: ReturnType<typeof vi.fn>, index = 0) => JSON.parse(Stri
 const nativeTool = (type: string, config = {}) => ({ native: hostedTool({ provider: "anthropic", name: "native", type, config }) });
 
 describe.each(["claude-sonnet-5-5", "claude-sonnet-5-5-20260928", "claude-sonnet-5-5@20260928"])("%s", (id) => {
+  it("advertises computer use through the public capability helpers", () => {
+    const model = createAnthropic({ apiKey: "test" })(id);
+    expect(getAgentCapabilities(model)).toMatchObject({ computerUse: true, hostedWebSearch: true, codeExecution: true, toolsets: true });
+    expect(inspectProviderAgentSupport(model).hostedToolSummary).toContain("computer use");
+  });
+
   it("maps none to between_tools, leaves default thinking to the API, and accepts the effort ladder", async () => {
     const fetcher = vi.fn(async () => response());
     const model = createAnthropic({ apiKey: "test", fetch: fetcher as typeof fetch })(id);
@@ -134,6 +140,7 @@ describe.each(["claude-sonnet-5-5", "claude-sonnet-5-5-20260928", "claude-sonnet
 it.each(["claude-sonnet-5", "claude-sonnet-5-50", "claude-opus-5-5", "claude-haiku-4-5"])("does not enable between_tools on %s", async (id) => {
   const fetcher = vi.fn();
   const model = createAnthropic({ apiKey: "test", fetch: fetcher })(id);
+  expect(getAgentCapabilities(model).computerUse).toBe(false);
   const input = { messages, providerOptions: { thinking: { type: "between_tools" as const } } };
   await expect(model.generate(input)).rejects.toThrow("requires Claude Sonnet 5.5");
   await expect(model.stream(input)).rejects.toThrow("requires Claude Sonnet 5.5");

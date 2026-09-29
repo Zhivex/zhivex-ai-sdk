@@ -271,6 +271,10 @@ const rejectsAssistantPrefill = (modelId: string) => {
 
 const modelCapabilities = (modelId: string): ModelCapabilities => ({
   ...capabilities,
+  agentCapabilities: {
+    ...capabilities.agentCapabilities!,
+    computerUse: isClaudeSonnet55Model(modelId)
+  },
   structuredOutput: supportsAnthropicStructuredOutput(modelId),
   files: supportsAnthropicFiles(modelId),
   reasoningEfforts: anthropicReasoningEfforts(modelId)
