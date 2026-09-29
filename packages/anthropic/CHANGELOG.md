@@ -1,5 +1,11 @@
 # @zhivex-ai/anthropic
 
+## 0.13.1
+
+### Patch Changes
+
+- 6356553: Advertise computer-use support for Claude Sonnet 5.5 and its dated variants through agent capability inspection, matching the supported computer toolset while retaining the other agent capabilities.
+
 ## 0.13.0
 
 ### Minor Changes
