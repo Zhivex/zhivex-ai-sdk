@@ -43,6 +43,9 @@ jobs:
       - name: Audit dependencies
         run: bun audit
 
+      - name: Provider registry coherence
+        run: bun run provider:check
+
       - name: Typecheck
         run: bun run typecheck
 

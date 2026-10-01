@@ -15,6 +15,11 @@ import {
 
 import { runCli } from "../src/cli.js";
 
+const packageVersion = async (provider: string) => {
+  const manifest = JSON.parse(await fs.readFile(path.resolve(import.meta.dirname, "../../", provider, "package.json"), "utf8"));
+  return `^${manifest.version}`;
+};
+
 const createCapture = () => {
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -200,8 +205,8 @@ export const failingSuite = {
         inspect: "zhivex-ai agents inspect --state .zhivex/runs/latest-agent-state.json"
       },
       dependencies: {
-        "@zhivex-ai/sdk": "^1.0.1",
-        "@zhivex-ai/openai": "^0.9.3"
+        "@zhivex-ai/sdk": await packageVersion("sdk"),
+        "@zhivex-ai/openai": await packageVersion("openai")
       }
     });
     await expect(fs.readFile(path.join(directory, "src", "agent.ts"), "utf8")).resolves.toContain("createProductionSafetyPolicy");
@@ -234,8 +239,8 @@ export const failingSuite = {
     });
     await expect(readJson(path.join(directory, "package.json"))).resolves.toMatchObject({
       dependencies: {
-        "@zhivex-ai/sdk": "^1.0.1",
-        "@zhivex-ai/kimi": "^0.7.3"
+        "@zhivex-ai/sdk": await packageVersion("sdk"),
+        "@zhivex-ai/kimi": await packageVersion("kimi")
       }
     });
     const agentSource = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
@@ -265,7 +270,7 @@ export const failingSuite = {
     });
     await expect(readJson(path.join(directory, "package.json"))).resolves.toMatchObject({
       dependencies: {
-        "@zhivex-ai/meta": "^0.2.0"
+        "@zhivex-ai/meta": await packageVersion("meta")
       }
     });
     const agentSource = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
@@ -337,8 +342,8 @@ export const failingSuite = {
     });
     await expect(readJson(path.join(directory, "package.json"))).resolves.toMatchObject({
       dependencies: {
-        "@zhivex-ai/sdk": "^1.0.1",
-        "@zhivex-ai/deepseek": "^0.4.1"
+        "@zhivex-ai/sdk": await packageVersion("sdk"),
+        "@zhivex-ai/deepseek": await packageVersion("deepseek")
       }
     });
     const agentSource = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");
@@ -384,8 +389,8 @@ export const failingSuite = {
     });
     await expect(readJson(path.join(directory, "package.json"))).resolves.toMatchObject({
       dependencies: {
-        "@zhivex-ai/sdk": "^1.0.1",
-        "@zhivex-ai/zai": "^0.1.0"
+        "@zhivex-ai/sdk": await packageVersion("sdk"),
+        "@zhivex-ai/zai": await packageVersion("zai")
       }
     });
     const agentSource = await fs.readFile(path.join(directory, "src", "agent.ts"), "utf8");

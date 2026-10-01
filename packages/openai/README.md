@@ -413,3 +413,26 @@ Events such as idle, subagent completion, turn failure and cancellation are pres
 ### Chat Completions stream contract
 
 Chat streaming shares the Core transport parser with Azure. It assembles fragmented tools by index, retains trailing usage, rejects malformed or prematurely disconnected tool streams, and releases the response body on early exit. Complete tool calls accompanied by a provider `stop` reason are emitted with SDK finish reason `tool-calls`, while `providerFinishReason` remains `stop`. Truncated or content-filtered calls are never emitted for execution.
+
+### Model capability profiles
+
+Unrecognized language model IDs default to text and streaming support. Tools, vision,
+native structured output and reasoning require a known provider profile or explicit
+per-model declarations. Direct requests reject undeclared advanced features before
+sending them to the provider. The model ID remains usable for ordinary text requests.
+
+For a new model or a private deployment, declare only features verified for that route:
+
+```ts
+const provider = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  modelCapabilities: {
+    "private-model": { tools: true, toolChoice: true, structuredOutput: true },
+  },
+});
+```
+
+`unknownModelCapabilities: "legacy"` explicitly restores the historical optimistic
+capabilities for unrecognized IDs during migration. Exact per-ID declarations take
+precedence over the selected defaults; nested `agentCapabilities` declarations merge
+with the profile. Known profiles keep their existing behavior.

@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-10-01T01:34:41.366Z",
+  "evidence": "checkout-dist-live-smoke",
+  "limits": {
+    "timeoutMs": 30000,
+    "maxRetries": 0,
+    "maxTokens": 128
+  },
+  "records": [
+    {
+      "name": "openai-chat-stream",
+      "model": "gpt-6-luna",
+      "status": "passed",
+      "toolCalls": 1,
+      "finishReason": "tool-calls",
+      "usage": {
+        "inputTokens": 131,
+        "outputTokens": 17,
+        "totalTokens": 148,
+        "cachedInputTokens": 0,
+        "reasoningTokens": 0,
+        "cacheWriteTokens": 0
+      }
+    },
+    {
+      "name": "openai-responses-stream",
+      "model": "gpt-6-luna",
+      "status": "passed",
+      "toolCalls": 1,
+      "finishReason": "tool-calls",
+      "usage": {
+        "inputTokens": 49,
+        "cachedInputTokens": 0,
+        "cacheWriteTokens": 0,
+        "outputTokens": 18,
+        "reasoningTokens": 0,
+        "totalTokens": 67
+      }
+    },
+    {
+      "name": "openai-generate",
+      "model": "gpt-6-luna",
+      "status": "passed",
+      "finishReason": "stop",
+      "usage": {
+        "inputTokens": 10,
+        "cachedInputTokens": 0,
+        "cacheWriteTokens": 0,
+        "outputTokens": 5,
+        "reasoningTokens": 0,
+        "totalTokens": 15
+      }
+    },
+    {
+      "name": "shared-chat-transport-stream",
+      "model": "gpt-6-luna",
+      "status": "passed",
+      "toolCalls": 1,
+      "finishReason": "tool-calls",
+      "usage": {
+        "inputTokens": 131,
+        "outputTokens": 17,
+        "totalTokens": 148,
+        "cachedInputTokens": 0,
+        "reasoningTokens": 0,
+        "cacheWriteTokens": 0
+      }
+    }
+  ],
+  "checkoutSnapshot": {
+    "gitSha": "bf3e8dc74924a992227a9013d2cf88fc7577e810",
+    "dirtyWorkingTree": true,
+    "sourceTree": {
+      "sha256": "d82f46ec91a4bca79bb835cd4bcc990147af1320418be227ab3defd5374dc0c2",
+      "files": 306
+    },
+    "builtJavaScript": {
+      "sha256": "7fa6fd5e04790a661cfd16eff20539684f86ef7db92f9273dc4f989d29c079cd",
+      "files": 286
+    },
+    "artifact": "checkout; modified and untracked source included; not an installed published package"
+  }
+}

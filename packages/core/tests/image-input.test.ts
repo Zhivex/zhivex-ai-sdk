@@ -22,7 +22,7 @@ for (const mode of ["chat", "responses"]) {
     [`xai/${mode}`, fetch => createXAI({ apiKey: "test", fetch })("grok-4.6"), mode]
   );
 }
-cases.push(["openrouter/chat", fetch => createOpenRouter({ apiKey: "test", fetch })("openai/gpt-4o"), "chat"]);
+cases.push(["openrouter/chat", fetch => createOpenRouter({ apiKey: "test", fetch, modelCapabilities: { "openai/gpt-4o": { vision: true } } })("openai/gpt-4o"), "chat"]);
 
 // Inspect the actual serialized request, then stop with a non-retryable HTTP
 // response. Both generate and stream must use the same image contract.

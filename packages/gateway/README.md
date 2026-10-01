@@ -235,8 +235,7 @@ TypeScript compilation and generation/streaming on all six transport variants
 candidate core/gateway/provider tarballs without checkout links. Add
 `--live --provider=openai` (or `deepseek`, `qwen`, `anthropic`) to require an
 authorized credential and perform two bounded live calls for one provider. A missing credential is a blocked live check, not
-a passing certification. Original candidate-artifact checks and their publication limits are recorded
-in [the historical delivery record](../../docs/history/GATEWAY_TOOL_HISTORY_DELIVERY.md).
+a passing certification. Installed-tarball checks and live calls certify their tested artifacts and routes; they do not establish npm publication.
 
 ## Usage accounting
 
@@ -454,3 +453,72 @@ counts. The benchmark asserts correct answers and actual fixture calls, includes
 runtime/source/artifact fingerprints, and explicitly excludes live provider
 performance or competitive claims. Its five measured trials are a smoke baseline,
 not a statistically reliable production tail-latency estimate.
+
+## Catalog lifecycle and explicit default scoring
+
+When a supplied catalog marks a model retired as of the operation time, Gateway
+skips it before constructing its model or calling the provider. This applies to
+text, structured output, streaming and agent operations, including adaptive
+routing. Skipped attempts have `reasonCode: "model-lifecycle"`. Deprecation alone
+allows execution and records a diagnostic in `routeDecision.lifecycle` with the
+catalog source and effective date. Future retirement dates and uncatalogued IDs
+remain eligible. Lifecycle lookup uses the catalog's provider and model aliases.
+
+If a private deployment still serves a retired ID, opt in for that deployment:
+
+```ts
+const gateway = createGateway({
+  adapters: { openai: openaiAdapter },
+  modelCatalog,
+  deployments: {
+    private: { provider: "openai", adapter: privateAdapter, allowRetiredModels: true }
+  }
+});
+// Route with primary: { provider: "openai", modelId, deploymentId: "private" }.
+```
+
+The override does not apply to the default adapter or other deployments; the
+result records `status: "retired-override"`. Lifecycle metadata is a snapshot,
+so update the catalog when the host's lifecycle changes.
+
+Default ordering retains its existing model-name boosts. Choose evidence mode
+to order using explicit task evaluation scores, configured latency bias and
+cost rates without deriving quality or speed from a model name:
+
+```ts
+const gateway = createGateway({
+  adapters: { openai: openaiAdapter },
+  modelCatalog,
+  routingPolicy: {
+    mode: "evidence",
+    unknownCostPenalty: 1,
+    qualityProfiles: [
+      { target: { provider: "openai", modelId: "my-model" },
+        intent: "reasoning", score: 0.9, version: "my-evaluation-v1" }
+    ]
+  }
+});
+```
+
+Quality scores range from 0 to 1 and apply only to their target (including
+`deploymentId`) and task intent. Evidence mode uses quality for `quality` and
+`balanced` routing, and configured latency for `speed` and `balanced`; missing
+quality earns no reward. Equal scores preserve request order. Legacy mode also
+accepts explicit quality profiles, which replace its name-based quality and
+reasoning boosts for that task. Choose one of `routingPolicy`, `scoreTarget`, or
+`adaptiveRouting`; use adaptive routing for measured latency, load and errors.
+
+Cost scoring prefers `providerCostsPer1kTokens`, then the larger of the catalog's
+input, output and declared cache rates, including declared long-context multipliers,
+when both input and output prices are known, then its scalar `costPer1kTokens`.
+An incomplete directional price without a scalar rate is unknown. Unknown cost
+has a default penalty of 1 in quality and balanced scoring; configure
+`unknownCostPenalty: 0` explicitly to restore its former zero penalty. Speed
+ordering does not include a cost penalty. These scores are ranking heuristics,
+not a quote for a request. The existing `maxCostPer1kTokens` budget still uses
+configured or scalar catalog rates by default. Set `costBudgetRate: "conservative"`
+to reuse the directional maximum when both rates exist; a partial price without
+a scalar rate remains unknown. This rate bounds declared per-token prices; it
+does not bound the total number of tokens or unrepresented provider charges.
+Detailed `costAccounting` quotes retain input/output token
+valuation and explicit unknown-cost handling.

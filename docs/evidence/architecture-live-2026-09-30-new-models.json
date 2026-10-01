@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-10-01T01:37:55.579071+00:00",
+  "evidence": "checkout-source-live-tests",
+  "checkoutSnapshot": {
+    "gitSha": "bf3e8dc74924a992227a9013d2cf88fc7577e810",
+    "dirtyWorkingTree": true,
+    "sourceTree": {
+      "sha256": "d82f46ec91a4bca79bb835cd4bcc990147af1320418be227ab3defd5374dc0c2",
+      "files": 306
+    },
+    "builtJavaScript": {
+      "sha256": "7fa6fd5e04790a661cfd16eff20539684f86ef7db92f9273dc4f989d29c079cd",
+      "files": 286
+    },
+    "artifact": "checkout; modified and untracked source included; not an installed published package"
+  },
+  "limits": {
+    "maxTokens": 1024,
+    "maxRetries": 0,
+    "timeoutMs": 45000
+  },
+  "newModelTests": [
+    {
+      "test": "gpt-6-sol direct API generates text with usage",
+      "status": "passed",
+      "durationMs": 1492.142167
+    },
+    {
+      "test": "gpt-6-sol direct API streams text",
+      "status": "passed",
+      "durationMs": 1925.1280419999998
+    },
+    {
+      "test": "gpt-6-sol direct API generates native structured output",
+      "status": "passed",
+      "durationMs": 1531.9586670000003
+    },
+    {
+      "test": "gpt-6-sol direct API executes a tool and continues with preserved history",
+      "status": "passed",
+      "durationMs": 2681.7965830000003
+    },
+    {
+      "test": "gpt-6-luna direct API generates text with usage",
+      "status": "passed",
+      "durationMs": 1551.561166999999
+    },
+    {
+      "test": "gpt-6-luna direct API streams text",
+      "status": "passed",
+      "durationMs": 1018.8294170000008
+    },
+    {
+      "test": "gpt-6-luna direct API generates native structured output",
+      "status": "passed",
+      "durationMs": 1216.9088749999992
+    },
+    {
+      "test": "gpt-6-luna direct API executes a tool and continues with preserved history",
+      "status": "passed",
+      "durationMs": 2486.7054580000004
+    },
+    {
+      "test": "claude-opus-5-5 direct API generates text with usage",
+      "status": "passed",
+      "durationMs": 2285.182834000001
+    },
+    {
+      "test": "claude-opus-5-5 direct API streams text",
+      "status": "passed",
+      "durationMs": 4572.530958000003
+    },
+    {
+      "test": "claude-opus-5-5 direct API generates native structured output",
+      "status": "passed",
+      "durationMs": 2675.423749999998
+    },
+    {
+      "test": "claude-opus-5-5 direct API executes a tool and continues with preserved history",
+      "status": "passed",
+      "durationMs": 3337.197124999999
+    }
+  ],
+  "vertexRetry": {
+    "initialHttpStatus": 429,
+    "retries": 1,
+    "tests": [
+      {
+        "test": "generateText capability integration vertex generates text with the common SDK contract",
+        "status": "passed",
+        "durationMs": 50806.149791
+      }
+    ]
+  }
+}

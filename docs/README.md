@@ -17,8 +17,8 @@
 - [Media](./reference/MEDIA.md)
 - [Providers](./reference/PROVIDERS.md)
 
-## Maintenance and evidence
+## Maintenance and verification
 
 - [Architecture](./ARCHITECTURE.md)
 - [Maintainer guides](./maintainers/README.md)
-- [Historical reports](./history/README.md)
+- [Gateway benchmark method and results](./benchmarks/2026-09-14/README.md)

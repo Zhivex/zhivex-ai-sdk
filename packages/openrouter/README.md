@@ -49,3 +49,32 @@ The adapter supports streaming, callable tools, tool choice, native structured o
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+### Model capability profiles
+
+Unrecognized language model IDs default to text and streaming support. Tools, vision,
+native structured output and reasoning require a known provider profile or explicit
+per-model declarations. Direct requests reject undeclared advanced features before
+sending them to the provider. The model ID remains usable for ordinary text requests.
+
+For a new model or a private deployment, declare only features verified for that route:
+
+```ts
+const provider = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  modelCapabilities: {
+    "private-model": { tools: true, toolChoice: true, structuredOutput: true },
+  },
+});
+```
+
+`unknownModelCapabilities: "legacy"` explicitly restores the historical optimistic
+capabilities for unrecognized IDs during migration. Exact per-ID declarations take
+precedence over the selected defaults; nested `agentCapabilities` declarations merge
+with the profile. Known profiles keep their existing behavior.
+
+OpenRouter web search is a host plugin capability, so `webSearch` and
+`hostedWebSearch` remain enabled for unknown model IDs. Function tools and model
+vision/native schema support are independent of that host capability. Registered
+host profiles currently preserve the existing behavior for `openai/gpt-4o-mini`,
+`meta/muse-spark-1.2` and `meta/muse-glimmer-30b`.

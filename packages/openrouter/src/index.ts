@@ -1,3 +1,4 @@
+import { resolveOpenRouterCapabilities } from "./model-profiles.js";
 import { toJSONSchema } from "zod";
 
 import {
@@ -28,6 +29,12 @@ import {
 
 export interface OpenRouterProviderOptions {
   apiKey?: string;
+  /** Legacy restores historical capabilities for unrecognized host model IDs. */
+  unknownModelCapabilities?: "conservative" | "legacy";
+  /** Explicit per-model declarations for host features verified by the caller. */
+  modelCapabilities?: Record<string, Omit<Partial<ModelCapabilities>, "agentCapabilities"> & {
+    agentCapabilities?: Partial<NonNullable<ModelCapabilities["agentCapabilities"]>>;
+  }>;
   baseURL?: string;
   appName?: string;
   appURL?: string;
@@ -68,33 +75,6 @@ export interface OpenRouterWebSearchToolConfig {
   allowed_domains?: string[];
   excluded_domains?: string[];
 }
-
-const capabilities: ModelCapabilities = {
-  streaming: true,
-  tools: true,
-  structuredOutput: true,
-  jsonMode: true,
-  toolChoice: true,
-  parallelToolCalls: true,
-  vision: true,
-  files: false,
-  audioInput: false,
-  audioOutput: false,
-  embeddings: false,
-  reasoning: true,
-  webSearch: true,
-  agentCapabilities: {
-    supportTier: "tier-c",
-    toolChoiceNone: true,
-    approvalRequests: false,
-    hostedWebSearch: true,
-    hostedFileSearch: false,
-    remoteMcp: false,
-    computerUse: false,
-    codeExecution: false,
-    toolsets: false
-  }
-};
 
 const jsonHeaders = (apiKey: string, appName?: string, appURL?: string) => ({
   "content-type": "application/json",
@@ -267,7 +247,7 @@ const parseAssistantMessage = (message: any): ModelMessage => ({
 
 class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOptions> {
   readonly provider = "openrouter";
-  readonly capabilities = capabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
@@ -275,10 +255,39 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
     private readonly baseURL: string,
     private readonly appName: string | undefined,
     private readonly appURL: string | undefined,
-    private readonly fetcher: typeof globalThis.fetch
-  ) {}
+    private readonly fetcher: typeof globalThis.fetch,
+    options: Pick<OpenRouterProviderOptions, "unknownModelCapabilities" | "modelCapabilities">
+  ) {
+    this.capabilities = resolveOpenRouterCapabilities(modelId, options.unknownModelCapabilities, (options.modelCapabilities && Object.hasOwn(options.modelCapabilities, modelId) ? options.modelCapabilities[modelId] : undefined));
+  }
+
+  private assertSupported(input: ModelGenerateInput<OpenRouterLanguageModelOptions>) {
+    if (!this.capabilities.tools && (Object.values(input.tools ?? {}).some(isCallableToolDefinition) || input.messages.some(message => message.parts.some(part => part.type === "tool-call" || part.type === "tool-result")))) {
+      throw new UnsupportedFeatureError(`OpenRouter model "${this.modelId}" has no declared tool support.`);
+    }
+    if (!this.capabilities.vision && input.messages.some(message => message.parts.some(part => part.type === "image"))) {
+      throw new UnsupportedFeatureError(`OpenRouter model "${this.modelId}" has no declared vision support.`);
+    }
+    const format = input.providerOptions?.response_format as { type?: string } | undefined;
+    if (!this.capabilities.structuredOutput && (input.structuredOutput?.mode === "native" || format?.type === "json_schema")) {
+      throw new UnsupportedFeatureError(`OpenRouter model "${this.modelId}" has no declared native structured output support.`);
+    }
+    if (!this.capabilities.jsonMode && format?.type === "json_object") {
+      throw new UnsupportedFeatureError(`OpenRouter model "${this.modelId}" has no declared JSON mode support.`);
+    }
+    if (!this.capabilities.toolChoice && (input.toolChoice !== undefined || input.providerOptions?.tool_choice !== undefined)) {
+      throw new UnsupportedFeatureError(`OpenRouter model "${this.modelId}" has no declared tool choice support.`);
+    }
+    if (!this.capabilities.parallelToolCalls && input.providerOptions?.parallel_tool_calls === true) {
+      throw new UnsupportedFeatureError(`OpenRouter model "${this.modelId}" has no declared parallel tool calling support.`);
+    }
+    if (!this.capabilities.reasoning && (input.reasoning || input.providerOptions?.reasoning)) {
+      throw new UnsupportedFeatureError(`OpenRouter model "${this.modelId}" has no declared reasoning support.`);
+    }
+  }
 
   async generate(input: ModelGenerateInput<OpenRouterLanguageModelOptions>): Promise<GenerateResult> {
+    this.assertSupported(input);
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
@@ -294,7 +303,7 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
               messages: mapMessages(input.messages),
               tools: mapTools(input.tools),
               tool_choice: mapToolChoice(input.toolChoice),
-              response_format: mapStructuredOutput(input),
+              response_format: mapStructuredOutput(input) ?? input.providerOptions?.response_format,
               temperature: input.temperature,
               max_tokens: input.maxTokens,
               stream: false,
@@ -330,6 +339,7 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
   }
 
   async stream(input: ModelGenerateInput<OpenRouterLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
+    this.assertSupported(input);
     const { signal, cleanup } = withTimeoutSignal(input);
     const response = await withRetry(
       () =>
@@ -343,7 +353,7 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
             messages: mapMessages(input.messages),
             tools: mapTools(input.tools),
             tool_choice: mapToolChoice(input.toolChoice),
-            response_format: mapStructuredOutput(input),
+            response_format: mapStructuredOutput(input) ?? input.providerOptions?.response_format,
             temperature: input.temperature,
             max_tokens: input.maxTokens,
             stream: true,
@@ -431,7 +441,7 @@ export const createOpenRouter = (
 
   return createProviderAdapter({
     name: "openrouter",
-    languageModel: (modelId) => new OpenRouterLanguageModel(modelId, apiKey, baseURL, options.appName, options.appURL, fetcher),
+    languageModel: (modelId) => new OpenRouterLanguageModel(modelId, apiKey, baseURL, options.appName, options.appURL, fetcher, options),
     rawFetch: fetcher
   });
 };

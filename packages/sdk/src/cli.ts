@@ -2,6 +2,7 @@
 import { constants, promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { providerTemplates, sdkScaffoldVersion } from "./provider-templates.generated.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -395,72 +396,6 @@ const listJsonFiles = async (directory: string): Promise<string[]> => {
   }
 };
 
-const providerTemplates = {
-  vertex: {
-    packageName: "@zhivex-ai/vertex",
-    packageVersion: "1.0.2",
-    factoryName: "createVertex",
-    envName: "GOOGLE_CLOUD_PROJECT",
-    defaultModel: "gemini-3.7-flash"
-  },
-  openai: {
-    packageName: "@zhivex-ai/openai",
-    packageVersion: "0.9.3",
-    factoryName: "createOpenAI",
-    envName: "OPENAI_API_KEY",
-    defaultModel: "gpt-6-astra"
-  },
-  xai: {
-    packageName: "@zhivex-ai/xai",
-    packageVersion: "0.1.4",
-    factoryName: "createXAI",
-    envName: "XAI_API_KEY",
-    defaultModel: "grok-4.5"
-  },
-  meta: {
-    packageName: "@zhivex-ai/meta",
-    packageVersion: "0.2.0",
-    factoryName: "createMeta",
-    envName: "MODEL_API_KEY",
-    defaultModel: "muse-spark-1.2"
-  },
-  anthropic: {
-    packageName: "@zhivex-ai/anthropic",
-    packageVersion: "0.7.1",
-    factoryName: "createAnthropic",
-    envName: "ANTHROPIC_API_KEY",
-    defaultModel: "claude-sonnet-5"
-  },
-  gemini: {
-    packageName: "@zhivex-ai/gemini",
-    packageVersion: "0.10.0",
-    factoryName: "createGemini",
-    envName: "GEMINI_API_KEY",
-    defaultModel: "gemini-3.6-flash"
-  },
-  kimi: {
-    packageName: "@zhivex-ai/kimi",
-    packageVersion: "0.7.3",
-    factoryName: "createKimi",
-    envName: "KIMI_API_KEY",
-    defaultModel: "kimi-k3"
-  },
-  deepseek: {
-    packageName: "@zhivex-ai/deepseek",
-    packageVersion: "0.4.1",
-    factoryName: "createDeepSeek",
-    envName: "DEEPSEEK_API_KEY",
-    defaultModel: "deepseek-v4-flash"
-  },
-  zai: {
-    packageName: "@zhivex-ai/zai",
-    packageVersion: "0.1.0",
-    factoryName: "createZAI",
-    envName: "ZAI_API_KEY",
-    defaultModel: "glm-5.3"
-  }
-} as const;
-
 type ProviderTemplateName = keyof typeof providerTemplates;
 
 const isProviderTemplateName = (value: string): value is ProviderTemplateName =>
@@ -628,7 +563,7 @@ const packageTemplate = (options: {
     ledger: "zhivex-ai agents ledger --state .zhivex/runs/latest-agent-state.json --out .zhivex/runs/latest-ledger.json"
   },
   dependencies: {
-    "@zhivex-ai/sdk": "^1.0.1",
+    "@zhivex-ai/sdk": `^${sdkScaffoldVersion}`,
     [providerTemplates[options.provider].packageName]: `^${providerTemplates[options.provider].packageVersion}`,
     zod: "^4.4.3"
   },

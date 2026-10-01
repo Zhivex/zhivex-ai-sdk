@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-10-01T01:35:59.386Z",
+  "evidence": "checkout-dist-live-smoke",
+  "limits": {
+    "timeoutMs": 30000,
+    "maxRetries": 0,
+    "maxTokens": 512
+  },
+  "records": [
+    {
+      "name": "deepseek-stream-budget-32",
+      "model": "deepseek-v4-flash",
+      "status": "passed",
+      "maxTokens": 32,
+      "thinkingDisabled": false,
+      "textDeltas": 7,
+      "reasoningEvents": 20,
+      "finishReason": "stop",
+      "usage": {
+        "inputTokens": 41,
+        "cachedInputTokens": 0,
+        "outputTokens": 28,
+        "reasoningTokens": 20,
+        "totalTokens": 69
+      },
+      "hasExpectedText": true
+    },
+    {
+      "name": "deepseek-stream-budget-512",
+      "model": "deepseek-v4-flash",
+      "status": "passed",
+      "maxTokens": 512,
+      "thinkingDisabled": false,
+      "textDeltas": 7,
+      "reasoningEvents": 14,
+      "finishReason": "stop",
+      "usage": {
+        "inputTokens": 41,
+        "cachedInputTokens": 0,
+        "outputTokens": 22,
+        "reasoningTokens": 14,
+        "totalTokens": 63
+      },
+      "hasExpectedText": true
+    },
+    {
+      "name": "deepseek-stream-budget-32-no-thinking",
+      "model": "deepseek-v4-flash",
+      "status": "passed",
+      "maxTokens": 32,
+      "thinkingDisabled": true,
+      "textDeltas": 7,
+      "reasoningEvents": 0,
+      "finishReason": "stop",
+      "usage": {
+        "inputTokens": 15,
+        "cachedInputTokens": 0,
+        "outputTokens": 7,
+        "totalTokens": 22
+      },
+      "hasExpectedText": true
+    },
+    {
+      "name": "gateway-retired-route-live-fallback",
+      "model": "gpt-6-luna",
+      "status": "passed",
+      "modelUsed": "gpt-6-luna",
+      "constructedModels": [
+        "gpt-6-luna"
+      ],
+      "retiredSkipped": true,
+      "usage": {
+        "inputTokens": 10,
+        "cachedInputTokens": 0,
+        "cacheWriteTokens": 0,
+        "outputTokens": 5,
+        "reasoningTokens": 0,
+        "totalTokens": 15,
+        "estimated": false
+      }
+    }
+  ],
+  "checkoutSnapshot": {
+    "gitSha": "bf3e8dc74924a992227a9013d2cf88fc7577e810",
+    "dirtyWorkingTree": true,
+    "sourceTree": {
+      "sha256": "d82f46ec91a4bca79bb835cd4bcc990147af1320418be227ab3defd5374dc0c2",
+      "files": 306
+    },
+    "builtJavaScript": {
+      "sha256": "7fa6fd5e04790a661cfd16eff20539684f86ef7db92f9273dc4f989d29c079cd",
+      "files": 286
+    },
+    "artifact": "checkout; modified and untracked source included; not an installed published package"
+  }
+}

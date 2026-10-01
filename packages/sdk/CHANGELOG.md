@@ -1,5 +1,13 @@
 # @zhivex-ai/sdk
 
+## 1.29.2
+
+### Patch Changes
+
+- Keep generated CLI starter dependencies aligned with the SDK and provider package
+  versions produced by Changesets. Centralize maintenance metadata and validate
+  provider/catalog/Gateway inventories to detect omitted onboarding wiring.
+
 ## 1.29.1
 
 ### Patch Changes

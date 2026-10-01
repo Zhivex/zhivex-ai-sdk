@@ -1,5 +1,13 @@
 # @zhivex-ai/openrouter
 
+## 0.6.0
+
+### Minor Changes
+
+- Centralize OpenAI family request policy and use conservative capability defaults for unknown language model IDs. Add explicit legacy migration and per-model capability declarations, and reject undeclared advanced requests before sending them to OpenAI or OpenRouter.
+  
+  Preserve JSON-object versus native JSON-schema controls and declared raw formats. xAI and Vertex supply host-owned capability declarations to their OpenAI transport delegates.
+
 ## 0.5.22
 
 ### Patch Changes

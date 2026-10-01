@@ -1,0 +1,2616 @@
+{
+  "schemaVersion": 1,
+  "reportId": "provider-conformance-bf3e8dc74924-20261001T013638521Z",
+  "generatedAt": "2026-10-01T01:36:38.521Z",
+  "expiresAt": "2026-10-08T01:36:38.521Z",
+  "generator": "scripts/provider-smoke-report.ts",
+  "source": {
+    "repository": "Zhivex/zhivex-ai-sdk",
+    "gitSha": "bf3e8dc74924a992227a9013d2cf88fc7577e810",
+    "runtime": "bun 1.4.0; darwin/arm64"
+  },
+  "providers": [
+    {
+      "provider": "anthropic",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "claude-opus-5",
+          "endpoint": "anthropic:messages",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/anthropic",
+            "packageVersion": "0.13.1"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "claude-opus-5",
+          "endpoint": "anthropic:messages",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/anthropic",
+            "packageVersion": "0.13.1"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "claude-opus-5",
+          "endpoint": "anthropic:messages",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/anthropic",
+            "packageVersion": "0.13.1"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "claude-opus-5",
+          "endpoint": "anthropic:messages",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/anthropic",
+            "packageVersion": "0.13.1"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "claude-opus-5",
+          "endpoint": "anthropic:messages",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/anthropic",
+            "packageVersion": "0.13.1"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "claude-opus-5",
+          "endpoint": "anthropic:messages",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/anthropic",
+            "packageVersion": "0.13.1"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        }
+      ]
+    },
+    {
+      "provider": "azure-openai",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT"
+          ]
+        },
+        {
+          "capability": "embeddings",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "text-embedding-3-small",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "embeddings",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "text-embedding-3-small",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT"
+          ]
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT"
+          ]
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT"
+          ]
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT"
+          ]
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT"
+          ]
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "gpt-5.4-nano",
+          "endpoint": "azure-openai:default-api-version",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/azure-openai",
+            "packageVersion": "0.7.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "bedrock-converse",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "anthropic.claude-3-5-sonnet",
+          "endpoint": "bedrock:converse:default-region",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "anthropic.claude-3-5-sonnet",
+          "endpoint": "bedrock:converse:default-region",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AWS_REGION (AWS credentials are also required by the default provider chain)"
+          ]
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "anthropic.claude-3-5-sonnet",
+          "endpoint": "bedrock:converse:default-region",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "anthropic.claude-3-5-sonnet",
+          "endpoint": "bedrock:converse:default-region",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AWS_REGION (AWS credentials are also required by the default provider chain)"
+          ]
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "anthropic.claude-3-5-sonnet",
+          "endpoint": "bedrock:converse:default-region",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "anthropic.claude-3-5-sonnet",
+          "endpoint": "bedrock:converse:default-region",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AWS_REGION (AWS credentials are also required by the default provider chain)"
+          ]
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "anthropic.claude-3-5-sonnet",
+          "endpoint": "bedrock:converse:default-region",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "anthropic.claude-3-5-sonnet",
+          "endpoint": "bedrock:converse:default-region",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AWS_REGION (AWS credentials are also required by the default provider chain)"
+          ]
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "anthropic.claude-3-5-sonnet",
+          "endpoint": "bedrock:converse:default-region",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "anthropic.claude-3-5-sonnet",
+          "endpoint": "bedrock:converse:default-region",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "AWS_REGION (AWS credentials are also required by the default provider chain)"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "bedrock-openai",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "BEDROCK_OPENAI_BASE_URL",
+            "BEDROCK_API_KEY or AWS_BEARER_TOKEN_BEDROCK"
+          ]
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "BEDROCK_OPENAI_BASE_URL",
+            "BEDROCK_API_KEY or AWS_BEARER_TOKEN_BEDROCK"
+          ]
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "BEDROCK_OPENAI_BASE_URL",
+            "BEDROCK_API_KEY or AWS_BEARER_TOKEN_BEDROCK"
+          ]
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "BEDROCK_OPENAI_BASE_URL",
+            "BEDROCK_API_KEY or AWS_BEARER_TOKEN_BEDROCK"
+          ]
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "BEDROCK_OPENAI_BASE_URL",
+            "BEDROCK_API_KEY or AWS_BEARER_TOKEN_BEDROCK"
+          ]
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai.gpt-oss-120b-1:0",
+          "endpoint": "bedrock:openai-compatible",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/bedrock",
+            "packageVersion": "2.0.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "BEDROCK_OPENAI_BASE_URL",
+            "BEDROCK_API_KEY or AWS_BEARER_TOKEN_BEDROCK"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "deepseek",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "deepseek-v4-flash",
+          "endpoint": "deepseek:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/deepseek",
+            "packageVersion": "0.5.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "deepseek-v4-flash",
+          "endpoint": "deepseek:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/deepseek",
+            "packageVersion": "0.5.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "live",
+          "status": "live_passed",
+          "required": true,
+          "modelId": "deepseek-v4-flash",
+          "endpoint": "deepseek:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/deepseek",
+            "packageVersion": "0.5.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 1,
+          "durationMs": 1121.132625
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "deepseek-v4-flash",
+          "endpoint": "deepseek:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/deepseek",
+            "packageVersion": "0.5.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "live",
+          "status": "live_passed",
+          "required": true,
+          "modelId": "deepseek-v4-flash",
+          "endpoint": "deepseek:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/deepseek",
+            "packageVersion": "0.5.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 1,
+          "durationMs": 1371.777709
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "deepseek-v4-flash",
+          "endpoint": "deepseek:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/deepseek",
+            "packageVersion": "0.5.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "live",
+          "status": "live_passed",
+          "required": true,
+          "modelId": "deepseek-v4-flash",
+          "endpoint": "deepseek:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/deepseek",
+            "packageVersion": "0.5.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 1,
+          "durationMs": 1290.6099590000001
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "deepseek-v4-flash",
+          "endpoint": "deepseek:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/deepseek",
+            "packageVersion": "0.5.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "live",
+          "status": "live_passed",
+          "required": true,
+          "modelId": "deepseek-v4-flash",
+          "endpoint": "deepseek:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/deepseek",
+            "packageVersion": "0.5.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 1,
+          "durationMs": 1253.425459
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "deepseek-v4-flash",
+          "endpoint": "deepseek:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/deepseek",
+            "packageVersion": "0.5.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "live",
+          "status": "live_passed",
+          "required": true,
+          "modelId": "deepseek-v4-flash",
+          "endpoint": "deepseek:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/deepseek",
+            "packageVersion": "0.5.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 1,
+          "durationMs": 2135.943042
+        }
+      ]
+    },
+    {
+      "provider": "gemini",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "gemini:generativelanguage",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/gemini",
+            "packageVersion": "0.13.0"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "embeddings",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-embedding-2",
+          "endpoint": "gemini:generativelanguage",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/gemini",
+            "packageVersion": "0.13.0"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "gemini:generativelanguage",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/gemini",
+            "packageVersion": "0.13.0"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "gemini:generativelanguage",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/gemini",
+            "packageVersion": "0.13.0"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "gemini:generativelanguage",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/gemini",
+            "packageVersion": "0.13.0"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "gemini:generativelanguage",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/gemini",
+            "packageVersion": "0.13.0"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "gemini:generativelanguage",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/gemini",
+            "packageVersion": "0.13.0"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        }
+      ]
+    },
+    {
+      "provider": "kimi",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "KIMI_API_KEY or MOONSHOT_API_KEY"
+          ]
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "KIMI_API_KEY or MOONSHOT_API_KEY"
+          ]
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "KIMI_API_KEY or MOONSHOT_API_KEY"
+          ]
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "KIMI_API_KEY or MOONSHOT_API_KEY"
+          ]
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "KIMI_API_KEY or MOONSHOT_API_KEY"
+          ]
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "kimi-k3",
+          "endpoint": "kimi:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/kimi",
+            "packageVersion": "0.7.10"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "KIMI_API_KEY or MOONSHOT_API_KEY"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "meta",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "muse-spark-1.2-contributor",
+          "endpoint": "meta:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/meta",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "muse-spark-1.2-contributor",
+          "endpoint": "meta:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/meta",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "muse-spark-1.2-contributor",
+          "endpoint": "meta:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/meta",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "muse-spark-1.2-contributor",
+          "endpoint": "meta:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/meta",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "muse-spark-1.2-contributor",
+          "endpoint": "meta:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/meta",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "muse-spark-1.2-contributor",
+          "endpoint": "meta:model-api",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/meta",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        }
+      ]
+    },
+    {
+      "provider": "ollama",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "llama3.2",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "llama3.2",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OLLAMA_INTEGRATION=1 (a reachable Ollama service is also required)"
+          ]
+        },
+        {
+          "capability": "embeddings",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "embeddinggemma",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "embeddings",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "embeddinggemma",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OLLAMA_INTEGRATION=1 (a reachable Ollama service is also required)"
+          ]
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "llama3.2",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "llama3.2",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OLLAMA_INTEGRATION=1 (a reachable Ollama service is also required)"
+          ]
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "llama3.2",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "llama3.2",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OLLAMA_INTEGRATION=1 (a reachable Ollama service is also required)"
+          ]
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "llama3.2",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "llama3.2",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OLLAMA_INTEGRATION=1 (a reachable Ollama service is also required)"
+          ]
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "llama3.2",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "llama3.2",
+          "endpoint": "ollama:local-default",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/ollama",
+            "packageVersion": "0.5.6"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OLLAMA_INTEGRATION=1 (a reachable Ollama service is also required)"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.6-luna",
+          "endpoint": "openai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openai",
+            "packageVersion": "0.13.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "embeddings",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "text-embedding-3-small",
+          "endpoint": "openai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openai",
+            "packageVersion": "0.13.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.6-luna",
+          "endpoint": "openai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openai",
+            "packageVersion": "0.13.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.6-luna",
+          "endpoint": "openai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openai",
+            "packageVersion": "0.13.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.6-luna",
+          "endpoint": "openai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openai",
+            "packageVersion": "0.13.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.6-luna",
+          "endpoint": "openai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openai",
+            "packageVersion": "0.13.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gpt-5.6-luna",
+          "endpoint": "openai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openai",
+            "packageVersion": "0.13.7"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        }
+      ]
+    },
+    {
+      "provider": "openrouter",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OPENROUTER_API_KEY"
+          ]
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OPENROUTER_API_KEY"
+          ]
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OPENROUTER_API_KEY"
+          ]
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OPENROUTER_API_KEY"
+          ]
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OPENROUTER_API_KEY"
+          ]
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "openai/gpt-4o-mini",
+          "endpoint": "openrouter:chat-completions",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/openrouter",
+            "packageVersion": "0.5.22"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "OPENROUTER_API_KEY"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "qwen",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "qwen3.7-plus",
+          "endpoint": "qwen:international",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/qwen",
+            "packageVersion": "0.16.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "embeddings",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "text-embedding-v4",
+          "endpoint": "qwen:international",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/qwen",
+            "packageVersion": "0.16.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "qwen3.7-plus",
+          "endpoint": "qwen:international",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/qwen",
+            "packageVersion": "0.16.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "qwen3.7-plus",
+          "endpoint": "qwen:international",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/qwen",
+            "packageVersion": "0.16.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "qwen3.7-plus",
+          "endpoint": "qwen:international",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/qwen",
+            "packageVersion": "0.16.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "qwen3.7-plus",
+          "endpoint": "qwen:international",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/qwen",
+            "packageVersion": "0.16.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "qwen3.7-plus",
+          "endpoint": "qwen:international",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/qwen",
+            "packageVersion": "0.16.3"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        }
+      ]
+    },
+    {
+      "provider": "vertex",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "vertex:gemini:gemini-3.7-flash:global",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/vertex",
+            "packageVersion": "1.2.2"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "embeddings",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "text-embedding-005",
+          "endpoint": "vertex:gemini:gemini-3.7-flash:global",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/vertex",
+            "packageVersion": "1.2.2"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "vertex:gemini:gemini-3.7-flash:global",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/vertex",
+            "packageVersion": "1.2.2"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "vertex:gemini:gemini-3.7-flash:global",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/vertex",
+            "packageVersion": "1.2.2"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "vertex:gemini:gemini-3.7-flash:global",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/vertex",
+            "packageVersion": "1.2.2"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "vertex:gemini:gemini-3.7-flash:global",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/vertex",
+            "packageVersion": "1.2.2"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "gemini-3.7-flash",
+          "endpoint": "vertex:gemini:gemini-3.7-flash:global",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/vertex",
+            "packageVersion": "1.2.2"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        }
+      ]
+    },
+    {
+      "provider": "xai",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "XAI_API_KEY"
+          ]
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "XAI_API_KEY"
+          ]
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "XAI_API_KEY"
+          ]
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "XAI_API_KEY"
+          ]
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "XAI_API_KEY"
+          ]
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "grok-4.6",
+          "endpoint": "xai:responses",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/xai",
+            "packageVersion": "0.2.8"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "XAI_API_KEY"
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "zai",
+      "results": [
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "agent_tool_loop",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "ZAI_API_KEY"
+          ]
+        },
+        {
+          "capability": "generateText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "generateText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "ZAI_API_KEY"
+          ]
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "reasoning",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "ZAI_API_KEY"
+          ]
+        },
+        {
+          "capability": "streamText",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "streamText",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "ZAI_API_KEY"
+          ]
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "structuredOutput",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "ZAI_API_KEY"
+          ]
+        },
+        {
+          "capability": "tools",
+          "evidence": "declared",
+          "status": "implemented",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0
+        },
+        {
+          "capability": "tools",
+          "evidence": "live",
+          "status": "skipped_missing_credentials",
+          "required": false,
+          "modelId": "glm-5.3-flash",
+          "endpoint": "zai:general",
+          "artifact": {
+            "kind": "checkout",
+            "packageName": "@zhivex-ai/zai",
+            "packageVersion": "0.2.4"
+          },
+          "observedAt": "2026-10-01T01:36:38.521Z",
+          "expiresAt": "2026-10-08T01:36:38.521Z",
+          "attempts": 0,
+          "missingRequirements": [
+            "ZAI_API_KEY"
+          ]
+        }
+      ]
+    }
+  ],
+  "checkoutSnapshot": {
+    "gitSha": "bf3e8dc74924a992227a9013d2cf88fc7577e810",
+    "dirtyWorkingTree": true,
+    "sourceTree": {
+      "sha256": "d82f46ec91a4bca79bb835cd4bcc990147af1320418be227ab3defd5374dc0c2",
+      "files": 306
+    },
+    "builtJavaScript": {
+      "sha256": "7fa6fd5e04790a661cfd16eff20539684f86ef7db92f9273dc4f989d29c079cd",
+      "files": 286
+    },
+    "artifact": "checkout; modified and untracked source included; not an installed published package"
+  }
+}
