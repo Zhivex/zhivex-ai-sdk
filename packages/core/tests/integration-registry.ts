@@ -10,6 +10,8 @@ import { createKimi } from "../../kimi/src/index.js";
 import { createMeta } from "../../meta/src/index.js";
 import { createOllama } from "../../ollama/src/index.js";
 import { createOpenAI } from "../../openai/src/index.js";
+import { resolveOpenAIModelProfile } from "../../openai/src/model-profiles.js";
+import { geminiTextProfiles } from "../../gemini/src/model-profiles.js";
 import { createOpenRouter } from "../../openrouter/src/index.js";
 import { createQwen, type QwenRegion } from "../../qwen/src/index.js";
 import { createVertex } from "../../vertex/src/index.js";
@@ -91,7 +93,7 @@ const openAIApiKey = process.env.OPENAI_API_KEY;
 const openAIBaseURL = process.env.OPENAI_BASE_URL;
 const openAITextModelId = process.env.OPENAI_INTEGRATION_MODEL ?? "gpt-5.6-luna";
 const openAIEmbeddingModelId = process.env.OPENAI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-3-small";
-const usesOpenAIGpt56Controls = /^gpt-5\.6(?:$|-)/i.test(openAITextModelId);
+const usesModernOpenAIControls = resolveOpenAIModelProfile(openAITextModelId).modern;
 
 const xaiApiKey = process.env.XAI_API_KEY;
 const xaiBaseURL = process.env.XAI_BASE_URL;
@@ -496,10 +498,10 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: openAIApiKey,
               baseURL: openAIBaseURL
             }).embeddingModel(openAIEmbeddingModelId),
-          omitTemperature: usesOpenAIGpt56Controls,
-          textMaxTokens: usesOpenAIGpt56Controls ? 128 : 32,
-          toolMaxTokens: usesOpenAIGpt56Controls ? 256 : 128,
-          reasoningMaxTokens: usesOpenAIGpt56Controls ? 256 : 128,
+          omitTemperature: usesModernOpenAIControls,
+          textMaxTokens: usesModernOpenAIControls ? 128 : 32,
+          toolMaxTokens: usesModernOpenAIControls ? 256 : 128,
+          reasoningMaxTokens: usesModernOpenAIControls ? 256 : 128,
           supports: openAISupports,
           toolChoiceForTool: () => "auto"
         } satisfies IntegrationLanguageProvider
@@ -597,7 +599,8 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               apiKey: geminiApiKey,
               baseURL: geminiBaseURL
             }).embeddingModel(geminiEmbeddingModelId),
-          omitTemperature: /^gemini-3\.(?:6-flash|5-flash-lite)$/.test(geminiTextModelId),
+          omitTemperature: Object.hasOwn(geminiTextProfiles, geminiTextModelId)
+            && geminiTextProfiles[geminiTextModelId]!.providerManagedSampling,
           supports: geminiSupports,
           toolChoiceForTool: (toolName) => ({
             type: "tool",
@@ -639,6 +642,8 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               baseURL: deepSeekBaseURL
             })(deepSeekTextModelId),
           omitTemperature: true,
+          // Thinking shares the output budget; 32 tokens can end before visible text.
+          textMaxTokens: 256,
           toolMaxTokens: 256,
           supports: deepSeekSupports
         } satisfies IntegrationLanguageProvider

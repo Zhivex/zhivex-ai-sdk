@@ -1,5 +1,7 @@
 # @zhivex-ai/gemini
 
+Model serving policy is maintained internally in `src/model-profiles.ts`: the current text-model profiles declare supported reasoning efforts, provider-managed sampling and assistant-prefill policy. Capabilities and request validation consume the same profile. Adding a model served by an existing protocol requires updating its profile, the SDK catalog fragment and conformance fixtures; a new protocol still requires adapter implementation. Message/schema mapping, usage normalization and media encoding have separate internal modules. These source paths are not public package imports. See [model onboarding](../../docs/maintainers/MODEL_ONBOARDING.md).
+
 Gemini adapter for Zhivex AI SDK.
 
 Supports Gemini text, audio understanding, multimodal embeddings, speech, realtime sessions, grounded generation, Files API, File Search stores, URL Context, Context Caching, Batch API, Interactions, managed agents, raw prediction calls, and current Google generative media models such as Gemini Image / Nano Banana, Gemini Omni Flash, Veo 3.1, and Lyria 3.

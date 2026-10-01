@@ -51,6 +51,16 @@ The existing Google hosted-tool helpers are available from Gemini and Vertex. Co
 
 Dependency tests traverse static and literal dynamic imports, check external dependency edges explicitly, and validate focused consumer facades. A dynamically loaded storage driver remains an allowed operational dependency, not proof of browser portability.
 
+## Model policy and maintenance
+
+Model inventory and serving policy have separate owners. SDK catalog fragments own aliases, pricing, lifecycle, limits and provenance. Provider-local model profiles own capabilities, reasoning controls, protocol selection and request restrictions for the actual API host. Adapters never import the SDK inventory. OpenAI keeps family policy in `model-profiles.ts`; Gemini's current text profiles drive both advertised reasoning efforts and generation/interaction validation. Gemini also separates message/schema mapping, usage normalization and media encoding from its root implementation. Internal profile and mapping modules are not public deep imports.
+
+Unrecognized OpenAI and OpenRouter language model IDs use conservative capabilities. Explicit provider configuration can declare verified private-model capabilities or opt into historical assumptions during migration. Recognition is not live certification, and catalog presence does not establish support for every operation. SDK consumer tests check that unverified tool routes fail before network requests and that explicitly declared models work without catalog registration.
+
+Gateway applies catalog lifecycle before constructing candidate models across generation, streaming and agent operations. Deployment-scoped retirement overrides are explicit trusted configuration. Evidence routing uses task quality profiles instead of name heuristics; the legacy routing mode remains available, and adaptive routing continues to use measured signals. Detailed cost accounting and scalar rate budgets remain distinct contracts.
+
+The maintenance-only registry in `scripts/provider-registry.ts` generates CLI package/default metadata and catalog fragment composition. `bun run provider:check` verifies generated files and package inventories against Gateway IDs, factory exports and TypeScript references. Published packages do not load the registry. Versioning regenerates CLI versions from package manifests. See [model onboarding](./maintainers/MODEL_ONBOARDING.md) for the update workflow.
+
 ## Documentation ownership
 
 The root README is the entry point. Application guides own adoption and operational guidance; `docs/reference/` contains extended API recipes. Historical reports record dated evidence, not current certification. [Release procedures](./maintainers/RELEASE.md) have one canonical home; [versioning policy](../VERSIONING.md) defines bump decisions.

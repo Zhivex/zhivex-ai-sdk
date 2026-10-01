@@ -605,14 +605,17 @@ export const createXAI = (
     allowUnsafe: options.allowUnsafeEndpoints
   }).toString().replace(/\/+$/, "");
   const fetcher = options.fetch ?? globalThis.fetch;
-  const transport = createOpenAI({ apiKey, baseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints });
   const defaultHeaders = Object.fromEntries(
     Object.entries(options.headers ?? {}).filter(
       ([key]) => !["authorization", "content-type", "content-length", "host", "connection", "transfer-encoding"].includes(key.toLowerCase())
     )
   );
   const languageModel = (modelId: string) =>
-    new XAILanguageModel(modelId, transport.languageModel(modelId), defaultHeaders);
+    new XAILanguageModel(modelId, createOpenAI({
+      apiKey, baseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints,
+      // This delegate implements the wire protocol; xAI owns model feature policy.
+      modelCapabilities: { [modelId]: modelCapabilities(modelId) },
+    }).languageModel(modelId), defaultHeaders);
 
   return createProviderAdapter({
     name: "xai",

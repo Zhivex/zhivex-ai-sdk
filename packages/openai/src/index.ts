@@ -18,11 +18,9 @@ import {
   capabilities,
   groundedCapabilities,
   supportsOpenAIModernResponses,
-  isOpenAIAstraModel,
-  isOpenAISolLunaModel,
-  modelCapabilities,
-  supportsOpenAIApplyPatchAndSkills,
-  supportsOpenAIShell
+  assertOpenAIModelRequestSupported,
+  resolveOpenAIModelProfile,
+  modelCapabilities
 } from "./capabilities.js";
 
 import {
@@ -129,6 +127,12 @@ const openAIResponsesToolCallError = (
 
 export interface OpenAIProviderOptions {
   apiKey?: string;
+  /** Conservative defaults for unrecognized IDs; legacy restores historical capability assumptions. */
+  unknownModelCapabilities?: "conservative" | "legacy";
+  /** Explicit capability declarations keyed by model ID, for private deployments or new models. */
+  modelCapabilities?: Record<string, Omit<Partial<ModelCapabilities>, "agentCapabilities"> & {
+    agentCapabilities?: Partial<NonNullable<ModelCapabilities["agentCapabilities"]>>;
+  }>;
   baseURL?: string;
   fetch?: typeof globalThis.fetch;
   realtimeURL?: string;
@@ -769,8 +773,7 @@ const responsesImageGenerationConfig = (
   };
 };
 
-const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInput["tools"]) => {
-  const currentCapabilities = modelCapabilities(modelId).agentCapabilities;
+const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInput["tools"], currentCapabilities: ModelCapabilities["agentCapabilities"]) => {
   for (const definition of Object.values(tools ?? {})) {
     const type = isCallableToolDefinition(definition) ? openAILocalResponsesToolType(definition) : definition.type;
     if (type === "tool_search" && !currentCapabilities?.toolSearch) {
@@ -782,16 +785,16 @@ const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInpu
     if (type === "computer" && !currentCapabilities?.computerUse) {
       throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses computer tool.`);
     }
-    if (type === "shell" && !supportsOpenAIShell(modelId)) {
+    if (type === "shell" && !currentCapabilities?.shell) {
       throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses ${type} tool.`);
     }
-    if (type === "apply_patch" && !supportsOpenAIApplyPatchAndSkills(modelId)) {
+    if (type === "apply_patch" && !currentCapabilities?.applyPatch) {
       throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses ${type} tool.`);
     }
     if (type === "skill" && !currentCapabilities?.skills) {
       throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support the Responses skills tool.`);
     }
-    if (type === "programmatic_tool_calling" && !supportsOpenAIModernResponses(modelId)) {
+    if (type === "programmatic_tool_calling" && !currentCapabilities?.programmaticToolCalling) {
       throw new UnsupportedFeatureError(
         `Provider "openai" model "${modelId}" does not support Programmatic Tool Calling.`
       );
@@ -799,8 +802,8 @@ const assertResponsesToolsSupported = (modelId: string, tools: ModelGenerateInpu
   }
 };
 
-const assertOpenAIResponsesOptionsSupported = (modelId: string, options: OpenAILanguageModelOptions) => {
-  if (options.multi_agent?.enabled && !supportsOpenAIModernResponses(modelId)) {
+const assertOpenAIResponsesOptionsSupported = (modelId: string, options: OpenAILanguageModelOptions, currentCapabilities: ModelCapabilities["agentCapabilities"]) => {
+  if (options.multi_agent?.enabled && !currentCapabilities?.multiAgent) {
     throw new UnsupportedFeatureError(`Provider "openai" model "${modelId}" does not support Multi-agent.`);
   }
 };
@@ -2171,42 +2174,41 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
     private readonly apiKey: string,
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch,
-    private readonly responseLimits: ResolvedOpenAIResponseLimits
+    private readonly responseLimits: ResolvedOpenAIResponseLimits,
+    capabilityOptions: Pick<OpenAIProviderOptions, "unknownModelCapabilities" | "modelCapabilities">
   ) {
-    this.capabilities = { ...modelCapabilities(modelId), toolHistory: "json" };
+    const base = modelCapabilities(modelId, capabilityOptions.unknownModelCapabilities);
+    const override = (capabilityOptions.modelCapabilities && Object.hasOwn(capabilityOptions.modelCapabilities, modelId) ? capabilityOptions.modelCapabilities[modelId] : undefined);
+    this.capabilities = { ...base, ...override,
+      agentCapabilities: { ...base.agentCapabilities!, ...override?.agentCapabilities }, toolHistory: "json" };
   }
 
   private usesResponsesAPI(input: ModelGenerateInput, options: ReturnType<typeof resolveOpenAILanguageRequestOptions>) {
-    if (isOpenAISolLunaModel(this.modelId)) {
-      const raw = options.bodyOptions;
-      const effort = input.reasoning?.effort ?? (raw.reasoning as { effort?: string } | undefined)?.effort ?? raw.reasoning_effort;
-      if (effort !== undefined && !["none", "low", "medium", "high", "xhigh", "max"].includes(String(effort))) {
-        throw new UnsupportedFeatureError(`GPT-6 Sol/Luna does not support reasoning effort "${effort}".`);
-      }
-      if (effort !== "none") {
-        if (input.temperature !== undefined || raw.temperature !== undefined || raw.top_p !== undefined || raw.top_logprobs !== undefined ||
-            (options.apiMode === "chat" && raw.logprobs !== undefined) || raw.include?.includes("message.output_text.logprobs")) {
-          throw new UnsupportedFeatureError('GPT-6 Sol/Luna sampling and logprobs controls require reasoning effort "none".');
-        }
-        if (options.apiMode === "chat" && Object.keys(input.tools ?? {}).length) {
-          throw new UnsupportedFeatureError('GPT-6 Sol/Luna tool calling with reasoning requires the Responses API; Chat Completions requires effort "none".');
-        }
-      }
+    if (!this.capabilities.tools && (Object.keys(input.tools ?? {}).length || input.messages.some(message => message.parts.some(part => part.type === "tool-call" || part.type === "tool-result")))) {
+      throw new UnsupportedFeatureError(`OpenAI model "${this.modelId}" has no declared tool support.`);
     }
-    if (isOpenAIAstraModel(this.modelId)) {
-      const raw = options.bodyOptions;
-      const effort = input.reasoning?.effort ?? (raw.reasoning as { effort?: string } | undefined)?.effort ?? raw.reasoning_effort;
-      if (effort !== undefined && !["low", "medium", "high", "xhigh", "max"].includes(String(effort))) {
-        throw new UnsupportedFeatureError(`GPT-6 Astra does not support reasoning effort "${effort}".`);
-      }
-      if (input.temperature !== undefined || raw.temperature !== undefined || raw.top_p !== undefined || raw.top_logprobs !== undefined ||
-          (options.apiMode === "chat" && raw.logprobs !== undefined) || raw.include?.includes("message.output_text.logprobs")) {
-        throw new UnsupportedFeatureError("GPT-6 Astra does not support the requested sampling or logprobs controls.");
-      }
-      if (options.apiMode === "chat" && Object.keys(input.tools ?? {}).length) {
-        throw new UnsupportedFeatureError("GPT-6 Astra tool calling requires the Responses API.");
-      }
+    if (!this.capabilities.vision && input.messages.some(message => message.parts.some(part => part.type === "image"))) {
+      throw new UnsupportedFeatureError(`OpenAI model "${this.modelId}" has no declared vision support.`);
     }
+    const rawFormat = options.bodyOptions.response_format as { type?: unknown } | undefined;
+    const rawText = options.bodyOptions.text as { format?: { type?: unknown } } | undefined;
+    const formatTypes = [rawFormat?.type, rawText?.format?.type];
+    if (!this.capabilities.structuredOutput && (input.structuredOutput?.mode === "native" || formatTypes.includes("json_schema"))) {
+      throw new UnsupportedFeatureError(`OpenAI model "${this.modelId}" has no declared native structured output support.`);
+    }
+    if (!this.capabilities.jsonMode && formatTypes.includes("json_object")) {
+      throw new UnsupportedFeatureError(`OpenAI model "${this.modelId}" has no declared JSON mode support.`);
+    }
+    if (!this.capabilities.parallelToolCalls && options.bodyOptions.parallel_tool_calls === true) {
+      throw new UnsupportedFeatureError(`OpenAI model "${this.modelId}" has no declared parallel tool calling support.`);
+    }
+    if (!this.capabilities.reasoning && (input.reasoning || options.bodyOptions.reasoning || options.bodyOptions.reasoning_effort)) {
+      throw new UnsupportedFeatureError(`OpenAI model "${this.modelId}" has no declared reasoning support.`);
+    }
+    if (!this.capabilities.toolChoice && (input.toolChoice !== undefined || options.bodyOptions.tool_choice !== undefined)) {
+      throw new UnsupportedFeatureError(`OpenAI model "${this.modelId}" has no declared tool choice support.`);
+    }
+    assertOpenAIModelRequestSupported(this.modelId, input, options);
     const requiresResponses = hasResponsesOnlyTools(input.tools) || options.multiAgentEnabled;
     if (options.apiMode === "chat") {
       if (requiresResponses) {
@@ -2216,7 +2218,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
       }
       return false;
     }
-    return options.apiMode === "responses" || requiresResponses || supportsOpenAIModernResponses(this.modelId);
+    return options.apiMode === "responses" || requiresResponses || resolveOpenAIModelProfile(this.modelId).defaultApi === "responses";
   }
 
   private async generateViaResponses(
@@ -2225,8 +2227,8 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
     options: ReturnType<typeof resolveOpenAILanguageRequestOptions>
   ): Promise<GenerateResult> {
     const responseBodyOptions = openAIResponsesBodyOptions(options.bodyOptions, this.modelId);
-    assertResponsesToolsSupported(this.modelId, input.tools);
-    assertOpenAIResponsesOptionsSupported(this.modelId, responseBodyOptions);
+    assertResponsesToolsSupported(this.modelId, input.tools, this.capabilities.agentCapabilities);
+    assertOpenAIResponsesOptionsSupported(this.modelId, responseBodyOptions, this.capabilities.agentCapabilities);
     const previousResponse = responseBodyOptions.store === false ? undefined : getProviderResponseId(input.messages);
     const messages =
       previousResponse && previousResponse.index < input.messages.length - 1
@@ -2251,7 +2253,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               ...(nextInput.length ? { input: nextInput } : {}),
               tools: mapResponsesTools(input.tools),
               ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
-              text: mapResponsesStructuredOutput(input),
+              text: mapResponsesStructuredOutput(input) ?? responseBodyOptions.text,
               temperature: input.temperature,
               max_output_tokens: input.maxTokens,
               ...mapResponsesReasoning(input, responseBodyOptions.reasoning)
@@ -2355,7 +2357,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               messages: mapMessages(input.messages, input.toolResultFormat),
               tools: mapTools(input.tools),
               ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
-              response_format: mapStructuredOutput(input),
+              response_format: mapStructuredOutput(input) ?? options.bodyOptions.response_format,
               temperature: input.temperature,
               ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
               ...mapChatReasoning(input),
@@ -2389,8 +2391,8 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
     const options = resolveOpenAILanguageRequestOptions(input.providerOptions, this.apiKey);
     if (this.usesResponsesAPI(input, options)) {
       const responseBodyOptions = openAIResponsesBodyOptions(options.bodyOptions, this.modelId);
-      assertResponsesToolsSupported(this.modelId, input.tools);
-      assertOpenAIResponsesOptionsSupported(this.modelId, responseBodyOptions);
+      assertResponsesToolsSupported(this.modelId, input.tools, this.capabilities.agentCapabilities);
+      assertOpenAIResponsesOptionsSupported(this.modelId, responseBodyOptions, this.capabilities.agentCapabilities);
       const { signal, cleanup } = getRequestOptions(input);
       if (hasProgrammaticToolCalling(input.tools)) {
         const result = await this.generateViaResponses(input, signal, options);
@@ -2420,7 +2422,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               ...(messages.length ? { input: toResponsesInput(messages, input.toolResultFormat, input.messages) } : {}),
               tools: mapResponsesTools(input.tools),
               ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
-              text: mapResponsesStructuredOutput(input),
+              text: mapResponsesStructuredOutput(input) ?? responseBodyOptions.text,
               temperature: input.temperature,
               max_output_tokens: input.maxTokens,
               ...mapResponsesReasoning(input, responseBodyOptions.reasoning),
@@ -2461,7 +2463,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             messages: mapMessages(input.messages, input.toolResultFormat),
             tools: mapTools(input.tools),
             ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
-            response_format: mapStructuredOutput(input),
+            response_format: mapStructuredOutput(input) ?? options.bodyOptions.response_format,
             temperature: input.temperature,
             ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
             ...mapChatReasoning(input),
@@ -2584,7 +2586,7 @@ export const createOpenAI = (
     name: "openai",
     languageModel: (modelId) => {
       if (modelId.startsWith("gpt-live-")) throw new UnsupportedFeatureError("GPT-Live is a voice model; use openai.realtimeModel(modelId).");
-      return new OpenAILanguageModel(modelId, apiKey, baseURL, fetcher, responseLimits);
+      return new OpenAILanguageModel(modelId, apiKey, baseURL, fetcher, responseLimits, options);
     },
     embeddingModel: (modelId) => new OpenAIEmbeddingModel(modelId, apiKey, baseURL, fetcher),
     transcriptionModel: (modelId) => new OpenAITranscriptionModel(modelId, apiKey, baseURL, fetcher, responseLimits),

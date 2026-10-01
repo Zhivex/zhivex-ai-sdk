@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/openrouter",
-  "version": "0.5.22",
+  "version": "0.6.0",
   "description": "OpenRouter adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",

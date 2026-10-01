@@ -33,7 +33,7 @@ The SDK-owned catalog includes direct API input/output and cache pricing; Vertex
 ZHIVEX_SONNET55_LIVE=1 bun --env-file=.env run test:integration packages/anthropic/tests/sonnet55.integration.test.ts
 ```
 
-Missing credentials skip these tests and do not constitute live certification. The [September 28 validation report](../../docs/maintainers/SONNET_55_SUPPORT_2026_09_28.md) records the five passing direct live checks and their scope. Sources: [Sonnet 5.5 specifications](https://platform.claude.com/docs/en/models/sonnet-5-5/overview), [breaking changes](https://platform.claude.com/docs/en/models/sonnet-5-5/whats-new-sonnet-5-5).
+Missing credentials skip these tests and do not constitute live certification. On September 28, 2026, all five checks passed against the direct API from the checkout, with a 1,024-token limit, no retries, a 45-second timeout and at most three tool-loop steps. This did not certify Vertex, Bedrock, installed packages, computer/advisor tools, server fallback or compaction. Sources: [Sonnet 5.5 specifications](https://platform.claude.com/docs/en/models/sonnet-5-5/overview), [breaking changes](https://platform.claude.com/docs/en/models/sonnet-5-5/whats-new-sonnet-5-5).
 
 ## Claude Opus 5.5
 

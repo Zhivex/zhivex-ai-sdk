@@ -56,6 +56,8 @@ export const createVertexResponsesModel = (
   if (!/\/projects\/[^/]+\/locations\/global$/.test(baseURL)) throw new ConfigurationError("Vertex Grok Responses requires a project-scoped global endpoint.");
   const endpoint = `${baseURL}/endpoints/openapi/responses`;
   const delegate = createOpenAI({
+    // Vertex owns the host profile; OpenAI only supplies Responses transport.
+    modelCapabilities: { [modelId]: { ...vertexChatProfile(modelId).capabilities, jsonMode: false } },
     // Authenticated Vertex fetch always replaces this transport-only placeholder.
     apiKey: "vertex-authenticated-transport", baseURL: `${baseURL}/endpoints/openapi`, allowUnsafeEndpoints,
     fetch: async (url, init) => {

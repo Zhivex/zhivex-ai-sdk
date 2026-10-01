@@ -1,3 +1,4 @@
+import { catalogRoutingRate, validateRoutingPolicy } from "./routing-policy.js";
 import { targetKey, sameTarget } from "./target.js";
 import { operationControl, GatewayDeadlineError } from "./operation.js";
 import { createGatewayExecutor, cachedResults } from "./execution.js";
@@ -191,12 +192,14 @@ const defaultScoreTarget = (
   config: GatewayConfig
 ) => {
   const model = target.modelId.toLowerCase();
-  const localBoost = target.provider === "ollama" ? -2 : 0;
-  const qualityBoost = model.includes("pro") || model.includes("claude") ? 2 : 0;
-  const speedBoost = model.includes("flash") || model.includes("lite") ? 2 : 0;
-  const reasoningBoost = model.includes("pro") || model.includes("claude") ? 2 : 0;
-  const catalogCost = config.modelCatalog?.find(target.provider, target.modelId)?.costPer1kTokens;
-  const costPenalty = config.providerCostsPer1kTokens?.[target.provider] ?? catalogCost ?? 0;
+  const localBoost = config.routingPolicy?.mode !== "evidence" && target.provider === "ollama" ? -2 : 0;
+  const evidence = config.routingPolicy?.mode === "evidence";
+  const qualityProfile = config.routingPolicy?.qualityProfiles?.find(profile => sameTarget(profile.target, target) && profile.intent === intent);
+  const qualityBoost = qualityProfile ? qualityProfile.score * 4 : !evidence && (model.includes("pro") || model.includes("claude")) ? 2 : 0;
+  const speedBoost = !evidence && (model.includes("flash") || model.includes("lite")) ? 2 : 0;
+  const reasoningBoost = !qualityProfile && !evidence && (model.includes("pro") || model.includes("claude")) ? 2 : 0;
+  const catalogCost = catalogRoutingRate(config.modelCatalog?.find(target.provider, target.modelId));
+  const costPenalty = config.providerCostsPer1kTokens?.[target.provider] ?? catalogCost ?? config.routingPolicy?.unknownCostPenalty ?? 1;
   const latencyBiasMs = config.latencyBiasMs?.[target.provider] ?? 0;
   if (!Number.isFinite(costPenalty) || costPenalty < 0) {
     throw new GatewayError(
@@ -238,7 +241,7 @@ const scoreTarget = (
     target,
     isPrimary: sameTarget(target, primary),
     configuredCostPer1kTokens: config.providerCostsPer1kTokens?.[target.provider],
-    catalogCostPer1kTokens: config.modelCatalog?.find(target.provider, target.modelId)?.costPer1kTokens,
+    catalogCostPer1kTokens: catalogRoutingRate(config.modelCatalog?.find(target.provider, target.modelId)),
     latencyBiasMs: config.latencyBiasMs?.[target.provider]
   });
 
@@ -422,7 +425,9 @@ const costBudgetSkipReason = (
   }
 
   const configuredCost = config.providerCostsPer1kTokens?.[target.provider];
-  const catalogCost = config.modelCatalog?.find(target.provider, target.modelId)?.costPer1kTokens;
+  const catalogCost = config.costBudgetRate === "conservative"
+    ? catalogRoutingRate(config.modelCatalog?.find(target.provider, target.modelId))
+    : config.modelCatalog?.find(target.provider, target.modelId)?.costPer1kTokens;
   const effectiveCost = configuredCost ?? catalogCost;
 
   if (effectiveCost == null) {
@@ -1034,6 +1039,8 @@ const enrichAgentResult = (
 });
 
 export const createGateway = (config: GatewayConfig) => {
+  validateRoutingPolicy(config);
+  if (config.costBudgetRate !== undefined && !["legacy", "conservative"].includes(config.costBudgetRate)) throw new GatewayError("Invalid costBudgetRate.", false);
   for (const value of [config.resourceTimeoutMs, config.cache?.timeoutMs]) {
     if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > 60000)) throw new GatewayError("Invalid resource/cache timeout.", false);
   }
@@ -1148,6 +1155,22 @@ export const createGateway = (config: GatewayConfig) => {
 
     for (const [targetRank, target] of orderedTargets.entries()) {
       const deployment = target.deploymentId === undefined ? undefined : config.deployments?.[target.deploymentId];
+      const lifecycle = config.modelCatalog?.find(target.provider, target.modelId)?.lifecycle;
+      const retired = lifecycle?.retiredAt !== undefined && Date.parse(lifecycle.retiredAt) <= Date.now();
+      const deprecated = lifecycle?.deprecatedAt !== undefined && Date.parse(lifecycle.deprecatedAt) <= Date.now();
+      if (retired || deprecated) {
+        const override = retired && deployment?.provider === target.provider && deployment.allowRetiredModels === true;
+        (routeDecision.lifecycle ??= []).push({
+          target: { ...target }, status: retired ? override ? "retired-override" : "retired" : "deprecated",
+          effectiveAt: retired ? lifecycle!.retiredAt! : lifecycle!.deprecatedAt!, source: lifecycle!.source
+        });
+        if (retired && !override) {
+          queueAttempt(createAttempt(target, false, 0, targetRank, {
+            reasonCode: "model-lifecycle", errorMessage: "Skipped because the catalog model is retired."
+          }));
+          continue;
+        }
+      }
       const adapter = target.deploymentId === undefined ? config.adapters[target.provider]
         : deployment?.provider === target.provider ? deployment.adapter : undefined;
       if (!adapter) {

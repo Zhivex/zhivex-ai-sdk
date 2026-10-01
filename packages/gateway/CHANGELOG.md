@@ -1,5 +1,11 @@
 # @zhivex-ai/gateway
 
+## 1.5.0
+
+### Minor Changes
+
+- Exclude catalog-retired models before model construction across text, object, stream and agent routing, with lifecycle diagnostics and explicit private-deployment overrides. Add evidence-based default ordering with task quality profiles, directional catalog cost scoring and a configurable unknown-cost penalty while retaining legacy model-name boosts and scalar rate budgets by default. Add an opt-in conservative directional rate policy for basic token budgets.
+
 ## 1.4.3
 
 ### Patch Changes

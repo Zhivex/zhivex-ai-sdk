@@ -6,6 +6,8 @@ It is designed around a small shared contract in `@zhivex-ai/core` and thin prov
 
 Use focused imports such as `@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/evals`, and `@zhivex-ai/agents/realtime` to avoid the complete Core aggregation. Operational stores remain explicit in `@zhivex-ai/agents/ops`. See [architecture boundaries](./docs/ARCHITECTURE.md).
 
+For model and provider maintenance, follow [model onboarding](./docs/maintainers/MODEL_ONBOARDING.md). OpenAI and OpenRouter use conservative capability declarations for unrecognized model IDs, with explicit per-model overrides and a legacy migration option. Gateway excludes catalog-retired routes before constructing their models; private deployments can explicitly override retirement. Its evidence routing policy uses declared quality profiles, while adaptive routing uses observed metrics. See the [OpenAI](./packages/openai/README.md), [OpenRouter](./packages/openrouter/README.md), and [Gateway](./packages/gateway/README.md) package guides for configuration.
+
 The direct providers support `gpt-6-sol`, `gpt-6-luna`, `claude-opus-5-5`, and `claude-sonnet-5-5`. GPT-6 Sol/Luna default to Responses; Chat Completions function calling requires reasoning effort `none`. Opus 5.5 uses always-on adaptive thinking and accepts only automatic or disabled tool choice. See the [OpenAI adapter](./packages/openai/README.md) and [Anthropic adapter](./packages/anthropic/README.md) for migration details. Sonnet 5.5 maps reasoning effort `none` to `between_tools` and rejects forced tools, disabled/manual thinking, and incompatible effort settings before sending requests. The SDK catalog includes their direct-provider token and cache prices; Sonnet 5.5 on Vertex has a separate entry without inferred pricing.
 
 ## Durable Agent Output Redaction
@@ -50,7 +52,7 @@ bun add @zhivex-ai/sdk@next
 
 Use the SDK from server runtimes: Node.js, Bun, Next.js route handlers/server actions, API servers, or background workers. Browser React clients should call your backend instead of importing provider-backed runners directly, because provider credentials, tools, database clients, and durable stores must stay server-side.
 
-Repository development requires Node.js 22.12+ and Bun 1.4.2+. Provider runtime requirements vary: Bedrock requires Node.js 20+, and Vertex requires Node.js 22+. See the [support policy](./SUPPORT.md) for consumer compatibility and the [historical dependency migration report](docs/history/DEPENDENCY_UPGRADE_2026_09.md) for that update.
+Repository development requires Node.js 22.12+ and Bun 1.4.2+. Provider runtime requirements vary: Bedrock requires Node.js 20+, and Vertex requires Node.js 22+. See the [support policy](./SUPPORT.md) for consumer compatibility.
 
 For local development, file-backed stores are convenient. For serverless and production deployments, prefer database-backed services such as `createPostgresSessionService()` over file stores, because serverless filesystems are usually ephemeral and not shared across instances.
 
@@ -349,7 +351,7 @@ Gateway object routing resolves `auto` per destination, including fallback betwe
 
 The gateway also offers optional operation deadlines, bounded concurrency/RPM/TPM admission, monetary reservations, deployment-aware routing, exact caching with shared misses, adaptive TTFT/throughput policies and bounded background attempt observers. The included quota/budget stores are local; shared backends can implement the asynchronous contracts. See the [production controls](./packages/gateway/README.md#production-controls) for scope and accounting guarantees.
 
-`GatewayRequest.messages` also accepts canonical core `ModelMessage` entries. Text/object generation and streaming preserve resolved tool history on Anthropic, OpenAI, DeepSeek and Qwen, with explicit validation and cross-provider fallback. Adapters declare native or JSON-envelope history support; older/incompatible destinations are skipped. Portable DeepSeek/Qwen replay uses non-thinking mode; agent operations accept canonical history on fresh runs and resume durable state without resupplying history. See the gateway README for the supported subset and the [historical delivery evidence](./docs/history/GATEWAY_TOOL_HISTORY_DELIVERY.md) for the original artifact checks and their publication limits.
+`GatewayRequest.messages` also accepts canonical core `ModelMessage` entries. Text/object generation and streaming preserve resolved tool history on Anthropic, OpenAI, DeepSeek and Qwen, with explicit validation and cross-provider fallback. Adapters declare native or JSON-envelope history support; older/incompatible destinations are skipped. Portable DeepSeek/Qwen replay uses non-thinking mode; agent operations accept canonical history on fresh runs and resume durable state without resupplying history. See the [Gateway guide](./packages/gateway/README.md#continuing-canonical-tool-history) for the supported subset and validation commands.
 
 `generateObject()` and `streamObject()` now route through the same gateway metadata path as text generation. Native object mode requires `structuredOutput`; prompted object mode requires `jsonMode`; auto mode accepts either capability and skips targets that cannot satisfy object output before making a provider call.
 

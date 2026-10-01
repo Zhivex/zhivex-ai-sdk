@@ -33,7 +33,7 @@ import type {
 import type { ZodTypeAny } from "zod";
 import type { GatewayMetricsStore } from "./metrics.js";
 import type { GatewayCircuitBreaker } from "./circuit-breaker.js";
-import type { GatewayAdaptiveCandidate, GatewayAdaptiveRoutingPolicy } from "./adaptive-routing.js";
+import type { GatewayAdaptiveCandidate, GatewayAdaptiveRoutingPolicy, GatewayQualityProfile } from "./adaptive-routing.js";
 
 export type GatewayProviderId =
   | "openai"
@@ -54,6 +54,7 @@ export type GatewayRoutingMode = "speed" | "balanced" | "quality";
 export type GatewayTaskIntent = "chat" | "reasoning" | "tool-heavy";
 export type GatewayUnknownCostPolicy = "reject" | "allow";
 export type GatewayAttemptReasonCode =
+  | "model-lifecycle"
   | "model-capabilities"
   | "agent-capabilities"
   | "cost-budget"
@@ -180,6 +181,8 @@ export interface GatewayResponse {
     orderedTargets: GatewayModelTarget[];
     reasonCode?: GatewayRouteDecisionReasonCode;
     reason: string;
+    /** Catalog lifecycle diagnostics for all requested targets. */
+    lifecycle?: Array<{ target: GatewayModelTarget; status: "deprecated" | "retired" | "retired-override"; effectiveAt: string; source: string }>;
     estimatedCosts?: ModelCostValuation[];
     adaptive?: { policyVersion: string; candidates: GatewayAdaptiveCandidate[]; exploration?: boolean; affinity?: boolean };
   };
@@ -237,7 +240,7 @@ export interface GatewayRoutingScoreContext {
 
 export interface GatewayConfig {
   /** Explicit deployment registrations; unknown IDs never fall back to the default adapter. */
-  deployments?: Record<string, { provider: GatewayProviderId; adapter: ProviderAdapter }>;
+  deployments?: Record<string, { provider: GatewayProviderId; adapter: ProviderAdapter; /** Explicitly permit catalog-retired IDs served by this private deployment. */ allowRetiredModels?: boolean }>;
   timeoutMs?: number;
   affinity?: { ttlMs?: number; maxEntries?: number; maxScoreLoss?: number };
   admission?: import("./admission.js").GatewayAdmissionController;
@@ -263,6 +266,16 @@ export interface GatewayConfig {
   providerCostsPer1kTokens?: Partial<Record<GatewayProviderId, number>>;
   latencyBiasMs?: Partial<Record<GatewayProviderId, number>>;
   unknownCostPolicy?: GatewayUnknownCostPolicy;
+  /** Catalog rates used by maxCostPer1kTokens: legacy scalar (default), or conservative directional maximum. */
+  costBudgetRate?: "legacy" | "conservative";
+  /** Default ordering policy. Legacy retains model-name boosts; evidence uses only explicit signals. */
+  routingPolicy?: {
+    mode?: "legacy" | "evidence";
+    /** Task-specific evaluation scores, using the same contract as adaptive routing. */
+    qualityProfiles?: GatewayQualityProfile[];
+    /** Rate penalty when neither configured nor catalog rates are known. Defaults to 1. */
+    unknownCostPenalty?: number;
+  };
   scoreTarget?: (context: GatewayRoutingScoreContext) => number;
   /** Maximum fallback targets accepted per request. Defaults to 8 and cannot exceed 32. */
   maxFallbacks?: number;
