@@ -59,8 +59,12 @@ describe("SDK model catalog ownership", () => {
       expect(defaultModelCatalog.find("qwen", id)).toMatchObject({ provider: "qwen", modelId: id });
     }
     expect(defaultModelCatalog.find("gemini", "gemini-3.8-live-extended-thinking")).toBeDefined();
+    expect(defaultModelCatalog.find("meta", "muse-spark-1.3-contributor")).toMatchObject({
+      provider: "meta", modelId: "muse-spark-1.3-contributor",
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(227);
+    expect(entries).toHaveLength(228);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
@@ -102,7 +106,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(227);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(228);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-09-24",
       verifiedAt: "2026-09-22",

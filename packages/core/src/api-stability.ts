@@ -353,6 +353,7 @@ const experimentalSymbols = [
   "googleUrlContextTool",
   "inspectToolRegistry",
   "recordToolTestFixture",
+  "runComputerUse",
   "runToolTestFixture",
   "testToolDefinition",
   "testToolRegistry"

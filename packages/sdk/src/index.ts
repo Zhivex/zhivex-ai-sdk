@@ -856,6 +856,8 @@ export { calculateModelCost } from "@zhivex-ai/core";
 export type { ModelCostInput, ModelCostValuation, TokenUsage } from "@zhivex-ai/core";
 
 export { reconcileAgentToolExecution } from "@zhivex-ai/core";
+export { runComputerUse } from "@zhivex-ai/core";
+export type { ComputerAction, ComputerUseEnvironment, ComputerUseResult, RunComputerUseOptions } from "@zhivex-ai/core";
 export type { ReconcileAgentToolExecutionOptions } from "@zhivex-ai/core";
 export type { AgentTaskOutcome, AgentToolReconciliationEvidence, AgentToolReconciliationRecord } from "@zhivex-ai/core";
 
