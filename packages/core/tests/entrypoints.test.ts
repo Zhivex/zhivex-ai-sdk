@@ -155,6 +155,12 @@ const collectRuntimeDependencies = async (entry: string, forbiddenBuiltins = ["n
 };
 
 describe("core public entrypoints", () => {
+  it("exposes portable computer use through the experimental entrypoint", () => {
+    expect(experimental.runComputerUse).toBe(core.runComputerUse);
+    expect(typeof experimental.runComputerUse).toBe("function");
+    expect(core.getApiStability("runComputerUse")?.stability).toBe("experimental");
+  });
+
   it("keeps the root compatible while exposing focused additive surfaces", () => {
     expect(Object.keys(contracts)).toEqual([]);
     expect(nodeCore.generateText).toBe(core.generateText);

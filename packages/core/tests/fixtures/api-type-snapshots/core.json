@@ -57,7 +57,7 @@
   "embed.d.ts": "70f92bcf66097448cf2b2a29533be5c3fd9c86c8a5132a61d35a99f197ac57b5",
   "errors.d.ts": "329b8d6704d6a9a3e16ca659fcc17e64bd3b17e8568611de1b6dd04b6c4a946b",
   "evals-entry.d.ts": "e27f00c1c78da0aee759271415201e91e72bb6b30534cdd98bae25a48d97bd6c",
-  "experimental-entry.d.ts": "33578bd0ec78c4fe4565c4732c12d44c921cc7f2a4ebb405f2bd9b9bfcb2895a",
+  "experimental-entry.d.ts": "864e271a2963c16a5946e91d1adc81a2d7f73aa7332dfa470fd399868c88cc2c",
   "fetch.d.ts": "ae781ed35c5ac1ca01c4083f09ff53d3c1e7b034eb2d270110ad23d8f0710e07",
   "generate-cache-file.d.ts": "273def95c472dc2dc406de04e19701f7b994eff9e9f76325651b643fe9d18924",
   "generate-object.d.ts": "07cdaa2381b501af6bb25a7f946f109a881f9f256b59d53e54ef5846d7462667",

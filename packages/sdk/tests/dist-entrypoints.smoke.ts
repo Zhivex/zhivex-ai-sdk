@@ -16,6 +16,7 @@ assert.equal(typeof beta.ModelResolutionError, "function");
 assert.equal(typeof beta.deriveLegacyModelCapabilities, "function");
 assert.equal(typeof experimental.createAdvancedToolRegistry, "function");
 assert.equal(typeof experimental.experimentalRawProviderOptions, "function");
+assert.equal(typeof experimental.runComputerUse, "function");
 assert.equal(typeof evals.runModelEvaluation, "function");
 assert.equal(typeof runtime.generateText, "function");
 assert.equal(typeof ui.toUIMessage, "function");

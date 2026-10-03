@@ -121,7 +121,8 @@ export const runComputerUse = async (options: RunComputerUseOptions): Promise<Co
 
   for (let step = 1; step <= maxSteps; step++) {
     signal?.throwIfAborted();
-    const response = await model.generate({ messages: structuredClone(messages), tools: { computer_action: computerTool }, toolChoice: "auto", abortSignal: signal });
+    const response = await model.generate({ messages: structuredClone(messages), tools: { computer_action: computerTool },
+      ...(model.capabilities.toolChoice ? { toolChoice: "auto" as const } : {}), abortSignal: signal });
     const assistant = response.message ?? response.messages?.filter((message) => message.role === "assistant").at(-1) ?? createTextMessage("assistant", response.text ?? "");
     const calls = assistant.parts.filter((part): part is Extract<ModelMessage["parts"][number], { type: "tool-call" }> => part.type === "tool-call").map((part) => part.toolCall);
     if (calls.length === 0) {

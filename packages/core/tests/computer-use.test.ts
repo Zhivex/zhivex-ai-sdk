@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { runComputerUse } from "../src/index.js";
+import { createChatCompletionsModel } from "../src/chat-completions.js";
 import type { LanguageModel, ModelGenerateInput } from "../src/index.js";
 
 const screenshot = "data:image/png;base64,iVBORw0KGgo=";
@@ -16,6 +17,31 @@ const model = (generate: LanguageModel["generate"]): LanguageModel => ({
 });
 
 describe("portable computer use", () => {
+  it.each([false, true])("runs the shared transport with explicit tool-choice support: %s", async (toolChoice) => {
+    const send = vi.fn()
+      .mockResolvedValueOnce(Response.json({ choices: [{ finish_reason: "tool_calls", message: {
+        content: null, tool_calls: [{ id: "call-1", type: "function", function: {
+          name: "computer_action", arguments: JSON.stringify({ actions: [{ type: "click", x: 12, y: 34 }] })
+        } }]
+      } }] }))
+      .mockResolvedValueOnce(Response.json({ choices: [{ finish_reason: "stop", message: { content: "Done" } }] }));
+    const testModel = createChatCompletionsModel({
+      provider: "fixture", modelId: "vision-tools", capabilities: { ...model(async () => ({})).capabilities, toolChoice }, send
+    });
+    const execute = vi.fn(async () => {});
+    const result = await runComputerUse({ model: testModel, prompt: "Open the panel", authorize: () => true,
+      environment: { viewport: { width: 800, height: 600 }, execute, screenshot: async () => screenshot }
+    });
+    expect(result.text).toBe("Done");
+    expect(result.steps).toBe(2);
+    expect(execute).toHaveBeenCalledExactlyOnceWith([{ type: "click", x: 12, y: 34 }]);
+    expect(send).toHaveBeenCalledTimes(2);
+    for (const [body] of send.mock.calls) {
+      if (toolChoice) expect(body.tool_choice).toBe("auto");
+      else expect(body).not.toHaveProperty("tool_choice");
+    }
+  });
+
   it("sends screenshots as images and executes an authorized batch before continuing", async () => {
     const requests: ModelGenerateInput[] = [];
     const execute = vi.fn(async () => {});

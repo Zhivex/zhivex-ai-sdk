@@ -4,9 +4,16 @@ import * as mcp from "../src/mcp-http.js";
 import * as coreMcp from "../../core/src/mcp-http.js";
 import * as beta from "../src/beta.js";
 import * as experimental from "../src/experimental.js";
-import { getApiStability } from "../src/index.js";
+import * as coreExperimental from "../../core/src/experimental-entry.js";
+import { getApiStability, runComputerUse } from "../src/index.js";
 
 describe("SDK stability entrypoints", () => {
+  it("exposes the same portable computer-use runner as core and the root", () => {
+    expect(experimental.runComputerUse).toBe(runComputerUse);
+    expect(experimental.runComputerUse).toBe(coreExperimental.runComputerUse);
+    expect(typeof experimental.runComputerUse).toBe("function");
+  });
+
   it("contains only Beta runtime symbols", () => {
     for (const symbol of Object.keys(beta)) {
       expect(getApiStability(symbol)?.stability, symbol).toBe("beta");

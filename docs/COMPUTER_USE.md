@@ -2,10 +2,15 @@
 
 `runComputerUse()` is an experimental API that lets a model with image input and callable tools operate an application-owned browser or desktop session. It uses ordinary `computer_action` function calls, so the model does not need a provider-native computer tool. OpenAI's native `openAIComputerTool()` remains available separately.
 
+Import the runner and its supporting types from `@zhivex-ai/sdk/experimental` or
+`@zhivex-ai/core/experimental`. The root exports remain available. Models need
+vision and callable tools; explicit tool-choice support is optional. The runner
+omits `toolChoice` when the model does not support that option.
+
 The application owns the environment: keep one browser or desktop session alive, provide its viewport size, execute each ordered action batch, and return a screenshot of that same session. The SDK sends the screenshot as an image in the next model request. `authorize` is required for every valid action batch. The SDK validates actions and applies step and batch limits; the application must enforce its own allowed sites and consequential-action policy.
 
 ```ts
-import { runComputerUse, type ComputerUseEnvironment } from "@zhivex-ai/sdk";
+import { runComputerUse, type ComputerUseEnvironment } from "@zhivex-ai/sdk/experimental";
 import { createQwen } from "@zhivex-ai/qwen";
 
 // Connect these methods to a persistent browser or desktop session in your app.
