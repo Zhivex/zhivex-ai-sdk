@@ -1,5 +1,13 @@
 # @zhivex-ai/core
 
+## 1.29.1
+
+### Patch Changes
+
+- 7b8cc82: Allow portable computer use with vision/tool models that do not support explicit
+  tool choice. Expose the runner and its supporting types through the Core and SDK
+  experimental entrypoints while preserving the root exports.
+
 ## 1.29.0
 
 ### Minor Changes
