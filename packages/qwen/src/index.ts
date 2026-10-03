@@ -1607,6 +1607,17 @@ const streamResponses = async function* (
   const searchEnabled = Object.values(input.tools ?? {}).some(t => !isCallableToolDefinition(t) && t.type === "web_search");
   if (searchEnabled) yield { type: "provider-data", provider: "qwen", data: qwenSearchUsage(attemptId) };
   const collectAnnotations = createAnnotationCollector();
+  const providerDataSnapshots = new Map<string, string>();
+  const collectProviderData = (item: unknown, outputIndex: unknown) => {
+    const data = parseResponsesProviderData(item);
+    if (!data) return undefined;
+    const typedItem = item as Record<string, unknown>;
+    const key = JSON.stringify([typedItem.type, typeof typedItem.id === "string" ? typedItem.id : outputIndex]);
+    const snapshot = JSON.stringify(data);
+    if (providerDataSnapshots.get(key) === snapshot) return undefined;
+    providerDataSnapshots.set(key, snapshot);
+    return data;
+  };
   const toolBuffers = new Map<string, ToolBuffer>();
   const toolBufferAliases = new Map<string, string>();
   const seenIds = existingToolCallIds(input.messages);
@@ -1731,10 +1742,11 @@ const streamResponses = async function* (
       const providerData = parseResponsesProviderData(item);
       if (providerData) effectsPossible = true;
       if (providerData && type === "response.output_item.done") {
-        yield {
+        const data = collectProviderData(item, json.output_index);
+        if (data) yield {
           type: "provider-data",
           provider: "qwen",
-          data: providerData
+          data
         } satisfies StreamEvent;
       }
       continue;
@@ -1803,7 +1815,9 @@ const streamResponses = async function* (
           if (data) yield { type: "provider-data", provider: "qwen", data };
         }
       }
+      const providerData = collectProviderData(item, index);
       if (parseResponsesProviderData(item)) effectsPossible = true;
+      if (providerData) yield { type: "provider-data", provider: "qwen", data: providerData };
       if (item?.type !== "function_call") continue;
       const fallbackId = fallbackToolCallId("responses", fallbackGeneration, index);
       const priorKey = [item.id, item.call_id]

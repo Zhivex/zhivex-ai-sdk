@@ -670,6 +670,15 @@ annotations and fields beyond these bounds are omitted. Non-streaming messages
 carry the same data part; citation parts are never replayed as Responses input.
 Partial citations already delivered remain available if the stream fails.
 
+Hosted search results are also emitted as `provider-data` with
+`data.type: "web_search_call"`, preserving `data.action.sources`. These items are
+recovered from terminal `response.completed`/`response.incomplete` snapshots even
+when no intermediate item event included the sources. Identical item snapshots
+are deduplicated by provider item ID (or output index when the ID is absent).
+If the terminal item adds sources, its updated snapshot is emitted too; consumers
+should replace the earlier snapshot for that item rather than append it as a new
+search call. Search counts come from the usage counter, not the source list.
+
 The [Responses contract](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-responses)
 notes that annotations are usually empty. This transport support does not certify
 that every model/region returns citations, nor does token usage include hosted-search

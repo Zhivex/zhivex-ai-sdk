@@ -6,6 +6,8 @@ const citation = { type: "url_citation", url: "https://example.com", title: "Sou
 const part = { type: "output_text", text: "Hello", annotations: [citation] };
 const item = { type: "message", id: "msg_1", content: [part] };
 const usage = { input_tokens: 10, output_tokens: 16, total_tokens: 26 };
+const searchItem = { type: "web_search_call", id: "search_1", status: "completed", action: { type: "search", sources: [{ type: "url", url: "https://example.com/source" }] } };
+const searchEvents = (events: StreamEvent[]) => events.filter(event => event.type === "provider-data" && (event.data as any)?.type === "web_search_call");
 const terminal = (status = "completed", output: unknown[] = [item]) => ({ type: `response.${status}`, response: { status, output, usage } });
 const sse = (events: unknown[]) => new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
 const collect = async (events: unknown[], options = {}) => {
@@ -58,6 +60,43 @@ it("deduplicates content, item and terminal citations, retaining indices and no 
 it.each(["completed", "incomplete"])("preserves terminal-only annotations on %s", async status => {
   const events = await collect([terminal(status)]);
   expect(events[0]).toMatchObject({ type: "provider-data", data: { annotations: [{ url: citation.url }] } });
+});
+it.each(["completed", "incomplete"])("preserves terminal-only hosted search sources on %s", async status => {
+  const events = await collect([terminal(status, [searchItem])]);
+  expect(searchEvents(events)).toEqual([{ type: "provider-data", provider: "qwen", data: searchItem }]);
+  expect(events.at(-1)).toMatchObject({ type: "finish", finishReason: status === "completed" ? "stop" : "length" });
+});
+it.each([true, false])("deduplicates hosted search snapshots with provider IDs: %s", async withId => {
+  const { id, ...withoutId } = searchItem;
+  const search = withId ? searchItem : withoutId;
+  const done = { type: "response.output_item.done", output_index: 0, item: search };
+  const events = await collect([done, done, terminal("completed", [search]), terminal("completed", [search])]);
+  expect(searchEvents(events)).toEqual([{ type: "provider-data", provider: "qwen", data: search }]);
+});
+it("emits final enriched search sources even when an earlier snapshot was emitted", async () => {
+  const early = { ...searchItem, action: { type: "search", sources: [] } };
+  const events = await collect([
+    { type: "response.output_item.done", output_index: 0, item: early },
+    terminal("completed", [searchItem])
+  ]);
+  expect(searchEvents(events).map(event => (event as any).data)).toEqual([early, searchItem]);
+});
+it("keeps distinct hosted search calls with identical sources", async () => {
+  const second = { ...searchItem, id: "search_2" };
+  const events = await collect([
+    { type: "response.output_item.done", output_index: 0, item: searchItem },
+    terminal("completed", [searchItem, second])
+  ]);
+  expect(searchEvents(events).map(event => (event as any).data)).toEqual([searchItem, second]);
+});
+it("stops terminal-only hosted sources on cancellation", async () => {
+  const controller = new AbortController();
+  const second = { ...searchItem, id: "search_2" };
+  const model = createQwen({ apiKey: "fixture", fetch: async () => sse([terminal("completed", [searchItem, second])]) })("qwen3.8-flash");
+  const iterator = (await model.stream({ messages, abortSignal: controller.signal }))[Symbol.asyncIterator]();
+  expect((await iterator.next()).value).toMatchObject({ type: "provider-data", data: searchItem });
+  controller.abort();
+  await expect(iterator.next()).rejects.toThrow();
 });
 it("does not invent sources from empty, malformed or unsafe annotations", async () => {
   const events = await collect([terminal("completed", [{ ...item, content: [{ ...part, annotations: [null, {}, { ...citation, url: "javascript:alert(1)" }] }] }])]);

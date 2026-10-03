@@ -1,5 +1,15 @@
 # @zhivex-ai/qwen
 
+## 0.16.4
+
+### Patch Changes
+
+- Preserve hosted search sources supplied only in terminal Responses streaming
+  snapshots. Deduplicate identical provider item snapshots while emitting final
+  updates that add sources.
+- Updated dependencies [24bfb1b]
+  - @zhivex-ai/core@1.29.0
+
 ## 0.16.3
 
 ### Patch Changes
