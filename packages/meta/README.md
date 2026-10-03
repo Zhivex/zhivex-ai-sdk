@@ -1,6 +1,6 @@
 # @zhivex-ai/meta
 
-Meta Model API adapter for Zhivex AI SDK. `muse-spark-1.3` is the recommended direct Meta model; the official `muse-spark-1.2-contributor` variant and older IDs such as `muse-spark-1.1` remain usable when they are available to your Meta project.
+Meta Model API adapter for Zhivex AI SDK. `muse-spark-1.3` is the recommended direct Meta model; the official `muse-spark-1.3-contributor` and `muse-spark-1.2-contributor` variants and older IDs such as `muse-spark-1.1` remain usable when they are available to your Meta project.
 
 ## Install
 
@@ -62,7 +62,7 @@ Meta Model API accepts only `toolChoice: "auto"` (which is also the default). Th
 
 The shared Zhivex `audio` part is supported for MP3 and WAV input. Chat Completions sends inline base64 audio; Responses additionally accepts base64 data URLs and uploaded Meta file IDs. Audio output is not supported.
 
-Meta computer use is composed from callable functions and screenshots rather than a native hosted computer tool; accordingly, the native `computerUse` capability remains `false`.
+Meta Model API has a native `computer` tool on Responses. The current Zhivex Meta adapter does not yet map native `computer_call` and `computer_call_output` items, so its native `computerUse` capability remains `false`. Use `runComputerUse()` for the SDK's portable function-and-screenshot path. The [native probe](../../examples/meta-native-computer-probe.ts) demonstrates the direct Meta protocol against an isolated page.
 
 Repository and full documentation:
 
@@ -74,7 +74,7 @@ Repository and full documentation:
 
 ## Muse Spark 1.3
 
-The SDK catalog includes `muse-spark-1.3`. Pass that exact ID to `languageModel()` to use the existing Chat or Responses adapter, including structured output, tools, streaming, and reasoning. Meta's current announcement confirms `max` reasoning availability. Pricing is omitted until independently verified; no 1.2 price is inherited. Existing 1.2 integrations and smoke defaults remain available.
+The SDK catalog includes `muse-spark-1.3` and `muse-spark-1.3-contributor`. Pass either exact ID to `languageModel()` to use the existing Chat or Responses adapter, including structured output, tools, streaming, and reasoning. Meta's announcement confirms `max` reasoning availability for Standard 1.3. Pricing is omitted from the catalog; no 1.2 price is inherited. Existing 1.2 integrations and smoke defaults remain available.
 
 See [Meta's release announcement](https://research.meta.ai/blog/introducing-muse-spark-1-3).
 

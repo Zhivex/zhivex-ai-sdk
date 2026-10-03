@@ -21,3 +21,5 @@ export {
   googleUrlContextTool
 } from "./google.js";
 export type { ExperimentalRawProviderOptions } from "./raw-provider-options.js";
+export { runComputerUse } from "./computer-use.js";
+export type { ComputerAction, ComputerUseEnvironment, ComputerUseResult, RunComputerUseOptions } from "./computer-use.js";

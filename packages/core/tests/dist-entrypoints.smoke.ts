@@ -16,6 +16,7 @@ import * as runtime from "../dist/runtime-entry.js";
 import * as testing from "../dist/testing.js";
 import * as ui from "../dist/ui-entry.js";
 import * as workflows from "../dist/workflows-entry.js";
+import * as experimental from "../dist/experimental-entry.js";
 
 const acceptsModel = (_model: LanguageModel) => undefined;
 void acceptsModel;
@@ -33,6 +34,7 @@ assert.equal(typeof runtime.tool, "function");
 assert.equal(typeof workflows.createWorkflow, "function");
 assert.equal(typeof ui.toUIMessage, "function");
 assert.equal(typeof testing.createMockLanguageModel, "function");
+assert.equal(experimental.runComputerUse, core.runComputerUse);
 
 for (const entry of ["ui-entry.js", "workflows-entry.js"]) {
   const result = await Bun.build({
