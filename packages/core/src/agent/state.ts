@@ -195,7 +195,7 @@ export const persistState = async <TModel extends LanguageModel>(
         const latest = loaded ? cloneState(loaded) : undefined;
         // A single revision and an otherwise identical durable payload prove a
         // cancellation-only race. Larger gaps or competing evidence fail closed.
-        if (!baseline || !latest || !["cancel_requested", "cancelled"].includes(latest.status) ||
+        if (!baseline || !latest || !["cancel_requested", "cancelled"].includes(latest.status) || latest.error !== undefined ||
           latest.revision !== (baseline.revision ?? 0) + 1 ||
           !isDeepStrictEqual(withoutCancellationTransition(latest), withoutCancellationTransition(baseline))) throw error;
         baseline = latest;

@@ -78,6 +78,15 @@ describe("cancellation checkpoint conflict provenance", () => {
     expect(await store.load(baseline.runId)).toEqual(authoritative);
   });
 
+  it("rejects new error evidence instead of treating it as cancellation clearing the error", async () => {
+    const { store, agent, baseline, response } = await fixture();
+    await store.save({ ...baseline, status: "cancel_requested", cancelledAt: 100,
+      error: { message: "New diagnostic evidence" } }, { expectedRevision: baseline.revision });
+    const authoritative = await store.load(baseline.runId);
+    await expect(persistState(agent, response("pending response"), undefined, baseline)).rejects.toBeInstanceOf(ConflictError);
+    expect(await store.load(baseline.runId)).toEqual(authoritative);
+  });
+
   it("rejects an untracked or foreign-store baseline", async () => {
     const first = await fixture();
     const second = await fixture();
