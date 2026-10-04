@@ -8,7 +8,7 @@ const root = process.argv[2] ?? fileURLToPath(new URL("../", import.meta.resolve
 const { McpServer, ResourceTemplate } = await import(pathToFileURL(resolve(root, "server/mcp.js")).href);
 const { WebStandardStreamableHTTPServerTransport } = await import(pathToFileURL(resolve(root, "server/webStandardStreamableHttp.js")).href);
 for (const enableJsonResponse of [true, false]) {
-  const server = new McpServer({ name: "official-sdk-fixture", version: "1.27.1" });
+  const server = new McpServer({ name: "official-sdk-fixture", version: "1.32.0" });
   server.registerTool("hello", {}, async () => ({ content: [{ type: "text", text: "hello" }] }));
   server.registerResource("text", "fixture://text", {}, async () => ({ contents: [{ uri: "fixture://text", text: "content" }] }));
   server.registerResource("binary", "fixture://binary", {}, async () => ({ contents: [{ uri: "fixture://binary", blob: "aGk=", mimeType: "application/octet-stream" }] }));
@@ -26,6 +26,6 @@ for (const enableJsonResponse of [true, false]) {
     assert.equal((await client.readResource!({ uri: "fixture://binary" })).contents[0].blob, "aGk=");
     assert.equal((await client.listPrompts!()).prompts.length, 1);
     assert.equal((await client.getPrompt!({ name: "greeting" })).messages.length, 1);
-    console.log(`Official MCP SDK 1.27.1 ${enableJsonResponse ? "JSON" : "SSE"}: tools, resources, templates, prompts passed`);
+    console.log(`Official MCP SDK 1.32.0 ${enableJsonResponse ? "JSON" : "SSE"}: tools, resources, templates, prompts passed`);
   } finally { client.close(); await server.close(); }
 }
