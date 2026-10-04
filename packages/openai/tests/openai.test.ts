@@ -1975,6 +1975,7 @@ describe("openai adapter", () => {
   it("supports Programmatic Tool Calling and preserves caller during continuation", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
+        usage: { input_tokens: 4, output_tokens: 3, total_tokens: 7 },
         id: "resp_program",
         status: "completed",
         output: [
@@ -1997,6 +1998,7 @@ describe("openai adapter", () => {
     );
     fetchMock.mockResolvedValueOnce(
       Response.json({
+        usage: { input_tokens: 4, output_tokens: 3, total_tokens: 7 },
         id: "resp_program_done",
         status: "completed",
         output: [{ type: "message", content: [{ type: "output_text", text: "done" }] }]
@@ -2092,6 +2094,7 @@ describe("openai adapter", () => {
   it("does not continue incomplete Programmatic Tool Calling responses", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
+        usage: { input_tokens: 4, output_tokens: 3, total_tokens: 7 },
         id: "resp_program_incomplete",
         status: "incomplete",
         output: [
@@ -2179,6 +2182,7 @@ describe("openai adapter", () => {
   it("uses the correctness-preserving non-SSE path when streaming Programmatic Tool Calling", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
+        usage: { input_tokens: 4, output_tokens: 3, total_tokens: 7 },
         id: "resp_stream_program_output",
         status: "completed",
         output: [
@@ -2193,6 +2197,7 @@ describe("openai adapter", () => {
     );
     fetchMock.mockResolvedValueOnce(
       Response.json({
+        usage: { input_tokens: 4, output_tokens: 3, total_tokens: 7 },
         id: "resp_stream_program_final",
         status: "completed",
         output: [{ type: "message", content: [{ type: "output_text", text: "stream final" }] }]
@@ -2267,6 +2272,7 @@ describe("openai adapter", () => {
   it("preserves all internal Programmatic Tool Calling outputs across store false tool steps", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
+        usage: { input_tokens: 4, output_tokens: 3, total_tokens: 7 },
         id: "resp_stateless_program",
         status: "completed",
         output: [
@@ -2281,6 +2287,7 @@ describe("openai adapter", () => {
     );
     fetchMock.mockResolvedValueOnce(
       Response.json({
+        usage: { input_tokens: 4, output_tokens: 3, total_tokens: 7 },
         id: "resp_stateless_call",
         status: "completed",
         output: [
@@ -2296,6 +2303,7 @@ describe("openai adapter", () => {
     );
     fetchMock.mockResolvedValueOnce(
       Response.json({
+        usage: { input_tokens: 4, output_tokens: 3, total_tokens: 7 },
         id: "resp_stateless_final",
         status: "completed",
         output: [{ type: "message", content: [{ type: "output_text", text: "complete" }] }]

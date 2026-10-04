@@ -60,6 +60,10 @@ const withPossibleToolEffects = (error: unknown, effectsPossible: boolean): unkn
     reason: error.reason,
     retryable: false,
     effectsPossible: true,
+    usage: error.usage,
+    confirmedUsage: error.confirmedUsage,
+    usageComplete: error.usageComplete,
+    providerRequestCount: error.providerRequestCount,
     cause: error
   });
 };
@@ -1166,6 +1170,7 @@ export const streamText = <
       const generatedImages: NonNullable<GenerateResult["images"]> = [];
       let finishReason = normalizeFinishReason("stop");
       let providerFinishReason: string | undefined;
+      let providerRequestCount: number | undefined;
       let usage = undefined;
 
       for await (const event of stream) {
@@ -1210,6 +1215,7 @@ export const streamText = <
           finishReason = event.finishReason;
           providerFinishReason = event.providerFinishReason;
           usage = event.usage;
+          providerRequestCount = event.providerRequestCount;
         }
       }
       stepTimings.set(request, { startedAt, finishedAt: Date.now() });
@@ -1229,7 +1235,8 @@ export const streamText = <
         images: generatedImages.length ? generatedImages : undefined,
         finishReason,
         providerFinishReason,
-        usage
+        usage,
+        ...(providerRequestCount !== undefined ? { providerRequestCount } : {})
       };
 
       steps.push({ request, response: finalResult });

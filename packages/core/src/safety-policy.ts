@@ -455,7 +455,7 @@ export const getAgentBudgetStatus = (
   const usage = childRuns.reduce((total, childRun) => addUsage(total, childRun.usage), output?.usage ?? state.usage);
   const toolErrors = state.toolResults.filter((result) => result.isError).length + childRuns.reduce((total, childRun) => total + childRun.toolErrors, 0);
   const toolCalls = countToolCalls(state) + childRuns.reduce((total, childRun) => total + childRun.toolCalls, 0);
-  const steps = state.currentStep + childRuns.reduce((total, childRun) => total + childRun.steps, 0);
+  const steps = state.currentStep + state.steps.reduce((extra, step) => extra + Math.max(0, (step.response?.providerRequestCount ?? 1) - 1), 0) + (state.error?.providerRequestCount ?? 0) + childRuns.reduce((total, childRun) => total + childRun.steps, 0);
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
   const totalTokens = usage?.totalTokens ?? inputTokens + outputTokens;
@@ -479,8 +479,8 @@ export const getAgentBudgetStatus = (
     },
     includeChildRuns,
     unknownUsageRunIds: [
-      ...((output?.usage ?? state.usage) && !state.compactionAttempts?.some(attempt => attempt.status !== "confirmed") ? [] : [state.runId]),
-      ...childRuns.filter(child => !child.usage || child.unknownCompactionUsage).map(child => child.runId)
+      ...((output?.usage ?? state.usage) && state.error?.usageComplete !== false && !state.compactionAttempts?.some(attempt => attempt.status !== "confirmed") ? [] : [state.runId]),
+      ...childRuns.filter(child => !child.usage || child.unknownCompactionUsage || child.unknownProviderUsage).map(child => child.runId)
     ]
   };
 };

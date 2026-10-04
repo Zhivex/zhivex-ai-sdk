@@ -138,4 +138,43 @@ describe("typed provider tool-call failures", () => {
       expect(attempts[0]!.cost).toMatchObject({ status: "unknown", amount: null });
     }
   });
+
+  for (const accounting of [false, true]) {
+    for (const priorFinish of [false, true]) {
+      for (const usageComplete of [false, true]) {
+        it.each(["throw", "error-event"] as const)(`preserves post-open request receipts (accounting=${accounting}, priorFinish=${priorFinish}, complete=${usageComplete}, %s)`, async mode => {
+          const confirmedUsage = { inputTokens: 20, outputTokens: 5, totalTokens: 25, cachedInputTokens: 0, cacheWriteTokens: 0 };
+          const earlierUsage = { inputTokens: 1, outputTokens: 1, totalTokens: 2, reasoningTokens: 1 };
+          const error = new ProviderToolCallError({ provider: "openai", transport: "responses", diagnosticCode: "OFFLINE_REQUEST_RECEIPT",
+            reason: "response_failed", retryable: true, effectsPossible: true, confirmedUsage, usageComplete, providerRequestCount: 2 });
+          const model = createMockLanguageModel();
+          model.stream = vi.fn(async () => (async function* (): AsyncGenerator<StreamEvent> {
+            yield { type: "text-delta", textDelta: "partial" };
+            if (priorFinish) yield { type: "finish", finishReason: "stop", usage: earlierUsage };
+            if (mode === "error-event") yield { type: "error", error };
+            else throw error;
+          })());
+          const fallback = createMockLanguageModel();
+          const fallbackStream = vi.spyOn(fallback, "stream");
+          const attempts: GatewayAttempt[] = [];
+          const modelCatalog = createModelCatalog([{ provider: "openai", modelId: "test", inputCostPer1kTokens: 1, outputCostPer1kTokens: 2 }],
+            { pricing: { version: "1", unit: "per_1k_tokens", currency: "USD" } });
+          const gateway = createGateway({ maxRetries: 2, retryBackoffMs: 0,
+            scoreTarget: ({ isPrimary }) => isPrimary ? 1 : 0,
+            ...(accounting ? { modelCatalog, costAccounting: {} } : {}),
+            adapters: { openai: { name: "openai", languageModel: () => model }, anthropic: { name: "anthropic", languageModel: () => fallback } },
+            onAttempt: attempt => { attempts.push(attempt); }
+          });
+          await expect(gateway.streamText(request).collect()).rejects.toBe(error);
+          expect(model.stream).toHaveBeenCalledTimes(1);
+          expect(fallbackStream).not.toHaveBeenCalled();
+          expect(attempts).toHaveLength(1);
+          expect(attempts[0]).toMatchObject({ ok: false, reasonCode: "provider-error", confirmedUsage, usageComplete, providerRequestCount: 2 });
+          // Complete terminal counters supersede earlier finish usage. An
+          // uncertain lower bound is retained separately, never promoted to usage.
+          expect(attempts[0]!.usage).toEqual(usageComplete ? confirmedUsage : priorFinish ? earlierUsage : undefined);
+        });
+      }
+    }
+  }
 });

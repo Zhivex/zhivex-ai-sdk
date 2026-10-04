@@ -1590,7 +1590,7 @@ const addTokenUsage = (
   if (!left) return right;
   if (!right) return left;
   const sum = (a: number | undefined, b: number | undefined) =>
-    a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0);
+    a === undefined || b === undefined ? undefined : a + b;
   return {
     inputTokens: sum(left.inputTokens, right.inputTokens),
     cachedInputTokens: sum(left.cachedInputTokens, right.cachedInputTokens),
@@ -2130,7 +2130,8 @@ const streamGenerateResult = async function* (result: GenerateResult): AsyncGene
     type: "finish",
     finishReason: result.finishReason,
     providerFinishReason: result.providerFinishReason,
-    usage: result.usage
+    usage: result.usage,
+    providerRequestCount: result.providerRequestCount
   } satisfies StreamEvent;
 };
 
@@ -2237,103 +2238,137 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
     let nextPreviousResponseId = previousResponse?.responseId;
     let nextInput = messages.length ? toResponsesInput(messages, input.toolResultFormat, input.messages) : [];
     let accumulatedUsage: ReturnType<typeof mapResponsesUsage>;
+    const ptc = hasProgrammaticToolCalling(input.tools);
+    const requestLimit = Math.min(input.maxProviderRequests ?? 8, 8);
+    if (!Number.isSafeInteger(requestLimit) || requestLimit < 1) throw new ConfigurationError("maxProviderRequests must be a positive integer.");
+    let providerRequestCount = 0;
+    let usageComplete = true;
+    const failure = (diagnosticCode: string, cause?: unknown) => new ProviderToolCallError({
+      provider: "openai", transport: "responses", diagnosticCode,
+      reason: cause instanceof ProviderToolCallError ? cause.reason : "response_failed",
+      retryable: false, effectsPossible: providerRequestCount > 0,
+      confirmedUsage: accumulatedUsage, usageComplete, providerRequestCount
+    });
     let statelessInternalOutputs: Array<Record<string, unknown>> = [];
 
-    for (let continuation = 0; continuation < 8; continuation += 1) {
-      const response = await withResponseRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/responses`, {
-            method: "POST",
-            headers: options.headers,
-            signal,
-            body: JSON.stringify({
-              ...responseBodyOptions,
-              model: this.modelId,
-              ...(nextPreviousResponseId ? { previous_response_id: nextPreviousResponseId } : {}),
-              ...(nextInput.length ? { input: nextInput } : {}),
-              tools: mapResponsesTools(input.tools),
-              ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
-              text: mapResponsesStructuredOutput(input) ?? responseBodyOptions.text,
-              temperature: input.temperature,
-              max_output_tokens: input.maxTokens,
-              ...mapResponsesReasoning(input, responseBodyOptions.reasoning)
-            })
-          }),
-        { ...input, abortSignal: signal },
-        "OpenAI"
-      );
+    try {
+      for (let continuation = 0; continuation < requestLimit; continuation += 1) {
+        const remainingOutputTokens = input.maxTokens === undefined ? undefined
+          : input.maxTokens - (accumulatedUsage?.outputTokens ?? 0);
+        if (ptc && remainingOutputTokens !== undefined && remainingOutputTokens < 1) throw failure("OPENAI_PTC_OUTPUT_LIMIT");
+        if (ptc) { signal?.throwIfAborted(); providerRequestCount++; usageComplete = false; }
+        const response = await withResponseRetry(
+          () =>
+            this.fetcher(`${this.baseURL}/responses`, {
+              method: "POST",
+              headers: options.headers,
+              signal,
+              body: JSON.stringify({
+                ...responseBodyOptions,
+                model: this.modelId,
+                ...(nextPreviousResponseId ? { previous_response_id: nextPreviousResponseId } : {}),
+                ...(nextInput.length ? { input: nextInput } : {}),
+                tools: mapResponsesTools(input.tools),
+                ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
+                text: mapResponsesStructuredOutput(input) ?? responseBodyOptions.text,
+                temperature: input.temperature,
+                max_output_tokens: ptc ? remainingOutputTokens : input.maxTokens,
+                ...mapResponsesReasoning(input, responseBodyOptions.reasoning)
+              })
+            }),
+          { ...input, abortSignal: signal, ...(ptc ? { maxRetries: 0 } : {}) },
+          "OpenAI"
+        );
 
-      const json = await parseJson(response);
-      accumulatedUsage = addTokenUsage(accumulatedUsage, mapResponsesUsage(json.usage));
-      const assistantMessage = parseResponsesAssistantMessage(
-        json,
-        options.multiAgentEnabled,
-        localResponsesTools(input.tools),
-        this.responseLimits.toolCallArgumentChars
-      );
-      const currentOutput = Array.isArray(json.output)
-        ? (json.output as Array<Record<string, unknown>>)
-        : [];
-      const completeStatelessOutput = [...statelessInternalOutputs, ...currentOutput];
-      if (responseBodyOptions.store === false && completeStatelessOutput.length) {
-        assistantMessage.parts = assistantMessage.parts.filter(
-          (part) =>
-            part.type !== "provider-data" ||
-            part.provider !== "openai" ||
-            !part.data ||
-            typeof part.data !== "object" ||
-            (part.data as Record<string, unknown>).type !== "responses_output"
+        const json = await parseJson(response);
+        const reportedUsage = mapResponsesUsage(json.usage);
+        if (ptc && (!reportedUsage || ![reportedUsage.inputTokens, reportedUsage.outputTokens, reportedUsage.totalTokens].every(
+          value => typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+        ) || reportedUsage.totalTokens! < reportedUsage.inputTokens! + reportedUsage.outputTokens! || Object.values(reportedUsage).some(value => value !== undefined && (!Number.isSafeInteger(value) || value < 0)))) {
+          throw failure("OPENAI_PTC_USAGE_UNKNOWN");
+        }
+        const nextUsage = addTokenUsage(accumulatedUsage, reportedUsage);
+        if (ptc && Object.values(nextUsage ?? {}).some(value => value !== undefined && !Number.isSafeInteger(value))) throw failure("OPENAI_PTC_USAGE_UNKNOWN");
+        accumulatedUsage = nextUsage;
+        if (ptc) usageComplete = true;
+        if (ptc && input.maxTokens !== undefined && accumulatedUsage!.outputTokens! > input.maxTokens) throw failure("OPENAI_PTC_OUTPUT_LIMIT");
+        const assistantMessage = parseResponsesAssistantMessage(
+          json,
+          options.multiAgentEnabled,
+          localResponsesTools(input.tools),
+          this.responseLimits.toolCallArgumentChars
         );
-        assistantMessage.parts.push(
-          providerDataPart("openai", {
-            type: "responses_output",
-            items: completeStatelessOutput
-          } as unknown as JsonValue)
-        );
-      }
-      const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
-      const hasRefusal = (json.output ?? []).some((item: any) =>
-        item?.type === "message" &&
-        (item.content ?? []).some((content: any) => content?.type === "refusal")
-      );
-      const hasFinalMessage = (json.output ?? []).some(
-        (item: any) =>
+        const currentOutput = Array.isArray(json.output)
+          ? (json.output as Array<Record<string, unknown>>)
+          : [];
+        const completeStatelessOutput = [...statelessInternalOutputs, ...currentOutput];
+        if (responseBodyOptions.store === false && completeStatelessOutput.length) {
+          assistantMessage.parts = assistantMessage.parts.filter(
+            (part) =>
+              part.type !== "provider-data" ||
+              part.provider !== "openai" ||
+              !part.data ||
+              typeof part.data !== "object" ||
+              (part.data as Record<string, unknown>).type !== "responses_output"
+          );
+          assistantMessage.parts.push(
+            providerDataPart("openai", {
+              type: "responses_output",
+              items: completeStatelessOutput
+            } as unknown as JsonValue)
+          );
+        }
+        const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
+        const hasRefusal = (json.output ?? []).some((item: any) =>
           item?.type === "message" &&
-          (!options.multiAgentEnabled || (item.agent?.agent_name === "/root" && item.phase === "final_answer"))
-      );
-      const shouldContinueProgram =
-        hasProgrammaticToolCalling(input.tools) &&
-        json.status === "completed" &&
-        !hasToolCalls &&
-        !hasFinalMessage &&
-        (json.output ?? []).some((item: any) => item?.type === "program" || item?.type === "program_output");
+          (item.content ?? []).some((content: any) => content?.type === "refusal")
+        );
+        const hasFinalMessage = (json.output ?? []).some(
+          (item: any) =>
+            item?.type === "message" &&
+            (!options.multiAgentEnabled || (item.agent?.agent_name === "/root" && item.phase === "final_answer"))
+        );
+        const shouldContinueProgram =
+          hasProgrammaticToolCalling(input.tools) &&
+          json.status === "completed" &&
+          !hasToolCalls &&
+          !hasFinalMessage &&
+          (json.output ?? []).some((item: any) => item?.type === "program" || item?.type === "program_output");
 
-      if (!shouldContinueProgram) {
-        return {
-          messages: [assistantMessage],
-          text: extractMessageText(assistantMessage),
-          audio: extractAudioOutputs(assistantMessage),
-          images: extractResponsesImageOutputs(
-            json,
-            responsesImageGenerationConfig(input.tools)?.outputFormat
-          ),
-          finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls, hasRefusal),
-          providerFinishReason: json.status,
-          usage: accumulatedUsage,
-          rawResponse: json
-        };
+        if (!shouldContinueProgram) {
+          return {
+            messages: [assistantMessage],
+            text: extractMessageText(assistantMessage),
+            audio: extractAudioOutputs(assistantMessage),
+            images: extractResponsesImageOutputs(
+              json,
+              responsesImageGenerationConfig(input.tools)?.outputFormat
+            ),
+            finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls, hasRefusal),
+            providerFinishReason: json.status,
+            usage: accumulatedUsage,
+            ...(ptc ? { providerRequestCount } : {}),
+            rawResponse: json
+          };
+        }
+
+        if (responseBodyOptions.store === false) {
+          statelessInternalOutputs = completeStatelessOutput;
+          nextInput = [...nextInput, ...currentOutput];
+        } else {
+          nextPreviousResponseId = json.id;
+          nextInput = [];
+        }
       }
 
-      if (responseBodyOptions.store === false) {
-        statelessInternalOutputs = completeStatelessOutput;
-        nextInput = [...nextInput, ...currentOutput];
-      } else {
-        nextPreviousResponseId = json.id;
-        nextInput = [];
-      }
+      throw failure("OPENAI_PTC_REQUEST_LIMIT");
+    } catch (error) {
+      if (!ptc) throw error;
+      if (error instanceof ProviderToolCallError && error.providerRequestCount !== undefined) throw error;
+      // Never replay a dispatched program; the receipt distinguishes a confirmed
+      // prefix from a failed/uncertain request and intentionally omits raw payloads.
+      throw failure(error instanceof ProviderToolCallError ? error.diagnosticCode : "OPENAI_PTC_REQUEST_FAILED", error);
     }
-
-    throw new ProviderHTTPError("OpenAI Programmatic Tool Calling exceeded 8 internal continuations.", 500);
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
@@ -2395,14 +2430,13 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
       assertOpenAIResponsesOptionsSupported(this.modelId, responseBodyOptions, this.capabilities.agentCapabilities);
       const { signal, cleanup } = getRequestOptions(input);
       if (hasProgrammaticToolCalling(input.tools)) {
-        const result = await this.generateViaResponses(input, signal, options);
-        return (async function* () {
-          try {
-            yield* streamGenerateResult(result);
-          } finally {
-            cleanup();
-          }
-        })();
+        try {
+          const result = await this.generateViaResponses(input, signal, options);
+          return streamGenerateResult(result);
+        } finally {
+          // PTC is fully materialized before an iterator is returned.
+          cleanup();
+        }
       }
       const previousResponse = responseBodyOptions.store === false ? undefined : getProviderResponseId(input.messages);
       const messages =

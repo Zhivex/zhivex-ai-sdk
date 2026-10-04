@@ -373,6 +373,10 @@ export const resolveContext = async <
     loadedByIdempotencyKey = true;
   }
 
+  if (loadedState?.status === "failed" && loadedState.error?.providerRequestCount && loadedState.error.effectsPossible) {
+    throw new ConflictError("Agent failed after internal provider execution; automatic resume is unsafe.");
+  }
+
   const normalizedInput =
     loadedState && loadedByIdempotencyKey
       ? { ...input, prompt: undefined, messages: undefined, system: undefined, handoff: undefined, state: loadedState }

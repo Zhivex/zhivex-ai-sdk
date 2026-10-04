@@ -160,6 +160,7 @@ export interface AgentStepRequest {
 }
 
 export interface AgentStepResponse {
+  providerRequestCount?: number;
   messages: ModelMessage[];
   text?: string;
   finishReason?: FinishReason;
@@ -177,6 +178,9 @@ export interface AgentRunError {
   reason?: ProviderToolCallErrorReason;
   retryable?: boolean;
   effectsPossible?: boolean;
+  confirmedUsage?: TokenUsage;
+  usageComplete?: boolean;
+  providerRequestCount?: number;
 }
 
 export interface AgentStep {
@@ -204,6 +208,8 @@ export interface AgentChildRun {
   usage?: TokenUsage;
   /** Auxiliary calls whose usage remains unknown or in flight. */
   unknownCompactionUsage?: boolean;
+  /** A provider request completed without a full usage receipt. */
+  unknownProviderUsage?: boolean;
   /** Descendant summaries; usage above remains this run's own confirmed usage. */
   childRuns?: AgentChildRun[];
   startedAt?: number;

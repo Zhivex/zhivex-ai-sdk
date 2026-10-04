@@ -1371,6 +1371,13 @@ export const createGateway = (config: GatewayConfig) => {
       return disposition;
     };
 
+    const providerRequestLimit = (input: ModelGenerateInput) => Math.min(
+      input.maxProviderRequests ?? Number.MAX_SAFE_INTEGER,
+      (config.budget || config.admission) ? 1 : maxTotalAttempts - totalProviderAttempts + 1
+    );
+    const recordInternalRequests = (count?: number) => {
+      if (count !== undefined && Number.isSafeInteger(count) && count > 1) totalProviderAttempts += count - 1;
+    };
     const reserveProviderAttempt = () => {
       if (totalProviderAttempts >= maxTotalAttempts) {
         throw new GatewayError(
@@ -1436,9 +1443,11 @@ export const createGateway = (config: GatewayConfig) => {
             const result = await control.waitFor(
               executor.generate(candidate.model, candidate.target, {
                 ...prepareHistoryInput(candidate.model, candidateInput, context.toolHistory),
-                abortSignal: control.signal
+                abortSignal: control.signal,
+                maxProviderRequests: providerRequestLimit(candidateInput)
               }, context.budgetScope, context.cacheScope)
             );
+            recordInternalRequests(result.providerRequestCount);
             control.stopTimeout();
             metrics.end(cachedResults.has(result) ? "cache" : "success", result.usage?.outputTokens);
             permit?.end(cachedResults.has(result) ? "neutral" : "success");
@@ -1447,7 +1456,8 @@ export const createGateway = (config: GatewayConfig) => {
                 retry,
                 reasonCode: "provider-success",
                 ...(cachedResults.has(result) ? { cacheHit: true } : {}),
-                ...(config.costAccounting ? { usage: result.usage } : {})
+                ...(config.costAccounting ? { usage: result.usage } : {}),
+                ...(result.providerRequestCount !== undefined ? { providerRequestCount: result.providerRequestCount } : {})
               })
             );
             await context.lock(candidate);
@@ -1472,6 +1482,7 @@ export const createGateway = (config: GatewayConfig) => {
               throw abortReason(input.abortSignal!);
             }
 
+            if (error instanceof ProviderToolCallError) recordInternalRequests(error.providerRequestCount);
             const disposition = dispositionFor(error);
             lastAttemptError = disposition.error;
             permit?.end(disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
@@ -1480,7 +1491,10 @@ export const createGateway = (config: GatewayConfig) => {
                 retry,
                 reasonCode: error instanceof GatewayAdmissionError ? "admission-denied" : error instanceof GatewayBudgetError ? "budget-denied" : "provider-error",
                 errorMessage: disposition.error.message,
-                ...(error instanceof ProviderToolCallError ? { usage: error.usage } : {})
+                ...(error instanceof ProviderToolCallError ? {
+                  usage: error.usage, confirmedUsage: error.confirmedUsage,
+                  usageComplete: error.usageComplete, providerRequestCount: error.providerRequestCount
+                } : {})
               })
             );
 
@@ -1542,7 +1556,8 @@ export const createGateway = (config: GatewayConfig) => {
             const providerStream = await control.waitFor(
               executor.stream(candidate.model, candidate.target, {
                 ...prepareHistoryInput(candidate.model, candidateInput, context.toolHistory),
-                abortSignal: control.signal
+                abortSignal: control.signal,
+                maxProviderRequests: providerRequestLimit(candidateInput)
               }, context.budgetScope)
             );
             iterator = providerStream[Symbol.asyncIterator]();
@@ -1583,6 +1598,8 @@ export const createGateway = (config: GatewayConfig) => {
 
             return (async function* () {
               let completed = false;
+              let providerRequestCount = firstEvent.value.type === "finish" ? firstEvent.value.providerRequestCount : undefined;
+              if (providerRequestCount !== undefined) recordInternalRequests(providerRequestCount);
               let usage: TokenUsage | undefined = firstEvent.value.type === "finish" ? firstEvent.value.usage : undefined;
               try {
                 yield firstEvent.value;
@@ -1593,18 +1610,26 @@ export const createGateway = (config: GatewayConfig) => {
                     metrics.end("success", usage?.outputTokens);
                     permit?.end("success");
                     await context.recordAttempt(createAttempt(candidate.target, true, Date.now() - attemptStartedAt, candidate.targetRank, {
-                      retry, reasonCode: "provider-success", ...(config.costAccounting ? { usage } : {})
+                      retry, reasonCode: "provider-success", ...(config.costAccounting ? { usage } : {}),
+                      ...(providerRequestCount !== undefined ? { providerRequestCount } : {})
                     }));
                     return;
                   }
                   if (next.value.type === "error") throw next.value.error;
                   if (next.value.type === "text-delta") metrics.firstText();
-                  if (next.value.type === "finish" && next.value.usage) usage = { ...usage, ...next.value.usage };
+                  if (next.value.type === "finish") {
+                    if (next.value.usage) usage = { ...usage, ...next.value.usage };
+                    if (next.value.providerRequestCount !== undefined && providerRequestCount === undefined) {
+                      providerRequestCount = next.value.providerRequestCount;
+                      recordInternalRequests(providerRequestCount);
+                    }
+                  }
                   yield next.value;
                 }
               } catch (error) {
                 const aborted = input.abortSignal?.aborted === true;
                 metrics.end(aborted ? "cancelled" : "error");
+                if (error instanceof ProviderToolCallError) recordInternalRequests(error.providerRequestCount);
                 const disposition = dispositionFor(error);
                 permit?.end(aborted ? "neutral" : disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
                 const diagnostic = disposition.error;
@@ -1614,6 +1639,10 @@ export const createGateway = (config: GatewayConfig) => {
                 await context.recordAttempt(createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                   retry,
                   ...(config.costAccounting || diagnostic instanceof ProviderToolCallError ? { usage } : {}),
+                  ...(diagnostic instanceof ProviderToolCallError ? {
+                    confirmedUsage: diagnostic.confirmedUsage, usageComplete: diagnostic.usageComplete,
+                    providerRequestCount: diagnostic.providerRequestCount
+                  } : {}),
                   reasonCode: aborted ? "request-aborted" : "provider-error",
                   errorMessage: aborted ? abortReason(input.abortSignal!).message : diagnostic.message
                 }));
@@ -1658,6 +1687,7 @@ export const createGateway = (config: GatewayConfig) => {
               throw abortReason(input.abortSignal!);
             }
 
+            if (error instanceof ProviderToolCallError) recordInternalRequests(error.providerRequestCount);
             const disposition = dispositionFor(error);
             lastAttemptError = disposition.error;
             permit?.end(disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
@@ -1666,7 +1696,10 @@ export const createGateway = (config: GatewayConfig) => {
                 retry,
                 reasonCode: error instanceof GatewayAdmissionError ? "admission-denied" : error instanceof GatewayBudgetError ? "budget-denied" : "provider-error",
                 errorMessage: disposition.error.message,
-                ...(error instanceof ProviderToolCallError ? { usage: error.usage } : {})
+                ...(error instanceof ProviderToolCallError ? {
+                  usage: error.usage, confirmedUsage: error.confirmedUsage,
+                  usageComplete: error.usageComplete, providerRequestCount: error.providerRequestCount
+                } : {})
               })
             );
 

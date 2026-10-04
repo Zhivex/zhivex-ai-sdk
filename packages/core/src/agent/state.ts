@@ -201,7 +201,9 @@ export const persistState = async <TModel extends LanguageModel>(
         baseline = latest;
         Object.assign(state, { status: latest.status, revision: latest.revision,
           cancelledAt: latest.cancelledAt, cancellationReason: latest.cancellationReason,
-          cancellationCascade: latest.cancellationCascade, error: undefined });
+          cancellationCascade: latest.cancellationCascade,
+          // A dispatched provider receipt remains evidence even after cancellation.
+          error: state.error?.category === "provider-tool-call" && state.error.providerRequestCount !== undefined ? state.error : undefined });
         await refreshAgentTaskOutcome(state, agent.store);
       }
     }
@@ -242,7 +244,9 @@ export const persistFailureState = async <TModel extends LanguageModel>(
     const durable = await agent.store.load(state.runId, state.scope);
     if (!durable || durable.revision !== state.revision || durable.status === "completed" || durable.status === "cancelled") throw error;
     const failure = { ...durable, ...(state.usage ? { usage: state.usage } : {}), status: "failed" as const, updatedAt: Date.now(),
-      error: { message: (state.error?.message ?? error.message).slice(0, 1024), diagnosticCode: "AGENT_STATE_LIMIT" } };
+      error: state.error?.category === "provider-tool-call"
+        ? { ...state.error, message: state.error.message.slice(0, 1024) }
+        : { message: (state.error?.message ?? error.message).slice(0, 1024), diagnosticCode: "AGENT_STATE_LIMIT" } };
     const size = (value: AgentRunState) => agent.store!.checkpointBytes?.(value) ?? new TextEncoder().encode(JSON.stringify(value)).byteLength;
     if (size(failure) > size(durable) + 4096) throw error;
     await saveStateWithRevision(agent.store, failure);

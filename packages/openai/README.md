@@ -195,6 +195,13 @@ For GPT-5.6, cache writes cost 1.25x the uncached input rate and cache reads rec
 
 GPT-5.6 supports Programmatic Tool Calling through `openAIProgrammaticToolCallingTool()`. Wrap callable tools with `openAIProgrammaticTool()` to declare `allowed_callers` and an optional provider output schema. The adapter preserves the provider `caller` metadata across tool execution and continuation requests.
 
+PTC may issue up to eight Responses requests within one model step. `maxTokens` is a cumulative output allowance for that sequence; each continuation receives only the reported remaining allowance. Each dispatched PTC request runs once, without automatic HTTP retry. Missing/invalid usage, exhausted output allowance, continuation exhaustion, or a request failure stops the sequence with a nonretryable `ProviderToolCallError` and possible-effects metadata. `providerRequestCount` reports actual dispatches. `confirmedUsage` retains validated consumption; when `usageComplete` is false it is only a lower bound and `usage` is absent. Streaming PTC releases request timeout resources before returning its materialized event iterator, including on failure.
+
+Gateway charges internal requests to `maxTotalAttempts`. With Gateway admission/spend reservations or Core token budgets/shared budget coordination, the adapter admits one PTC request per model step and fails before a required internal continuation. Independent reservations for internal inputs need a future per-request adapter lifecycle contract. Durable failures retain confirmed usage and block automatic resume after possible program effects; unknown allocations remain held for reconciliation. These bounds do not guarantee a monetary ceiling: provider-reported input/hosted-tool charges and uncertain requests may add consumption, and providers must enforce their own output limits.
+
+If PTC failure races cancellation, a proven cancellation-only checkpoint transition retains its confirmed/uncertain receipt without changing the cancellation status or reason. Finalizing requested cancellation also preserves that receipt. Complete shared-budget receipts settle once; uncertain requests keep their allocation. A competing checkpoint is never overwritten to attach the receipt: the call and stream events fail with the provider error so the caller retains the unsaved accounting evidence. Persistence failures likewise return that error; durable recovery of every receipt is not guaranteed.
+
+
 ```ts
 import { generateText, tool } from "@zhivex-ai/core";
 import {

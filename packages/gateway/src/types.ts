@@ -163,6 +163,10 @@ export interface GatewayAttempt {
   targetRank?: number;
   /** Reported provider usage for this attempt, never an estimated request total. */
   usage?: TokenUsage;
+  /** Confirmed lower bound when a later internal request has uncertain usage. */
+  confirmedUsage?: TokenUsage;
+  usageComplete?: boolean;
+  providerRequestCount?: number;
   cost?: ModelCostValuation;
 }
 

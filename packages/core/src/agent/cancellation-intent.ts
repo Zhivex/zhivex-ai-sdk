@@ -25,7 +25,10 @@ export const cancelAgentState = async (
       status: options.mode === "final" || current.status === "cancelled" ? "cancelled" : "cancel_requested",
       cancelledAt, cancellationReason: current.cancellationReason ?? options.reason,
       cancellationCascade: current.cancellationCascade || options.cascade || undefined,
-      updatedAt: Math.max(Date.now(), current.updatedAt ?? 0), error: undefined
+      updatedAt: Math.max(Date.now(), current.updatedAt ?? 0),
+      // Cancellation clears execution failures, but dispatched-request receipts
+      // must survive finalization so uncertain consumption remains explicit.
+      error: current.error?.category === "provider-tool-call" && current.error.providerRequestCount !== undefined ? current.error : undefined
     });
     try { await store.save(state, { expectedRevision: revision }); return cloneState(state); }
     catch (error) { if (!(error instanceof ConflictError) || retry === MAX_CANCELLATION_RETRIES - 1) throw error; }

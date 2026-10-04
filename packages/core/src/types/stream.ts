@@ -52,6 +52,7 @@ export interface StreamImageGenerationEvent {
 
 export interface StreamFinishEvent {
   type: "finish";
+  providerRequestCount?: number;
   finishReason?: FinishReason;
   providerFinishReason?: string;
   usage?: TokenUsage;
@@ -95,6 +96,8 @@ export type ObjectStreamEvent<TObject = JsonValue, TPartialObject = PartialJsonV
   | StreamObjectCompleteEvent<TObject>;
 
 export interface GenerateResult {
+  /** Actual dispatched requests for adapters with internal continuations; otherwise one. */
+  providerRequestCount?: number;
   message?: ModelMessage;
   messages?: ModelMessage[];
   text?: string;

@@ -27,6 +27,7 @@ import {
 import {
   ConflictError,
   GuardrailTriggeredError,
+  ProviderToolCallError,
   ValidationError
 } from "../errors.js";
 import {
@@ -133,6 +134,33 @@ import {
 import {
   compactAgentMessages
 } from "./compaction.js";
+
+/** Complete receipts may settle a failed call; an uncertain prefix never frees
+ * its allocation. Settlement errors cannot replace the original provider failure. */
+const settleFailedProviderRequest = async (policy: AgentRunPolicy | undefined, state: AgentRunState, error: unknown) => {
+  if (error instanceof ProviderToolCallError && error.providerRequestCount !== undefined && policy?.budgetCoordinator) {
+    try { await policy.budgetCoordinator.settle(`model:${state.runId}:${state.currentStep + 1}`, error.usage); }
+    catch { /* The coordinator retains unknown or exceeded allocations. */ }
+  }
+};
+
+/** Cancellation does not erase a dispatched request's accounting receipt. Use
+ * the worker checkpoint, so cancellation-only CAS retries retain their proof;
+ * competing durable writes are never rebased over or silently reported saved. */
+const persistCancelledProviderReceipt = async <TModel extends LanguageModel>(
+  agent: AgentDefinition<TModel>, state: AgentRunState, cancelled: AgentRunState,
+  error: unknown, policy?: AgentRunPolicy
+): Promise<AgentRunState> => {
+  if (!(error instanceof ProviderToolCallError) || error.providerRequestCount === undefined) return cancelled;
+  const checkpoint = runCheckpoints.get(state) ?? state;
+  await settleFailedProviderRequest(policy, checkpoint, error);
+  const receipt = { ...createFailedState(checkpoint, error), status: cancelled.status,
+    cancelledAt: cancelled.cancelledAt, cancellationReason: cancelled.cancellationReason,
+    cancellationCascade: cancelled.cancellationCascade };
+  try { await persistState(agent, receipt, policy, state); }
+  catch { throw error; } // Preserve the confirmed/uncertain receipt for the caller.
+  return receipt;
+};
 
 const subAgentToolInputSchema = z.object({
   prompt: z.string().min(1),
@@ -610,6 +638,9 @@ const createGenerateOptions = <
       : undefined,
     onBeforeModelStep: async ({ step, request }) => {
       await assertAgentNotCancelled(agent.store, state);
+      // Internal requests need independent input reservations. Until the adapter
+      // exposes that lifecycle, a bounded agent step admits one dispatch only.
+      if (budget || coordinator) request.maxProviderRequests = 1;
       if (budget) {
         const remaining = getAgentBudgetStatus({ ...state, usage: liveUsage, toolResults: liveToolResults }, budget).remaining;
         const ceilings = [requestedMaxTokens, remaining.outputTokens, remaining.totalTokens].filter((value): value is number => value !== undefined);
@@ -1003,8 +1034,9 @@ export const runAgent = async <
     executionEnvironmentError = {
       message: error instanceof Error ? error.message : String(error)
     };
-    const cancelled = error instanceof AgentCancellationError ? error.state : executionLease.cancelledState() ?? await cancellationAfterFailure(agent.store, context.state);
+    let cancelled = error instanceof AgentCancellationError ? error.state : executionLease.cancelledState() ?? await cancellationAfterFailure(agent.store, context.state);
     if (cancelled) {
+      cancelled = await persistCancelledProviderReceipt(agent, context.state, cancelled, error, policy);
       executionEnvironmentStatus = cancelled.status;
       await emitRunFinishTelemetry(agent, cancelled);
       return returnInvocationOutput(toOutput(cancelled));
@@ -1025,6 +1057,7 @@ export const runAgent = async <
 
     const durableState = await loadFailureState(context.state, agent.store);
     const failedState = createFailedState(durableState, error);
+    await settleFailedProviderRequest(policy, durableState, error);
     try { await persistFailureState(agent, failedState, policy); } catch { /* preserve primary error */ }
     await emitRunFinishTelemetry(agent, failedState);
     executionEnvironmentStatus = failedState.status;
@@ -1448,8 +1481,10 @@ export const streamAgent = <
         executionEnvironmentError = {
           message: error instanceof Error ? error.message : String(error)
         };
-        const cancelled = error instanceof AgentCancellationError ? error.state : executionLease.cancelledState() ?? await cancellationAfterFailure(agent.store, context.state);
+        let cancelled = error instanceof AgentCancellationError ? error.state : executionLease.cancelledState() ?? await cancellationAfterFailure(agent.store, context.state);
         if (cancelled) {
+          try { cancelled = await persistCancelledProviderReceipt(agent, context.state, cancelled, error, policy); }
+          catch (receiptError) { broadcast.fail(receiptError); throw receiptError; }
           executionEnvironmentStatus = cancelled.status;
           await emitRunFinishTelemetry(agent, cancelled);
           await publish({
@@ -1488,6 +1523,7 @@ export const streamAgent = <
 
         const durableState = await loadFailureState(context.state, agent.store);
         const failedState = createFailedState(durableState, error);
+        await settleFailedProviderRequest(policy, durableState, error);
         try { await persistFailureState(agent, failedState, policy); } catch { /* preserve primary error */ }
         await emitRunFinishTelemetry(agent, failedState);
         await publish({

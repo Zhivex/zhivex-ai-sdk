@@ -10,7 +10,8 @@ import {
   UnsupportedFeatureError
 } from "../errors.js";
 import {
-  getGenerateTextStepTiming
+  getGenerateTextStepTiming,
+  aggregateTokenUsage
 } from "../generate-text.js";
 import {
   createSecureId
@@ -96,7 +97,8 @@ export const snapshotResponse = (response: GenerateTextStep["response"]): AgentS
   text: response.text,
   finishReason: response.finishReason,
   providerFinishReason: response.providerFinishReason,
-  usage: response.usage
+  usage: response.usage,
+  ...(response.providerRequestCount !== undefined ? { providerRequestCount: response.providerRequestCount } : {})
 });
 
 const countToolCalls = (messages: ModelMessage[]): number =>
@@ -197,7 +199,10 @@ const toAgentRunError = (error: unknown): AgentRunError => {
       ...(error.transport ? { transport: error.transport } : {}),
       reason: error.reason,
       retryable: error.retryable,
-      effectsPossible: error.effectsPossible
+      effectsPossible: error.effectsPossible,
+      ...(error.confirmedUsage ? { confirmedUsage: { ...error.confirmedUsage } } : {}),
+      usageComplete: error.usageComplete,
+      ...(error.providerRequestCount !== undefined ? { providerRequestCount: error.providerRequestCount } : {})
     };
   }
 
@@ -210,6 +215,8 @@ export const createFailedState = (state: AgentRunState, error: unknown): AgentRu
   ...state,
   status: "failed",
   error: toAgentRunError(error),
+  ...(error instanceof ProviderToolCallError && error.confirmedUsage
+    ? { usage: aggregateTokenUsage([state.usage, error.confirmedUsage]) } : {}),
   updatedAt: Date.now()
 });
 
