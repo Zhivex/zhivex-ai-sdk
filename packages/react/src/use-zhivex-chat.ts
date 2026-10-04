@@ -22,6 +22,9 @@ import { ChatTransportError, createFetchChatTransport } from "./transport.js";
 import { ChatBusyError } from "./types.js";
 import type {
   ChatAction,
+  ChatCancellation,
+  ChatCancellationResult,
+  ChatReconnectRequest,
   ChatInputMessage,
   ChatInputPart,
   ChatMessage,
@@ -122,6 +125,16 @@ export const useZhivexChat = (
     checkpoint: options.initialCheckpoint
   }));
   const [input, setInputState] = useState("");
+  const [cancellation, setCancellation] = useState<ChatCancellation>();
+  const cancellationEpoch = useRef(0);
+  const cancellationTarget = useRef<{
+    transport: ChatTransport;
+    request: ChatReconnectRequest;
+  } | undefined>(undefined);
+  const pendingCancellation = useRef<{
+    epoch: number;
+    promise: Promise<ChatCancellationResult>;
+  } | undefined>(undefined);
 
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -189,12 +202,20 @@ export const useZhivexChat = (
     return next;
   }, []);
 
+  const clearCancellation = useCallback(() => {
+    cancellationEpoch.current += 1;
+    cancellationTarget.current = undefined;
+    pendingCancellation.current = undefined;
+    setCancellation(undefined);
+  }, []);
+
   const runRequest = useCallback(
     async (request: RunRequest): Promise<ChatSendResult> => {
       if (activeRef.current) {
         throw new ChatBusyError("send");
       }
 
+      clearCancellation();
       const controller = new AbortController();
       const active: ActiveRequest = {
         controller,
@@ -202,6 +223,17 @@ export const useZhivexChat = (
       };
       activeRef.current = active;
       const transport = transportRef.current;
+      const rememberExecution = () => {
+        const checkpoint = stateRef.current.checkpoint;
+        if (checkpoint) cancellationTarget.current = {
+          transport,
+          request: {
+            checkpoint: { ...checkpoint }, messages: stateRef.current.messages,
+            sessionId: stateRef.current.sessionId, signal: new AbortController().signal
+          }
+        };
+      };
+      if (request.reconnect) rememberExecution();
       commit(request.reconnect ? { type: "request-reconnect" } : { type: "request-start", messages: request.messages });
 
       let streamReportedError = false;
@@ -236,6 +268,7 @@ export const useZhivexChat = (
           streamReportedError = true;
           return;
         }
+        rememberExecution();
         if (
           next.sessionId !== previousSessionId &&
           next.sessionId !== undefined
@@ -367,7 +400,7 @@ export const useZhivexChat = (
         }
       }
     },
-    [commit]
+    [commit, clearCancellation]
   );
 
   const setInput = useCallback((value: string) => {
@@ -425,23 +458,70 @@ export const useZhivexChat = (
     [sendMessage]
   );
 
-  const stop = useCallback(() => {
+  const detach = useCallback(() => {
     const active = activeRef.current;
-    if (!active) {
-      return;
-    }
+    if (!active) return;
     active.flushPending?.();
     activeRef.current = undefined;
     active.controller.abort();
-    const checkpoint = stateRef.current.checkpoint;
-    if (checkpoint && transportRef.current.cancel) {
-      void transportRef.current.cancel({ checkpoint, messages: stateRef.current.messages,
-        sessionId: active.sessionId, signal: new AbortController().signal
-      }).catch((error: unknown) => callbackRef.current.onError?.(error instanceof Error ? error : new Error(String(error))));
-    }
     const next = commit({ type: "request-stop" });
     callbackRef.current.onFinish?.(next);
   }, [commit]);
+
+  const cancel = useCallback((): Promise<ChatCancellationResult> => {
+    if (controlledSessionRef.current.enabled &&
+        controlledSessionRef.current.sessionId !== stateRef.current.sessionId) {
+      return Promise.resolve({ status: "uncertain" });
+    }
+    activeRef.current?.flushPending?.();
+    const epoch = cancellationEpoch.current;
+    if (pendingCancellation.current?.epoch === epoch) return pendingCancellation.current.promise;
+    const target = cancellationTarget.current ?? (stateRef.current.checkpoint ? {
+      transport: transportRef.current,
+      request: { checkpoint: { ...stateRef.current.checkpoint }, messages: stateRef.current.messages,
+        sessionId: stateRef.current.sessionId, signal: new AbortController().signal }
+    } : undefined);
+    const session = controlledSessionRef.current;
+    detach();
+    const isCurrent = () => cancellationEpoch.current === epoch &&
+      session.enabled === controlledSessionRef.current.enabled &&
+      session.sessionId === controlledSessionRef.current.sessionId;
+    if (!target || (!target.transport.cancel && !target.transport.requestCancellation)) {
+      const result: ChatCancellationResult = { status: "uncertain", checkpoint: target?.request.checkpoint };
+      if (isCurrent()) setCancellation(result);
+      return Promise.resolve(result);
+    }
+    if (isCurrent()) setCancellation({ status: "pending", checkpoint: target.request.checkpoint });
+    const promise = Promise.resolve().then<void | ChatCancellationResult>(() => target.transport.requestCancellation
+      ? target.transport.requestCancellation(target.request) : target.transport.cancel!(target.request)).then(
+      (acknowledgement): ChatCancellationResult => ({
+        status: acknowledgement?.status ?? "uncertain",
+        error: acknowledgement?.error,
+        checkpoint: target.request.checkpoint
+      }),
+      (cause: unknown): ChatCancellationResult => ({
+        // Network errors and timeouts cannot establish whether the server stopped.
+        status: cause instanceof ChatTransportError && cause.code === "http_error" &&
+          cause.status !== undefined && cause.status >= 400 && cause.status < 500 &&
+          cause.status !== 408 ? "failed" : "uncertain",
+        error: cause instanceof Error ? cause : new Error(String(cause)),
+        checkpoint: target.request.checkpoint
+      })
+    ).then((result) => {
+      if (isCurrent()) {
+        setCancellation(result);
+        pendingCancellation.current = undefined;
+        if (result.error) callbackRef.current.onError?.(result.error);
+      }
+      return result;
+    });
+    if (isCurrent()) pendingCancellation.current = { epoch, promise };
+    return promise;
+  }, [detach]);
+
+  const stop = useCallback(() => {
+    if (activeRef.current) void cancel();
+  }, [cancel]);
 
   const reconnect = useCallback(async (): Promise<ChatSendResult> => {
     if (activeRef.current) throw new ChatBusyError("send");
@@ -487,6 +567,7 @@ export const useZhivexChat = (
 
   const setMessages = useCallback(
     (update: ChatMessagesUpdate) => {
+      clearCancellation();
       if (activeRef.current) {
         const active = activeRef.current;
         activeRef.current = undefined;
@@ -500,11 +581,12 @@ export const useZhivexChat = (
           : update;
       commit({ type: "set-messages", messages: next });
     },
-    [commit]
+    [commit, clearCancellation]
   );
 
   const reset = useCallback(
     (resetOptions: ChatResetOptions = {}) => {
+      clearCancellation();
       const active = activeRef.current;
       if (active) {
         activeRef.current = undefined;
@@ -523,7 +605,7 @@ export const useZhivexChat = (
         callbackRef.current.onSessionChange?.(nextSessionId);
       }
     },
-    [commit, setInput]
+    [commit, setInput, clearCancellation]
   );
 
   const resolveApproval = useCallback(
@@ -557,6 +639,7 @@ export const useZhivexChat = (
 
   useEffect(
     () => () => {
+      cancellationEpoch.current += 1;
       draftRevisionRef.current += 1;
       const active = activeRef.current;
       activeRef.current = undefined;
@@ -582,9 +665,10 @@ export const useZhivexChat = (
       callbackRef.current.onFinish?.(next);
     }
     if (stateRef.current.sessionId !== nextSessionId) {
+      clearCancellation();
       commit({ type: "set-session", sessionId: nextSessionId });
     }
-  }, [commit, options.sessionId, state.sessionId]);
+  }, [commit, clearCancellation, options.sessionId, state.sessionId]);
 
   return {
     state,
@@ -602,6 +686,9 @@ export const useZhivexChat = (
     inputCapabilities: options.inputCapabilities,
     sendMessageWithResult,
     stop,
+    detach,
+    cancel,
+    cancellation,
     canReconnect: Boolean(!state.replayComplete && state.checkpoint && transportRef.current.supportsReconnect && transportRef.current.reconnect),
     reconnect,
     canReload: transportRef.current.supportsReload === true,

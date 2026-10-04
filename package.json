@@ -41,7 +41,7 @@
     "smoke:packages:workflows-postgres": "bun run build && bun run scripts/workflow-package-postgres-smoke.ts",
     "snapshots:update:api": "bun run scripts/update-api-type-snapshots.ts",
     "typecheck": "tsc -b --force --pretty false && bun run typecheck:examples",
-    "typecheck:examples": "tsc -p examples/next-runner/tsconfig.repo.json --pretty false && tsc -p examples/react-omni/tsconfig.json --pretty false",
+    "typecheck:examples": "tsc -p examples/next-runner/tsconfig.repo.json --pretty false && tsc -p examples/react-omni/tsconfig.json --pretty false && tsc -p examples/react-external-runtime/tsconfig.json --pretty false",
     "version-packages": "changeset version && bun run scripts/sync-release-consumers.ts && bun run provider:sync",
     "release:check": "bun run scripts/check-release-readiness.ts",
     "release:check:next": "bun run scripts/check-release-readiness.ts --tag=next",
