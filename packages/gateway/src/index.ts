@@ -1639,6 +1639,10 @@ export const createGateway = (config: GatewayConfig) => {
                 await context.recordAttempt(createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                   retry,
                   ...(config.costAccounting || diagnostic instanceof ProviderToolCallError ? { usage } : {}),
+                  ...(diagnostic instanceof ProviderToolCallError ? {
+                    confirmedUsage: diagnostic.confirmedUsage, usageComplete: diagnostic.usageComplete,
+                    providerRequestCount: diagnostic.providerRequestCount
+                  } : {}),
                   reasonCode: aborted ? "request-aborted" : "provider-error",
                   errorMessage: aborted ? abortReason(input.abortSignal!).message : diagnostic.message
                 }));
