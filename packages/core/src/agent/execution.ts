@@ -493,7 +493,7 @@ const createGenerateOptions = <
           const saveAttempt = async () => {
             state.compactionAttempts = structuredClone(checkpointState.compactionAttempts);
             runCheckpoints.set(state, checkpointState);
-            await persistState(agent, checkpointState, runPolicy);
+            await persistState(agent, checkpointState, runPolicy, state);
             state.revision = checkpointState.revision;
           };
           const compacted = await compactAgentMessages(
@@ -602,7 +602,7 @@ const createGenerateOptions = <
           };
           state.messages = compacted.messages;
           state.compactions = checkpointState.compactions;
-          await persistState(agent, checkpointState, runPolicy);
+          await persistState(agent, checkpointState, runPolicy, state);
           state.revision = checkpointState.revision;
           await onCompaction?.(compacted.record);
           return compacted.messages;
@@ -686,7 +686,7 @@ const createGenerateOptions = <
       observeChildState(agent, checkpointState);
       if (coordinator && primaryReservationId) await coordinator.settle(primaryReservationId, response.usage);
       if (agent.store) {
-        await persistState(agent, checkpointState, runPolicy);
+        await persistState(agent, checkpointState, runPolicy, state);
         state.revision = checkpointState.revision;
         await assertAgentNotCancelled(agent.store, checkpointState);
       }
@@ -714,7 +714,7 @@ const createGenerateOptions = <
       runCheckpoints.set(state, checkpointState);
       observeChildState(agent, checkpointState);
       if (agent.store) {
-        await persistState(agent, checkpointState, runPolicy);
+        await persistState(agent, checkpointState, runPolicy, state);
         state.revision = checkpointState.revision;
       }
     },

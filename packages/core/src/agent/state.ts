@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { synchronizeAgentCancellation } from "./cancellation-intent.js";
 import { observeChildState, reconcileChildRuns } from "./children.js";
 import {
@@ -41,6 +42,14 @@ import {
 } from "./telemetry.js";
 
 const DEFAULT_AGENT_MAX_STATE_BYTES = 4 * 1024 * 1024;
+
+// Only successful writes establish provenance. Keep an immutable snapshot tied
+// to the store and worker object, rather than trusting its mutable current state.
+const confirmedCheckpoints = new WeakMap<AgentRunState, { store: AgentRunStore; state: AgentRunState }>();
+const withoutCancellationTransition = (state: AgentRunState) => {
+  const { revision, status, updatedAt, cancelledAt, cancellationReason, cancellationCascade, error, ...durable } = state;
+  return durable;
+};
 
 export const finalizeState = <TOutput>(
   agent: AgentDefinition<LanguageModel, any, TOutput>,
@@ -112,8 +121,11 @@ export const saveStateWithRevision = async (store: AgentRunStore, state: AgentRu
   const expectedRevision = state.revision ?? 0;
   const nextRevision = expectedRevision + 1;
   const nextState = { ...state, revision: nextRevision } satisfies AgentRunState;
-  await store.save(serializedNextState === undefined ? cloneState(nextState) : JSON.parse(serializedNextState) as AgentRunState, { expectedRevision });
+  const payload = serializedNextState === undefined ? cloneState(nextState) : JSON.parse(serializedNextState) as AgentRunState;
+  const confirmed = cloneState(payload);
+  await store.save(payload, { expectedRevision });
   state.revision = nextRevision;
+  confirmedCheckpoints.set(state, { store, state: confirmed });
 };
 
 export const claimAgentExecution = async <TModel extends LanguageModel>(
@@ -158,7 +170,8 @@ const assertStateSize = <TModel extends LanguageModel>(
 export const persistState = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   state: AgentRunState,
-  policy?: AgentRunPolicy
+  policy?: AgentRunPolicy,
+  baselineState: AgentRunState = state
 ) => {
   state.updatedAt = Date.now();
   observeChildState(agent, state);
@@ -166,18 +179,30 @@ export const persistState = async <TModel extends LanguageModel>(
   await refreshAgentTaskOutcome(state, agent.store);
   const serialized = assertStateSize(agent, agent.store ? normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }) : state, policy);
   if (agent.store) {
+    const confirmed = confirmedCheckpoints.get(baselineState);
+    let baseline = confirmed?.store === agent.store && confirmed.state.runId === state.runId &&
+      confirmed.state.revision === state.revision && isDeepStrictEqual(confirmed.state.scope, state.scope)
+      ? confirmed.state : undefined;
     for (let retry = 0; ; retry++) {
       try {
         const nextSerialized = retry === 0 ? serialized : assertStateSize(agent, normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }), policy);
         await saveStateWithRevision(agent.store, state, nextSerialized);
+        confirmedCheckpoints.set(baselineState, confirmedCheckpoints.get(state)!);
         break;
       } catch (error) {
         if (!(error instanceof ConflictError) || retry >= 7) throw error;
-        const latest = await agent.store.load(state.runId, state.scope);
-        if (!latest || !["cancel_requested", "cancelled"].includes(latest.status)) throw error;
+        const loaded = await agent.store.load(state.runId, state.scope);
+        const latest = loaded ? cloneState(loaded) : undefined;
+        // A single revision and an otherwise identical durable payload prove a
+        // cancellation-only race. Larger gaps or competing evidence fail closed.
+        if (!baseline || !latest || !["cancel_requested", "cancelled"].includes(latest.status) ||
+          latest.revision !== (baseline.revision ?? 0) + 1 ||
+          !isDeepStrictEqual(withoutCancellationTransition(latest), withoutCancellationTransition(baseline))) throw error;
+        baseline = latest;
         Object.assign(state, { status: latest.status, revision: latest.revision,
           cancelledAt: latest.cancelledAt, cancellationReason: latest.cancellationReason,
           cancellationCascade: latest.cancellationCascade, error: undefined });
+        await refreshAgentTaskOutcome(state, agent.store);
       }
     }
   }
