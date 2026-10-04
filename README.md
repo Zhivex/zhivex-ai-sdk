@@ -15,6 +15,16 @@ Install the stable SDK and one provider in a server-side Bun or Node.js applicat
 bun add @zhivex-ai/sdk @zhivex-ai/openai
 ```
 
+npm, pnpm, and Yarn can install the same published packages:
+
+```bash
+npm install @zhivex-ai/sdk @zhivex-ai/openai
+pnpm add @zhivex-ai/sdk @zhivex-ai/openai
+yarn add @zhivex-ai/sdk @zhivex-ai/openai
+```
+
+See the [consumer compatibility matrix](./SUPPORT.md#installation-and-consumer-compatibility) for pinned CI versions, runtime boundaries, and coverage.
+
 Set `OPENAI_API_KEY` in the server environment before running this example.
 
 This is step 1 of the canonical [Quickstart](./docs/QUICKSTART.md). It continues with the same `gpt-6-astra` provider setup through `Agent`, persistent `Runner` sessions, and the [Next.js React starter](./examples/next-runner/README.md).
