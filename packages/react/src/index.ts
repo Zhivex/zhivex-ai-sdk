@@ -7,3 +7,4 @@ export * from "./types.js";
 export * from "./use-zhivex-chat.js";
 
 export * from "./input-capabilities.js";
+export * from "./use-external-chat.js";

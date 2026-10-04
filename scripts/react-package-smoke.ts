@@ -19,7 +19,8 @@ const coreDependency = `file:${resolvePack(corePack)}`;
 const repo = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 await writeFile(join(consumer, "package.json"), JSON.stringify({ name: "react-consumer-smoke", private: true, type: "module", dependencies: {
   "@zhivex-ai/core": coreDependency, "@zhivex-ai/react": `file:${resolvePack(reactPack)}`,
-  react: repo.devDependencies.react, "react-dom": repo.devDependencies["react-dom"]
+  react: repo.devDependencies.react, "react-dom": repo.devDependencies["react-dom"],
+  "@types/react": repo.devDependencies["@types/react"], "@types/react-dom": repo.devDependencies["@types/react-dom"]
 }, overrides: {
   // Resolve React's transitive Core dependency from this checkout before publication.
   "@zhivex-ai/core": coreDependency
@@ -48,6 +49,30 @@ for (const peer of ["react-markdown", "remark-gfm", "@tanstack/react-virtual"]) 
 console.log("Native React entrypoints load without optional UI peers.");
 `);
 console.log(await run(["node", "smoke.mjs"], consumer));
+await writeFile(join(consumer, "compat.tsx"), `
+import { ApprovalCard, ReviewCard, type ChatController, type ChatState, type ChatTransport,
+  type ChatReconnectRequest, type UseZhivexChatResult } from "@zhivex-ai/react";
+import { useExternalChat } from "@zhivex-ai/react/hooks";
+declare const request: ChatReconnectRequest;
+declare const oldResult: UseZhivexChatResult;
+const legacyController: ChatController = oldResult;
+const legacy: ChatTransport = { async *send() {}, async cancel() {} };
+const delivery: Promise<void> = legacy.cancel!(request);
+const stop: () => void = oldResult.stop;
+const modern: ChatTransport = { ...legacy, async requestCancellation() { return { status: "confirmed" }; } };
+declare const state: ChatState;
+const store = { getSnapshot: () => state, getServerSnapshot: () => state, subscribe: () => () => {} };
+function View() {
+  const { controller } = useExternalChat({ store, selectState: snapshot => snapshot, actions: legacyController });
+  const token = Symbol("opaque host token");
+  const decide = async (_token: symbol, _approved: boolean) => {};
+  return <><ReviewCard reviewId="host:review" heading="Review" onDecision={approved => decide(token, approved)} />
+    <ApprovalCard title="Legacy HTML title" approval={{ id: "old", provider: "sdk", name: "Old approval", arguments: "{}", rawData: {} }} /></>;
+}
+`);
+await run([join(root, "node_modules/.bin/tsc"), "--noEmit", "--strict", "--skipLibCheck", "--target", "ES2022",
+  "--module", "NodeNext", "--jsx", "react-jsx", "compat.tsx"], consumer);
+console.log("Packed legacy transport and controller types remain compatible with external presentation APIs.");
 await run(["bun", "add", "--ignore-scripts", "react-markdown@10.1.0", "remark-gfm@4.0.1", "@tanstack/react-virtual@3.14.13"], consumer);
 await writeFile(join(consumer, "optional.mjs"), `
 import assert from "node:assert/strict";

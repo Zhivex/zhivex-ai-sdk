@@ -455,6 +455,10 @@ export const normalizeAgentRunState = (value: unknown): AgentRunState => {
       `AgentRunState schemaVersion must be ${AGENT_RUN_STATE_SCHEMA_VERSION}; only states without schemaVersion are treated as legacy.`
     );
   }
+  if (state.memory !== undefined && state.memory !== false) invalid("memory", "must be false when present");
+  if (state.memoryInitialization !== undefined && state.memoryInitialization !== "pending") {
+    invalid("memoryInitialization", "must be pending when present");
+  }
   if (state.revision !== undefined) integer(state.revision, "revision");
   scope(state.scope, "scope");
   if (state.taskOutcome !== undefined) taskOutcome(state.taskOutcome, "taskOutcome");
@@ -566,6 +570,7 @@ export const normalizeAgentRunState = (value: unknown): AgentRunState => {
     invalid("updatedAt", "must not precede startedAt");
   }
   optionalString(state.cancellationReason, "cancellationReason", true);
+  if (state.cancellationCascade !== undefined && typeof state.cancellationCascade !== "boolean") invalid("cancellationCascade", "must be a boolean");
   if (state.error !== undefined) agentRunError(state.error, "error");
 
   return {

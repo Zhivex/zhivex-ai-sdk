@@ -15,6 +15,16 @@ Install the stable SDK and one provider in a server-side Bun or Node.js applicat
 bun add @zhivex-ai/sdk @zhivex-ai/openai
 ```
 
+npm, pnpm, and Yarn can install the same published packages:
+
+```bash
+npm install @zhivex-ai/sdk @zhivex-ai/openai
+pnpm add @zhivex-ai/sdk @zhivex-ai/openai
+yarn add @zhivex-ai/sdk @zhivex-ai/openai
+```
+
+See the [consumer compatibility matrix](./SUPPORT.md#installation-and-consumer-compatibility) for pinned CI versions, runtime boundaries, and coverage.
+
 Set `OPENAI_API_KEY` in the server environment before running this example.
 
 This is step 1 of the canonical [Quickstart](./docs/QUICKSTART.md). It continues with the same `gpt-6-astra` provider setup through `Agent`, persistent `Runner` sessions, and the [Next.js React starter](./examples/next-runner/README.md).
@@ -247,6 +257,12 @@ Use the `/hooks` and `/components` subpaths for client UI, or `/headless` and
 React at runtime. The server route owns `Runner`, provider credentials, tools,
 authorization, and session persistence. See the [React package guide](./packages/react/README.md) and [Next.js example](./examples/next-runner/README.md).
 
+React hosts with an existing durable runtime can use `useExternalChat` to project
+immutable snapshots into the existing `ChatController`, with host activity and
+opaque review callbacks. The [offline example](examples/react-external-runtime/README.md)
+requires no provider. SDK-owned streams also expose awaitable remote cancellation
+separately from local detachment; see the [React guide](packages/react/README.md#remote-cancellation-and-local-detachment).
+
 ## Provider Compatibility
 
 The SDK aims to keep the application-facing contract stable, but capability parity is not identical across providers yet. Use this matrix as the source of truth for the currently implemented SDK behavior.
@@ -322,6 +338,11 @@ Detailed examples are organized by task:
 - [Realtime](./docs/reference/REALTIME.md)
 - [Media](./docs/reference/MEDIA.md)
 - [Providers](./docs/reference/PROVIDERS.md)
+
+Agent invocations support `memory: false` to disable memory reads and writes,
+including declared subagents, without changing shared definitions. The disabled
+policy persists in run state across resumes; durable run persistence remains independent. See the
+[agent memory guidance](docs/AGENTS.md#per-invocation-memory-opt-out).
 
 ## Switching Providers
 

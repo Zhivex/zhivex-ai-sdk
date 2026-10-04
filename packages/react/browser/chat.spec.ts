@@ -1,5 +1,65 @@
 import { expect, test } from "@playwright/test";
 
+for (const width of [1280, 390]) {
+  for (let mask = 0; mask < 32; mask++) {
+    const slots = ["header", "runs", "error", "activity", "reviews"];
+    const enabled = slots.filter((_, index) => mask & (1 << index));
+    test(`external panels stay between transcript and composer at ${width}px with ${enabled.join(",") || "no optional panels"}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      const errors: string[] = [];
+      page.on("pageerror", error => errors.push(error.message));
+      page.on("console", message => {
+        if (message.type() === "error") errors.push(message.text());
+      });
+      await page.goto(`/?view=external-layout&${enabled.map(slot => `${slot}=1`).join("&")}`);
+      const log = page.getByRole("log");
+      await expect(log).toContainText("External history 199");
+      if (mask === 31) await page.screenshot({ path: `.cache/react-browser/external-layout-${width}.png`, fullPage: true });
+      const ordered = [
+        ...(enabled.includes("header") ? [page.locator('[data-slot="chat-header"]')] : []),
+        ...(enabled.includes("runs") ? [page.locator('[data-slot="agent-runs"]')] : []),
+        log,
+        ...(enabled.includes("activity") ? [page.getByLabel("Host activity", { exact: true }), page.getByLabel("Host checkpoint")] : []),
+        ...(enabled.includes("reviews") ? [page.locator('[data-slot="approval"]')] : []),
+        ...(enabled.includes("error") ? [page.locator('[data-slot="error"]')] : []),
+        page.locator('[data-slot="composer"]')
+      ];
+      let previousBottom = 0;
+      for (const element of ordered) {
+        const box = await element.boundingBox();
+        expect(box).not.toBeNull();
+        expect(box!.y).toBeGreaterThanOrEqual(previousBottom - 1);
+        previousBottom = box!.y + box!.height;
+      }
+      const transcript = await log.boundingBox();
+      expect(transcript!.height).toBeGreaterThan(80);
+      const chat = await page.locator('[data-slot="chat-root"]').boundingBox();
+      expect(previousBottom).toBeLessThanOrEqual(chat!.y + chat!.height);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(await log.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+      await log.evaluate(element => { element.scrollTop = 0; });
+      await expect.poll(() => log.evaluate(element => element.scrollTop)).toBe(0);
+      if (mask === 31) {
+        await log.focus();
+        await page.keyboard.press("Tab");
+        await expect(page.getByRole("button", { name: "Reject", exact: true })).toBeFocused();
+        await page.keyboard.press("Tab");
+        await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeFocused();
+        await page.keyboard.press("Enter");
+        await expect(page.getByLabel("Host decision")).toHaveText("accepted");
+        const input = page.getByRole("textbox", { name: "Message", exact: true });
+        await page.keyboard.press("Tab");
+        await expect(input).toBeFocused();
+        await input.fill("Keyboard message");
+        await input.press("Enter");
+        await expect(page.getByLabel("Host sent message")).toHaveText("Keyboard message");
+        await expect(input).toBeFocused();
+      }
+      expect(errors).toEqual([]);
+    });
+  }
+}
+
 test("reconnects a truncated response with GET and renders every token exactly once", async ({ page, request }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));

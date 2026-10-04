@@ -199,6 +199,8 @@ PTC may issue up to eight Responses requests within one model step. `maxTokens` 
 
 Gateway charges internal requests to `maxTotalAttempts`. With Gateway admission/spend reservations or Core token budgets/shared budget coordination, the adapter admits one PTC request per model step and fails before a required internal continuation. Independent reservations for internal inputs need a future per-request adapter lifecycle contract. Durable failures retain confirmed usage and block automatic resume after possible program effects; unknown allocations remain held for reconciliation. These bounds do not guarantee a monetary ceiling: provider-reported input/hosted-tool charges and uncertain requests may add consumption, and providers must enforce their own output limits.
 
+If PTC failure races cancellation, a proven cancellation-only checkpoint transition retains its confirmed/uncertain receipt without changing the cancellation status or reason. Finalizing requested cancellation also preserves that receipt. Complete shared-budget receipts settle once; uncertain requests keep their allocation. A competing checkpoint is never overwritten to attach the receipt: the call and stream events fail with the provider error so the caller retains the unsaved accounting evidence. Persistence failures likewise return that error; durable recovery of every receipt is not guaranteed.
+
 
 ```ts
 import { generateText, tool } from "@zhivex-ai/core";

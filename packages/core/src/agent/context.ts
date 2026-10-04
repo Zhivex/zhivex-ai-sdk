@@ -55,12 +55,14 @@ const createBaseState = (
   scope: AgentRunInput["scope"],
   outputMode: "native" | "prompted" | undefined,
   harness: AgentDefinition["harness"],
-  executionEnvironment: AgentExecutionEnvironmentBinding | undefined
+  executionEnvironment: AgentExecutionEnvironmentBinding | undefined,
+  memory?: false
 ): AgentRunState => {
   const startedAt = Date.now();
 
   return {
     schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
+    ...(memory === false ? { memory: false as const } : {}),
     revision: 0,
     runId,
     scope,
@@ -153,6 +155,37 @@ const injectContextMessages = (messages: ModelMessage[], extraMessages: ModelMes
   return [...extraMessages, ...messages];
 };
 
+const loadMemoryMessages = <TModel extends AgentDefinition["model"]>(
+  agent: AgentDefinition<TModel>, input: AgentRunInput<TModel>, runId: string
+): Promise<ModelMessage[]> => invokeOperationalHook(
+    agent,
+    "memory",
+    "load",
+    runId,
+    agent.memory
+      ? () => agent.memory!.load({
+        runId,
+        agentId: agent.id,
+        scope: input.scope ?? input.handoff?.scope,
+        metadata: cloneMetadata(agent.metadata, input.metadata)
+      })
+      : undefined,
+    [] as ModelMessage[]
+  );
+
+/** Called only after claiming execution ownership and resolving the durable policy. */
+export const initializePendingMemory = async <TModel extends AgentDefinition["model"]>(
+  agent: AgentDefinition<TModel>, state: AgentRunState
+): Promise<{ messages: ModelMessage[]; memoryMessages: ModelMessage[] }> => {
+  const memoryMessages = state.memory === false ? [] : await loadMemoryMessages(agent, {
+    scope: state.scope, metadata: state.metadata
+  }, state.runId);
+  const messages = injectContextMessages(state.messages, memoryMessages);
+  state.messages = messages;
+  delete state.memoryInitialization;
+  return { messages, memoryMessages };
+};
+
 const prepareFreshMessages = async <TModel extends AgentDefinition["model"]>(
   agent: AgentDefinition<TModel>,
   input: AgentRunInput<TModel>,
@@ -169,21 +202,7 @@ const prepareFreshMessages = async <TModel extends AgentDefinition["model"]>(
     : [];
   messages = injectContextMessages(messages, handoffMessages);
 
-  const memoryMessages = await invokeOperationalHook(
-    agent,
-    "memory",
-    "load",
-    runId,
-    agent.memory
-      ? () => agent.memory!.load({
-        runId,
-        agentId: agent.id,
-        scope: input.scope ?? input.handoff?.scope,
-        metadata: cloneMetadata(agent.metadata, input.metadata)
-      })
-      : undefined,
-    [] as ModelMessage[]
-  );
+  const memoryMessages = await loadMemoryMessages(agent, input, runId);
 
   messages = injectContextMessages(messages, memoryMessages);
 
@@ -316,7 +335,9 @@ export const resolveContext = async <
     const runId = input.runId ?? randomId("run");
     const maxSteps = validateMaxSteps(input.maxSteps ?? agent.maxSteps);
     const metadata = cloneMetadata(agent.metadata, input.metadata, input.handoff?.metadata);
-    const prepared = await prepareFreshMessages(agent, input, runId);
+    // The winning claim establishes the run's memory policy before any memory read.
+    // A losing invocation must not load memory before seeing a persisted opt-out.
+    const prepared = await prepareFreshMessages({ ...agent, memory: undefined }, input, runId);
     const candidate = createBaseState(
       agent.model.provider,
       agent.model.modelId,
@@ -331,8 +352,10 @@ export const resolveContext = async <
       inputScope,
       resolveAgentOutputMode(agent),
       agent.harness,
-      executionEnvironmentBinding
+      executionEnvironmentBinding,
+      input.memory
     ) as AgentRunState & { idempotencyKey: string };
+    if (agent.memory && input.memory !== false) candidate.memoryInitialization = "pending";
     bindDurableRuntime(agent, input, candidate, executionEnvironmentBinding);
     const claim = await agent.store!.claimIdempotencyKey!(candidate);
     if (claim.claimed) {
@@ -384,6 +407,7 @@ export const resolveContext = async <
     return {
       state: {
         ...loadedState,
+        ...(input.memory === false ? { memory: false as const } : {}),
         schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
         idempotencyKey: loadedState.idempotencyKey ?? input.idempotencyKey,
         scope: loadedState.scope ?? inputScope,
@@ -425,7 +449,8 @@ export const resolveContext = async <
       inputScope,
       resolveAgentOutputMode(agent),
       agent.harness,
-      executionEnvironmentBinding
+      executionEnvironmentBinding,
+      input.memory
     );
   bindDurableRuntime(agent, input, state, executionEnvironmentBinding);
   return {

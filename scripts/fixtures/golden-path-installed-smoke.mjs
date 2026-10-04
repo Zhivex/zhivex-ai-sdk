@@ -105,7 +105,7 @@ console.log(JSON.stringify({
   type: "golden_path_installed_smoke",
   status: "passed",
   mode: live ? "live" : "deterministic",
-  runtime: { name: "bun", version: Bun.version },
+  runtime: { name: process.versions.bun ? "bun" : "node", version: process.versions.bun ?? process.versions.node },
   firstResponseMs,
   persistentChatMs,
   installedEntrypoints: [
