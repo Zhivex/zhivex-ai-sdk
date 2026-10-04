@@ -1,5 +1,22 @@
 # @zhivex-ai/react
 
+## 0.7.0
+
+### Minor Changes
+
+- 4598c5f: Add observable, awaitable remote cancellation while preserving legacy transport cancellation. Add external snapshot presentation and opaque review callbacks using the existing chat controller and components.
+  
+  Keep external runtime activity and reviews in explicit grid rows between the transcript and error/composer, independent of optional header, execution, or error panels.
+
+### Patch Changes
+
+- Updated dependencies [6ec00f8]
+- Updated dependencies [0ea5598]
+- Updated dependencies [6f95dac]
+- Updated dependencies [fbbd7a1]
+- Updated dependencies [b1645cf]
+  - @zhivex-ai/core@1.30.0
+
 ## 0.6.2
 
 ### Patch Changes
