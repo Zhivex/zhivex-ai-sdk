@@ -43,7 +43,7 @@
     "snapshots:update:api": "bun run scripts/update-api-type-snapshots.ts",
     "typecheck": "tsc -b --force --pretty false && bun run typecheck:examples",
     "typecheck:examples": "tsc -p examples/next-runner/tsconfig.repo.json --pretty false && tsc -p examples/react-omni/tsconfig.json --pretty false && tsc -p examples/react-external-runtime/tsconfig.json --pretty false",
-    "version-packages": "changeset version && bun run scripts/sync-release-consumers.ts && bun run provider:sync",
+    "version-packages": "changeset version && bun run scripts/sync-release-consumers.ts && bun run provider:sync && bun run scripts/sync-lock-workspaces.ts",
     "release:check": "bun run scripts/check-release-readiness.ts",
     "release:check:next": "bun run scripts/check-release-readiness.ts --tag=next",
     "release:verify": "bun run scripts/check-release-readiness.ts --postpublish",
@@ -58,7 +58,8 @@
     "smoke:packages:mcp": "bun run build && bun run scripts/mcp-package-smoke.ts",
     "test:mcp:interop": "bun run scripts/verify-mcp-http-interop.ts",
     "provider:check": "bun run scripts/sync-provider-registry.ts --check",
-    "provider:sync": "bun run scripts/sync-provider-registry.ts"
+    "provider:sync": "bun run scripts/sync-provider-registry.ts",
+    "lock:check": "bun run scripts/sync-lock-workspaces.ts --check"
   },
   "devDependencies": {
     "@ai-sdk/react": "4.0.130",

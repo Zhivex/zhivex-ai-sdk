@@ -40,6 +40,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Check workspace lock snapshots
+        run: bun run lock:check
+
       - name: Audit dependencies
         run: bun audit
 
