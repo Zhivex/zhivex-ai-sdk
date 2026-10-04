@@ -323,6 +323,11 @@ Detailed examples are organized by task:
 - [Media](./docs/reference/MEDIA.md)
 - [Providers](./docs/reference/PROVIDERS.md)
 
+Agent invocations support `memory: false` to disable memory reads and writes,
+including declared subagents, without changing shared definitions. The disabled
+policy persists in run state across resumes; durable run persistence remains independent. See the
+[agent memory guidance](docs/AGENTS.md#per-invocation-memory-opt-out).
+
 ## Switching Providers
 
 The application-facing API remains the same. In most cases, switching providers only requires replacing the adapter factory and model identifier.
