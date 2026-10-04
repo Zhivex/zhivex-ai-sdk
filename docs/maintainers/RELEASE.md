@@ -43,6 +43,8 @@ Missing credentials are reported as skipped, not passed. Save the report in rele
 
 `smoke:packages` packs every workspace package, installs the tarballs together in an isolated temporary Node consumer, imports every JavaScript export, and exercises runtime-sensitive Core behavior. It uses its own temporary npm cache and does not publish anything.
 
+CI also runs `node scripts/package-manager-consumer-smoke.mjs <npm|pnpm|yarn|bun>` with pinned manager versions. Before publication, its temporary loopback registry serves only the exact packed `@zhivex-ai` batch, retaining package manifests, internal ranges and artifact hashes. Other dependencies still come from npm. A missing or incompatible internal candidate fails installation rather than falling back to an older published SDK package. Runtime smoke tests use deterministic providers. After publication, use `--registry=public` to validate transitive resolution against npm instead of the candidate registry.
+
 For a quick manual inspection of individual package contents without writing tarballs:
 
 ```bash
@@ -71,7 +73,7 @@ bun run smoke:packages
 git status --short
 ```
 
-`bun run version-packages` also synchronizes the standalone Next.js starter pins for SDK, OpenAI, and React with the generated package versions. Review that diff and rerun `docs:check` and the internal Core range tests after versioning; providers that import new Core helpers must require the version that introduced them.
+`bun run version-packages` also synchronizes the standalone Next.js starter pins for SDK, OpenAI, and React, the provider registry, and Bun workspace snapshots with the generated package versions. The snapshot synchronizer updates only workspace versions and internal ranges, preserving external resolutions byte for byte; external dependency or inventory changes require a real Bun lockfile regeneration. Run `bun run lock:check` to detect stale snapshots even when a frozen install accepts them. Review that diff and rerun `docs:check` and the internal Core range tests after versioning; providers that import new Core helpers must require the version that introduced them. For an already versioned, unpublished batch with stale snapshots, run `bun scripts/sync-lock-workspaces.ts` without repeating Changesets.
 
 Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The `validate` job has no OIDC permission: it checks out immutable committed source, installs dependencies without lifecycle scripts, scans for recognized secret signatures, repeats audit/typecheck/test/build and the packed Node consumer smoke, then produces the exact release batch as commit-bound SHA-512 tarballs. The separate `publish` job is the only OIDC trust boundary; it installs no dependencies and publishes only those downloaded, checksum-verified tarballs. Package tags are pushed only after npm integrity, dist-tags, and the signed SLSA provenance subject and source commit match the release. `gitHead` is also checked when npm provides it.
 

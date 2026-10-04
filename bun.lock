@@ -35,17 +35,17 @@
     },
     "packages/agents": {
       "name": "@zhivex-ai/agents",
-      "version": "1.10.2",
+      "version": "1.10.3",
       "dependencies": {
-        "@zhivex-ai/core": "^1.27.0",
+        "@zhivex-ai/core": "^1.30.0",
       },
     },
     "packages/anthropic": {
       "name": "@zhivex-ai/anthropic",
-      "version": "0.13.1",
+      "version": "0.13.2",
       "dependencies": {
         "@anthropic-ai/sdk": "0.131.0",
-        "@zhivex-ai/core": "^1.24.0",
+        "@zhivex-ai/core": "^1.30.0",
         "zod": "^4.6.3",
       },
     },
@@ -59,16 +59,16 @@
     },
     "packages/bedrock": {
       "name": "@zhivex-ai/bedrock",
-      "version": "2.0.3",
+      "version": "2.0.4",
       "dependencies": {
         "@aws-sdk/client-bedrock-runtime": "^3.1146.0",
-        "@zhivex-ai/core": "^1.24.0",
+        "@zhivex-ai/core": "^1.30.0",
         "zod": "^4.6.3",
       },
     },
     "packages/core": {
       "name": "@zhivex-ai/core",
-      "version": "1.29.0",
+      "version": "1.30.0",
       "dependencies": {
         "ws": "^8.22.0",
         "zod": "^4.6.3",
@@ -90,9 +90,9 @@
     },
     "packages/gateway": {
       "name": "@zhivex-ai/gateway",
-      "version": "1.5.0",
+      "version": "1.5.1",
       "dependencies": {
-        "@zhivex-ai/core": "^1.27.0",
+        "@zhivex-ai/core": "^1.30.0",
         "zod": "^4.6.3",
       },
     },
@@ -130,9 +130,9 @@
     },
     "packages/openai": {
       "name": "@zhivex-ai/openai",
-      "version": "0.14.0",
+      "version": "0.14.1",
       "dependencies": {
-        "@zhivex-ai/core": "^1.27.0",
+        "@zhivex-ai/core": "^1.30.0",
         "zod": "^4.6.3",
       },
     },
@@ -154,9 +154,9 @@
     },
     "packages/react": {
       "name": "@zhivex-ai/react",
-      "version": "0.6.2",
+      "version": "0.7.0",
       "dependencies": {
-        "@zhivex-ai/core": "^1.24.0",
+        "@zhivex-ai/core": "^1.30.0",
       },
       "peerDependencies": {
         "@ai-sdk/react": ">=4.0.0 <5",
@@ -177,22 +177,22 @@
     },
     "packages/sdk": {
       "name": "@zhivex-ai/sdk",
-      "version": "1.30.0",
+      "version": "1.30.1",
       "bin": {
         "zhivex-ai": "dist/cli.js",
       },
       "dependencies": {
-        "@zhivex-ai/core": "~1.29.0",
+        "@zhivex-ai/core": "~1.30.0",
       },
     },
     "packages/vertex": {
       "name": "@zhivex-ai/vertex",
-      "version": "1.2.3",
+      "version": "1.2.4",
       "dependencies": {
         "@google-cloud/aiplatform": "^7.4.1",
-        "@zhivex-ai/anthropic": "^0.13.0",
-        "@zhivex-ai/core": "^1.27.0",
-        "@zhivex-ai/openai": "^0.14.0",
+        "@zhivex-ai/anthropic": "^0.13.2",
+        "@zhivex-ai/core": "^1.30.0",
+        "@zhivex-ai/openai": "^0.14.1",
         "google-auth-library": "^11.0.2",
         "zod": "^4.6.3",
       },

@@ -1,5 +1,17 @@
 # @zhivex-ai/anthropic
 
+## 0.13.2
+
+### Patch Changes
+
+- 6f95dac: Update the WebSocket and Anthropic, Bedrock, and Vertex client dependencies while preserving the existing SDK API and supported runtimes.
+- Updated dependencies [6ec00f8]
+- Updated dependencies [0ea5598]
+- Updated dependencies [6f95dac]
+- Updated dependencies [fbbd7a1]
+- Updated dependencies [b1645cf]
+  - @zhivex-ai/core@1.30.0
+
 ## 0.13.1
 
 ### Patch Changes

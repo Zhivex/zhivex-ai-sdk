@@ -1,5 +1,29 @@
 # @zhivex-ai/agents
 
+## 1.10.3
+
+### Patch Changes
+
+- 6ec00f8: Retry cancellation revision conflicts with bounded reloads, persist tree cancellation intent before discovery, and preserve terminal descendants. Check durable ancestry around execution admission and before model/tool dispatch so late child claims observe cancellation. Preserve cancellation plus confirmed response evidence when checkpoint writes race it. Tree cancellation remains cooperative; the generic store contract does not provide an atomic cross-run admission fence.
+  
+  Honor cancellation when pending memory initialization completes or fails, before input guardrails or model dispatch, while preserving persisted memory opt-out and initialization claims.
+  
+  Retry response checkpoint conflicts only when an immutable, store-bound successful checkpoint proves one cancellation-only revision transition. Recheck every retry and reject intervening checkpoints, overlapping responses, unknown baselines and changed durable metadata or memory opt-out, preserving the authoritative state.
+- fbbd7a1: Bound OpenAI PTC continuations by cumulative output tokens and actual provider request limits. Disable automatic PTC request retries and preserve confirmed versus uncertain consumption in sanitized errors and durable agent accounting. Count internal requests against Gateway limits, fail closed before extra requests under per-step token/admission/spend reservations, and clean up failed PTC streams before returning an iterator. Unsafe durable PTC failures cannot automatically resume.
+  
+  Preserve dispatched-request receipts when failure races durable cancellation and when cancellation is finalized, settling complete shared-budget receipts and retaining uncertain allocations. Use the worker's confirmed checkpoint for cancellation-only CAS retries; competing checkpoints remain authoritative and the unsaved receipt is returned as an explicit provider error, including to stream event consumers.
+  
+  Retain validated confirmedUsage, usageComplete and providerRequestCount in Gateway attempt callbacks when a stream fails after opening. Keep complete terminal usage precedence and uncertain lower-bound receipts without retrying or falling back after output.
+- b1645cf: Add per-invocation memory opt-out for agent runs, streams, resumes, and declared subagents with a persisted disabled policy that survives resumes, while preserving defaults for independent runs and legacy unmarked states.
+  
+  Claim execution ownership before initializing idempotent memory, including custom stores without leases and runs with leases disabled, so concurrent retries cannot duplicate memory reads.
+- Updated dependencies [6ec00f8]
+- Updated dependencies [0ea5598]
+- Updated dependencies [6f95dac]
+- Updated dependencies [fbbd7a1]
+- Updated dependencies [b1645cf]
+  - @zhivex-ai/core@1.30.0
+
 ## 1.10.2
 
 ### Patch Changes

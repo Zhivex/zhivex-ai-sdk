@@ -51,6 +51,9 @@ jobs:
       - name: Scan tracked files for secrets
         run: bun run scripts/scan-secrets.ts
 
+      - name: Check workspace lock snapshots
+        run: bun run lock:check
+
       - name: Audit dependencies
         run: bun audit
 

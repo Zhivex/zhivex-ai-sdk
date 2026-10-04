@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { startCandidateRegistry } from "./candidate-registry.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const versions = { npm: "10.9.4", pnpm: "10.34.6", yarn: "1.22.22", bun: "1.3.7" };
 const manager = process.argv[2];
 assert.ok(Object.hasOwn(versions, manager), "Usage: node scripts/package-manager-consumer-smoke.mjs <npm|pnpm|yarn|bun>");
+const registryMode = process.argv[3] ?? "--registry=candidate";
+assert.ok(["--registry=candidate", "--registry=public"].includes(registryMode), "Use --registry=candidate (prepublish) or --registry=public (postpublish)");
 const temporary = mkdtempSync(join(tmpdir(), `zhivex-${manager}-consumer-`));
 const packs = join(temporary, "packs");
 const consumer = join(temporary, "consumer");
@@ -34,6 +37,7 @@ writeFileSync(env.NPM_CONFIG_USERCONFIG, "registry=https://registry.npmjs.org\n"
 const run = (command, args, cwd = consumer, capture = false) => execFileSync(command, args, {
   cwd, env, encoding: "utf8", stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit"
 });
+let registry;
 
 try {
   const managerVersion = run(manager, ["--version"], consumer, true).trim();
@@ -54,6 +58,13 @@ try {
     });
   // Retain published dependency ranges. No overrides, resolutions, workspace
   // aliases or rewritten package manifests are used.
+  if (registryMode === "--registry=candidate") {
+    registry = await startCandidateRegistry(packed);
+    // Only this temporary consumer's SDK scope uses the candidate batch.
+    const npmrc = `registry=https://registry.npmjs.org\n@zhivex-ai:registry=${registry.url}\n`;
+    writeFileSync(env.NPM_CONFIG_USERCONFIG, npmrc);
+    writeFileSync(join(consumer, ".npmrc"), npmrc);
+  }
   const dependencies = Object.fromEntries(packed.map(({ manifest, tarball }) => [manifest.name, `file:${tarball}`]));
   Object.assign(dependencies, {
     "react": "19.3.0", "react-dom": "19.3.0",
@@ -72,7 +83,13 @@ try {
     yarn: ["install", "--ignore-scripts", "--non-interactive"],
     bun: ["install", "--ignore-scripts"]
   };
-  run(manager, installArgs[manager]);
+  // Keep the event loop available to serve metadata and immutable tarballs.
+  await new Promise((resolve, reject) => {
+    const child = spawn(manager, installArgs[manager], { cwd: consumer, env, stdio: "inherit" });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => code === 0 ? resolve() : reject(new Error(`${manager} install failed (${signal ?? code})`)));
+  });
+  if (registry) { await registry.close(); registry = undefined; }
   const runtime = manager === "bun" ? "bun" : "node";
   const specifiers = packed.flatMap(({ manifest }) => Object.entries(manifest.exports).filter(([, target]) =>
     typeof target === "string" ? target.endsWith(".js") : target.import || target.default
@@ -104,6 +121,12 @@ for (const pkg of packed) {
     const dependencyEntry = realpathSync(fileURLToPath(import.meta.resolve(dependency, pathToFileURL(entry).href)));
     assert.ok(relative(consumer, dependencyEntry).startsWith("node_modules/"), dependency + " escaped the consumer");
     const installedDependency = JSON.parse(readFileSync(join(dirname(dependencyEntry), "../package.json"), "utf8"));
+    if (${registryMode === "--registry=candidate"}) {
+      const candidate = packed.find(value => value.name === dependency);
+      assert.ok(candidate, "Missing internal candidate: " + dependency);
+      assert.equal(installedDependency.version, candidate.version, dependency + " did not resolve the exact candidate");
+      verifyFiles(dependencyEntry, candidate);
+    }
     internalDependencies.push({ package: pkg.name, dependency, range: pkg.dependencies[dependency], version: installedDependency.version, source: dependencyEntry === realpathSync(fileURLToPath(import.meta.resolve(dependency))) ? "packed" : "registry" });
   }
 }
@@ -143,9 +166,10 @@ void generateText({ model, messages: [createTextMessage("user", "types only")] }
     status: "passed", manager, managerVersion,
     sourceGitSha: process.env.GITHUB_SHA ?? run("git", ["rev-parse", "HEAD"], root, true).trim(),
     runtime, runtimeVersion: run(runtime, ["--version"], consumer, true).trim(),
-    packing: `npm@${versions.npm}`, entrypoints: specifiers.length,
+    packing: `npm@${versions.npm}`, registryMode, entrypoints: specifiers.length,
     packages: packed.map(({ manifest, integrity }) => ({ name: manifest.name, version: manifest.version, sha256: integrity }))
   }));
 } finally {
+  if (registry) await registry.close();
   rmSync(temporary, { recursive: true, force: true });
 }
