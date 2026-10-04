@@ -132,6 +132,9 @@ const agentRunError = (value: unknown, path: string) => {
   }
   optionalBoolean(current.retryable, `${path}.retryable`);
   optionalBoolean(current.effectsPossible, `${path}.effectsPossible`);
+  optionalBoolean(current.usageComplete, `${path}.usageComplete`);
+  usage(current.confirmedUsage, `${path}.confirmedUsage`);
+  if (current.providerRequestCount !== undefined) integer(current.providerRequestCount, `${path}.providerRequestCount`);
 };
 
 const scope = (value: unknown, path: string) => {
@@ -276,6 +279,7 @@ const step = (value: unknown, path: string) => {
     finishReason(response.finishReason, `${path}.response.finishReason`);
     optionalString(response.providerFinishReason, `${path}.response.providerFinishReason`, true);
     usage(response.usage, `${path}.response.usage`);
+    if (response.providerRequestCount !== undefined) integer(response.providerRequestCount, `${path}.response.providerRequestCount`, 1);
   }
   array(current.toolResults, `${path}.toolResults`).forEach((entry, index) => toolResult(entry, `${path}.toolResults[${index}]`));
   if (current.error !== undefined) {
@@ -363,6 +367,7 @@ const childRun = (value: unknown, path: string) => {
   integer(current.toolCalls, `${path}.toolCalls`);
   integer(current.toolErrors, `${path}.toolErrors`);
   usage(current.usage, `${path}.usage`);
+  optionalBoolean(current.unknownProviderUsage, `${path}.unknownProviderUsage`);
   if (current.unknownCompactionUsage !== undefined && typeof current.unknownCompactionUsage !== "boolean") invalid(`${path}.unknownCompactionUsage`, "must be a boolean");
   if (current.startedAt !== undefined) finiteNumber(current.startedAt, `${path}.startedAt`, 0);
   if (current.updatedAt !== undefined) finiteNumber(current.updatedAt, `${path}.updatedAt`, 0);

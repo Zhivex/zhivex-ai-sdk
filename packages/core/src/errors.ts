@@ -92,6 +92,10 @@ export class ProviderToolCallError extends ZhivexAIError {
   readonly effectsPossible: boolean;
   /** Validated terminal accounting, independent of whether the tool call was safe. */
   readonly usage?: Readonly<TokenUsage>;
+  /** Confirmed lower bound; never a complete receipt when usageComplete is false. */
+  readonly confirmedUsage?: Readonly<TokenUsage>;
+  readonly usageComplete: boolean;
+  readonly providerRequestCount?: number;
 
   constructor(options: {
     provider: string;
@@ -101,6 +105,9 @@ export class ProviderToolCallError extends ZhivexAIError {
     retryable?: boolean;
     effectsPossible?: boolean;
     usage?: TokenUsage;
+    confirmedUsage?: TokenUsage;
+    usageComplete?: boolean;
+    providerRequestCount?: number;
     cause?: unknown;
   }) {
     super("Provider tool call could not be materialized safely.", { cause: options.cause });
@@ -110,7 +117,9 @@ export class ProviderToolCallError extends ZhivexAIError {
     this.reason = options.reason;
     this.effectsPossible = options.effectsPossible ?? false;
     this.retryable = this.effectsPossible ? false : (options.retryable ?? false);
-    const supplied = options.usage;
+    this.usageComplete = false;
+    if (Number.isSafeInteger(options.providerRequestCount) && options.providerRequestCount! >= 0) this.providerRequestCount = options.providerRequestCount;
+    const supplied = options.confirmedUsage ?? options.usage;
     if (supplied && [supplied.inputTokens, supplied.outputTokens].every(
       count => typeof count === "number" && Number.isSafeInteger(count) && count >= 0
     )) {
@@ -122,7 +131,11 @@ export class ProviderToolCallError extends ZhivexAIError {
         if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) { valid = false; break; }
         copy[key] = count;
       }
-      if (valid) this.usage = Object.freeze(copy);
+      if (valid) {
+        this.confirmedUsage = Object.freeze(copy);
+        this.usageComplete = options.usageComplete ?? true;
+        if (this.usageComplete) this.usage = this.confirmedUsage;
+      }
     }
   }
 }

@@ -173,6 +173,8 @@ export interface AgentExecutionEnvironment<TContext = any> {
 
 export interface ModelGenerateInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
   messages: ModelMessage[];
+  /** Bounds internal requests in adapters that support continuations. Not a monetary ceiling. */
+  maxProviderRequests?: number;
   /** Opt-in discriminated JSON tool outputs: { output } on success, { error } on failure.
    * Only use with models advertising toolHistory: "json"; legacy serialization is the default.
    */

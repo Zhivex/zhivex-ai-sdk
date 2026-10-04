@@ -25,6 +25,7 @@ import {
 import {
   ConflictError,
   GuardrailTriggeredError,
+  ProviderToolCallError,
   ValidationError
 } from "../errors.js";
 import {
@@ -130,6 +131,15 @@ import {
 import {
   compactAgentMessages
 } from "./compaction.js";
+
+/** Complete receipts may settle a failed call; an uncertain prefix never frees
+ * its allocation. Settlement errors cannot replace the original provider failure. */
+const settleFailedProviderRequest = async (policy: AgentRunPolicy | undefined, state: AgentRunState, error: unknown) => {
+  if (error instanceof ProviderToolCallError && error.providerRequestCount !== undefined && policy?.budgetCoordinator) {
+    try { await policy.budgetCoordinator.settle(`model:${state.runId}:${state.currentStep + 1}`, error.usage); }
+    catch { /* The coordinator retains unknown or exceeded allocations. */ }
+  }
+};
 
 const subAgentToolInputSchema = z.object({
   prompt: z.string().min(1),
@@ -606,6 +616,9 @@ const createGenerateOptions = <
         }
       : undefined,
     onBeforeModelStep: async ({ step, request }) => {
+      // Internal requests need independent input reservations. Until the adapter
+      // exposes that lifecycle, a bounded agent step admits one dispatch only.
+      if (budget || coordinator) request.maxProviderRequests = 1;
       if (budget) {
         const remaining = getAgentBudgetStatus({ ...state, usage: liveUsage, toolResults: liveToolResults }, budget).remaining;
         const ceilings = [requestedMaxTokens, remaining.outputTokens, remaining.totalTokens].filter((value): value is number => value !== undefined);
@@ -988,6 +1001,7 @@ export const runAgent = async <
 
     const durableState = await loadFailureState(context.state, agent.store);
     const failedState = createFailedState(durableState, error);
+    await settleFailedProviderRequest(policy, durableState, error);
     try { await persistFailureState(agent, failedState, policy); } catch { /* preserve primary error */ }
     await emitRunFinishTelemetry(agent, failedState);
     executionEnvironmentStatus = failedState.status;
@@ -1417,6 +1431,7 @@ export const streamAgent = <
 
         const durableState = await loadFailureState(context.state, agent.store);
         const failedState = createFailedState(durableState, error);
+        await settleFailedProviderRequest(policy, durableState, error);
         try { await persistFailureState(agent, failedState, policy); } catch { /* preserve primary error */ }
         await emitRunFinishTelemetry(agent, failedState);
         await publish({

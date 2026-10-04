@@ -1,5 +1,5 @@
 import { calculateModelCost } from "@zhivex-ai/core/catalog";
-import { createCachedGenerateMiddleware, type GenerateResult, type LanguageModel, type ModelGenerateInput, type StreamEvent, type TokenUsage } from "@zhivex-ai/core/generation";
+import { createCachedGenerateMiddleware, ProviderToolCallError, type GenerateResult, type LanguageModel, type ModelGenerateInput, type StreamEvent, type TokenUsage } from "@zhivex-ai/core/generation";
 import { type GatewayConfig, type GatewayModelTarget } from "./types.js";
 import { GatewayBudgetError, type GatewayBudgetReservation } from "./budget.js";
 import type { GatewayAdmissionLease } from "./admission.js";
@@ -73,7 +73,7 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
   const generate = async (model: LanguageModel, target: GatewayModelTarget, input: ModelGenerateInput, scope?: string): Promise<GenerateResult> => {
     const lease = await begin(target, input, scope);
     try { lease.start(); const result = await model.generate(input); await lease.finish(result.usage); return result; }
-    catch (error) { await lease.finish(); throw error; }
+    catch (error) { await lease.finish(error instanceof ProviderToolCallError ? error.usage : undefined); throw error; }
   };
   return {
     diagnostics: () => ({ settlementFailures, pendingSettlements: settlements.size, pendingCacheWrites: cacheWrites.size, droppedCacheWrites, inFlightCacheKeys: flights.size }),
@@ -143,9 +143,12 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
           let usage: TokenUsage | undefined;
           try {
             for await (const event of source) { if (event.type === "finish") usage = event.usage; yield event; }
+          } catch (error) {
+            if (error instanceof ProviderToolCallError) usage = error.usage;
+            throw error;
           } finally { await lease.finish(usage); }
         })();
-      } catch (error) { await lease.finish(); throw error; }
+      } catch (error) { await lease.finish(error instanceof ProviderToolCallError ? error.usage : undefined); throw error; }
     }
   };
 };

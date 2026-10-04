@@ -195,6 +195,11 @@ For GPT-5.6, cache writes cost 1.25x the uncached input rate and cache reads rec
 
 GPT-5.6 supports Programmatic Tool Calling through `openAIProgrammaticToolCallingTool()`. Wrap callable tools with `openAIProgrammaticTool()` to declare `allowed_callers` and an optional provider output schema. The adapter preserves the provider `caller` metadata across tool execution and continuation requests.
 
+PTC may issue up to eight Responses requests within one model step. `maxTokens` is a cumulative output allowance for that sequence; each continuation receives only the reported remaining allowance. Each dispatched PTC request runs once, without automatic HTTP retry. Missing/invalid usage, exhausted output allowance, continuation exhaustion, or a request failure stops the sequence with a nonretryable `ProviderToolCallError` and possible-effects metadata. `providerRequestCount` reports actual dispatches. `confirmedUsage` retains validated consumption; when `usageComplete` is false it is only a lower bound and `usage` is absent. Streaming PTC releases request timeout resources before returning its materialized event iterator, including on failure.
+
+Gateway charges internal requests to `maxTotalAttempts`. With Gateway admission/spend reservations or Core token budgets/shared budget coordination, the adapter admits one PTC request per model step and fails before a required internal continuation. Independent reservations for internal inputs need a future per-request adapter lifecycle contract. Durable failures retain confirmed usage and block automatic resume after possible program effects; unknown allocations remain held for reconciliation. These bounds do not guarantee a monetary ceiling: provider-reported input/hosted-tool charges and uncertain requests may add consumption, and providers must enforce their own output limits.
+
+
 ```ts
 import { generateText, tool } from "@zhivex-ai/core";
 import {
