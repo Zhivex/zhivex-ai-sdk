@@ -1,3 +1,4 @@
+import { synchronizeAgentCancellation } from "./cancellation-intent.js";
 import {
   normalizeAgentRunState
 } from "../agent-state.js";
@@ -191,10 +192,11 @@ export const acquireAgentExecutionLease = async <TModel extends LanguageModel>(
         lastHeartbeat = now;
       }
       if (now - lastCancellationPoll >= cancellationPollMs) {
-        const latest = await store.load(state.runId, state.scope);
+        const latest = { ...state };
+        const cancellation = await synchronizeAgentCancellation(store, latest);
         if (stopped) return;
         lastCancellationPoll = now;
-        if (latest?.status === "cancel_requested" || latest?.status === "cancelled") {
+        if (cancellation) {
           cancelled = normalizeAgentRunState(latest);
           controller.abort(new Error(latest.cancellationReason ?? "Agent run was cancelled."));
         }

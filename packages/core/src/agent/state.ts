@@ -1,3 +1,4 @@
+import { synchronizeAgentCancellation } from "./cancellation-intent.js";
 import { observeChildState, reconcileChildRuns } from "./children.js";
 import {
   refreshAgentTaskOutcome
@@ -9,6 +10,7 @@ import {
   normalizeAgentRunState
 } from "../agent-state.js";
 import {
+  ConflictError,
   ValidationError
 } from "../errors.js";
 import {
@@ -118,13 +120,19 @@ export const claimAgentExecution = async <TModel extends LanguageModel>(
   agent: AgentDefinition<TModel>,
   state: AgentRunState
 ) => {
+  if (await synchronizeAgentCancellation(agent.store, state)) return false;
   state.status = "running";
   observeChildState(agent, state);
   state.updatedAt = Date.now();
   const serialized = assertStateSize(agent, agent.store ? normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }) : state);
   if (agent.store) {
-    await saveStateWithRevision(agent.store, state, serialized);
+    try { await saveStateWithRevision(agent.store, state, serialized); }
+    catch (error) {
+      if (!(error instanceof ConflictError) || !await synchronizeAgentCancellation(agent.store, state)) throw error;
+      return false;
+    }
   }
+  return !await synchronizeAgentCancellation(agent.store, state);
 };
 
 const assertStateSize = <TModel extends LanguageModel>(
@@ -158,7 +166,20 @@ export const persistState = async <TModel extends LanguageModel>(
   await refreshAgentTaskOutcome(state, agent.store);
   const serialized = assertStateSize(agent, agent.store ? normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }) : state, policy);
   if (agent.store) {
-    await saveStateWithRevision(agent.store, state, serialized);
+    for (let retry = 0; ; retry++) {
+      try {
+        const nextSerialized = retry === 0 ? serialized : assertStateSize(agent, normalizeAgentRunState({ ...state, revision: (state.revision ?? 0) + 1 }), policy);
+        await saveStateWithRevision(agent.store, state, nextSerialized);
+        break;
+      } catch (error) {
+        if (!(error instanceof ConflictError) || retry >= 7) throw error;
+        const latest = await agent.store.load(state.runId, state.scope);
+        if (!latest || !["cancel_requested", "cancelled"].includes(latest.status)) throw error;
+        Object.assign(state, { status: latest.status, revision: latest.revision,
+          cancelledAt: latest.cancelledAt, cancellationReason: latest.cancellationReason,
+          cancellationCascade: latest.cancellationCascade, error: undefined });
+      }
+    }
   }
   await emitTelemetryEvent(agent, {
     type: "state-saved",
