@@ -441,7 +441,7 @@ describe("chat SSE transport", () => {
 
 describe("remote cancellation acknowledgements", () => {
   it.each([undefined, "confirmed", "failed", "unexpected"])("handles explicit status %s", async (status) => {
-    const fetch = vi.fn(async () => new Response(null, { status: 204,
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(null, { status: 204,
       headers: status ? { "x-zhivex-cancellation-status": status } : undefined }));
     const transport = createFetchChatTransport({ cancelEndpoint: "/cancel", fetch });
     const request = { checkpoint: { streamId: "stable-id", sequence: 2 }, messages: [], signal: new AbortController().signal };
