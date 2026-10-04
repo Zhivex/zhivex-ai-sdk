@@ -438,3 +438,19 @@ describe("chat SSE transport", () => {
     expect(cancelled).toBe(true);
   });
 });
+
+describe("remote cancellation acknowledgements", () => {
+  it.each([undefined, "confirmed", "failed", "unexpected"])("handles explicit status %s", async (status) => {
+    const fetch = vi.fn(async () => new Response(null, { status: 204,
+      headers: status ? { "x-zhivex-cancellation-status": status } : undefined }));
+    const transport = createFetchChatTransport({ cancelEndpoint: "/cancel", fetch });
+    const request = { checkpoint: { streamId: "stable-id", sequence: 2 }, messages: [], signal: new AbortController().signal };
+    expect(await transport.requestCancellation!(request)).toEqual({
+      status: status === "confirmed" || status === "failed" ? status : "uncertain"
+    });
+    expect(fetch.mock.calls[0]?.[0]).toBe("/cancel?streamId=stable-id");
+    // Existing transports and callers can continue using the void-returning method.
+    const legacy: Promise<void> = transport.cancel!(request);
+    expect(await legacy).toBeUndefined();
+  });
+});

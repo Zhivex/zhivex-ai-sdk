@@ -664,3 +664,128 @@ describe("useZhivexChat", () => {
     expect(request?.signal.aborted).toBe(true);
   });
 });
+
+
+describe("remote cancellation", () => {
+  const checkpoint = { streamId: "execution-a", sequence: 1 };
+
+  it("awaits acknowledgement after connection loss and coalesces concurrent requests", async () => {
+    const acknowledgement = createDeferred();
+    const cancel = vi.fn(async () => { await acknowledgement.promise; return { status: "confirmed" as const }; });
+    const transport: ChatTransport = {
+      async *send() {
+        yield { type: "text-delta", id: "answer", textDelta: "partial", replay: checkpoint };
+        throw new ChatTransportError("Disconnected", { code: "network_error" });
+      }, requestCancellation: cancel
+    };
+    const chat = await mountChat({ transport, initialSessionId: "session-a", streamBatchMs: 0 });
+    await act(async () => { await chat.current.send("hello"); });
+    let first!: ReturnType<UseZhivexChatResult["cancel"]>;
+    let second!: typeof first;
+    await act(async () => {
+      first = chat.current.cancel();
+      second = chat.current.cancel();
+    });
+    expect(first).toBe(second);
+    expect(chat.current.cancellation?.status).toBe("pending");
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(transport.requestCancellation!).mock.calls[0]?.[0]).toMatchObject({ checkpoint, sessionId: "session-a" });
+    await act(async () => { acknowledgement.resolve(); await first; });
+    expect(await first).toMatchObject({ status: "confirmed", checkpoint });
+    expect(chat.current.cancellation?.status).toBe("confirmed");
+  });
+
+  it.each([
+    [undefined, "uncertain"],
+    [new Error("Connection lost"), "uncertain"],
+    [new ChatTransportError("Denied", { code: "http_error", status: 403 }), "failed"],
+    [new ChatTransportError("Server failed", { code: "http_error", status: 503 }), "uncertain"]
+  ] as const)("distinguishes ambiguous delivery from rejection: %s", async (error, status) => {
+    const chat = await mountChat({ initialCheckpoint: checkpoint, transport: {
+      async *send() {},
+      async cancel() { if (error) throw error; }
+    } });
+    await act(async () => { expect(await chat.current.cancel()).toMatchObject({ status }); });
+    expect(chat.current.cancellation?.status).toBe(status);
+  });
+
+  it("does not let an old cancellation update a new session", async () => {
+    const acknowledgement = createDeferred();
+    const transport: ChatTransport = { async *send() {}, async requestCancellation() {
+      await acknowledgement.promise;
+      return { status: "confirmed" };
+    } };
+    const chat = await mountChat({ transport, sessionId: "a", initialCheckpoint: checkpoint });
+    let pending!: ReturnType<UseZhivexChatResult["cancel"]>;
+    await act(async () => { pending = chat.current.cancel(); });
+    await chat.rerender({ transport, sessionId: "b" });
+    await act(async () => { acknowledgement.resolve(); await pending; });
+    expect(await pending).toMatchObject({ status: "confirmed", checkpoint });
+    expect(chat.current.sessionId).toBe("b");
+    expect(chat.current.cancellation).toBeUndefined();
+  });
+
+  it("detaches without remote cancellation and preserves identity for a later cancel", async () => {
+    const finished = createDeferred();
+    const cancel = vi.fn(async () => ({ status: "confirmed" as const }));
+    const transport: ChatTransport = { requestCancellation: cancel, async *send(request) {
+      yield { type: "text-delta", id: "answer", textDelta: "partial", replay: checkpoint };
+      request.signal.addEventListener("abort", finished.resolve, { once: true });
+      await finished.promise;
+    } };
+    const chat = await mountChat({ transport, streamBatchMs: 0 });
+    let sending!: Promise<void>;
+    await act(async () => { sending = chat.current.send("hello"); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => { chat.current.detach(); await sending; });
+    expect(cancel).not.toHaveBeenCalled();
+    await act(async () => { await chat.current.cancel(); });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(chat.current.cancellation?.status).toBe("confirmed");
+  });
+});
+
+it.each(["reset", "replace", "send"] as const)("ignores cancellation completion after %s", async (operation) => {
+  const acknowledgement = createDeferred();
+  const onError = vi.fn();
+  const chat = await mountChat({ onError, initialCheckpoint: { streamId: "old", sequence: 1 }, transport: {
+    async *send() {},
+    async requestCancellation() { await acknowledgement.promise; throw new Error("Old execution failed"); }
+  } });
+  let pending!: ReturnType<UseZhivexChatResult["cancel"]>;
+  await act(async () => { pending = chat.current.cancel(); });
+  await act(async () => {
+    if (operation === "reset") chat.current.reset();
+    else if (operation === "replace") chat.current.setMessages([]);
+    else await chat.current.send("New work");
+    acknowledgement.resolve();
+    await pending;
+  });
+  expect((await pending).status).toBe("uncertain");
+  expect(chat.current.cancellation).toBeUndefined();
+  expect(onError).not.toHaveBeenCalled();
+});
+
+it("cancels through the original transport after a disconnected stream", async () => {
+  const original = vi.fn(async () => ({ status: "confirmed" as const }));
+  const replacement = vi.fn(async () => ({ status: "failed" as const }));
+  const chat = await mountChat({ streamBatchMs: 0, transport: {
+    requestCancellation: original,
+    async *send() {
+      yield { type: "stream-start", replay: { streamId: "original", sequence: 1 } };
+      throw new Error("Disconnected");
+    }
+  } });
+  await act(async () => { await chat.current.send("Work"); });
+  await chat.rerender({ transport: { async *send() {}, requestCancellation: replacement } });
+  await act(async () => { await chat.current.cancel(); });
+  expect(original).toHaveBeenCalledTimes(1);
+  expect(replacement).not.toHaveBeenCalled();
+});
+
+it("keeps stop synchronous and reports missing execution identity as uncertain", async () => {
+  const cancel = vi.fn(async () => {});
+  const chat = await mountChat({ transport: { async *send() {}, cancel } });
+  await act(async () => { expect(chat.current.stop()).toBeUndefined(); });
+  expect(chat.current.cancellation?.status).toBe("uncertain");
+  expect(cancel).not.toHaveBeenCalled();
+});

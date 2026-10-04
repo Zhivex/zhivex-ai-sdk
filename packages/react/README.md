@@ -631,3 +631,62 @@ Idle `interrupt()` clears local audio without asking Qwen to cancel a nonexisten
 
 See the [React/Qwen live certification](../../docs/REACT_QWEN_LIVE.md) for the tested
 provider matrix, commands and limits; browser fixture results alone are not live evidence.
+
+## Remote cancellation and local detachment
+
+`chat.detach()` aborts local stream consumption only. `chat.cancel()` detaches and
+returns a promise for the remote cancellation result; it also exposes
+`chat.cancellation` with `pending`, `confirmed`, `failed`, or `uncertain` status.
+`confirmed` requires explicit remote evidence that execution stopped. `failed`
+means a known rejection, while `uncertain` means the outcome could not be
+established (including network loss, timeout, no known execution, or delivery-only
+acknowledgement). Local message status `stopped` never proves remote termination.
+
+```ts
+const result = await chat.cancel();
+if (result.status === "uncertain") {
+  // Reconcile with the host's durable execution status before retrying work.
+}
+```
+
+The existing `stop(): void` remains available and starts the same operation without
+awaiting it. `ChatTransport.cancel(): Promise<void>` remains compatible; its
+successful return is delivery-only and therefore uncertain. New transports may
+implement `requestCancellation(request)` and return a typed result. They must
+return `confirmed` only after remote execution is known to have stopped.
+
+The fetch transport uses the existing authenticated DELETE endpoint and stable
+`checkpoint.streamId`, including after a connection is lost. A successful response
+is uncertain unless `x-zhivex-cancellation-status` explicitly says `confirmed` or
+`failed`. Set that header only from authoritative server evidence; accepting a
+cooperative abort request is insufficient. HTTP 4xx rejection (except 408) is
+failed; timeouts, network failures and 5xx errors remain uncertain.
+
+Cancellation captures the originating transport and checkpoint. Concurrent calls
+share an in-flight promise. A later session switch, reset, transcript replacement,
+or new send prevents the old result from updating the current hook. The original
+caller still receives the old execution's result. Before any cursor is received,
+the SDK cannot infer a stable execution identity and reports uncertain. Restore
+`initialCheckpoint` only with the matching transcript and session.
+
+## An external durable runtime owns the conversation
+
+Use `useExternalChat({ store, selectState, actions })` to subscribe to an existing
+host store with `useSyncExternalStore`. `selectState(snapshot)` is a pure view of
+the existing `ChatState` contract; the hook does not store a second copy, reduce
+stream events, create a transport, or execute an agent. Its `controller` works with
+`ZhivexChat`; its `snapshot` lets the same render display host-owned activity and
+reviews. Store snapshots must be immutable and cached until a change. Provide
+`getServerSnapshot` for server rendering and hydration.
+
+Pass host activity as `ZhivexChat.runtimeActivity` and reviews as
+`ZhivexChat.reviews`. `ReviewCard` accepts `reviewId`, `heading`, optional `details`,
+and opaque `onDecision(approved, reason)` callbacks. Keep host tokens in closures;
+no conversion to `AgentApprovalRequest` is required. Include the owning session in
+`reviewId` so pending decisions and errors cannot bleed into a replacement review.
+The existing `ApprovalCard` remains the SDK approval adapter over the same card.
+
+See the [runnable offline example](../../examples/react-external-runtime/README.md).
+Use `useZhivexChat` with `ChatTransport` when the SDK owns stream reduction, or
+`useExternalChat` when the host owns snapshots. Compose `ChatRoot` and `Message`
+directly if a full controller is unnecessary.

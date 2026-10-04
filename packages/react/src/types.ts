@@ -65,6 +65,18 @@ export type ChatActivity =
       status: AgentStatus;
     };
 
+/** Remote acknowledgement is separate from local stream detachment. */
+export type ChatCancellationResult = {
+  status: "confirmed" | "failed" | "uncertain";
+  checkpoint?: ChatReplayCursor;
+  error?: Error;
+};
+
+export type ChatCancellation = ChatCancellationResult | {
+  status: "pending";
+  checkpoint: ChatReplayCursor;
+};
+
 export interface ChatState {
   /** Bounded execution summaries keyed by run identity, including child runs. */
   runs?: AgentRunView[];
@@ -120,7 +132,10 @@ export interface ChatTransport {
   readonly supportsReload?: boolean;
   readonly supportsReconnect?: boolean;
   reconnect?(request: ChatReconnectRequest): AsyncIterable<ChatStreamChunk>;
+  /** Legacy delivery-only cancellation. Success does not establish remote termination. */
   cancel?(request: ChatReconnectRequest): Promise<void>;
+  /** Return confirmed only when the remote execution is known to have stopped. */
+  requestCancellation?(request: ChatReconnectRequest): Promise<ChatCancellationResult>;
   send(request: ChatTransportRequest): AsyncIterable<ChatStreamChunk>;
 }
 
@@ -255,7 +270,13 @@ export interface UseZhivexChatResult {
   send: (input?: string) => Promise<void>;
   sendMessage: (input: ChatSendInput) => Promise<void>;
   sendMessageWithResult: (input: ChatSendInput) => Promise<ChatSendResult>;
+  /** Legacy convenience: detach locally and request remote cancellation. */
   stop: () => void;
+  /** Detach locally without requesting remote cancellation. */
+  detach: () => void;
+  /** Await remote acknowledgement, including after a lost connection. */
+  cancel: () => Promise<ChatCancellationResult>;
+  cancellation?: ChatCancellation;
   canReconnect: boolean;
   reconnect: () => Promise<ChatSendResult>;
   canReload: boolean;

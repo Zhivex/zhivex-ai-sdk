@@ -800,8 +800,38 @@ export interface ApprovalCardProps extends HTMLAttributes<HTMLElement> {
   labels?: Partial<ChatLabels>;
 }
 
-export function ApprovalCard({
-  approval,
+/** Presentation-only review. Keep opaque runtime tokens inside the callbacks. */
+export interface ReviewCardProps extends Omit<ApprovalCardProps, "approval" | "onDecision" | "onDecisionError"> {
+  /** Change identity when the review or its owning session changes. */
+  reviewId: string;
+  heading: string;
+  details?: string;
+  sourceLabel?: string;
+  onDecision?: (approved: boolean, reason?: string) => void | Promise<void>;
+  onDecisionError?: (error: unknown, approved: boolean) => void;
+}
+
+export function ReviewCard(props: ReviewCardProps) {
+  return <ReviewCardContent key={props.reviewId} {...props} />;
+}
+
+export function ApprovalCard({ approval, onDecision, onDecisionError, ...props }: ApprovalCardProps) {
+  return <ReviewCard
+    {...props}
+    reviewId={approvalKey(approval)}
+    heading={approval.name}
+    details={approval.arguments}
+    sourceLabel={approval.serverLabel}
+    onDecision={onDecision ? (approved, reason) => onDecision(approval, approved, reason) : undefined}
+    onDecisionError={onDecisionError ? (error, approved) => onDecisionError(error, approval, approved) : undefined}
+  />;
+}
+
+function ReviewCardContent({
+  reviewId,
+  heading,
+  details,
+  sourceLabel,
   onDecision,
   onDecisionError,
   disabled = false,
@@ -815,23 +845,24 @@ export function ApprovalCard({
   labels: labelsOverride,
   className,
   ...props
-}: ApprovalCardProps) {
+}: ReviewCardProps) {
   const labels = useChatLabels(labelsOverride);
   const [resolving, setResolving] = useState<"approve" | "reject" | null>(null);
   const [decisionErrorFor, setDecisionErrorFor] = useState<string>();
   const [reason, setReason] = useState("");
   const [reasonValidationFor, setReasonValidationFor] = useState<string>();
+  const decidingRef = useRef(false);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const headingId = useId();
   const decisionErrorId = useId();
   const reasonId = useId();
   const reasonErrorId = useId();
-  const currentApprovalKey = approvalKey(approval);
+  const currentApprovalKey = reviewId;
   const hasDecisionError = decisionErrorFor === currentApprovalKey;
   const hasReasonError = reasonValidationFor === currentApprovalKey;
 
   const decide = async (approved: boolean) => {
-    if (!onDecision || disabled || resolving) return;
+    if (!onDecision || disabled || decidingRef.current) return;
     const shouldIncludeReason = reasonMode === "always" || !approved;
     const normalizedReason = shouldIncludeReason ? reason.trim() : "";
     if (!approved && reasonRequired && normalizedReason.length === 0) {
@@ -842,17 +873,18 @@ export function ApprovalCard({
 
     setDecisionErrorFor(undefined);
     setReasonValidationFor(undefined);
+    decidingRef.current = true;
     setResolving(approved ? "approve" : "reject");
     try {
       await onDecision(
-        approval,
         approved,
         normalizedReason.length > 0 ? normalizedReason : undefined
       );
     } catch (error) {
       setDecisionErrorFor(currentApprovalKey);
-      onDecisionError?.(error, approval, approved);
+      onDecisionError?.(error, approved);
     } finally {
+      decidingRef.current = false;
       setResolving(null);
     }
   };
@@ -875,20 +907,20 @@ export function ApprovalCard({
         <div>
           <span className="zhivex-card__label">{labels.approval}</span>
           <h3 id={headingId}>
-            {humanizeName ? humanizeIdentifier(approval.name) : approval.name}
+            {humanizeName ? humanizeIdentifier(heading) : heading}
           </h3>
         </div>
-        {approval.serverLabel ? (
+        {sourceLabel ? (
           <span className="zhivex-approval__server">
-            {approval.serverLabel}
+            {sourceLabel}
           </span>
         ) : null}
       </div>
       <p>{description ?? labels.approvalDescription}</p>
-      {approval.arguments ? (
+      {details ? (
         <details>
           <summary>{labels.arguments}</summary>
-          <pre>{approval.arguments}</pre>
+          <pre>{details}</pre>
         </details>
       ) : null}
       {reasonMode !== "never" ? (
@@ -1669,6 +1701,10 @@ export interface ChatController {
 export interface ZhivexChatProps
   extends Omit<ChatRootProps, "children" | "label"> {
   controller: ChatController;
+  /** Application-owned activity rendered from the same external snapshot. */
+  runtimeActivity?: ReactNode;
+  /** Application-owned reviews, for example ReviewCard with opaque callbacks. */
+  reviews?: ReactNode;
   agentRunsProps?: Omit<AgentRunsPanelProps, "runs">;
   showAgentRuns?: boolean;
   header?: ReactNode;
@@ -1719,6 +1755,8 @@ export interface ZhivexChatProps
 
 export function ZhivexChat({
   controller,
+  runtimeActivity,
+  reviews,
   agentRunsProps,
   showAgentRuns = true,
   header,
@@ -1787,6 +1825,8 @@ export function ZhivexChat({
         starterPrompts={starterPrompts}
         status={controller.state.status}
       />
+      {runtimeActivity}
+      {reviews}
       {error ? (
         <div className="zhivex-error" data-slot="error" role="alert">
           <span>{formatError?.(error) ?? labels.error}</span>

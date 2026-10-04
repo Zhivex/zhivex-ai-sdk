@@ -236,6 +236,12 @@ Use the `/hooks` and `/components` subpaths for client UI, or `/headless` and
 React at runtime. The server route owns `Runner`, provider credentials, tools,
 authorization, and session persistence. See the [React package guide](./packages/react/README.md) and [Next.js example](./examples/next-runner/README.md).
 
+React hosts with an existing durable runtime can use `useExternalChat` to project
+immutable snapshots into the existing `ChatController`, with host activity and
+opaque review callbacks. The [offline example](examples/react-external-runtime/README.md)
+requires no provider. SDK-owned streams also expose awaitable remote cancellation
+separately from local detachment; see the [React guide](packages/react/README.md#remote-cancellation-and-local-detachment).
+
 ## Provider Compatibility
 
 The SDK aims to keep the application-facing contract stable, but capability parity is not identical across providers yet. Use this matrix as the source of truth for the currently implemented SDK behavior.
