@@ -855,18 +855,22 @@ export const runAgent = async <
     invocationStatus = outputState.status;
     return returnInvocationOutput(toOutput(outputState));
   }
+  let initializingMemory = false;
   try {
+    if (!context.fresh || freshRequiresExistingClaim) {
+      await claimAgentExecution(agent, context.state);
+    }
     if (context.state.memoryInitialization === "pending") {
+      initializingMemory = true;
       const prepared = await initializePendingMemory(agent, context.state);
       context.messages = prepared.messages;
       context.memoryMessages = prepared.memoryMessages;
-    }
-    if (!context.fresh || freshRequiresExistingClaim) {
+      // Persist the initialized context before model execution or another retry.
       await claimAgentExecution(agent, context.state);
     }
     await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals, invocationStartedAt);
   } catch (error) {
-    if (context.state.memoryInitialization === "pending" && !executionLease.leaseLost()) {
+    if (initializingMemory && context.state.memoryInitialization === "pending" && !executionLease.leaseLost()) {
       try {
         await persistFailureState({ ...agent, memory: undefined }, createFailedState(context.state, error), policy);
       } catch { /* Preserve the original initialization error. */ }
@@ -1143,18 +1147,22 @@ export const streamAgent = <
       };
     }
     activeLease = executionLease;
+    let initializingMemory = false;
     try {
+      if (!context.fresh || freshRequiresExistingClaim) {
+        await claimAgentExecution(agent, context.state);
+      }
       if (context.state.memoryInitialization === "pending") {
+        initializingMemory = true;
         const prepared = await initializePendingMemory(agent, context.state);
         context.messages = prepared.messages;
         context.memoryMessages = prepared.memoryMessages;
-      }
-      if (!context.fresh || freshRequiresExistingClaim) {
+        // Persist the initialized context before model execution or another retry.
         await claimAgentExecution(agent, context.state);
       }
       await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals, invocationStartedAt);
     } catch (error) {
-      if (context.state.memoryInitialization === "pending" && !executionLease.leaseLost()) {
+      if (initializingMemory && context.state.memoryInitialization === "pending" && !executionLease.leaseLost()) {
         try {
           await persistFailureState({ ...agent, memory: undefined }, createFailedState(context.state, error), policy);
         } catch { /* Preserve the original initialization error. */ }

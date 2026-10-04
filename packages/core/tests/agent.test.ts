@@ -4343,6 +4343,63 @@ describe("per-invocation memory opt-out", () => {
     expect(generate).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["run", "missing", undefined], ["stream", "missing", undefined],
+    ["run", "disabled", undefined], ["stream", "disabled", undefined],
+    ["run", "missing", false], ["stream", "missing", false],
+    ["run", "disabled", false], ["stream", "disabled", false]
+  ] as const)("claims execution before memory initialization through %s with %s leases and memory %s", async (mode, leases, memoryPolicy) => {
+    const store = createInMemoryAgentRunStore();
+    if (leases === "missing") {
+      delete store.acquireLease;
+      delete store.renewLease;
+      delete store.releaseLease;
+    }
+    const claim = store.claimIdempotencyKey!;
+    let releaseClaims!: () => void;
+    const claimsReady = new Promise<void>(resolve => { releaseClaims = resolve; });
+    let claims = 0;
+    store.claimIdempotencyKey = async state => {
+      // Custom stores can queue the claimed run for execution by a worker.
+      const result = await claim({ ...state, status: "queued" });
+      // Give both workers the same queued revision before either can execute.
+      if (++claims === 2) releaseClaims();
+      await claimsReady;
+      return result;
+    };
+    const scope = { tenantId: "tenant-a", userId: "caller", namespace: "memory-race" };
+    const statesAtMemoryLoad: Array<AgentRunState | undefined> = [];
+    const memory = { load: vi.fn(async ({ runId }: { runId: string }) => {
+      statesAtMemoryLoad.push(await store.load(runId, scope));
+      return [createTextMessage("user", "Claimed memory")];
+    }), save: vi.fn(() => {}) };
+    const model = createLanguageModel();
+    const generate = vi.spyOn(model, "generate");
+    const stream = vi.spyOn(model, "stream");
+    const agent = createAgent({ model, memory, store,
+      policy: leases === "disabled" ? { leaseMode: "disabled" } : undefined,
+      hookFailurePolicy: { memory: "fail" } });
+    const input = { prompt: "Work", idempotencyKey: "memory-race", scope, memory: memoryPolicy };
+    const execute = () => mode === "stream" ? streamAgent(agent, input).collect() : runAgent(agent, input);
+    const results = await Promise.allSettled([execute(), execute()]);
+    const winner = results.find(result => result.status === "fulfilled");
+    const loser = results.find(result => result.status === "rejected");
+    expect(memory.load).toHaveBeenCalledTimes(memoryPolicy === false ? 0 : 1);
+    if (memoryPolicy !== false) {
+      expect(statesAtMemoryLoad).toEqual([expect.objectContaining({ status: "running", revision: 1, memoryInitialization: "pending" })]);
+    }
+    expect(winner?.status === "fulfilled" && winner.value.status).toBe("completed");
+    expect(loser?.status === "rejected" && loser.reason).toBeInstanceOf(ConflictError);
+    if (memoryPolicy === false) expect(memory.save).not.toHaveBeenCalled();
+    expect(mode === "stream" ? stream : generate).toHaveBeenCalledTimes(1);
+    const stored = await store.findByIdempotencyKey!(input.idempotencyKey, scope);
+    expect(stored).toMatchObject({ status: "completed", scope });
+    expect(stored?.memory).toBe(memoryPolicy);
+    expect(stored?.memoryInitialization).toBeUndefined();
+    expect(await store.findByIdempotencyKey!(input.idempotencyKey, { ...scope, tenantId: "tenant-b" })).toBeUndefined();
+    expect(agent.memory).toBe(memory);
+  });
+
   it.each([false, undefined] as const)("recovers pending initialization with persisted memory policy %s", async (memoryPolicy) => {
     const seed = await runAgent(createAgent({ model: createLanguageModel() }), { prompt: "Seed" });
     const store = createInMemoryAgentRunStore();
@@ -4364,10 +4421,11 @@ describe("per-invocation memory opt-out", () => {
     }
   });
 
-  it("records a failed claimed run when strict memory loading fails", async () => {
+  it.each(["run", "stream"] as const)("records a failed claimed %s when strict memory loading fails", async (mode) => {
     const memory = forbiddenMemory();
     const agent = { ...resumableAgent(memory), hookFailurePolicy: { memory: "fail" as const } };
-    await expect(runAgent(agent, { prompt: "Lookup", idempotencyKey: "failed-load" })).rejects.toThrow("Memory must not be read");
+    const input = { prompt: "Lookup", idempotencyKey: "failed-load" };
+    await expect(mode === "stream" ? streamAgent(agent, input).collect() : runAgent(agent, input)).rejects.toThrow("Memory must not be read");
     const stored = await agent.store!.findByIdempotencyKey!("failed-load");
     expect(stored?.status).toBe("failed");
     expect(memory.save).not.toHaveBeenCalled();

@@ -173,7 +173,7 @@ const loadMemoryMessages = <TModel extends AgentDefinition["model"]>(
     [] as ModelMessage[]
   );
 
-/** Called only by the execution lease owner, after the durable policy is resolved. */
+/** Called only after claiming execution ownership and resolving the durable policy. */
 export const initializePendingMemory = async <TModel extends AgentDefinition["model"]>(
   agent: AgentDefinition<TModel>, state: AgentRunState
 ): Promise<{ messages: ModelMessage[]; memoryMessages: ModelMessage[] }> => {

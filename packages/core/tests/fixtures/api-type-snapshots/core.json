@@ -24,7 +24,7 @@
   "agent/children.d.ts": "0115d4a9d0a5f09efcdae7e369c4b9ee47a0b8f3cfabf2b6692367b122a10d8e",
   "agent/common.d.ts": "856da8a656ee61154bd5396d3c8b7a0d535ed0c8586d8acc5449ae85eb2de1d2",
   "agent/compaction.d.ts": "5a48553953578e8628d5f80bc02a1accfc8fd2b5b07ab67c81dc7fe0393644b8",
-  "agent/context.d.ts": "4f0c5aff327a9e927bf158e5ec014c54ff55730e26db152192fde553b0013092",
+  "agent/context.d.ts": "333839b782fe8f8405742e79e318adbbba492eb2b0c1b79d17908591fbf1a2ec",
   "agent/definition.d.ts": "5ea8efd337822b79abf77b4bae0e73a03416e387dafa279db6227a8461d4cd59",
   "agent/execution.d.ts": "653a4330f378d3dfd93d78f729808119b501a3580e08d238348aae8d5864d7c2",
   "agent/groups.d.ts": "d0d6cf286a3c090ec58515a9cd99a6fe04dc32f573a4f7765e6a4bed1ec12ef7",

@@ -314,6 +314,11 @@ choose different policies. Resuming by serialized state, durable `runId`, or
 may read memory. A child checkpoint also retains opt-out when resumed directly
 with its original definition.
 
+Before initializing memory, the runtime claims execution with a revision check,
+including when leases are unavailable or disabled. Custom stores must enforce
+`save(state, { expectedRevision })` atomically so a concurrent retry cannot also
+initialize memory. The initialized context is checkpointed before model execution.
+
 ```ts
 const result = await agent.run({ prompt: "Handle this without memory", memory: false });
 // The saved state carries the policy; omission cannot re-enable memory.
