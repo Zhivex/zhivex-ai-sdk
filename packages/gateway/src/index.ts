@@ -14,6 +14,7 @@ import {
   ConflictError,
   GuardrailTriggeredError,
   ProviderHTTPError,
+  ProviderToolCallError,
   ValidationError,
   createStructuredOutputPrompt,
   createTextMessage,
@@ -139,7 +140,7 @@ type RouteRequiredCapabilities = NonNullable<GatewayRequest["requiredCapabilitie
 };
 
 type ErrorDisposition = {
-  error: GatewayError;
+  error: GatewayError | ProviderToolCallError;
   retrySameTarget: boolean;
   fallbackNextTarget: boolean;
   retryAfterMs?: number;
@@ -578,6 +579,10 @@ const redactSensitiveErrorMessage = (message: string): string =>
     .replace(/\b(Bearer)\s+[a-z\d._~+/=-]+/gi, "$1 [REDACTED]");
 
 const normalizeError = (error: unknown): ErrorDisposition => {
+  if (error instanceof ProviderToolCallError) {
+    const replaySafe = error.retryable && !error.effectsPossible;
+    return { error, retrySameTarget: replaySafe, fallbackNextTarget: replaySafe };
+  }
   if (error instanceof GatewayBudgetError || error instanceof GatewayDeadlineError) return { error, retrySameTarget: false, fallbackNextTarget: false };
   if (error instanceof ValidationError || error instanceof ConflictError || error instanceof GuardrailTriggeredError) {
     return {
@@ -1357,7 +1362,7 @@ export const createGateway = (config: GatewayConfig) => {
     };
     const dispositionFor = (error: unknown): ErrorDisposition => {
       const disposition = normalizeError(error);
-      if (context.toolHistory) {
+      if (context.toolHistory && !(disposition.error instanceof ProviderToolCallError)) {
         disposition.error = new GatewayError(
           "Gateway provider failed while continuing tool history.",
           disposition.error.retryable
@@ -1385,7 +1390,8 @@ export const createGateway = (config: GatewayConfig) => {
       );
     };
 
-    const throwFinalError = (): never => {
+    const throwFinalError = (lastAttemptError?: ErrorDisposition["error"]): never => {
+      if (lastAttemptError instanceof ProviderToolCallError) throw lastAttemptError;
       if (context.attempts.at(-1)?.reasonCode === "circuit-open") throw new GatewayCircuitOpenError();
       if (context.attempts.at(-1)?.reasonCode === "admission-denied") throw new GatewayAdmissionError();
       throw new GatewayError(
@@ -1396,6 +1402,7 @@ export const createGateway = (config: GatewayConfig) => {
 
     const generate = async (input: ModelGenerateInput): Promise<GenerateResult> => {
       await context.flushAttempts();
+      let lastAttemptError: ErrorDisposition["error"] | undefined;
       const candidates = context.winner
         ? [context.winner, ...context.candidates.filter((candidate) => candidate !== context.winner)]
         : context.candidates;
@@ -1466,15 +1473,18 @@ export const createGateway = (config: GatewayConfig) => {
             }
 
             const disposition = dispositionFor(error);
+            lastAttemptError = disposition.error;
             permit?.end(disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
             await context.recordAttempt(
               createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                 retry,
                 reasonCode: error instanceof GatewayAdmissionError ? "admission-denied" : error instanceof GatewayBudgetError ? "budget-denied" : "provider-error",
-                errorMessage: disposition.error.message
+                errorMessage: disposition.error.message,
+                ...(error instanceof ProviderToolCallError ? { usage: error.usage } : {})
               })
             );
 
+            if (!disposition.fallbackNextTarget) throw disposition.error;
             if (config.circuitBreaker?.snapshot(candidate.target)?.state === "open") break;
             if (retry < maxRetries && disposition.retrySameTarget) {
               await abortableSleep(retryBackoffMs(config, retry, disposition.retryAfterMs), input.abortSignal);
@@ -1488,11 +1498,12 @@ export const createGateway = (config: GatewayConfig) => {
         }
       }
 
-      return throwFinalError();
+      return throwFinalError(lastAttemptError);
     };
 
     const stream = async (input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> => {
       await context.flushAttempts();
+      let lastAttemptError: ErrorDisposition["error"] | undefined;
       const candidates = context.winner
         ? [context.winner, ...context.candidates.filter((candidate) => candidate !== context.winner)]
         : context.candidates;
@@ -1597,10 +1608,12 @@ export const createGateway = (config: GatewayConfig) => {
                 const disposition = dispositionFor(error);
                 permit?.end(aborted ? "neutral" : disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
                 const diagnostic = disposition.error;
+                // Validated terminal tool-error counters supersede earlier finish usage.
+                if (diagnostic instanceof ProviderToolCallError && diagnostic.usage) usage = diagnostic.usage;
                 const failure = aborted ? abortReason(input.abortSignal!) : context.toolHistory ? diagnostic : error;
                 await context.recordAttempt(createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                   retry,
-                  ...(config.costAccounting ? { usage } : {}),
+                  ...(config.costAccounting || diagnostic instanceof ProviderToolCallError ? { usage } : {}),
                   reasonCode: aborted ? "request-aborted" : "provider-error",
                   errorMessage: aborted ? abortReason(input.abortSignal!).message : diagnostic.message
                 }));
@@ -1646,15 +1659,18 @@ export const createGateway = (config: GatewayConfig) => {
             }
 
             const disposition = dispositionFor(error);
+            lastAttemptError = disposition.error;
             permit?.end(disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
             await context.recordAttempt(
               createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                 retry,
                 reasonCode: error instanceof GatewayAdmissionError ? "admission-denied" : error instanceof GatewayBudgetError ? "budget-denied" : "provider-error",
-                errorMessage: disposition.error.message
+                errorMessage: disposition.error.message,
+                ...(error instanceof ProviderToolCallError ? { usage: error.usage } : {})
               })
             );
 
+            if (!disposition.fallbackNextTarget) throw disposition.error;
             if (config.circuitBreaker?.snapshot(candidate.target)?.state === "open") break;
             if (retry < maxRetries && disposition.retrySameTarget) {
               await abortableSleep(retryBackoffMs(config, retry, disposition.retryAfterMs), input.abortSignal);
@@ -1668,7 +1684,7 @@ export const createGateway = (config: GatewayConfig) => {
         }
       }
 
-      return throwFinalError();
+      return throwFinalError(lastAttemptError);
     };
 
     return {
