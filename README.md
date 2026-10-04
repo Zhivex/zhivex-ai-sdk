@@ -489,3 +489,8 @@ cannot be guaranteed; reconciliation can recover only states actually saved.
 ### Qwen Cloud specialized APIs
 
 Qwen Cloud adds typed Decision Preview, native dense/sparse embeddings, binary speech synthesis and streaming recognition, asynchronous file transcription, image translation and world sessions. See the [Qwen Cloud support matrix](./docs/QWEN_CLOUD_SUPPORT.md) for factory selection, endpoint configuration and the distinction between implemented contracts and live validation. The [Decision guide](./docs/QWEN_CLOUD_DECISION.md) includes a measured, small comparison with Qwen Flash.
+
+Agent invocations support `memory: false` to disable memory reads and writes,
+including declared subagents, without changing shared definitions. Pass it again
+on resume; durable run persistence remains independent. See the
+[agent memory guidance](docs/AGENTS.md#per-invocation-memory-opt-out).

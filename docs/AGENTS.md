@@ -290,3 +290,24 @@ its result within this run; use a distinct operation ID for a new intentional
 mutation. Other inputs are separate operations. Lease ownership is fenced at each
 write. SQL stores currently reject this API until they implement the same fencing
 capability; direct journal editing is not a supported reconciliation workflow.
+
+## Per-invocation memory opt-out
+
+Pass `memory: false` to `Agent.run`, `Agent.stream`, `Agent.resume`, `runAgent`,
+`streamAgent`, or `resumeAgent` to disable all `AgentMemoryStore.load` and `save`
+calls for that invocation. This overrides the agent definition and every declared
+subagent's memory, including explicit child adapters and nested descendants.
+Omitting the option preserves definition defaults and existing subagent inheritance.
+Definitions are not mutated, so concurrent invocations may choose independently.
+
+```ts
+const result = await agent.run({ prompt: "Handle this without memory", memory: false });
+const resumed = await agent.resume({ state: result.state, memory: false, maxSteps: 4 });
+```
+
+The choice is ephemeral: supply it again on each resume or new handoff invocation.
+A resumed state may already contain messages loaded during an earlier invocation;
+opt-out prevents new memory access, but does not erase those messages. Run stores,
+checkpoints, tool journals, compaction and application tools remain independent.
+If a custom tool starts its own agent outside the declared `subagents` tree, the
+application must pass the opt-out to that independent invocation too.

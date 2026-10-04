@@ -1,3 +1,4 @@
+import { withoutInvocationMemory } from "./memory.js";
 import { createAgentBudgetCoordinator, assertAgentTokenReservation } from "../agent-budget-coordinator.js";
 import { childStateObserver, loadFailureState, runCheckpoints, observeChildState, projectChildRun, reconcileChildRuns, upsertChildRun } from "./children.js";
 import { validateMaxSteps } from "../validate-max-steps.js";
@@ -775,6 +776,7 @@ export const runAgent = async <
   agent: AgentDefinition<TModel, TContext, TOutput, TContextInput>,
   input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>> = {}
 ): Promise<AgentRunOutput<TOutput>> => {
+  if (input.memory === false) agent = withoutInvocationMemory(agent);
   const invocationStartedAt = Date.now();
   const telemetryRunId = input.runId ?? input.state?.runId ?? randomId("run");
   const invocationInput = input.runId || input.state
@@ -1017,6 +1019,7 @@ export const streamAgent = <
   agent: AgentDefinition<TModel, TContext, TOutput, TContextInput>,
   input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>> = {}
 ): AgentStreamResult<TOutput> => {
+  if (input.memory === false) agent = withoutInvocationMemory(agent);
   const invocationStartedAt = Date.now();
   const telemetryRunId = input.runId ?? input.state?.runId ?? randomId("run");
   const invocationInput = input.runId || input.state

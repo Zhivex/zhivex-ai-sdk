@@ -4151,3 +4151,84 @@ describe("agent runtime", () => {
     );
   });
 });
+
+
+describe("per-invocation memory opt-out", () => {
+  const forbiddenMemory = () => ({
+    load: vi.fn(() => { throw new Error("Memory must not be read"); }),
+    save: vi.fn(() => { throw new Error("Memory must not be written"); })
+  });
+
+  it.each(["run", "stream", "facade"] as const)("disables reads and writes through %s", async (mode) => {
+    const memory = forbiddenMemory();
+    const store = createInMemoryAgentRunStore();
+    const agent = createAgent({ model: createLanguageModel(), memory, store,
+      hookFailurePolicy: { memory: "fail" } });
+    const input = { prompt: "No memory", memory: false as const };
+    const result = mode === "stream" ? await streamAgent(agent, input).collect()
+      : mode === "facade" ? await new Agent(agent).run(input) : await runAgent(agent, input);
+    expect(result.status).toBe("completed");
+    expect(memory.load).not.toHaveBeenCalled();
+    expect(memory.save).not.toHaveBeenCalled();
+    expect(await store.load(result.state.runId)).toBeDefined();
+    expect(agent.memory).toBe(memory);
+  });
+
+  it("overrides explicit nested subagent memory without changing definition defaults", async () => {
+    const memory = forbiddenMemory();
+    const childMemory = forbiddenMemory();
+    const grandchildMemory = forbiddenMemory();
+    const delegateModel = () => {
+      let calls = 0;
+      return createLanguageModel({ async generate() {
+        if (calls++ === 0) return {
+          messages: [{ role: "assistant" as const, parts: [{ type: "tool-call" as const,
+            toolCall: { id: "delegate-call", name: "delegate", input: { prompt: "Nested work" } } }] }],
+          finishReason: "tool-calls" as const
+        };
+        return { messages: [createTextMessage("assistant", "Done")], text: "Done", finishReason: "stop" as const };
+      } });
+    };
+    const grandchild = createAgent({ id: "grandchild", model: createLanguageModel(), memory: grandchildMemory });
+    const child = createAgent({ id: "child", model: delegateModel(), memory: childMemory,
+      maxSteps: 2, subagents: [{ name: "delegate", agent: grandchild }] });
+    const parent = createAgent({ model: delegateModel(), memory, maxSteps: 2,
+      subagents: [{ name: "delegate", agent: child }] });
+    const result = await runAgent(parent, { prompt: "Delegate", memory: false });
+    expect(result.status).toBe("completed");
+    expect(result.state.childRuns).toHaveLength(1);
+    for (const adapter of [memory, childMemory, grandchildMemory]) {
+      expect(adapter.load).not.toHaveBeenCalled();
+      expect(adapter.save).not.toHaveBeenCalled();
+    }
+    expect(parent.memory).toBe(memory);
+    expect(child.memory).toBe(childMemory);
+    expect(grandchild.memory).toBe(grandchildMemory);
+  });
+
+  it("requires opt-out again on resume and preserves legacy default memory access", async () => {
+    const memory = { load: vi.fn(() => []), save: vi.fn(() => {}) };
+    const makeAgent = () => {
+      let calls = 0;
+      return createAgent({ memory, model: createLanguageModel({ async generate() {
+        if (calls++ === 0) return {
+          messages: [{ role: "assistant" as const, parts: [{ type: "tool-call" as const,
+            toolCall: { id: "lookup-call", name: "lookup", input: {} } }] }],
+          finishReason: "tool-calls" as const
+        };
+        return { messages: [createTextMessage("assistant", "Done")], text: "Done", finishReason: "stop" as const };
+      } }), tools: { lookup: tool({ name: "lookup", schema: z.object({}), execute: () => "Found" }) } });
+    };
+    const agent = makeAgent();
+    const paused = await runAgent(agent, { prompt: "Lookup", memory: false, maxSteps: 1 });
+    await resumeAgent(agent, { state: paused.state, maxSteps: 2, memory: false });
+    expect(memory.load).not.toHaveBeenCalled();
+    expect(memory.save).not.toHaveBeenCalled();
+    const other = makeAgent();
+    const next = await runAgent(other, { prompt: "Lookup", memory: false, maxSteps: 1 });
+    await resumeAgent(other, { state: next.state, maxSteps: 2 });
+    expect(memory.save).toHaveBeenCalled();
+    await runAgent(createAgent({ model: createLanguageModel(), memory }), { prompt: "Default" });
+    expect(memory.load).toHaveBeenCalled();
+  });
+});
