@@ -1,6 +1,7 @@
 import type { ContentPart, UIMessage } from "@zhivex-ai/core";
 import type {
   ChatRequestBody,
+  ChatCancellationResult,
   ChatReconnectRequest,
   ChatStreamChunk,
   ChatTransport,
@@ -577,7 +578,11 @@ export class FetchChatTransport implements ChatTransport {
   }
 
   async cancel(request: ChatReconnectRequest): Promise<void> {
-    if (!this.options.cancelEndpoint) return;
+    await this.requestCancellation(request);
+  }
+
+  async requestCancellation(request: ChatReconnectRequest): Promise<ChatCancellationResult> {
+    if (!this.options.cancelEndpoint) return { status: "uncertain" };
     const control = createRequestControl(request.signal, 10_000);
     try {
       const headers = await awaitWithSignal(Promise.resolve().then(() => typeof this.options.headers === "function"
@@ -589,6 +594,10 @@ export class FetchChatTransport implements ChatTransport {
       ), control.signal);
       if (!response.ok) throw new ChatTransportError("Unable to cancel the background chat run.", { code: "http_error", status: response.status });
       await response.body?.cancel();
+      // An accepted DELETE alone does not prove cooperative execution has stopped.
+      const acknowledgement = response.headers.get("x-zhivex-cancellation-status");
+      return { status: acknowledgement === "confirmed" || acknowledgement === "failed"
+        ? acknowledgement : "uncertain" };
     } finally { control.dispose(); }
   }
 

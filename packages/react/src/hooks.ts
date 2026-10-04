@@ -11,3 +11,4 @@ export type {
   UseZhivexChatOptions,
   UseZhivexChatResult
 } from "./types.js";
+export * from "./use-external-chat.js";
