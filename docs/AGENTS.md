@@ -290,3 +290,50 @@ its result within this run; use a distinct operation ID for a new intentional
 mutation. Other inputs are separate operations. Lease ownership is fenced at each
 write. SQL stores currently reject this API until they implement the same fencing
 capability; direct journal editing is not a supported reconciliation workflow.
+
+## Per-invocation memory opt-out
+
+Pass `memory: false` to `Agent.run`, `Agent.stream`, `Agent.resume`, `runAgent`,
+`streamAgent`, or `resumeAgent` to disable all `AgentMemoryStore.load` and `save`
+calls. The runtime records `memory: false` in the run state and in declared
+subagents' states, so the policy survives serialization and later resumes.
+
+Precedence is explicit:
+
+1. A persisted `state.memory: false` always disables memory, even when the new
+   invocation omits the option or uses a definition with a memory adapter.
+2. An invocation's `memory: false` disables memory for that run and every declared
+   descendant, overriding inherited and explicit child adapters.
+3. When neither input nor state disables memory, existing definition defaults and
+   subagent inheritance apply unchanged.
+
+There is no `memory: true` override for an opted-out run. Start a separate fresh run
+to use memory again. Definitions are not mutated, so independent invocations may
+choose different policies. Resuming by serialized state, durable `runId`, or
+`idempotencyKey` retains the opt-out; only the winner of a fresh idempotency claim
+may read memory. A child checkpoint also retains opt-out when resumed directly
+with its original definition.
+
+Before initializing memory, the runtime claims execution with a revision check,
+including when leases are unavailable or disabled. Custom stores must enforce
+`save(state, { expectedRevision })` atomically so a concurrent retry cannot also
+initialize memory. The initialized context is checkpointed before model execution.
+
+```ts
+const result = await agent.run({ prompt: "Handle this without memory", memory: false });
+// The saved state carries the policy; omission cannot re-enable memory.
+const resumed = await agent.resume({ state: result.state, maxSteps: 4 });
+```
+
+Keep the complete SDK state when serializing checkpoints. Legacy states without
+the marker preserve their historical defaults: an empty message list cannot prove
+that memory was disabled. If the original policy of an unmarked checkpoint is
+unknown, pass `memory: false` on resume to establish a disabled policy. Invalid
+persisted marker values are rejected rather than interpreted as permission to
+access memory.
+
+A state may contain messages loaded before memory was disabled; opt-out prevents
+new memory access but does not erase those messages. Run stores, checkpoints,
+tool journals and compaction remain independent. New handoff runs and custom tools
+that start agents outside the declared `subagents` tree are independent invocations;
+pass the opt-out explicitly when they should also disable memory.

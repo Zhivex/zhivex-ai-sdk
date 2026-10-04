@@ -217,3 +217,13 @@ describe("agent handoff IDs", () => {
     expect(createAgentHandoff({ source, id: "handoff_durable_1" }).id).toBe("handoff_durable_1");
   });
 });
+
+
+it("preserves durable memory opt-out and rejects values that could silently enable it", () => {
+  expect(normalizeAgentRunState({ ...validState(), memory: false }).memory).toBe(false);
+  expect(normalizeAgentRunState(validState()).memory).toBeUndefined();
+  expect(() => normalizeAgentRunState({ ...validState(), memoryInitialization: "ready" })).toThrow("memoryInitialization");
+  for (const memory of [true, "false", null, 0]) {
+    expect(() => normalizeAgentRunState({ ...validState(), memory })).toThrow("memory");
+  }
+});
