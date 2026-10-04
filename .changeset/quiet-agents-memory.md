@@ -4,4 +4,4 @@
 "@zhivex-ai/agents": patch
 ---
 
-Add per-invocation memory opt-out for agent runs, streams, resumes, and declared subagents while preserving configured defaults.
+Add per-invocation memory opt-out for agent runs, streams, resumes, and declared subagents with a persisted disabled policy that survives resumes, while preserving defaults for independent runs and legacy unmarked states.

@@ -47,6 +47,7 @@ import {
   ValidationError,
   type AgentStreamEvent,
   type AgentRunState,
+  type AgentMemoryStore,
   type AgentRunStore,
   type AgentExecutionEnvironment,
   type PostgresClientLike,
@@ -4206,29 +4207,169 @@ describe("per-invocation memory opt-out", () => {
     expect(grandchild.memory).toBe(grandchildMemory);
   });
 
-  it("requires opt-out again on resume and preserves legacy default memory access", async () => {
+  const resumableAgent = (memory: AgentMemoryStore) => {
+    let calls = 0;
+    return createAgent({ memory, store: createInMemoryAgentRunStore(), model: createLanguageModel({ async generate() {
+      if (calls++ === 0) return {
+        messages: [{ role: "assistant" as const, parts: [{ type: "tool-call" as const,
+          toolCall: { id: "lookup-call", name: "lookup", input: {} } }] }],
+        finishReason: "tool-calls" as const
+      };
+      return { messages: [createTextMessage("assistant", "Done")], text: "Done", finishReason: "stop" as const };
+    } }), tools: { lookup: tool({ name: "lookup", schema: z.object({}), execute: () => "Found" }) } });
+  };
+
+  it.each(["state", "runId", "idempotencyKey", "stream", "facade"] as const)(
+    "preserves opt-out when resuming by %s without repeating it", async (mode) => {
+      const memory = forbiddenMemory();
+      const agent = resumableAgent(memory);
+      const paused = await runAgent(agent, { prompt: "Lookup", memory: false, maxSteps: 1,
+        idempotencyKey: "private-request" });
+      expect(paused.state.memory).toBe(false);
+      const restored = JSON.parse(JSON.stringify(paused.state)) as AgentRunState;
+      const resumed = mode === "runId" ? await runAgent(agent, { runId: paused.state.runId, maxSteps: 2 })
+        : mode === "idempotencyKey" ? await runAgent(agent, { prompt: "Lookup", idempotencyKey: "private-request", maxSteps: 2 })
+        : mode === "stream" ? await streamAgent(agent, { state: restored, maxSteps: 2 }).collect()
+        : mode === "facade" ? await new Agent(agent).resume({ state: restored, maxSteps: 2 })
+        : await resumeAgent(agent, { state: restored, maxSteps: 2 });
+      expect(resumed.status).toBe("completed");
+      expect(resumed.state.memory).toBe(false);
+      expect((await agent.store!.load(resumed.state.runId))?.memory).toBe(false);
+      expect(memory.load).not.toHaveBeenCalled();
+      expect(memory.save).not.toHaveBeenCalled();
+    }
+  );
+
+  it("lets an invocation disable memory on a legacy resume and keeps fresh defaults independent", async () => {
     const memory = { load: vi.fn(() => []), save: vi.fn(() => {}) };
-    const makeAgent = () => {
-      let calls = 0;
-      return createAgent({ memory, model: createLanguageModel({ async generate() {
-        if (calls++ === 0) return {
-          messages: [{ role: "assistant" as const, parts: [{ type: "tool-call" as const,
-            toolCall: { id: "lookup-call", name: "lookup", input: {} } }] }],
-          finishReason: "tool-calls" as const
-        };
-        return { messages: [createTextMessage("assistant", "Done")], text: "Done", finishReason: "stop" as const };
-      } }), tools: { lookup: tool({ name: "lookup", schema: z.object({}), execute: () => "Found" }) } });
-    };
-    const agent = makeAgent();
-    const paused = await runAgent(agent, { prompt: "Lookup", memory: false, maxSteps: 1 });
-    await resumeAgent(agent, { state: paused.state, maxSteps: 2, memory: false });
+    const agent = resumableAgent(memory);
+    const paused = await runAgent(agent, { prompt: "Lookup", maxSteps: 1 });
+    expect(paused.state.memory).toBeUndefined();
+    expect(memory.load).toHaveBeenCalled();
+    expect(memory.save).toHaveBeenCalled();
+    memory.load.mockClear();
+    memory.save.mockClear();
+    const resumed = await resumeAgent(agent, { state: paused.state, maxSteps: 2, memory: false });
+    expect(resumed.state.memory).toBe(false);
     expect(memory.load).not.toHaveBeenCalled();
     expect(memory.save).not.toHaveBeenCalled();
-    const other = makeAgent();
-    const next = await runAgent(other, { prompt: "Lookup", memory: false, maxSteps: 1 });
-    await resumeAgent(other, { state: next.state, maxSteps: 2 });
-    expect(memory.save).toHaveBeenCalled();
-    await runAgent(createAgent({ model: createLanguageModel(), memory }), { prompt: "Default" });
+    await runAgent(createAgent({ model: createLanguageModel(), memory }), { prompt: "Fresh defaults" });
     expect(memory.load).toHaveBeenCalled();
+    expect(memory.save).toHaveBeenCalled();
+  });
+
+  it("retains default writes for a legacy resume with no opt-out marker", async () => {
+    const memory = { load: vi.fn(() => []), save: vi.fn(() => {}) };
+    const agent = resumableAgent(memory);
+    const paused = await runAgent(agent, { prompt: "Lookup", maxSteps: 1 });
+    memory.save.mockClear();
+    const resumed = await resumeAgent(agent, { state: paused.state, maxSteps: 2 });
+    expect(resumed.state.memory).toBeUndefined();
+    expect(memory.save).toHaveBeenCalled();
+  });
+
+  it.each(["parent", "child"] as const)("persists inherited opt-out for a %s approval resume", async (mode) => {
+    const memory = forbiddenMemory();
+    const childMemory = forbiddenMemory();
+    const effect = vi.fn(() => "Approved");
+    const modelCalling = (name: string, input: Record<string, string>) => {
+      let calls = 0;
+      return createLanguageModel({ async generate() {
+        if (calls++ === 0) return {
+          messages: [{ role: "assistant" as const, parts: [{ type: "tool-call" as const,
+            toolCall: { id: name + "-call", name, input } }] }], finishReason: "tool-calls" as const
+        };
+        return { messages: [createTextMessage("assistant", "Done")], text: "Done", finishReason: "stop" as const };
+      } });
+    };
+    const child = createAgent({ id: "private-child", memory: childMemory, maxSteps: 2,
+      model: modelCalling("review", {}), tools: { review: tool({ name: "review", schema: z.object({}),
+        requiresApproval: true, approvalMode: "interrupt", execute: effect }) } });
+    const parent = createAgent({ memory, maxSteps: 2, model: modelCalling("delegate", { prompt: "Review" }),
+      subagents: [{ name: "delegate", agent: child }] });
+    const waiting = await runAgent(parent, { prompt: "Delegate", memory: false });
+    expect(waiting.status).toBe("waiting_approval");
+    expect(waiting.state.memory).toBe(false);
+    expect(waiting.state.childRuns?.[0]?.resumeState?.memory).toBe(false);
+    const state = JSON.parse(JSON.stringify(mode === "parent" ? waiting.state : waiting.state.childRuns![0]!.resumeState!)) as AgentRunState;
+    const resumed = await resumeAgent(mode === "parent" ? parent : child, { state,
+      approvals: state.pendingApprovals.map(approval => ({ provider: approval.provider, approvalRequestId: approval.id, approve: true })) });
+    expect(resumed.status).toBe("completed");
+    expect(resumed.state.memory).toBe(false);
+    expect(effect).toHaveBeenCalledTimes(1);
+    for (const adapter of [memory, childMemory]) {
+      expect(adapter.load).not.toHaveBeenCalled();
+      expect(adapter.save).not.toHaveBeenCalled();
+    }
+  });
+
+  it("loads memory only for a winning fresh idempotency claim", async () => {
+    const memory = { load: vi.fn(() => [createTextMessage("user", "Remembered")]), save: vi.fn(() => {}) };
+    const agent = resumableAgent(memory);
+    const first = await runAgent(agent, { prompt: "Lookup", idempotencyKey: "normal", maxSteps: 1 });
+    expect(memory.load).toHaveBeenCalledTimes(1);
+    expect(first.messages.some(message => message.parts.some(part => part.type === "text" && part.text === "Remembered"))).toBe(true);
+    await runAgent(agent, { prompt: "Lookup", idempotencyKey: "normal", maxSteps: 2 });
+    expect(memory.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the execution lease while initializing a fresh idempotent run", async () => {
+    const store = createInMemoryAgentRunStore();
+    const acquire = vi.spyOn(store, "acquireLease");
+    let releaseLoad!: () => void;
+    let loadStarted!: () => void;
+    const started = new Promise<void>(resolve => { loadStarted = resolve; });
+    const blocked = new Promise<void>(resolve => { releaseLoad = resolve; });
+    const memory = { load: vi.fn(async () => {
+      expect(acquire).toHaveBeenCalledTimes(1);
+      loadStarted();
+      await blocked;
+      return [createTextMessage("user", "Remembered under lease")];
+    }), save: vi.fn(() => {}) };
+    const model = createLanguageModel();
+    const generate = vi.spyOn(model, "generate");
+    const agent = createAgent({ store, memory, model });
+    const first = runAgent(agent, { prompt: "Work", idempotencyKey: "lease-test" });
+    await started;
+    expect((await store.findByIdempotencyKey!("lease-test"))?.memoryInitialization).toBe("pending");
+    const duplicate = await runAgent(agent, { prompt: "Work", idempotencyKey: "lease-test" });
+    expect(duplicate.status).toBe("running");
+    expect(generate).not.toHaveBeenCalled();
+    expect(memory.load).toHaveBeenCalledTimes(1);
+    releaseLoad();
+    const result = await first;
+    expect(result.status).toBe("completed");
+    expect(result.state.memoryInitialization).toBeUndefined();
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, undefined] as const)("recovers pending initialization with persisted memory policy %s", async (memoryPolicy) => {
+    const seed = await runAgent(createAgent({ model: createLanguageModel() }), { prompt: "Seed" });
+    const store = createInMemoryAgentRunStore();
+    await store.save({ ...seed.state, runId: "recover", revision: 0, status: "running", currentStep: 0,
+      steps: [], outputText: "", messages: [createTextMessage("user", "Recover")],
+      memory: memoryPolicy, memoryInitialization: "pending" });
+    const memory = { load: vi.fn(() => [createTextMessage("user", "Recovered context")]), save: vi.fn(() => {}) };
+    const result = await runAgent(createAgent({ model: createLanguageModel(), memory, store }), { runId: "recover" });
+    expect(result.status).toBe("completed");
+    expect(result.state.memoryInitialization).toBeUndefined();
+    if (memoryPolicy === false) {
+      expect(result.state.memory).toBe(false);
+      expect(memory.load).not.toHaveBeenCalled();
+      expect(memory.save).not.toHaveBeenCalled();
+    } else {
+      expect(memory.load).toHaveBeenCalledTimes(1);
+      expect(memory.save).toHaveBeenCalled();
+      expect(result.messages.some(message => message.parts.some(part => part.type === "text" && part.text === "Recovered context"))).toBe(true);
+    }
+  });
+
+  it("records a failed claimed run when strict memory loading fails", async () => {
+    const memory = forbiddenMemory();
+    const agent = { ...resumableAgent(memory), hookFailurePolicy: { memory: "fail" as const } };
+    await expect(runAgent(agent, { prompt: "Lookup", idempotencyKey: "failed-load" })).rejects.toThrow("Memory must not be read");
+    const stored = await agent.store!.findByIdempotencyKey!("failed-load");
+    expect(stored?.status).toBe("failed");
+    expect(memory.save).not.toHaveBeenCalled();
   });
 });

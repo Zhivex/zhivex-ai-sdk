@@ -8,7 +8,9 @@ it("keeps default memory compatible and exposes opt-out through the SDK facade",
     { text: "Default", messages: [createTextMessage("assistant", "Default")], finishReason: "stop" }
   ] }) });
   const input: AgentRunInput = { prompt: "Private invocation", memory: false };
-  expect((await agent.run(input)).status).toBe("completed");
+  const result = await agent.run(input);
+  expect(result.status).toBe("completed");
+  expect(result.state.memory).toBe(false);
   expect(memory.load).not.toHaveBeenCalled();
   expect(memory.save).not.toHaveBeenCalled();
   await agent.run({ prompt: "Use defaults" });

@@ -1,4 +1,4 @@
-import { withoutInvocationMemory } from "./memory.js";
+import { hasDisabledMemory, withoutInvocationMemory } from "./memory.js";
 import { createAgentBudgetCoordinator, assertAgentTokenReservation } from "../agent-budget-coordinator.js";
 import { childStateObserver, loadFailureState, runCheckpoints, observeChildState, projectChildRun, reconcileChildRuns, upsertChildRun } from "./children.js";
 import { validateMaxSteps } from "../validate-max-steps.js";
@@ -105,7 +105,8 @@ import {
   persistState
 } from "./state.js";
 import {
-  resolveContext
+  resolveContext,
+  initializePendingMemory
 } from "./context.js";
 import {
   emitApprovalTelemetry,
@@ -776,7 +777,10 @@ export const runAgent = async <
   agent: AgentDefinition<TModel, TContext, TOutput, TContextInput>,
   input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>> = {}
 ): Promise<AgentRunOutput<TOutput>> => {
-  if (input.memory === false) agent = withoutInvocationMemory(agent);
+  if (input.memory === false || input.state?.memory === false || hasDisabledMemory(agent)) {
+    input = { ...input, memory: false };
+    agent = withoutInvocationMemory(agent);
+  }
   const invocationStartedAt = Date.now();
   const telemetryRunId = input.runId ?? input.state?.runId ?? randomId("run");
   const invocationInput = input.runId || input.state
@@ -803,6 +807,7 @@ export const runAgent = async <
 
   try {
   const context = await resolveContext(agent, invocationInput);
+  if (context.state.memory === false) agent = withoutInvocationMemory(agent);
   await reconcileChildRuns(context.state, agent.store);
   observeChildState(agent, context.state);
   const currentStatus = normalizeApprovalStatus(context.state.status);
@@ -851,11 +856,21 @@ export const runAgent = async <
     return returnInvocationOutput(toOutput(outputState));
   }
   try {
+    if (context.state.memoryInitialization === "pending") {
+      const prepared = await initializePendingMemory(agent, context.state);
+      context.messages = prepared.messages;
+      context.memoryMessages = prepared.memoryMessages;
+    }
     if (!context.fresh || freshRequiresExistingClaim) {
       await claimAgentExecution(agent, context.state);
     }
     await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals, invocationStartedAt);
   } catch (error) {
+    if (context.state.memoryInitialization === "pending" && !executionLease.leaseLost()) {
+      try {
+        await persistFailureState({ ...agent, memory: undefined }, createFailedState(context.state, error), policy);
+      } catch { /* Preserve the original initialization error. */ }
+    }
     await executionLease.release();
     throw error;
   }
@@ -1019,7 +1034,10 @@ export const streamAgent = <
   agent: AgentDefinition<TModel, TContext, TOutput, TContextInput>,
   input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>> = {}
 ): AgentStreamResult<TOutput> => {
-  if (input.memory === false) agent = withoutInvocationMemory(agent);
+  if (input.memory === false || input.state?.memory === false || hasDisabledMemory(agent)) {
+    input = { ...input, memory: false };
+    agent = withoutInvocationMemory(agent);
+  }
   const invocationStartedAt = Date.now();
   const telemetryRunId = input.runId ?? input.state?.runId ?? randomId("run");
   const invocationInput = input.runId || input.state
@@ -1064,6 +1082,7 @@ export const streamAgent = <
       validateMaxSteps(input.maxSteps ?? input.state?.maxSteps ?? agent.maxSteps)
     );
     const context = await resolveContext(agent, invocationInput);
+    if (context.state.memory === false) agent = withoutInvocationMemory(agent);
     await reconcileChildRuns(context.state, agent.store);
     observeChildState(agent, context.state);
     const currentStatus = normalizeApprovalStatus(context.state.status);
@@ -1125,11 +1144,21 @@ export const streamAgent = <
     }
     activeLease = executionLease;
     try {
+      if (context.state.memoryInitialization === "pending") {
+        const prepared = await initializePendingMemory(agent, context.state);
+        context.messages = prepared.messages;
+        context.memoryMessages = prepared.memoryMessages;
+      }
       if (!context.fresh || freshRequiresExistingClaim) {
         await claimAgentExecution(agent, context.state);
       }
       await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals, invocationStartedAt);
     } catch (error) {
+      if (context.state.memoryInitialization === "pending" && !executionLease.leaseLost()) {
+        try {
+          await persistFailureState({ ...agent, memory: undefined }, createFailedState(context.state, error), policy);
+        } catch { /* Preserve the original initialization error. */ }
+      }
       await executionLease.release();
       throw error;
     }

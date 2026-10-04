@@ -295,19 +295,40 @@ capability; direct journal editing is not a supported reconciliation workflow.
 
 Pass `memory: false` to `Agent.run`, `Agent.stream`, `Agent.resume`, `runAgent`,
 `streamAgent`, or `resumeAgent` to disable all `AgentMemoryStore.load` and `save`
-calls for that invocation. This overrides the agent definition and every declared
-subagent's memory, including explicit child adapters and nested descendants.
-Omitting the option preserves definition defaults and existing subagent inheritance.
-Definitions are not mutated, so concurrent invocations may choose independently.
+calls. The runtime records `memory: false` in the run state and in declared
+subagents' states, so the policy survives serialization and later resumes.
+
+Precedence is explicit:
+
+1. A persisted `state.memory: false` always disables memory, even when the new
+   invocation omits the option or uses a definition with a memory adapter.
+2. An invocation's `memory: false` disables memory for that run and every declared
+   descendant, overriding inherited and explicit child adapters.
+3. When neither input nor state disables memory, existing definition defaults and
+   subagent inheritance apply unchanged.
+
+There is no `memory: true` override for an opted-out run. Start a separate fresh run
+to use memory again. Definitions are not mutated, so independent invocations may
+choose different policies. Resuming by serialized state, durable `runId`, or
+`idempotencyKey` retains the opt-out; only the winner of a fresh idempotency claim
+may read memory. A child checkpoint also retains opt-out when resumed directly
+with its original definition.
 
 ```ts
 const result = await agent.run({ prompt: "Handle this without memory", memory: false });
-const resumed = await agent.resume({ state: result.state, memory: false, maxSteps: 4 });
+// The saved state carries the policy; omission cannot re-enable memory.
+const resumed = await agent.resume({ state: result.state, maxSteps: 4 });
 ```
 
-The choice is ephemeral: supply it again on each resume or new handoff invocation.
-A resumed state may already contain messages loaded during an earlier invocation;
-opt-out prevents new memory access, but does not erase those messages. Run stores,
-checkpoints, tool journals, compaction and application tools remain independent.
-If a custom tool starts its own agent outside the declared `subagents` tree, the
-application must pass the opt-out to that independent invocation too.
+Keep the complete SDK state when serializing checkpoints. Legacy states without
+the marker preserve their historical defaults: an empty message list cannot prove
+that memory was disabled. If the original policy of an unmarked checkpoint is
+unknown, pass `memory: false` on resume to establish a disabled policy. Invalid
+persisted marker values are rejected rather than interpreted as permission to
+access memory.
+
+A state may contain messages loaded before memory was disabled; opt-out prevents
+new memory access but does not erase those messages. Run stores, checkpoints,
+tool journals and compaction remain independent. New handoff runs and custom tools
+that start agents outside the declared `subagents` tree are independent invocations;
+pass the opt-out explicitly when they should also disable memory.
