@@ -519,7 +519,9 @@ export const useZhivexChat = (
     return promise;
   }, [detach]);
 
-  const stop = useCallback(() => { void cancel(); }, [cancel]);
+  const stop = useCallback(() => {
+    if (activeRef.current) void cancel();
+  }, [cancel]);
 
   const reconnect = useCallback(async (): Promise<ChatSendResult> => {
     if (activeRef.current) throw new ChatBusyError("send");

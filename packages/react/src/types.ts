@@ -270,7 +270,7 @@ export interface UseZhivexChatResult {
   send: (input?: string) => Promise<void>;
   sendMessage: (input: ChatSendInput) => Promise<void>;
   sendMessageWithResult: (input: ChatSendInput) => Promise<ChatSendResult>;
-  /** Legacy convenience: detach locally and request remote cancellation. */
+  /** Legacy convenience for an active stream; no-op when idle. */
   stop: () => void;
   /** Detach locally without requesting remote cancellation. */
   detach: () => void;

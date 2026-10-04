@@ -650,7 +650,8 @@ if (result.status === "uncertain") {
 ```
 
 The existing `stop(): void` remains available and starts the same operation without
-awaiting it. `ChatTransport.cancel(): Promise<void>` remains compatible; its
+awaiting it while a stream is active. It remains a no-op when idle; use `cancel()`
+after a connection loss. `ChatTransport.cancel(): Promise<void>` remains compatible; its
 successful return is delivery-only and therefore uncertain. New transports may
 implement `requestCancellation(request)` and return a typed result. They must
 return `confirmed` only after remote execution is known to have stopped.

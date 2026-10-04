@@ -782,10 +782,12 @@ it("cancels through the original transport after a disconnected stream", async (
   expect(replacement).not.toHaveBeenCalled();
 });
 
-it("keeps stop synchronous and reports missing execution identity as uncertain", async () => {
+it("keeps idle stop a synchronous no-op and reports missing cancellation identity as uncertain", async () => {
   const cancel = vi.fn(async () => {});
   const chat = await mountChat({ transport: { async *send() {}, cancel } });
   await act(async () => { expect(chat.current.stop()).toBeUndefined(); });
+  expect(chat.current.cancellation).toBeUndefined();
+  await act(async () => { await chat.current.cancel(); });
   expect(chat.current.cancellation?.status).toBe("uncertain");
   expect(cancel).not.toHaveBeenCalled();
 });
