@@ -426,6 +426,10 @@ export type AgentRunInput<
     toolExecution?: ToolExecutionOptions;
     toolApprovalPolicy?: ToolApprovalPolicy<TContext>;
     executionEnvironment?: AgentExecutionEnvironment<TContext>;
+    /** Disable memory reads and writes for this run and its declared subagents.
+     * Persisted in run state; omission on resume cannot re-enable memory. Run stores are unaffected.
+     */
+    memory?: false;
     /** Pass false to disable the agent default for this invocation. */
     compaction?: AgentCompactionOptions<TContext> | false;
     /** Positive safe integer. Defaults to one for new runs. */

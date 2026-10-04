@@ -251,6 +251,10 @@ export interface AgentToolReconciliationRecord {
 
 export interface AgentRunState {
   schemaVersion: 1;
+  /** A durable opt-out: resumed invocations and declared descendants cannot re-enable memory. */
+  memory?: false;
+  /** Fresh idempotent runs initialize memory only after acquiring their execution lease. */
+  memoryInitialization?: "pending";
   taskOutcome?: AgentTaskOutcome;
   reconciliations?: AgentToolReconciliationRecord[];
   /**

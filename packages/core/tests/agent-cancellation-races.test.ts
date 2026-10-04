@@ -6,6 +6,33 @@ import { createMockLanguageModel } from "../src/testing.js";
 const state = (runId: string, parentRunId?: string, status: AgentRunState["status"] = "running"): AgentRunState => ({ schemaVersion: 1, runId, parentRunId, status, provider: "test", modelId: "test", messages: [], steps: [], toolResults: [], pendingApprovals: [], currentStep: 0, maxSteps: 2, outputText: "", metadata: { evidence: "keep" } });
 
 describe("durable agent cancellation races", () => {
+  for (const streaming of [false, true]) {
+    it.each([false, true])(`honors cancellation during pending memory initialization (stream=${streaming}, load fails=%s)`, async failLoad => {
+      const store = createInMemoryAgentRunStore();
+      const model = createMockLanguageModel();
+      const generate = vi.spyOn(model, "generate");
+      const stream = vi.spyOn(model, "stream");
+      const guardrail = vi.fn(async () => ({ triggered: false }));
+      const memory = { load: vi.fn(async ({ runId }: { runId: string }) => {
+        await cancelAgentRun(store, runId, { reason: "Cancelled during memory load" });
+        if (failLoad) throw new Error("Offline memory load failed");
+        return [{ role: "user" as const, parts: [{ type: "text" as const, text: "Remembered context" }] }];
+      }), save: vi.fn(() => {}) };
+      const agent = createAgent({ model, store, memory, inputGuardrails: [guardrail],
+        hookFailurePolicy: { memory: "fail" }, policy: { leaseMode: "disabled" } });
+      const input = { runId: "memory-cancellation", idempotencyKey: "memory-claim", prompt: "Work" };
+      const invocation = streaming ? streamAgent(agent, input).collect() : runAgent(agent, input);
+      await expect(invocation).resolves.toMatchObject({ status: "cancel_requested" });
+      expect(await store.load(input.runId)).toMatchObject({ status: "cancel_requested", cancellationReason: "Cancelled during memory load" });
+      expect((await store.load(input.runId))?.error).toBeUndefined();
+      expect(memory.load).toHaveBeenCalledTimes(1);
+      expect(memory.save).not.toHaveBeenCalled();
+      expect(guardrail).not.toHaveBeenCalled();
+      expect(generate).not.toHaveBeenCalled();
+      expect(stream).not.toHaveBeenCalled();
+    });
+  }
+
   it("retries cancellation after a concurrent checkpoint and preserves its evidence", async () => {
     const store = createInMemoryAgentRunStore(); await store.save(state("parent"));
     const save = store.save.bind(store); let raced = false;

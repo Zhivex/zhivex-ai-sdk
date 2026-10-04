@@ -1,0 +1,4 @@
+{
+  "extends": "../react-omni/tsconfig.json",
+  "include": ["app.tsx", "client.tsx"]
+}
