@@ -41,7 +41,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.1131.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1146.0",
     "@zhivex-ai/core": "^1.24.0",
     "zod": "^4.6.3"
   }

@@ -1,6 +1,6 @@
 version: 2
 updates:
-  - package-ecosystem: npm
+  - package-ecosystem: bun
     directory: /
     schedule:
       interval: weekly
@@ -19,6 +19,25 @@ updates:
           - minor
           - patch
     open-pull-requests-limit: 10
+
+  # Update the independent starter manifest without fetching the root bun.lock.
+  # A Bun entry here would search ancestor directories for a lockfile.
+  - package-ecosystem: npm
+    directory: /examples/next-runner
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:15"
+      timezone: America/Argentina/Buenos_Aires
+    # Changesets synchronizes these exact versions with the SDK checkout.
+    ignore:
+      - dependency-name: "@zhivex-ai/*"
+    groups:
+      starter-dependencies:
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
 
   - package-ecosystem: github-actions
     directory: /

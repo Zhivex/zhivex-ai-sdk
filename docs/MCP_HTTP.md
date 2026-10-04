@@ -106,7 +106,7 @@ must not be logged as credentials or used without destination validation.
 
 The deterministic unit suites cover negotiation, byte limits, cancellation,
 OAuth binding, state, singleflight refresh, session expiration, and credential races.
-The official MCP TypeScript SDK **1.27.1** is a pinned development dependency;
+The official MCP TypeScript SDK **1.32.0** is a pinned development dependency;
 it is not shipped as a runtime dependency of the SDK.
 
 ```sh
