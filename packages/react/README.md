@@ -681,8 +681,11 @@ reviews. Store snapshots must be immutable and cached until a change. Provide
 `getServerSnapshot` for server rendering and hydration.
 
 Pass host activity as `ZhivexChat.runtimeActivity` and reviews as
-`ZhivexChat.reviews`. `ReviewCard` accepts `reviewId`, `heading`, optional `details`,
-and opaque `onDecision(approved, reason)` callbacks. Keep host tokens in closures;
+`ZhivexChat.reviews`. With the bundled stylesheet, these slots occupy explicit
+rows after the transcript and before the error and composer, regardless of which
+header, execution, or error panels are present. `ReviewCard` accepts `reviewId`,
+`heading`, optional `details`, and opaque `onDecision(approved, reason)` callbacks.
+Keep host tokens in closures;
 no conversion to `AgentApprovalRequest` is required. Include the owning session in
 `reviewId` so pending decisions and errors cannot bleed into a replacement review.
 The existing `ApprovalCard` remains the SDK approval adapter over the same card.

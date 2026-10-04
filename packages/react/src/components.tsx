@@ -1825,8 +1825,16 @@ export function ZhivexChat({
         starterPrompts={starterPrompts}
         status={controller.state.status}
       />
-      {runtimeActivity}
-      {reviews}
+      {runtimeActivity != null ? (
+        <div className="zhivex-chat__runtime-activity" data-slot="runtime-activity">
+          {runtimeActivity}
+        </div>
+      ) : null}
+      {reviews != null ? (
+        <div className="zhivex-chat__reviews" data-slot="reviews">
+          {reviews}
+        </div>
+      ) : null}
       {error ? (
         <div className="zhivex-error" data-slot="error" role="alert">
           <span>{formatError?.(error) ?? labels.error}</span>
