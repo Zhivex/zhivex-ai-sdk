@@ -1,8 +1,42 @@
 # Zhivex AI SDK
 
-Zhivex AI SDK is a TypeScript monorepo for Bun and Node that provides a unified, provider-agnostic API for modern LLM workflows.
+Build AI applications and agents in TypeScript with one contract for generation, streaming, tools, and provider adapters. The SDK runs on Bun and Node.js.
 
-It is designed around a small shared contract in `@zhivex-ai/core` and thin provider adapters on top of it, so application code can stay stable while models and vendors change underneath.
+Shared contracts live in `@zhivex-ai/core`; provider adapters translate them to each API. Install only the providers your application uses.
+
+[Quickstart](./docs/QUICKSTART.md) · [Agent guide](./docs/AGENTS.md) ·
+[Production guide](./docs/PRODUCTION.md) · [SDK documentation](https://sdk.zhivex.ai)
+
+## Quick Start
+
+Install the stable SDK and one provider in a server-side Bun or Node.js application:
+
+```bash
+bun add @zhivex-ai/sdk @zhivex-ai/openai
+```
+
+Set `OPENAI_API_KEY` in the server environment before running this example.
+
+This is step 1 of the canonical [Quickstart](./docs/QUICKSTART.md). It continues with the same `gpt-6-astra` provider setup through `Agent`, persistent `Runner` sessions, and the [Next.js React starter](./examples/next-runner/README.md).
+
+```ts
+import { generateText } from "@zhivex-ai/sdk";
+import { createOpenAI } from "@zhivex-ai/openai";
+
+const apiKey = process.env.OPENAI_API_KEY;
+if (!apiKey) throw new Error("Set OPENAI_API_KEY in the server environment.");
+
+const result = await generateText({
+  model: createOpenAI({ apiKey })("gpt-6-astra"),
+  prompt: "Describe Zhivex AI SDK in one sentence.",
+  maxTokens: 64,
+  timeoutMs: 30_000
+});
+
+console.log(result.text);
+```
+
+Keep the credential server-side. The high-level API accepts either a `prompt` or explicit `messages`, and returns normalized output including text, messages, finish reason, usage, tool results, and execution steps.
 
 Use focused imports such as `@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/evals`, and `@zhivex-ai/agents/realtime` to avoid the complete Core aggregation. Operational stores remain explicit in `@zhivex-ai/agents/ops`. See [architecture boundaries](./docs/ARCHITECTURE.md).
 
@@ -189,29 +223,6 @@ The repository includes runnable examples under [`examples/`](./examples/README.
 - provider-specific setup for each adapter package
 - gateway routing and fallback
 
-## Quick Start
-
-This is step 1 of the canonical [Quickstart](./docs/QUICKSTART.md). It continues with the same `gpt-6-astra` provider setup through `Agent`, persistent `Runner` sessions, and the [Next.js React starter](./examples/next-runner/README.md).
-
-```ts
-import { generateText } from "@zhivex-ai/sdk";
-import { createOpenAI } from "@zhivex-ai/openai";
-
-const apiKey = process.env.OPENAI_API_KEY;
-if (!apiKey) throw new Error("Set OPENAI_API_KEY in the server environment.");
-
-const result = await generateText({
-  model: createOpenAI({ apiKey })("gpt-6-astra"),
-  prompt: "Describe Zhivex AI SDK in one sentence.",
-  maxTokens: 64,
-  timeoutMs: 30_000
-});
-
-console.log(result.text);
-```
-
-Keep the credential server-side. The high-level API accepts either a `prompt` or explicit `messages`, and returns normalized output including text, messages, finish reason, usage, tool results, and execution steps.
-
 ## React Chat UI
 
 `@zhivex-ai/react` provides a browser-safe controller, multimodal chat input,
@@ -317,6 +328,11 @@ Detailed examples are organized by task:
 - [Realtime](./docs/reference/REALTIME.md)
 - [Media](./docs/reference/MEDIA.md)
 - [Providers](./docs/reference/PROVIDERS.md)
+
+Agent invocations support `memory: false` to disable memory reads and writes,
+including declared subagents, without changing shared definitions. The disabled
+policy persists in run state across resumes; durable run persistence remains independent. See the
+[agent memory guidance](docs/AGENTS.md#per-invocation-memory-opt-out).
 
 ## Switching Providers
 
