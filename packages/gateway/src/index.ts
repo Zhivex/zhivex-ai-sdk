@@ -1390,7 +1390,8 @@ export const createGateway = (config: GatewayConfig) => {
       );
     };
 
-    const throwFinalError = (): never => {
+    const throwFinalError = (lastAttemptError?: ErrorDisposition["error"]): never => {
+      if (lastAttemptError instanceof ProviderToolCallError) throw lastAttemptError;
       if (context.attempts.at(-1)?.reasonCode === "circuit-open") throw new GatewayCircuitOpenError();
       if (context.attempts.at(-1)?.reasonCode === "admission-denied") throw new GatewayAdmissionError();
       throw new GatewayError(
@@ -1401,6 +1402,7 @@ export const createGateway = (config: GatewayConfig) => {
 
     const generate = async (input: ModelGenerateInput): Promise<GenerateResult> => {
       await context.flushAttempts();
+      let lastAttemptError: ErrorDisposition["error"] | undefined;
       const candidates = context.winner
         ? [context.winner, ...context.candidates.filter((candidate) => candidate !== context.winner)]
         : context.candidates;
@@ -1471,6 +1473,7 @@ export const createGateway = (config: GatewayConfig) => {
             }
 
             const disposition = dispositionFor(error);
+            lastAttemptError = disposition.error;
             permit?.end(disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
             await context.recordAttempt(
               createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
@@ -1495,11 +1498,12 @@ export const createGateway = (config: GatewayConfig) => {
         }
       }
 
-      return throwFinalError();
+      return throwFinalError(lastAttemptError);
     };
 
     const stream = async (input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> => {
       await context.flushAttempts();
+      let lastAttemptError: ErrorDisposition["error"] | undefined;
       const candidates = context.winner
         ? [context.winner, ...context.candidates.filter((candidate) => candidate !== context.winner)]
         : context.candidates;
@@ -1604,10 +1608,12 @@ export const createGateway = (config: GatewayConfig) => {
                 const disposition = dispositionFor(error);
                 permit?.end(aborted ? "neutral" : disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
                 const diagnostic = disposition.error;
+                // Validated terminal tool-error counters supersede earlier finish usage.
+                if (diagnostic instanceof ProviderToolCallError && diagnostic.usage) usage = diagnostic.usage;
                 const failure = aborted ? abortReason(input.abortSignal!) : context.toolHistory ? diagnostic : error;
                 await context.recordAttempt(createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                   retry,
-                  ...(config.costAccounting ? { usage } : {}),
+                  ...(config.costAccounting || diagnostic instanceof ProviderToolCallError ? { usage } : {}),
                   reasonCode: aborted ? "request-aborted" : "provider-error",
                   errorMessage: aborted ? abortReason(input.abortSignal!).message : diagnostic.message
                 }));
@@ -1653,6 +1659,7 @@ export const createGateway = (config: GatewayConfig) => {
             }
 
             const disposition = dispositionFor(error);
+            lastAttemptError = disposition.error;
             permit?.end(disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
             await context.recordAttempt(
               createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
@@ -1677,7 +1684,7 @@ export const createGateway = (config: GatewayConfig) => {
         }
       }
 
-      return throwFinalError();
+      return throwFinalError(lastAttemptError);
     };
 
     return {

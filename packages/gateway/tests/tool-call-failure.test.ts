@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { ProviderToolCallError, type StreamEvent } from "@zhivex-ai/core";
+import { createModelCatalog, ProviderToolCallError, type StreamEvent } from "@zhivex-ai/core";
 import { createMockLanguageModel } from "../../core/src/testing.js";
-import { createGateway } from "../src/index.js";
+import { createGateway, GatewayError, type GatewayAttempt } from "../src/index.js";
 
 const usage = { inputTokens: 10, outputTokens: 3, totalTokens: 13 };
 const request = {
@@ -52,5 +52,90 @@ describe("typed provider tool-call failures", () => {
     await expect(f.run()).rejects.toBe(error);
     expect(f.model.generate).toHaveBeenCalledTimes(1);
     expect(f.fallbackGenerate).not.toHaveBeenCalled();
+  });
+
+  it.each(["generate", "stream-open", "stream-first"] as const)("retains the final typed %s error when safe fallbacks are exhausted", async mode => {
+    const primaryError = new ProviderToolCallError({ provider: "openai", diagnosticCode: "primary-invalid-tool", reason: "invalid_json", retryable: true, usage });
+    const finalError = new ProviderToolCallError({ provider: "anthropic", transport: "messages", diagnosticCode: "fallback-invalid-tool", reason: "invalid_json", retryable: true, usage: { inputTokens: 20, outputTokens: 5, totalTokens: 25 }, cause: new Error("offline validation failure") });
+    const f = fixture(primaryError, mode);
+    f.fallbackGenerate.mockRejectedValue(finalError);
+    f.fallbackStream.mockImplementation(async () => {
+      if (mode === "stream-open") throw finalError;
+      return (async function* (): AsyncGenerator<StreamEvent> { throw finalError; })();
+    });
+    await expect(f.run()).rejects.toBe(finalError);
+    expect(mode === "generate" ? f.model.generate : f.model.stream).toHaveBeenCalledTimes(3);
+    expect(mode === "generate" ? f.fallbackGenerate : f.fallbackStream).toHaveBeenCalledTimes(3);
+    expect(f.attempts).toHaveLength(6);
+    expect(f.attempts.at(-1)).toMatchObject({ ok: false, usage: finalError.usage });
+  });
+
+  it("does not substitute an earlier typed error for a later generic provider failure", async () => {
+    const error = new ProviderToolCallError({ provider: "openai", diagnosticCode: "primary-invalid-tool", reason: "invalid_json", retryable: true, usage });
+    const f = fixture(error, "generate");
+    f.fallbackGenerate.mockRejectedValue(new Error("Final fallback failed."));
+    await expect(f.run()).rejects.toBeInstanceOf(GatewayError);
+    expect(f.fallbackGenerate).toHaveBeenCalledTimes(1);
+  });
+
+  for (const accounting of [false, true]) {
+    for (const priorFinish of [false, true]) {
+      it.each(["throw", "error-event"] as const)(`records confirmed usage after stream output (${accounting ? "cost accounting" : "no cost accounting"}, ${priorFinish ? "earlier finish usage" : "no earlier usage"}, %s)`, async mode => {
+        const confirmed = { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+          ...(priorFinish ? {} : { totalTokens: usage.totalTokens }), cachedInputTokens: 0, cacheWriteTokens: 0 };
+        const error = new ProviderToolCallError({ provider: "openai", diagnosticCode: "terminal-invalid-tool", reason: "invalid_json", retryable: true, usage: confirmed });
+        const model = createMockLanguageModel();
+        model.stream = vi.fn(async () => (async function* (): AsyncGenerator<StreamEvent> {
+          yield { type: "text-delta", textDelta: "partial" };
+          if (priorFinish) yield { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, reasoningTokens: 1 } };
+          if (mode === "error-event") yield { type: "error", error };
+          else throw error;
+        })());
+        const fallback = createMockLanguageModel();
+        const fallbackStream = vi.spyOn(fallback, "stream");
+        const attempts: GatewayAttempt[] = [];
+        const modelCatalog = createModelCatalog([{ provider: "openai", modelId: "test", inputCostPer1kTokens: 1, outputCostPer1kTokens: 2 }], { snapshotVersion: "offline", pricing: { version: "1", unit: "per_1k_tokens", currency: "USD" } });
+        const gateway = createGateway({ maxRetries: 2, retryBackoffMs: 0,
+          scoreTarget: ({ isPrimary }) => isPrimary ? 1 : 0,
+          ...(accounting ? { modelCatalog, costAccounting: {} } : {}),
+          adapters: { openai: { name: "openai", languageModel: () => model }, anthropic: { name: "anthropic", languageModel: () => fallback } },
+          onAttempt: attempt => { attempts.push(attempt); }
+        });
+        await expect(gateway.streamText(request).collect()).rejects.toBe(error);
+        expect(model.stream).toHaveBeenCalledTimes(1);
+        expect(fallbackStream).not.toHaveBeenCalled();
+        expect(attempts).toHaveLength(1);
+        expect(attempts[0]).toMatchObject({ ok: false, reasonCode: "provider-error" });
+        expect(attempts[0]!.usage).toEqual(confirmed);
+        if (accounting) {
+          expect(attempts[0]!.cost).toMatchObject({ status: "known", currency: "USD" });
+          expect(attempts[0]!.cost!.amount).toBeCloseTo(0.016);
+        } else expect(attempts[0]!.cost).toBeUndefined();
+      });
+    }
+  }
+
+  it.each([false, true])("uses earlier finish usage only when the typed stream error has no usage (prior finish=%s)", async priorFinish => {
+    const error = new ProviderToolCallError({ provider: "openai", diagnosticCode: "terminal-invalid-tool", reason: "invalid_json", retryable: true });
+    const model = createMockLanguageModel();
+    model.stream = vi.fn(async () => (async function* (): AsyncGenerator<StreamEvent> {
+      yield { type: "text-delta", textDelta: "partial" };
+      if (priorFinish) yield { type: "finish", finishReason: "stop", usage: { ...usage, cachedInputTokens: 0, cacheWriteTokens: 0 } };
+      throw error;
+    })());
+    const attempts: GatewayAttempt[] = [];
+    const gateway = createGateway({ modelCatalog: createModelCatalog([{ provider: "openai", modelId: "test", inputCostPer1kTokens: 1, outputCostPer1kTokens: 2 }], { pricing: { version: "1", unit: "per_1k_tokens", currency: "USD" } }), costAccounting: {},
+      adapters: { openai: { name: "openai", languageModel: () => model } },
+      onAttempt: attempt => { attempts.push(attempt); }
+    });
+    await expect(gateway.streamText({ ...request, fallbacks: [] }).collect()).rejects.toBe(error);
+    expect(model.stream).toHaveBeenCalledTimes(1);
+    if (priorFinish) {
+      expect(attempts[0]!.usage).toEqual({ ...usage, cachedInputTokens: 0, cacheWriteTokens: 0 });
+      expect(attempts[0]!.cost!.amount).toBeCloseTo(0.016);
+    } else {
+      expect(attempts[0]!.usage).toBeUndefined();
+      expect(attempts[0]!.cost).toMatchObject({ status: "unknown", amount: null });
+    }
   });
 });
