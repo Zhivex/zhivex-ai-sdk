@@ -1,3 +1,4 @@
+import { AgentCancellationError, assertAgentNotCancelled, cancellationAfterFailure } from "./cancellation-intent.js";
 import { hasDisabledMemory, withoutInvocationMemory } from "./memory.js";
 import { createAgentBudgetCoordinator, assertAgentTokenReservation } from "../agent-budget-coordinator.js";
 import { childStateObserver, loadFailureState, runCheckpoints, observeChildState, projectChildRun, reconcileChildRuns, upsertChildRun } from "./children.js";
@@ -492,7 +493,7 @@ const createGenerateOptions = <
           const saveAttempt = async () => {
             state.compactionAttempts = structuredClone(checkpointState.compactionAttempts);
             runCheckpoints.set(state, checkpointState);
-            await persistState(agent, checkpointState, runPolicy);
+            await persistState(agent, checkpointState, runPolicy, state);
             state.revision = checkpointState.revision;
           };
           const compacted = await compactAgentMessages(
@@ -601,13 +602,14 @@ const createGenerateOptions = <
           };
           state.messages = compacted.messages;
           state.compactions = checkpointState.compactions;
-          await persistState(agent, checkpointState, runPolicy);
+          await persistState(agent, checkpointState, runPolicy, state);
           state.revision = checkpointState.revision;
           await onCompaction?.(compacted.record);
           return compacted.messages;
         }
       : undefined,
     onBeforeModelStep: async ({ step, request }) => {
+      await assertAgentNotCancelled(agent.store, state);
       if (budget) {
         const remaining = getAgentBudgetStatus({ ...state, usage: liveUsage, toolResults: liveToolResults }, budget).remaining;
         const ceilings = [requestedMaxTokens, remaining.outputTokens, remaining.totalTokens].filter((value): value is number => value !== undefined);
@@ -684,8 +686,9 @@ const createGenerateOptions = <
       observeChildState(agent, checkpointState);
       if (coordinator && primaryReservationId) await coordinator.settle(primaryReservationId, response.usage);
       if (agent.store) {
-        await persistState(agent, checkpointState, runPolicy);
+        await persistState(agent, checkpointState, runPolicy, state);
         state.revision = checkpointState.revision;
+        await assertAgentNotCancelled(agent.store, checkpointState);
       }
       if (failedToolResults) Object.assign(state, checkpointState);
     },
@@ -711,12 +714,13 @@ const createGenerateOptions = <
       runCheckpoints.set(state, checkpointState);
       observeChildState(agent, checkpointState);
       if (agent.store) {
-        await persistState(agent, checkpointState, runPolicy);
+        await persistState(agent, checkpointState, runPolicy, state);
         state.revision = checkpointState.revision;
       }
     },
     stepOffset: state.currentStep,
     onBeforeToolExecution: async ({ step, toolCalls }) => {
+      await assertAgentNotCancelled(agent.store, checkpointState);
       if (budget) {
         reservedToolCalls += toolCalls.length;
         const trigger = evaluateAgentBudgetPreflight({ ...state, usage: liveUsage, toolResults: liveToolResults }, budget, {
@@ -843,7 +847,7 @@ export const runAgent = async <
 
   const freshRequiresExistingClaim = context.fresh && Boolean(context.state.idempotencyKey);
   if (context.fresh && !freshRequiresExistingClaim) {
-    await claimAgentExecution(agent, context.state);
+    if (!await claimAgentExecution(agent, context.state)) return returnInvocationOutput(toOutput(context.state));
   }
   const executionLease = await acquireAgentExecutionLease(agent, context.state, policy);
   if (!executionLease) {
@@ -858,7 +862,10 @@ export const runAgent = async <
   let initializingMemory = false;
   try {
     if (!context.fresh || freshRequiresExistingClaim) {
-      await claimAgentExecution(agent, context.state);
+      if (!await claimAgentExecution(agent, context.state)) {
+        await executionLease.release();
+        return returnInvocationOutput(toOutput(context.state));
+      }
     }
     if (context.state.memoryInitialization === "pending") {
       initializingMemory = true;
@@ -866,10 +873,18 @@ export const runAgent = async <
       context.messages = prepared.messages;
       context.memoryMessages = prepared.memoryMessages;
       // Persist the initialized context before model execution or another retry.
-      await claimAgentExecution(agent, context.state);
+      if (!await claimAgentExecution(agent, context.state)) {
+        await executionLease.release();
+        return returnInvocationOutput(toOutput(context.state));
+      }
     }
     await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals, invocationStartedAt);
   } catch (error) {
+    const cancelled = initializingMemory ? await cancellationAfterFailure(agent.store, context.state) : undefined;
+    if (cancelled) {
+      await executionLease.release();
+      return returnInvocationOutput(toOutput(cancelled));
+    }
     if (initializingMemory && context.state.memoryInitialization === "pending" && !executionLease.leaseLost()) {
       try {
         await persistFailureState({ ...agent, memory: undefined }, createFailedState(context.state, error), policy);
@@ -978,6 +993,7 @@ export const runAgent = async <
       ...approvalsFromEvents(newSteps.flatMap((step) => step.response?.messages ?? []))
     ]);
     await persistState(agent, output.state, policy);
+    await assertAgentNotCancelled(agent.store, output.state);
     output.taskOutcome = output.state.taskOutcome;
     await emitRunFinishTelemetry(agent, output.state);
 
@@ -987,7 +1003,7 @@ export const runAgent = async <
     executionEnvironmentError = {
       message: error instanceof Error ? error.message : String(error)
     };
-    const cancelled = executionLease.cancelledState();
+    const cancelled = error instanceof AgentCancellationError ? error.state : executionLease.cancelledState() ?? await cancellationAfterFailure(agent.store, context.state);
     if (cancelled) {
       executionEnvironmentStatus = cancelled.status;
       await emitRunFinishTelemetry(agent, cancelled);
@@ -1130,7 +1146,10 @@ export const streamAgent = <
 
     const freshRequiresExistingClaim = context.fresh && Boolean(context.state.idempotencyKey);
     if (context.fresh && !freshRequiresExistingClaim) {
-      await claimAgentExecution(agent, context.state);
+      if (!await claimAgentExecution(agent, context.state)) {
+        broadcast.close(); await finishInvocation(context.state.status);
+        return { output: toOutput(context.state), textStream: emptyAsyncIterable() };
+      }
     }
     const executionLease = await acquireAgentExecutionLease(agent, context.state, policy);
     if (!executionLease) {
@@ -1150,7 +1169,10 @@ export const streamAgent = <
     let initializingMemory = false;
     try {
       if (!context.fresh || freshRequiresExistingClaim) {
-        await claimAgentExecution(agent, context.state);
+        if (!await claimAgentExecution(agent, context.state)) {
+          await executionLease.release(); broadcast.close(); await finishInvocation(context.state.status);
+          return { output: toOutput(context.state), textStream: emptyAsyncIterable() };
+        }
       }
       if (context.state.memoryInitialization === "pending") {
         initializingMemory = true;
@@ -1158,10 +1180,18 @@ export const streamAgent = <
         context.messages = prepared.messages;
         context.memoryMessages = prepared.memoryMessages;
         // Persist the initialized context before model execution or another retry.
-        await claimAgentExecution(agent, context.state);
+        if (!await claimAgentExecution(agent, context.state)) {
+          await executionLease.release(); broadcast.close(); await finishInvocation(context.state.status);
+          return { output: toOutput(context.state), textStream: emptyAsyncIterable() };
+        }
       }
       await emitRunStartTelemetry(agent, context.state, context.memoryMessages, input.approvals, invocationStartedAt);
     } catch (error) {
+      const cancelled = initializingMemory ? await cancellationAfterFailure(agent.store, context.state) : undefined;
+      if (cancelled) {
+        await executionLease.release(); broadcast.close(); await finishInvocation(cancelled.status);
+        return { output: toOutput(cancelled), textStream: emptyAsyncIterable() };
+      }
       if (initializingMemory && context.state.memoryInitialization === "pending" && !executionLease.leaseLost()) {
         try {
           await persistFailureState({ ...agent, memory: undefined }, createFailedState(context.state, error), policy);
@@ -1402,6 +1432,7 @@ export const streamAgent = <
           await emitApprovalTelemetry(agent, result.state, approvalsFromEvents(newSteps.flatMap((step) => step.response?.messages ?? [])));
         }
         await persistState(agent, result.state, policy);
+        await assertAgentNotCancelled(agent.store, result.state);
         result.taskOutcome = result.state.taskOutcome;
         await emitRunFinishTelemetry(agent, result.state);
 
@@ -1417,7 +1448,7 @@ export const streamAgent = <
         executionEnvironmentError = {
           message: error instanceof Error ? error.message : String(error)
         };
-        const cancelled = executionLease.cancelledState();
+        const cancelled = error instanceof AgentCancellationError ? error.state : executionLease.cancelledState() ?? await cancellationAfterFailure(agent.store, context.state);
         if (cancelled) {
           executionEnvironmentStatus = cancelled.status;
           await emitRunFinishTelemetry(agent, cancelled);

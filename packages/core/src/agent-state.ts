@@ -565,6 +565,7 @@ export const normalizeAgentRunState = (value: unknown): AgentRunState => {
     invalid("updatedAt", "must not precede startedAt");
   }
   optionalString(state.cancellationReason, "cancellationReason", true);
+  if (state.cancellationCascade !== undefined && typeof state.cancellationCascade !== "boolean") invalid("cancellationCascade", "must be a boolean");
   if (state.error !== undefined) agentRunError(state.error, "error");
 
   return {

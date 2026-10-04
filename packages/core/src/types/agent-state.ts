@@ -297,6 +297,8 @@ export interface AgentRunState {
   updatedAt?: number;
   cancelledAt?: number;
   cancellationReason?: string;
+  /** Durable descendant cancellation intent, consulted by late admissions. */
+  cancellationCascade?: boolean;
   error?: AgentRunError;
 }
 

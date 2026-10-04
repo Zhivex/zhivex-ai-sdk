@@ -2951,8 +2951,8 @@ describe("agent runtime", () => {
 
     expect(result.parent).toMatchObject({ runId: "parent-run", status: "cancel_requested", cancellationReason: "Stop workflow." });
     expect(result.children).toHaveLength(1);
-    expect(result.children[0]).toMatchObject({ runId: "child-run", status: "cancel_requested", cancellationReason: "Stop workflow." });
-    await expect(Promise.resolve(store.load("child-run"))).resolves.toMatchObject({ status: "cancel_requested" });
+    expect(result.children[0]).toMatchObject({ runId: "child-run", status: "completed", outputText: "child" });
+    await expect(Promise.resolve(store.load("child-run"))).resolves.toMatchObject({ status: "completed" });
   });
 
   it("requires parent lookup support for tree cancellation", async () => {
