@@ -1,5 +1,15 @@
 # @zhivex-ai/core
 
+## 1.30.1
+
+### Patch Changes
+
+- 70c4fee: Apply agent-run scope, filters, cursor ordering and page limits inside PostgreSQL before transferring state. List and retention queries now fetch at most the requested limit plus one matching state, including when canonical and legacy run keys coexist. Preserve exact scope distinctions, UTF-16 run ID ordering, scoped cursor ties and legacy cursor compatibility. Add non-destructive indexes for logical timestamps and scope-filtered pagination, hashing indexed scope fields to support long identifiers while retaining exact comparisons.
+- 10bd4ee: Fix streaming backpressure and cancellation, emit structured object completion only after final validation, preserve nested input identity in generate caches, count streamed error events in circuit breakers, and stop parallel workflows promptly when failFast is enabled. Add cooperative cancel hooks to generated text/object stream results and onCancel hooks to SSE/UI response adapters.
+- 10bd4ee: Isolate agent run scopes and tool journals with canonical identity keys, preserve verified legacy runs and their leases/history, make rejected in-memory saves atomic, serialize file-store idempotency saves/claims/deletes, and use consistent ordering for cursor pagination.
+  
+  Existing file/SQLite/PostgreSQL runs remain readable and writable at their original physical keys only when persisted run ID and scope match exactly. New runs use canonical keys. Upgrade all workers sharing a store together: old workers do not understand the new key format. A legacy record occupying another identity's canonical key now raises a conflict instead of being overwritten; migrate that conflicting record and its indices, lease and journal while workers are stopped. Run IDs and scopes in stored JSON must not be rewritten to bypass identity validation. Default persistent agent memory uses canonical identity envelopes; unverifiable legacy memory requires explicit offline migration. See `docs/maintainers/AGENT_STORE_MIGRATION.md`.
+
 ## 1.30.0
 
 ### Minor Changes

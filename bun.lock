@@ -51,24 +51,24 @@
     },
     "packages/azure-openai": {
       "name": "@zhivex-ai/azure-openai",
-      "version": "0.7.6",
+      "version": "0.7.7",
       "dependencies": {
-        "@zhivex-ai/core": "^1.27.0",
+        "@zhivex-ai/core": "^1.30.1",
         "zod": "^4.6.3",
       },
     },
     "packages/bedrock": {
       "name": "@zhivex-ai/bedrock",
-      "version": "2.0.4",
+      "version": "2.0.5",
       "dependencies": {
         "@aws-sdk/client-bedrock-runtime": "^3.1146.0",
-        "@zhivex-ai/core": "^1.30.0",
+        "@zhivex-ai/core": "^1.30.1",
         "zod": "^4.6.3",
       },
     },
     "packages/core": {
       "name": "@zhivex-ai/core",
-      "version": "1.30.0",
+      "version": "1.30.1",
       "dependencies": {
         "ws": "^8.22.0",
         "zod": "^4.6.3",
@@ -106,9 +106,9 @@
     },
     "packages/kimi": {
       "name": "@zhivex-ai/kimi",
-      "version": "0.7.10",
+      "version": "0.7.11",
       "dependencies": {
-        "@zhivex-ai/core": "^1.24.0",
+        "@zhivex-ai/core": "^1.30.1",
         "zod": "^4.6.3",
       },
     },
@@ -122,9 +122,9 @@
     },
     "packages/ollama": {
       "name": "@zhivex-ai/ollama",
-      "version": "0.5.6",
+      "version": "0.5.7",
       "dependencies": {
-        "@zhivex-ai/core": "^1.24.0",
+        "@zhivex-ai/core": "^1.30.1",
         "zod": "^4.6.3",
       },
     },
@@ -138,9 +138,9 @@
     },
     "packages/openrouter": {
       "name": "@zhivex-ai/openrouter",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "dependencies": {
-        "@zhivex-ai/core": "^1.24.0",
+        "@zhivex-ai/core": "^1.30.1",
         "zod": "^4.6.3",
       },
     },
@@ -154,9 +154,9 @@
     },
     "packages/react": {
       "name": "@zhivex-ai/react",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "dependencies": {
-        "@zhivex-ai/core": "^1.30.0",
+        "@zhivex-ai/core": "^1.30.1",
       },
       "peerDependencies": {
         "@ai-sdk/react": ">=4.0.0 <5",
@@ -177,12 +177,12 @@
     },
     "packages/sdk": {
       "name": "@zhivex-ai/sdk",
-      "version": "1.30.1",
+      "version": "1.30.2",
       "bin": {
         "zhivex-ai": "dist/cli.js",
       },
       "dependencies": {
-        "@zhivex-ai/core": "~1.30.0",
+        "@zhivex-ai/core": "~1.30.1",
       },
     },
     "packages/vertex": {
