@@ -770,6 +770,12 @@ console.log("INSTALLED_REALTIME_LIVE_SMOKE_OK");
     stdio: "inherit"
   });
 
+  const metaUsagePath = join(consumerDirectory, "meta-usage.mjs");
+  writeFileSync(metaUsagePath, readFileSync(join(scriptDirectory, "fixtures/meta-usage-consumer.mjs"), "utf8"));
+  for (const runtime of ["node", "bun"]) {
+    execFileSync(runtime, [metaUsagePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
+  }
+
   const agwTypePath = join(consumerDirectory, "sdk-agw-consumer.ts");
   writeFileSync(agwTypePath, readFileSync(join(scriptDirectory, "fixtures/sdk-agw-consumer.ts"), "utf8"));
   // TypeScript 7's extensionless ESM launcher needs the build runtime; package execution below still uses the selected Node version.

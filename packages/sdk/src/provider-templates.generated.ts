@@ -33,7 +33,7 @@ export const providerTemplates: Readonly<Record<"vertex" | "openai" | "xai" | "m
   },
   "meta": {
     "packageName": "@zhivex-ai/meta",
-    "packageVersion": "0.2.8",
+    "packageVersion": "0.2.9",
     "factoryName": "createMeta",
     "envName": "MODEL_API_KEY",
     "defaultModel": "muse-spark-1.2"

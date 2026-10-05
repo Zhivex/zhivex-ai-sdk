@@ -32,6 +32,7 @@ import {
   type ModelMessage,
   type RetryOptions,
   type StreamEvent,
+  type TokenUsage,
   type UploadedFile
 } from "@zhivex-ai/core/provider";
 
@@ -657,6 +658,14 @@ const mapChatUsage = (usage: any) =>
       }
     : undefined;
 
+const mapResponsesUsage = (usage: any): TokenUsage => ({
+  inputTokens: usage?.input_tokens,
+  outputTokens: usage?.output_tokens,
+  // Meta includes reasoning in output_tokens; this is a reported subset.
+  reasoningTokens: usage?.output_tokens_details?.reasoning_tokens,
+  totalTokens: usage?.total_tokens
+});
+
 const normalizeResponsesFinishReason = (status: string | undefined, hasToolCalls: boolean) => {
   if (hasToolCalls) {
     return "tool-calls" as const;
@@ -786,13 +795,7 @@ const streamResponses = async function* (response: Response): AsyncGenerator<Str
         type: "finish",
         finishReason: normalizeResponsesFinishReason(responseData.status, sawToolCalls),
         providerFinishReason: responseData.status,
-        usage: responseData.usage
-          ? {
-              inputTokens: responseData.usage.input_tokens,
-              outputTokens: responseData.usage.output_tokens,
-              totalTokens: responseData.usage.total_tokens
-            }
-          : undefined
+        usage: responseData.usage ? mapResponsesUsage(responseData.usage) : undefined
       } satisfies StreamEvent;
     }
   }
@@ -883,11 +886,7 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
       text: extractMessageText(assistantMessage),
       finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls),
       providerFinishReason: json.status,
-      usage: {
-        inputTokens: json.usage?.input_tokens,
-        outputTokens: json.usage?.output_tokens,
-        totalTokens: json.usage?.total_tokens
-      },
+      usage: mapResponsesUsage(json.usage),
       rawResponse: json
     };
   }
@@ -1126,11 +1125,7 @@ class MetaGroundedLanguageModel implements GroundedLanguageModel<MetaLanguageMod
         sources: extractSources(json),
         finishReason: normalizeResponsesFinishReason(json.status, false),
         providerFinishReason: json.status,
-        usage: {
-          inputTokens: json.usage?.input_tokens,
-          outputTokens: json.usage?.output_tokens,
-          totalTokens: json.usage?.total_tokens
-        },
+        usage: mapResponsesUsage(json.usage),
         rawResponse: json
       };
     } finally {
