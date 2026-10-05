@@ -17,6 +17,7 @@ import {
   readJsonWithLimit,
   tool,
   withRetry,
+  withResponseRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
@@ -645,7 +646,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
       assertKimiRequestCompatibility(this.modelId, input);
       const reasoning = mapReasoning(this.modelId, input);
       const providerOptions = mapProviderOptions(this.modelId, input.providerOptions);
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
             method: "POST",
@@ -664,7 +665,8 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
               ...reasoning
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Kimi"
       );
 
       const json = await parseJson(response);
@@ -694,12 +696,12 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
   }
 
   async stream(input: ModelGenerateInput<KimiLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     assertKimiRequestCompatibility(this.modelId, input);
     const reasoning = mapReasoning(this.modelId, input);
     const providerOptions = mapProviderOptions(this.modelId, input.providerOptions);
 
-    const response = await withRetry(
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const response = await withResponseRetry(
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {
           method: "POST",
@@ -719,19 +721,23 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
             ...reasoning
           })
         }),
-      input
-    );
+      { ...input, abortSignal: signal },
+      "Kimi"
+    ).catch((error) => { cleanup(); throw error; });
 
     return (async function* () {
       try {
+        let lastFinishReason: string | undefined;
+        let lastUsage: any;
         const toolBuffers = new Map<number, { id: string; name: string; args: string }>();
 
         for await (const event of streamSSE(response)) {
           if (event.data === "[DONE]") {
-            return;
+            break;
           }
 
           const json = JSON.parse(event.data);
+          if (json.usage) lastUsage = json.usage;
           const choice = json.choices?.[0];
           const delta = choice?.delta;
 
@@ -777,22 +783,20 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
             toolBuffers.clear();
           }
 
-          if (choice?.finish_reason) {
-            yield {
-              type: "finish",
-              finishReason: normalizeFinishReason(choice.finish_reason),
-              providerFinishReason: choice.finish_reason,
-              usage: json.usage
-                ? {
-                    inputTokens: json.usage.prompt_tokens,
-                    cachedInputTokens: json.usage.cached_tokens,
-                    outputTokens: json.usage.completion_tokens,
-                    totalTokens: json.usage.total_tokens
-                  }
-                : undefined
-            } satisfies StreamEvent;
-          }
+          if (choice?.finish_reason) lastFinishReason = choice.finish_reason;
         }
+        if (!lastFinishReason) throw new ConfigurationError("Kimi stream ended without a finish reason.");
+        yield {
+          type: "finish",
+          finishReason: normalizeFinishReason(lastFinishReason),
+          providerFinishReason: lastFinishReason,
+          usage: lastUsage ? {
+            inputTokens: lastUsage.prompt_tokens,
+            cachedInputTokens: lastUsage.cached_tokens,
+            outputTokens: lastUsage.completion_tokens,
+            totalTokens: lastUsage.total_tokens
+          } : undefined
+        } satisfies StreamEvent;
       } finally {
         cleanup();
       }

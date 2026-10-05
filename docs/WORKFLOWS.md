@@ -127,6 +127,7 @@ const workflow = createWorkflow({
 ```
 
 Use `failFast: true` when downstream work should stop as soon as one branch fails.
+The first failed branch aborts the signals of pending siblings and settles their workflow results as failed without waiting for code that ignores cancellation. Already completed outputs are retained; late sibling outputs do not alter the returned workflow state. Forward the runner's abort signal to external I/O: cancellation cannot roll back effects that have already started. With `failFast: false`, the workflow waits for all branches.
 
 ## Bounded Loops
 

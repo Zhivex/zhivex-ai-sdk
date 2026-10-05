@@ -19,6 +19,7 @@ import {
   readJsonWithLimit,
   serializeJsonValue,
   withRetry,
+  withResponseRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
@@ -531,7 +532,7 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(apiEndpoint(this.baseURL, "chat"), {
             method: "POST",
@@ -539,7 +540,8 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
             signal,
             body: JSON.stringify(this.toRequestBody(input, false))
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Ollama"
       );
 
       const json = await parseJson(response);
@@ -572,7 +574,7 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(apiEndpoint(this.baseURL, "chat"), {
             method: "POST",
@@ -580,7 +582,8 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
             signal,
             body: JSON.stringify(this.toRequestBody(input, true))
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Ollama"
       );
 
       return (async function* () {

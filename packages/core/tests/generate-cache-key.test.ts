@@ -71,7 +71,7 @@ describe("default generate cache keys", () => {
     expect(first).toEqual(second);
     expect(getCalls()).toBe(1);
     expect(observedKeys).toHaveLength(2);
-    expect(observedKeys[0]).toMatch(/^generate:v2:[a-f0-9]{64}$/);
+    expect(observedKeys[0]).toMatch(/^generate:v3:[a-f0-9]{64}$/);
     expect(observedKeys[0]).toBe(observedKeys[1]);
     expect(observedKeys[0]).not.toContain("sensitive prompt");
   });

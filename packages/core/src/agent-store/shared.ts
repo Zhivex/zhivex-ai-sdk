@@ -1,3 +1,4 @@
+import { canonicalStoreKey } from "../store-key.js";
 import { normalizeAgentRunState } from "../agent-state.js";
 import { ConflictError, ValidationError } from "../errors.js";
 import type {
@@ -24,11 +25,40 @@ export const scopePrefix = (scope?: AgentStoreScope): string => scope
   ? `${encodeURIComponent(scope.namespace ?? "default")}:${encodeURIComponent(scope.tenantId)}:${encodeURIComponent(scope.userId ?? "*")}:`
   : "";
 
-export const scopedKey = (scope: AgentStoreScope | undefined, value: string): string => `${scopePrefix(scope)}${value}`;
+export const legacyScopedKey = (scope: AgentStoreScope | undefined, value: string): string => `${scopePrefix(scope)}${value}`;
 
-export const defaultMemoryKey = (context: AgentMemoryContext) => context.scope
-  ? scopedKey(context.scope, context.agentId ?? context.runId)
+export const scopedKey = (scope: AgentStoreScope | undefined, value: string): string =>
+  canonicalStoreKey("agent-run", [JSON.stringify(scope ? [scope.namespace ?? null, scope.tenantId, scope.userId ?? null] : null), value]);
+
+export const matchesScope = (actual: AgentStoreScope | undefined, expected: AgentStoreScope | undefined): boolean =>
+  actual === undefined ? expected === undefined : expected !== undefined && sameScope(actual, expected);
+
+export const matchesRun = (state: { runId: string; scope?: AgentStoreScope }, runId: string, scope?: AgentStoreScope): boolean =>
+  state.runId === runId && matchesScope(state.scope, scope);
+
+export const journalKey = (scope: AgentStoreScope | undefined, runId: string, toolCallId: string): string =>
+  canonicalStoreKey("agent-journal", [scopedKey(scope, runId), toolCallId]);
+
+export const legacyDefaultMemoryKey = (context: AgentMemoryContext) => context.scope
+  ? legacyScopedKey(context.scope, context.agentId ?? context.runId)
   : context.runId;
+
+export const defaultMemoryKey = (context: AgentMemoryContext) =>
+  canonicalStoreKey("agent-memory", [JSON.stringify(context.scope ? [context.scope.namespace ?? null, context.scope.tenantId, context.scope.userId ?? null] : null), context.scope ? context.agentId ?? context.runId : context.runId]);
+
+export const LEGACY_MEMORY_MIGRATION_MESSAGE = "Legacy agent memory has no verifiable identity. Migrate it offline from an explicitly selected key into a new store before using canonical keys.";
+
+export const encodeAgentMemory = (context: AgentMemoryContext, messages: ModelMessage[]) => ({
+  schemaVersion: 1, memoryKey: defaultMemoryKey(context), messages
+});
+
+export const decodeAgentMemory = (context: AgentMemoryContext, value: unknown): ModelMessage[] => {
+  const envelope = value as ReturnType<typeof encodeAgentMemory> | undefined;
+  if (!envelope || envelope.schemaVersion !== 1 || envelope.memoryKey !== defaultMemoryKey(context) || !Array.isArray(envelope.messages)) {
+    throw new ValidationError(LEGACY_MEMORY_MIGRATION_MESSAGE);
+  }
+  return envelope.messages;
+};
 
 export const sameScope = (left: AgentStoreScope, right: AgentStoreScope): boolean =>
   left.tenantId === right.tenantId && left.userId === right.userId && left.namespace === right.namespace;
@@ -76,16 +106,16 @@ export const validateLeaseOptions = (options: AgentRunLeaseOptions): void => {
 };
 
 const encodeCursor = (state: AgentRunState): string =>
-  Buffer.from(JSON.stringify([state.updatedAt ?? state.startedAt ?? 0, state.runId]), "utf8").toString("base64url");
+  Buffer.from(JSON.stringify([state.updatedAt ?? state.startedAt ?? 0, state.runId, scopedKey(state.scope, state.runId)]), "utf8").toString("base64url");
 
-const decodeCursor = (cursor: string | undefined): readonly [number, string] | undefined => {
+const decodeCursor = (cursor: string | undefined): readonly [number, string, string?] | undefined => {
   if (!cursor) return undefined;
   try {
     const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown;
-    if (!Array.isArray(value) || value.length !== 2 || typeof value[0] !== "number" || typeof value[1] !== "string") {
+    if (!Array.isArray(value) || (value.length !== 2 && value.length !== 3) || typeof value[0] !== "number" || !Number.isFinite(value[0]) || typeof value[1] !== "string" || (value.length === 3 && typeof value[2] !== "string")) {
       throw new Error("invalid");
     }
-    return [value[0], value[1]];
+    return [value[0], value[1], value[2]];
   } catch {
     throw new ValidationError('The "cursor" option is invalid.');
   }
@@ -100,8 +130,22 @@ export const listStates = (states: Iterable<AgentRunState>, options: AgentRunLis
     .filter((state) => !options.statuses?.length || options.statuses.includes(state.status))
     .filter((state) => options.updatedAfter === undefined || (state.updatedAt ?? 0) > options.updatedAfter)
     .filter((state) => options.updatedBefore === undefined || (state.updatedAt ?? 0) < options.updatedBefore)
-    .sort((left, right) => (right.updatedAt ?? right.startedAt ?? 0) - (left.updatedAt ?? left.startedAt ?? 0) || right.runId.localeCompare(left.runId))
-    .filter((state) => !cursor || (state.updatedAt ?? state.startedAt ?? 0) < cursor[0] || ((state.updatedAt ?? state.startedAt ?? 0) === cursor[0] && state.runId < cursor[1]));
+    .sort((left, right) => {
+      const timeOrder = (right.updatedAt ?? right.startedAt ?? 0) - (left.updatedAt ?? left.startedAt ?? 0);
+      if (timeOrder) return timeOrder;
+      if (right.runId !== left.runId) return right.runId > left.runId ? 1 : -1;
+      const leftKey = scopedKey(left.scope, left.runId);
+      const rightKey = scopedKey(right.scope, right.runId);
+      return rightKey > leftKey ? 1 : rightKey < leftKey ? -1 : 0;
+    })
+    .filter((state) => {
+      if (!cursor) return true;
+      const time = state.updatedAt ?? state.startedAt ?? 0;
+      if (time !== cursor[0]) return time < cursor[0];
+      if (state.runId !== cursor[1]) return state.runId < cursor[1];
+      // Legacy cursors have no scope boundary; retain their original semantics.
+      return cursor[2] !== undefined && scopedKey(state.scope, state.runId) < cursor[2];
+    });
   const page = filtered.slice(0, limit);
   return {
     items: page.map(hydrate),

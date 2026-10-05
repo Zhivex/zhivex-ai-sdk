@@ -272,7 +272,6 @@ export const streamObject = <TSchema extends ZodTypeAny>(options: GenerateObject
   const finalResultPromise = (async () => {
     let text = "";
     let lastPartial: Partial<GenerateObjectOutput<TSchema>["object"]> | undefined;
-    let completed = false;
 
     for await (const event of streamResult.eventStream) {
       await broadcast.publish(event);
@@ -294,22 +293,13 @@ export const streamObject = <TSchema extends ZodTypeAny>(options: GenerateObject
         await broadcast.publish({ type: "object-partial", partialObject: partial });
         await partialBroadcast.publish(partial);
 
-        if (!completed) {
-          const parsed = options.schema.safeParse(partial);
-          if (parsed.success) {
-            completed = true;
-            await broadcast.publish({ type: "object-complete", object: parsed.data }, { terminal: true });
-          }
-        }
       }
     }
 
     const textResult = await streamResult.collect();
     const object = parseObject(textResult.text, options.schema);
 
-    if (!completed) {
-      await broadcast.publish({ type: "object-complete", object }, { terminal: true });
-    }
+    await broadcast.publish({ type: "object-complete", object }, { terminal: true });
 
     broadcast.close();
     partialBroadcast.close();
@@ -331,8 +321,10 @@ export const streamObject = <TSchema extends ZodTypeAny>(options: GenerateObject
     }
     throw error;
   });
+  void finalResultPromise.catch(() => {});
 
   return {
+    cancel: streamResult.cancel,
     eventStream: createEventStream(),
     partialObjectStream: createPartialStream(),
     textStream: streamResult.textStream,

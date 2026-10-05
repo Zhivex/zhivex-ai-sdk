@@ -36,6 +36,7 @@ import {
   toToolSet,
   toolResultPayload,
   withRetry,
+  withResponseRetry,
   withTimeoutSignal,
   type AudioFrame,
   type AudioInput,
@@ -1235,7 +1236,7 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
           previousResponse && previousResponse.index < input.messages.length - 1
             ? input.messages.slice(previousResponse.index + 1)
             : input.messages;
-        const response = await withRetry(
+        const response = await withResponseRetry(
           () =>
             this.fetcher(this.resolveURL(this.modelId, "responses"), {
               method: "POST",
@@ -1254,7 +1255,8 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
                 ...mapAzureResponsesReasoning(input)
               })
             }),
-          { ...input, abortSignal: signal }
+          { ...input, abortSignal: signal },
+          "Azure OpenAI"
         );
 
         const json = await parseJson(response);
@@ -1275,7 +1277,7 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
         };
       }
 
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.resolveURL(this.modelId, "chat/completions"), {
             method: "POST",
@@ -1294,7 +1296,8 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
               stream: false
             })
           }),
-        { ...input, abortSignal: signal }
+        { ...input, abortSignal: signal },
+        "Azure OpenAI"
       );
 
       const json = await parseJson(response);
@@ -1324,7 +1327,7 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
     try {
       if (useAzureResponses(this.modelId, input)) {
         assertResponsesToolsSupported(this.modelId, input.tools);
-        const response = await withRetry(
+        const response = await withResponseRetry(
           () =>
             this.fetcher(this.resolveURL(this.modelId, "responses"), {
               method: "POST",
@@ -1343,7 +1346,8 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
                 stream: true
               })
             }),
-          { ...input, abortSignal: signal }
+          { ...input, abortSignal: signal },
+          "Azure OpenAI"
         );
 
         return (async function* () {
@@ -1356,7 +1360,7 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
         })();
       }
 
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.resolveURL(this.modelId, "chat/completions"), {
             method: "POST",
@@ -1376,7 +1380,8 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
               stream_options: { include_usage: true }
             })
           }),
-        { ...input, abortSignal: signal }
+        { ...input, abortSignal: signal },
+        "Azure OpenAI"
       );
 
       return (async function* () {

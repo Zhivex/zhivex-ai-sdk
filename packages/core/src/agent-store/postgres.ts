@@ -17,15 +17,21 @@ import type {
 import {
   validateIdentifier,
   scopedKey,
+  legacyScopedKey,
+  matchesRun,
+  matchesScope,
   resolveScope,
   getRecordField,
   nextStoredState,
-  scopePrefix,
   listStates,
   validateLeaseOptions,
   cloneJournalEntry,
   nextJournalEntry,
   defaultMemoryKey,
+  legacyDefaultMemoryKey,
+  encodeAgentMemory,
+  decodeAgentMemory,
+  LEGACY_MEMORY_MIGRATION_MESSAGE,
   defaultMemoryMessages
 } from "./shared.js";
 
@@ -134,45 +140,62 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
     await ensurePostgresTable(options.client, `${tableName}:indexes`, createIndexesSql);
   };
 
+  const physicalKey = async (runId: string, scope?: AgentStoreScope): Promise<string> => {
+    const targetScope = resolveScope(options.scope, scope);
+    const canonical = dbKey(runId, scope);
+    for (const key of [canonical, legacyScopedKey(targetScope, runId)]) {
+      const result = await options.client.query<{ state_json?: AgentRunState; stateJson?: AgentRunState }>(`SELECT state_json FROM ${tableName} WHERE run_id = $1`, [key]);
+      const state = getRecordField(result.rows[0], ["state_json", "stateJson"]) as AgentRunState | undefined;
+      if (state && matchesRun(state, runId, targetScope)) return key;
+      if (state && key === canonical) throw new ConflictError("Canonical agent key is occupied by a different legacy identity; migrate that identity before writing.");
+    }
+    return canonical;
+  };
+  const findByIdempotencyKey = async (idempotencyKey: string, scope?: AgentStoreScope): Promise<AgentRunState | undefined> => {
+    const targetScope = resolveScope(options.scope, scope);
+    for (const key of [dbKey(idempotencyKey, scope), legacyScopedKey(targetScope, idempotencyKey)]) {
+      const result = await options.client.query<{ state_json?: AgentRunState; stateJson?: AgentRunState }>(
+        `SELECT runs.state_json FROM ${tableName} runs INNER JOIN ${idempotencyTableName} keys ON keys.run_id = runs.run_id WHERE keys.idempotency_key = $1`, [key]);
+      const state = getRecordField(result.rows[0], ["state_json", "stateJson"]) as AgentRunState | undefined;
+      if (state && state.idempotencyKey === idempotencyKey && matchesScope(state.scope, targetScope)) return normalizeAgentRunState(state);
+      if (state && key === dbKey(idempotencyKey, scope)) throw new ConflictError("Canonical idempotency key is occupied by a different legacy identity; migrate that index before writing.");
+    }
+    return undefined;
+  };
+
   return {
     async load(runId, scope) {
       await ensureAllTables();
       const result = await options.client.query<{ state_json?: AgentRunState; stateJson?: AgentRunState }>(
         `SELECT state_json FROM ${tableName} WHERE run_id = $1`,
-        [dbKey(runId, scope)]
+        [await physicalKey(runId, scope)]
       );
       const state = result.rows[0] ? ((getRecordField(result.rows[0], ["state_json", "stateJson"]) as AgentRunState | undefined) ?? undefined) : undefined;
-      return state ? normalizeAgentRunState(state) : undefined;
+      return state && matchesRun(state, runId, resolveScope(options.scope, scope)) ? normalizeAgentRunState(state) : undefined;
     },
     async findByIdempotencyKey(idempotencyKey, scope) {
       await ensureAllTables();
-      const result = await options.client.query<{ state_json?: AgentRunState; stateJson?: AgentRunState }>(
-        `SELECT runs.state_json
-         FROM ${tableName} runs
-         INNER JOIN ${idempotencyTableName} keys ON keys.run_id = runs.run_id
-         WHERE keys.idempotency_key = $1`,
-        [dbKey(idempotencyKey, scope)]
-      );
-      const state = result.rows[0] ? ((getRecordField(result.rows[0], ["state_json", "stateJson"]) as AgentRunState | undefined) ?? undefined) : undefined;
-      return state ? normalizeAgentRunState(state) : undefined;
+      return findByIdempotencyKey(idempotencyKey, scope);
     },
     async findByParentRunId(parentRunId, scope) {
       await ensureAllTables();
-      const result = await options.client.query<{ state_json?: AgentRunState; stateJson?: AgentRunState }>(
-        `SELECT runs.state_json
-         FROM ${tableName} runs
-         INNER JOIN ${parentTableName} parents ON parents.run_id = runs.run_id
-         WHERE parents.parent_run_id = $1`,
-        [dbKey(parentRunId, scope)]
-      );
-      return result.rows.flatMap((row) => {
-        const state = (getRecordField(row, ["state_json", "stateJson"]) as AgentRunState | undefined) ?? undefined;
-        return state ? [normalizeAgentRunState(state)] : [];
-      });
+      const targetScope = resolveScope(options.scope, scope);
+      const states = new Map<string, AgentRunState>();
+      for (const key of [dbKey(parentRunId, scope), legacyScopedKey(targetScope, parentRunId)]) {
+        const result = await options.client.query<{ state_json?: AgentRunState; stateJson?: AgentRunState }>(
+          `SELECT runs.state_json FROM ${tableName} runs INNER JOIN ${parentTableName} parents ON parents.run_id = runs.run_id WHERE parents.parent_run_id = $1`, [key]);
+        for (const row of result.rows) {
+          const state = getRecordField(row, ["state_json", "stateJson"]) as AgentRunState | undefined;
+          if (state && state.parentRunId === parentRunId && matchesScope(state.scope, targetScope)) states.set(state.runId, normalizeAgentRunState(state));
+        }
+      }
+      return [...states.values()];
     },
     async claimIdempotencyKey(state) {
       await ensureAllTables();
       const scope = resolveScope(options.scope, state.scope);
+      const existingOwner = await findByIdempotencyKey(state.idempotencyKey, scope);
+      if (existingOwner) return { claimed: false, state: existingOwner };
       const normalized = normalizeAgentRunState({ ...state, ...(scope ? { scope } : {}) });
       const updatedAt = Date.now();
 
@@ -180,17 +203,17 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
         `INSERT INTO ${tableName} (run_id, state_json, updated_at_ms)
          VALUES ($1, $2::jsonb, $3)
          ON CONFLICT(run_id) DO NOTHING`,
-        [dbKey(normalized.runId, scope), normalized, updatedAt]
+        [await physicalKey(normalized.runId, scope), normalized, updatedAt]
       );
       const claim = await options.client.query<{ run_id?: string; runId?: string }>(
         `INSERT INTO ${idempotencyTableName} (idempotency_key, run_id, updated_at_ms)
          VALUES ($1, $2, $3)
          ON CONFLICT(idempotency_key) DO NOTHING
          RETURNING run_id`,
-        [dbKey(state.idempotencyKey, scope), dbKey(normalized.runId, scope), updatedAt]
+        [dbKey(state.idempotencyKey, scope), await physicalKey(normalized.runId, scope), updatedAt]
       );
       const claimedRunId = getRecordField(claim.rows[0], ["run_id", "runId"]);
-      if (claimedRunId === dbKey(normalized.runId, scope)) {
+      if (claimedRunId === await physicalKey(normalized.runId, scope)) {
         if (normalized.parentRunId) {
           await options.client.query(
             `INSERT INTO ${parentTableName} (run_id, parent_run_id, updated_at_ms)
@@ -198,7 +221,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
              ON CONFLICT(run_id) DO UPDATE SET
                parent_run_id = EXCLUDED.parent_run_id,
                updated_at_ms = EXCLUDED.updated_at_ms`,
-            [dbKey(normalized.runId, scope), dbKey(normalized.parentRunId, scope), updatedAt]
+            [await physicalKey(normalized.runId, scope), dbKey(normalized.parentRunId, scope), updatedAt]
           );
         }
         return { claimed: true, state: normalized };
@@ -214,11 +237,11 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
       const existingState = existing.rows[0]
         ? getRecordField(existing.rows[0], ["state_json", "stateJson"]) as AgentRunState | undefined
         : undefined;
-      if (!existingState) {
-        throw new ConflictError("AgentRunState idempotency claim could not be loaded.");
+      if (!existingState || existingState.idempotencyKey !== state.idempotencyKey || !matchesScope(existingState.scope, scope)) {
+        throw new ConflictError("AgentRunState idempotency claim could not be loaded with the expected identity.");
       }
       if (existingState.runId !== normalized.runId) {
-        await options.client.query(`DELETE FROM ${tableName} WHERE run_id = $1`, [dbKey(normalized.runId, scope)]);
+        await options.client.query(`DELETE FROM ${tableName} WHERE run_id = $1`, [await physicalKey(normalized.runId, scope)]);
       }
       return { claimed: false, state: normalizeAgentRunState(existingState) };
     },
@@ -229,12 +252,14 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
       const stored = { ...normalized, ...(scope ? { scope } : {}) };
       const updatedAt = Date.now();
       if (normalized.idempotencyKey) {
+        const existingOwner = await findByIdempotencyKey(normalized.idempotencyKey, scope);
+        if (existingOwner && existingOwner.runId !== normalized.runId) throw new ConflictError("AgentRunState idempotency key conflict.");
         const owner = await options.client.query<{ run_id?: string; runId?: string }>(
           `SELECT run_id FROM ${idempotencyTableName} WHERE idempotency_key = $1`,
           [dbKey(normalized.idempotencyKey, scope)]
         );
         const ownerRunId = getRecordField(owner.rows[0], ["run_id", "runId"]);
-        if (typeof ownerRunId === "string" && ownerRunId !== dbKey(normalized.runId, scope)) {
+        if (typeof ownerRunId === "string" && ownerRunId !== await physicalKey(normalized.runId, scope)) {
           throw new ConflictError("AgentRunState idempotency key conflict.");
         }
       }
@@ -246,7 +271,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
            ON CONFLICT(run_id) DO UPDATE SET
              state_json = EXCLUDED.state_json,
              updated_at_ms = EXCLUDED.updated_at_ms`,
-          [dbKey(normalized.runId, scope), stored, updatedAt]
+          [await physicalKey(normalized.runId, scope), stored, updatedAt]
         );
       } else {
         const saved = await options.client.query<{ run_id?: string; runId?: string }>(
@@ -257,9 +282,9 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
              updated_at_ms = EXCLUDED.updated_at_ms
            WHERE COALESCE((${tableName}.state_json->>'revision')::bigint, 0) = $4
            RETURNING run_id`,
-          [dbKey(normalized.runId, scope), stored, updatedAt, saveOptions.expectedRevision]
+          [await physicalKey(normalized.runId, scope), stored, updatedAt, saveOptions.expectedRevision]
         );
-        if (getRecordField(saved.rows[0], ["run_id", "runId"]) !== dbKey(normalized.runId, scope)) {
+        if (getRecordField(saved.rows[0], ["run_id", "runId"]) !== await physicalKey(normalized.runId, scope)) {
           throw new ConflictError("AgentRunState revision conflict.");
         }
       }
@@ -268,10 +293,10 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
           `INSERT INTO ${idempotencyTableName} (idempotency_key, run_id, updated_at_ms)
            VALUES ($1, $2, $3)
            ON CONFLICT(idempotency_key) DO NOTHING`,
-          [dbKey(normalized.idempotencyKey, scope), dbKey(normalized.runId, scope), updatedAt]
+          [dbKey(normalized.idempotencyKey, scope), await physicalKey(normalized.runId, scope), updatedAt]
         );
       }
-      await options.client.query(`DELETE FROM ${parentTableName} WHERE run_id = $1`, [dbKey(normalized.runId, scope)]);
+      await options.client.query(`DELETE FROM ${parentTableName} WHERE run_id = $1`, [await physicalKey(normalized.runId, scope)]);
       if (normalized.parentRunId) {
         await options.client.query(
           `INSERT INTO ${parentTableName} (run_id, parent_run_id, updated_at_ms)
@@ -279,13 +304,13 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
            ON CONFLICT(run_id) DO UPDATE SET
              parent_run_id = EXCLUDED.parent_run_id,
              updated_at_ms = EXCLUDED.updated_at_ms`,
-          [dbKey(normalized.runId, scope), dbKey(normalized.parentRunId, scope), updatedAt]
+          [await physicalKey(normalized.runId, scope), dbKey(normalized.parentRunId, scope), updatedAt]
         );
       }
     },
     async delete(runId, scope) {
       await ensureAllTables();
-      const key = dbKey(runId, scope);
+      const key = await physicalKey(runId, scope);
       await options.client.query(
         `WITH deleted_run AS (
            DELETE FROM ${tableName} WHERE run_id = $1 RETURNING run_id
@@ -302,14 +327,15 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
     },
     async list(listOptions, scope) {
       await ensureAllTables();
-      const prefix = scopePrefix(resolveScope(options.scope, scope));
+      const targetScope = resolveScope(options.scope, scope);
+      const prefix = "";
       const result = await options.client.query<{ state_json?: AgentRunState; stateJson?: AgentRunState }>(
         `SELECT state_json FROM ${tableName} WHERE run_id >= $1 AND run_id < $2`,
         [prefix, `${prefix}\uffff`]
       );
       const states = result.rows.flatMap((row) => {
         const state = getRecordField(row, ["state_json", "stateJson"]) as AgentRunState | undefined;
-        return state ? [normalizeAgentRunState(state)] : [];
+        return state && (!targetScope || matchesScope(state.scope, targetScope)) ? [normalizeAgentRunState(state)] : [];
       });
       return listStates(states, listOptions);
     },
@@ -322,7 +348,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
       validateLeaseOptions(leaseOptions);
       await ensureAllTables();
       const now = leaseOptions.now ?? Date.now();
-      const key = dbKey(runId, scope);
+      const key = await physicalKey(runId, scope);
       const expiresAt = now + leaseOptions.ttlMs;
       const result = await options.client.query<{ owner_id?: string; ownerId?: string; expires_at_ms?: number | string; expiresAtMs?: number | string }>(
         `INSERT INTO ${leaseTableName} (run_key, run_id, owner_id, expires_at_ms)
@@ -348,7 +374,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
          SET expires_at_ms = $3
          WHERE run_key = $1 AND owner_id = $2 AND expires_at_ms > $4
          RETURNING owner_id`,
-        [dbKey(runId, scope), leaseOptions.ownerId, expiresAt, now]
+        [await physicalKey(runId, scope), leaseOptions.ownerId, expiresAt, now]
       );
       return getRecordField(result.rows[0], ["owner_id", "ownerId"]) === leaseOptions.ownerId
         ? { runId, ownerId: leaseOptions.ownerId, expiresAt }
@@ -358,7 +384,7 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
       await ensureAllTables();
       const result = await options.client.query<{ owner_id?: string; ownerId?: string }>(
         `DELETE FROM ${leaseTableName} WHERE run_key = $1 AND owner_id = $2 RETURNING owner_id`,
-        [dbKey(runId, scope), ownerId]
+        [await physicalKey(runId, scope), ownerId]
       );
       return getRecordField(result.rows[0], ["owner_id", "ownerId"]) === ownerId;
     },
@@ -366,9 +392,10 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
       await ensureAllTables();
       const result = await options.client.query<{ entry_json?: AgentToolCallJournalEntry; entryJson?: AgentToolCallJournalEntry }>(
         `SELECT entry_json FROM ${journalTableName} WHERE run_key = $1 AND tool_call_id = $2`,
-        [dbKey(runId, scope), toolCallId]
+        [await physicalKey(runId, scope), toolCallId]
       );
       const entry = getRecordField(result.rows[0], ["entry_json", "entryJson"]);
+      if (entry && typeof entry === "object" && (!matchesRun(entry as AgentToolCallJournalEntry, runId, resolveScope(options.scope, scope)) || (entry as AgentToolCallJournalEntry).toolCallId !== toolCallId)) throw new ConflictError("Persisted journal identity cannot be verified; reconcile or migrate before executing the tool.");
       return entry && typeof entry === "object" ? cloneJournalEntry(entry as AgentToolCallJournalEntry) : undefined;
     },
     async loadToolExecution(runId, toolCallId, scope) {
@@ -378,17 +405,20 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
       await ensureAllTables();
       const result = await options.client.query<{ entry_json?: AgentToolCallJournalEntry; entryJson?: AgentToolCallJournalEntry }>(
         `SELECT entry_json FROM ${journalTableName} WHERE run_key = $1 ORDER BY updated_at_ms, tool_call_id`,
-        [dbKey(runId, scope)]
+        [await physicalKey(runId, scope)]
       );
       return result.rows.flatMap((row) => {
         const entry = getRecordField(row, ["entry_json", "entryJson"]);
+        if (entry && typeof entry === "object" && !matchesRun(entry as AgentToolCallJournalEntry, runId, resolveScope(options.scope, scope))) throw new ConflictError("Persisted journal identity cannot be verified; reconcile or migrate before continuing.");
         return entry && typeof entry === "object" ? [cloneJournalEntry(entry as AgentToolCallJournalEntry)] : [];
       });
     },
     async saveToolCall(entry, journalOptions) {
       await ensureAllTables();
-      const next = nextJournalEntry(entry, journalOptions);
-      const key = dbKey(entry.runId, entry.scope);
+      await this.loadToolCall?.(entry.runId, entry.toolCallId, entry.scope);
+      const scope = resolveScope(options.scope, entry.scope);
+      const next = nextJournalEntry({ ...entry, ...(scope ? { scope } : {}) }, journalOptions);
+      const key = await physicalKey(entry.runId, entry.scope);
       const result = journalOptions?.expectedRevision === undefined
         ? await options.client.query<{ revision?: number | string }>(
           `INSERT INTO ${journalTableName} (run_key, tool_call_id, entry_json, revision, updated_at_ms)
@@ -416,14 +446,15 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
     },
     async claimToolExecution(entry) {
       await ensureAllTables();
-      const next = nextJournalEntry({ ...entry, status: "running", revision: 0 });
+      const scope = resolveScope(options.scope, entry.scope);
+      const next = nextJournalEntry({ ...entry, ...(scope ? { scope } : {}), status: "running", revision: 0 });
       const result = await options.client.query<{ entry_json?: AgentToolCallJournalEntry; entryJson?: AgentToolCallJournalEntry }>(
         `INSERT INTO ${journalTableName} (run_key, tool_call_id, entry_json, revision, updated_at_ms)
          SELECT $1, $2, $3::jsonb, 0, $4
          WHERE EXISTS (SELECT 1 FROM ${tableName} WHERE run_id = $1)
          ON CONFLICT(run_key, tool_call_id) DO NOTHING
          RETURNING entry_json`,
-        [dbKey(entry.runId, entry.scope), entry.toolCallId, next, next.updatedAt]
+        [await physicalKey(entry.runId, entry.scope), entry.toolCallId, next, next.updatedAt]
       );
       const claimed = getRecordField(result.rows[0], ["entry_json", "entryJson"]);
       if (claimed && typeof claimed === "object") return { claimed: true, entry: next };
@@ -441,6 +472,10 @@ export const createPostgresAgentMemoryStore = (options: PostgresAgentMemoryStore
   assertPostgresClient(options.client);
   const tableName = validateIdentifier(options.tableName ?? "zhivex_agent_memory", "tableName");
   const keyFor = (context: AgentMemoryContext) => (options.key ?? defaultMemoryKey)({ ...context, scope: resolveScope(options.scope, context.scope) });
+  const memoryContext = (context: AgentMemoryContext) => ({ ...context, scope: resolveScope(options.scope, context.scope) });
+  const encode = (context: AgentMemoryContext, messages: ModelMessage[]) => options.key ? messages : encodeAgentMemory(memoryContext(context), messages);
+  const decode = (context: AgentMemoryContext, value: unknown) => options.key ? value as ModelMessage[] : decodeAgentMemory(memoryContext(context), value);
+
   const selectMessages = options.selectMessages ?? defaultMemoryMessages;
   const createSql = `
     CREATE TABLE IF NOT EXISTS ${tableName} (
@@ -450,26 +485,37 @@ export const createPostgresAgentMemoryStore = (options: PostgresAgentMemoryStore
     )
   `;
 
+  const assertMemoryIdentity = async (context: AgentMemoryContext) => {
+    if (options.key) return;
+    const canonical = await options.client.query(`SELECT messages_json FROM ${tableName} WHERE memory_key = $1`, [keyFor(context)]);
+    if (canonical.rows.length) { decode(context, getRecordField(canonical.rows[0], ["messages_json", "messagesJson"])); return; }
+    const legacy = legacyDefaultMemoryKey({ ...context, scope: resolveScope(options.scope, context.scope) });
+    const previous = await options.client.query(`SELECT messages_json FROM ${tableName} WHERE memory_key = $1`, [legacy]);
+    if (previous.rows.length) throw new ValidationError(LEGACY_MEMORY_MIGRATION_MESSAGE);
+  };
+
   return {
     async load(context) {
       await ensurePostgresTable(options.client, tableName, createSql);
+      await assertMemoryIdentity(context);
       const result = await options.client.query<{ messages_json?: ModelMessage[]; messagesJson?: ModelMessage[] }>(
         `SELECT messages_json FROM ${tableName} WHERE memory_key = $1`,
         [keyFor(context)]
       );
       return result.rows[0]
-        ? ((getRecordField(result.rows[0], ["messages_json", "messagesJson"]) as ModelMessage[] | undefined) ?? [])
+        ? decode(context, getRecordField(result.rows[0], ["messages_json", "messagesJson"]))
         : [];
     },
     async save(context) {
       await ensurePostgresTable(options.client, tableName, createSql);
+      await assertMemoryIdentity(context);
       await options.client.query(
         `INSERT INTO ${tableName} (memory_key, messages_json, updated_at_ms)
          VALUES ($1, $2::jsonb, $3)
          ON CONFLICT(memory_key) DO UPDATE SET
            messages_json = EXCLUDED.messages_json,
            updated_at_ms = EXCLUDED.updated_at_ms`,
-        [keyFor(context), selectMessages(context.state), Date.now()]
+        [keyFor(context), encode(context, selectMessages(context.state)), Date.now()]
       );
     }
   };

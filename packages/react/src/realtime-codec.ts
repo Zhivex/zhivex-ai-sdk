@@ -11,10 +11,46 @@ export function decodeRealtimeBase64(value: string): Uint8Array {
   if (value.length > 350_000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) throw new Error("Invalid realtime base64 frame.");
   return Uint8Array.from(atob(value), char => char.charCodeAt(0));
 }
+// Copy public scalar fields instead of serializing provider objects. In particular,
+// response-complete metadata can contain tool arguments and other server-only data.
+const publicFields = (value: object, keys: readonly string[]): Record<string, string | number | boolean> => {
+  const result: Record<string, string | number | boolean> = {};
+  for (const key of keys) {
+    const field = (value as Record<string, unknown>)[key];
+    if (typeof field === "string" || typeof field === "boolean" || typeof field === "number" && Number.isFinite(field)) result[key] = field;
+  }
+  return result;
+};
+
 export function encodeRealtimeEvent(event: AgentLiveEvent): unknown {
-  if (event.type === "realtime-audio-output") return { ...event, audio: realtimeBase64(event.audio) };
-  if (event.type === "realtime-error" || event.type === "error") return { type: "realtime-error", message: "Realtime provider failed." };
-  return event;
+  switch (event.type) {
+    case "realtime-start":
+      return { type: event.type, ...publicFields(event, ["sessionId"]) };
+    case "realtime-end":
+    case "realtime-response-complete":
+      return { type: event.type, ...publicFields(event, ["reason"]) };
+    case "realtime-error":
+    case "error":
+      return { type: "realtime-error", message: "Realtime provider failed." };
+    case "realtime-text-delta":
+      return { type: event.type, ...publicFields(event, ["textDelta", "itemId", "responseId", "role"]) };
+    case "realtime-transcript":
+      return { type: event.type, ...publicFields(event, ["text", "role", "isFinal", "startMs", "endMs", "itemId", "responseId"]) };
+    case "realtime-audio-output":
+      return { type: event.type, ...publicFields(event, ["mediaType", "sampleRateHz", "channels", "itemId", "responseId"]), audio: realtimeBase64(event.audio) };
+    case "realtime-delegation":
+      return { type: event.type, ...publicFields(event, ["delegationId", "offsetMs"]) };
+    case "agent-run-update": {
+      const run = publicFields(event.run, ["runId", "parentRunId", "agentId", "name", "status", "provider", "modelId", "currentStep", "maxSteps", "toolCalls", "handoffToAgentId", "startedAt", "updatedAt"]);
+      return { type: event.type, run: {
+        ...run,
+        ...(event.run.usage ? { usage: publicFields(event.run.usage, ["inputTokens", "cachedInputTokens", "cacheWriteTokens", "outputTokens", "reasoningTokens", "totalTokens", "speed"]) } : {}),
+        ...(event.run.budget ? { budget: publicFields(event.run.budget, ["maxTotalTokens", "maxToolCalls"]) } : {})
+      } };
+    }
+    default:
+      throw new Error("Unsupported browser realtime event.");
+  }
 }
 export function decodeRealtimeEvent(value: unknown): AgentLiveEvent {
   if (!value || typeof value !== "object" || !("type" in value) || typeof value.type !== "string") throw new Error("Malformed realtime event.");
