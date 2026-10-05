@@ -40,7 +40,7 @@ const state = (runId: string, extra: Partial<AgentRunState> = {}): AgentRunState
   const seed = async (states: AgentRunState[], legacy = false) => {
     const records = states.map(item => ({ key: (legacy ? legacyScopedKey : scopedKey)(item.scope, item.runId), state: item }));
     await db.query(`INSERT INTO ${table} (run_id, state_json, updated_at_ms)
-      SELECT item->>'key', item->'state', 999999 FROM jsonb_array_elements($1::jsonb) AS item`, [JSON.stringify(records)]);
+      SELECT item->>'key', item->'state', 999999 FROM jsonb_array_elements($1::jsonb) AS item`, [records]);
   };
   const assertBounded = (limit: number) => {
     expect(reads.length).toBeGreaterThan(0);
