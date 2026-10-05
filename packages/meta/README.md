@@ -58,6 +58,8 @@ const result = await generateText({
 
 Responses streaming supports text deltas, fragmented function-call arguments, and continuation through `previous_response_id`. Retryable HTTP statuses (`408`, `429`, and `5xx`) are retried when `maxRetries` is configured, before a JSON body or SSE stream is consumed.
 
+Chat Completions and Responses preserve Meta's reported reasoning count in `usage.reasoningTokens`, including Responses streaming and grounded generation. Reasoning tokens are already included in `usage.outputTokens`; do not add them again to output or total tokens. A reported zero remains `0`, while an unreported reasoning count remains `undefined`.
+
 Meta Model API accepts only `toolChoice: "auto"` (which is also the default). The adapter rejects `"none"`, `"required"`, and named-tool choices before sending a request.
 
 The shared Zhivex `audio` part is supported for MP3 and WAV input. Chat Completions sends inline base64 audio; Responses additionally accepts base64 data URLs and uploaded Meta file IDs. Audio output is not supported.
