@@ -1,5 +1,15 @@
 # @zhivex-ai/react
 
+## 0.7.1
+
+### Patch Changes
+
+- 10bd4ee: Restrict realtime relay events to public fields, including nested execution summaries, so raw provider metadata and internal tool arguments remain on the server.
+- Updated dependencies [70c4fee]
+- Updated dependencies [10bd4ee]
+- Updated dependencies [10bd4ee]
+  - @zhivex-ai/core@1.30.1
+
 ## 0.7.0
 
 ### Minor Changes

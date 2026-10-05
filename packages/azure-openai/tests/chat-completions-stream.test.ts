@@ -60,7 +60,7 @@ describe("Azure shared Chat Completions streaming", () => {
   it.each([false, true])("surfaces HTTP failures for responses=%s", async (responses) => {
     const fetcher = vi.fn().mockResolvedValue(new Response("denied", { status: 401 }));
     const instance = createAzureOpenAI({ apiKey: "test", endpoint: "https://example.openai.azure.com", fetch: fetcher })(responses ? "gpt-6-astra" : "gpt-4o-mini");
-    await expect(collect(await instance.stream!({ ...input, maxRetries: 0 }))).rejects.toMatchObject({ status: 401 });
+    await expect(instance.stream!({ ...input, maxRetries: 0 })).rejects.toMatchObject({ status: 401 });
   });
 
   it.each([false, true])("does not dispatch an already aborted request for responses=%s", async (responses) => {

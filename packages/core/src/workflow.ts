@@ -18,6 +18,7 @@ import {
   type WorkflowStepResult,
   type WorkflowStepStatus
 } from "./workflow-state-contracts.js";
+import { createMergedAbortSignal } from "./runtime.js";
 import { createSecureId } from "#secure-id";
 
 export {
@@ -725,6 +726,38 @@ const runParallelStep = async (
 ): Promise<WorkflowStepExecution> => {
   const previousChildren = existingResult?.children ?? [];
   const hasWaitingChild = previousChildren.some((child) => child.status === "waiting_approval");
+  const failureController = step.failFast ? new AbortController() : undefined;
+  const control = createMergedAbortSignal(input.abortSignal, failureController?.signal);
+  const branchInput = { ...input, abortSignal: control.signal };
+  const runBranch = async (child: WorkflowTaskStep, isApprovalResume: boolean) => {
+    const signal = control.signal;
+    signal?.throwIfAborted();
+    let onAbort: (() => void) | undefined;
+    try {
+      const operation = runTaskStep(workflow, state, child, branchInput, {
+        startedAt: Date.now(), isApprovalResume
+      });
+      const execution = failureController && signal
+        ? await Promise.race([
+            operation,
+            new Promise<never>((_, reject) => {
+              onAbort = () => reject(signal.reason ?? new DOMException("Workflow branch aborted.", "AbortError"));
+              signal.addEventListener("abort", onAbort, { once: true });
+              if (signal.aborted) onAbort();
+            })
+          ])
+        : await operation;
+      if (execution.result.status === "failed") {
+        failureController?.abort(new DOMException("Parallel workflow stopped after a branch failed.", "AbortError"));
+      }
+      return execution;
+    } catch (error) {
+      failureController?.abort(new DOMException("Parallel workflow stopped after a branch failed.", "AbortError"));
+      throw error;
+    } finally {
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+    }
+  };
   const runnableSteps = step.steps.map((child, childIndex) => {
     const previous = previousChildren.find((result) => result.id === child.id);
     if (previous?.status === "completed") {
@@ -747,10 +780,7 @@ const runParallelStep = async (
       });
     }
 
-    return runTaskStep(workflow, state, child, input, {
-      startedAt: Date.now(),
-      isApprovalResume: previous?.status === "waiting_approval" && Boolean(input.approvals?.length)
-    })
+    return runBranch(child, previous?.status === "waiting_approval" && Boolean(input.approvals?.length))
       .then(({ result, output }) => ({ child, childIndex, result, output, skipped: false as const }))
       .catch((error) => ({
         child,
@@ -761,7 +791,7 @@ const runParallelStep = async (
       }));
   });
 
-  const settled = await Promise.allSettled(runnableSteps);
+  const settled = await Promise.allSettled(runnableSteps).finally(control.cleanup);
   const childRuns = settled.map((settledResult, index) => {
     if (settledResult.status === "fulfilled") {
       return settledResult.value;

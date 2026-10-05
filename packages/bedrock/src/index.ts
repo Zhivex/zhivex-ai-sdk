@@ -13,6 +13,7 @@ import {
   ConfigurationError,
   isCallableToolDefinition,
   ProviderHTTPError,
+  ProviderToolCallError,
   UnsupportedFeatureError,
   ValidationError,
   assertTrustedEndpoint,
@@ -25,6 +26,7 @@ import {
   readErrorBodyWithLimit,
   readJsonWithLimit,
   withRetry,
+  withResponseRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
@@ -824,7 +826,7 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
         previousResponse && previousResponse.index < input.messages.length - 1
           ? input.messages.slice(previousResponse.index + 1)
           : input.messages;
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/responses`, {
             method: "POST",
@@ -845,7 +847,8 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
               stream: false
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Bedrock"
       );
       if (!response.ok) {
         const body = await readErrorBodyWithLimit(response);
@@ -887,7 +890,7 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
       previousResponse && previousResponse.index < input.messages.length - 1
         ? input.messages.slice(previousResponse.index + 1)
         : input.messages;
-    const response = await withRetry(
+    const response = await withResponseRetry(
       () =>
         this.fetcher(`${this.baseURL}/responses`, {
           method: "POST",
@@ -908,55 +911,71 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
             stream: true
           })
         }),
-      input
-    );
+      { ...input, abortSignal: signal },
+      "Bedrock"
+    ).catch((error) => { cleanup(); throw error; });
 
     return (async function* () {
       try {
+        let providerEffectsPossible = false;
+        const pendingCalls: Array<{ call_id?: string; id?: string; name: string; arguments?: string }> = [];
         for await (const event of streamSSE(response)) {
           if (event.data === "[DONE]") {
-            return;
+            break;
           }
           const json = JSON.parse(event.data);
           if (json.type === "response.output_text.delta" && typeof json.delta === "string") {
             yield { type: "text-delta", textDelta: json.delta } satisfies StreamEvent;
           }
           if (json.type === "response.output_item.done" && json.item?.type === "function_call") {
-            yield {
-              type: "tool-call",
-              toolCall: {
-                id: json.item.call_id ?? json.item.id,
-                name: json.item.name,
-                input: JSON.parse(json.item.arguments ?? "{}")
-              }
-            } satisfies StreamEvent;
+            pendingCalls.push(json.item);
           }
           if (
             json.type === "response.output_item.done" &&
             json.item?.type &&
             !["message", "function_call", "function_call_output"].includes(json.item.type)
           ) {
+            providerEffectsPossible = true;
             yield {
               type: "provider-data",
               provider: "bedrock",
               data: json.item as JsonValue
             } satisfies StreamEvent;
           }
-          if (json.type === "response.completed") {
+          if (["response.completed", "response.failed", "response.incomplete"].includes(json.type)) {
+            const status = json.type.slice("response.".length);
+            const calls = status === "completed" ? pendingCalls.map(item => {
+              const id = item.call_id ?? item.id;
+              if (!id || !item.name) throw new ConfigurationError("Incomplete Bedrock function call.");
+              return { id, name: item.name, input: JSON.parse(item.arguments ?? "{}") };
+            }) : [];
+            for (const toolCall of calls) yield { type: "tool-call", toolCall } satisfies StreamEvent;
             yield {
               type: "finish",
-              finishReason: "stop",
-              providerFinishReason: "completed",
-              usage: json.response?.usage
-                ? {
-                    inputTokens: json.response.usage.input_tokens,
-                    outputTokens: json.response.usage.output_tokens,
-                    totalTokens: json.response.usage.total_tokens
-                  }
-                : undefined
+              finishReason: normalizeOpenAICompatibleFinishReason(status, calls.length > 0),
+              providerFinishReason: status,
+              usage: json.response?.usage ? {
+                inputTokens: json.response.usage.input_tokens,
+                outputTokens: json.response.usage.output_tokens,
+                totalTokens: json.response.usage.total_tokens
+              } : undefined
             } satisfies StreamEvent;
+            if (status === "failed") throw new ProviderToolCallError({
+              provider: "bedrock", transport: "responses", diagnosticCode: "BEDROCK_RESPONSE_FAILED",
+              reason: "response_failed", retryable: false,
+              // Hosted output items may already represent provider-side effects.
+              effectsPossible: providerEffectsPossible,
+              usage: json.response?.usage ? {
+                inputTokens: json.response.usage.input_tokens,
+                outputTokens: json.response.usage.output_tokens,
+                totalTokens: json.response.usage.total_tokens
+              } : undefined
+            });
+            return;
           }
+          if (json.type === "error") throw new ConfigurationError("Bedrock reported a response stream error.");
         }
+        throw new ConfigurationError("Bedrock response stream ended without a terminal event.");
       } finally {
         cleanup();
       }

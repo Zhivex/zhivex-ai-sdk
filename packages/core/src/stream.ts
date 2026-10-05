@@ -83,6 +83,7 @@ export async function* streamSSE(
   }
 
   let buffer = "";
+  let completed = false;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
 
@@ -110,6 +111,7 @@ export async function* streamSSE(
   try {
     while (true) {
       const { done, value } = await reader.read();
+      completed = done;
       buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
 
       while (true) {
@@ -147,6 +149,7 @@ export async function* streamSSE(
       }
     }
   } finally {
+    if (!completed) await reader.cancel("SSE consumption ended before EOF.").catch(() => {});
     reader.releaseLock();
   }
 }
@@ -159,35 +162,65 @@ const normalizeSSEData = (value: unknown) => {
     .join("\n");
 };
 
+// A cancelled consumer must not wait for an uncooperative pending next().
+// The explicit hook lets sources abort pending I/O before iterator cleanup.
+const iterableReadableStream = <T>(
+  source: AsyncIterable<T>,
+  encode: (value: T) => Uint8Array,
+  onCancel?: (reason: unknown) => void | Promise<void>
+): ReadableStream<Uint8Array> => {
+  const iterator = source[Symbol.asyncIterator]();
+  let stopped = false;
+  const cleanup = (reason: unknown) => {
+    if (stopped) return;
+    stopped = true;
+    try { void Promise.resolve(onCancel?.(reason)).catch(() => {}); } catch { /* Continue iterator cleanup. */ }
+    try { void Promise.resolve(iterator.return?.()).catch(() => {}); } catch { /* Preserve the original failure. */ }
+  };
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const item = await iterator.next();
+        if (stopped) return;
+        if (item.done) {
+          stopped = true;
+          controller.close();
+        } else {
+          controller.enqueue(encode(item.value));
+        }
+      } catch (error) {
+        if (!stopped) {
+          cleanup(error);
+          controller.error(error);
+        }
+      }
+    },
+    cancel: cleanup
+  });
+};
+
 export const toSSEStream = <TValue>(
   source: AsyncIterable<TValue>,
   options: {
     event?: string | ((value: TValue) => string | undefined);
+    /** Abort source I/O when the HTTP consumer cancels or encoding fails. */
+    onCancel?: (reason: unknown) => void | Promise<void>;
   } = {}
-): ReadableStream<Uint8Array> =>
-  new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for await (const value of source) {
-          const eventName = typeof options.event === "function" ? options.event(value) : options.event;
-          const eventLine = eventName ? `event: ${eventName}\n` : "";
-          controller.enqueue(encoder.encode(`${eventLine}${normalizeSSEData(value)}\n\n`));
-        }
-        controller.close();
-      } catch (error) {
-        controller.error(error);
-      }
-    }
-  });
+): ReadableStream<Uint8Array> => iterableReadableStream(source, value => {
+  const eventName = typeof options.event === "function" ? options.event(value) : options.event;
+  const eventLine = eventName ? `event: ${eventName}\n` : "";
+  return encoder.encode(`${eventLine}${normalizeSSEData(value)}\n\n`);
+}, options.onCancel);
 
 export const toSSEResponse = <TValue>(
   source: AsyncIterable<TValue>,
   options: ResponseInit & {
     event?: string | ((value: TValue) => string | undefined);
+    onCancel?: (reason: unknown) => void | Promise<void>;
   } = {}
 ): Response => {
-  const { event, headers, ...init } = options;
-  return new Response(toSSEStream(source, { event }), {
+  const { event, onCancel, headers, ...init } = options;
+  return new Response(toSSEStream(source, { event, onCancel }), {
     ...init,
     headers: {
       "content-type": "text/event-stream; charset=utf-8",
@@ -199,18 +232,7 @@ export const toSSEResponse = <TValue>(
 };
 
 export const toTextReadableStream = (result: StreamTextResult): ReadableStream<Uint8Array> =>
-  new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for await (const chunk of result.textStream) {
-          controller.enqueue(encoder.encode(chunk));
-        }
-        controller.close();
-      } catch (error) {
-        controller.error(error);
-      }
-    }
-  });
+  iterableReadableStream(result.textStream, chunk => encoder.encode(chunk), reason => result.cancel?.(reason));
 
 export const toTextStreamResponse = (result: StreamTextResult, init: ResponseInit = {}): Response =>
   new Response(toTextReadableStream(result), {
@@ -223,27 +245,33 @@ export const toTextStreamResponse = (result: StreamTextResult, init: ResponseIni
 
 export const toUIMessageStreamResponse = (
   source: StreamTextResult | AgentStreamResult | AsyncIterable<UIMessageChunk>,
-  init: ResponseInit & { messageId?: string } = {}
+  init: ResponseInit & { messageId?: string; onCancel?: (reason: unknown) => void | Promise<void> } = {}
 ): Response => {
-  const { messageId, headers, ...rest } = init;
+  const { messageId, onCancel, headers, ...rest } = init;
   const uiStream =
     "eventStream" in source ? toUIMessageStream(source, messageId) : source;
 
   return toSSEResponse(uiStream, {
     ...rest,
     headers,
+    onCancel: reason => Promise.allSettled([
+      Promise.resolve().then(() => {
+        if ("cancel" in source && typeof source.cancel === "function") return source.cancel(reason);
+      }),
+      Promise.resolve().then(() => onCancel?.(reason))
+    ]).then(() => undefined),
     event: (chunk) => chunk.type
   });
 };
 
 export const toUIAgentStreamResponse = (
   source: AgentStreamResult | AsyncIterable<UIMessageChunk>,
-  init: ResponseInit & { messageId?: string } = {}
+  init: ResponseInit & { messageId?: string; onCancel?: (reason: unknown) => void | Promise<void> } = {}
 ): Response => toUIMessageStreamResponse(source, init);
 
 export const toUIRunnerStreamResponse = (
   source: RunnerStreamResult,
-  init: ResponseInit & { messageId?: string } = {}
+  init: ResponseInit & { messageId?: string; onCancel?: (reason: unknown) => void | Promise<void> } = {}
 ): Response => {
   const { messageId, ...responseInit } = init;
   const uiStream = (async function* (): AsyncGenerator<UIMessageChunk> {

@@ -19,6 +19,10 @@ import type {
 import {
   resolveScope,
   scopedKey,
+  legacyScopedKey,
+  matchesRun,
+  matchesScope,
+  journalKey,
   sameScope,
   assertLeaseOwner,
   assertExpectedRevision,
@@ -28,6 +32,10 @@ import {
   assertJournalRevision,
   nextJournalEntry,
   defaultMemoryKey,
+  legacyDefaultMemoryKey,
+  encodeAgentMemory,
+  decodeAgentMemory,
+  LEGACY_MEMORY_MIGRATION_MESSAGE,
   defaultMemoryMessages
 } from "./shared.js";
 
@@ -203,16 +211,48 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
   directory: string;
 }): AgentRunStore => {
   const effectiveScope = (scope?: AgentStoreScope) => resolveScope(options.scope, scope);
-  const runPath = (runId: string, scope?: AgentStoreScope) => path.join(options.directory, fileNameForAgentStoreKey(scopedKey(effectiveScope(scope), runId)));
+  // Existing runs retain their verified physical key, including leases and history.
+  // New identities always use canonical keys; foreign legacy aliases are ignored.
+  const readJson = async <T>(file: string): Promise<T | undefined> => {
+    try { return JSON.parse(await fs.readFile(file, "utf8")) as T; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+  };
+  const physicalKey = async (runId: string, scope?: AgentStoreScope) => {
+    const targetScope = effectiveScope(scope);
+    const canonical = scopedKey(targetScope, runId);
+    for (const key of [canonical, legacyScopedKey(targetScope, runId)]) {
+      const state = await readJson<AgentRunState>(path.join(options.directory, fileNameForAgentStoreKey(key)));
+      if (state && matchesRun(state, runId, targetScope)) return key;
+      if (state && key === canonical) throw new ConflictError("Canonical agent key is occupied by a different legacy identity; migrate that identity before writing.");
+    }
+    return canonical;
+  };
+  const runPath = async (runId: string, scope?: AgentStoreScope) => path.join(options.directory, fileNameForAgentStoreKey(await physicalKey(runId, scope)));
   const idempotencyPath = (key: string, scope?: AgentStoreScope) => path.join(options.directory, fileNameForIdempotencyKey(scopedKey(effectiveScope(scope), key)));
-  const leasePath = (runId: string, scope?: AgentStoreScope) => path.join(options.directory, `.lease-${createHash("sha256").update(scopedKey(effectiveScope(scope), runId)).digest("hex")}.json`);
-  const toolPath = (runId: string, toolCallId: string, scope?: AgentStoreScope) => path.join(options.directory, `.tool-${createHash("sha256").update(`${scopedKey(effectiveScope(scope), runId)}:${toolCallId}`).digest("hex")}.json`);
+  const leasePath = async (runId: string, scope?: AgentStoreScope) => path.join(options.directory, `.lease-${createHash("sha256").update(await physicalKey(runId, scope)).digest("hex")}.json`);
+  const toolPath = async (runId: string, toolCallId: string, scope?: AgentStoreScope) => {
+    const targetScope = effectiveScope(scope);
+    const canonical = path.join(options.directory, `.tool-${createHash("sha256").update(journalKey(targetScope, runId, toolCallId)).digest("hex")}.json`);
+    const legacy = path.join(options.directory, `.tool-${createHash("sha256").update(`${legacyScopedKey(targetScope, runId)}:${toolCallId}`).digest("hex")}.json`);
+    for (const file of [canonical, legacy]) {
+      const entry = await readJson<AgentToolCallJournalEntry>(file);
+      if (entry && matchesRun(entry, runId, targetScope) && entry.toolCallId === toolCallId) return file;
+      if (entry && (file === canonical || await physicalKey(runId, scope) === legacyScopedKey(targetScope, runId))) {
+        throw new ConflictError("Persisted journal identity cannot be verified; reconcile or migrate the entry before executing the tool.");
+      }
+    }
+    return canonical;
+  };
   const revisionLockPath = (runId: string, scope?: AgentStoreScope) => path.join(options.directory, `.run-lock-${createHash("sha256").update(scopedKey(effectiveScope(scope), runId)).digest("hex")}.lock`);
+  // Every operation that mutates the idempotency index takes this lock BEFORE
+  // the run lock, including claims and deletes, so lock ordering cannot cycle.
+  const acquireIndexLock = () => acquireFileRunStoreLock(path.join(options.directory, ".idempotency-index.lock"));
 
   const load = async (runId: string, scope?: AgentStoreScope): Promise<AgentRunState | undefined> => {
     try {
-      const content = await fs.readFile(runPath(runId, scope), "utf8");
-      return normalizeAgentRunState(JSON.parse(content) as AgentRunState);
+      const content = await fs.readFile(await runPath(runId, scope), "utf8");
+      const state = normalizeAgentRunState(JSON.parse(content) as AgentRunState);
+      return matchesRun(state, runId, effectiveScope(scope)) ? state : undefined;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return undefined;
@@ -223,14 +263,13 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
 
   const findByIdempotencyKey = async (idempotencyKey: string, scope?: AgentStoreScope): Promise<AgentRunState | undefined> => {
     const targetScope = effectiveScope(scope);
-    try {
-      const marker = await fs.readFile(idempotencyPath(idempotencyKey, scope), "utf8");
-      const claimed = normalizeAgentRunState(JSON.parse(marker) as AgentRunState);
-      return (await load(claimed.runId, scope)) ?? claimed;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
+    for (const file of [idempotencyPath(idempotencyKey, scope), path.join(options.directory, fileNameForIdempotencyKey(legacyScopedKey(targetScope, idempotencyKey)))]) {
+      const marker = await readJson<AgentRunState>(file);
+      if (marker && marker.idempotencyKey === idempotencyKey && matchesScope(marker.scope, targetScope)) {
+        const claimed = normalizeAgentRunState(marker);
+        return (await load(claimed.runId, scope)) ?? claimed;
       }
+      if (marker && file === idempotencyPath(idempotencyKey, scope)) throw new ConflictError("Canonical idempotency key is occupied by a different legacy identity; migrate that index before writing.");
     }
 
     let entries: string[];
@@ -245,7 +284,7 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       }
       const content = await fs.readFile(path.join(options.directory, entry), "utf8");
       const state = normalizeAgentRunState(JSON.parse(content) as AgentRunState);
-      if (state.idempotencyKey === idempotencyKey && (!targetScope || (state.scope && sameScope(state.scope, targetScope)))) {
+      if (state.idempotencyKey === idempotencyKey && matchesScope(state.scope, targetScope)) {
         return state;
       }
     }
@@ -276,7 +315,7 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
         }
         const content = await fs.readFile(path.join(options.directory, entry), "utf8");
         const state = normalizeAgentRunState(JSON.parse(content) as AgentRunState);
-        if (state.parentRunId === parentRunId && (!targetScope || (state.scope && sameScope(state.scope, targetScope)))) {
+        if (state.parentRunId === parentRunId && matchesScope(state.scope, targetScope)) {
           states.push(state);
         }
       }
@@ -287,31 +326,27 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       await ensurePrivateDirectory(options.directory);
       const scope = effectiveScope(state.scope);
       const normalized = normalizeAgentRunState({ ...state, ...(scope ? { scope } : {}) });
+      const releaseIndex = await acquireIndexLock();
       try {
-        await writePrivateFile(
-          idempotencyPath(state.idempotencyKey, scope),
-          JSON.stringify(normalized, null, 2),
-          { flag: "wx" }
-        );
-        await writePrivateFile(runPath(normalized.runId, scope), JSON.stringify(normalized, null, 2));
-        return { claimed: true, state: normalized };
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-          throw error;
-        }
-        const existing = await findByIdempotencyKey(state.idempotencyKey, scope);
-        if (!existing) {
-          throw new ConflictError("AgentRunState idempotency claim could not be loaded.");
-        }
-        return { claimed: false, state: existing };
-      }
+        const releaseRun = await acquireFileRunStoreLock(revisionLockPath(state.runId, scope));
+        try {
+          const existing = await findByIdempotencyKey(state.idempotencyKey, scope);
+          if (existing) return { claimed: false, state: existing };
+          if (await load(normalized.runId, scope)) throw new ConflictError("Agent run identity already exists.");
+          await writePrivateFile(idempotencyPath(state.idempotencyKey, scope), JSON.stringify(normalized, null, 2), { flag: "wx" });
+          await writePrivateFile(await runPath(normalized.runId, scope), JSON.stringify(normalized, null, 2));
+          return { claimed: true, state: normalized };
+        } finally { await releaseRun(); }
+      } finally { await releaseIndex(); }
     },
     async save(state, saveOptions) {
       await ensurePrivateDirectory(options.directory);
       const scope = effectiveScope(state.scope);
+      const releaseIndex = await acquireIndexLock();
+      try {
       const releaseLock = await acquireFileRunStoreLock(revisionLockPath(state.runId, scope));
       try {
-        if (saveOptions?.leaseOwnerId) assertLeaseOwner(JSON.parse(await fs.readFile(leasePath(state.runId, scope), "utf8")), saveOptions.leaseOwnerId);
+        if (saveOptions?.leaseOwnerId) assertLeaseOwner(JSON.parse(await fs.readFile(await leasePath(state.runId, scope), "utf8")), saveOptions.leaseOwnerId);
         const current = await load(state.runId, scope);
         assertExpectedRevision(current, saveOptions?.expectedRevision);
         const normalized = nextStoredState(state, saveOptions);
@@ -322,34 +357,39 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
           }
         }
         const stored = { ...normalized, ...(scope ? { scope } : {}) };
-        await writePrivateFile(runPath(normalized.runId, scope), JSON.stringify(stored, null, 2));
+        await writePrivateFile(await runPath(normalized.runId, scope), JSON.stringify(stored, null, 2));
         if (normalized.idempotencyKey) {
           await writePrivateFile(idempotencyPath(normalized.idempotencyKey, scope), JSON.stringify(stored, null, 2));
         }
       } finally {
         await releaseLock();
       }
+      } finally { await releaseIndex(); }
     },
     async delete(runId, scope) {
-      const current = await load(runId, scope);
-      const targetScope = effectiveScope(scope);
+      await ensurePrivateDirectory(options.directory);
+      const releaseIndex = await acquireIndexLock();
       try {
-        await fs.unlink(runPath(runId, scope));
+      const releaseRun = await acquireFileRunStoreLock(revisionLockPath(runId, scope));
+      try {
+      const current = await load(runId, scope);
+      if (!current) return;
+      const targetScope = effectiveScope(scope);
+      const physicalLeasePath = await leasePath(runId, scope);
+      try {
+        await fs.unlink(await runPath(runId, scope));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
           throw error;
         }
       }
-      if (current?.idempotencyKey) {
-        try {
-          await fs.unlink(idempotencyPath(current.idempotencyKey, scope));
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-            throw error;
-          }
+      if (current.idempotencyKey) {
+        for (const file of [idempotencyPath(current.idempotencyKey, scope), path.join(options.directory, fileNameForIdempotencyKey(legacyScopedKey(targetScope, current.idempotencyKey)))]) {
+          const marker = await readJson<AgentRunState>(file);
+          if (marker && matchesRun(marker, runId, targetScope)) await fs.unlink(file);
         }
       }
-      await fs.unlink(leasePath(runId, scope)).catch((error: NodeJS.ErrnoException) => {
+      await fs.unlink(physicalLeasePath).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") throw error;
       });
       const entries = await fs.readdir(options.directory).catch((error: NodeJS.ErrnoException) => {
@@ -370,6 +410,8 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
       }
+      } finally { await releaseRun(); }
+      } finally { await releaseIndex(); }
     },
     async list(listOptions, scope) {
       const targetScope = effectiveScope(scope);
@@ -398,7 +440,7 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
         validateLeaseOptions(leaseOptions);
         if (!await load(runId, scope)) return undefined;
         await ensurePrivateDirectory(options.directory);
-        const file = leasePath(runId, scope);
+        const file = await leasePath(runId, scope);
         const now = leaseOptions.now ?? Date.now();
         const lease = { runId, ownerId: leaseOptions.ownerId, expiresAt: now + leaseOptions.ttlMs };
         for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -426,7 +468,7 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       const unlock = await acquireFileRunStoreLock(revisionLockPath(runId, scope));
       try {
         validateLeaseOptions(leaseOptions);
-        const file = leasePath(runId, scope);
+        const file = await leasePath(runId, scope);
         const now = leaseOptions.now ?? Date.now();
         try {
           const current = JSON.parse(await fs.readFile(file, "utf8")) as AgentRunLease;
@@ -446,7 +488,7 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       await ensurePrivateDirectory(options.directory);
       const unlock = await acquireFileRunStoreLock(revisionLockPath(runId, scope));
       try {
-        const file = leasePath(runId, scope);
+        const file = await leasePath(runId, scope);
         try {
           const current = JSON.parse(await fs.readFile(file, "utf8")) as AgentRunLease;
           if (current.ownerId !== ownerId) return false;
@@ -462,7 +504,8 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
     },
     async loadToolCall(runId, toolCallId, scope) {
       try {
-        return JSON.parse(await fs.readFile(toolPath(runId, toolCallId, scope), "utf8")) as AgentToolCallJournalEntry;
+        const entry = JSON.parse(await fs.readFile(await toolPath(runId, toolCallId, scope), "utf8")) as AgentToolCallJournalEntry;
+        return matchesRun(entry, runId, effectiveScope(scope)) && entry.toolCallId === toolCallId ? entry : undefined;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
         throw error;
@@ -478,7 +521,12 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       for (const entry of entries) {
         if (!entry.startsWith(".tool-") || !entry.endsWith(".json")) continue;
         const value = JSON.parse(await fs.readFile(path.join(options.directory, entry), "utf8")) as AgentToolCallJournalEntry;
-        if (value.runId === runId && (!targetScope || (value.scope && sameScope(value.scope, targetScope)))) results.push(value);
+        if (matchesRun(value, runId, targetScope)) results.push(value);
+        else if (value.runId === runId) {
+          const legacyKey = legacyScopedKey(targetScope, runId);
+          const legacyName = `.tool-${createHash("sha256").update(`${legacyKey}:${value.toolCallId}`).digest("hex")}.json`;
+          if (entry === legacyName && await physicalKey(runId, scope) === legacyKey) throw new ConflictError("Persisted journal identity cannot be verified; reconcile or migrate before continuing.");
+        }
       }
       return results.sort((a, b) => a.updatedAt - b.updatedAt || a.toolCallId.localeCompare(b.toolCallId));
     },
@@ -486,11 +534,12 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       await ensurePrivateDirectory(options.directory);
       const unlock = await acquireFileRunStoreLock(revisionLockPath(entry.runId, entry.scope));
       try {
-        if (journalOptions?.leaseOwnerId) assertLeaseOwner(JSON.parse(await fs.readFile(leasePath(entry.runId, entry.scope), "utf8")), journalOptions.leaseOwnerId);
-        const file = toolPath(entry.runId, entry.toolCallId, entry.scope);
+        if (journalOptions?.leaseOwnerId) assertLeaseOwner(JSON.parse(await fs.readFile(await leasePath(entry.runId, entry.scope), "utf8")), journalOptions.leaseOwnerId);
+        const file = await toolPath(entry.runId, entry.toolCallId, entry.scope);
         const current = await this.loadToolCall?.(entry.runId, entry.toolCallId, entry.scope);
         assertJournalRevision(current, journalOptions?.expectedRevision);
-        const next = nextJournalEntry(entry, journalOptions);
+        const scope = effectiveScope(entry.scope);
+        const next = nextJournalEntry({ ...entry, ...(scope ? { scope } : {}) }, journalOptions);
         await writePrivateFile(file, JSON.stringify(next, null, 2));
         return next;
       } finally {
@@ -503,10 +552,13 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
       try {
         await ensurePrivateDirectory(options.directory);
         if (!await load(entry.runId, entry.scope)) throw new ValidationError("Cannot journal a tool call for an unknown run.");
-        const next = nextJournalEntry({ ...entry, status: "running", revision: 0 });
+        const existing = await this.loadToolCall?.(entry.runId, entry.toolCallId, entry.scope);
+        if (existing) return { claimed: false, entry: existing };
+        const scope = effectiveScope(entry.scope);
+        const next = nextJournalEntry({ ...entry, ...(scope ? { scope } : {}), status: "running", revision: 0 });
         try {
           await writePrivateFile(
-            toolPath(entry.runId, entry.toolCallId, entry.scope),
+            await toolPath(entry.runId, entry.toolCallId, entry.scope),
             JSON.stringify(next, null, 2),
             { flag: "wx" }
           );
@@ -534,13 +586,33 @@ export const createFileAgentMemoryStore = (options: {
   scope?: AgentStoreScope;
 }): AgentMemoryStore => {
   const keyFor = (context: AgentMemoryContext) => (options.key ?? defaultMemoryKey)({ ...context, scope: resolveScope(options.scope, context.scope) });
+  const memoryContext = (context: AgentMemoryContext) => ({ ...context, scope: resolveScope(options.scope, context.scope) });
+  const encode = (context: AgentMemoryContext, messages: ModelMessage[]) => options.key ? messages : encodeAgentMemory(memoryContext(context), messages);
+  const decode = (context: AgentMemoryContext, value: unknown) => options.key ? value as ModelMessage[] : decodeAgentMemory(memoryContext(context), value);
+
   const selectMessages = options.selectMessages ?? defaultMemoryMessages;
+
+  const assertMemoryIdentity = async (context: AgentMemoryContext) => {
+    if (options.key) return;
+    const exists = async (key: string) => {
+      try { await fs.access(path.join(options.directory, fileNameForAgentStoreKey(key))); return true; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
+    };
+    if (await exists(keyFor(context))) {
+      decode(context, JSON.parse(await fs.readFile(path.join(options.directory, fileNameForAgentStoreKey(keyFor(context))), "utf8")));
+      return;
+    }
+    if (await exists(legacyDefaultMemoryKey(memoryContext(context)))) {
+      throw new ValidationError(LEGACY_MEMORY_MIGRATION_MESSAGE);
+    }
+  };
 
   return {
     async load(context) {
+      await assertMemoryIdentity(context);
       try {
         const file = await fs.readFile(path.join(options.directory, fileNameForAgentStoreKey(keyFor(context))), "utf8");
-        return JSON.parse(file) as ModelMessage[];
+        return decode(context, JSON.parse(file));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
           return [];
@@ -549,10 +621,11 @@ export const createFileAgentMemoryStore = (options: {
       }
     },
     async save(context) {
+      await assertMemoryIdentity(context);
       await ensurePrivateDirectory(options.directory);
       await writePrivateFile(
         path.join(options.directory, fileNameForAgentStoreKey(keyFor(context))),
-        JSON.stringify(selectMessages(context.state), null, 2)
+        JSON.stringify(encode(context, selectMessages(context.state)), null, 2)
       );
     }
   };

@@ -152,6 +152,8 @@ export interface GenerateObjectOutput<TSchema extends ZodTypeAny> extends Genera
 }
 
 export interface StreamObjectResult<TSchema extends ZodTypeAny> {
+  /** Cooperatively abort generation. Custom result implementations may omit this hook. */
+  cancel?: (reason?: unknown) => void;
   eventStream: AsyncIterable<ObjectStreamEvent<z.infer<TSchema>, Partial<z.infer<TSchema>>>>;
   partialObjectStream: AsyncIterable<Partial<z.infer<TSchema>>>;
   /** Text only. Provider errors are reported by eventStream and collect(); await collect() to verify success. */
@@ -160,6 +162,8 @@ export interface StreamObjectResult<TSchema extends ZodTypeAny> {
 }
 
 export interface StreamTextResult {
+  /** Cooperatively abort generation. Custom result implementations may omit this hook. */
+  cancel?: (reason?: unknown) => void;
   eventStream: AsyncIterable<StreamEvent>;
   /** Text only. Provider errors are reported by eventStream and collect(); await collect() to verify success. */
   textStream: AsyncIterable<string>;

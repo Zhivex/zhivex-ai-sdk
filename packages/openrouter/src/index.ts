@@ -14,8 +14,8 @@ import {
   normalizeFinishReason,
   readErrorBodyWithLimit,
   readJsonWithLimit,
-  streamSSE,
-  withRetry,
+  streamChatCompletions,
+  withResponseRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
@@ -291,7 +291,7 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
             method: "POST",
@@ -310,7 +310,8 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
               reasoning: mapReasoning(input)
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "OpenRouter"
       );
 
       const json = await parseJson(response);
@@ -341,7 +342,7 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
   async stream(input: ModelGenerateInput<OpenRouterLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     this.assertSupported(input);
     const { signal, cleanup } = withTimeoutSignal(input);
-    const response = await withRetry(
+    const response = await withResponseRetry(
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {
           method: "POST",
@@ -361,60 +362,13 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
             reasoning: mapReasoning(input)
           })
         }),
-      input
-    );
+      { ...input, abortSignal: signal },
+      "OpenRouter"
+    ).catch((error) => { cleanup(); throw error; });
 
     return (async function* () {
       try {
-        const toolBuffers = new Map<string, { name: string; args: string }>();
-
-        for await (const event of streamSSE(response)) {
-          if (event.data === "[DONE]") {
-            return;
-          }
-
-          const json = JSON.parse(event.data);
-          const choice = json.choices?.[0];
-          const delta = choice?.delta;
-
-          if (delta?.content) {
-            yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;
-          }
-
-          for (const toolCall of delta?.tool_calls ?? []) {
-            const id = toolCall.id ?? `${toolCall.index}`;
-            const existing = toolBuffers.get(id) ?? { name: "", args: "" };
-            existing.name ||= toolCall.function?.name ?? "";
-            existing.args += toolCall.function?.arguments ?? "";
-            toolBuffers.set(id, existing);
-
-            if (choice?.finish_reason === "tool_calls") {
-              yield {
-                type: "tool-call",
-                toolCall: {
-                  id,
-                  name: existing.name,
-                  input: JSON.parse(existing.args || "{}")
-                }
-              } satisfies StreamEvent;
-            }
-          }
-
-          if (choice?.finish_reason) {
-            yield {
-              type: "finish",
-              finishReason: normalizeFinishReason(choice.finish_reason),
-              providerFinishReason: choice.finish_reason,
-              usage: json.usage
-                ? {
-                    inputTokens: json.usage.prompt_tokens,
-                    outputTokens: json.usage.completion_tokens,
-                    totalTokens: json.usage.total_tokens
-                  }
-                : undefined
-            } satisfies StreamEvent;
-          }
-        }
+        yield* streamChatCompletions(response, "openrouter");
       } finally {
         cleanup();
       }

@@ -1055,6 +1055,9 @@ export const streamText = <
   }
 
   const broadcast = new BoundedReplayBroadcast<StreamEvent>(options.streamBuffer);
+  const cancellation = new AbortController();
+  const cancellationSignal = createMergedAbortSignal(options.abortSignal, cancellation.signal);
+  options = { ...options, abortSignal: cancellationSignal.signal };
   let finalResultPromise: Promise<GenerateTextOutput> | undefined;
   let effectsPossible = false;
 
@@ -1073,6 +1076,7 @@ export const streamText = <
   ) => broadcast.stream(accepts);
 
   const runner = async (): Promise<GenerateTextOutput> => {
+    options.abortSignal?.throwIfAborted();
     const allMessages = [...baseMessages];
     const generatedMessages: ModelMessage[] = [];
     const steps: GenerateTextOutput["steps"] = [];
@@ -1153,6 +1157,7 @@ export const streamText = <
     }
 
     for (let step = 0; step < maxSteps; step += 1) {
+      options.abortSignal?.throwIfAborted();
       const absoluteStep = (options.stepOffset ?? 0) + step + 1;
       const preparedMessages = await options.prepareModelMessages?.({
         messages: structuredClone(allMessages),
@@ -1164,6 +1169,7 @@ export const streamText = <
       const request = toRequest(options, allMessages);
       await options.onBeforeModelStep?.({ request, step: absoluteStep });
       const startedAt = Date.now();
+      options.abortSignal?.throwIfAborted();
       const stream = await streamModel(request);
       const stepMessages: ModelMessage[] = [];
       let textBuffer = "";
@@ -1174,6 +1180,7 @@ export const streamText = <
       let usage = undefined;
 
       for await (const event of stream) {
+        options.abortSignal?.throwIfAborted();
         // The runner catch publishes one terminal error and rejects collect().
         // Do not execute tool calls accumulated from a failed provider response.
         if (event.type === "error") throw event.error;
@@ -1243,6 +1250,7 @@ export const streamText = <
       allMessages.push(...stepMessages);
       generatedMessages.push(...stepMessages);
 
+      options.abortSignal?.throwIfAborted();
       const toolCalls = extractToolCalls(stepMessages);
       const preflight = await preflightModelResponse(toolCalls, options, {
         request, step: absoluteStep, tools: resolvedTools
@@ -1337,7 +1345,7 @@ export const streamText = <
 
   finalResultPromise = runner().catch(async (error) => {
     const contextualizedError = withPossibleToolEffects(error, effectsPossible);
-    if (!(contextualizedError instanceof Error && contextualizedError.name === "StreamBufferOverflowError")) {
+    if (!broadcast.isClosed) {
       await publish({
         type: "error",
         error: contextualizedError instanceof Error ? contextualizedError : new Error(String(contextualizedError))
@@ -1345,12 +1353,17 @@ export const streamText = <
       broadcast.close();
     }
     throw contextualizedError;
-  });
+  }).finally(cancellationSignal.cleanup);
   // eventStream/textStream consumers need not call collect(). Observe the
   // rejection immediately while preserving the original promise for collect().
   void finalResultPromise.catch(() => {});
 
   return {
+    cancel: (reason?: unknown) => {
+      const error = reason ?? new DOMException("Stream cancelled.", "AbortError");
+      cancellation.abort(error);
+      broadcast.fail(error);
+    },
     eventStream: createEventStream(),
     textStream: (async function* () {
       for await (const event of createEventStream((candidate) => candidate.type === "text-delta")) {

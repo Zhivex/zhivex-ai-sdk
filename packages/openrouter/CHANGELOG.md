@@ -1,5 +1,15 @@
 # @zhivex-ai/openrouter
 
+## 0.6.1
+
+### Patch Changes
+
+- 10bd4ee: Retry transient HTTP failures before language-model response consumption, honor deadlines during retry backoff, and release stream-opening resources on rejection. Preserve fragmented OpenRouter tool calls and final OpenRouter/Kimi token usage. Surface Bedrock Responses failures and truncation, and release streamed function calls only after successful completion.
+- Updated dependencies [70c4fee]
+- Updated dependencies [10bd4ee]
+- Updated dependencies [10bd4ee]
+  - @zhivex-ai/core@1.30.1
+
 ## 0.6.0
 
 ### Minor Changes

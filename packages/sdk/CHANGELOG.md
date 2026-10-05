@@ -1,5 +1,15 @@
 # @zhivex-ai/sdk
 
+## 1.30.2
+
+### Patch Changes
+
+- 10bd4ee: Fix streaming backpressure and cancellation, emit structured object completion only after final validation, preserve nested input identity in generate caches, count streamed error events in circuit breakers, and stop parallel workflows promptly when failFast is enabled. Add cooperative cancel hooks to generated text/object stream results and onCancel hooks to SSE/UI response adapters.
+- Updated dependencies [70c4fee]
+- Updated dependencies [10bd4ee]
+- Updated dependencies [10bd4ee]
+  - @zhivex-ai/core@1.30.1
+
 ## 1.30.1
 
 ### Patch Changes

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { scopedKey, defaultMemoryKey } from "../src/agent-store/shared.js";
 import { mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -2656,7 +2657,7 @@ describe("agent runtime", () => {
     const runId = "recovered-file-run";
     const lockPath = path.join(
       directory,
-      `.run-lock-${createHash("sha256").update(runId).digest("hex")}.lock`
+      `.run-lock-${createHash("sha256").update(scopedKey(undefined, runId)).digest("hex")}.lock`
     );
     await writeFile(lockPath, JSON.stringify({
       ownerId: "exited-owner",
@@ -2980,13 +2981,13 @@ describe("agent runtime", () => {
       prompt: "Persist this"
     });
 
-    const saved = JSON.parse(await readFile(path.join(directory, `${encodeURIComponent(result.state.runId)}.json`), "utf8")) as {
+    const saved = JSON.parse(await readFile(path.join(directory, `${encodeURIComponent(scopedKey(undefined, result.state.runId))}.json`), "utf8")) as {
       runId: string;
       outputText: string;
     };
     expect(saved.runId).toBe(result.state.runId);
     expect(saved.outputText).toBe("hello world");
-    expect((await stat(path.join(directory, `${encodeURIComponent(result.state.runId)}.json`))).mode & 0o777)
+    expect((await stat(path.join(directory, `${encodeURIComponent(scopedKey(undefined, result.state.runId))}.json`))).mode & 0o777)
       .toBe(0o600);
     await expect(Promise.resolve(store.findByIdempotencyKey?.("missing-key"))).resolves.toBeUndefined();
     await expect(Promise.resolve(store.findByParentRunId?.("missing-parent"))).resolves.toEqual([]);
@@ -3014,7 +3015,7 @@ describe("agent runtime", () => {
     for (const runId of ["../escape", "folder/child", "/tmp/escape"]) {
       await Promise.resolve(store.save(createState(runId)));
       await expect(Promise.resolve(store.load(runId))).resolves.toMatchObject({ runId, outputText: runId });
-      await expect(readFile(path.join(directory, `${encodeURIComponent(runId)}.json`), "utf8")).resolves.toContain(runId);
+      await expect(readFile(path.join(directory, `${encodeURIComponent(scopedKey(undefined, runId))}.json`), "utf8")).resolves.toContain(runId);
     }
 
     await expect(readFile(path.join(root, "escape.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
@@ -3047,7 +3048,7 @@ describe("agent runtime", () => {
     await expect(Promise.resolve(defaultStore.load({ runId: "ignored", agentId: "../memory" }))).resolves.toEqual([
       { role: "assistant", content: "memory:../memory" }
     ]);
-    await expect(readFile(path.join(directory, `${encodeURIComponent("ignored")}.json`), "utf8")).resolves.toContain("memory:../memory");
+    await expect(readFile(path.join(directory, `${encodeURIComponent(defaultMemoryKey({ runId: "ignored", agentId: "../memory" }))}.json`), "utf8")).resolves.toContain("memory:../memory");
 
     await Promise.resolve(defaultStore.save({ runId: "../memory-run", state: createState("../memory-run") }));
     await expect(Promise.resolve(defaultStore.load({ runId: "../memory-run" }))).resolves.toEqual([

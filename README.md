@@ -399,6 +399,10 @@ For portable inline images, pass `{ type: "image", image: base64Bytes, mediaType
 
 `streamText` can be consumed through `eventStream` or `textStream` without calling `collect()`. Internal generation failures are observed by Core, so ignoring `collect()` does not cause an unhandled promise rejection. `eventStream` still emits the terminal `error` event without a successful `finish`, and `collect()` still rejects with that error even when called later. Consumers of `textStream` that need failure details should also inspect `eventStream` or await `collect()`.
 
+`streamText()` and `streamObject()` expose `cancel(reason?)` for cooperative cancellation. Text responses and UI responses built from a `streamText()` result forward HTTP body cancellation to that generation. SSE adapters pull one item at a time instead of draining the source; for custom iterables or agent/runner streams, pass `onCancel` to `toSSEStream()`, `toSSEResponse()` or the UI response helper to abort the application's controller. Cancelling a response does not wait for an uncooperative iterator, and code that ignores its abort signal can continue running. `streamObject()` emits `object-complete` only after validating the final JSON; repaired intermediate values remain `object-partial` events.
+
+Default generate-cache keys use the `generate:v3` namespace so previously cached results with ambiguous nested fields are not reused. Request cancellation controls are excluded, but identically named fields in tool results and provider data remain part of the cache identity.
+
 Run the opt-in cross-provider image smoke with `INLINE_IMAGE_INTEGRATION=1 bun --env-file=.env run test:integration packages/core/tests/image-input.integration.test.ts`. It checks synthetic PNG base64/data URLs, generation and streaming, and real invalid-image errors for OpenAI Chat/Responses, Qwen Chat/Responses, Meta Chat/Responses, and Anthropic Messages when their credentials are configured. This smoke accepts `MODEL_API_KEY` as a fallback for `META_API_KEY` and defaults Meta to `muse-spark-1.3` with `minimal` reasoning and a 512-token output budget; `META_INTEGRATION_MODEL` overrides the model. Missing credentials skip that provider and do not certify it. Qwen Responses can report failure inside HTTP 200 SSE; these events reject with the bounded `QWEN_RESPONSE_FAILED` diagnostic rather than resolving `collect()` with an empty result.
 
 
@@ -521,3 +525,5 @@ cannot be guaranteed; reconciliation can recover only states actually saved.
 ### Qwen Cloud specialized APIs
 
 Qwen Cloud adds typed Decision Preview, native dense/sparse embeddings, binary speech synthesis and streaming recognition, asynchronous file transcription, image translation and world sessions. See the [Qwen Cloud support matrix](./docs/QWEN_CLOUD_SUPPORT.md) for factory selection, endpoint configuration and the distinction between implemented contracts and live validation. The [Decision guide](./docs/QWEN_CLOUD_DECISION.md) includes a measured, small comparison with Qwen Flash.
+
+For upgrades of existing agent run or memory stores, follow the [agent store identity migration guide](docs/maintainers/AGENT_STORE_MIGRATION.md).

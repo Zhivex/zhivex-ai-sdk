@@ -24,7 +24,7 @@ const cacheKeyOmittedFields = new Set([
   "signal"
 ]);
 
-const canonicalCacheInput = (value: unknown, seen = new WeakSet<object>()): string => {
+const canonicalCacheInput = (value: unknown, seen = new WeakSet<object>(), path: string[] = []): string => {
   if (value === null) return "null";
   if (value === undefined) return '"[undefined]"';
   if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
@@ -56,18 +56,21 @@ const canonicalCacheInput = (value: unknown, seen = new WeakSet<object>()): stri
   seen.add(value);
   try {
     if (Array.isArray(value)) {
-      return `[${value.map((entry) => canonicalCacheInput(entry, seen)).join(",")}]`;
+      return `[${value.map((entry, index) => canonicalCacheInput(entry, seen, [...path, String(index)])).join(",")}]`;
     }
 
     return `{${Object.keys(value)
-      .filter((key) => !cacheKeyOmittedFields.has(key))
+      // Only SDK control fields are omitted. Identically named fields inside
+      // messages, tool results, schemas and provider options are model input.
+      .filter((key) => !(path.length === 1 && path[0] === "input" && key === "abortSignal") &&
+        !(path.length === 3 && path[0] === "input" && path[1] === "tools" && cacheKeyOmittedFields.has(key)))
       .sort()
       .map((key) => {
         if (cacheKeySensitiveField.test(key)) {
           throw new TypeError("Generate cache keys cannot include sensitive fields.");
         }
         const entry = (value as Record<string, unknown>)[key];
-        const serialized = canonicalCacheInput(entry, seen);
+        const serialized = canonicalCacheInput(entry, seen, [...path, key]);
         return `${JSON.stringify(key)}:${serialized}`;
       })
       .join(",")}}`;
@@ -77,7 +80,7 @@ const canonicalCacheInput = (value: unknown, seen = new WeakSet<object>()): stri
 };
 
 const createDefaultGenerateCacheKey = (input: unknown): string =>
-  `generate:v2:${createHash("sha256").update(canonicalCacheInput(input)).digest("hex")}`;
+  `generate:v3:${createHash("sha256").update(canonicalCacheInput(input)).digest("hex")}`;
 const defaultGenerateCacheModelScopes = new WeakMap<LanguageModel, string>();
 const getDefaultGenerateCacheModelScope = (model: LanguageModel): string => {
   const existing = defaultGenerateCacheModelScopes.get(model);
@@ -611,12 +614,18 @@ export const createCircuitBreakerMiddleware = <TProviderOptions extends Provider
         try {
           const stream = await next();
           for await (const event of stream) {
+            if (event.type === "error") {
+              await markFailure(context.model, permit, event.error);
+              settled = true;
+              yield event;
+              return;
+            }
             yield event;
           }
           await markSuccess(context.model, permit);
           settled = true;
         } catch (error) {
-          await markFailure(context.model, permit, error);
+          if (!settled) await markFailure(context.model, permit, error);
           settled = true;
           throw error;
         } finally {

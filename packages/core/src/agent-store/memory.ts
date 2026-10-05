@@ -13,12 +13,13 @@ import type {
 } from "../types.js";
 import {
   scopedKey,
+  matchesScope,
+  journalKey as canonicalJournalKey,
   resolveScope,
   cloneState,
   assertLeaseOwner,
   assertExpectedRevision,
   nextStoredState,
-  scopePrefix,
   listStates,
   validateLeaseOptions,
   cloneJournalEntry,
@@ -39,7 +40,7 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
   const journal = new Map<string, AgentToolCallJournalEntry>();
   const runKey = (runId: string, scope?: AgentStoreScope) => scopedKey(resolveScope(options.scope, scope), runId);
   const idempotencyKey = (key: string, scope?: AgentStoreScope) => scopedKey(resolveScope(options.scope, scope), key);
-  const journalKey = (runId: string, toolCallId: string, scope?: AgentStoreScope) => `${runKey(runId, scope)}:${toolCallId}`;
+  const journalKey = (runId: string, toolCallId: string, scope?: AgentStoreScope) => canonicalJournalKey(resolveScope(options.scope, scope), runId, toolCallId);
 
   const removeParentIndex = (state: AgentRunState | undefined) => {
     if (!state?.parentRunId) {
@@ -100,15 +101,17 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
       const current = states.get(runKey(state.runId, scope));
       assertExpectedRevision(current, saveOptions?.expectedRevision);
       const normalized = nextStoredState(state, saveOptions);
-      removeParentIndex(current);
-      states.set(runKey(normalized.runId, scope), cloneState({ ...normalized, ...(scope ? { scope } : {}) }));
+
       if (normalized.idempotencyKey) {
         const owner = idempotencyKeys.get(idempotencyKey(normalized.idempotencyKey, scope));
         if (owner && owner !== runKey(normalized.runId, scope)) {
           throw new ConflictError("AgentRunState idempotency key conflict.");
         }
-        idempotencyKeys.set(idempotencyKey(normalized.idempotencyKey, scope), runKey(normalized.runId, scope));
       }
+      const stored = cloneState({ ...normalized, ...(scope ? { scope } : {}) });
+      removeParentIndex(current);
+      states.set(runKey(normalized.runId, scope), stored);
+      if (normalized.idempotencyKey) idempotencyKeys.set(idempotencyKey(normalized.idempotencyKey, scope), runKey(normalized.runId, scope));
       if (normalized.parentRunId) {
         const parentKey = scopedKey(scope, normalized.parentRunId);
         const children = parentRunIds.get(parentKey) ?? new Set<string>();
@@ -125,17 +128,17 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
       removeParentIndex(state);
       states.delete(key);
       leases.delete(key);
-      for (const journalEntryKey of journal.keys()) {
-        if (journalEntryKey.startsWith(`${key}:`)) journal.delete(journalEntryKey);
+      for (const [journalEntryKey, entry] of journal) {
+        if (entry.runId === runId && matchesScope(entry.scope, resolveScope(options.scope, scope))) journal.delete(journalEntryKey);
       }
     },
     list(listOptions, scope) {
-      const prefix = scopePrefix(resolveScope(options.scope, scope));
-      return listStates([...states.entries()].filter(([key]) => key.startsWith(prefix)).map(([, state]) => state), listOptions);
+      const targetScope = resolveScope(options.scope, scope);
+      return listStates([...states.values()].filter(state => !targetScope || matchesScope(state.scope, targetScope)), listOptions);
     },
     deleteExpired(retention, scope) {
-      const prefix = scopePrefix(resolveScope(options.scope, scope));
-      const candidates = listStates([...states.entries()].filter(([key]) => key.startsWith(prefix)).map(([, state]) => state), {
+      const targetScope = resolveScope(options.scope, scope);
+      const candidates = listStates([...states.values()].filter(state => !targetScope || matchesScope(state.scope, targetScope)), {
         statuses: retention.statuses,
         updatedBefore: retention.before,
         limit: retention.limit ?? 1_000
@@ -177,10 +180,9 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
       return this.loadToolCall?.(runId, toolCallId, scope);
     },
     listToolCalls(runId, scope) {
-      const prefix = `${runKey(runId, scope)}:`;
-      return [...journal.entries()]
-        .filter(([key]) => key.startsWith(prefix))
-        .map(([, entry]) => cloneJournalEntry(entry))
+      return [...journal.values()]
+        .filter(entry => entry.runId === runId && matchesScope(entry.scope, resolveScope(options.scope, scope)))
+        .map(entry => cloneJournalEntry(entry))
         .sort((left, right) => left.updatedAt - right.updatedAt || left.toolCallId.localeCompare(right.toolCallId));
     },
     saveToolCall(entry, journalOptions) {
@@ -190,7 +192,7 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
       const key = journalKey(entry.runId, entry.toolCallId, scope);
       const current = journal.get(key);
       assertJournalRevision(current, journalOptions?.expectedRevision);
-      const next = nextJournalEntry(entry, journalOptions);
+      const next = nextJournalEntry({ ...entry, ...(scope ? { scope } : {}) }, journalOptions);
       journal.set(key, next);
       return cloneJournalEntry(next);
     },
@@ -221,7 +223,7 @@ export const createInMemoryAgentMemoryStore = (options: {
 
   return {
     load(context) {
-      return cloneMessages(memories.get(keyFor(context)) ?? (context.agentId ? options.initialMessages?.[context.agentId] : undefined) ?? []);
+      return cloneMessages(memories.get(keyFor(context)) ?? (!context.scope ? options.initialMessages?.[context.runId] : undefined) ?? (context.agentId ? options.initialMessages?.[context.agentId] : undefined) ?? []);
     },
     save(context) {
       memories.set(keyFor(context), cloneMessages(selectMessages(context.state)));
