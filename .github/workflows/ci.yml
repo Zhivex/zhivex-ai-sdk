@@ -303,6 +303,9 @@ jobs:
       - name: Run fail-closed Postgres workflow certification
         run: bun run test:integration:workflows-postgres
 
+      - name: Certify bounded agent store listings against Postgres
+        run: ZHIVEX_WORKFLOW_POSTGRES_CERTIFICATION=1 bun run test:integration packages/core/tests/agent-store-postgres-list.integration.test.ts
+
       - name: Certify installed SDK package against Postgres
         run: bun run smoke:packages:workflows-postgres
 

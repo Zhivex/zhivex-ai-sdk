@@ -62,3 +62,19 @@ lists can page through different scopes that reuse a run ID and timestamp. Legac
 two-component cursors remain accepted with their original boundary semantics.
 They cannot recover scope ties that the old cursor never recorded; restart an
 aggregate listing without a cursor to enumerate those tied records completely.
+
+## PostgreSQL listing and retention
+
+PostgreSQL applies scope, status, time, cursor and page-size constraints before
+returning run states. It transfers at most the requested limit plus one matching
+state for cursor construction. Retention uses the same bounded selection. Scope
+matching uses tenant, user and namespace fields, including legacy rows, rather
+than relying on physical key prefixes. Additional scope properties do not change
+the identity contract.
+
+Store initialization adds indexes for logical timestamps and scope-filtered
+pagination with `CREATE INDEX IF NOT EXISTS`; existing rows and keys are unchanged.
+The scope index stores fixed-size hashes so long scope identifiers fit within
+PostgreSQL index limits; exact field comparisons remain in the query.
+Index creation can block writes while the indexes are built, so initialize the upgraded
+store during the application's usual database maintenance window when necessary.

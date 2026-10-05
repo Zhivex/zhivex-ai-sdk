@@ -121,9 +121,14 @@ const decodeCursor = (cursor: string | undefined): readonly [number, string, str
   }
 };
 
+/** Shared validation for stores that push pagination down to their database. */
+export const parseAgentRunListOptions = (options: AgentRunListOptions = {}) => ({
+  limit: normalizeLimit(options.limit),
+  cursor: decodeCursor(options.cursor)
+});
+
 export const listStates = (states: Iterable<AgentRunState>, options: AgentRunListOptions = {}, hydrate: (state: AgentRunState) => AgentRunState = cloneState): AgentRunPage => {
-  const limit = normalizeLimit(options.limit);
-  const cursor = decodeCursor(options.cursor);
+  const { limit, cursor } = parseAgentRunListOptions(options);
   const filtered = [...states]
     .filter((state) => options.agentId === undefined || state.agentId === options.agentId)
     .filter((state) => options.parentRunId === undefined || state.parentRunId === options.parentRunId)

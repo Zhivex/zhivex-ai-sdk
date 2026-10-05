@@ -14,7 +14,7 @@
   "agent-store/file.d.ts": "8f7555ae62b698effef4faa8e86a0a073425ea07befbe95cb0c9b324d01f6e2b",
   "agent-store/memory.d.ts": "587ee3159acbd3a90af760dae92d09a78023e486f739a57014c27f8f590dea0e",
   "agent-store/postgres.d.ts": "afb5f1900c402f60b7f54168cc896a20e663449c5d2249ac519ea4a0a0aa4490",
-  "agent-store/shared.d.ts": "ef874322bc9895b21c1516e2ba44b84ee6dc1a16aff414477ad5f8c571e4428d",
+  "agent-store/shared.d.ts": "558cbbf9050039014f8bcc9b107421df5c0d36633af1e8a9aba9f8112b96e389",
   "agent-store/sqlite-history.d.ts": "ad54f55f68843caf8302ffd74eed6d58c0e610f09ac0b4535886933108e5270c",
   "agent-store/sqlite.d.ts": "51fd68aaa9c7a8204cb5f7b85dd5a9865daeee9816ac4bf75e3a9414ebfa484e",
   "agent-trace.d.ts": "f26a905a65824894f4be1d46caddad06a460c37c10af11f2815c6340201bed24",

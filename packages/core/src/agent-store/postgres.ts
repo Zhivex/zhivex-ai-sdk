@@ -24,6 +24,7 @@ import {
   getRecordField,
   nextStoredState,
   listStates,
+  parseAgentRunListOptions,
   validateLeaseOptions,
   cloneJournalEntry,
   nextJournalEntry,
@@ -125,8 +126,39 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
     updated_at_ms BIGINT NOT NULL,
     PRIMARY KEY (run_key, tool_call_id)
   )`;
+  // Use persisted logical timestamps, not the database write timestamp. These
+  // expressions also apply to legacy rows without changing their physical keys.
+  const sortTimeSql = "COALESCE((state_json->>'updatedAt')::double precision, (state_json->>'startedAt')::double precision, 0)";
+  const updatedTimeSql = "COALESCE((state_json->>'updatedAt')::double precision, 0)";
+  const tenantSql = "(state_json #>> '{scope,tenantId}')";
+  const userSql = "(state_json #>> '{scope,userId}')";
+  const namespaceSql = "(state_json #>> '{scope,namespace}')";
+  // Scope strings are unbounded. Hash index entries so valid long identifiers
+  // cannot exceed PostgreSQL's B-tree tuple limit; raw predicates below still
+  // establish exact identity even if two values ever share a digest.
+  const scopeHashSql = (expression: string) => `md5(${expression})`;
+  // JS string ordering compares UTF-16 code units. PostgreSQL's C collation
+  // compares UTF-8 bytes instead, so supplementary characters need surrogate
+  // pairs in this sort key to preserve existing cursors exactly.
+  const runIdSortSql = `(SELECT string_agg(
+    CASE WHEN ascii(character) <= 65535 THEN lpad(to_hex(ascii(character)), 4, '0')
+      ELSE lpad(to_hex(55296 + (ascii(character) - 65536) / 1024), 4, '0')
+        || lpad(to_hex(56320 + (ascii(character) - 65536) % 1024), 4, '0') END,
+    '' ORDER BY position)
+    FROM regexp_split_to_table(state_json->>'runId', '') WITH ORDINALITY AS units(character, position)) COLLATE "C"`;
+  // Recreate scopedKey from logical JSON identity, including legacy rows. Build
+  // compact JSON explicitly: json[b]_build_array textual output adds spaces.
+  const scopeTupleSql = `CASE WHEN state_json->'scope' IS NULL THEN 'null' ELSE
+    '[' || COALESCE((state_json #> '{scope,namespace}')::text, 'null') || ','
+      || (state_json #> '{scope,tenantId}')::text || ','
+      || COALESCE((state_json #> '{scope,userId}')::text, 'null') || ']' END`;
+  const scopedSortSql = `('agent-run:v2:' || encode(sha256(convert_to(
+    '[' || to_json((${scopeTupleSql})::text)::text || ',' || (state_json->'runId')::text || ']',
+    'UTF8')), 'hex')) COLLATE "C"`;
   const createIndexesSql = `
     CREATE INDEX IF NOT EXISTS ${tableName}_updated_idx ON ${tableName} (updated_at_ms DESC, run_id);
+    CREATE INDEX IF NOT EXISTS ${tableName}_scope_hash_page_idx ON ${tableName} ((${scopeHashSql(tenantSql)}), (${scopeHashSql(userSql)}), (${scopeHashSql(namespaceSql)}), (${sortTimeSql}) DESC);
+    CREATE INDEX IF NOT EXISTS ${tableName}_logical_time_idx ON ${tableName} ((${sortTimeSql}) DESC);
     CREATE INDEX IF NOT EXISTS ${parentTableName}_parent_idx ON ${parentTableName} (parent_run_id, updated_at_ms DESC);
     CREATE INDEX IF NOT EXISTS ${leaseTableName}_expiry_idx ON ${leaseTableName} (expires_at_ms);
     CREATE INDEX IF NOT EXISTS ${journalTableName}_run_idx ON ${journalTableName} (run_key, updated_at_ms, tool_call_id)
@@ -325,18 +357,57 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
         [key]
       );
     },
-    async list(listOptions, scope) {
-      await ensureAllTables();
+    async list(listOptions = {}, scope) {
       const targetScope = resolveScope(options.scope, scope);
-      const prefix = "";
-      const result = await options.client.query<{ state_json?: AgentRunState; stateJson?: AgentRunState }>(
-        `SELECT state_json FROM ${tableName} WHERE run_id >= $1 AND run_id < $2`,
-        [prefix, `${prefix}\uffff`]
-      );
+      const { limit, cursor } = parseAgentRunListOptions(listOptions);
+      const parameters: unknown[] = [];
+      const bind = (value: unknown) => { parameters.push(value); return `$${parameters.length}`; };
+      const predicates: string[] = [];
+      if (targetScope) {
+        for (const [expression, value] of [
+          [tenantSql, targetScope.tenantId],
+          [userSql, targetScope.userId],
+          [namespaceSql, targetScope.namespace]
+        ] as const) {
+          if (value === undefined) {
+            predicates.push(`${scopeHashSql(expression)} IS NULL`, `${expression} IS NULL`);
+          } else {
+            const parameter = `${bind(value)}::text`;
+            predicates.push(`${scopeHashSql(expression)} = ${scopeHashSql(parameter)}`, `${expression} = ${parameter}`);
+          }
+        }
+      }
+      if (listOptions.agentId !== undefined) predicates.push(`state_json->>'agentId' = ${bind(listOptions.agentId)}::text`);
+      if (listOptions.parentRunId !== undefined) predicates.push(`state_json->>'parentRunId' = ${bind(listOptions.parentRunId)}::text`);
+      if (listOptions.statuses?.length) predicates.push(`state_json->>'status' = ANY(${bind(listOptions.statuses)}::text[])`);
+      if (listOptions.updatedAfter !== undefined) predicates.push(`${updatedTimeSql} > ${bind(listOptions.updatedAfter)}::double precision`);
+      if (listOptions.updatedBefore !== undefined) predicates.push(`${updatedTimeSql} < ${bind(listOptions.updatedBefore)}::double precision`);
+      let cursorPredicate = "";
+      if (cursor) {
+        const utf16RunId = Array.from({ length: cursor[1].length }, (_, index) => cursor[1].charCodeAt(index).toString(16).padStart(4, "0")).join("");
+        const time = bind(cursor[0]);
+        const id = bind(utf16RunId);
+        cursorPredicate = cursor[2] === undefined
+          ? `WHERE (sort_time, run_id_sort) < (${time}::double precision, ${id}::text COLLATE "C")`
+          : `WHERE (sort_time, run_id_sort, scope_sort) < (${time}::double precision, ${id}::text COLLATE "C", ${bind(cursor[2])}::text COLLATE "C")`;
+      }
+      const query = `WITH candidates AS (
+        SELECT state_json, ${sortTimeSql} AS sort_time,
+          ${runIdSortSql} AS run_id_sort, ${scopedSortSql} AS scope_sort
+        FROM ${tableName}
+        ${predicates.length ? `WHERE ${predicates.join(" AND ")}` : ""}
+      )
+      SELECT state_json FROM candidates ${cursorPredicate}
+      ORDER BY sort_time DESC, run_id_sort DESC, scope_sort DESC
+      LIMIT ${bind(limit + 1)}::integer`;
+      await ensureAllTables();
+      const result = await options.client.query<{ state_json?: AgentRunState; stateJson?: AgentRunState }>(query, parameters);
       const states = result.rows.flatMap((row) => {
         const state = getRecordField(row, ["state_json", "stateJson"]) as AgentRunState | undefined;
         return state && (!targetScope || matchesScope(state.scope, targetScope)) ? [normalizeAgentRunState(state)] : [];
       });
+      // At most limit + 1 matching states cross the connection. Shared projection
+      // preserves exactly the same cursor format as memory, file and SQLite.
       return listStates(states, listOptions);
     },
     async deleteExpired(retention, scope) {
