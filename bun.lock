@@ -114,7 +114,7 @@
     },
     "packages/meta": {
       "name": "@zhivex-ai/meta",
-      "version": "0.2.8",
+      "version": "0.2.9",
       "dependencies": {
         "@zhivex-ai/core": "^1.24.0",
         "zod": "^4.6.3",
