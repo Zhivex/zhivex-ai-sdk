@@ -309,6 +309,30 @@ for (const streaming of [false, true]) for (const toolName of ["apply_patch", "s
 }
 console.log("INSTALLED_OPENAI_FUNCTION_RECEIPTS_OK");
 const installedQwen = await import("@zhivex-ai/qwen");
+// Portable Decisions from installed artifacts; all requests use synthetic fetch.
+const installedGateway = await import("@zhivex-ai/gateway");
+let decisionCalls = 0;
+const decisionPrimary = installedOpenAI.createOpenAI({ apiKey: "synthetic", fetch: async () => {
+  decisionCalls++;
+  return new Response("unavailable", { status: 503 });
+} }).experimentalDecisionModel();
+const decisionBackup = installedQwen.createQwen({ apiKey: "synthetic", fetch: async () => {
+  decisionCalls++;
+  return Response.json({ model: "decision-model-preview", request_id: "offline", latency_ms: 0.5,
+    answers: { urgent: { type: "noul", noul: 0.25 } }, usage: { input_tokens: 7 } });
+} }).experimentalDecisionModel();
+const decisionGateway = installedGateway.createGateway({ adapters: {}, decisions: {
+  primary: { model: decisionPrimary }, backup: { model: decisionBackup }
+} });
+const installedDecision = await decisionGateway.decide({ primary: "primary", alternatives: ["backup"],
+  maxAttempts: 2, fallbackOn: [503], input: "Synthetic ticket",
+  questions: { urgent: { type: "predicate", instructions: "Is it urgent?" } }
+});
+assert.equal(decisionCalls, 2);
+assert.deepEqual(installedDecision.answers.urgent, { type: "predicate", probability: 0.25 });
+assert.equal(installedDecision.provenance.provider, "qwen");
+assert.equal(installedDecision.routing.target, "backup");
+console.log("INSTALLED_PORTABLE_DECISIONS_OK");
 const installedCloudQwen = installedQwen.createQwen({ apiKey: "installed-qwen-smoke", baseURL: installedQwen.QWEN_CLOUD_BASE_URL });
 assert.equal(typeof installedCloudQwen.decisionModel().decide, "function");
 assert.equal(typeof installedCloudQwen.textEmbeddingModel("qwen3.7-text-embedding").embedNative, "function");
@@ -782,10 +806,12 @@ console.log("INSTALLED_REALTIME_LIVE_SMOKE_OK");
     execFileSync(runtime, [metaUsagePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
   }
 
+  const decisionTypePath = join(consumerDirectory, "decision-consumer.ts");
+  writeFileSync(decisionTypePath, readFileSync(join(scriptDirectory, "fixtures/decision-consumer.ts"), "utf8"));
   const agwTypePath = join(consumerDirectory, "sdk-agw-consumer.ts");
   writeFileSync(agwTypePath, readFileSync(join(scriptDirectory, "fixtures/sdk-agw-consumer.ts"), "utf8"));
   // TypeScript 7's extensionless ESM launcher needs the build runtime; package execution below still uses the selected Node version.
-  execFileSync("bun", [join(workspaceDirectory, "node_modules/.bin/tsc"), "--noEmit", "--strict", "--skipLibCheck", "--module", "NodeNext", "--target", "ES2022", agwTypePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
+  execFileSync("bun", [join(workspaceDirectory, "node_modules/.bin/tsc"), "--noEmit", "--strict", "--skipLibCheck", "--module", "NodeNext", "--target", "ES2022", agwTypePath, decisionTypePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
 
   const agwSmokePath = join(consumerDirectory, "sdk-agw-consumer.mjs");
   writeFileSync(agwSmokePath, readFileSync(join(scriptDirectory, "fixtures/sdk-agw-consumer.mjs"), "utf8"));

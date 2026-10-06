@@ -1,3 +1,5 @@
+import { createGatewayDecide } from "./decisions.js";
+export type { GatewayDecisionTarget, GatewayDecisionRequest, GatewayDecisionResult } from "./decisions.js";
 import { catalogRoutingRate, validateRoutingPolicy } from "./routing-policy.js";
 import { targetKey, sameTarget } from "./target.js";
 import { operationControl, GatewayDeadlineError } from "./operation.js";
@@ -2033,6 +2035,8 @@ export const createGateway = (config: GatewayConfig) => {
   };
   return {
     ...gateway,
+    /** Experimental; uses only explicitly registered decision models. */
+    decide: createGatewayDecide(config.decisions, config.timeoutMs),
     flushControls: executor.flush,
     flushObservers: async () => { await Promise.all([...pendingObservers]); },
     diagnostics: () => ({ pendingObservers: pendingObservers.size, droppedObservers, affinityEntries: affinities.size, ...executor.diagnostics() }),

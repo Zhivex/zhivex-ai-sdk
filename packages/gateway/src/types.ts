@@ -243,6 +243,8 @@ export interface GatewayRoutingScoreContext {
 }
 
 export interface GatewayConfig {
+  /** Experimental, explicit destinations for decide(); independent of chat routing. */
+  decisions?: Readonly<Record<string, import("./decisions.js").GatewayDecisionTarget>>;
   /** Explicit deployment registrations; unknown IDs never fall back to the default adapter. */
   deployments?: Record<string, { provider: GatewayProviderId; adapter: ProviderAdapter; /** Explicitly permit catalog-retired IDs served by this private deployment. */ allowRetiredModels?: boolean }>;
   timeoutMs?: number;

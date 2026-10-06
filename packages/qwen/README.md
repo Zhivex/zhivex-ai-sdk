@@ -710,3 +710,11 @@ The documented limit on Qwen's separate Anthropic-compatible route does not
 certify Responses and is not exposed by this adapter.
 
 Counter evidence: [Model Studio web search](https://www.alibabacloud.com/help/en/model-studio/web-search).
+
+## Experimental portable Decisions
+
+`qwen.experimentalDecisionModel('decision-model-preview')` exposes the shared
+`DecisionModel` contract. It maps predicate to native `noul`, preserves fractional
+scores and uses only the configured decision endpoint. Its text-only and string
+choice capabilities are explicit. Native `qwen.decisionModel()` is unchanged.
+See [portable Decisions](../../docs/DECISIONS.md).

@@ -339,6 +339,7 @@ const betaSymbols = [
 ] as const;
 
 const experimentalSymbols = [
+  "experimentalDecisionHelpers",
   "ComputerUseExecutionError",
   "AdvancedToolRegistry",
   "createAdvancedToolRegistry",

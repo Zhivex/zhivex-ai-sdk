@@ -77,3 +77,9 @@ A six-request live evaluation used three synthetic tickets (refund, production o
 Average end-to-end latency was approximately 1673 ms for Decision and 1636 ms for Flash: this run does not demonstrate a latency advantage. Different endpoints and first-connection overhead affect these measurements. Decision emitted fractional severity (0.56, 2, 0.03), while Flash emitted prompted integer severity (0, 2, 0). Their scoring contracts differ. No monetary cost is inferred from token counts.
 
 Reproduce with `QWEN_DECISION_EVAL=1` and the same Bun/Vitest invocation targeting `packages/qwen/tests/decision-evaluation.live.test.ts`. Optional `QWEN_DECISION_EVAL_OUTPUT` writes only synthetic results, timing and usage as JSON.
+
+## Portable experimental adapter
+
+`experimentalDecisionModel()` adds the common SDK DecisionModel contract without
+changing the native extension above. See [portable Decisions](./DECISIONS.md) for
+predicate/noul mapping, explicit capabilities and gateway destination selection.

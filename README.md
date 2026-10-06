@@ -533,3 +533,12 @@ The experimental portable runner verifies text-only completion when `isComplete`
 is supplied and exposes callback cancellation/deadlines. OpenAI native GA preserves
 provider safety warnings and requires separate explicit confirmation before
 acknowledging them. See [computer-use safety and provider limits](docs/COMPUTER_USE.md).
+
+### Experimental Decisions
+
+OpenAI and Qwen provide `experimentalDecisionModel()` using the shared
+`DecisionModel` contract. The SDK gateway's `decide()` accepts an explicit primary
+and ordered alternatives, validates capabilities before sending data, preserves
+per-question refusals, and supports deadline and request-local cost reservations.
+See [portable Decisions](docs/DECISIONS.md). Native Qwen `decisionModel()` and chat
+routing remain unchanged; automatic chat/Code selection is not included.
