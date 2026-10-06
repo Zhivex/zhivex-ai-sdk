@@ -67,3 +67,6 @@ export { imageInputToDataUrl } from "./image-input.js";
 export { createChatCompletionsModel } from "./chat-completions.js";
 export { streamChatCompletions } from "./chat-completions-stream.js";
 export type { ChatCompletionsTransportOptions } from "./chat-completions.js";
+
+export type { DecisionQuestion, DecisionQuestions, DecisionEvidence, DecisionInput, DecisionCapabilities, DecisionAnswer, DecisionResult, DecisionModel } from "./decisions.js";
+export { experimentalDecisionHelpers } from "./decision-helpers.js";

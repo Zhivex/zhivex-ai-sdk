@@ -68,7 +68,7 @@ export interface AgentRunView {
   provider?: string;
   modelId?: string;
   currentStep: number;
-  maxSteps: number;
+  maxSteps: number | "unlimited";
   usage?: TokenUsage;
   budget?: { maxTotalTokens?: number; maxToolCalls?: number };
   toolCalls?: number;
@@ -85,7 +85,7 @@ export interface AgentRunUpdateEvent {
 export interface AgentRunStartEvent {
   type: "agent-run-start";
   currentStep: number;
-  maxSteps: number;
+  maxSteps: number | "unlimited";
 }
 
 export interface AgentStepStartEvent {
@@ -137,7 +137,7 @@ export interface AgentTelemetryRunStartEvent {
   agentName?: string;
   provider: string;
   modelId: string;
-  maxSteps: number;
+  maxSteps: number | "unlimited";
   startedAt?: number;
 }
 
@@ -300,7 +300,7 @@ export interface AgentTelemetryInvocationStart {
   agentName?: string;
   provider: string;
   modelId: string;
-  maxSteps: number;
+  maxSteps: number | "unlimited";
   startedAt: number;
 }
 
@@ -356,7 +356,8 @@ export interface AgentDefinition<
   instructions?: string;
   contextSchema?: z.ZodType<TContext, TContextInput>;
   tools?: ToolCollection;
-  maxSteps?: number;
+  /** Cumulative step ceiling, or explicit "unlimited" opt-in. Omission preserves the default. */
+  maxSteps?: number | "unlimited";
   /** Explicit streaming replay and subscriber limits. */
   streamBuffer?: BoundedReplayBroadcastOptions;
   temperature?: number;
@@ -432,8 +433,8 @@ export type AgentRunInput<
     memory?: false;
     /** Pass false to disable the agent default for this invocation. */
     compaction?: AgentCompactionOptions<TContext> | false;
-    /** Positive safe integer. Defaults to one for new runs. */
-    maxSteps?: number;
+    /** Cumulative positive step ceiling, or explicit "unlimited". Defaults to one for new runs. */
+    maxSteps?: number | "unlimited";
     /** Explicit streaming replay and subscriber limits. */
     streamBuffer?: BoundedReplayBroadcastOptions;
     temperature?: number;
@@ -463,7 +464,8 @@ export interface AgentSubAgentDefinition<TModel extends LanguageModel = Language
   agent: AgentDefinition<TModel>;
   name?: string;
   description?: string;
-  maxSteps?: number;
+  /** Cumulative step ceiling, or explicit "unlimited" opt-in. Omission preserves the default. */
+  maxSteps?: number | "unlimited";
   system?: string;
   metadata?: Record<string, JsonValue>;
   requiresApproval?: boolean;

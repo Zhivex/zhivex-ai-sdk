@@ -336,3 +336,23 @@ describe("chat reducer", () => {
     expect(restarted.usage).toBeUndefined();
   });
 });
+
+it.each([4, "unlimited"] as const)("retains lifecycle activity and run projections for maxSteps=%s", maxSteps => {
+  let state = createInitialChatState();
+  state = applyUIMessageChunk(state, { type: "agent-run-start", currentStep: 0, maxSteps });
+  expect(state.status).toBe("streaming");
+  expect(state.activity).toContainEqual({ type: "run-start", currentStep: 0, maxSteps });
+  state = applyUIMessageChunk(state, { type: "agent-run-update", run: { runId: "limit-test", currentStep: 3, maxSteps, status: "running" } });
+  expect(state.runs).toMatchObject([{ runId: "limit-test", currentStep: 3, maxSteps, status: "running" }]);
+  state = applyUIMessageChunk(state, { type: "agent-run-update", run: { runId: "limit-test", currentStep: 4, maxSteps, status: "completed" } });
+  expect(state.runs).toHaveLength(1);
+  expect(state.runs![0]).toMatchObject({ currentStep: 4, maxSteps, status: "completed" });
+});
+
+it.each([null, undefined, Infinity, "4", "infinite", {}, true])("still rejects malformed lifecycle maxSteps=%s", maxSteps => {
+  const state = createInitialChatState();
+  for (const chunk of [
+    { type: "agent-run-start", currentStep: 0, maxSteps },
+    { type: "agent-run-update", run: { runId: "bad", currentStep: 0, maxSteps, status: "running" } }
+  ]) expect(applyUIMessageChunk(state, chunk as ChatStreamChunk)).toBe(state);
+});

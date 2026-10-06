@@ -103,7 +103,7 @@ export interface UIMessageErrorChunk {
 export interface UIAgentRunStartChunk {
   type: "agent-run-start";
   currentStep: number;
-  maxSteps: number;
+  maxSteps: number | "unlimited";
 }
 
 export interface UIAgentStepStartChunk {

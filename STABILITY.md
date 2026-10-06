@@ -170,3 +170,12 @@ endpoints or model capabilities.
 Google hosted-tool helpers may also be imported from `@zhivex-ai/gemini` and
 `@zhivex-ai/vertex`. Their existing Experimental classification and host/model
 limitations still apply. Core and SDK exports remain compatibility aliases.
+
+## Experimental portable Decisions
+
+The DecisionModel contract and associated Decision* types, provider
+`experimentalDecisionModel()` factories and `gateway.decide()` are experimental.
+They are independent of the stable language-model contract. Provider confidence
+is not comparable across adapters. Native Qwen `decisionModel()` retains its
+existing contract. See [Decisions](docs/DECISIONS.md) for supported capabilities,
+explicit destinations, reservations and limitations.

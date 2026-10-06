@@ -874,3 +874,7 @@ export { createAgentBudgetCoordinator } from "@zhivex-ai/core";
 export type { AgentBudgetCoordinator, AgentBudgetCoordinatorOptions, AgentTokenReservation } from "@zhivex-ai/core";
 
 export type { HostedToolUsage, HostedToolSupport } from "@zhivex-ai/core";
+
+export type { DecisionQuestion, DecisionQuestions, DecisionEvidence, DecisionInput, DecisionCapabilities, DecisionAnswer, DecisionResult, DecisionModel } from "@zhivex-ai/core";
+
+export { experimentalDecisionHelpers } from "@zhivex-ai/core/experimental";

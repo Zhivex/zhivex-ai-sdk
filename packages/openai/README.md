@@ -457,3 +457,11 @@ Only known, nonempty GA action batches are accepted; the app owns the executor,
 origin/session policy, coordinate bounds and screenshots. See the
 [computer-use guide](../../docs/COMPUTER_USE.md) for provider and durability limits.
 These changes describe this source branch, not previously published packages.
+
+## Experimental Decisions
+
+`openai.experimentalDecisionModel('gpt-6-luna')` implements the portable
+`DecisionModel` contract using `/decisions`, independently of chat. It supports
+predicate, typed string/boolean choice, fractional score, inline images and
+per-question refusal. See [portable Decisions](../../docs/DECISIONS.md) for the
+contract, explicit gateway fallback and separate Decisions pricing.

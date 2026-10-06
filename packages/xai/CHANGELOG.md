@@ -1,5 +1,14 @@
 # @zhivex-ai/xai
 
+## 0.2.10
+
+### Patch Changes
+
+- Updated dependencies [d0a4d08]
+- Updated dependencies [21ac5a2]
+  - @zhivex-ai/core@1.31.0
+  - @zhivex-ai/openai@0.15.0
+
 ## 0.2.9
 
 ### Patch Changes

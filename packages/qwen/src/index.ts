@@ -1,3 +1,4 @@
+import { createPortableQwenDecisionModel } from "./portable-decision.js";
 import { qwenSearchUsage } from "./search-usage.js";
 import { createAnnotationCollector } from "./annotations.js";
 export { createQwenSDPExchange } from "./sdp-exchange.js";
@@ -223,6 +224,7 @@ export type QwenProvider = Omit<CallableProviderAdapter<LanguageModel<QwenLangua
   temporaryKeys: QwenTemporaryKeysClient;
   textEmbeddingModel(modelId: string): QwenTextEmbeddingModel;
   decisionModel(modelId?: string): QwenDecisionModel;
+  experimentalDecisionModel(modelId?: string): import("@zhivex-ai/core").DecisionModel;
   imageTranslationModel(modelId?: string): QwenImageTranslationModel;
   worlds(modelId: QwenWorldModelId): QwenWorldsClient;
   streamingASRModel(modelId: string): QwenCloudStreamingASRModel;
@@ -3321,6 +3323,7 @@ export const createQwen = (
 
   return createProviderAdapter({
     name: "qwen",
+    experimentalDecisionModel: (modelId = "decision-model-preview") => createPortableQwenDecisionModel(modelId, { apiKey, baseURL: options.decisionBaseURL ?? baseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints }),
     languageModel: (modelId) => {
       assertQwenLanguageModel(modelId);
       if (isLiveTranslate38(modelId)) throw new UnsupportedFeatureError("Qwen 3.8 LiveTranslate requires realtimeModel(), not languageModel().");

@@ -1,3 +1,4 @@
+import { createOpenAIDecisionModel } from "./decision.js";
 import { computerInputSchema, computerScreenshotSchema } from "./computer.js";
 export { openAIComputerTool, OpenAIComputerExecutionError } from "./computer.js";
 export type { OpenAIComputerExecutionContext, OpenAIComputerAction, OpenAIComputerSafetyCheck, OpenAIComputerCallInput, OpenAIComputerScreenshotOutput, OpenAIComputerToolConfig } from "./computer.js";
@@ -2583,6 +2584,7 @@ export const createOpenAI = (
 ): CallableProviderAdapter<LanguageModel<OpenAILanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
   agents: OpenAIAgentsClient;
+  experimentalDecisionModel(modelId?: string): import("@zhivex-ai/core").DecisionModel;
 } => {
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -2616,6 +2618,7 @@ export const createOpenAI = (
 
   return createProviderAdapter({
     name: "openai",
+    experimentalDecisionModel: (modelId = "gpt-6-luna") => createOpenAIDecisionModel(modelId, { apiKey, baseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints }),
     languageModel: (modelId) => {
       if (modelId.startsWith("gpt-live-")) throw new UnsupportedFeatureError("GPT-Live is a voice model; use openai.realtimeModel(modelId).");
       return new OpenAILanguageModel(modelId, apiKey, baseURL, fetcher, responseLimits, options);

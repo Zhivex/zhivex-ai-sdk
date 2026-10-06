@@ -23,3 +23,6 @@ export {
 
 export type { ExperimentalRawProviderOptions } from "@zhivex-ai/core/experimental";
 export type { ComputerUseCallbackContext, ComputerAction, ComputerUseEnvironment, ComputerUseResult, RunComputerUseOptions } from "@zhivex-ai/core/experimental";
+
+export { experimentalDecisionHelpers } from "@zhivex-ai/core/experimental";
+export type { DecisionQuestion, DecisionQuestions, DecisionEvidence, DecisionInput, DecisionCapabilities, DecisionAnswer, DecisionResult, DecisionModel } from "@zhivex-ai/core/experimental";

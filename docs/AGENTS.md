@@ -11,6 +11,25 @@ Related guides:
 - [Agent Observability Guide](./OBSERVABILITY.md): traces, audit records, ledgers, golden traces, and evaluations.
 - [Workspace Agents Guide](./WORKSPACE_AGENTS.md): shell/apply-patch harnesses, approvals, and app-owned execution boundaries.
 
+## Explicit unlimited cumulative steps
+
+`generateText`, `streamText`, `Agent` / `createAgent`, run/resume inputs, and subagent definitions accept `maxSteps: "unlimited"`. This JSON-safe opt-in removes the cumulative step ceiling until a terminal response, approval pause, cancellation, or another explicit limit stops execution. Positive safe integers retain their existing behavior; omission still resolves to one step for fresh runs (or the agent default / persisted ceiling on resume). `null`, `Infinity`, fractions, and other strings are invalid.
+
+```ts
+const agent = new Agent({
+  model,
+  tools,
+  maxSteps: "unlimited",
+  toolExecution: { timeoutMs: 30_000 },
+  policy: { budget: { maxToolCalls: 100 } }
+});
+const result = await agent.run({ prompt: "Continue the task", timeoutMs: 60_000, abortSignal });
+```
+
+The existing `policy.timeoutMs` is an optional timer for one invocation, not a persisted deadline across resumptions. Omit it from the effective policy to have no run-policy timer. An input policy is merged with the agent policy, so omitting the input field does **not** erase an agent-level timeout. A harness with a persisted “unlimited duration” setting should omit this field when constructing the effective agent policy. There is no new unlimited value for request or tool timeouts: keep those independently finite. `timeoutMs` on run/generation input remains a per-provider-operation option, with its existing validation.
+
+The literal `"unlimited"` is retained in durable run state, run views, telemetry, and streaming events; JSON serialization never substitutes a huge number or `Infinity`. Consumers doing arithmetic on `maxSteps` must first narrow `typeof maxSteps === "number"`. Older SDK readers do not understand the new literal; upgrade readers before enabling this opt-in. Numeric persisted runs remain compatible. Explicit finite step/token/tool budgets, permissions, approval interruption, leases, cancellation, replay buffers, and checkpoint-size limits remain enforced. For a durable terminal stop, use `cancelAgentRun(store, runId, { mode: "final", reason })` to retain cancellation intent and checkpoint; aborting only a request signal does not promise a persisted `cancelled` status. This opt-in adds no new pause/resume state. Child agents keep their own configured ceiling; the parent opt-in does not silently propagate to children. Compaction does not reset the cumulative step counter. Workflow agent steps use the same agent contract; workflow-level limits are unchanged.
+
 ## Choose The Entry Point
 
 Use `Agent` for new agent code:

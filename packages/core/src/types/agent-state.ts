@@ -28,6 +28,7 @@ export interface AgentRunPolicy {
   budgetCoordinator?: import("../agent-budget-coordinator.js").AgentBudgetCoordinator;
   /** Required with budgetCoordinator. A conservative bound for each primary model call. */
   modelReservation?: import("../agent-budget-coordinator.js").AgentTokenReservation;
+  /** Optional run-policy duration timer. Omit for no run-policy timer; operation timeouts remain independent. */
   timeoutMs?: number;
   onTimeout?: "fail" | "cancel-requested";
   /** Explicit migration escape hatch for pre-fingerprint durable states. */
@@ -283,7 +284,7 @@ export interface AgentRunState {
   steps: AgentStep[];
   toolResults: ToolExecutionResult[];
   currentStep: number;
-  maxSteps: number;
+  maxSteps: number | "unlimited";
   outputText: string;
   finalOutput?: JsonValue;
   outputMode?: Exclude<StructuredOutputMode, "auto">;

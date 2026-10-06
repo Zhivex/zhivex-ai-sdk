@@ -524,3 +524,12 @@ a scalar rate remains unknown. This rate bounds declared per-token prices; it
 does not bound the total number of tokens or unrepresented provider charges.
 Detailed `costAccounting` quotes retain input/output token
 valuation and explicit unknown-cost handling.
+
+## Experimental decision routing
+
+Register `decisions` separately from chat adapters, then call `gateway.decide()`
+with an explicit primary and alternatives. One attempt and no fallback are the
+defaults. Capability/restriction preflight, per-question refusal preservation,
+whole-operation deadlines and request-local cost reservations are documented in
+[portable Decisions](../../docs/DECISIONS.md). Chat budgets, caches, admission and
+adaptive routing do not apply to this separate experimental operation.

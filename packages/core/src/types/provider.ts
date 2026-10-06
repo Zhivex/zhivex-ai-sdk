@@ -21,6 +21,8 @@ import type {
 } from "./media.js";
 
 export interface ProviderAdapter<TLanguageModel extends LanguageModel = LanguageModel> {
+  /** Experimental portable Decisions; separate from native provider extensions. */
+  experimentalDecisionModel?: (modelId?: string) => import("../decisions.js").DecisionModel;
   readonly name: string;
   languageModel(modelId: string): TLanguageModel;
   embeddingModel?: (modelId: string) => EmbeddingModel;

@@ -59,7 +59,7 @@ export const finalizeState = <TOutput>(
   newToolResults: ToolExecutionResult[]
 ): AgentRunOutput<TOutput> => {
   const nextCurrentStep = state.currentStep + newSteps.length;
-  const exhausted = nextCurrentStep >= state.maxSteps;
+  const exhausted = state.maxSteps !== "unlimited" && nextCurrentStep >= state.maxSteps;
   const lastStep = newSteps.at(-1);
   const unresolvedToolCalls = lastStep?.response ? hasToolCalls(lastStep.response.messages) : false;
   const pendingApprovals = [
