@@ -2527,7 +2527,7 @@ describe("openai adapter", () => {
           display_height: 720
         })
       }
-    })).rejects.toThrow(/hosted|executable|tool/i);
+    })).rejects.toThrow(/native computer executor/i);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(hostedResult.toolCalls ?? []).toHaveLength(0);
