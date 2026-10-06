@@ -1100,6 +1100,7 @@ describe("gemini adapter", () => {
           'event: step.delta\ndata: {"event_id":"event-42","event_type":"step.delta","index":0,"delta":{"type":"text","text":"continued"}}',
           "",
           'event: interaction.completed\ndata: {"event_type":"interaction.completed","interaction":{"id":"int-background","status":"completed"}}',
+          "",
           ""
         ].join("\n"),
         { headers: { "content-type": "text/event-stream" } }
@@ -1805,6 +1806,7 @@ describe("gemini adapter", () => {
           'data: {"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"audio/pcm","data":"AQI="}}]}}]}',
           "",
           'data: {"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"audio/pcm","data":"AwQ="}}]}}]}',
+          "",
           ""
         ].join("\n"),
         { headers: { "content-type": "text/event-stream" } }

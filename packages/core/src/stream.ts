@@ -82,74 +82,74 @@ export async function* streamSSE(
     throw new ParseError("Streaming response did not include a body.");
   }
 
-  let buffer = "";
-  let completed = false;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  let line = "";
+  let event: string | undefined;
+  let dataLines: string[] = [];
+  let eventChars = 0;
+  let skipLF = false;
+  let readDone = false;
+  let cancelled = false;
 
   const cancelForLimit = async (message: string): Promise<never> => {
+    cancelled = true;
     await reader.cancel(message).catch(() => {});
     throw new ParseError(message);
   };
 
-  const parseEvent = (rawEvent: string) => {
-    let event: string | undefined;
-    const dataLines: string[] = [];
-
-    for (const line of rawEvent.split(/\r?\n/)) {
-      if (line.startsWith("event:")) {
-        event = line.slice(6).trim();
-      } else if (line.startsWith("data:")) {
-        dataLines.push(line.slice(5).trim());
-      }
+  // WHATWG SSE is line-oriented: CR, LF and CRLF are all line endings.
+  // A CRLF pair may straddle reads; EOF never dispatches a pending event.
+  const processLine = () => {
+    if (line === "") {
+      const parsed = dataLines.length ? { event, data: dataLines.join("\n") } : undefined;
+      event = undefined;
+      dataLines = [];
+      eventChars = 0;
+      return parsed;
     }
-
-    const data = dataLines.join("\n");
-    return data.length ? { event, data } : undefined;
+    eventChars += line.length + 1;
+    if (!line.startsWith(":")) {
+      const colon = line.indexOf(":");
+      const field = colon < 0 ? line : line.slice(0, colon);
+      let value = colon < 0 ? "" : line.slice(colon + 1);
+      if (value.startsWith(" ")) value = value.slice(1);
+      if (field === "event") event = value;
+      else if (field === "data") dataLines.push(value);
+    }
+    return undefined;
   };
 
   try {
-    while (true) {
+    while (!readDone) {
       const { done, value } = await reader.read();
-      completed = done;
-      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
-
-      while (true) {
-        const separatorMatch = buffer.match(/\r?\n\r?\n/);
-        if (!separatorMatch) {
-          if (buffer.length > maxBufferChars) {
-            await cancelForLimit(`SSE buffer exceeded ${maxBufferChars} characters before an event separator.`);
-          }
-          break;
+      readDone = done;
+      const chunk = done ? decoder.decode() : decoder.decode(value, { stream: true });
+      for (const character of chunk) {
+        if (skipLF) {
+          skipLF = false;
+          if (character === "\n") continue;
         }
-
-        const separatorIndex = separatorMatch.index ?? 0;
-        if (separatorIndex > maxEventChars) {
+        if (character === "\r" || character === "\n") {
+          skipLF = character === "\r";
+          const parsed = processLine();
+          line = "";
+          if (parsed) yield parsed;
+        } else {
+          line += character;
+        }
+        if (eventChars + line.length > maxEventChars) {
           await cancelForLimit(`SSE event exceeded ${maxEventChars} characters.`);
         }
-
-        const rawEvent = buffer.slice(0, separatorIndex);
-        buffer = buffer.slice(separatorIndex + separatorMatch[0].length);
-        const parsed = parseEvent(rawEvent);
-        if (parsed) {
-          yield parsed;
+        if (eventChars + line.length > maxBufferChars) {
+          await cancelForLimit(`SSE buffer exceeded ${maxBufferChars} characters before an event separator.`);
         }
-      }
-
-      if (done) {
-        if (buffer.length > maxEventChars) {
-          await cancelForLimit(`SSE event exceeded ${maxEventChars} characters.`);
-        }
-
-        const parsed = parseEvent(buffer);
-        if (parsed) {
-          yield parsed;
-        }
-        break;
       }
     }
   } finally {
-    if (!completed) await reader.cancel("SSE consumption ended before EOF.").catch(() => {});
+    // A provider can stop on [DONE], reject JSON, or a caller can cancel early.
+    // Releasing the lock alone leaves the HTTP body and its producer running.
+    if (!readDone && !cancelled) await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }

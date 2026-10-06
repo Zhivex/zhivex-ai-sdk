@@ -90,7 +90,7 @@ These APIs are the supported public contract for application code and production
 - Agent replay and evaluation helpers: `createAgentRunSnapshot`, `replayAgentRun`, `createMockLanguageModel`, `createMockTool`, `runAgentEvaluation`, `createAgentEvaluationFixture`, `runAgentEvaluationFixture`, `createAgentEvaluationReport`, multi-agent child-run expectations, and `judgeAgentEvaluation`
 - Agent trace and cost helpers: `createAgentTraceArtifact`, `createAgentRunTreeSnapshot`, `createHierarchicalAgentTrace`, `createAgentTraceCollector`, `summarizeAgentTrace`, `estimateTokenCost`, and `estimateAgentRunCost`
 - Safety/policy helpers: `createSafetyPolicy`, `createApprovalPolicy`, `createRedactionPolicy`, `createBudgetGuard`, and `applySafetyPolicyToAgent`
-- Typed failures: `ProviderToolCallError` and its sanitized durable `AgentRunError` projection
+- Typed failures: `ProviderStreamError`, `ProviderToolCallError` and its sanitized durable `AgentRunError` projection
 - Provider parity helpers: `inspectProviderAgentSupport`, `createProviderSupportMatrix`, `renderProviderSupportMatrix`, and `createProviderSupportDriftReport`
 - Default agent stores: in-memory, file-backed, SQLite, and Postgres run and memory stores
 - MCP integration: `createMcpToolSet`, plus the opt-in HTTP/OAuth entrypoints described in [MCP HTTP](docs/MCP_HTTP.md). `MCP_HTTP_API_STABILITY_MANIFEST` classifies every runtime export of those entrypoints; their exported types are Stable and covered by declaration snapshots.

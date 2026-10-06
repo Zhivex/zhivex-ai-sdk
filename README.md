@@ -411,6 +411,10 @@ Run the opt-in cross-provider image smoke with `INLINE_IMAGE_INTEGRATION=1 bun -
 
 Object generation preserves tool approval policies and lifecycle hooks. Provider stream error events terminate the operation and reject `collect()` before pending tools execute. OpenAI, Anthropic, Gemini and Qwen language-model routes validate HTTP status inside their retry boundary; DeepSeek also cancels retry waits when its timeout expires.
 
+`ProviderStreamError` identifies sanitized streaming payload failures. Its `provider`, `transport`, `diagnosticCode`, `reason` (`invalid_json` or `invalid_event`) and `retryable=false` survive the durable `AgentRunError` projection; raw SSE data and parser causes are excluded. Qwen uses `QWEN_SSE_EVENT_INVALID`. A zero recorded usage after such a failure does not prove that a dispatched request consumed no tokens.
+
+`streamSSE` follows [WHATWG SSE framing](https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream): LF, CRLF and CR line endings, multiline data and one optional space after the colon. Comment heartbeats are ignored; dispatched malformed JSON still fails in the provider adapter. EOF does not dispatch an unfinished frame. Qwen requires a terminal response or Chat finish reason before reporting completion, and early consumer termination cancels the response body.
+
 `ProviderToolCallError.usage` optionally carries validated terminal token counts when a rejected OpenAI Responses tool call still has terminal accounting. Incomplete calls remain rejected and are never emitted for execution. Missing or invalid terminal usage stays absent; applications must not estimate billed usage or assume retry safety from the presence of counters. The numeric record is copied, frozen, and excludes provider payloads.
 
 

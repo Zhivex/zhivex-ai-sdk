@@ -4,6 +4,7 @@ export {
   ParseError,
   ProviderHTTPError,
   ProviderResponseTooLargeError,
+  ProviderStreamError,
   ProviderToolCallError,
   UnsupportedFeatureError,
   ValidationError

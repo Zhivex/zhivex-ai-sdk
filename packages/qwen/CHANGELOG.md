@@ -1,5 +1,10 @@
 # @zhivex-ai/qwen
 
+## Unreleased
+
+- Correct SSE CR/LF/CRLF framing, field whitespace and incomplete EOF handling; cancel transports when consumption stops early.
+- Preserve sanitized Qwen parser diagnostics in durable agent failures and reject Chat streams without terminal evidence.
+
 ## 0.16.4
 
 ### Patch Changes

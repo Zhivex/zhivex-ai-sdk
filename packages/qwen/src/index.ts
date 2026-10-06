@@ -45,6 +45,7 @@ import {
   ConfigurationError,
   decodeBase64WithLimit,
   ProviderHTTPError,
+  ProviderStreamError,
   ProviderToolCallError,
   ValidationError,
   assertTrustedEndpoint,
@@ -1466,12 +1467,10 @@ const qwenResponsesToolCallError = (
   reason, usage, effectsPossible, retryable: false
 });
 
-class QwenStreamEventError extends Error {
-  readonly provider = "qwen";
-  readonly diagnosticCode = "QWEN_SSE_EVENT_INVALID";
-  readonly retryable = false;
-  constructor(readonly transport: "responses" | "chat", readonly reason: "invalid_json" | "invalid_event") {
-    super("Qwen stream event could not be parsed safely.");
+class QwenStreamEventError extends ProviderStreamError {
+  constructor(transport: "responses" | "chat", reason: "invalid_json" | "invalid_event") {
+    super({ provider: "qwen", transport, diagnosticCode: "QWEN_SSE_EVENT_INVALID", reason });
+    this.message = "Qwen stream event could not be parsed safely.";
     this.name = "QwenStreamEventError";
   }
 }
@@ -2186,6 +2185,9 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             lastUsage = json.usage;
           }
         }
+
+        input.abortSignal?.throwIfAborted();
+        if (!lastFinishReason) throw failure("stream_truncated");
 
         // Named Qwen Chat tool choices can finish with "stop". Wait until the
         // stream ends and validate the whole batch before exposing any effects.

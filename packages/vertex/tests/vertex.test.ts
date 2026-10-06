@@ -1796,6 +1796,7 @@ describe("vertex adapter", () => {
           'data: {"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"audio/pcm","data":"AQI="}}]}}]}',
           "",
           'data: {"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"audio/pcm","data":"AwQ="}}]}}]}',
+          "",
           ""
         ].join("\n"),
         { headers: { "content-type": "text/event-stream" } }
