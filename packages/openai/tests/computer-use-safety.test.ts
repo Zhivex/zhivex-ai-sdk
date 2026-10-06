@@ -347,3 +347,14 @@ it.each(["failed", "incomplete", "cancelled", "in_progress"])("never executes a 
   expect(execute).not.toHaveBeenCalled();
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+
+it("does not dispatch a native call to an ordinary function named computer", async () => {
+  const { model, fetchMock } = fixture(input());
+  const execute = vi.fn(() => screenshot);
+  const nativeTool = openAIComputerTool({ execute });
+  // An ordinary tool registry entry cannot acquire native privileges by name.
+  const ordinaryTool = { ...nativeTool, metadata: undefined, requiresApproval: false };
+  await expect(generateText({ model, prompt: "fixture", maxSteps: 1, tools: { computer: ordinaryTool } })).rejects.toThrow(/native computer executor/);
+  expect(execute).not.toHaveBeenCalled();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});

@@ -367,6 +367,9 @@ const validateToolCalls = async (
       });
       continue;
     }
+    if (call.providerMetadata?.responsesToolType === "computer" && (!isCallableToolDefinition(tool) || !isComputerEffectTool(tool))) {
+      throw new ValidationError("Native computer calls require a registered native computer executor.");
+    }
     if (!isCallableToolDefinition(tool)) {
       throw new ValidationError(
         `Tool "${call.name}" is provider-hosted and cannot be executed by the local tool loop.`
