@@ -339,6 +339,7 @@ const betaSymbols = [
 ] as const;
 
 const experimentalSymbols = [
+  "ComputerUseExecutionError",
   "AdvancedToolRegistry",
   "createAdvancedToolRegistry",
   "createHttpTool",

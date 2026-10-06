@@ -443,3 +443,17 @@ const provider = createOpenAI({
 capabilities for unrecognized IDs during migration. Exact per-ID declarations take
 precedence over the selected defaults; nested `agentCapabilities` declarations merge
 with the profile. Known profiles keep their existing behavior.
+
+### Computer execution safety
+
+`openAIComputerTool` accepts `approveSafetyChecks(input, context)` in addition to
+`execute(input, context)`. Inputs preserve `call_id` and `pending_safety_checks`.
+When checks exist, the safety callback must explicitly return true for the frozen
+call before execution; generic tool approval alone is insufficient. The result
+acknowledges the exact checks and preserves call correlation. Both callbacks
+receive `abortSignal` and `deadline`; `callbackTimeoutMs` defaults to 60 seconds.
+Native unknown outcomes are not safe to retry without session reconciliation.
+Only known, nonempty GA action batches are accepted; the app owns the executor,
+origin/session policy, coordinate bounds and screenshots. See the
+[computer-use guide](../../docs/COMPUTER_USE.md) for provider and durability limits.
+These changes describe this source branch, not previously published packages.

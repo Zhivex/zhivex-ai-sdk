@@ -373,8 +373,11 @@ export const resolveContext = async <
     loadedByIdempotencyKey = true;
   }
 
-  if (loadedState?.status === "failed" && loadedState.error?.providerRequestCount && loadedState.error.effectsPossible) {
-    throw new ConflictError("Agent failed after internal provider execution; automatic resume is unsafe.");
+  if (loadedState?.taskOutcome?.status === "needs_reconciliation" && loadedState.status !== "completed") {
+    throw new ConflictError("Agent has an indeterminate durable execution; reconcile before resuming.");
+  }
+  if (loadedState?.status === "failed" && loadedState.error?.effectsPossible) {
+    throw new ConflictError("Agent failed after possible external effects; automatic resume is unsafe; reconcile before resuming.");
   }
 
   const normalizedInput =

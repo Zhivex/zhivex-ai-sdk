@@ -1,3 +1,4 @@
+import { isComputerEffectTool, isUnknownToolExecution, unknownToolExecution } from "../tool-execution-outcome.js";
 import {
   createHash
 } from "node:crypto";
@@ -162,14 +163,18 @@ export const wrapToolWithJournal = <TModel extends LanguageModel>(
         );
       }
 
+      let returned = false;
       try {
-        const output = serializeJsonValue(
-          await tool.execute(input, {
-            ...context,
-            runId: state.runId,
-            idempotencyKey
-          })
-        );
+        const rawOutput = await tool.execute(input, {
+          ...context,
+          runId: state.runId,
+          idempotencyKey
+        });
+        returned = true;
+        const output = serializeJsonValue(rawOutput);
+        if (isComputerEffectTool(tool) && context.abortSignal?.aborted) {
+          throw unknownToolExecution(context.abortSignal.reason);
+        }
         await store.completeToolExecution!(
           {
             ...claim.entry,
@@ -182,6 +187,9 @@ export const wrapToolWithJournal = <TModel extends LanguageModel>(
         );
         return output;
       } catch (error) {
+        // Keep the claimed row running; only authenticated reconciliation can resolve it.
+        if (isUnknownToolExecution(error)) throw error;
+        if (isComputerEffectTool(tool) && (returned || context.abortSignal?.aborted)) throw unknownToolExecution(error);
         const normalizedError = error instanceof Error ? error : new Error(String(error));
         try {
           await store.completeToolExecution!(

@@ -503,8 +503,8 @@ export type {
 } from "./mcp.js";
 export { generateImage, generateMusic, generateVideo } from "./media.js";
 export { generateText, normalizeMessages, streamText } from "./generate-text.js";
-export { runComputerUse } from "./computer-use.js";
-export type { ComputerAction, ComputerUseEnvironment, ComputerUseResult, RunComputerUseOptions } from "./computer-use.js";
+export { runComputerUse, ComputerUseExecutionError } from "./computer-use.js";
+export type { ComputerUseCallbackContext, ComputerAction, ComputerUseEnvironment, ComputerUseResult, RunComputerUseOptions } from "./computer-use.js";
 export {
   createOtelAgentObserver,
   createOtelObserver,

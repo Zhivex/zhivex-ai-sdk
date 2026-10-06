@@ -16,9 +16,10 @@ export {
   recordToolTestFixture,
   runToolTestFixture,
   runComputerUse,
+  ComputerUseExecutionError,
   testToolDefinition,
   testToolRegistry
 } from "@zhivex-ai/core/experimental";
 
 export type { ExperimentalRawProviderOptions } from "@zhivex-ai/core/experimental";
-export type { ComputerAction, ComputerUseEnvironment, ComputerUseResult, RunComputerUseOptions } from "@zhivex-ai/core/experimental";
+export type { ComputerUseCallbackContext, ComputerAction, ComputerUseEnvironment, ComputerUseResult, RunComputerUseOptions } from "@zhivex-ai/core/experimental";

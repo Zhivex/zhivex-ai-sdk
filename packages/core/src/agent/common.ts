@@ -1,3 +1,4 @@
+import { isUnknownToolExecution } from "../tool-execution-outcome.js";
 import {
   getAgentApprovalRequests
 } from "../agent-approval.js";
@@ -187,6 +188,9 @@ export const countToolErrors = (toolResults: ToolExecutionResult[]): number =>
 export const approvalsFromEvents = (messages: ModelMessage[]): AgentApprovalRequest[] => getAgentApprovalRequests(messages);
 
 const toAgentRunError = (error: unknown): AgentRunError => {
+  if (isUnknownToolExecution(error)) {
+    return { message: error.message, effectsPossible: true, retryable: false, diagnosticCode: "INDETERMINATE_TOOL_EXECUTION" };
+  }
   if (error instanceof ToolNotRegisteredError) {
     return { message: error.message, diagnosticCode: error.code };
   }
