@@ -17,9 +17,9 @@
   },
   "dependencies": {
     "@ai-sdk/react": "4.0.130",
-    "@zhivex-ai/openai": "0.14.1",
+    "@zhivex-ai/openai": "0.14.2",
     "@zhivex-ai/react": "0.7.1",
-    "@zhivex-ai/sdk": "1.30.2",
+    "@zhivex-ai/sdk": "1.30.3",
     "ai": "7.0.127",
     "next": "16.3.8",
     "react": "19.3.0",
