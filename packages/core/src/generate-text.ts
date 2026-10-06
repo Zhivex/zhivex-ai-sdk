@@ -963,7 +963,7 @@ export const generateText = async <
     await options.onToolExecutionComplete?.({ request, step, toolResults: recoveredToolResults });
   }
 
-  for (let step = 0; step < maxSteps; step += 1) {
+  for (let step = 0; (maxSteps === "unlimited" || step < maxSteps); step += 1) {
     const absoluteStep = (options.stepOffset ?? 0) + step + 1;
     const preparedMessages = await options.prepareModelMessages?.({
       messages: structuredClone(allMessages),
@@ -1198,7 +1198,7 @@ export const streamText = <
       await options.onToolExecutionComplete?.({ request, step, toolResults: recoveredToolResults });
     }
 
-    for (let step = 0; step < maxSteps; step += 1) {
+    for (let step = 0; (maxSteps === "unlimited" || step < maxSteps); step += 1) {
       options.abortSignal?.throwIfAborted();
       const absoluteStep = (options.stepOffset ?? 0) + step + 1;
       const preparedMessages = await options.prepareModelMessages?.({

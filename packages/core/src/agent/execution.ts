@@ -391,7 +391,7 @@ const createGenerateOptions = <
   state: AgentRunState,
   input: AgentRunInput<TModel, TContext, NoInfer<TContextInput>>,
   messages: ModelMessage[],
-  maxSteps: number,
+  maxSteps: number | "unlimited",
   context: TContext | undefined,
   executionEnvironmentSession: AgentExecutionEnvironmentSession<TContext> | undefined,
   abortSignal: AbortSignal | undefined = input.abortSignal,
@@ -837,7 +837,7 @@ export const runAgent = async <
     agent,
     telemetryRunId,
     invocationStartedAt,
-    validateMaxSteps(input.maxSteps ?? input.state?.maxSteps ?? agent.maxSteps)
+    validateMaxSteps(input.maxSteps !== undefined ? input.maxSteps : input.state?.maxSteps !== undefined ? input.state.maxSteps : agent.maxSteps)
   );
 
   try {
@@ -1132,7 +1132,7 @@ export const streamAgent = <
       agent,
       telemetryRunId,
       invocationStartedAt,
-      validateMaxSteps(input.maxSteps ?? input.state?.maxSteps ?? agent.maxSteps)
+      validateMaxSteps(input.maxSteps !== undefined ? input.maxSteps : input.state?.maxSteps !== undefined ? input.state.maxSteps : agent.maxSteps)
     );
     const context = await resolveContext(agent, invocationInput);
     if (context.state.memory === false) agent = withoutInvocationMemory(agent);

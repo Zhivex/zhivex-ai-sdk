@@ -530,7 +530,7 @@ export const createOtelAgentObserver = async (options: {
     agentName?: string;
     provider: string;
     modelId: string;
-    maxSteps: number;
+    maxSteps: number | "unlimited";
     startedAt?: number;
   }) => {
     const existing = runSpans.get(event.runId);

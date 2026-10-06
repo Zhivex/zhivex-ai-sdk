@@ -806,12 +806,19 @@ console.log("INSTALLED_REALTIME_LIVE_SMOKE_OK");
     execFileSync(runtime, [metaUsagePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
   }
 
+  const unlimitedTypePath = join(consumerDirectory, "unlimited-consumer.ts");
+  writeFileSync(unlimitedTypePath, readFileSync(join(scriptDirectory, "fixtures/unlimited-consumer.ts"), "utf8"));
+  const unlimitedSmokePath = join(consumerDirectory, "unlimited-consumer.mjs");
+  writeFileSync(unlimitedSmokePath, readFileSync(join(scriptDirectory, "fixtures/unlimited-consumer.mjs"), "utf8"));
+  for (const runtime of ["node", "bun"]) {
+    execFileSync(runtime, [unlimitedSmokePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
+  }
   const decisionTypePath = join(consumerDirectory, "decision-consumer.ts");
   writeFileSync(decisionTypePath, readFileSync(join(scriptDirectory, "fixtures/decision-consumer.ts"), "utf8"));
   const agwTypePath = join(consumerDirectory, "sdk-agw-consumer.ts");
   writeFileSync(agwTypePath, readFileSync(join(scriptDirectory, "fixtures/sdk-agw-consumer.ts"), "utf8"));
   // TypeScript 7's extensionless ESM launcher needs the build runtime; package execution below still uses the selected Node version.
-  execFileSync("bun", [join(workspaceDirectory, "node_modules/.bin/tsc"), "--noEmit", "--strict", "--skipLibCheck", "--module", "NodeNext", "--target", "ES2022", agwTypePath, decisionTypePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
+  execFileSync("bun", [join(workspaceDirectory, "node_modules/.bin/tsc"), "--noEmit", "--strict", "--skipLibCheck", "--module", "NodeNext", "--target", "ES2022", agwTypePath, decisionTypePath, unlimitedTypePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
 
   const agwSmokePath = join(consumerDirectory, "sdk-agw-consumer.mjs");
   writeFileSync(agwSmokePath, readFileSync(join(scriptDirectory, "fixtures/sdk-agw-consumer.mjs"), "utf8"));

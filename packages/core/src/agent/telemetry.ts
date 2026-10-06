@@ -70,7 +70,7 @@ export const emitInvocationStartTelemetry = async <TModel extends LanguageModel>
   agent: AgentDefinition<TModel>,
   runId: string,
   startedAt: number,
-  maxSteps: number
+  maxSteps: number | "unlimited"
 ) => {
   try {
     await agent.onTelemetryEvent?.startInvocation?.({

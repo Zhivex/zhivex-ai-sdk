@@ -689,7 +689,7 @@ export const applySafetyPolicyToAgent = <TModel extends AgentDefinition["model"]
   maxSteps:
     policy.budget?.limits.maxSteps === undefined
       ? agent.maxSteps
-      : Math.min(agent.maxSteps ?? policy.budget.limits.maxSteps, policy.budget.limits.maxSteps)
+      : Math.min(agent.maxSteps === "unlimited" ? policy.budget.limits.maxSteps : agent.maxSteps ?? policy.budget.limits.maxSteps, policy.budget.limits.maxSteps)
 });
 
 export const createProductionSafetyPolicy = (options: SafetyPolicyOptions = {}): SafetyPolicy => {

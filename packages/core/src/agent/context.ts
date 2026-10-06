@@ -45,7 +45,7 @@ const createBaseState = (
   provider: string,
   modelId: string,
   initialMessages: ModelMessage[],
-  maxSteps: number,
+  maxSteps: number | "unlimited",
   metadata: Record<string, JsonValue> | undefined,
   agentId: string | undefined,
   runId: string,
@@ -333,7 +333,7 @@ export const resolveContext = async <
 
   if (!loadedState && input.idempotencyKey) {
     const runId = input.runId ?? randomId("run");
-    const maxSteps = validateMaxSteps(input.maxSteps ?? agent.maxSteps);
+    const maxSteps = validateMaxSteps(input.maxSteps !== undefined ? input.maxSteps : agent.maxSteps);
     const metadata = cloneMetadata(agent.metadata, input.metadata, input.handoff?.metadata);
     // The winning claim establishes the run's memory policy before any memory read.
     // A losing invocation must not load memory before seeing a persisted opt-out.
@@ -398,7 +398,7 @@ export const resolveContext = async <
       throw new ConflictError("Agent group idempotency key belongs to a different member or agent.");
     }
     bindDurableRuntime(agent, input, loadedState, executionEnvironmentBinding);
-    const maxSteps = validateMaxSteps(input.maxSteps ?? loadedState.maxSteps);
+    const maxSteps = validateMaxSteps(input.maxSteps !== undefined ? input.maxSteps : loadedState.maxSteps);
     const resumed = await applyApprovalResponses(
       loadedState.messages,
       input.approvals,
@@ -426,7 +426,7 @@ export const resolveContext = async <
         updatedAt: Date.now()
       } satisfies AgentRunState,
       messages: resumed.messages,
-      remainingSteps: Math.max(0, maxSteps - loadedState.currentStep),
+      remainingSteps: maxSteps === "unlimited" ? maxSteps : Math.max(0, maxSteps - loadedState.currentStep),
       memoryMessages: [] as ModelMessage[],
       context: parsedContext,
       executionEnvironment,
@@ -435,7 +435,7 @@ export const resolveContext = async <
   }
 
   const runId = input.runId ?? randomId("run");
-  const maxSteps = validateMaxSteps(input.maxSteps ?? agent.maxSteps);
+  const maxSteps = validateMaxSteps(input.maxSteps !== undefined ? input.maxSteps : agent.maxSteps);
   const prepared = await prepareFreshMessages(agent, input, runId);
 
   const state = createBaseState(

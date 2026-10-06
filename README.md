@@ -54,6 +54,8 @@ For model and provider maintenance, follow [model onboarding](./docs/maintainers
 
 The direct providers support `gpt-6-sol`, `gpt-6-luna`, `claude-opus-5-5`, and `claude-sonnet-5-5`. GPT-6 Sol/Luna default to Responses; Chat Completions function calling requires reasoning effort `none`. Opus 5.5 uses always-on adaptive thinking and accepts only automatic or disabled tool choice. See the [OpenAI adapter](./packages/openai/README.md) and [Anthropic adapter](./packages/anthropic/README.md) for migration details. Sonnet 5.5 maps reasoning effort `none` to `between_tools` and rejects forced tools, disabled/manual thinking, and incompatible effort settings before sending requests. The SDK catalog includes their direct-provider token and cache prices; Sonnet 5.5 on Vertex has a separate entry without inferred pricing.
 
+Agents and generation support explicit JSON-safe `maxSteps: "unlimited"`; existing defaults and operation limits remain unchanged. See [cumulative limits and duration semantics](./docs/AGENTS.md#explicit-unlimited-cumulative-steps).
+
 ## Durable Agent Output Redaction
 
 `createRedactionPolicy().outputGuardrail` sanitizes final agent state before persistence. It does not retroactively sanitize live streams or earlier checkpoints. See [scope and limitations](./docs/PRODUCTION.md#durable-agent-output-redaction).

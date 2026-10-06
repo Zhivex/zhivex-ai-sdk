@@ -493,9 +493,9 @@ export const normalizeAgentRunState = (value: unknown): AgentRunState => {
   });
   array(state.toolResults, "toolResults").forEach((entry, index) => toolResult(entry, `toolResults[${index}]`));
   integer(state.currentStep, "currentStep");
-  integer(state.maxSteps, "maxSteps", 1);
+  if (state.maxSteps !== "unlimited") integer(state.maxSteps, "maxSteps", 1);
   if (state.currentStep !== stateSteps.length) invalid("currentStep", "must equal steps.length");
-  if ((state.maxSteps as number) < (state.currentStep as number)) invalid("maxSteps", "must be greater than or equal to currentStep");
+  if (state.maxSteps !== "unlimited" && (state.maxSteps as number) < (state.currentStep as number)) invalid("maxSteps", "must be greater than or equal to currentStep");
   string(state.outputText, "outputText", true);
   if (state.finalOutput !== undefined) jsonValue(state.finalOutput, "finalOutput");
   if (state.outputMode !== undefined && state.outputMode !== "native" && state.outputMode !== "prompted") {

@@ -94,8 +94,8 @@ export type GenerateTextOptions<
     }) => void | Promise<void>;
     /** Existing completed steps preceding this invocation. */
     stepOffset?: number;
-    /** Positive safe integer. Defaults to 1. */
-    maxSteps?: number;
+    /** Positive safe integer, or explicit "unlimited" opt-in. Defaults to 1. */
+    maxSteps?: number | "unlimited";
     /** Streaming replay/queue limits. Full replay with overflow errors is the default. */
     streamBuffer?: BoundedReplayBroadcastOptions;
     temperature?: number;

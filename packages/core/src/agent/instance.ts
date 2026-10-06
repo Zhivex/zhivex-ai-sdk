@@ -33,7 +33,7 @@ export class Agent<
   instructions?: string;
   contextSchema?: z.ZodType<TContext, TContextInput>;
   tools?: AgentDefinition<TModel>["tools"];
-  maxSteps?: number;
+  maxSteps?: number | "unlimited";
   streamBuffer?: AgentDefinition<TModel>["streamBuffer"];
   temperature?: number;
   maxTokens?: number;
