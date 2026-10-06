@@ -1,5 +1,15 @@
 # @zhivex-ai/core
 
+## 1.31.0
+
+### Minor Changes
+
+- d0a4d08: Allow explicit JSON-safe `maxSteps: "unlimited"` in generation and agent runs, including streaming, resume, state and run-view events. Numeric defaults and independent finite operation/budget limits are preserved. Consumers of maxSteps in state and events must narrow the number/string union before arithmetic; older SDK readers must be upgraded before enabling unlimited persisted runs. Clarify existing optional run-policy timeout semantics without adding or relaxing request/tool timeouts.
+- 21ac5a2: Add an experimental portable DecisionModel contract, OpenAI Decisions and Qwen
+  System One adapters, and explicit gateway.decide routing with capability preflight,
+  refusal preservation, deadlines and request-local cost reservations. Preserve the
+  native Qwen decisionModel API and existing language-model routing.
+
 ## 1.30.2
 
 ### Patch Changes

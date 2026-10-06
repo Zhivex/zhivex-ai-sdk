@@ -1,5 +1,17 @@
 # @zhivex-ai/react
 
+## 0.8.0
+
+### Minor Changes
+
+- d0a4d08: Allow explicit JSON-safe `maxSteps: "unlimited"` in generation and agent runs, including streaming, resume, state and run-view events. Numeric defaults and independent finite operation/budget limits are preserved. Consumers of maxSteps in state and events must narrow the number/string union before arithmetic; older SDK readers must be upgraded before enabling unlimited persisted runs. Clarify existing optional run-policy timeout semantics without adding or relaxing request/tool timeouts.
+
+### Patch Changes
+
+- Updated dependencies [d0a4d08]
+- Updated dependencies [21ac5a2]
+  - @zhivex-ai/core@1.31.0
+
 ## 0.7.1
 
 ### Patch Changes

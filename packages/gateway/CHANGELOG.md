@@ -1,5 +1,20 @@
 # @zhivex-ai/gateway
 
+## 1.6.0
+
+### Minor Changes
+
+- 21ac5a2: Add an experimental portable DecisionModel contract, OpenAI Decisions and Qwen
+  System One adapters, and explicit gateway.decide routing with capability preflight,
+  refusal preservation, deadlines and request-local cost reservations. Preserve the
+  native Qwen decisionModel API and existing language-model routing.
+
+### Patch Changes
+
+- Updated dependencies [d0a4d08]
+- Updated dependencies [21ac5a2]
+  - @zhivex-ai/core@1.31.0
+
 ## 1.5.1
 
 ### Patch Changes
