@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAgent, createInMemoryAgentRunStore, generateText, runAgent, streamAgent } from "@zhivex-ai/core";
+import { createAgent, createInMemoryAgentRunStore, generateText, streamText, runAgent, streamAgent } from "@zhivex-ai/core";
 import { createOpenAI, openAIComputerTool, type OpenAIComputerToolConfig, openAIComputerUseTool } from "../src/index.js";
 
 const screenshot = { type: "computer_screenshot" as const, image_url: "data:image/png;base64,aGVsbG8=" };
@@ -251,13 +251,35 @@ describe("OpenAI native computer safety boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("blocks repeated call IDs before a second execution even when the proposal changes", async () => {
-    const execute = vi.fn<OpenAIComputerToolConfig["execute"]>(() => screenshot);
+  it.each([false, true])("blocks repeated call IDs across steps within one invocation (stream=%s)", async streaming => {
+    let count = 0;
+    const fetchMock = vi.fn(async () => {
+      const proposal = { type: "computer_call", call_id: "same-call", actions: count++ === 0 ? actions : [{ type: "screenshot" }] };
+      const response = { id: `response-${count}`, status: "completed", output: [proposal] };
+      return streaming
+        ? new Response(`data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: proposal })}\n\ndata: ${JSON.stringify({ type: "response.completed", response })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } })
+        : Response.json(response);
+    });
+    const model = createOpenAI({ apiKey: "fixture", fetch: fetchMock as typeof fetch })("gpt-6-luna");
+    const execute = vi.fn(() => screenshot);
+    const options = { model, prompt: "fixture", maxSteps: 3, toolApprovalPolicy: () => true, tools: { computer: openAIComputerTool({ execute }) } };
+    const run = async () => {
+      if (!streaming) return generateText(options);
+      const stream = streamText(options);
+      await Array.fromAsync(stream.eventStream);
+      return stream.collect();
+    };
+    await expect(run()).rejects.toThrow(/already started|reconcile/i);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases direct helper call IDs after completion", async () => {
+    const execute = vi.fn(() => screenshot);
     const nativeTool = openAIComputerTool({ execute });
     await nativeTool.execute({ call_id: "same-call", actions });
-    await expect(nativeTool.execute({ call_id: "same-call", actions: [{ type: "screenshot" }] })).rejects.toThrow(/already started|reconcile/i);
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls[0]?.[1]).toMatchObject({ abortSignal: expect.any(AbortSignal), deadline: expect.any(Number) });
+    await nativeTool.execute({ call_id: "same-call", actions });
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
   it.each(["GA", "preview"])("does not falsely complete unhandled %s computer work", async (mode) => {
@@ -357,4 +379,63 @@ it("does not dispatch a native call to an ordinary function named computer", asy
   await expect(generateText({ model, prompt: "fixture", maxSteps: 1, tools: { computer: ordinaryTool } })).rejects.toThrow(/native computer executor/);
   expect(execute).not.toHaveBeenCalled();
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+
+it.each([false, true])("reuses a long-lived tool across independent same-ID invocations (stream=%s)", async streaming => {
+  const execute = vi.fn(() => screenshot);
+  const nativeTool = openAIComputerTool({ execute, approveSafetyChecks: () => true });
+  for (let index = 0; index < 3; index++) {
+    let count = 0;
+    const model = createOpenAI({ apiKey: "fixture", fetch: async () => {
+      const output = count++ === 0 ? [{ type: "computer_call", ...input() }] : [{ type: "message", content: [{ type: "output_text", text: "Done" }] }];
+      const response = { id: `response-${count}`, status: "completed", output };
+      return streaming ? new Response(`${output.map((item, output_index) => `data: ${JSON.stringify({ type: "response.output_item.done", output_index, item })}\n\n`).join("")}data: ${JSON.stringify({ type: "response.completed", response })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } }) : Response.json(response);
+    } })("gpt-6-luna");
+    const options = { model, prompt: "fixture", maxSteps: 2, toolApprovalPolicy: () => true, tools: { computer: nativeTool } };
+    if (streaming) {
+      const stream = streamText(options);
+      await Array.fromAsync(stream.eventStream);
+      await stream.collect();
+    } else await generateText(options);
+  }
+  expect(execute).toHaveBeenCalledTimes(3);
+});
+
+it("allows concurrent independent invocations sharing a tool and provider call ID", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const execute = vi.fn(async () => { await gate; return screenshot; });
+  const nativeTool = openAIComputerTool({ execute, approveSafetyChecks: () => true });
+  const invoke = () => generateText({ model: fixture(input()).model, prompt: "fixture", maxSteps: 2,
+    toolApprovalPolicy: () => true, tools: { computer: nativeTool } });
+  const pending = [invoke(), invoke()];
+  await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+  release();
+  await Promise.all(pending);
+});
+
+it("retains the direct duplicate guard while a timed-out executor is still running", async () => {
+  let settle!: (value: typeof screenshot) => void;
+  const execute = vi.fn(() => new Promise<typeof screenshot>(resolve => { settle = resolve; }));
+  const nativeTool = openAIComputerTool({ callbackTimeoutMs: 10, execute });
+  const proposal = { call_id: "late-direct", actions };
+  await expect(nativeTool.execute(proposal)).rejects.toMatchObject({ effectsPossible: true });
+  await expect(nativeTool.execute(proposal)).rejects.toThrow(/already started/);
+  expect(execute).toHaveBeenCalledTimes(1);
+  settle(screenshot);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  execute.mockImplementation(async () => screenshot);
+  await nativeTool.execute(proposal);
+  expect(execute).toHaveBeenCalledTimes(2);
+});
+
+it("rejects a completed native call ID supplied in continuation history", async () => {
+  const execute = vi.fn(() => screenshot);
+  const nativeTool = openAIComputerTool({ execute, approveSafetyChecks: () => true });
+  const first = await generateText({ model: fixture(input()).model, prompt: "fixture", maxSteps: 2,
+    toolApprovalPolicy: () => true, tools: { computer: nativeTool } });
+  await expect(generateText({ model: fixture(input()).model, messages: first.messages, maxSteps: 2,
+    toolApprovalPolicy: () => true, tools: { computer: nativeTool } })).rejects.toThrow(/already started/);
+  expect(execute).toHaveBeenCalledTimes(1);
 });

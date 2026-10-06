@@ -29,6 +29,14 @@ await assert.rejects(generateText({ model, prompt: 'synthetic', maxSteps: 2, too
 }) } }));
 assert.equal(executions, 0);
 
+const reusedComputer = openAIComputerTool({ approveSafetyChecks: () => true, execute: () => { executions++; return screenshot; } });
+executions = 0;
+for (let invocation = 0; invocation < 3; invocation++) {
+  requests = [];
+  await generateText({ model, prompt: 'synthetic', maxSteps: 2, toolApprovalPolicy: () => true, tools: { computer: reusedComputer } });
+}
+assert.equal(executions, 3);
+
 const textModel = { provider: 'fixture', modelId: 'offline', capabilities: { vision: true, tools: true }, generate: async () => ({ message: { role: 'assistant', parts: [{ type: 'text', text: 'done' }] }, finishReason: 'stop' }) };
 let verified = 0;
 await assert.rejects(runComputerUse({ model: textModel, prompt: 'fixture', environment: { viewport: { width: 10, height: 10 }, screenshot: async () => image, execute: async () => {} }, authorize: () => true, isComplete: () => { verified++; return false; } }));

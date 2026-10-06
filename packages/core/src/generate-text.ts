@@ -876,6 +876,10 @@ export const generateText = async <
 >(
   options: GenerateTextOptions<TModel, TContext>
 ): Promise<GenerateTextOutput> => {
+  // A fresh, non-serializable identity spans every step of this invocation. The
+  // enumerable symbol survives runtime context spreads but never enters JSON state.
+  options = { ...options, toolContext: { ...options.toolContext,
+    [Symbol.for("@zhivex-ai/core/tool-execution-scope")]: Object.freeze({}) } };
   const maxSteps = validateMaxSteps(options.maxSteps);
   const allMessages = buildMessages(options);
   const steps: GenerateTextOutput["steps"] = [];
@@ -1067,6 +1071,10 @@ export const streamText = <
 >(
   options: GenerateTextOptions<TModel, TContext>
 ): StreamTextResult => {
+  // A fresh, non-serializable identity spans every step of this invocation. The
+  // enumerable symbol survives runtime context spreads but never enters JSON state.
+  options = { ...options, toolContext: { ...options.toolContext,
+    [Symbol.for("@zhivex-ai/core/tool-execution-scope")]: Object.freeze({}) } };
   const maxSteps = validateMaxSteps(options.maxSteps);
   const baseMessages = buildMessages(options);
   const tools = toToolSet(options.tools);

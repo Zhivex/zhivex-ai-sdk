@@ -97,8 +97,13 @@ data URL or HTTPS screenshot URL for the same session (maximum 12 MiB URL string
 image contents and dimensions are not decoded/verified). The helper forces image
 `detail: "original"`. Failed, cancelled or timed-out execution has an unknown
 external outcome and must be reconciled before retrying. Reusing an already
-started native call ID in the same helper/run is rejected. This in-memory guard is
-not durable; use the Agent journal and an application reconciliation process for
+started native call ID within one generation invocation or its supplied continuation
+history is rejected. Independent invocations can reuse a long-lived helper and
+provider IDs. Replay sets are weakly held by an internal invocation identity rather
+than retained for the helper's lifetime. Direct helper calls without a generation
+context only reject overlapping calls with the same ID; an execution timeout keeps
+that guard until the underlying executor actually settles. This is not a durable
+replay ledger; use the Agent journal and an application reconciliation process for
 persistent runs. Ordinary functions named `computer` do not acquire native execution
 privileges. Native calls without a registered executor remain pending tool calls
 and fail the generic tool loop rather than being treated as completed UI work.

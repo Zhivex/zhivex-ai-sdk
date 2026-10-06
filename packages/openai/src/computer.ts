@@ -109,7 +109,10 @@ export const openAIComputerTool = (config: OpenAIComputerToolConfig): ToolDefini
   const timeout = config.callbackTimeoutMs ?? 60_000;
   if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 86_400_000) throw new ConfigurationError("computer callbackTimeoutMs must be a positive integer no greater than 86400000.");
   if (typeof config.execute !== "function") throw new ConfigurationError("OpenAI computer requires an application-owned executor.");
-  const startedCalls = new Set<string>();
+  // Retain completed IDs only while their invocation context remains reachable.
+  // Direct execute calls have no invocation lifecycle; guard only overlapping work.
+  const scopedCalls = new WeakMap<object, Set<string>>();
+  const inFlightCalls = new Set<string>();
   return {
     name: config.name ?? "computer",
     description: "Execute authorized ordered OpenAI computer actions and return the same session's screenshot.",
@@ -125,8 +128,12 @@ export const openAIComputerTool = (config: OpenAIComputerToolConfig): ToolDefini
       context?.abortSignal?.throwIfAborted();
       const runtimeContext = { ...context, ...(context?.toolCall ? { toolCall: freeze(structuredClone(context.toolCall)) } : {}) };
       const executionContext = (abortSignal: AbortSignal): OpenAIComputerExecutionContext => ({ ...runtimeContext, abortSignal, deadline: Date.now() + timeout });
-      const callKey = snapshot.call_id ? `${context?.runId ?? ""}:${snapshot.call_id}` : undefined;
-      if (callKey && startedCalls.has(callKey)) throw new ConfigurationError("Computer call was already started; reconcile before retrying.");
+      const scope = context && (context as unknown as Record<symbol, object | undefined>)[Symbol.for("@zhivex-ai/core/tool-execution-scope")];
+      let startedCalls = scope ? scopedCalls.get(scope) : inFlightCalls;
+      if (!startedCalls) { startedCalls = new Set<string>(); scopedCalls.set(scope!, startedCalls); }
+      const callKey = snapshot.call_id;
+      const hasPriorResult = callKey && context?.request?.messages.some(message => message.parts.some(part => part.type === "tool-result" && part.toolResult.toolCallId === callKey));
+      if (callKey && (startedCalls.has(callKey) || hasPriorResult)) throw new ConfigurationError("Computer call was already started; reconcile before retrying.");
       const checks = snapshot.pending_safety_checks ?? [];
       if (checks.length) {
         if (!snapshot.call_id || !config.approveSafetyChecks) throw new ConfigurationError("OpenAI computer pending safety checks require explicit approval.");
@@ -136,12 +143,22 @@ export const openAIComputerTool = (config: OpenAIComputerToolConfig): ToolDefini
       context?.abortSignal?.throwIfAborted();
       if (callKey && startedCalls.has(callKey)) throw new ConfigurationError("Computer call was already started; reconcile before retrying.");
       if (callKey) startedCalls.add(callKey);
+      let enteredExecutor = false;
       try {
-        const output = await callback((abortSignal) => config.execute(snapshot, executionContext(abortSignal)), timeout, context?.abortSignal);
+        const output = await callback(async (abortSignal) => {
+          enteredExecutor = true;
+          try { return await config.execute(snapshot, executionContext(abortSignal)); }
+          finally {
+            // An outer timeout cannot release a still-running direct executor.
+            if (!scope && callKey) inFlightCalls.delete(callKey);
+          }
+        }, timeout, context?.abortSignal);
         const screenshot = computerScreenshotSchema.parse(output);
         return { ...screenshot, detail: "original", ...(snapshot.call_id ? { call_id: snapshot.call_id } : {}), ...(checks.length ? { acknowledged_safety_checks: checks } : {}) } as JsonValue;
       } catch (error) {
         throw new OpenAIComputerExecutionError(snapshot.call_id, error);
+      } finally {
+        if (!scope && callKey && !enteredExecutor) inFlightCalls.delete(callKey);
       }
     }
   };
