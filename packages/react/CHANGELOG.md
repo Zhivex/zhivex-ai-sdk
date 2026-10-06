@@ -1,5 +1,11 @@
 # @zhivex-ai/react
 
+## 0.8.1
+
+### Patch Changes
+
+- 7c89f38: Preserve agent lifecycle activity and run-view updates when maxSteps is explicitly "unlimited", while retaining numeric limits and rejecting malformed values.
+
 ## 0.8.0
 
 ### Minor Changes

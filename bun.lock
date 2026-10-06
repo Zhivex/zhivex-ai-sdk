@@ -154,7 +154,7 @@
     },
     "packages/react": {
       "name": "@zhivex-ai/react",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "dependencies": {
         "@zhivex-ai/core": "^1.31.0",
       },
