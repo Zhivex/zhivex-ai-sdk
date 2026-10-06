@@ -1,3 +1,4 @@
+import { trimTrailingSlashes } from "./url-path.js";
 import { experimentalDecisionHelpers, type DecisionModel, type DecisionCapabilities, type DecisionInput, type DecisionAnswer } from '@zhivex-ai/core/provider';
 const invalidDecision: typeof experimentalDecisionHelpers.invalidDecision = experimentalDecisionHelpers.invalidDecision;
 const snapshotDecision: typeof experimentalDecisionHelpers.snapshotDecision = experimentalDecisionHelpers.snapshotDecision;
@@ -12,7 +13,7 @@ const capabilities: DecisionCapabilities = Object.freeze({
 });
 export function createPortableQwenDecisionModel(modelId: string, options: QwenDecisionModelOptions): DecisionModel {
   const native = createQwenDecisionModel(modelId, options);
-  const endpoint = `${options.baseURL.replace(/\/+$/, '')}/systemone`;
+  const endpoint = `${trimTrailingSlashes(options.baseURL)}/systemone`;
   const validate = (input: DecisionInput) => {
     validateDecision(input, capabilities);
     const snapshot = snapshotDecision(input);

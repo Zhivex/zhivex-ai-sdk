@@ -18,7 +18,10 @@ const capabilities: DecisionCapabilities = Object.freeze({
 });
 export function createOpenAIDecisionModel(modelId: string, options: { apiKey: string; baseURL: string; fetch?: typeof globalThis.fetch; allowUnsafeEndpoints?: boolean }): DecisionModel {
   if (modelId !== 'gpt-6-luna') throw new ConfigurationError('OpenAI Decisions currently supports gpt-6-luna only.');
-  const endpoint = `${options.baseURL.replace(/\/+$/, '')}/decisions`;
+  // A linear suffix scan avoids backtracking on long slash-filled paths.
+  let end = options.baseURL.length;
+  while (end > 0 && options.baseURL.charCodeAt(end - 1) === 47) end--;
+  const endpoint = `${options.baseURL.slice(0, end)}/decisions`;
   assertTrustedEndpoint(endpoint, { protocols: ['https:'], allowUnsafe: options.allowUnsafeEndpoints, label: 'OpenAI decision endpoint' });
   const prepare = (input: DecisionInput) => {
     validateDecision(input, capabilities);

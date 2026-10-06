@@ -1,3 +1,4 @@
+import { createOpenAIDecisionModel } from "../src/decision.js";
 import { it, expect } from 'vitest';
 import { decisionFixture, decisionInput } from '../../core/tests/fixtures/decision-contract.js';
 it('returns partial refusals without converting them to numeric answers', async () => {
@@ -41,4 +42,10 @@ it('rejects malformed JSON without retaining echoed input', async () => {
   const error = await model.decide(decisionInput).catch(e => e);
   expect(error.message).not.toContain('SECRET');
   expect(error.cause).toBeUndefined();
+});
+
+it('normalizes only trailing endpoint slashes while preserving long internal paths', () => {
+  const base = 'https://decision.example.com/' + '/'.repeat(20_000) + 'v1';
+  const model = createOpenAIDecisionModel('gpt-6-luna', { apiKey: 'offline-test', baseURL: base + '///' });
+  expect(model.endpoint).toBe(base + '/decisions');
 });
