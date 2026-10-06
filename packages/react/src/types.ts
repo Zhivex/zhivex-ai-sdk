@@ -33,7 +33,7 @@ export type ChatActivity =
   | {
       type: "run-start";
       currentStep: number;
-      maxSteps: number;
+      maxSteps: number | "unlimited";
     }
   | {
       type: "step-start";

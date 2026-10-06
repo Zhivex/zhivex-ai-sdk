@@ -24,6 +24,9 @@ const isString = (value: unknown): value is string => typeof value === "string";
 const isNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
+const isStepLimit = (value: unknown): value is number | "unlimited" =>
+  value === "unlimited" || isNumber(value);
+
 const isMessageRole = (value: unknown): value is MessageRole =>
   value === "system" || value === "user" || value === "assistant" || value === "tool";
 
@@ -450,7 +453,7 @@ const applyChunk = (
   if (chunk.type === "agent-run-update") {
     const run = chunk.run;
     if (!isRecord(run) || !isString(run.runId) || !run.runId || !isAgentStatus(run.status) ||
-        !isNumber(run.currentStep) || !isNumber(run.maxSteps)) return state;
+        !isNumber(run.currentStep) || !isStepLimit(run.maxSteps)) return state;
     const safe: import("@zhivex-ai/core").AgentRunView = {
       runId: run.runId, status: run.status, currentStep: run.currentStep, maxSteps: run.maxSteps,
       usage: toTokenUsage(run.usage)
@@ -602,7 +605,7 @@ const applyChunk = (
   }
 
   if (chunk.type === "agent-run-start") {
-    if (!isNumber(chunk.currentStep) || !isNumber(chunk.maxSteps)) {
+    if (!isNumber(chunk.currentStep) || !isStepLimit(chunk.maxSteps)) {
       return state;
     }
     return {
