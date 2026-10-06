@@ -27,6 +27,37 @@ export interface GatewayDecisionResult extends DecisionResult {
   routing: { target: string; attempts: number; reservedUSD?: number };
 }
 const money = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+// Exact arithmetic over each supplied number's canonical decimal value. Do not
+// admit overspending with an epsilon, or round small USD reservations to zero.
+type DecimalUSD = { coefficient: bigint; exponent: number };
+const decimalUSD = (value: number): DecimalUSD => {
+  const [mantissa, exponent = '0'] = value.toString().split('e');
+  const [whole, fraction = ''] = mantissa!.split('.');
+  return { coefficient: BigInt(whole! + fraction), exponent: Number(exponent) - fraction.length };
+};
+const alignUSD = (a: DecimalUSD, b: DecimalUSD) => {
+  const exponent = Math.min(a.exponent, b.exponent);
+  return { a: a.coefficient * 10n ** BigInt(a.exponent - exponent), b: b.coefficient * 10n ** BigInt(b.exponent - exponent), exponent };
+};
+const addUSD = (a: DecimalUSD, b: DecimalUSD): DecimalUSD => {
+  const aligned = alignUSD(a, b);
+  return { coefficient: aligned.a + aligned.b, exponent: aligned.exponent };
+};
+const exceedsUSD = (amount: DecimalUSD, ceiling: DecimalUSD) => {
+  const aligned = alignUSD(amount, ceiling);
+  return aligned.a > aligned.b;
+};
+const numberUSD = (amount: DecimalUSD) => {
+  const value = Number(`${amount.coefficient}e${amount.exponent}`);
+  if (!Number.isFinite(value) || !exceedsUSD(amount, decimalUSD(value))) return value;
+  // Public numbers must not under-report a decimal sum between representable
+  // values. Admission above still compares the exact sum, not this projection.
+  const bits = new DataView(new ArrayBuffer(8));
+  bits.setFloat64(0, value);
+  bits.setBigUint64(0, bits.getBigUint64(0) + 1n);
+  return bits.getFloat64(0);
+};
+
 export function createGatewayDecide(registry: Readonly<Record<string, GatewayDecisionTarget>> = {}, defaultTimeoutMs?: number) {
   const registrations = Object.fromEntries(Object.entries(registry).map(([id, target]) => [id, { ...target }]));
   return async (request: GatewayDecisionRequest): Promise<GatewayDecisionResult> => {
@@ -54,21 +85,23 @@ export function createGatewayDecide(registry: Readonly<Record<string, GatewayDec
     });
     if (ceiling !== undefined && targets[0]!.reserveUSD! > ceiling) throw new ValidationError('Decision reservation ceiling exceeded.');
     return decisionOperation(input, async signal => {
-      let reserved = 0; let known = true;
+      let reserved = decimalUSD(0); let known = true;
+      const decimalCeiling = ceiling === undefined ? undefined : decimalUSD(ceiling);
       for (let i = 0; i < maxAttempts; i++) {
         if (signal.aborted) throw new Error('Decision cancelled.');
         const t = targets[i]!;
         if (t.reserveUSD === undefined) known = false;
-        if (ceiling !== undefined && reserved + t.reserveUSD! > ceiling) throw new ValidationError('Decision reservation ceiling exceeded.');
-        reserved += t.reserveUSD ?? 0;
-        if (!Number.isFinite(reserved)) throw new ValidationError("Invalid decision reservation sum.");
+        const nextReserved = addUSD(reserved, decimalUSD(t.reserveUSD ?? 0));
+        if (decimalCeiling !== undefined && exceedsUSD(nextReserved, decimalCeiling)) throw new ValidationError('Decision reservation ceiling exceeded.');
+        reserved = nextReserved;
+        if (!Number.isFinite(numberUSD(reserved))) throw new ValidationError("Invalid decision reservation sum.");
         try {
           const result = await t.model.decide({ ...input, abortSignal: signal });
           if (result.provenance.provider !== t.model.provider || result.provenance.modelId !== t.model.modelId || result.provenance.endpoint !== t.model.endpoint) throw new ValidationError('Invalid decision provenance.');
           validateDecisionAnswers(result.answers, input.questions, t.model.capabilities.perQuestionRefusal);
           decisionTokenCount(result.usage.inputTokens);
           // Partial refusals are successful typed results, never fallback signals.
-          return { ...result, routing: { target: t.id, attempts: i + 1, ...(known ? { reservedUSD: reserved } : {}) } };
+          return { ...result, routing: { target: t.id, attempts: i + 1, ...(known ? { reservedUSD: numberUSD(reserved) } : {}) } };
         } catch (error) {
           if (signal.aborted || !(error instanceof ProviderHTTPError) || !fallbackOn.includes(error.status as 429) || i + 1 >= maxAttempts) throw error;
         }

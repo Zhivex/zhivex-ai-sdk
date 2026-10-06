@@ -49,3 +49,16 @@ it('normalizes only trailing endpoint slashes while preserving long internal pat
   const model = createOpenAIDecisionModel('gpt-6-luna', { apiKey: 'offline-test', baseURL: base + '///' });
   expect(model.endpoint).toBe(base + '/decisions');
 });
+
+it('enforces the image-count boundary during validation and decide before network', async () => {
+  const { model, fetcher } = decisionFixture('openai');
+  const image = { type: 'image' as const, dataURL: 'data:image/png;base64,AAAA' };
+  const tooMany = { ...decisionInput, input: Array.from({ length: 129 }, () => image) };
+  expect(() => model.validate(tooMany)).toThrow();
+  await expect(model.decide(tooMany)).rejects.toThrow();
+  expect(fetcher).not.toHaveBeenCalled();
+  const boundary = { ...decisionInput, input: [{ type: 'text' as const, text: 'Evidence' }, ...Array.from({ length: 128 }, () => image)] };
+  expect(() => model.validate(boundary)).not.toThrow();
+  await model.decide(boundary);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});

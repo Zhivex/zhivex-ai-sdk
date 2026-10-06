@@ -13,10 +13,10 @@ const request = { ...decisionInput, primary: 'primary', alternatives: ['backup']
 describe('explicit decision gateway', () => {
   it('falls back only to the selected compatible destination with provenance and reservations', async () => {
     const { gateway, firstFetch, second } = setup();
-    const result = await gateway.decide({ ...request, maxReservedUSD: 0.31 });
+    const result = await gateway.decide({ ...request, maxReservedUSD: 0.3 });
     expect(result.provenance.provider).toBe('qwen');
     expect(result.routing).toMatchObject({ target: 'backup', attempts: 2 });
-    expect(result.routing.reservedUSD).toBeCloseTo(0.3);
+    expect(result.routing.reservedUSD).toBe(0.3);
     expect(firstFetch).toHaveBeenCalledTimes(1);
     expect(second.fetcher).toHaveBeenCalledTimes(1);
   });
@@ -101,4 +101,31 @@ it('checks advertised capabilities even for a custom no-op validator', async () 
   const gateway = createGateway({ adapters: {}, decisions: { primary: { model } } });
   await expect(gateway.decide({ ...decisionInput, primary: 'primary' })).rejects.toThrow();
   expect(fixture.fetcher).not.toHaveBeenCalled();
+});
+
+it.each([
+  [0.1, 0.2, 0.3, true],
+  [1e-20, 2e-20, 3e-20, true],
+  [1e20, 2e20, 3e20, true],
+  [0.1, 0.20000000000000004, 0.3, false],
+  [1e-20, 2.0000000000000002e-20, 3e-20, false],
+  [0, Number.MIN_VALUE, 0, false],
+  [1, 1e-16, 1, false]
+])('compares exact decimal reservations %s + %s against %s', async (primary, backup, ceiling, allowed) => {
+  const first = decisionFixture('openai', vi.fn(async () => new Response('', { status: 503 })));
+  const second = decisionFixture('qwen');
+  const gateway = createGateway({ adapters: {}, decisions: { primary: { model: first.model, reserveUSD: primary as number }, backup: { model: second.model, reserveUSD: backup as number } } });
+  const pending = gateway.decide({ ...request, maxReservedUSD: ceiling as number });
+  if (allowed) expect((await pending).routing.reservedUSD).toBe(ceiling);
+  else await expect(pending).rejects.toThrow();
+  expect(second.fetcher).toHaveBeenCalledTimes(allowed ? 1 : 0);
+});
+
+it('reports a conservative reservation when the exact decimal sum is between numbers', async () => {
+  const first = decisionFixture('openai', vi.fn(async () => new Response('', { status: 503 })));
+  const second = decisionFixture('qwen');
+  const gateway = createGateway({ adapters: {}, decisions: { primary: { model: first.model, reserveUSD: 1 }, backup: { model: second.model, reserveUSD: 1e-16 } } });
+  const result = await gateway.decide(request);
+  expect(result.routing.reservedUSD).toBe(1.0000000000000002);
+  expect(second.fetcher).toHaveBeenCalledTimes(1);
 });

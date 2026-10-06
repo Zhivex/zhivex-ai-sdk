@@ -26,6 +26,7 @@ export function createOpenAIDecisionModel(modelId: string, options: { apiKey: st
   const prepare = (input: DecisionInput) => {
     validateDecision(input, capabilities);
     const snapshot = snapshotDecision(input);
+    if (Array.isArray(snapshot.input) && snapshot.input.filter(part => part.type === "image").length > 128) invalidDecision();
     const questions = Object.entries(snapshot.questions).map(([name, q]) => q.type === 'score'
       ? { name, type: q.type, instructions: q.instructions, levels: q.levels.map(label => ({ label })) }
       : { name, ...q });

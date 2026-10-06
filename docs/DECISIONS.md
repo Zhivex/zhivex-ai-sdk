@@ -96,11 +96,11 @@ stop further attempts and bound settlement even if a custom fetch ignores its
 signal; such a fetch remains responsible for stopping underlying I/O. Transport
 errors and HTTP bodies are sanitized. Requests and responses are bounded to 1 MiB;
 IDs, answer types, distributions, score ranges, labels and token quantities are
-validated. Hosted image URLs are rejected; OpenAI accepts inline base64 images.
+validated. Hosted image URLs are rejected; OpenAI accepts at most 128 inline base64 images per request; this is checked before network.
 
 For request-local spend admission, configure a conservative `reserveUSD` on each
 destination and set `maxReservedUSD` on the request. Unknown reservations fail
-closed when a ceiling is supplied. Failed attempts consume reservations too;
+closed when a ceiling is supplied. Reservation totals are compared as exact decimal values of the supplied numbers (for example, 0.1 + 0.2 fits a 0.3 ceiling), without an overspend tolerance. If the numeric reporting field cannot represent the exact sum, it rounds upward; admission still uses the exact decimal total. Failed attempts consume reservations too;
 an alternative is blocked if it would exceed the remaining allowance.
 `routing.reservedUSD` is a reservation sum, **not actual cost**. No provider token
 preflight or billable cap exists in this contract. The application must set
@@ -137,3 +137,5 @@ Validation for this addition is offline only. No paid inference, release or npm
 publication is part of this change. Both portable adapters and `gateway.decide`
 are experimental; the existing native Qwen API and language routing retain their
 previous contracts. Automatic chat/Code model selection is out of scope.
+
+Release preparation uses the feature changeset and the repository's `updateInternalDependencies: "patch"` policy to raise OpenAI, Qwen and Gateway's Core dependency floors to the new Core version that exports the Decisions helpers. An offline temporary-workspace regression test checks the resulting manifests; feature branches do not pre-bump published versions.
