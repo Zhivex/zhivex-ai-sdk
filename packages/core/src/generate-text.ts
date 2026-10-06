@@ -24,7 +24,8 @@ import {
   toolResultPart,
   validateMessageParts
 } from "./messages.js";
-import { createMergedAbortSignal } from "./runtime.js";
+import { createMergedAbortSignal, withTimeoutSignal } from "./runtime.js";
+import { isComputerEffectTool, isUnknownToolExecution, unknownToolExecution } from "./tool-execution-outcome.js";
 import { toToolSet } from "./tool-registry.js";
 import { ToolExecutionSuspendedError } from "./tool-execution-suspension.js";
 import type {
@@ -71,8 +72,29 @@ const withPossibleToolEffects = (error: unknown, effectsPossible: boolean): unkn
 const withToolTimeout = async <T>(
   operation: (signal: AbortSignal | undefined) => Promise<T>,
   timeoutMs?: number,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  computerEffect = false
 ): Promise<T> => {
+  if (computerEffect) {
+    const timeout = withTimeoutSignal({ abortSignal, timeoutMs });
+    let onAbort: (() => void) | undefined;
+    let started = false;
+    try {
+      timeout.signal.throwIfAborted();
+      const interrupted = new Promise<never>((_, reject) => {
+        onAbort = () => reject(started ? unknownToolExecution(timeout.signal.reason) : timeout.signal.reason);
+        timeout.signal.addEventListener("abort", onAbort, { once: true });
+      });
+      return await Promise.race([Promise.resolve().then(() => {
+        timeout.signal.throwIfAborted();
+        started = true;
+        return operation(timeout.signal);
+      }), interrupted]);
+    } finally {
+      if (onAbort) timeout.signal.removeEventListener("abort", onAbort);
+      timeout.cleanup();
+    }
+  }
   if (!timeoutMs) {
     return operation(abortSignal);
   }
@@ -325,10 +347,11 @@ const validateToolCalls = async (
     tools: NonNullable<ReturnType<typeof toToolSet>>;
   }
 ): Promise<ValidatedToolCall[]> => {
-  if (options.toolExecution?.unknownToolMode !== "tool-result" || options.toolExecution.stopOnError) {
-    const missing = toolCalls.find(call => !Object.hasOwn(context.tools, call.name) || !context.tools[call.name]);
-    if (missing) throw new ToolNotRegisteredError(createHash("sha256").update(missing.name).digest("hex"));
-  }
+  const missing = toolCalls.find(call =>
+    (!Object.hasOwn(context.tools, call.name) || !context.tools[call.name]) &&
+    (options.toolExecution?.unknownToolMode !== "tool-result" || options.toolExecution.stopOnError || call.providerMetadata?.responsesToolType === "computer")
+  );
+  if (missing) throw new ToolNotRegisteredError(createHash("sha256").update(missing.name).digest("hex"));
   const validated: ValidatedToolCall[] = [];
   for (const call of toolCalls) {
     const tool = Object.hasOwn(context.tools, call.name) ? context.tools[call.name] : undefined;
@@ -343,6 +366,9 @@ const validateToolCalls = async (
         validationError: { code: "TOOL_NOT_REGISTERED", message: "Tool is not registered. Use an available tool with its exact name." }
       });
       continue;
+    }
+    if (call.providerMetadata?.responsesToolType === "computer" && (!isCallableToolDefinition(tool) || !isComputerEffectTool(tool))) {
+      throw new ValidationError("Native computer calls require a registered native computer executor.");
     }
     if (!isCallableToolDefinition(tool)) {
       throw new ValidationError(
@@ -564,7 +590,7 @@ const executeTools = async (
   }
 ): Promise<ToolExecutionResult[]> => {
   const { validatedCalls, decisions } = preflight;
-  const parallel = options.toolExecution?.parallel ?? options.model.capabilities.parallelToolCalls;
+  const parallel = !validatedCalls.some(item => isComputerEffectTool(item.tool)) && (options.toolExecution?.parallel ?? options.model.capabilities.parallelToolCalls);
   const maxConcurrency = Math.max(1, options.toolExecution?.maxConcurrency ?? validatedCalls.length ?? 1);
   const timeoutMs = options.toolExecution?.timeoutMs;
   const stopOnError = options.toolExecution?.stopOnError ?? false;
@@ -579,6 +605,7 @@ const executeTools = async (
       throw context.request.abortSignal.reason ?? new Error("Tool execution aborted.");
     }
     if (item.validationError) {
+      if (isComputerEffectTool(tool)) throw new ValidationError(item.validationError.message);
       results[index] = {
         toolCallId: call.id,
         toolName: call.name,
@@ -590,6 +617,7 @@ const executeTools = async (
     if (!tool) throw new ValidationError("Missing validated tool.");
     const approval = decisions.get(call.id) ?? { approved: true };
     if (!approval.approved) {
+      if (isComputerEffectTool(tool)) throw new ValidationError(approval.reason ?? "Computer action was denied by the approval policy.");
       results[index] = {
         toolCallId: call.id,
         toolName: call.name,
@@ -630,7 +658,8 @@ const executeTools = async (
           abortSignal
         }),
         timeoutMs,
-        context.request.abortSignal
+        context.request.abortSignal,
+        isComputerEffectTool(tool)
       );
       await runToolGuardrails(item, "output", rawOutput);
       const output = serializeJsonValue(rawOutput);
@@ -656,7 +685,7 @@ const executeTools = async (
         latencyMs: finishedAt - startedAt
       });
     } catch (error) {
-      if (error instanceof ToolExecutionSuspendedError) {
+      if (error instanceof ToolExecutionSuspendedError || isUnknownToolExecution(error) || isComputerEffectTool(tool)) {
         throw error;
       }
       const normalizedError = error instanceof Error ? error : new Error(String(error));
@@ -770,11 +799,16 @@ const executeTools = async (
   }
 
   let cursor = 0;
+  let failed = false;
   const workers = Array.from({ length: Math.min(maxConcurrency, validatedCalls.length) }, async () => {
-    while (cursor < validatedCalls.length) {
-      const index = cursor;
-      cursor += 1;
-      await executeSingleTool(validatedCalls[index], index);
+    while (cursor < validatedCalls.length && !failed) {
+      const index = cursor++;
+      try {
+        await executeSingleTool(validatedCalls[index], index);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   });
   await Promise.all(workers);
@@ -842,6 +876,10 @@ export const generateText = async <
 >(
   options: GenerateTextOptions<TModel, TContext>
 ): Promise<GenerateTextOutput> => {
+  // A fresh, non-serializable identity spans every step of this invocation. The
+  // enumerable symbol survives runtime context spreads but never enters JSON state.
+  options = { ...options, toolContext: { ...options.toolContext,
+    [Symbol.for("@zhivex-ai/core/tool-execution-scope")]: Object.freeze({}) } };
   const maxSteps = validateMaxSteps(options.maxSteps);
   const allMessages = buildMessages(options);
   const steps: GenerateTextOutput["steps"] = [];
@@ -1033,6 +1071,10 @@ export const streamText = <
 >(
   options: GenerateTextOptions<TModel, TContext>
 ): StreamTextResult => {
+  // A fresh, non-serializable identity spans every step of this invocation. The
+  // enumerable symbol survives runtime context spreads but never enters JSON state.
+  options = { ...options, toolContext: { ...options.toolContext,
+    [Symbol.for("@zhivex-ai/core/tool-execution-scope")]: Object.freeze({}) } };
   const maxSteps = validateMaxSteps(options.maxSteps);
   const baseMessages = buildMessages(options);
   const tools = toToolSet(options.tools);

@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.30.2
+
+### Patch Changes
+
+- 3978b47: Fail closed on interrupted computer execution, bind immutable approvals and native OpenAI safety acknowledgements to correlated calls, and verify portable text-only completion. Add bounded cancellable callbacks and document application-owned execution and provider limits.
+
 ## 1.30.1
 
 ### Patch Changes

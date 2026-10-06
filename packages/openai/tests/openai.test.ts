@@ -2377,8 +2377,9 @@ describe("openai adapter", () => {
 
     expect(result.text).toBe("finished");
     expect(execute).toHaveBeenCalledWith({
+      call_id: "call_computer",
       actions: [{ type: "click", x: 10, y: 20 }, { type: "screenshot" }]
-    });
+    }, expect.objectContaining({ abortSignal: expect.any(AbortSignal) }));
     const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
     expect(firstBody.tools).toContainEqual({ type: "computer" });
     const secondBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
@@ -2466,7 +2467,7 @@ describe("openai adapter", () => {
     });
   });
 
-  it("keeps hosted Shell and preview Computer calls as provider data instead of executing locally", async () => {
+  it("keeps hosted Shell provider data but fails closed on unhandled preview Computer calls", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
         id: "resp_hosted_shell",
@@ -2515,7 +2516,7 @@ describe("openai adapter", () => {
         })
       }
     });
-    const previewResult = await generateText({
+    await expect(generateText({
       model: provider("gpt-5.4"),
       prompt: "legacy preview",
       maxSteps: 2,
@@ -2526,7 +2527,7 @@ describe("openai adapter", () => {
           display_height: 720
         })
       }
-    });
+    })).rejects.toThrow(/native computer executor/i);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(hostedResult.toolCalls ?? []).toHaveLength(0);
@@ -2534,13 +2535,6 @@ describe("openai adapter", () => {
       expect.objectContaining({
         type: "provider-data",
         data: expect.objectContaining({ type: "shell_call", call_id: "hosted_shell_1" })
-      })
-    );
-    expect(previewResult.toolCalls ?? []).toHaveLength(0);
-    expect(previewResult.messages.at(-1)?.parts).toContainEqual(
-      expect.objectContaining({
-        type: "provider-data",
-        data: expect.objectContaining({ type: "computer_call", action: { type: "screenshot" } })
       })
     );
 

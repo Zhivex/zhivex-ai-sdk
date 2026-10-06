@@ -93,6 +93,7 @@
     "picomatch": "^4.0.7",
     "postcss": "^8.5.28",
     "tinyglobby": "^0.2.17",
-    "vite": "^8.3.2"
+    "vite": "^8.3.2",
+    "source-map-js": "^1.2.2"
   }
 }

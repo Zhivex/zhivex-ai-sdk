@@ -1,3 +1,6 @@
+import { computerInputSchema, computerScreenshotSchema } from "./computer.js";
+export { openAIComputerTool, OpenAIComputerExecutionError } from "./computer.js";
+export type { OpenAIComputerExecutionContext, OpenAIComputerAction, OpenAIComputerSafetyCheck, OpenAIComputerCallInput, OpenAIComputerScreenshotOutput, OpenAIComputerToolConfig } from "./computer.js";
 import { jsonHeaders, parseJson, RESERVED_REQUEST_HEADERS } from "./http.js";
 import { OpenAIRealtimeModel, openAIRealtimeMcpMetadataKey, resolveOpenAIRealtimeHeaders } from "./realtime.js";
 export { openAIRealtimeMcpMetadataKey } from "./realtime.js";
@@ -229,24 +232,6 @@ export interface OpenAIComputerUseToolConfig {
   environment: "browser" | "mac" | "windows" | "linux" | "ubuntu";
   display_width?: number;
   display_height?: number;
-}
-
-export interface OpenAIComputerCallInput {
-  actions: JsonValue[];
-}
-
-export interface OpenAIComputerScreenshotOutput {
-  type: "computer_screenshot";
-  image_url: string;
-  detail?: "original";
-}
-
-export interface OpenAIComputerToolConfig {
-  name?: string;
-  requiresApproval?: boolean;
-  execute: (
-    input: OpenAIComputerCallInput
-  ) => Promise<OpenAIComputerScreenshotOutput> | OpenAIComputerScreenshotOutput;
 }
 
 export interface OpenAICodeInterpreterToolConfig {
@@ -1010,6 +995,12 @@ const getProviderResponseId = (messages: ModelMessage[]) => {
   return undefined;
 };
 
+const parseComputerCallInput = (item: Record<string, unknown>) => computerInputSchema.parse({
+  call_id: item.call_id,
+  actions: item.actions ?? (item.action ? [item.action] : undefined),
+  ...(item.pending_safety_checks !== undefined ? { pending_safety_checks: item.pending_safety_checks } : {})
+});
+
 const serializeToolOutput = (
   message: ModelMessage,
   format: ModelGenerateInput["toolResultFormat"],
@@ -1098,10 +1089,21 @@ const serializeToolOutput = (
             `OpenAI computer action execution failed: ${part.toolResult.error?.message ?? "unknown error"}`
           );
         }
+        const raw = part.toolResult.output as Record<string, unknown> | undefined;
+        const input = call ? computerInputSchema.parse(call.input) : undefined;
+        if ((input && input.call_id !== part.toolResult.toolCallId) || (raw?.call_id !== undefined && raw.call_id !== part.toolResult.toolCallId) || (!input && (raw?.call_id !== undefined || raw?.acknowledged_safety_checks !== undefined))) {
+          throw new ConfigurationError("OpenAI computer result is missing its correlated call identity.");
+        }
+        const pending = input?.pending_safety_checks ?? [];
+        const acknowledged = raw?.acknowledged_safety_checks ?? [];
+        if (JSON.stringify(pending) !== JSON.stringify(acknowledged)) {
+          throw new ConfigurationError("OpenAI computer safety acknowledgements do not match the pending checks.");
+        }
         return {
           type: "computer_call_output",
           call_id: part.toolResult.toolCallId,
-          output: part.toolResult.output
+          output: computerScreenshotSchema.parse(raw),
+          ...(pending.length ? { acknowledged_safety_checks: pending } : {})
         };
       }
 
@@ -1372,7 +1374,7 @@ const parseResponsesAssistantMessage = (
     item?.type === "function_call" ||
     (item?.type === "shell_call" && localTools.has("shell")) ||
     (item?.type === "apply_patch_call" && localTools.has("apply_patch")) ||
-    (item?.type === "computer_call" && localTools.has("computer"));
+    (item?.type === "computer_call");
   const hasExecutableToolOutput = output.some(isExecutableToolOutput);
 
   if (hasExecutableToolOutput && responseStatus !== "completed") {
@@ -1465,16 +1467,14 @@ const parseResponsesAssistantMessage = (
       continue;
     }
 
-    if (item?.type === "computer_call" && localTools.has("computer")) {
+    if (item?.type === "computer_call") {
       parts.push({
         type: "tool-call",
         toolCall: {
           id: item.call_id ?? item.id ?? `computer-${index}`,
-          name: localTools.get("computer")!,
-          input: {
-            actions: Array.isArray(item.actions) ? item.actions : []
-          } as JsonValue,
-          providerMetadata: { responsesToolType: "computer" }
+          name: localTools.get("computer") ?? "computer",
+          input: parseComputerCallInput(item) as JsonValue,
+          providerMetadata: { responsesToolType: "computer", computerCallInput: JSON.stringify(parseComputerCallInput(item)) }
         }
       });
       continue;
@@ -1896,7 +1896,7 @@ const streamResponses = async function* (
         item?.type === "function_call" ||
         (item?.type === "shell_call" && localTools.has("shell")) ||
         (item?.type === "apply_patch_call" && localTools.has("apply_patch")) ||
-        (item?.type === "computer_call" && localTools.has("computer"));
+        (item?.type === "computer_call");
 
       if (
         type === "response.output_item.done" &&
@@ -1979,16 +1979,14 @@ const streamResponses = async function* (
         handledLocalToolCall = true;
       }
 
-      if (item?.type === "computer_call" && type === "response.output_item.done" && localTools.has("computer")) {
+      if (item?.type === "computer_call" && type === "response.output_item.done") {
         pendingExecutableEvents.push({
           type: "tool-call",
           toolCall: {
             id: item.call_id ?? item.id ?? `${json.output_index ?? "computer"}`,
-            name: localTools.get("computer")!,
-            input: {
-              actions: Array.isArray(item.actions) ? item.actions : []
-            } as JsonValue,
-            providerMetadata: { responsesToolType: "computer" }
+            name: localTools.get("computer") ?? "computer",
+            input: parseComputerCallInput(item) as JsonValue,
+            providerMetadata: { responsesToolType: "computer", computerCallInput: JSON.stringify(parseComputerCallInput(item)) }
           }
         } satisfies StreamEvent);
         handledLocalToolCall = true;
@@ -2768,28 +2766,6 @@ export const openAIComputerUseTool = (config: OpenAIComputerUseToolConfig) =>
     toolClass: "computer-use",
     config: config as unknown as JsonValue
   });
-
-export const openAIComputerTool = (
-  config: OpenAIComputerToolConfig
-): ToolDefinition<z.ZodType<OpenAIComputerCallInput>, JsonValue> => ({
-  name: config.name ?? "computer",
-  description: "Execute batched actions requested by the OpenAI Responses computer tool and return a screenshot.",
-  requiresApproval: config.requiresApproval ?? true,
-  metadata: {
-    [openAIResponsesToolMetadataKey]: "computer",
-    "openai.responses_tool_config": {}
-  },
-  schema: z.object({
-    actions: z.array(z.record(z.string(), z.unknown()))
-  }) as z.ZodType<OpenAIComputerCallInput>,
-  execute: async (input) => {
-    const output = await config.execute(input);
-    return {
-      ...output,
-      detail: "original"
-    } as unknown as JsonValue;
-  }
-});
 
 const runOpenAIShellCommand = async (
   input: OpenAIShellToolInput,

@@ -527,3 +527,9 @@ cannot be guaranteed; reconciliation can recover only states actually saved.
 Qwen Cloud adds typed Decision Preview, native dense/sparse embeddings, binary speech synthesis and streaming recognition, asynchronous file transcription, image translation and world sessions. See the [Qwen Cloud support matrix](./docs/QWEN_CLOUD_SUPPORT.md) for factory selection, endpoint configuration and the distinction between implemented contracts and live validation. The [Decision guide](./docs/QWEN_CLOUD_DECISION.md) includes a measured, small comparison with Qwen Flash.
 
 For upgrades of existing agent run or memory stores, follow the [agent store identity migration guide](docs/maintainers/AGENT_STORE_MIGRATION.md).
+
+Computer-use integrations must supply their own authorized session executor.
+The experimental portable runner verifies text-only completion when `isComplete`
+is supplied and exposes callback cancellation/deadlines. OpenAI native GA preserves
+provider safety warnings and requires separate explicit confirmation before
+acknowledging them. See [computer-use safety and provider limits](docs/COMPUTER_USE.md).

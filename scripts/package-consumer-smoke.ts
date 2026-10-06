@@ -770,6 +770,12 @@ console.log("INSTALLED_REALTIME_LIVE_SMOKE_OK");
     stdio: "inherit"
   });
 
+  const computerUsePath = join(consumerDirectory, "computer-use-consumer.mjs");
+  writeFileSync(computerUsePath, readFileSync(join(scriptDirectory, "fixtures/computer-use-consumer.mjs"), "utf8"));
+  for (const runtime of ["node", "bun"]) {
+    execFileSync(runtime, [computerUsePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
+  }
+
   const metaUsagePath = join(consumerDirectory, "meta-usage.mjs");
   writeFileSync(metaUsagePath, readFileSync(join(scriptDirectory, "fixtures/meta-usage-consumer.mjs"), "utf8"));
   for (const runtime of ["node", "bun"]) {

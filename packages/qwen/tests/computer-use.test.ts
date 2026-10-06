@@ -21,7 +21,7 @@ it("runs portable computer use with Qwen 3.8 Flash through vision and callable t
   });
 
   expect(result.text).toBe("The panel is open.");
-  expect(execute).toHaveBeenCalledWith([{ type: "click", x: 5, y: 9 }]);
+  expect(execute).toHaveBeenCalledWith([{ type: "click", x: 5, y: 9 }], expect.objectContaining({ signal: expect.any(AbortSignal), toolCallId: "call-1" }));
   expect(requests[0].tools[0].name).toBe("computer_action");
   expect(requests[0].input.at(-1).content[1]).toMatchObject({ type: "input_image" });
   expect(requests[1].input.some((item: any) => item.type === "function_call_output" && item.call_id === "call-1")).toBe(true);
