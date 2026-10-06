@@ -6,6 +6,26 @@ const tools = { search: qwenWebSearchTool() };
 const response = (count: unknown, id = "resp_1") => ({ id, status: "completed", output: [], usage: { input_tokens: 10, output_tokens: 5, x_tools: { web_search: { count } } } });
 const sse = (events: any[]) => new Response(events.map(e => `data: ${JSON.stringify(e)}\n\n`).join(""));
 const records = (events: StreamEvent[]) => events.filter(e => e.type === "provider-data" && (e.data as any).type === "hosted-tool-usage").map(e => (e as any).data as HostedToolUsage);
+it.each(["generate", "stream"] as const)("creates secure Responses attempt IDs without global Web Crypto (%s)", async method => {
+  const raw = response(1);
+  const model = createQwen({ apiKey: "fixture", fetch: async () => method === "stream"
+    ? sse([{ type: "response.completed", response: raw }]) : Response.json(raw) })("qwen3.8-flash");
+  vi.stubGlobal("crypto", undefined);
+  try {
+    let attemptId: string | undefined;
+    if (method === "stream") {
+      const events: StreamEvent[] = []; for await (const event of await model.stream({ messages, tools })) events.push(event);
+      const usage = records(events);
+      expect(usage[0].attemptId).toBe(usage[1].attemptId);
+      attemptId = usage[0].attemptId;
+    } else {
+      const result = await model.generate({ messages, tools });
+      const usage = result.messages[0].parts.find(part => part.type === "provider-data" && (part.data as HostedToolUsage).type === "hosted-tool-usage");
+      if (usage?.type === "provider-data") attemptId = (usage.data as HostedToolUsage).attemptId;
+    }
+    expect(attemptId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  } finally { vi.unstubAllGlobals(); }
+});
 it.each([0, 1, 7, undefined, -1, 0.5, "2", null])("preserves count %j without deriving it from citations in generate/stream", async count => {
   const raw = response(count);
   const model = createQwen({ apiKey: "fixture", fetch: async (_url, init) => JSON.parse(String(init?.body)).stream ? sse([{ type: "response.completed", response: raw }, { type: "response.completed", response: raw }]) : Response.json(raw) })("qwen3.8-flash");

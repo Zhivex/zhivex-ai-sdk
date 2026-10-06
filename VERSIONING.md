@@ -74,3 +74,5 @@ Consumers should evaluate:
 - the stability level of the surface they depend on
 
 The version number communicates package evolution, not identical behavior across all providers.
+
+Sanitized provider stream diagnostics are additive to `AgentRunError`; consumers should tolerate optional `provider-stream` errors without assuming retry safety or complete usage. The SDK rejects unfinished provider streams instead of promoting partial data to completion.

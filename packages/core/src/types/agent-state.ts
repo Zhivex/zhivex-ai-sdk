@@ -172,10 +172,10 @@ export interface AgentStepResponse {
 export interface AgentRunError {
   message: string;
   diagnosticCode?: string;
-  category?: "provider-tool-call";
+  category?: "provider-tool-call" | "provider-stream";
   provider?: string;
   transport?: string;
-  reason?: ProviderToolCallErrorReason;
+  reason?: ProviderToolCallErrorReason | "invalid_event";
   retryable?: boolean;
   effectsPossible?: boolean;
   confirmedUsage?: TokenUsage;

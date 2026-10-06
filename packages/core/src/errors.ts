@@ -82,6 +82,29 @@ export class ProviderResponseTooLargeError extends ZhivexAIError {
  * The message is intentionally fixed. Provider payloads, raw arguments, tool
  * names, prompts, and response bodies must not be attached to this error.
  */
+/** Sanitized stream framing/payload failure. Never retains raw data or parser causes. */
+export class ProviderStreamError extends ZhivexAIError {
+  readonly category = "provider-stream" as const;
+  readonly retryable = false;
+  readonly provider: string;
+  readonly transport: "chat" | "responses";
+  readonly diagnosticCode: string;
+  readonly reason: "invalid_json" | "invalid_event";
+
+  constructor(options: {
+    provider: string;
+    transport: "chat" | "responses";
+    diagnosticCode: string;
+    reason: "invalid_json" | "invalid_event";
+  }) {
+    super("Provider stream event could not be parsed safely.");
+    this.provider = options.provider;
+    this.transport = options.transport;
+    this.diagnosticCode = options.diagnosticCode;
+    this.reason = options.reason;
+  }
+}
+
 export class ProviderToolCallError extends ZhivexAIError {
   readonly category = "provider-tool-call" as const;
   readonly provider: string;

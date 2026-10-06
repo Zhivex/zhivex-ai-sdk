@@ -362,6 +362,28 @@ assert.deepEqual(
 );
 console.log("INSTALLED_QWEN_TRANSIENT_TOOL_CALL_ID_SMOKE_OK");
 
+// Standards framing and typed failure must survive actual packed dependencies.
+assert.equal(installedSdk.ProviderStreamError, (await import("@zhivex-ai/core")).ProviderStreamError);
+const qwenFixture = (body) => installedQwen.createQwen({
+  apiKey: "offline-fixture", fetch: async () => new Response(body)
+})("deepseek-v4.1-flash");
+const qwenInput = { messages: [createTextMessage("user", "fixture")] };
+const completedEvent = JSON.stringify({ type: "response.completed", response: { id: "fixture", status: "completed", output: [] } });
+const framedEvents = [];
+for await (const event of await qwenFixture("data: " + completedEvent + "\\r\\r").stream(qwenInput)) framedEvents.push(event);
+assert.equal(framedEvents.at(-1).type, "finish");
+for (const apiMode of ["chat", "responses"]) {
+  await assert.rejects(async () => {
+    for await (const event of await qwenFixture("data: {PRIVATE\\n\\n").stream({ ...qwenInput, providerOptions: { apiMode } })) {}
+  }, (error) => error instanceof installedSdk.ProviderStreamError &&
+    error.diagnosticCode === "QWEN_SSE_EVENT_INVALID" && error.transport === apiMode &&
+    error.reason === "invalid_json" && error.retryable === false && !error.message.includes("PRIVATE"));
+}
+await assert.rejects(async () => {
+  for await (const event of await qwenFixture("data: " + completedEvent + "\\n").stream(qwenInput)) {}
+}, (error) => error.reason === "stream_truncated");
+console.log("INSTALLED_QWEN_SSE_FRAMING_DIAGNOSTICS_OK");
+
 const { createModelResolver, ModelResolutionError } = await import("@zhivex-ai/sdk/beta");
 const installedResolverCatalog = createModelCatalog([
   { provider: "installed", modelId: "resolver-model", aliases: ["current"], costPer1kTokens: 0.01 }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { qwenSearchUsage } from "./search-usage.js";
 import { createAnnotationCollector } from "./annotations.js";
 export { createQwenSDPExchange } from "./sdp-exchange.js";
@@ -45,6 +46,7 @@ import {
   ConfigurationError,
   decodeBase64WithLimit,
   ProviderHTTPError,
+  ProviderStreamError,
   ProviderToolCallError,
   ValidationError,
   assertTrustedEndpoint,
@@ -1466,12 +1468,10 @@ const qwenResponsesToolCallError = (
   reason, usage, effectsPossible, retryable: false
 });
 
-class QwenStreamEventError extends Error {
-  readonly provider = "qwen";
-  readonly diagnosticCode = "QWEN_SSE_EVENT_INVALID";
-  readonly retryable = false;
-  constructor(readonly transport: "responses" | "chat", readonly reason: "invalid_json" | "invalid_event") {
-    super("Qwen stream event could not be parsed safely.");
+class QwenStreamEventError extends ProviderStreamError {
+  constructor(transport: "responses" | "chat", reason: "invalid_json" | "invalid_event") {
+    super({ provider: "qwen", transport, diagnosticCode: "QWEN_SSE_EVENT_INVALID", reason });
+    this.message = "Qwen stream event could not be parsed safely.";
     this.name = "QwenStreamEventError";
   }
 }
@@ -1603,7 +1603,7 @@ const streamResponses = async function* (
     args: string;
     done: boolean;
   };
-  const attemptId = globalThis.crypto.randomUUID();
+  const attemptId = randomUUID();
   const searchEnabled = Object.values(input.tools ?? {}).some(t => !isCallableToolDefinition(t) && t.type === "web_search");
   if (searchEnabled) yield { type: "provider-data", provider: "qwen", data: qwenSearchUsage(attemptId) };
   const collectAnnotations = createAnnotationCollector();
@@ -1958,7 +1958,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
         const json = await parseJson(response);
         const assistantMessage = parseResponsesAssistantMessage(json, input);
         if (Object.values(input.tools ?? {}).some(t => !isCallableToolDefinition(t) && t.type === "web_search") || json.usage?.x_tools?.web_search !== undefined) {
-          assistantMessage.parts.push(providerDataPart("qwen", qwenSearchUsage(globalThis.crypto.randomUUID(), json)));
+          assistantMessage.parts.push(providerDataPart("qwen", qwenSearchUsage(randomUUID(), json)));
         }
         const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
 
@@ -2186,6 +2186,9 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
             lastUsage = json.usage;
           }
         }
+
+        input.abortSignal?.throwIfAborted();
+        if (!lastFinishReason) throw failure("stream_truncated");
 
         // Named Qwen Chat tool choices can finish with "stop". Wait until the
         // stream ends and validate the whole batch before exposing any effects.

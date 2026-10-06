@@ -6,6 +6,7 @@ import {
   normalizeAgentRunState
 } from "../agent-state.js";
 import {
+  ProviderStreamError,
   ProviderToolCallError,
   ToolNotRegisteredError,
   UnsupportedFeatureError
@@ -193,6 +194,17 @@ const toAgentRunError = (error: unknown): AgentRunError => {
   }
   if (error instanceof ToolNotRegisteredError) {
     return { message: error.message, diagnosticCode: error.code };
+  }
+  if (error instanceof ProviderStreamError) {
+    return {
+      message: error.message,
+      diagnosticCode: error.diagnosticCode,
+      category: error.category,
+      provider: error.provider,
+      transport: error.transport,
+      reason: error.reason,
+      retryable: false
+    };
   }
   if (error instanceof ProviderToolCallError) {
     return {

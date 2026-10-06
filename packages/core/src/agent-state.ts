@@ -122,13 +122,17 @@ const agentRunError = (value: unknown, path: string) => {
   const current = record(value, path);
   string(current.message, `${path}.message`);
   optionalString(current.diagnosticCode, `${path}.diagnosticCode`);
-  if (current.category !== undefined && current.category !== "provider-tool-call") {
-    invalid(`${path}.category`, 'must be "provider-tool-call"');
+  if (current.category !== undefined && current.category !== "provider-tool-call" && current.category !== "provider-stream") {
+    invalid(`${path}.category`, 'must be "provider-tool-call" or "provider-stream"');
   }
   optionalString(current.provider, `${path}.provider`);
   optionalString(current.transport, `${path}.transport`);
-  if (current.reason !== undefined && !providerToolCallErrorReasons.has(string(current.reason, `${path}.reason`))) {
-    invalid(`${path}.reason`, "must be a supported provider tool-call reason");
+  if (current.reason !== undefined) {
+    const reason = string(current.reason, `${path}.reason`);
+    const valid = current.category === "provider-stream"
+      ? reason === "invalid_json" || reason === "invalid_event"
+      : providerToolCallErrorReasons.has(reason);
+    if (!valid) invalid(`${path}.reason`, "must be a supported provider failure reason");
   }
   optionalBoolean(current.retryable, `${path}.retryable`);
   optionalBoolean(current.effectsPossible, `${path}.effectsPossible`);
