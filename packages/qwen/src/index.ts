@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { qwenSearchUsage } from "./search-usage.js";
 import { createAnnotationCollector } from "./annotations.js";
 export { createQwenSDPExchange } from "./sdp-exchange.js";
@@ -1602,7 +1603,7 @@ const streamResponses = async function* (
     args: string;
     done: boolean;
   };
-  const attemptId = globalThis.crypto.randomUUID();
+  const attemptId = randomUUID();
   const searchEnabled = Object.values(input.tools ?? {}).some(t => !isCallableToolDefinition(t) && t.type === "web_search");
   if (searchEnabled) yield { type: "provider-data", provider: "qwen", data: qwenSearchUsage(attemptId) };
   const collectAnnotations = createAnnotationCollector();
@@ -1957,7 +1958,7 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
         const json = await parseJson(response);
         const assistantMessage = parseResponsesAssistantMessage(json, input);
         if (Object.values(input.tools ?? {}).some(t => !isCallableToolDefinition(t) && t.type === "web_search") || json.usage?.x_tools?.web_search !== undefined) {
-          assistantMessage.parts.push(providerDataPart("qwen", qwenSearchUsage(globalThis.crypto.randomUUID(), json)));
+          assistantMessage.parts.push(providerDataPart("qwen", qwenSearchUsage(randomUUID(), json)));
         }
         const hasToolCalls = assistantMessage.parts.some((part) => part.type === "tool-call");
 
