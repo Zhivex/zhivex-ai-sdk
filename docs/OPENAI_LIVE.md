@@ -1,8 +1,9 @@
-# GPT-Live-1: server voice with a Zhivex backend
+# GPT-Live-1: voice with a Zhivex backend
 
 `createOpenAI().realtimeModel!("gpt-live-1")` selects the Live protocol at
 `wss://api.openai.com/v1/live/sessions`. It does not send the model to the Realtime
-endpoint. This implementation supports **server WebSockets and client delegation**.
+endpoint. This implementation supports **server WebSockets and client delegation**, plus
+[experimental browser WebRTC](#experimental-browser-webrtc).
 Use `model.connect()` with `runRealtimeDelegations()`; `streamLiveAgent()` rejects
 full-duplex models because its lifecycle requires response-completion events.
 
@@ -116,9 +117,8 @@ directly to your backend, not `sendText()` or `sendMedia()` on the voice fronten
 
 The Live voice frontend advertises audio and client delegation, not direct tools,
 reasoning, structured output, image input or browser tokens. Backend capabilities
-remain those of its chosen model. Managed Responses delegation, WebRTC session
-creation, SIP, sideband attachment, recording downloads and forks are not exposed
-by this adapter. Unsupported options fail explicitly.
+remain those of its chosen model. Managed Responses delegation, SIP, recording downloads and forks are not exposed.
+WebRTC creation and trusted sideband attachment use separate experimental entrypoints. Unsupported options fail explicitly.
 
 The SDK catalog lists `gpt-live-1` without token prices: voice is duration-billed,
 and backend usage is separate. Preserve cumulative usage snapshots and the final
@@ -206,3 +206,86 @@ Official references, checked September 12, 2026:
 - [WebSocket transport](https://developers.openai.com/api/docs/guides/voice-websockets?api=live)
 - [Client delegation](https://developers.openai.com/api/docs/guides/live-delegation?delegation-mode=client)
 - [Session lifecycle](https://developers.openai.com/api/docs/guides/live-conversations)
+
+## Experimental browser WebRTC
+
+Import `experimentalConnectOpenAILiveWebRTC` from
+`@zhivex-ai/openai/experimental/live-browser`. Import
+`experimentalCreateOpenAILiveWebRTCSession` and
+`experimentalAttachOpenAILiveSession` from
+`@zhivex-ai/openai/experimental/live-server` on the trusted backend. These APIs
+reuse Core's `RealtimeSession`, capabilities, lifecycle and delegation runner.
+They are experimental; the stable provider factory remains compatible.
+
+The browser accepts an application-provided stream, `exchangeSdp` and
+`releaseSession` callbacks, `onTrack`, optional `onError`, an abort signal, setup
+and close deadlines, and a peer factory for testing. It never captures devices or
+plays audio. Only cloned audio tracks are attached and stopped by the SDK. Clones
+remain disabled until startup is acknowledged; video tracks are ignored. Keep the
+original capture and playback lifecycle in your application.
+
+The backend posts JSON to `/v1/live/sessions`, with a server-owned session and
+WebRTC transport. The public answer contains only `session.id` and `transport.sdp`.
+IDs are opaque. WebRTC negotiates audio through SDP: format fields, raw audio
+appends and output-audio deltas are rejected. Initialization is bounded through
+ICE gathering, HTTP exchange, remote description and `session.started`; no second
+`session.start`, retry or automatic reconnect is sent.
+
+Creation uses client delegation and restricts frontend commands to close and input
+mute/unmute. Caption/lifecycle events are exposed; backend delegation and context
+commands stay on the authenticated sideband. The sideband attaches to
+`/v1/live/sessions/{session_id}/attach` without starting a new session. Use
+`runRealtimeDelegations(sideband, { onDelegation })` with your existing backend.
+`sideband.close()` ends the shared session; `disconnect()` only detaches and leaves
+the primary session active. Attach early; restore prior authoritative context from
+your app because attachment does not promise historical event replay.
+
+Use a single backend owner for delegated actions. Tool execution, approvals,
+result review, task revisions and durable idempotency remain application-owned.
+No frontend/backend credential is serialized into the handshake answer. Do not put
+secrets in voice instructions or context; lifecycle events can include a session
+snapshot. The backend fixes the OpenAI endpoint and rejects redirects.
+
+Input muting does not finish billing. `close()` sends `session.close` and waits for
+`session.closed` before releasing resources. A valid final event carries the same
+session ID and cumulative `usage.seconds`. Keep its reason and usage; do not add
+usage snapshots. Abort, transport failure or timeout reports unconfirmed usage and
+invokes `releaseSession` once for a known ID. A successful fallback callback does
+not supply final usage to the browser. Its five-second deadline reports failures
+through `onError`; retain a server watchdog independently. Set `onError` when your
+application needs to surface fallback cleanup failures.
+
+The backend must bind creation to an authenticated, bounded, single-use lease.
+`onSessionCreated` records a known ID even when the remaining response is invalid
+or the request was canceled. If the answer is lost before an ID is observed, the
+outcome is unknown: reconcile the lease and do not blindly create a replacement.
+An SDK abort cannot undo an already accepted HTTP request. See the typechecked
+[Next.js server/client recipe](../examples/openai-live-webrtc/README.md) for origin,
+owner binding, byte limits and orphan handling.
+
+Frames are limited to 64 KiB, pending events to 128 / 256 KiB and outgoing buffered
+bytes to 256 KiB. Overflow terminates explicitly. Unexpected binary, malformed JSON,
+session mismatches and invalid finalization events fail closed. Provider errors
+and safety refusals retain their metadata in shared events. Any termination still
+needs application handling for UI, pending tools and what the user actually heard.
+
+### Evidence and limits
+
+The [synthetic contract fixtures](../packages/openai/tests/fixtures/live-webrtc-contract.json)
+were checked against official OpenAI documentation on October 7, 2026:
+[WebRTC](https://developers.openai.com/api/docs/guides/voice-webrtc?api=live),
+[creation reference](https://developers.openai.com/api/reference/resources/live/methods/create),
+[server controls](https://developers.openai.com/api/docs/guides/voice-server-controls?api=live),
+and [session lifecycle](https://developers.openai.com/api/docs/guides/live-conversations).
+These are documented-shape fixtures, not captured live-provider responses.
+
+Unit tests use fake peers/channels and backend callbacks. An offline Chromium
+loopback negotiates real ICE, SDP, audio tracks and events with synthetic audio,
+blocks device capture, and checks confirmed close and original-track ownership.
+Its signaling fixture resolves same-browser mDNS candidates to loopback; no LAN
+permission or ICE server is added.
+Packed consumers verify Node exports and a browser bundle without Node imports or
+server credential handling. These checks do not certify OpenAI connectivity,
+production browser compatibility, microphone quality or real billing finalization.
+SIP, WARP, noise processing, managed Responses and additional origins remain out
+of scope. Paid provider certification requires separate approval.

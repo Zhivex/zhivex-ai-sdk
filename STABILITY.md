@@ -179,3 +179,12 @@ They are independent of the stable language-model contract. Provider confidence
 is not comparable across adapters. Native Qwen `decisionModel()` retains its
 existing contract. See [Decisions](docs/DECISIONS.md) for supported capabilities,
 explicit destinations, reservations and limitations.
+
+## OpenAI Live browser experimental entrypoints
+
+`@zhivex-ai/openai/experimental/live-browser` and
+`@zhivex-ai/openai/experimental/live-server` are Experimental. Their functions use
+an `experimental` prefix and are excluded from stable provider and SDK roots.
+They reuse the stable Core realtime session/delegation contracts; this does not
+promote the new transport or certify live-provider/browser behavior. See the
+[Live WebRTC scope and evidence](./docs/OPENAI_LIVE.md#experimental-browser-webrtc).

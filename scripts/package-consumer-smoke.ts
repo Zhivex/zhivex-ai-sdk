@@ -794,6 +794,18 @@ console.log("INSTALLED_REALTIME_LIVE_SMOKE_OK");
     stdio: "inherit"
   });
 
+  const liveSmokePath = join(consumerDirectory, "openai-live-webrtc-consumer.mjs");
+  writeFileSync(liveSmokePath, readFileSync(join(scriptDirectory, "fixtures/openai-live-webrtc-consumer.mjs"), "utf8"));
+  for (const runtime of ["node", "bun"]) {
+    execFileSync(runtime, [liveSmokePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
+  }
+  const liveBrowserPath = join(consumerDirectory, "openai-live-browser-consumer.ts");
+  writeFileSync(liveBrowserPath, readFileSync(join(scriptDirectory, "fixtures/openai-live-browser-consumer.ts"), "utf8"));
+  const liveBrowserBundle = join(consumerDirectory, "live-browser.js");
+  execFileSync("bun", ["build", liveBrowserPath, "--target=browser", "--outfile", liveBrowserBundle], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
+  if (/node:|process\.env|Bearer /.test(readFileSync(liveBrowserBundle, "utf8"))) throw new Error("Packed Live browser bundle contains server dependencies or credential handling.");
+  console.log("INSTALLED_OPENAI_LIVE_BROWSER_BUNDLE_OK");
+
   const computerUsePath = join(consumerDirectory, "computer-use-consumer.mjs");
   writeFileSync(computerUsePath, readFileSync(join(scriptDirectory, "fixtures/computer-use-consumer.mjs"), "utf8"));
   for (const runtime of ["node", "bun"]) {
@@ -825,7 +837,7 @@ console.log("INSTALLED_REALTIME_LIVE_SMOKE_OK");
   const agwTypePath = join(consumerDirectory, "sdk-agw-consumer.ts");
   writeFileSync(agwTypePath, readFileSync(join(scriptDirectory, "fixtures/sdk-agw-consumer.ts"), "utf8"));
   // TypeScript 7's extensionless ESM launcher needs the build runtime; package execution below still uses the selected Node version.
-  execFileSync("bun", [join(workspaceDirectory, "node_modules/.bin/tsc"), "--noEmit", "--strict", "--skipLibCheck", "--module", "NodeNext", "--target", "ES2022", agwTypePath, decisionTypePath, unlimitedTypePath, reactUnlimitedTypePath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
+  execFileSync("bun", [join(workspaceDirectory, "node_modules/.bin/tsc"), "--noEmit", "--strict", "--skipLibCheck", "--module", "NodeNext", "--target", "ES2022", agwTypePath, decisionTypePath, unlimitedTypePath, reactUnlimitedTypePath, liveBrowserPath], { cwd: consumerDirectory, env: commandEnvironment, stdio: "inherit" });
 
   const agwSmokePath = join(consumerDirectory, "sdk-agw-consumer.mjs");
   writeFileSync(agwSmokePath, readFileSync(join(scriptDirectory, "fixtures/sdk-agw-consumer.mjs"), "utf8"));

@@ -61,6 +61,9 @@ jobs:
       - name: Install Chromium for React browser tests
         run: bunx playwright install --with-deps chromium
 
+      - name: Offline OpenAI Live WebRTC browser loopback
+        run: bun run test:openai-live:browser
+
       - name: React browser tests
         run: bun run test:react:browser
 

@@ -1,0 +1,31 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "rootDir": "../..",
+    "paths": {
+      "@zhivex-ai/core/realtime": [
+        "../../packages/core/src/realtime-entry.ts"
+      ],
+      "@zhivex-ai/core/runtime": [
+        "../../packages/core/src/runtime-entry.ts"
+      ],
+      "@zhivex-ai/core/provider": [
+        "../../packages/core/src/provider-entry.ts"
+      ],
+      "@zhivex-ai/openai/experimental/live-browser": [
+        "../../packages/openai/src/live-webrtc-browser.ts"
+      ],
+      "@zhivex-ai/openai/experimental/live-server": [
+        "../../packages/openai/src/live-webrtc-server.ts"
+      ]
+    }
+  },
+  "include": [
+    "client.ts",
+    "server.ts"
+  ]
+}

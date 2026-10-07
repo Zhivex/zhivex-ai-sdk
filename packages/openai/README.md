@@ -465,3 +465,14 @@ These changes describe this source branch, not previously published packages.
 predicate, typed string/boolean choice, fractional score, inline images and
 per-question refusal. See [portable Decisions](../../docs/DECISIONS.md) for the
 contract, explicit gateway fallback and separate Decisions pricing.
+
+## Experimental GPT-Live browser WebRTC
+
+Use `@zhivex-ai/openai/experimental/live-browser` for the application-stream client,
+and `@zhivex-ai/openai/experimental/live-server` for server session creation and
+sideband delegation. These are experimental entrypoints over Core's existing
+RealtimeSession contract. API keys stay on the backend; the app owns microphone
+permission and playback. Muting keeps billing active; end with confirmed
+`session.closed`. See the [Live guide](../../docs/OPENAI_LIVE.md#experimental-browser-webrtc)
+and [Next.js recipe](../../examples/openai-live-webrtc/README.md). Offline tests do
+not constitute authenticated WebRTC provider certification.
