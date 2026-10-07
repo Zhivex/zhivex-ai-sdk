@@ -1,1 +1,13 @@
-https://raw.githubusercontent.com/Zhivex/zhivex-ai-sdk/a7905584074340a905e40b93ad79c19873cdeb27/bun.lock
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "zhivex-ai-sdk",
+      "devDependencies": {
+        "@ai-sdk/react": "4.0.130"
+      }
+    }
+  },
+  "packages": {}
+}
