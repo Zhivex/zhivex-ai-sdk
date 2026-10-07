@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/openai",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "OpenAI adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -14,6 +14,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./experimental/live-browser": {
+      "types": "./dist/live-webrtc-browser.d.ts",
+      "import": "./dist/live-webrtc-browser.js"
+    },
+    "./experimental/live-server": {
+      "types": "./dist/live-webrtc-server.d.ts",
+      "import": "./dist/live-webrtc-server.js"
     }
   },
   "files": [

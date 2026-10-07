@@ -64,3 +64,12 @@ The maintenance-only registry in `scripts/provider-registry.ts` generates CLI pa
 ## Documentation ownership
 
 The root README is the entry point. Application guides own adoption and operational guidance; `docs/reference/` contains extended API recipes. Historical reports record dated evidence, not current certification. [Release procedures](./maintainers/RELEASE.md) have one canonical home; [versioning policy](../VERSIONING.md) defines bump decisions.
+
+## OpenAI Live WebRTC boundary
+
+The experimental `openai/experimental/live-browser` entrypoint imports the shared
+Live session mapper and browser-safe Core runtime, with no provider HTTP client or
+Node audio codec. `openai/experimental/live-server` owns authenticated session
+creation and sideband attachment. Both reuse `CallbackRealtimeSession`; delegated
+work uses the existing Core runner. Frontend permissions exclude backend context
+and delegation commands. See the [protocol and lifecycle guide](./OPENAI_LIVE.md#experimental-browser-webrtc).

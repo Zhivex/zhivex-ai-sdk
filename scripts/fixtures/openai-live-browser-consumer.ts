@@ -1,0 +1,2 @@
+import { experimentalConnectOpenAILiveWebRTC, type OpenAILiveWebRTCAnswer, type OpenAILiveWebRTCSession } from "@zhivex-ai/openai/experimental/live-browser";
+export const connect = async (stream: MediaStream, signal: AbortSignal, exchange: (input: { offerSdp: string; signal: AbortSignal }) => Promise<OpenAILiveWebRTCAnswer>, release: (input: { sessionId: string }) => Promise<void>): Promise<OpenAILiveWebRTCSession> => experimentalConnectOpenAILiveWebRTC({ mediaStream: stream, signal, exchangeSdp: exchange, releaseSession: release });

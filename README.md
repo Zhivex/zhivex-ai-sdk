@@ -7,6 +7,9 @@ Shared contracts live in `@zhivex-ai/core`; provider adapters translate them to 
 [Quickstart](./docs/QUICKSTART.md) · [Agent guide](./docs/AGENTS.md) ·
 [Production guide](./docs/PRODUCTION.md) · [SDK documentation](https://sdk.zhivex.ai)
 
+Experimental [GPT-Live browser WebRTC](./docs/OPENAI_LIVE.md#experimental-browser-webrtc)
+uses app-owned audio and a trusted backend over the shared realtime contract.
+
 ## Quick Start
 
 Install the stable SDK and one provider in a server-side Bun or Node.js application:

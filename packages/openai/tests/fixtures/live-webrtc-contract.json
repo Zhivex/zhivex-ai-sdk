@@ -1,0 +1,16 @@
+{
+  "checkedAt": "2026-10-07",
+  "sources": [
+    "https://developers.openai.com/api/docs/guides/voice-webrtc?api=live",
+    "https://developers.openai.com/api/reference/resources/live/methods/create",
+    "https://developers.openai.com/api/docs/guides/voice-server-controls?api=live",
+    "https://developers.openai.com/api/docs/guides/live-conversations"
+  ],
+  "description": "Synthetic fixtures from documented shapes, not authenticated provider captures.",
+  "offer": "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=synthetic\r\nt=0 0\r\n",
+  "answer": { "session": { "id": "live_test_opaque" }, "transport": { "type": "webrtc", "sdp": "v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\ns=synthetic-answer\r\nt=0 0\r\n" } },
+  "started": { "type": "session.started", "session": { "id": "live_test_opaque" } },
+  "transcript": { "type": "session.input_transcript.delta", "delta": "Synthetic task", "start_ms": 0, "end_ms": 900 },
+  "delegation": { "type": "session.delegation.created", "delegation": { "id": "delegation_opaque", "target": "client" }, "offset_ms": 900 },
+  "closed": { "type": "session.closed", "session": { "id": "live_test_opaque" }, "usage": { "seconds": 3 }, "reason": "close_requested" }
+}

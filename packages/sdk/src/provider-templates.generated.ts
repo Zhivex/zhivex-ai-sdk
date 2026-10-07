@@ -12,21 +12,21 @@ interface ProviderTemplateMetadata {
 export const providerTemplates: Readonly<Record<"vertex" | "openai" | "xai" | "meta" | "anthropic" | "gemini" | "kimi" | "deepseek" | "zai", ProviderTemplateMetadata>> = {
   "vertex": {
     "packageName": "@zhivex-ai/vertex",
-    "packageVersion": "1.2.5",
+    "packageVersion": "1.2.6",
     "factoryName": "createVertex",
     "envName": "GOOGLE_CLOUD_PROJECT",
     "defaultModel": "gemini-3.7-flash"
   },
   "openai": {
     "packageName": "@zhivex-ai/openai",
-    "packageVersion": "0.15.0",
+    "packageVersion": "0.16.0",
     "factoryName": "createOpenAI",
     "envName": "OPENAI_API_KEY",
     "defaultModel": "gpt-6-astra"
   },
   "xai": {
     "packageName": "@zhivex-ai/xai",
-    "packageVersion": "0.2.10",
+    "packageVersion": "0.2.11",
     "factoryName": "createXAI",
     "envName": "XAI_API_KEY",
     "defaultModel": "grok-4.5"
