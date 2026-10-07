@@ -99,6 +99,7 @@ Provider compatibility for the common `reasoning` option:
   - Claude Fable 5 server-side refusal fallback is available with `providerOptions.fallbacks`; the adapter adds the required `server-side-fallback-2026-06-01` beta header automatically
   - Claude Opus 4.7 and later, including Claude Opus 4.8, support `effort`; `budgetTokens` is rejected
   - Claude Opus 4.5, Claude Opus 4.6, and Claude Sonnet 4.6 support `effort`; integration checks use `effort` instead of deprecated undersized manual thinking budgets
+  - Claude Haiku 5.5 uses adaptive thinking with `effort` (no `budgetTokens`, no `effort=none`/`between_tools`); computer toolsets are supported and managed `fallbacks=default` is rejected
   - Claude Haiku 4.5 supports extended thinking through `budgetTokens`; it does not use the modern `effort` mapping
   - `budgetTokens` remains available only on Anthropic models that still accept manual thinking
   - Claude Opus 5, Claude Opus 4.8, and Claude Opus 4.7 accept provider-specific `providerOptions.speed = "fast"` for fast mode
