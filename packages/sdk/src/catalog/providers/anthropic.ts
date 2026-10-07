@@ -2,14 +2,31 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const anthropicCatalogFragment = defineModelCatalogFragment({
   provider: "anthropic",
-  revision: "2026-09-28",
-  verifiedAt: "2026-09-28",
-  pricingEffectiveAt: "2026-09-28",
+  revision: "2026-10-07",
+  verifiedAt: "2026-10-07",
+  pricingEffectiveAt: "2026-10-07",
   sources: [
+    "https://platform.claude.com/docs/en/models/haiku-5-5/overview",
     "https://platform.claude.com/docs/en/models/sonnet-5-5/overview",
     "https://platform.claude.com/docs/en/models/opus-5-5/overview",
-    "https://platform.claude.com/docs/en/models/fable-5-1/overview","catalog-release:2026-08-16"],
+    "https://platform.claude.com/docs/en/models/fable-5-1/overview",
+    "catalog-release:2026-08-16"
+  ],
   entries: [
+    {
+      provider: "anthropic",
+      modelId: "claude-haiku-5-5",
+      inputCostPer1kTokens: 0.0001,
+      cachedInputCostPer1kTokens: 0.00001,
+      cacheWriteCostPer1kTokens: 0.000125,
+      outputCostPer1kTokens: 0.0005,
+      longContextPricing: {
+        inputTokenThreshold: 100000,
+        inputMultiplier: 5,
+        outputMultiplier: 5
+      },
+      recommendedFor: ["chat", "reasoning", "speed", "tools", "vision"]
+    },
     {
       provider: "anthropic",
       modelId: "claude-sonnet-5-5",
