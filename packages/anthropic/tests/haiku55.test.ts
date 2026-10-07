@@ -56,7 +56,7 @@ describe.each(["claude-haiku-5-5", "claude-haiku-5-5-20261007", "claude-haiku-5-
 
   it("allows forced tool choice unlike Sonnet/Opus 5.5 and preserves structured output with binding controls", async () => {
     const thinking = { type: "thinking", thinking: "Checking.", signature: "opaque-signature" };
-    const fetcher = vi.fn(async () => Response.json({ content: [thinking, { type: "text", text: '{\"ok\":true}' }], stop_reason: "end_turn" }));
+    const fetcher = vi.fn(async () => Response.json({ content: [thinking, { type: "text", text: '{"ok":true}' }], stop_reason: "end_turn" }));
     const model = createAnthropic({ apiKey: "test", fetch: fetcher as typeof fetch })(id);
     const result = await model.generate({
       messages,
@@ -95,7 +95,7 @@ describe.each(["claude-haiku-5-5", "claude-haiku-5-5-20261007", "claude-haiku-5-
       { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "opaque-signature" } },
       { type: "content_block_stop", index: 0 },
       { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "c1", name: "click", toolset_name: "computer", input: {} } },
-      { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{\"x\":1}' } },
+      { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"x":1}' } },
       { type: "content_block_stop", index: 1 },
       { type: "content_block_start", index: 2, content_block: { type: "text", text: "" } },
       { type: "content_block_delta", index: 2, delta: { type: "text_delta", text: "Done." } },
@@ -103,7 +103,7 @@ describe.each(["claude-haiku-5-5", "claude-haiku-5-5-20261007", "claude-haiku-5-
       { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 10 } },
       { type: "message_stop" },
     ];
-    const fetcher = vi.fn(async () => new Response(events.map(event => `event: ${event.type}\\ndata: ${JSON.stringify(event)}\\n\\n`).join("")));
+    const fetcher = vi.fn(async () => new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("")));
     const model = createAnthropic({ apiKey: "test", fetch: fetcher as typeof fetch })(id);
     const received = [];
     for await (const event of await model.stream({ messages, reasoning: { effort: "low" } })) received.push(event);
