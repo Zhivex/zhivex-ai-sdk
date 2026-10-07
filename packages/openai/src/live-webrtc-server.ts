@@ -79,7 +79,7 @@ export async function experimentalAttachOpenAILiveSession(options: OpenAILiveAtt
   const connection = await (options.connectionFactory ?? openWebSocketConnection)(url.toString(), headers(options), { signal: options.signal, timeoutMs: options.timeoutMs ?? 15_000, maxIncomingFrameBytes: options.maxIncomingFrameBytes, subprotocols: options.subprotocols });
   // Attachment observes an already-running session: no session.start or started wait.
   const reflected = { ...config, outputAudioMediaType: "audio/pcm", outputSampleRateHz: 24000 };
-  const session = createLiveSession(modelId, reflected, connection, { started: true, attached: true, parseOutputAudio: liveAudioCallbacks(reflected).parseOutputAudio });
+  const session = createLiveSession(modelId, reflected, connection, { expectedSessionId: options.sessionId, started: true, attached: true, parseOutputAudio: liveAudioCallbacks(reflected).parseOutputAudio });
   try { await session.initialize(); } catch (error) { await connection.close(); throw error; }
   return Object.assign(session, {
     sessionId: options.sessionId,

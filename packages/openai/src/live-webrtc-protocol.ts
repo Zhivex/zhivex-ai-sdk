@@ -13,7 +13,7 @@ export function liveSdp(value: unknown): string {
   return value;
 }
 export function liveSessionId(value: unknown): string {
-  if (typeof value !== "string" || !value || value.length > 256 || /[\s\x00-\x1f\x7f]/.test(value)) throw new ConfigurationError("Invalid GPT-Live session ID.");
+  if (typeof value !== "string" || !value || value === "." || value === ".." || value.length > 256 || /[\s\x00-\x1f\x7f]/.test(value)) throw new ConfigurationError("Invalid GPT-Live session ID.");
   return value;
 }
 export function liveAnswer(value: unknown): OpenAILiveWebRTCAnswer {

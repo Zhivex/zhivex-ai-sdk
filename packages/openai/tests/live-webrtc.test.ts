@@ -194,3 +194,13 @@ it("attaches one trusted sideband and runs the existing delegation backend with 
   await vi.waitFor(() => expect(connection.sent).toContainEqual({ type: "session.commentary.append", content: "Verified backend result", delegation_id: "delegation_opaque" }));
   await session.close(); await backend; expect(connection.sent.some(p => p.type === "session.start")).toBe(false);
 });
+
+it("rejects path-segment session IDs before transport, and invalid sideband finalization", async () => {
+  const factory = vi.fn(async () => new Sideband());
+  await expect(attach({ apiKey: "key", sessionId: "..", connectionFactory: factory })).rejects.toThrow("session ID");
+  expect(factory).not.toHaveBeenCalled();
+  const connection = new Sideband();
+  connection.sendJson = async () => { connection.push({ type: "session.closed", session: { id: "other" }, usage: { seconds: 1 } }); };
+  const session = await attach({ apiKey: "key", sessionId: fixture.answer.session.id, connectionFactory: async () => connection });
+  await expect(session.close()).rejects.toThrow("unconfirmed");
+});

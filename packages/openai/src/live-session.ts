@@ -65,7 +65,7 @@ export function resolveLiveConfig(config: RealtimeSessionConfig) {
 }
 
 /** Internal protocol mapper shared by primary WebSocket, WebRTC and sideband. */
-export function createLiveSession(modelId: string, resolved: RealtimeSessionConfig, connection: RealtimeConnection, options: { started?: boolean; attached?: boolean; webrtc?: boolean; timeoutMs?: number; parseOutputAudio?: RealtimeEventParser; buildAudioPayloads?: RealtimePayloadBuilder<AudioFrame> } = {}) {
+export function createLiveSession(modelId: string, resolved: RealtimeSessionConfig, connection: RealtimeConnection, options: { expectedSessionId?: string; started?: boolean; attached?: boolean; webrtc?: boolean; timeoutMs?: number; parseOutputAudio?: RealtimeEventParser; buildAudioPayloads?: RealtimePayloadBuilder<AudioFrame> } = {}) {
     const delegations = new Set<string>();
     const metadata = (payload: Record<string, unknown>) => payload as Record<string, JsonValue>;
     const unsupported = (feature: string): never => { throw new UnsupportedFeatureError(`GPT-Live ${feature}; use the backend agent or appendContext() as appropriate.`); };
@@ -116,7 +116,17 @@ export function createLiveSession(modelId: string, resolved: RealtimeSessionConf
         parseEvent,
         ...(options.attached ? {} : { isReadyPayload: (p: Record<string, unknown>) => p.type === "session.started" }),
         shouldReplayEvent: (event) => event.type !== "realtime-audio-output",
-        isCloseAcknowledgementPayload: (p) => p.type === "session.closed",
+        isCloseAcknowledgementPayload: (p) => {
+          if (p.type !== "session.closed") return false;
+          if (options.expectedSessionId) {
+            const snapshot = p.session as { id?: unknown } | undefined;
+            const usage = p.usage as { seconds?: unknown } | undefined;
+            if (snapshot?.id !== options.expectedSessionId || typeof usage?.seconds !== "number" || !Number.isFinite(usage.seconds) || usage.seconds < 0) {
+              throw new ValidationError("Invalid GPT-Live finalization event; final usage is unconfirmed.");
+            }
+          }
+          return true;
+        },
         buildInitialPayloads: () => options.started ? [] : [{ type: "session.start", session: {
           model: modelId, ...(resolved.instructions !== undefined ? { instructions: resolved.instructions } : {}),
           audio: { format: { type: resolved.inputAudioMediaType, rate: resolved.inputSampleRateHz }, output: { voice: resolved.voice ?? "marin" } },

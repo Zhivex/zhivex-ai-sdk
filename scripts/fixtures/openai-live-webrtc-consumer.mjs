@@ -20,7 +20,7 @@ assert.equal(session.sessionId, "packed_opaque"); await session.close(); assert.
 let receive;
 const sideband = await attach({ apiKey: "offline", sessionId: "packed_opaque", connectionFactory: async (url) => {
   assert.equal(url, "wss://api.openai.com/v1/live/sessions/packed_opaque/attach");
-  return { async recvJson() { return new Promise(resolve => { receive = resolve; }); }, async sendJson(event) { assert.equal(event.type, "session.close"); receive({ type: "session.closed", usage: { seconds: 1 } }); }, async close() {} };
+  return { async recvJson() { return new Promise(resolve => { receive = resolve; }); }, async sendJson(event) { assert.equal(event.type, "session.close"); receive({ type: "session.closed", session: { id: "packed_opaque" }, usage: { seconds: 1 } }); }, async close() {} };
 } });
 await sideband.close();
 console.log("INSTALLED_OPENAI_LIVE_WEBRTC_OK");
