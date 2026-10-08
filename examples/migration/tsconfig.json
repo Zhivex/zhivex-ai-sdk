@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "paths": {
+      "@zhivex-ai/sdk": ["../../packages/sdk/src/index.ts"],
+      "@zhivex-ai/core": ["../../packages/core/src/index.ts"],
+      "@zhivex-ai/core/contracts": ["../../packages/core/src/contracts.ts"],
+      "@zhivex-ai/core/runtime": ["../../packages/core/src/runtime-entry.ts"],
+      "@zhivex-ai/core/workflows": ["../../packages/core/src/workflows-entry.ts"],
+      "@zhivex-ai/core/node": ["../../packages/core/src/node.ts"],
+      "@zhivex-ai/core/ui": ["../../packages/core/src/ui-entry.ts"],
+      "@zhivex-ai/core/testing": ["../../packages/core/src/testing.ts"],
+      "@zhivex-ai/core/generation": ["../../packages/core/src/generation-entry.ts"],
+      "@zhivex-ai/core/provider": ["../../packages/core/src/provider-entry.ts"],
+      "@zhivex-ai/core/catalog": ["../../packages/core/src/catalog-entry.ts"],
+      "@zhivex-ai/core/agents": ["../../packages/core/src/agents-entry.ts"],
+      "@zhivex-ai/core/mcp-http": ["../../packages/core/src/mcp-http.ts"],
+      "@zhivex-ai/core/evals": ["../../packages/core/src/evals-entry.ts"],
+      "@zhivex-ai/core/realtime": ["../../packages/core/src/realtime-entry.ts"],
+      "@zhivex-ai/core/control-plane": ["../../packages/core/src/control-plane-entry.ts"],
+      "@zhivex-ai/core/ops": ["../../packages/core/src/ops-entry.ts"],
+      "@zhivex-ai/core/beta": ["../../packages/core/src/beta-entry.ts"],
+      "@zhivex-ai/core/experimental": ["../../packages/core/src/experimental-entry.ts"],
+      "@zhivex-ai/core/provider-google": ["../../packages/core/src/provider-google.ts"]
+    }
+  },
+  "files": ["from-vercel-ai-sdk.ts"]
+}

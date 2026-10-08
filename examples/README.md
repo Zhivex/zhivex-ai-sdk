@@ -9,6 +9,7 @@ This folder contains runnable TypeScript examples for the main public surfaces o
 - `providers/`: one quick-start per provider package
 - `gateway/`: routing and fallback examples
 - `next-runner/`: standalone Next.js App Router starter using `@zhivex-ai/react` with a bounded, persistent server-side Runner
+- `migration/`: offline end-to-end script for the Vercel AI SDK Core migration guide
 - `_shared.ts`: tiny helpers used by the examples
 
 ## Run
@@ -68,7 +69,13 @@ The `examples/sdk/runner-session.ts` example is deterministic and does not requi
 
 `examples/sdk/rag-agent.ts` is deterministic and does not require provider credentials. It shows chunking, embedding, local ranking, context injection, and an agent run over retrieved context.
 
-For migration-oriented snippets from direct provider SDKs, Vercel AI SDK core usage, and simple custom tool loops, see `docs/MIGRATION.md`. For RAG and semantic-memory recipes, see `docs/RAG.md`.
+For migration-oriented snippets from direct provider SDKs, Vercel AI SDK Core, and simple custom tool loops, see `docs/MIGRATION.md`. The offline script for that guide is:
+
+```bash
+bun run examples/migration/from-vercel-ai-sdk.ts
+```
+
+It exercises `generateText`, `streamObject`, `embed` / `embedMany`, and a file-backed `Runner` with a local model double. It does not call a provider. For RAG and semantic-memory recipes, see `docs/RAG.md`.
 
 ## Notes
 
