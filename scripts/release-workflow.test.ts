@@ -84,6 +84,19 @@ describe("release workflow", () => {
     expect(workflow).toContain("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c");
   });
 
+  it("moves stale next tags after a latest publish without publishing again", () => {
+    const alignJob = workflow.slice(workflow.indexOf("  align_next:"));
+
+    expect(alignJob).toContain("needs: publish");
+    expect(alignJob).toContain("inputs.channel == 'latest'");
+    expect(alignJob).toContain("environment: npm");
+    expect(alignJob).toContain("id-token: write");
+    expect(alignJob).toContain("npm install -g npm@11.21.0");
+    expect(alignJob).toContain("bun scripts/align-next-dist-tag.ts --apply");
+    expect(alignJob).not.toContain("npm publish");
+    expect(alignJob).not.toContain("NPM_TOKEN");
+  });
+
   it("runs the repository-pinned secret scanner in CI and release validation", () => {
     expect(ciWorkflow).toContain("bun run scripts/scan-secrets.ts");
     expect(jobSection("validate", "publish")).toContain("bun run scripts/scan-secrets.ts");
