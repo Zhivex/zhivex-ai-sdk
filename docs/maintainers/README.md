@@ -8,3 +8,4 @@ These documents are for repository maintainers and release operators. They are n
 - [Realtime/Live Agent Certification](./AGENT_REALTIME_CERTIFICATION.md): fail-closed Gemini, Qwen, and OpenAI live gate plus deterministic tarball criteria.
 - [Provider Conformance and Smoke](./PROVIDER_SMOKE.md): versioned JSON/Markdown evidence, TTL, baselines, installed artifacts, CI attestations, and live provider setup.
 - [Model and Provider Maintenance](./MODEL_ONBOARDING.md): profile-based model onboarding, registry generation and coherence checks.
+- [Agent store identity migration](./AGENT_STORE_MIGRATION.md): upgrade existing agent run and memory stores to canonical identity keys.

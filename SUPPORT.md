@@ -76,7 +76,7 @@ Use Bun 1.4.2 for the repository build and Bun 1.3.7 on PATH for the Bun consume
 
 ## Provider Tiers
 
-The README support matrix is the source of truth for current feature coverage.
+The [provider compatibility matrix](./docs/reference/PROVIDERS.md#provider-compatibility) is the source of truth for current feature coverage. Tier C providers are basic (Tier C).
 
 At a high level:
 

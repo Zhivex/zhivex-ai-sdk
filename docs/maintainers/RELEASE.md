@@ -163,6 +163,8 @@ npm view @zhivex-ai/sdk dist-tags --json
 
 The prerelease version should be under `next`, not `latest`.
 
+Consumer docs install `@zhivex-ai/sdk` from `latest` or pin an exact version. The public `next` dist-tag can lag `latest`. Do not tell application developers to install `@next` unless you have just published a prerelease and confirmed that tag is newer than `latest`.
+
 ## Fresh Install Smoke
 
 After publish, test a clean install in a temporary project. Use `latest` for stable releases:

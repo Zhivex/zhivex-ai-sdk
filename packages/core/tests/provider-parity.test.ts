@@ -25,7 +25,7 @@ import { createQwen } from "../../qwen/src/index.js";
 import { createVertex } from "../../vertex/src/index.js";
 import { createXAI } from "../../xai/src/index.js";
 
-const README_PATH = path.resolve(import.meta.dirname, "../../../README.md");
+const README_PATH = path.resolve(import.meta.dirname, "../../../docs/reference/PROVIDERS.md");
 const MATRIX_START = "<!-- provider-matrix:start -->";
 const MATRIX_END = "<!-- provider-matrix:end -->";
 
@@ -42,7 +42,7 @@ const extractReadmeProviderMatrix = async () => {
   const start = readme.indexOf(MATRIX_START);
   const end = readme.indexOf(MATRIX_END);
   if (start === -1 || end === -1 || end <= start) {
-    throw new Error("README provider matrix markers are missing or out of order.");
+    throw new Error("Provider compatibility matrix markers are missing or out of order in docs/reference/PROVIDERS.md.");
   }
 
   return normalizeMarkdownTable(readme.slice(start + MATRIX_START.length, end));
@@ -223,7 +223,7 @@ const expectedDrift: ProviderSupportDriftExpectedMatrix = {
 };
 
 describe("provider parity documentation", () => {
-  it("keeps the README compatibility matrix aligned with runtime provider metadata", async () => {
+  it("keeps the provider compatibility matrix aligned with runtime provider metadata", async () => {
     const rendered = [
       [
         "| OpenAI | yes | yes | yes | native | yes | no | no | no | no | `effort` | yes | model-dependent Responses hosted tools including image generation, remote MCP, shell/apply patch harness | Tier A |",
