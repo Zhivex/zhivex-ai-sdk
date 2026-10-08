@@ -209,6 +209,8 @@ Official references, checked September 12, 2026:
 
 ## Experimental browser WebRTC
 
+Experimental browser WebRTC uses app-owned audio and a trusted backend over the shared realtime contract.
+
 Import `experimentalConnectOpenAILiveWebRTC` from
 `@zhivex-ai/openai/experimental/live-browser`. Import
 `experimentalCreateOpenAILiveWebRTCSession` and

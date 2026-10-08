@@ -117,3 +117,5 @@ flag describes protocol support, not a browser/OS driver or successful UI action
 The portable vision-plus-functions runner can use a compatible model from those
 providers independently of their native computer protocol. No SDK creates or
 controls an OS session on the application's behalf.
+
+Computer-use integrations must supply their own authorized session executor. The experimental portable runner verifies text-only completion when `isComplete` is supplied and exposes callback cancellation and deadlines. OpenAI native GA preserves provider safety warnings and requires separate explicit confirmation before acknowledging them.
