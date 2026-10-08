@@ -324,6 +324,24 @@ describe("release readiness", () => {
     );
   });
 
+  it("warns when next is an older prerelease than latest and ignores an active higher prerelease", () => {
+    const withNext = (next: string, latest: string): Record<string, RegistryDocument> => ({
+      "@zhivex-ai/core": {
+        versions: { [latest]: publishedVersion(), [next]: publishedVersion() },
+        "dist-tags": { latest, next }
+      }
+    });
+
+    expect(auditRelease("main", [{ name: "@zhivex-ai/core", version: "1.31.0" }], withNext("1.27.0-next.1", "1.31.0")).warnings).toContain(
+      "@zhivex-ai/core: npm dist-tag next (1.27.0-next.1) is older than latest (1.31.0). Publishing to latest does not move next."
+    );
+    expect(auditRelease("main", [{ name: "@zhivex-ai/core", version: "0.5.7" }], withNext("0.5.7-next.0", "0.5.7")).warnings).toContain(
+      "@zhivex-ai/core: npm dist-tag next (0.5.7-next.0) is older than latest (0.5.7). Publishing to latest does not move next."
+    );
+    expect(auditRelease("main", [{ name: "@zhivex-ai/core", version: "1.31.0" }], withNext("1.32.0-next.0", "1.31.0")).warnings).toEqual([]);
+    expect(auditRelease("main", [{ name: "@zhivex-ai/core", version: "1.31.0" }], withNext("1.31.0", "1.31.0")).warnings).toEqual([]);
+  });
+
   it("rejects prerelease versions on latest and stable versions on next", () => {
     const prereleasePackages = packages.map((manifest) => ({ ...manifest, version: `${manifest.version}-next.0` }));
 

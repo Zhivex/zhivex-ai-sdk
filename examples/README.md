@@ -9,6 +9,7 @@ This folder contains runnable TypeScript examples for the main public surfaces o
 - `providers/`: one quick-start per provider package
 - `gateway/`: routing and fallback examples
 - `next-runner/`: standalone Next.js App Router starter using `@zhivex-ai/react` with a bounded, persistent server-side Runner
+- `migration/`: offline end-to-end script for the Vercel AI SDK Core migration guide
 - `_shared.ts`: tiny helpers used by the examples
 
 ## Run
@@ -70,7 +71,13 @@ The `examples/sdk/runner-session.ts` example is deterministic and does not requi
 
 `examples/sdk/mcp-stdio-bcra.ts` wires the experimental stdio client into `createMcpToolRegistry()` and an `Agent`. It spawns `npx -y mcp-bcra` and allowlists exchange-rate, variable, and entity tools. Build the workspace first so `@zhivex-ai/sdk/mcp-stdio` resolves. The script needs network access to the published `mcp-bcra` package and the public BCRA APIs. It does not call debtor or cheque lookups.
 
-For migration-oriented snippets from direct provider SDKs, Vercel AI SDK core usage, and simple custom tool loops, see `docs/MIGRATION.md`. For RAG and semantic-memory recipes, see `docs/RAG.md`.
+For migration-oriented snippets from direct provider SDKs, Vercel AI SDK Core, and simple custom tool loops, see `docs/MIGRATION.md`. The offline script for that guide is:
+
+```bash
+bun run examples/migration/from-vercel-ai-sdk.ts
+```
+
+It exercises `generateText`, `streamObject`, `embed` / `embedMany`, and a file-backed `Runner` with a local model double. It does not call a provider. For RAG and semantic-memory recipes, see `docs/RAG.md`.
 
 ## Notes
 

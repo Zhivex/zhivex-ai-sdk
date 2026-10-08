@@ -62,7 +62,7 @@ The manifest classifies runtime exports as `stable`, `beta`, or `experimental`. 
 
 The stable boundary includes shared generation, media, agent runtime, realtime sessions and live agents, safety, evaluation, replay, trace, Runner/session APIs, declarative workflows, every built-in workflow state service, workflow evaluation gates, the Artifact Service, Model Catalog, OpenTelemetry adapters, the `zhivex-ai` CLI, and the dedicated Agent Control Plane contract listed by the manifest. Provider-native resource helpers remain Beta. Advanced tool registry helpers remain Experimental.
 
-The current stable npm package is published under the `latest` dist-tag. Install it with `@zhivex-ai/sdk`. Use `@next` only for prerelease validation.
+The current stable npm package is published under the `latest` dist-tag. Install it with `@zhivex-ai/sdk`. The `next` dist-tag is only for an intentional prerelease and can lag `latest`. It is not a way to install the newest stable release.
 
 ## Stable
 
