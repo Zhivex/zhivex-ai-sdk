@@ -42,7 +42,7 @@
     },
     "packages/anthropic": {
       "name": "@zhivex-ai/anthropic",
-      "version": "0.13.2",
+      "version": "0.14.0",
       "dependencies": {
         "@anthropic-ai/sdk": "0.131.0",
         "@zhivex-ai/core": "^1.30.0",
@@ -177,7 +177,7 @@
     },
     "packages/sdk": {
       "name": "@zhivex-ai/sdk",
-      "version": "1.31.0",
+      "version": "1.31.1",
       "bin": {
         "zhivex-ai": "dist/cli.js",
       },
@@ -187,10 +187,10 @@
     },
     "packages/vertex": {
       "name": "@zhivex-ai/vertex",
-      "version": "1.2.6",
+      "version": "1.2.7",
       "dependencies": {
         "@google-cloud/aiplatform": "^7.4.1",
-        "@zhivex-ai/anthropic": "^0.13.2",
+        "@zhivex-ai/anthropic": "^0.14.0",
         "@zhivex-ai/core": "^1.31.0",
         "@zhivex-ai/openai": "^0.16.0",
         "google-auth-library": "^11.0.2",

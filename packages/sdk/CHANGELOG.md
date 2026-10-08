@@ -1,5 +1,11 @@
 # @zhivex-ai/sdk
 
+## 1.31.1
+
+### Patch Changes
+
+- 19dfe07: Support Claude Haiku 5.5 in the Anthropic adapter and model catalogs (direct API, Bedrock, Vertex), including adaptive effort, toolsets, bound thinking, and Haiku-specific refusal/fallback rules.
+
 ## 1.31.0
 
 ### Minor Changes

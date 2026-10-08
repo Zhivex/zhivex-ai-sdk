@@ -6,6 +6,12 @@
 
 - Support Claude Haiku 5.5 with adaptive thinking and effort controls, computer/browser toolsets, bound thinking, local rejection of sampling/prefill/`effort=none`, catalog pricing (including the 100k long-context tier), Bedrock/Vertex host IDs, and no managed server-side fallbacks.
 
+## 0.14.0
+
+### Minor Changes
+
+- 19dfe07: Support Claude Haiku 5.5 in the Anthropic adapter and model catalogs (direct API, Bedrock, Vertex), including adaptive effort, toolsets, bound thinking, and Haiku-specific refusal/fallback rules.
+
 ## 0.13.2
 
 ### Patch Changes
