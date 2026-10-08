@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const vertexCatalogFragment = defineModelCatalogFragment({
   provider: "vertex",
-  revision: "2026-09-28",
-  verifiedAt: "2026-09-28",
+  revision: "2026-10-07",
+  verifiedAt: "2026-10-07",
   pricingEffectiveAt: "2026-08-30",
   sources: [
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/sonnet-5-5",
@@ -72,6 +72,7 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     // Host-specific entries: do not inherit Anthropic API pricing or recommendations.
     { provider: "vertex", modelId: "claude-sonnet-4-6" },
     { provider: "vertex", modelId: "claude-opus-4-6" },
+    { provider: "vertex", modelId: "claude-haiku-5-5" },
     { provider: "vertex", modelId: "claude-sonnet-5-5" },
     { provider: "vertex", modelId: "claude-sonnet-5" },
     { provider: "vertex", modelId: "claude-opus-5" },

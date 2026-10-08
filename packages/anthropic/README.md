@@ -2,6 +2,31 @@
 
 Anthropic adapter for Zhivex AI SDK, with model-specific Claude thinking and tool controls.
 
+## Claude Haiku 5.5
+
+Use `createAnthropic()("claude-haiku-5-5")`. Haiku 5.5 is the latency/cost tier of the Claude 5.5 family: adaptive thinking with `reasoning.effort` (`low`–`max`, provider default `medium`), a 1M context window, and tiered prompt pricing (short prompts ≤100k tokens vs long prompts).
+
+```ts
+import { generateText } from "@zhivex-ai/core";
+import { createAnthropic } from "@zhivex-ai/anthropic";
+
+const result = await generateText({
+  model: createAnthropic()("claude-haiku-5-5"),
+  prompt: "Classify this ticket in one word.",
+  reasoning: { effort: "low" },
+  maxTokens: 1024,
+});
+console.log(result.text);
+```
+
+Local validation mirrors Sonnet 5.5 for adaptive/`effort`, non-default sampling, assistant prefill, and `computer_toolset_20260801`, with three Haiku-specific differences:
+
+- `reasoning.effort: "none"` and `thinking.type: "disabled"` / `"between_tools"` are rejected (use a lower adaptive effort such as `"low"`).
+- Forced tool choice (`required`, named tools, native `any`/`tool`) is allowed, matching the Claude API.
+- Managed `providerOptions.fallbacks: "default"` is **not** supported: Haiku 5.5 can return `stop_reason: "refusal"` without a server-side fallback path.
+
+Bound thinking (`display: "updates"`, `block_binding`) and native structured output are supported. The SDK catalog includes direct API short-tier and long-context (100k) multipliers; Bedrock lists `anthropic.claude-haiku-5-5`, and Vertex lists a host-only `claude-haiku-5-5` entry. Sources: [Haiku 5.5 overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview), [migration guide](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide).
+
 ## Claude Sonnet 5.5
 
 Sonnet 5.5 and its dated variants advertise `computerUse: true` through the shared agent capability helpers, matching support for `computer_toolset_20260801`.
@@ -155,8 +180,8 @@ Usage maps uncached input, cache reads, cache writes, output, thinking tokens, t
 reported standard/fast speed. Unknown provider-native blocks—including fallback metadata—are preserved
 as `provider-data`.
 
-The package also supports current Claude families such as Claude Sonnet 5, Claude Fable 5, Claude
-Mythos 5, Claude Opus 4.8, and Claude Haiku 4.5, with model-specific capability validation. Models
+The package also supports current Claude families such as Claude Sonnet 5.5, Claude Haiku 5.5, Claude Opus 5.5, Claude Fable 5.1, Claude
+Mythos 5.1, Claude Sonnet 5, and Claude Haiku 4.5, with model-specific capability validation. Models
 that reject assistant-prefilled conversations fail locally before an API request is attempted.
 
 Authenticated Anthropic requests and WIF token exchanges reject redirects so a `307` or `308` cannot

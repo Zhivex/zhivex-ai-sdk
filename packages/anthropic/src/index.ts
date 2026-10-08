@@ -189,15 +189,23 @@ const isClaudeOpus55Model = (modelId: string) => /^claude-opus-5-5(?:[-@]|$)/.te
 
 const isClaudeSonnet55Model = (modelId: string) => /^claude-sonnet-5-5(?:[-@]|$)/.test(normalizeModelId(modelId));
 
+const isClaudeHaiku55Model = (modelId: string) => /^claude-haiku-5-5(?:[-@]|$)/.test(normalizeModelId(modelId));
+
+const isClaude55ToolsetModel = (modelId: string) =>
+  isClaudeOpus55Model(modelId) || isClaudeSonnet55Model(modelId) || isClaudeHaiku55Model(modelId);
+
 const supportsBoundThinking = (modelId: string) =>
-  isClaude51Model(modelId) || isClaudeOpus55Model(modelId) || isClaudeSonnet55Model(modelId);
+  isClaude51Model(modelId) || isClaudeOpus55Model(modelId) || isClaudeSonnet55Model(modelId) || isClaudeHaiku55Model(modelId);
 
 const isClaudeMythosClass5Model = (modelId: string) => isClaudeFable5Model(modelId) || isClaudeMythos5Model(modelId);
 
 const requiresAnthropicAdaptiveThinking = (modelId: string) => isClaudeMythosClass5Model(modelId) || isClaudeOpus55Model(modelId);
 
 const supportsAnthropicModernControls = (modelId: string) =>
-  isClaudeOpus47OrLaterModel(modelId) || isClaudeSonnet5Model(modelId) || isClaudeMythosClass5Model(modelId);
+  isClaudeOpus47OrLaterModel(modelId) ||
+  isClaudeSonnet5Model(modelId) ||
+  isClaudeHaiku55Model(modelId) ||
+  isClaudeMythosClass5Model(modelId);
 
 const supportsAnthropicFastMode = (modelId: string) =>
   /^(?:claude-opus-4-(?:7|8)|claude-opus-5)(?:[-@]|$)/.test(normalizeModelId(modelId));
@@ -207,12 +215,20 @@ const supportsAnthropicTaskBudgets = (modelId: string) =>
   isClaudeMythosClass5Model(modelId);
 
 const supportsMidConversationSystemMessages = (modelId: string) =>
-  isClaudeOpus48OrLaterModel(modelId) || isClaudeSonnet5Model(modelId) || isClaudeMythosClass5Model(modelId);
+  isClaudeOpus48OrLaterModel(modelId) ||
+  isClaudeSonnet5Model(modelId) ||
+  isClaudeHaiku55Model(modelId) ||
+  isClaudeMythosClass5Model(modelId);
 
 const anthropicReasoningEfforts = (
   modelId: string
 ): NonNullable<ModelCapabilities["reasoningEfforts"]> | undefined => {
   if (requiresAnthropicAdaptiveThinking(modelId)) {
+    return ["low", "medium", "high", "xhigh", "max"];
+  }
+
+  // Haiku 5.5 is adaptive with effort, but has no disabled/between_tools mode.
+  if (isClaudeHaiku55Model(modelId)) {
     return ["low", "medium", "high", "xhigh", "max"];
   }
 
@@ -236,6 +252,7 @@ const supportsAdaptiveThinking = (modelId: string) =>
   isClaudeSonnet46Model(modelId) ||
   isClaudeOpus47OrLaterModel(modelId) ||
   isClaudeSonnet5Model(modelId) ||
+  isClaudeHaiku55Model(modelId) ||
   isClaudeMythosClass5Model(modelId);
 
 const supportsAnthropicFiles = (modelId: string) => {
@@ -254,7 +271,7 @@ const supportsAnthropicStructuredOutput = (modelId: string) => {
     /^claude-opus-4-(?:1|[5-9])(?:[-@]|$)/.test(normalized) ||
     /^claude-sonnet-4-(?:5|6)(?:[-@]|$)/.test(normalized) ||
     /^claude-haiku-4-5(?:[-@]|$)/.test(normalized) ||
-    /^claude-(?:opus|sonnet)-5(?:[-@]|$)/.test(normalized) ||
+    /^claude-(?:opus|sonnet|haiku)-5(?:[-@]|$)/.test(normalized) ||
     isClaudeMythosClass5Model(normalized)
   );
 };
@@ -265,6 +282,7 @@ const rejectsAssistantPrefill = (modelId: string) => {
     /^(?:claude-opus-4-(?:[6-9])|claude-opus-[5-9])(?:[-@]|$)/.test(normalized) ||
     isClaudeSonnet46Model(normalized) ||
     isClaudeSonnet5Model(normalized) ||
+    isClaudeHaiku55Model(normalized) ||
     isClaudeMythosClass5Model(normalized)
   );
 };
@@ -273,7 +291,7 @@ const modelCapabilities = (modelId: string): ModelCapabilities => ({
   ...capabilities,
   agentCapabilities: {
     ...capabilities.agentCapabilities!,
-    computerUse: isClaudeSonnet55Model(modelId)
+    computerUse: isClaudeSonnet55Model(modelId) || isClaudeHaiku55Model(modelId)
   },
   structuredOutput: supportsAnthropicStructuredOutput(modelId),
   files: supportsAnthropicFiles(modelId),
@@ -909,6 +927,12 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput): MappedAnthrop
       );
     }
 
+    if (isClaudeHaiku55Model(modelId)) {
+      throw new UnsupportedFeatureError(
+        'Provider "anthropic" does not support reasoning.effort="none" for Claude Haiku 5.5; use a lower adaptive effort such as "low".'
+      );
+    }
+
     return supportsAdaptiveThinking(modelId)
       ? {
           thinking: {
@@ -1009,6 +1033,12 @@ const assertAnthropicRequestCompatibility = (
     throw new UnsupportedFeatureError('Claude Sonnet 5.5 requires thinking.type="between_tools" instead of "disabled".');
   }
 
+  if (isClaudeHaiku55Model(modelId) && thinking?.type === "disabled") {
+    throw new UnsupportedFeatureError(
+      'Claude Haiku 5.5 does not support thinking.type="disabled"; use adaptive thinking with output_config.effort.'
+    );
+  }
+
   if (thinking?.type === "between_tools") {
     if (!isClaudeSonnet55Model(modelId)) {
       throw new UnsupportedFeatureError('Thinking type "between_tools" requires Claude Sonnet 5.5.');
@@ -1028,10 +1058,10 @@ const assertAnthropicRequestCompatibility = (
   }
 
   if (thinking?.display === "updates" && !supportsBoundThinking(modelId)) {
-    throw new UnsupportedFeatureError('Thinking display "updates" requires Claude Fable/Mythos 5.1, Opus 5.5, or Sonnet 5.5.');
+    throw new UnsupportedFeatureError('Thinking display "updates" requires Claude Fable/Mythos 5.1, Opus 5.5, Sonnet 5.5, or Haiku 5.5.');
   }
   if (thinking?.block_binding && !supportsBoundThinking(modelId)) {
-    throw new UnsupportedFeatureError("Thinking block binding controls require Claude Fable/Mythos 5.1, Opus 5.5, or Sonnet 5.5.");
+    throw new UnsupportedFeatureError("Thinking block binding controls require Claude Fable/Mythos 5.1, Opus 5.5, Sonnet 5.5, or Haiku 5.5.");
   }
   const effort = outputConfig?.effort;
   const supportedEfforts = anthropicReasoningEfforts(modelId);
@@ -1182,20 +1212,26 @@ const prepareAnthropicRequest = (
   provider = "anthropic"
 ): PreparedAnthropicRequest => {
   const providerOptions = { ...(input.providerOptions ?? {}) } as AnthropicLanguageModelOptions;
-  if (supportsBoundThinking(modelId) && (
-    input.toolChoice === "required" || typeof input.toolChoice === "object" ||
-    providerOptions.tool_choice?.type === "any" || providerOptions.tool_choice?.type === "tool"
-  )) {
+  if (
+    supportsBoundThinking(modelId) &&
+    !isClaudeHaiku55Model(modelId) &&
+    (
+      input.toolChoice === "required" || typeof input.toolChoice === "object" ||
+      providerOptions.tool_choice?.type === "any" || providerOptions.tool_choice?.type === "tool"
+    )
+  ) {
     throw new UnsupportedFeatureError(`Provider "anthropic" model "${modelId}" supports only automatic or disabled tool choice.`);
   }
-  if (isClaudeOpus55Model(modelId) || isClaudeSonnet55Model(modelId)) {
+  if (isClaude55ToolsetModel(modelId)) {
     for (const tool of mapTools(input.tools) ?? []) {
       if (!("type" in tool)) continue;
       if (provider !== "bedrock" && tool.type === "computer_20251124") {
         throw new UnsupportedFeatureError(`Model "${modelId}" requires computer_toolset_20260801 instead of computer_20251124 on this host.`);
       }
-      if (isClaudeSonnet55Model(modelId) && tool.type === "computer_20250124") {
-        throw new UnsupportedFeatureError('Claude Sonnet 5.5 does not support computer_20250124.');
+      if ((isClaudeSonnet55Model(modelId) || isClaudeHaiku55Model(modelId)) && tool.type === "computer_20250124") {
+        throw new UnsupportedFeatureError(
+          `${isClaudeHaiku55Model(modelId) ? "Claude Haiku 5.5" : "Claude Sonnet 5.5"} does not support computer_20250124.`
+        );
       }
       if (isClaudeSonnet55Model(modelId) && tool.type === "advisor_20260301" &&
           !("model" in tool && typeof tool.model === "string" &&
