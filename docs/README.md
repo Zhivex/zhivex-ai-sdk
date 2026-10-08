@@ -7,8 +7,6 @@ Guides for adopting the SDK. The [provider compatibility matrix](./reference/PRO
 - [Quickstart](./QUICKSTART.md) and [Next.js integration](./NEXTJS.md)
 - [Agents](./AGENTS.md), [workflows](./WORKFLOWS.md), and [workspace agents](./WORKSPACE_AGENTS.md)
 - [Production](./PRODUCTION.md), [observability](./OBSERVABILITY.md), and [artifacts](./ARTIFACTS.md)
-- [Catalog](./MODEL_CATALOG.md), [model resolver](./MODEL_RESOLVER.md), and [evaluations](./MODEL_EVALUATIONS.md)
-- [Migration](./MIGRATION.md) (including Vercel AI SDK Core), [RAG](./RAG.md), and [CLI](./CLI.md)
 - [Catalog](./MODEL_CATALOG.md), [context limits](./CATALOG_COMPACTION.md), [durable compaction](./DURABLE_COMPACTION.md), and [evaluations](./MODEL_EVALUATIONS.md)
 - [Migration](./MIGRATION.md) from direct provider SDKs, Vercel AI SDK Core, or a simple tool loop
 - [RAG](./RAG.md), [CLI](./CLI.md), and [MCP HTTP and OAuth](./MCP_HTTP.md)
