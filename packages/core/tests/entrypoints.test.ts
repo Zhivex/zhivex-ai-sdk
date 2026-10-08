@@ -201,6 +201,14 @@ describe("core public entrypoints", () => {
       "./catalog": { types: "./dist/catalog-entry.d.ts", import: "./dist/catalog-entry.js" },
       "./agents": { types: "./dist/agents-entry.d.ts", import: "./dist/agents-entry.js" },
       "./mcp-http": { types: "./dist/mcp-http.d.ts", import: "./dist/mcp-http.js" },
+      "./mcp-stdio": {
+        types: "./dist/mcp-stdio.d.ts",
+        browser: "./dist/mcp-stdio-browser.js",
+        bun: "./dist/mcp-stdio.js",
+        node: "./dist/mcp-stdio.js",
+        import: "./dist/mcp-stdio.js",
+        default: "./dist/mcp-stdio.js"
+      },
       "./evals": { types: "./dist/evals-entry.d.ts", import: "./dist/evals-entry.js" },
       "./realtime": { types: "./dist/realtime-entry.d.ts", import: "./dist/realtime-entry.js" },
       "./control-plane": { types: "./dist/control-plane-entry.d.ts", import: "./dist/control-plane-entry.js" },

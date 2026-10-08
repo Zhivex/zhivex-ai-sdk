@@ -31,7 +31,8 @@ Focused published entrypoints are also supported: `@zhivex-ai/core/contracts`,
 `@zhivex-ai/core/evals`, `@zhivex-ai/core/realtime`, `@zhivex-ai/core/control-plane`,
 `@zhivex-ai/core/ops`, `@zhivex-ai/core/beta`, `@zhivex-ai/core/experimental`,
 `@zhivex-ai/core/provider-google`, `@zhivex-ai/core/mcp-http`,
-`@zhivex-ai/sdk/mcp-http`,
+`@zhivex-ai/core/mcp-stdio`, `@zhivex-ai/sdk/mcp-http`,
+`@zhivex-ai/sdk/mcp-stdio`,
 `@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/workflows`, `@zhivex-ai/sdk/ui`,
 `@zhivex-ai/sdk/evals`, `@zhivex-ai/sdk/catalog`, `@zhivex-ai/sdk/beta`, and
 `@zhivex-ai/sdk/experimental`. The package roots remain backward compatible.
@@ -139,6 +140,12 @@ These areas are available for evaluation, but they should not be treated as long
 
 Experimental areas may change faster than the rest of the SDK. Production adopters should isolate them behind an application-owned service layer.
 The same runtime cohort is available from `@zhivex-ai/sdk/experimental`.
+
+The local MCP stdio transport is also Experimental, with its own entrypoints
+`@zhivex-ai/sdk/mcp-stdio` and `@zhivex-ai/core/mcp-stdio`. See [MCP stdio](docs/MCP_STDIO.md).
+`MCP_STDIO_API_STABILITY_MANIFEST` classifies every runtime export.
+`createMcpStdioClient` spawns a child process, so it stays off the root export
+and off `@zhivex-ai/sdk/experimental`. Browser bundles resolve a stub that throws.
 
 ## Provider Scope
 

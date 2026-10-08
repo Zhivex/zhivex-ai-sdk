@@ -68,6 +68,8 @@ The `examples/sdk/runner-session.ts` example is deterministic and does not requi
 
 `examples/sdk/rag-agent.ts` is deterministic and does not require provider credentials. It shows chunking, embedding, local ranking, context injection, and an agent run over retrieved context.
 
+`examples/sdk/mcp-stdio-bcra.ts` wires the experimental stdio client into `createMcpToolRegistry()` and an `Agent`. It spawns `npx -y mcp-bcra` and allowlists exchange-rate, variable, and entity tools. Build the workspace first so `@zhivex-ai/sdk/mcp-stdio` resolves. The script needs network access to the published `mcp-bcra` package and the public BCRA APIs. It does not call debtor or cheque lookups.
+
 For migration-oriented snippets from direct provider SDKs, Vercel AI SDK core usage, and simple custom tool loops, see `docs/MIGRATION.md`. For RAG and semantic-memory recipes, see `docs/RAG.md`.
 
 ## Notes

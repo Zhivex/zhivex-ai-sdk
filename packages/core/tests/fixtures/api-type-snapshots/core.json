@@ -77,6 +77,8 @@
   "mcp-http-common.d.ts": "e1a7eed0c2b04f25e49d60afd0c58b7a4278ef72babaddc2ee7e429a730242ee",
   "mcp-http.d.ts": "309f007a9dbe1ebed7f8f3d0879a818dc9f56c62bec41cfbb9a91e881bf1069d",
   "mcp-oauth.d.ts": "fdac17e62b2e71bceca9f0d5732db9b9f0813e3c4bdcba5b657386707459a328",
+  "mcp-stdio-browser.d.ts": "dc69e67336c504ca1531b866e425900421b3c09c07327965ad9624fb4aae1fdd",
+  "mcp-stdio.d.ts": "593750afbfaa03b7b639c8ba865eebee73a78fb6de76e6a1105000b7739a7299",
   "mcp.d.ts": "7de790ca0f6167dced6aac855c42dade4cfe5a42cf71d45f29b901941605a745",
   "media.d.ts": "d801c841bebed85d22a39ab18f6691bb44e8ca18d0543cc4305485d20a1c3bfc",
   "messages.d.ts": "d4a61405630261038f6d3ed2006b53eb19958c56033b3bae467669f940bea9ed",

@@ -7,6 +7,7 @@
 - [Production](./PRODUCTION.md), [observability](./OBSERVABILITY.md), and [artifacts](./ARTIFACTS.md)
 - [Catalog](./MODEL_CATALOG.md), [model resolver](./MODEL_RESOLVER.md), and [evaluations](./MODEL_EVALUATIONS.md)
 - [Migration](./MIGRATION.md), [RAG](./RAG.md), and [CLI](./CLI.md)
+- [MCP HTTP and OAuth](./MCP_HTTP.md) and [experimental MCP stdio](./MCP_STDIO.md)
 
 ## Extended API recipes
 
