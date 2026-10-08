@@ -6,7 +6,7 @@
 - [Agents](./AGENTS.md), [workflows](./WORKFLOWS.md), and [workspace agents](./WORKSPACE_AGENTS.md)
 - [Production](./PRODUCTION.md), [observability](./OBSERVABILITY.md), and [artifacts](./ARTIFACTS.md)
 - [Catalog](./MODEL_CATALOG.md), [model resolver](./MODEL_RESOLVER.md), and [evaluations](./MODEL_EVALUATIONS.md)
-- [Migration](./MIGRATION.md), [RAG](./RAG.md), and [CLI](./CLI.md)
+- [Migration](./MIGRATION.md) (including Vercel AI SDK Core), [RAG](./RAG.md), and [CLI](./CLI.md)
 
 ## Extended API recipes
 
