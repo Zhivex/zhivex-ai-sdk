@@ -171,3 +171,10 @@ correct exports in the package itself.
 - Publishing package changes without a changeset when they affect npm consumers.
 - Versioning only a provider when the real API change lives in `core` or `sdk`.
 - Updating tests to match a regression before understanding the real cause.
+
+## Cursor Cloud specific instructions
+
+- The default image already provides Node.js 22.14+, which satisfies `engines.node`. Install Bun 1.4.2 with the official installer and link it at `/usr/local/bin/bun` (and `bunx`). Login shells skip `~/.bashrc`, so a Bun install that only edits the shell profile is not visible to `install`.
+- Dependency install matches CI: `bun install --frozen-lockfile --ignore-scripts`. The workspace is a library. Provider integration tests are opt-in and need the API keys listed in `CONTRIBUTING.md`.
+- Published package exports resolve to `dist/`. Run `bun run build` before the credential-free smokes `bun run examples/sdk/full-agent.ts`, `bun run examples/sdk/runner-session.ts`, and `bun run examples/sdk/workflow.ts`.
+- React and OpenAI Live browser tests need Playwright Chromium: `bunx playwright install --with-deps chromium`. Postgres workflow certification stays in CI and is outside this environment.
