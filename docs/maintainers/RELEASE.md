@@ -163,6 +163,22 @@ npm view @zhivex-ai/sdk dist-tags --json
 
 The prerelease version should be under `next`, not `latest`.
 
+## Keep `next` From Falling Behind `latest`
+
+`npm publish --tag latest` does not move `next`. After `bunx changeset pre exit` and a stable publish, `next` stays on the last prerelease. That tag is older than `latest`, so `bun add @zhivex-ai/sdk@next` installs a downgrade. `bun run release:check` warns when this happens. It does not fail the publish: the pending stable batch must be able to ship before `next` is moved, and channel `next` cannot republish a stable version (`stable versions must publish to the latest dist-tag`).
+
+Dispatching `.github/workflows/release.yml` with channel `latest` publishes the unpublished batch, then the `align_next` job points each stale `next` tag at that package's `latest` version. The job does not publish packages and does not delete tags. A higher prerelease, such as `1.32.0-next.0` while `latest` is `1.31.0`, is left alone.
+
+`align_next` uses the same protected `npm` environment and OIDC trusted publisher as `release.yml`. It upgrades npm to 11.21.0 because dist-tag operations need npm 11.21.0 or 12.2.0 or newer; `npm publish` alone still accepts the older 11.5.1 minimum. Trusted publishing does not allow dist-tag changes until an npm maintainer enables **Allow npm dist-tag** on each package's trusted publisher. That permission defaults to off and is separate from `npm publish`. This repository does not store an `NPM_TOKEN`. If the permission is still off, `align_next` fails after a successful publish; rerun that job after enabling it. Do not treat a red `align_next` job as a failed publish.
+
+To remove `next` instead of pointing it at `latest`, an npm maintainer runs this from the authorized workflow or with a granular access token. Removal makes `@next` uninstallable until the next prerelease:
+
+```bash
+npm dist-tag rm @zhivex-ai/sdk next
+```
+
+Repeat for every `@zhivex-ai/*` package. Prefer moving `next` onto `latest` while the README still tells consumers to install `@next` for prerelease validation.
+
 ## Fresh Install Smoke
 
 After publish, test a clean install in a temporary project. Use `latest` for stable releases:
