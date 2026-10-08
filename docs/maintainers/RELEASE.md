@@ -178,6 +178,7 @@ npm dist-tag rm @zhivex-ai/sdk next
 ```
 
 Repeat for every `@zhivex-ai/*` package. Prefer moving `next` onto `latest` while the README still tells consumers to install `@next` for prerelease validation.
+Consumer docs install `@zhivex-ai/sdk` from `latest` or pin an exact version. The public `next` dist-tag can lag `latest`. Do not tell application developers to install `@next` unless you have just published a prerelease and confirmed that tag is newer than `latest`.
 
 ## Fresh Install Smoke
 

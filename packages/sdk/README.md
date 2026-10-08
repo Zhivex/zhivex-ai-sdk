@@ -10,11 +10,7 @@ Provider conformance reporting is available as a Beta surface from both the root
 bun add @zhivex-ai/sdk @zhivex-ai/openai
 ```
 
-Install only the provider packages your application uses. For prerelease validation, install the SDK from `next` and use the matching provider prerelease whenever that provider is part of the same release:
-
-```bash
-bun add @zhivex-ai/sdk@next
-```
+Install only the provider packages your application uses. Install `@zhivex-ai/sdk` from the npm `latest` tag, or pin an exact version. The `next` dist-tag can lag `latest`, so it does not track the newest stable release. Use a provider prerelease only when that provider was published in the same prerelease and the tag is newer than `latest`.
 
 ## Quick Start
 

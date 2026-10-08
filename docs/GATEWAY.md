@@ -1,0 +1,34 @@
+# Gateway routing
+
+`@zhivex-ai/gateway` is the optional SDK-local routing and fallback package. It is separate from `@zhivex-ai/sdk` and from any hosted gateway API. Package setup and examples live in the [gateway guide](../packages/gateway/README.md).
+
+## Gateway Routing
+
+Gateway object routing resolves `auto` per destination, including fallback between native structured output and prompted JSON. Stream attempt diagnostics report terminal success/failure, and retries honor bounded provider `retryAfterMs`.
+
+`@zhivex-ai/gateway` is the optional SDK-local routing and fallback package for multi-provider setups. It is separate from the main `@zhivex-ai/sdk` facade and separate from any Zhivex-hosted Gateway API. See [`packages/gateway/README.md`](../packages/gateway/README.md) for routing examples and package-specific behavior.
+
+The gateway also offers optional operation deadlines, bounded concurrency/RPM/TPM admission, monetary reservations, deployment-aware routing, exact caching with shared misses, adaptive TTFT/throughput policies and bounded background attempt observers. The included quota/budget stores are local; shared backends can implement the asynchronous contracts. See the [production controls](../packages/gateway/README.md#production-controls) for scope and accounting guarantees.
+
+`GatewayRequest.messages` also accepts canonical core `ModelMessage` entries. Text/object generation and streaming preserve resolved tool history on Anthropic, OpenAI, DeepSeek and Qwen, with explicit validation and cross-provider fallback. Adapters declare native or JSON-envelope history support; older/incompatible destinations are skipped. Portable DeepSeek/Qwen replay uses non-thinking mode; agent operations accept canonical history on fresh runs and resume durable state without resupplying history. See the [Gateway guide](../packages/gateway/README.md#continuing-canonical-tool-history) for the supported subset and validation commands.
+
+`generateObject()` and `streamObject()` now route through the same gateway metadata path as text generation. Native object mode requires `structuredOutput`; prompted object mode requires `jsonMode`; auto mode accepts either capability and skips targets that cannot satisfy object output before making a provider call.
+
+`runAgent()` and `streamAgent()` use the same retry and ordered-fallback behavior as text and object operations, but keep one Core agent execution so fallback does not restart the run or replay completed tools. Text and object streaming resolve fallback before the first event; agent streaming resolves it before the first provider event, after any initial agent lifecycle events. Once a provider stream emits, later failure is propagated without mixing provider transcripts. Attempt timeouts abort non-streaming calls and streaming startup before the first event; a request `abortSignal` remains active for the full operation and stops active streams, backoff, retry, and fallback work.
+
+Gateway retries use typed `ProviderHTTPError` status codes: `408`, `429`, and `5xx` are retryable on the same target, while other `4xx` responses can move directly to an eligible fallback. If a request sets `maxCostPer1kTokens`, targets with unknown pricing are rejected by default; `unknownCostPolicy: "allow"` explicitly opts into those targets. Applications can replace the default name-based ordering heuristic with a finite `scoreTarget(context)` score.
+
+Image requests are routed only to models declaring `capabilities.vision: true`. Images are never removed silently to accommodate an incompatible target. The unused `GatewayConfig.groundedAdapters` option has been removed; register adapters through `adapters`, and do not rely on this package for a grounded-generation route.
+
+For portable inline images, pass `{ type: "image", image: base64Bytes, mediaType: "image/png" }` using the actual MIME type. Qwen, OpenAI (including xAI), Azure OpenAI, Meta, and OpenRouter serialize this to a base64 data URL in both their applicable Chat and Responses routes. Existing HTTP(S) URLs and base64 image data URLs remain unchanged. Anthropic uses its native base64 source block; Gemini and Vertex retain inline base64. URL support remains provider-specific. The URL-based adapters require `mediaType` for bare base64 and reject empty/non-string images, non-image MIME types, MIME parameters, and malformed base64/data-URL syntax with `ValidationError`; they do not inspect image bytes or infer MIME types. Serialization does not mutate message history.
+
+`streamText` can be consumed through `eventStream` or `textStream` without calling `collect()`. Internal generation failures are observed by Core, so ignoring `collect()` does not cause an unhandled promise rejection. `eventStream` still emits the terminal `error` event without a successful `finish`, and `collect()` still rejects with that error even when called later. Consumers of `textStream` that need failure details should also inspect `eventStream` or await `collect()`.
+
+`streamText()` and `streamObject()` expose `cancel(reason?)` for cooperative cancellation. Text responses and UI responses built from a `streamText()` result forward HTTP body cancellation to that generation. SSE adapters pull one item at a time instead of draining the source; for custom iterables or agent/runner streams, pass `onCancel` to `toSSEStream()`, `toSSEResponse()` or the UI response helper to abort the application's controller. Cancelling a response does not wait for an uncooperative iterator, and code that ignores its abort signal can continue running. `streamObject()` emits `object-complete` only after validating the final JSON; repaired intermediate values remain `object-partial` events.
+
+Default generate-cache keys use the `generate:v3` namespace so previously cached results with ambiguous nested fields are not reused. Request cancellation controls are excluded, but identically named fields in tool results and provider data remain part of the cache identity.
+
+Run the opt-in cross-provider image smoke with `INLINE_IMAGE_INTEGRATION=1 bun --env-file=.env run test:integration packages/core/tests/image-input.integration.test.ts`. It checks synthetic PNG base64/data URLs, generation and streaming, and real invalid-image errors for OpenAI Chat/Responses, Qwen Chat/Responses, Meta Chat/Responses, and Anthropic Messages when their credentials are configured. This smoke accepts `MODEL_API_KEY` as a fallback for `META_API_KEY` and defaults Meta to `muse-spark-1.3` with `minimal` reasoning and a 512-token output budget; `META_INTEGRATION_MODEL` overrides the model. Missing credentials skip that provider and do not certify it. Qwen Responses can report failure inside HTTP 200 SSE; these events reject with the bounded `QWEN_RESPONSE_FAILED` diagnostic rather than resolving `collect()` with an empty result.
+
+
+
