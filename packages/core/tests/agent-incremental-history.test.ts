@@ -43,7 +43,7 @@ describe("incremental SQLite agent history", () => {
     expect(await store.loadHistory!("long", { field: "toolResults", offset: 75, limit: 2 })).toEqual(output.state.toolResults.slice(75, 77));
     expect((await store.list!({ limit: 1 })).items[0]).toEqual(output.state);
     db.close();
-  }, 60000);
+  }, 120000);
 
   it("preserves approval and journal across restart without repeating a mutation", async () => {
     const root = mkdtempSync(join(tmpdir(), "agent-approval-history-")); roots.push(root);

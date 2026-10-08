@@ -223,6 +223,13 @@ export const auditRelease = (
       );
     }
 
+    const nextTag = registry["dist-tags"]?.next;
+    if (latest && nextTag && compareVersions(nextTag, latest) < 0) {
+      warnings.push(
+        `${manifest.name}: npm dist-tag next (${nextTag}) is older than latest (${latest}). Publishing to latest does not move next.`
+      );
+    }
+
     if (mode === "prepublish" && latest && highestStable && latest !== highestStable) {
       const pendingHigherVersion =
         !localIsPublished && compareVersions(manifest.version, highestStable) > 0;

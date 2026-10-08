@@ -63,7 +63,7 @@ The maintenance-only registry in `scripts/provider-registry.ts` generates CLI pa
 
 ## Documentation ownership
 
-The root README is the entry point. Application guides own adoption and operational guidance; `docs/reference/` contains extended API recipes. Historical reports record dated evidence, not current certification. [Release procedures](./maintainers/RELEASE.md) have one canonical home; [versioning policy](../VERSIONING.md) defines bump decisions.
+The root README is the adoption entry point. The [provider compatibility matrix](./reference/PROVIDERS.md#provider-compatibility) is the source of truth for cross-provider behavior. Application guides own adoption and operational guidance; `docs/reference/` contains extended API recipes. Historical reports record dated evidence, not current certification. [Release procedures](./maintainers/RELEASE.md) have one canonical home; [versioning policy](../VERSIONING.md) defines bump decisions.
 
 ## OpenAI Live WebRTC boundary
 
@@ -73,3 +73,32 @@ Node audio codec. `openai/experimental/live-server` owns authenticated session
 creation and sideband attachment. Both reuse `CallbackRealtimeSession`; delegated
 work uses the existing Core runner. Frontend permissions exclude backend context
 and delegation commands. See the [protocol and lifecycle guide](./OPENAI_LIVE.md#experimental-browser-webrtc).
+
+## Public API surface
+
+Object generation preserves tool approval policies and lifecycle hooks. Provider stream error events terminate the operation and reject `collect()` before pending tools execute. OpenAI, Anthropic, Gemini and Qwen language-model routes validate HTTP status inside their retry boundary; DeepSeek also cancels retry waits when its timeout expires.
+
+`ProviderToolCallError.usage` optionally carries validated terminal token counts when a rejected OpenAI Responses tool call still has terminal accounting. Incomplete calls remain rejected and are never emitted for execution. Missing or invalid terminal usage stays absent; applications must not estimate billed usage or assume retry safety from the presence of counters. The numeric record is copied, frozen, and excludes provider payloads.
+
+
+The recommended package, `@zhivex-ai/sdk`, re-exports the high-level primitives from `core`, including:
+
+- `generateText`, `streamText`
+- `generateObject`, `streamObject`
+- `transcribeAudio`, `generateSpeech`, `streamSpeech`
+- `generateImage`, `generateVideo`, `generateMusic`
+- `generateGroundedText`
+- `embed`, `embedMany`
+- portable agent, runner, session, safety, evaluation, replay, and trace helpers
+- Stable declarative workflows, SQL workflow state, workflow evaluation gates, Artifact Service, Model Catalog, OTEL adapters, CLI, and Agent Control Plane helpers plus Beta provider-native resource helpers, classified by `API_STABILITY_MANIFEST`
+- message helpers such as `system`, `user`, `assistant`, `tool`, `textPart`
+- shared types such as `ReasoningConfig`, `GenerateTextOptions`, and `GenerateObjectOptions`
+- stream and HTTP helpers such as `toTextStreamResponse`, `toUIMessageStreamResponse`, `toSSEStream`, and related UI serialization utilities
+- middleware and runtime helpers such as telemetry, caching, circuit breakers, and `wrapLanguageModel`
+
+If you are building custom adapters or lower-level integrations, use `@zhivex-ai/core` directly.
+
+If you are building an agent-focused service and do not want the full aggregator surface, use `@zhivex-ai/agents`. It re-exports the current agent contracts from `core`; it does not define a separate runtime.
+
+Use focused imports such as `@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/evals`, and `@zhivex-ai/agents/realtime` to avoid the complete Core aggregation. Operational stores remain explicit in `@zhivex-ai/agents/ops`.
+

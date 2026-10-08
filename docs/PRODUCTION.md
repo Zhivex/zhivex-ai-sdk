@@ -4,6 +4,15 @@ This SDK is a runtime library. Your application still owns auth, tenancy, billin
 
 If you are moving from direct provider SDKs, Vercel AI SDK core usage, or a custom tool loop, start with the [Migration Guide](./MIGRATION.md) and then apply the production path below. For long-term semantic memory and retrieval-augmented generation, see the [RAG Guide](./RAG.md).
 
+Production adoption path:
+
+1. Start with `Runner + SessionService`.
+2. Use `createPostgresSessionService()` for shared or serverless production state.
+3. Keep provider credentials, tools, database clients, and safety policies on the server.
+4. Wrap tool-using agents with `createProductionSafetyPolicy()` before exposing them to real users.
+5. Export redacted trace summaries and tool-call audit records from server-side runs.
+6. Use app-owned retrievers and vector stores for long-term semantic memory.
+
 ## Recommended Architecture
 
 ```text
