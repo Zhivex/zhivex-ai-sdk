@@ -22,6 +22,8 @@
   "experimental.d.ts": "e2cf003ace31ccbf3615362484c836ff4a2657b6606c005725eaf622f4fccbd7",
   "index.d.ts": "15f364f78bb4b512bf71341f0146e7b7d846f94a02ed7ca538efbbea59d678b8",
   "mcp-http.d.ts": "1fc87fdf9a0f8d938b8a1447b9af01f391cace4b520662b0c9beb83e99a2d20d",
+  "mcp-stdio-browser.d.ts": "671cb086eda611a2b9a1395a53630eabc31159a437a01c1489aeab11491a34ac",
+  "mcp-stdio.d.ts": "0ef7d888605edf63085ceafd91b7ab8ed84b1aee1038188323ded9b3a61593ca",
   "provider-templates.generated.d.ts": "f27a33cd72b1c8309b5d63b89c26ab66c14f3b92b5723b6727297c597c81d11d",
   "runtime.d.ts": "47308048ac9c00bb2a73c3d8ae4a9ca2287611aeacf01dd8636f93c1443edb17",
   "ui.d.ts": "596782b28057907121a3ceada8ed3783cee4bb287b5d9f6a7b2b8e8f1fbaac62",

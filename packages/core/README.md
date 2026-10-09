@@ -50,6 +50,7 @@ surface. The package root remains backward compatible.
 | `@zhivex-ai/core/provider` | Adapter HTTP, SSE, realtime, and message helpers | Server-side |
 | `@zhivex-ai/core/catalog` | Catalog contracts, factory and opt-in auxiliary model recommendations, without a default inventory | None |
 | `@zhivex-ai/core/mcp-http` | Opt-in Stable MCP HTTP transport and host-owned OAuth authentication | None |
+| `@zhivex-ai/core/mcp-stdio` | Opt-in Experimental MCP stdio transport. Spawns a local server process | `node:child_process` on Node and Bun; browser bundles load a stub that throws |
 | `@zhivex-ai/core/runtime` | Adapter, message, tool, media, retrieval, and realtime primitives | None |
 | `@zhivex-ai/core/workflows` | Portable workflow orchestration, evaluation contracts, diffs, and gates | None |
 | `@zhivex-ai/core/ui` | UI messages, request parsing, and response streams | None |
