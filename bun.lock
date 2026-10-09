@@ -68,7 +68,7 @@
     },
     "packages/core": {
       "name": "@zhivex-ai/core",
-      "version": "1.31.0",
+      "version": "1.32.0",
       "dependencies": {
         "ws": "^8.22.0",
         "zod": "^4.6.3",
@@ -177,12 +177,12 @@
     },
     "packages/sdk": {
       "name": "@zhivex-ai/sdk",
-      "version": "1.31.1",
+      "version": "1.32.0",
       "bin": {
         "zhivex-ai": "dist/cli.js",
       },
       "dependencies": {
-        "@zhivex-ai/core": "~1.31.0",
+        "@zhivex-ai/core": "~1.32.0",
       },
     },
     "packages/vertex": {
