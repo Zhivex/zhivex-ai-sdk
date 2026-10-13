@@ -2,13 +2,15 @@
 
 OpenAI adapter for Zhivex AI SDK.
 
-## GPT-6 Sol and Luna
+## GPT-6.1 Sol, GPT-6 Sol, and GPT-6 Luna
 
-Use `createOpenAI()("gpt-6-sol")` or `createOpenAI()("gpt-6-luna")`. Both default to the Responses API, including streaming, tools, and native structured output, and expose the modern GPT-5.6 capabilities. Supported reasoning efforts are `none`, `low`, `medium`, `high`, `xhigh`, and `max`; the provider default is `medium`.
+Use `createOpenAI()("gpt-6.1-sol")`, `createOpenAI()("gpt-6-sol")`, or `createOpenAI()("gpt-6-luna")`. All three default to the Responses API, including streaming, tools, vision, and native structured output.
 
-When explicitly selecting `providerOptions.apiMode: "chat"`, function calling requires `reasoning.effort: "none"`. Sampling controls (`temperature`, `top_p`, `top_logprobs`) and logprobs also require effort `none`. Incompatible requests fail locally before network I/O. Astra retains its separate restrictions and does not accept `none`.
+`gpt-6.1-sol` accepts reasoning efforts `low`, `medium` (the provider default), `high`, `xhigh`, and `max`. It does not accept `none` or `minimal`. Tool calling requires the Responses API. Sampling controls (`temperature`, `top_p`, `top_logprobs`) and logprobs are rejected before the request is sent. The OpenAI model page does not list multi-agent orchestration for this id, so `agentCapabilities.multiAgent` stays false.
 
-See the official [GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model), [Sol model](https://developers.openai.com/api/docs/models/gpt-6-sol), and [Luna model](https://developers.openai.com/api/docs/models/gpt-6-luna).
+`gpt-6-sol` and `gpt-6-luna` accept `none`, `low`, `medium`, `high`, `xhigh`, and `max`. When explicitly selecting `providerOptions.apiMode: "chat"`, function calling requires `reasoning.effort: "none"`. Sampling controls and logprobs also require effort `none`. Astra retains its separate restrictions and does not accept `none`.
+
+See the official [GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model), [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol), [Sol model](https://developers.openai.com/api/docs/models/gpt-6-sol), and [Luna model](https://developers.openai.com/api/docs/models/gpt-6-luna).
 
 ## Install
 

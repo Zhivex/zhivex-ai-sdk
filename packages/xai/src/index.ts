@@ -130,16 +130,18 @@ const baseCapabilities: ModelCapabilities = {
 const normalizedModelId = (modelId: string) => modelId.trim().toLowerCase();
 const isGrok45 = (modelId: string) => /^grok-4\.5(?:[-@]|$)/.test(normalizedModelId(modelId));
 const isGrok46 = (modelId: string) => /^grok-4\.6(?:[-@]|$)/.test(normalizedModelId(modelId));
+const isGrok47 = (modelId: string) => /^grok-4\.7(?:[-@]|$)/.test(normalizedModelId(modelId));
 const isGrok420MultiAgent = (modelId: string) => /^grok-4\.20(?:-\d{4})?-multi-agent(?:[-@]|$)/.test(normalizedModelId(modelId));
 const isNonReasoningModel = (modelId: string) => /non-reasoning/.test(normalizedModelId(modelId));
-const isAlwaysReasoningModel = (modelId: string) => isGrok45(modelId) || isGrok46(modelId);
+const isGrokXHighReasoning = (modelId: string) => isGrok46(modelId) || isGrok47(modelId);
+const isAlwaysReasoningModel = (modelId: string) => isGrok45(modelId) || isGrokXHighReasoning(modelId);
 
 const modelCapabilities = (modelId: string): ModelCapabilities => ({
   ...baseCapabilities,
   reasoning: !isNonReasoningModel(modelId),
   reasoningEfforts: isNonReasoningModel(modelId)
     ? undefined
-    : isGrok46(modelId)
+    : isGrokXHighReasoning(modelId)
       ? ["low", "medium", "high", "xhigh"]
       : isGrok45(modelId)
       ? ["low", "medium", "high"]

@@ -27,7 +27,15 @@ describe("OpenAI model profile policy", () => {
 
   it("couples family reasoning, sampling and default transport", () => {
     expect(resolveOpenAIModelProfile("gpt-6-astra")).toMatchObject({ defaultApi: "responses", sampling: "unsupported", toolsRequireResponses: "always" });
+    expect(resolveOpenAIModelProfile("gpt-6.1-sol")).toMatchObject({
+      label: "GPT-6.1 Sol", defaultApi: "responses", sampling: "unsupported", toolsRequireResponses: "always",
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max"]
+    });
     expect(resolveOpenAIModelProfile("gpt-6-sol")).toMatchObject({ defaultApi: "responses", sampling: "effort-none", toolsRequireResponses: "unless-effort-none" });
+    const sol61 = createOpenAI({ apiKey: "test" })("gpt-6.1-sol");
+    expect(sol61.capabilities).toMatchObject({ tools: true, vision: true, reasoning: true, files: true });
+    expect(sol61.capabilities.agentCapabilities).toMatchObject({ multiAgent: false, toolSearch: true, computerUse: true });
+    expect(createOpenAI({ apiKey: "test" })("gpt-6.1-luna").capabilities.tools).toBe(false);
     expect(createOpenAI({ apiKey: "test" })("gpt-4-0613").capabilities.tools).toBe(true);
     expect(createOpenAI({ apiKey: "test" })("gpt-6-astra-2026-01-01-extra").capabilities.tools).toBe(false);
   });

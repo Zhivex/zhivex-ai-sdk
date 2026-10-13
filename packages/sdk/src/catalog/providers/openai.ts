@@ -2,17 +2,48 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const openaiCatalogFragment = defineModelCatalogFragment({
   provider: "openai",
-  revision: "2026-09-24",
-  verifiedAt: "2026-09-22",
-  pricingEffectiveAt: "2026-09-22",
+  revision: "2026-10-13",
+  verifiedAt: "2026-10-13",
+  pricingEffectiveAt: "2026-10-13",
   sources: [
     "https://developers.openai.com/api/docs/models/gpt-4o-mini",
     "https://developers.openai.com/api/docs/guides/conversation-state",
     "https://developers.openai.com/api/docs/models/gpt-6-sol",
     "https://developers.openai.com/api/docs/models/gpt-6-luna",
-    "https://developers.openai.com/api/docs/models/gpt-6-astra", "catalog-release:2026-08-16",
+    "https://developers.openai.com/api/docs/models/gpt-6-astra",
+    "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+    "catalog-release:2026-08-16",
     "https://developers.openai.com/api/docs/guides/live"],
   entries: [
+    {
+      "provider": "openai",
+      "modelId": "gpt-6.1-sol",
+      "contextWindowTokens": 1050000,
+      "contextWindowType": "combined",
+      "maxInputTokens": 922000,
+      "maxOutputTokens": 128000,
+      "evidence": {
+        "contextWindowTokens": { "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "sourceType": "primary", "verifiedAt": "2026-10-13" },
+        "contextWindowType": { "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "sourceType": "primary", "verifiedAt": "2026-10-13" },
+        "maxInputTokens": { "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "sourceType": "primary", "verifiedAt": "2026-10-13" },
+        "maxOutputTokens": { "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "sourceType": "primary", "verifiedAt": "2026-10-13" }
+      },
+      "inputCostPer1kTokens": 0.002,
+      "cachedInputCostPer1kTokens": 0.0001,
+      "cacheWriteCostPer1kTokens": 0.0025,
+      "outputCostPer1kTokens": 0.01,
+      "longContextPricing": {
+        "inputTokenThreshold": 272000,
+        "inputMultiplier": 2,
+        "outputMultiplier": 1.5
+      },
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
     {
       "provider": "openai",
       "modelId": "gpt-6-sol",

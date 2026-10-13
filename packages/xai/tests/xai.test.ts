@@ -447,6 +447,22 @@ describe("xai adapter", () => {
     expect(body.reasoning).toEqual({ effort: "xhigh" });
   });
 
+  it("models Grok 4.7 as always-reasoning with the same efforts as 4.6", async () => {
+    const xai = createXAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    expect(xai("grok-4.7").capabilities.reasoningEfforts).toEqual(["low", "medium", "high", "xhigh"]);
+    await expect(generateText({ model: xai("grok-4.7"), prompt: "hello", reasoning: { effort: "none" } })).rejects.toThrow(
+      'does not support reasoning effort "none"'
+    );
+    await expect(generateText({
+      model: xai("grok-4.7"), prompt: "hello", providerOptions: { stop: ["done"] }
+    })).rejects.toThrow("does not support presence_penalty, frequency_penalty, or stop");
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValueOnce(responseMessage("resp_47", "done"));
+    await generateText({ model: xai("grok-4.7"), prompt: "hello", reasoning: { effort: "xhigh" } });
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { reasoning?: { effort?: string } };
+    expect(body.reasoning).toEqual({ effort: "xhigh" });
+  });
+
   it("rejects invalid hosted-tool and file configurations before sending", async () => {
     expect(() =>
       xAIWebSearchTool({ allowed_domains: ["x.ai"], excluded_domains: ["example.com"] })

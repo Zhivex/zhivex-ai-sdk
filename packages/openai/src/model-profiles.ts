@@ -48,8 +48,12 @@ export const isOpenAIAstraModel = (modelId: string) =>
 export const isOpenAISolLunaModel = (modelId: string) =>
   /^gpt-6-(?:sol|luna)(?:$|-\d{4}-\d{2}-\d{2}$)/.test(normalizeModelId(modelId));
 
+/** GPT-6.1 Sol rejects `none` and `minimal` and requires Responses for tools. */
+export const isOpenAIGpt61SolModel = (modelId: string) =>
+  /^gpt-6\.1-sol(?:-\d{4}-\d{2}-\d{2})?$/.test(normalizeModelId(modelId));
+
 export const supportsOpenAIModernResponses = (modelId: string) =>
-  isOpenAIGpt56Model(modelId) || isOpenAIAstraModel(modelId) || isOpenAISolLunaModel(modelId);
+  isOpenAIGpt56Model(modelId) || isOpenAIAstraModel(modelId) || isOpenAISolLunaModel(modelId) || isOpenAIGpt61SolModel(modelId);
 
 const isOpenAIGpt55BaseModel = (modelId: string) =>
   /^gpt-5\.5(?:-\d{4}-\d{2}-\d{2})?$/.test(normalizeModelId(modelId));
@@ -95,7 +99,7 @@ const supportsOpenAIChatAudio = (modelId: string) =>
 
 export const isKnownOpenAIChatModel = (modelId: string) =>
   ["gpt-4-0613", "gpt-4-1106-preview", "gpt-4-0125-preview", "gpt-3.5-turbo-0125", "gpt-3.5-turbo-1106"].includes(normalizeModelId(modelId)) ||
-  /^(?:gpt-(?:3\.5-turbo|4(?:o|\.1|\.5|-turbo)?(?:-mini|-nano)?|5(?:\.[1-6])?(?:-sol|-terra|-luna|-mini|-nano|-pro|-chat-latest)?|6-(?:sol|luna|astra))|o[134](?:-mini|-pro)?)(?:$|-\d{4}-\d{2}-\d{2}$|-preview$)/.test(normalizeModelId(modelId)) || supportsOpenAIChatAudio(modelId);
+  /^(?:gpt-(?:3\.5-turbo|4(?:o|\.1|\.5|-turbo)?(?:-mini|-nano)?|5(?:\.[1-6])?(?:-sol|-terra|-luna|-mini|-nano|-pro|-chat-latest)?|(?:6-(?:sol|luna|astra)|6\.1-sol))|o[134](?:-mini|-pro)?)(?:$|-\d{4}-\d{2}-\d{2}$|-preview$)/.test(normalizeModelId(modelId)) || supportsOpenAIChatAudio(modelId);
 
 export const conservativeCapabilities: ModelCapabilities = {
   streaming: true,
@@ -141,7 +145,7 @@ export const modelCapabilities = (modelId: string, unknownPolicy: "conservative"
     skills: supportsOpenAIApplyPatchAndSkills(modelId),
     toolSearch: supportsOpenAIToolSearch(modelId),
     programmaticToolCalling: supportsOpenAIModernResponses(modelId),
-    multiAgent: supportsOpenAIModernResponses(modelId),
+    multiAgent: supportsOpenAIModernResponses(modelId) && !isOpenAIGpt61SolModel(modelId),
   },
 });
 
@@ -271,15 +275,17 @@ export const realtimeCapabilities = (
 /** Family policy is the single input to metadata, validation and default transport selection. */
 export const resolveOpenAIModelProfile = (modelId: string) => {
   const astra = isOpenAIAstraModel(modelId);
+  const sol61 = isOpenAIGpt61SolModel(modelId);
   const solLuna = isOpenAISolLunaModel(modelId);
   const modern = supportsOpenAIModernResponses(modelId);
+  const fixedEffort = astra || sol61;
   return {
-    label: astra ? "GPT-6 Astra" : "GPT-6 Sol/Luna",
+    label: astra ? "GPT-6 Astra" : sol61 ? "GPT-6.1 Sol" : "GPT-6 Sol/Luna",
     defaultApi: modern ? "responses" : "chat",
     modern,
-    reasoningEfforts: modern ? (astra ? ["low", "medium", "high", "xhigh", "max"] as const : ["none", "low", "medium", "high", "xhigh", "max"] as const) : undefined,
-    sampling: astra ? "unsupported" : solLuna ? "effort-none" : "allowed",
-    toolsRequireResponses: astra ? "always" : solLuna ? "unless-effort-none" : "never",
+    reasoningEfforts: modern ? (fixedEffort ? ["low", "medium", "high", "xhigh", "max"] as const : ["none", "low", "medium", "high", "xhigh", "max"] as const) : undefined,
+    sampling: fixedEffort ? "unsupported" : solLuna ? "effort-none" : "allowed",
+    toolsRequireResponses: fixedEffort ? "always" : solLuna ? "unless-effort-none" : "never",
   };
 };
 

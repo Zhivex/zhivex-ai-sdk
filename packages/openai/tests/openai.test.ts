@@ -1678,6 +1678,24 @@ describe("openai adapter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("gives gpt-6.1-sol tools and vision and rejects none, minimal, sampling, and Chat tools", async () => {
+    const model = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("gpt-6.1-sol");
+    expect(model.capabilities).toMatchObject({
+      tools: true,
+      vision: true,
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max"]
+    });
+    for (const effort of ["none", "minimal"] as const) {
+      await expect(generateText({ model, prompt: "hello", reasoning: { effort } })).rejects.toThrow(effort);
+    }
+    await expect(generateText({ model, prompt: "hello", temperature: 0.2 })).rejects.toThrow("sampling");
+    await expect(generateText({
+      model, prompt: "hello", providerOptions: { apiMode: "chat" },
+      tools: { weather: tool({ name: "weather", schema: z.object({}), execute: () => "sunny" }) }
+    })).rejects.toThrow("requires the Responses API");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("reports the current GPT-5.6, GPT-5.5, and GPT-5.4 tool capability matrix", () => {
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
