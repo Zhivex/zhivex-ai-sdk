@@ -84,17 +84,33 @@ describe("release workflow", () => {
     expect(workflow).toContain("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c");
   });
 
-  it("moves stale next tags after a latest publish without publishing again", () => {
-    const alignJob = workflow.slice(workflow.indexOf("  align_next:"));
+  it("publishes each channel with npm publish --tag and does not move dist-tags", () => {
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    const verifyJob = jobSection("verify_public", "missing");
 
-    expect(alignJob).toContain("needs: publish");
-    expect(alignJob).toContain("inputs.channel == 'latest'");
-    expect(alignJob).toContain("environment: npm");
-    expect(alignJob).toContain("id-token: write");
-    expect(alignJob).toContain("npm install -g npm@11.21.0");
-    expect(alignJob).toContain("bun scripts/align-next-dist-tag.ts --apply");
-    expect(alignJob).not.toContain("npm publish");
-    expect(alignJob).not.toContain("NPM_TOKEN");
+    expect(workflow).not.toContain("align_next");
+    expect(workflow).not.toContain("dist-tag add");
+    expect(workflow).not.toContain("npm install -g npm@11.21.0");
+    expect(workflow).not.toContain("--apply");
+    expect(workflow.match(/id-token:\s*write/g)).toEqual(["id-token: write"]);
+    expect(workflow.match(/environment:\s*npm/g)).toEqual(["environment: npm"]);
+    expect(packageJson.scripts.release).toBeUndefined();
+    expect(packageJson.scripts["release:next"]).toBeUndefined();
+    expect(verifyJob).toContain("needs: publish");
+    expect(verifyJob).toContain("contents: read");
+    expect(verifyJob).not.toContain("id-token:");
+    expect(verifyJob).not.toContain("environment:");
+    expect(verifyJob).not.toContain("NPM_TOKEN");
+    expect(verifyJob).not.toContain("npm publish");
+    expect(verifyJob).toContain(
+      "check-release-readiness.ts --postpublish --tag=${{ inputs.channel }} --release-batch-file=.release/zhivex-release-batch.json"
+    );
+    expect(verifyJob).toContain(
+      "install-published-release.ts --release-batch-file=.release/zhivex-release-batch.json"
+    );
+    expect(verifyJob).toContain("bun run scripts/align-next-dist-tag.ts");
   });
 
   it("runs the repository-pinned secret scanner in CI and release validation", () => {
