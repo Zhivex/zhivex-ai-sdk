@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createQwenImageTranslationModel, validateWan30, validateQwenImage30 } from "../src/cloud-media.js";
+import { createQwenImageTranslationModel, validateWan30, validateQwenImage21, validateQwenImage30 } from "../src/cloud-media.js";
 import { createQwenWorldsClient } from "../src/worlds.js";
 const base = "https://maas.qwencloudapi.com/api/v1";
 const mock = (body: unknown, status = 200) => vi.fn(async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
@@ -145,4 +145,15 @@ it("accepts Wan3 base64 media and requires prompt enhancement for documents", ()
 });
 it("rejects Image3 agent prompt enhancement with editing references", () => {
   expect(() => validateQwenImage30({ prompt: "Edit", images: [{}] }, { prompt_extend_mode: "agent" })).toThrow("text-to-image only");
+});
+it("validates Image 2.1 reference limits and rejects negative prompts", () => {
+  const images = Array.from({ length: 10 }, () => ({}));
+  expect(() => validateQwenImage21({ prompt: "blue square", images, size: "512*512", count: 6 }, {})).not.toThrow();
+  expect(() => validateQwenImage21({ prompt: "blue square", images: [...images, {}] }, {})).toThrow("at most 10");
+  expect(() => validateQwenImage21({ prompt: "blue square", negativePrompt: "red" }, {})).toThrow("negative_prompt");
+  expect(() => validateQwenImage21({ prompt: "blue square" }, { negative_prompt: "red" })).toThrow("qwen-image-3.0");
+  expect(() => validateQwenImage21({ prompt: "Edit", images: [{}] }, { prompt_extend_mode: "agent" })).toThrow("text-to-image only");
+  expect(() => validateQwenImage21({ prompt: "blue square", size: "256*256" }, {})).toThrow("pixels");
+  expect(() => validateQwenImage21({ prompt: "blue square" }, { n: 7 })).toThrow("count");
+  expect(() => validateQwenImage21({ prompt: "blue square", size: "1024x1024" }, {})).toThrow("width*height");
 });

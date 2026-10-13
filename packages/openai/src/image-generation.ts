@@ -26,7 +26,7 @@ const DEFAULT_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
 export type OpenAIImageOutputFormat = "png" | "jpeg" | "webp";
 export type OpenAIImageSize = "auto" | `${number}x${number}`;
-export type OpenAIImageQuality = "auto" | "low" | "medium" | "high" | "standard" | "hd";
+export type OpenAIImageQuality = "auto" | "low" | "medium" | "high" | "xhigh" | "max" | "standard" | "hd";
 
 export type OpenAIImageGenerationOptions = Record<string, unknown> & {
   background?: "auto" | "opaque" | "transparent";
@@ -57,7 +57,8 @@ export interface OpenAIImageGenerationToolConfig {
   output_compression?: number;
   output_format?: OpenAIImageOutputFormat;
   partial_images?: 0 | 1 | 2 | 3;
-  quality?: "auto" | "low" | "medium" | "high";
+  model?: string;
+  quality?: "auto" | "low" | "medium" | "high" | "xhigh" | "max";
   size?: OpenAIImageSize;
 }
 
@@ -183,6 +184,16 @@ const mediaTypeFromOutputFormat = (format: OpenAIImageOutputFormat | undefined) 
 const normalizedModelId = (modelId: string) => modelId.trim().toLowerCase();
 const isGPTImageModel = (modelId: string) => /^gpt-image(?:-|$)/.test(normalizedModelId(modelId));
 const isGPTImage2Model = (modelId: string) => /^gpt-image-2(?:-|$)/.test(normalizedModelId(modelId));
+const isGPTImage25Model = (modelId: string) =>
+  /^gpt-image-2\.5-(?:flare|sunburst)(?:-\d{4}-\d{2}-\d{2})?$/.test(normalizedModelId(modelId));
+
+const assertExtendedImageQuality = (modelId: string | undefined, quality: unknown) => {
+  if (quality !== "xhigh" && quality !== "max") return;
+  if (modelId !== undefined && isGPTImage25Model(modelId)) return;
+  throw new UnsupportedFeatureError(
+    `Provider "openai" image quality "${quality}" is supported by gpt-image-2.5-flare and gpt-image-2.5-sunburst.`
+  );
+};
 const isDallE2Model = (modelId: string) => /^dall-e-2(?:-|$)/.test(normalizedModelId(modelId));
 const isDallE3Model = (modelId: string) => /^dall-e-3(?:-|$)/.test(normalizedModelId(modelId));
 
@@ -235,6 +246,7 @@ const sanitizeMetadata = (value: Record<string, unknown>, base64Keys: string[]) 
 };
 
 const validateToolConfig = (config: OpenAIImageGenerationToolConfig) => {
+  assertExtendedImageQuality(config.model, config.quality);
   validateIntegerRange(config.partial_images, "partial_images", 0, 3);
   validateIntegerRange(config.output_compression, "output_compression", 0, 100);
   if (config.background === "transparent" && config.output_format === "jpeg") {
@@ -430,6 +442,7 @@ export class OpenAIImageGenerationModel implements ImageGenerationModel<OpenAIIm
     );
     delete providerOptions.responseMaxBytes;
     delete providerOptions.errorBodyMaxBytes;
+    assertExtendedImageQuality(this.modelId, providerOptions.quality);
 
     validateIntegerRange(
       typeof providerOptions.output_compression === "number" ? providerOptions.output_compression : undefined,

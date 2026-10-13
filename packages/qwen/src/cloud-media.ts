@@ -77,6 +77,23 @@ export interface QwenImage30Parameters {
 }
 export interface QwenHappyHorseMedia { type: "first_frame" | "reference_image" | "video"; url: string }
 export interface QwenHappyHorseParameters { resolution?: "480P" | "720P" | "1080P"; ratio?: string; duration?: number; watermark?: boolean; seed?: number; audio_setting?: "auto" | "origin" }
+export function validateQwenImage21(input: { prompt: string; images?: unknown[]; count?: number; size?: string; negativePrompt?: string }, parameters: Record<string, unknown>): void {
+  if (input.negativePrompt !== undefined || parameters.negative_prompt !== undefined) {
+    throw new ConfigurationError("Qwen Image 2.1 does not support negative_prompt. Only the qwen-image-3.0 series accepts it.");
+  }
+  requireCloudText(input.prompt, "prompt", 100000);
+  if ((input.images?.length ?? 0) > 10) throw new ConfigurationError("Qwen Image 2.1 accepts at most 10 reference images.");
+  if (parameters.prompt_extend_mode !== undefined && !["direct", "agent"].includes(String(parameters.prompt_extend_mode))) throw new ConfigurationError("Invalid Image 2.1 prompt_extend_mode.");
+  if (parameters.prompt_extend_mode === "agent" && input.images?.length) throw new ConfigurationError("Image 2.1 agent enhancement is text-to-image only.");
+  const count = input.count ?? parameters.n;
+  if (count !== undefined && (typeof count !== "number" || !Number.isInteger(count) || count < 1 || count > 6)) throw new ConfigurationError("Qwen Image 2.1 count must be an integer from 1 to 6.");
+  const size = input.size ?? parameters.size;
+  if (size !== undefined) {
+    const match = typeof size === "string" ? /^(\d+)\*(\d+)$/.exec(size) : null;
+    const w = Number(match?.[1]), h = Number(match?.[2]);
+    if (!match || w * h < 512 * 512 || w * h > 2048 * 2048 || w / h < 1 / 8 || w / h > 8) throw new ConfigurationError("Qwen Image 2.1 size requires width*height, 512²–2048² pixels and ratio 1:8–8:1.");
+  }
+}
 export function validateQwenImage30(input: { prompt: string; images?: unknown[]; count?: number; size?: string }, parameters: Record<string, unknown>): void {
   requireCloudText(input.prompt, "prompt", 100000);
   if ((input.images?.length ?? 0) > 3) throw new ConfigurationError("Qwen Image 3.0 accepts at most three reference images.");

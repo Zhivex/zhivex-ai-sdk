@@ -86,7 +86,7 @@ Use `providerOptions.safety_identifier` for a stable, non-PII identifier for the
 
 ## GPT Image 2 and hosted image generation
 
-Use the shared image contract for direct Image API generations. `gpt-image-2` supports the current square, portrait, landscape, and wide output sizes exposed by OpenAI. See the official [GPT Image 2 model page](https://developers.openai.com/api/docs/models/gpt-image-2) and [image generation guide](https://developers.openai.com/api/docs/guides/image-generation).
+Use the shared image contract for direct Image API generations. `gpt-image-2` supports the current square, portrait, landscape, and wide output sizes exposed by OpenAI. `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst`, including the `2026-09-08` snapshots, accept image qualities `low`, `medium`, `high`, `xhigh`, `max`, and `auto`. Earlier GPT Image models stop at `high`; the adapter rejects `xhigh` and `max` for those ids and for a hosted image tool that omits a 2.5 model. See the official [GPT Image 2 model page](https://developers.openai.com/api/docs/models/gpt-image-2), [GPT Image 2.5 Flare](https://developers.openai.com/api/docs/models/gpt-image-2.5-flare), [GPT Image 2.5 Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst), and [image generation guide](https://developers.openai.com/api/docs/guides/image-generation).
 
 ```ts
 import { generateImage } from "@zhivex-ai/core";

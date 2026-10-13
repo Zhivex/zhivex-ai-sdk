@@ -64,7 +64,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(231);
+    expect(entries).toHaveLength(250);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
@@ -106,12 +106,12 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(231);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(250);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-10-13",
       verifiedAt: "2026-10-13",
       pricingEffectiveAt: "2026-10-13",
-      sources: ["https://developers.openai.com/api/docs/models/gpt-4o-mini", "https://developers.openai.com/api/docs/guides/conversation-state", "https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
+      sources: ["https://developers.openai.com/api/docs/models/gpt-4o-mini", "https://developers.openai.com/api/docs/guides/conversation-state", "https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare", "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst", "https://developers.openai.com/api/docs/guides/image-generation", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
     });
     expect(fragments.find((fragment) => fragment.provider === "zai")).toMatchObject({
       revision: "2026-08-26",
@@ -120,10 +120,10 @@ describe("SDK model catalog ownership", () => {
       modelCount: 3
     });
     expect(fragments.find((fragment) => fragment.provider === "qwen")).toMatchObject({
-      revision: "2026-09-26",
-      verifiedAt: "2026-09-26",
+      revision: "2026-10-13",
+      verifiedAt: "2026-10-13",
       pricingEffectiveAt: "2026-09-18",
-      modelCount: 75
+      modelCount: 77
     });
     expect(Object.isFrozen(fragments[0])).toBe(true);
     expect(Object.isFrozen(fragments[0]?.sources)).toBe(true);
@@ -134,9 +134,84 @@ describe("SDK model catalog ownership", () => {
     expect(entry).toMatchObject({ provider: "vertex", modelId: "claude-sonnet-4-6" });
     expect(entry?.inputCostPer1kTokens).toBeUndefined();
     expect(entry?.recommendedFor).toBeUndefined();
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "anthropic")?.revision).toBe("2026-10-07");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "anthropic")?.revision).toBe("2026-10-13");
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "bedrock")?.revision).toBe("2026-10-07");
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-07");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-13");
+  });
+
+  it("records the October 2026 frontier inventory without inventing token prices", () => {
+    expect(defaultModelCatalog.find("meta", "muse-wonder-1.0")).toMatchObject({
+      inputCostPer1kTokens: 0.004,
+      cachedInputCostPer1kTokens: 0.0002,
+      outputCostPer1kTokens: 0.02,
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    });
+    expect(defaultModelCatalog.find("meta", "muse-wonder-1.0")?.contextWindowTokens).toBeUndefined();
+    expect(defaultModelCatalog.find("gemini", "gemini-nano-banana-2.1")).toMatchObject({
+      recommendedFor: ["vision", "speed"]
+    });
+    expect(defaultModelCatalog.find("vertex", "gemini-nano-banana-2.1")).toMatchObject({
+      recommendedFor: ["vision", "speed"]
+    });
+    for (const id of ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"]) {
+      const entry = defaultModelCatalog.find("gemini", id);
+      expect(entry).toMatchObject({ recommendedFor: ["speed"] });
+      expect(entry?.inputCostPer1kTokens).toBeUndefined();
+      expect(entry?.lifecycle).toBeUndefined();
+    }
+    expect(defaultModelCatalog.find("gemini", "gemini-3.7-flash")?.lifecycle).toMatchObject({
+      deprecatedAt: "2026-10-08",
+      source: "https://ai.google.dev/gemini-api/docs/changelog"
+    });
+    expect(defaultModelCatalog.find("gemini", "gemini-3.7-flash")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("gemini", "gemini-3.5-flash")).toMatchObject({
+      aliases: ["gemini-flash-latest"],
+      lifecycle: { deprecatedAt: "2026-10-08" }
+    });
+    expect(defaultModelCatalog.find("gemini", "gemini-3.5-flash")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("gemini", "gemini-3.5-flash-lite")?.lifecycle).toBeUndefined();
+    expect(defaultModelCatalog.find("gemini", "gemini-3.1-flash-image")?.lifecycle).toMatchObject({
+      deprecatedAt: "2026-10-06"
+    });
+    expect(defaultModelCatalog.find("vertex", "gemini-3.7-flash")?.lifecycle).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "gemini-3.5-flash")?.recommendedFor).toEqual([
+      "chat", "reasoning", "speed", "vision", "tools"
+    ]);
+    for (const id of ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]) {
+      const entry = defaultModelCatalog.find("openai", id);
+      expect(entry?.recommendedFor).toEqual(["vision"]);
+      for (const field of ["inputCostPer1kTokens", "outputCostPer1kTokens", "cachedInputCostPer1kTokens"]) {
+        expect(entry).not.toHaveProperty(field);
+      }
+    }
+    expect(defaultModelCatalog.find("openai", "gpt-image-2.5-flare")?.aliases).toEqual(["gpt-image-2.5-flare-2026-09-08"]);
+    expect(defaultModelCatalog.find("openai", "gpt-image-2.5-sunburst")?.aliases).toEqual(["gpt-image-2.5-sunburst-2026-09-08"]);
+    for (const id of ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
+      const entry = defaultModelCatalog.find("azure-openai", id);
+      expect(entry).toMatchObject({ recommendedFor: ["chat", "reasoning", "tools", "vision"] });
+      expect(entry?.inputCostPer1kTokens).toBeUndefined();
+    }
+    expect(defaultModelCatalog.find("openrouter", "meta/muse-wonder")).toMatchObject({
+      inputCostPer1kTokens: 0.004,
+      cachedInputCostPer1kTokens: 0.0002,
+      outputCostPer1kTokens: 0.02
+    });
+    expect(defaultModelCatalog.find("openrouter", "openai/gpt-6.1-sol")?.longContextPricing).toEqual({
+      inputTokenThreshold: 272000, inputMultiplier: 2, outputMultiplier: 1.5
+    });
+    expect(defaultModelCatalog.find("openrouter", "x-ai/grok-4.7")?.longContextPricing).toEqual({
+      inputTokenThreshold: 200000, inputMultiplier: 2, outputMultiplier: 2
+    });
+    expect(defaultModelCatalog.find("openrouter", "google/gemini-nano-banana-2.1")?.inputCostPer1kTokens).toBeUndefined();
+    expect(defaultModelCatalog.find("openai", "gpt-6.1-sol")?.recommendedFor).toContain("tools");
+    expect(defaultModelCatalog.find("xai", "grok-4.7")?.recommendedFor).toContain("reasoning");
+    expect(defaultModelCatalog.find("kimi", "kimi-k2.5")).toBeUndefined();
+    expect(defaultModelCatalog.find("openrouter", "google/gemini-3.8-flash-tts")).toBeUndefined();
+    for (const id of ["qwen-image-2.1-pro", "qwen-image-2.1-turbo"]) {
+      const entry = defaultModelCatalog.find("qwen", id);
+      expect(entry).toMatchObject({ recommendedFor: ["vision"] });
+      expect(entry?.inputCostPer1kTokens).toBeUndefined();
+    }
   });
 
   it("does not derive the release-managed snapshot from the frozen core compatibility copy", () => {

@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const geminiCatalogFragment = defineModelCatalogFragment({
   provider: "gemini",
-  revision: "2026-09-16",
-  verifiedAt: "2026-09-16",
+  revision: "2026-10-13",
+  verifiedAt: "2026-10-13",
   pricingEffectiveAt: "2026-08-30",
   sources: [
     "https://ai.google.dev/gemini-api/docs/models",
@@ -31,17 +31,36 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     },
     {
       "provider": "gemini",
+      "modelId": "gemini-nano-banana-2.1",
+      "recommendedFor": [
+        "vision",
+        "speed"
+      ]
+    },
+    {
+      "provider": "gemini",
+      "modelId": "gemini-3.8-flash-tts",
+      "recommendedFor": [
+        "speed"
+      ]
+    },
+    {
+      "provider": "gemini",
+      "modelId": "gemini-3.8-flash-lite-tts",
+      "recommendedFor": [
+        "speed"
+      ]
+    },
+    {
+      "provider": "gemini",
       "modelId": "gemini-3.7-flash",
       "inputCostPer1kTokens": 0.0015,
       "cachedInputCostPer1kTokens": 0.00015,
       "outputCostPer1kTokens": 0.0075,
-      "recommendedFor": [
-        "chat",
-        "reasoning",
-        "speed",
-        "vision",
-        "tools"
-      ]
+      "lifecycle": {
+        "deprecatedAt": "2026-10-08",
+        "source": "https://ai.google.dev/gemini-api/docs/changelog"
+      }
     },
     {
       "provider": "gemini",
@@ -80,13 +99,10 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
       "inputCostPer1kTokens": 0.0015,
       "cachedInputCostPer1kTokens": 0.00015,
       "outputCostPer1kTokens": 0.009,
-      "recommendedFor": [
-        "chat",
-        "reasoning",
-        "speed",
-        "vision",
-        "tools"
-      ]
+      "lifecycle": {
+        "deprecatedAt": "2026-10-08",
+        "source": "https://ai.google.dev/gemini-api/docs/changelog"
+      }
     },
     {
       "provider": "gemini",
@@ -138,10 +154,10 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "gemini",
       "modelId": "gemini-3.1-flash-image",
-      "recommendedFor": [
-        "vision",
-        "speed"
-      ]
+      "lifecycle": {
+        "deprecatedAt": "2026-10-06",
+        "source": "https://ai.google.dev/gemini-api/docs/changelog"
+      }
     },
     {
       "provider": "gemini",

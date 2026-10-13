@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const qwenCatalogFragment = defineModelCatalogFragment({
   provider: "qwen",
-  revision: "2026-09-26",
-  verifiedAt: "2026-09-26",
+  revision: "2026-10-13",
+  verifiedAt: "2026-10-13",
   pricingEffectiveAt: "2026-09-18",
   sources: [
     "https://docs.qwencloud.com/api-reference/decision-model-api",
@@ -18,7 +18,10 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
     "https://www.qwencloud.com/models/qwen3.8-omni-flash",
     "https://docs.qwencloud.com/changelog/models",
     "https://www.qwencloud.com/models/qwen3.8-flash",
-    "https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models"
+    "https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models",
+    "https://www.alibabacloud.com/help/en/model-studio/qwen-image-generation-and-editing-api-reference",
+    "https://www.alibabacloud.com/help/en/model-studio/qwen-image-2-1-turbo",
+    "https://www.qwencloud.com/models/qwen-image-2.1-pro"
   ],
   entries: [
     // Discovery is not a claim that every account, transport or feature is live-certified.
@@ -34,6 +37,8 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
     { provider: "qwen", modelId: "qwen-audio-3.0-asr-flash-filetrans" },
     { provider: "qwen", modelId: "qwen-audio-3.1-asr-flash-streaming" },
     { provider: "qwen", modelId: "qwen-audio-3.1-asr-flash-filetrans" },
+    { provider: "qwen", modelId: "qwen-image-2.1-pro", recommendedFor: ["vision"] },
+    { provider: "qwen", modelId: "qwen-image-2.1-turbo", recommendedFor: ["vision"] },
     { provider: "qwen", modelId: "qwen-image-3.0-pro" },
     { provider: "qwen", modelId: "qwen-image-3.0" },
     { provider: "qwen", modelId: "qwen3.8-27b" },
