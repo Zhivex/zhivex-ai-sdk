@@ -229,7 +229,7 @@ const sizeFromAspectRatio = (aspectRatio: string | undefined, modelId: string): 
   };
   if (standard[normalized]) return standard[normalized];
 
-  if (isGPTImage2Model(modelId)) {
+  if (isGPTImage2Model(modelId) || isGPTImage25Model(modelId)) {
     if (normalized === "16:9") return "1536x864";
     if (normalized === "9:16") return "864x1536";
   }
