@@ -106,7 +106,12 @@ describe("September provider model contracts", () => {
     for (const [provider, id] of [["openai", "gpt-6-astra"], ["azure-openai", "gpt-6-astra"], ["anthropic", "claude-fable-5-1"], ["gemini", "gemini-3.8-flash"], ["vertex", "gemini-3.8-flash"], ["gemini", "lyria-3.5"], ["meta", "muse-spark-1.3"], ["qwen", "qwen3.8-max-0902"], ["ollama", "qwen3.8"]]) {
       expect(defaultModelCatalog.find(provider!, id!)).toBeDefined();
     }
-    for (const id of ["kimi-k2.5", "kimi-k2-0905-preview"]) expect(defaultModelCatalog.find("kimi", id)?.recommendedFor).toBeUndefined();
+    for (const id of ["kimi-k2.5", "kimi-k2-0905-preview", "kimi-k2-thinking"]) {
+      expect(defaultModelCatalog.find("kimi", id)).toBeUndefined();
+    }
+    expect(defaultModelCatalog.find("kimi", "kimi-k3")?.recommendedFor).toEqual(["chat", "reasoning", "tools", "vision"]);
+    expect(defaultModelCatalog.find("openai", "gpt-6.1-sol")?.recommendedFor).toContain("tools");
+    expect(defaultModelCatalog.find("xai", "grok-4.7")?.recommendedFor).toContain("reasoning");
     expect(defaultModelCatalog.find("anthropic", "claude-mythos-5-1")?.recommendedFor).toBeUndefined();
     expect(createOllama()("qwen3.8:27b").capabilities.reasoning).toBe(true);
   });

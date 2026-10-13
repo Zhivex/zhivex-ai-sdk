@@ -26,7 +26,7 @@ const result = await generateText({
 });
 ```
 
-K3 always reasons. The shared `reasoning.effort: "max"` option maps to Kimi's top-level `reasoning_effort: "max"`; K2.x `thinking` options are rejected. `maxTokens` maps to `max_completion_tokens`, whose K3 range is 1 through 1,048,576.
+K3 always reasons. `reasoning.effort` maps to Kimi's top-level `reasoning_effort` and accepts `low`, `high`, and `max` (`max` is the provider default). Other efforts, including `medium` and `none`, are rejected before the request is sent. K2.x `thinking` options are rejected. `maxTokens` maps to `max_completion_tokens`, whose K3 range is 1 through 1,048,576.
 
 K3 uses fixed sampling values (`temperature=1`, `top_p=0.95`, `n=1`, and zero presence/frequency penalties). The adapter accepts those exact values but omits them from the request, and rejects incompatible values before calling the API.
 
@@ -63,7 +63,7 @@ const tools = await kimiFormulaTools({
 
 Formula tools require approval by default, reject unsafe Formula resource paths and prototype-sensitive remote tool names, return a prototype-free tool set, and apply a 30-second request timeout. Use `requiresApproval: false` only when the caller has an equivalent policy boundary. `timeoutMs` can set a positive timeout up to 10 minutes; caller and agent abort signals are propagated to both loaded and statically declared Formula tools.
 
-Built-in shortcuts include `kimiWebSearchTool()`, `kimiFetchTool()`, `kimiCodeRunnerTool()`, `kimiExcelTool()`, and `kimiDateTool()`. Current first-class model IDs are `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6`, and `kimi-k2.5`. The older `kimi-k2-0905-preview` and `kimi-k2-thinking` IDs are kept for passthrough compatibility but are deprecated upstream.
+Built-in shortcuts include `kimiWebSearchTool()`, `kimiFetchTool()`, `kimiCodeRunnerTool()`, `kimiExcelTool()`, and `kimiDateTool()`. Current first-class model IDs are `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, and `kimi-k2.6`. Older ids such as `kimi-k2.5`, `kimi-k2-0905-preview`, and `kimi-k2-thinking` can still be passed through to the API, which documents them as retired.
 
 Moonshot currently marks its Formula web-search tool as being updated and not recommended for near-term production workflows. The helper remains available for compatibility, but production use should follow the current upstream status.
 
@@ -75,8 +75,8 @@ Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
 
-## Retired model recommendations
+## Retired model catalog entries
 
-The release-managed SDK catalog retains `kimi-k2.5` and `kimi-k2-0905-preview` for explicit lookup but no longer recommends them. Kimi documents K2.5 as discontinued on August 31, 2026 and the K2 series on May 25, 2026. Prefer an available K3 or K2.7 Code deployment. Keeping an entry for historical lookup does not imply continued upstream availability.
+The Open Platform changelog documents that `kimi-k2.5`, the `moonshot-v1` series, and the `kimi-k2` series (including `kimi-k2-0905-preview`) return 404. Those ids are no longer in the release-managed SDK catalog. `kimi-k2.6` and `kimi-k2.7-code` remain. Prefer `kimi-k3` for new work.
 
-See [Kimi's model lifecycle](https://platform.kimi.ai/docs/models).
+See the [platform changelog](https://platform.kimi.ai/docs/platform-changelog).

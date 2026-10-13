@@ -46,7 +46,7 @@ export interface KimiLanguageModelOptions {
   seed?: number;
   user?: string;
   max_completion_tokens?: number;
-  reasoning_effort?: "max";
+  reasoning_effort?: "low" | "high" | "max";
   thinking?: {
     type: "enabled" | "disabled";
     keep?: "all" | null;
@@ -119,6 +119,9 @@ const capabilities: ModelCapabilities = {
   }
 };
 
+const kimiK3Efforts = ["low", "high", "max"] as const;
+const isKimiK3Effort = (value: string): value is (typeof kimiK3Efforts)[number] =>
+  (kimiK3Efforts as readonly string[]).includes(value);
 const isKimiK3Model = (modelId: string) => /^kimi-k3(?:$|-)/i.test(modelId);
 const isKimiK27CodeModel = (modelId: string) => /^kimi-k2\.7-code(?:$|-)/i.test(modelId);
 const isKimiK26Model = (modelId: string) => /^kimi-k2\.6(?:$|-)/i.test(modelId);
@@ -444,11 +447,13 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
   }
 
   if (isKimiK3Model(modelId)) {
-    if (input.reasoning.effort !== undefined && input.reasoning.effort !== "max") {
-      throw new UnsupportedFeatureError('Provider "kimi" only supports "reasoning.effort=max" for Kimi K3 models.');
+    if (input.reasoning.effort !== undefined && !isKimiK3Effort(input.reasoning.effort)) {
+      throw new UnsupportedFeatureError(
+        'Provider "kimi" supports reasoning efforts "low", "high", and "max" for Kimi K3 models.'
+      );
     }
 
-    return input.reasoning.effort === "max" ? { reasoning_effort: "max" } : undefined;
+    return input.reasoning.effort ? { reasoning_effort: input.reasoning.effort } : undefined;
   }
 
   if (input.reasoning.effort === "none" && isKimiK27CodeModel(modelId)) {
@@ -491,11 +496,13 @@ const assertKimiRequestCompatibility = (modelId: string, input: ModelGenerateInp
   if (isKimiK3Model(modelId)) {
     if (rawThinking !== undefined) {
       throw new UnsupportedFeatureError(
-        'Provider "kimi" does not support the K2.x "thinking" parameter for Kimi K3 models. Use "reasoning_effort=max".'
+        'Provider "kimi" does not support the K2.x "thinking" parameter for Kimi K3 models. Use reasoning_effort "low", "high", or "max".'
       );
     }
-    if (providerOptions.reasoning_effort !== undefined && providerOptions.reasoning_effort !== "max") {
-      throw new UnsupportedFeatureError('Provider "kimi" only supports "reasoning_effort=max" for Kimi K3 models.');
+    if (providerOptions.reasoning_effort !== undefined && !isKimiK3Effort(String(providerOptions.reasoning_effort))) {
+      throw new UnsupportedFeatureError(
+        'Provider "kimi" supports reasoning_effort "low", "high", and "max" for Kimi K3 models.'
+      );
     }
 
     validateFixedNumber("Kimi K3", "temperature", input.temperature ?? providerOptions.temperature, 1);
@@ -600,7 +607,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
       reasoning: supportsKimiReasoning(modelId),
       ...(isKimiK3Model(modelId)
         ? {
-            reasoningEfforts: ["max" as const],
+            reasoningEfforts: [...kimiK3Efforts],
             contextCaching: true
           }
         : {})

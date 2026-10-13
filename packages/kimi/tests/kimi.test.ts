@@ -286,7 +286,7 @@ describe("kimi adapter", () => {
 
     expect(provider("kimi-k3").capabilities).toMatchObject({
       reasoning: true,
-      reasoningEfforts: ["max"],
+      reasoningEfforts: ["low", "high", "max"],
       contextCaching: true
     });
     expect(provider("kimi-k2.7-code").capabilities.reasoning).toBe(true);
@@ -325,13 +325,25 @@ describe("kimi adapter", () => {
     expect(result.usage?.cachedInputTokens).toBe(6);
   });
 
+  it.each(["low", "high"] as const)("sends Kimi K3 reasoning_effort %s", async (effort) => {
+    fetchMock.mockResolvedValueOnce(Response.json({ choices: [{ finish_reason: "stop", message: { content: "ok" } }] }));
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({ model: provider("kimi-k3"), prompt: "hello", reasoning: { effort } });
+    const body = JSON.parse(String((fetchMock.mock.calls.at(-1)?.[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body.reasoning_effort).toBe(effort);
+    expect(body).not.toHaveProperty("thinking");
+  });
+
   it("rejects unsupported Kimi K3 reasoning and sampling controls before fetch", async () => {
     const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const model = provider("kimi-k3");
     const messages = [createTextMessage("user", "hello")];
 
-    await expect(model.generate({ messages, reasoning: { effort: "low" } })).rejects.toThrow(
-      'only supports "reasoning.effort=max"'
+    await expect(model.generate({ messages, reasoning: { effort: "medium" } })).rejects.toThrow(
+      'supports reasoning efforts "low", "high", and "max"'
+    );
+    await expect(model.generate({ messages, reasoning: { effort: "none" } })).rejects.toThrow(
+      'supports reasoning efforts "low", "high", and "max"'
     );
     await expect(model.generate({ messages, reasoning: { effort: "max", budgetTokens: 100 } })).rejects.toThrow(
       'does not support "reasoning.budgetTokens"'
@@ -339,8 +351,8 @@ describe("kimi adapter", () => {
     await expect(model.generate({ messages, providerOptions: { thinking: { type: "enabled" } } })).rejects.toThrow(
       'does not support the K2.x "thinking" parameter'
     );
-    await expect(model.generate({ messages, providerOptions: { reasoning_effort: "high" as never } })).rejects.toThrow(
-      'only supports "reasoning_effort=max"'
+    await expect(model.generate({ messages, providerOptions: { reasoning_effort: "medium" as never } })).rejects.toThrow(
+      'supports reasoning_effort "low", "high", and "max"'
     );
 
     const invalidControls: Array<{ input: Parameters<typeof model.generate>[0]; parameter: string }> = [
