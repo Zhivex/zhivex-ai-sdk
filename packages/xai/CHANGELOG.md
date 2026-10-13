@@ -1,5 +1,14 @@
 # @zhivex-ai/xai
 
+## 0.2.12
+
+### Patch Changes
+
+- 0979b26: Recognize `gpt-6.1-sol` as a vision and tool model that rejects `none` and `minimal` reasoning and requires the Responses API for tools. Treat `grok-4.7` as always-reasoning with `low`, `medium`, `high`, and `xhigh`. Accept Kimi K3 `reasoning_effort` values `low`, `high`, and `max`, and remove retired Kimi ids from the SDK catalog.
+- Updated dependencies [0979b26]
+- Updated dependencies [06fe4f7]
+  - @zhivex-ai/openai@0.16.1
+
 ## 0.2.11
 
 ### Patch Changes

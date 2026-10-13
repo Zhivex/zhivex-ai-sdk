@@ -1,5 +1,16 @@
 # @zhivex-ai/vertex
 
+## 1.2.8
+
+### Patch Changes
+
+- 06fe4f7: Bump `@anthropic-ai/sdk` to 0.133.0, `@aws-sdk/client-bedrock-runtime` to ^3.1149.0, `@google-cloud/aiplatform` to ^7.5.0, and `google-auth-library` to ^11.2.0.
+- Updated dependencies [06fe4f7]
+- Updated dependencies [0979b26]
+- Updated dependencies [06fe4f7]
+  - @zhivex-ai/anthropic@0.14.1
+  - @zhivex-ai/openai@0.16.1
+
 ## 1.2.7
 
 ### Patch Changes

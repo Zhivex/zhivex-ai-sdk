@@ -1,5 +1,11 @@
 # @zhivex-ai/qwen
 
+## 0.17.1
+
+### Patch Changes
+
+- 06fe4f7: Add GPT Image 2.5 Flare and Sunburst qualities `xhigh` and `max`, and map their `16:9` and `9:16` aspect ratios to `1536x864` and `864x1536`. Validate Qwen Image 2.1 Pro and Turbo on the synchronous image path. Refresh the SDK catalog with Muse Wonder 1.0, Gemini Nano Banana 2.1, Gemini 3.8 TTS, the image and Azure GPT-6 entries, OpenRouter frontier routes, Gemini 3.7 and 3.5 deprecations, and the Sonnet 5.5 cache-read price.
+
 ## 0.17.0
 
 ### Minor Changes
