@@ -1,5 +1,12 @@
 # @zhivex-ai/openai
 
+## 0.16.1
+
+### Patch Changes
+
+- 0979b26: Recognize `gpt-6.1-sol` as a vision and tool model that rejects `none` and `minimal` reasoning and requires the Responses API for tools. Treat `grok-4.7` as always-reasoning with `low`, `medium`, `high`, and `xhigh`. Accept Kimi K3 `reasoning_effort` values `low`, `high`, and `max`, and remove retired Kimi ids from the SDK catalog.
+- 06fe4f7: Add GPT Image 2.5 Flare and Sunburst qualities `xhigh` and `max`, and map their `16:9` and `9:16` aspect ratios to `1536x864` and `864x1536`. Validate Qwen Image 2.1 Pro and Turbo on the synchronous image path. Refresh the SDK catalog with Muse Wonder 1.0, Gemini Nano Banana 2.1, Gemini 3.8 TTS, the image and Azure GPT-6 entries, OpenRouter frontier routes, Gemini 3.7 and 3.5 deprecations, and the Sonnet 5.5 cache-read price.
+
 ## 0.16.0
 
 ### Minor Changes

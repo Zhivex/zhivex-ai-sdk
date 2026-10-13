@@ -1,5 +1,11 @@
 # @zhivex-ai/bedrock
 
+## 2.0.6
+
+### Patch Changes
+
+- 06fe4f7: Bump `@anthropic-ai/sdk` to 0.133.0, `@aws-sdk/client-bedrock-runtime` to ^3.1149.0, `@google-cloud/aiplatform` to ^7.5.0, and `google-auth-library` to ^11.2.0.
+
 ## 2.0.5
 
 ### Patch Changes
