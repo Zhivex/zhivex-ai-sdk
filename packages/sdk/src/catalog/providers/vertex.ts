@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const vertexCatalogFragment = defineModelCatalogFragment({
   provider: "vertex",
-  revision: "2026-10-07",
-  verifiedAt: "2026-10-07",
+  revision: "2026-10-13",
+  verifiedAt: "2026-10-13",
   pricingEffectiveAt: "2026-08-30",
   sources: [
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/sonnet-5-5",
@@ -25,7 +25,8 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/use-claude",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-8-flash",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-7-flash",
-    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-3-7-flash"
+    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-3-7-flash",
+    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/release-notes"
   ],
   entries: [
     { provider: "vertex", modelId: "gemini-3.5-transcribe-live-preview" },
@@ -177,6 +178,14 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "vertex",
       "modelId": "gemini-3.1-flash-lite-image",
+      "recommendedFor": [
+        "vision",
+        "speed"
+      ]
+    },
+    {
+      "provider": "vertex",
+      "modelId": "gemini-nano-banana-2.1",
       "recommendedFor": [
         "vision",
         "speed"

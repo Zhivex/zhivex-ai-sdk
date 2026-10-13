@@ -232,6 +232,78 @@ describe("OpenAI image generation", () => {
     );
   });
 
+  it("maps 16:9 and 9:16 for GPT Image 2.5 Flare and Sunburst", async () => {
+    const cases = [
+      ["gpt-image-2.5-flare", "16:9", "1536x864"],
+      ["gpt-image-2.5-sunburst", "9:16", "864x1536"],
+      ["gpt-image-2.5-sunburst-2026-09-08", "16:9", "1536x864"]
+    ] as const;
+    for (const [modelId, aspectRatio, size] of cases) {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({ data: [{ b64_json: Buffer.from([1]).toString("base64") }] })
+      );
+      const model = createOpenAIImageGenerationModel({
+        modelId,
+        apiKey: "test",
+        fetch: fetchMock as typeof fetch
+      });
+      await model.generateImage({ prompt: "draw", aspectRatio });
+      expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body))).toMatchObject({
+        model: modelId,
+        size
+      });
+    }
+
+    const older = createOpenAIImageGenerationModel({
+      modelId: "gpt-image-1.5",
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch
+    });
+    await expect(older.generateImage({ prompt: "draw", aspectRatio: "16:9" }))
+      .rejects.toThrow('aspect ratio "16:9"');
+    expect(fetchMock).toHaveBeenCalledTimes(cases.length);
+  });
+
+  it("accepts xhigh and max quality only for GPT Image 2.5 Flare and Sunburst", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ data: [{ b64_json: Buffer.from([1]).toString("base64") }] })
+    );
+    const flare = createOpenAIImageGenerationModel({
+      modelId: "gpt-image-2.5-flare",
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch
+    });
+    await flare.generateImage({ prompt: "draw", providerOptions: { quality: "max" } });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      model: "gpt-image-2.5-flare",
+      quality: "max"
+    });
+
+    const dated = createOpenAIImageGenerationModel({
+      modelId: "gpt-image-2.5-sunburst-2026-09-08",
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch
+    });
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ data: [{ b64_json: Buffer.from([2]).toString("base64") }] })
+    );
+    await dated.generateImage({ prompt: "draw", providerOptions: { quality: "xhigh" } });
+
+    const older = createOpenAIImageGenerationModel({
+      modelId: "gpt-image-2",
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch
+    });
+    await expect(older.generateImage({ prompt: "draw", providerOptions: { quality: "xhigh" } }))
+      .rejects.toThrow('image quality "xhigh"');
+    expect(() => openAIImageGenerationTool({ quality: "max" })).toThrow('image quality "max"');
+    expect(openAIImageGenerationTool({
+      model: "gpt-image-2.5-flare-2026-09-08",
+      quality: "xhigh"
+    }).config).toMatchObject({ model: "gpt-image-2.5-flare-2026-09-08", quality: "xhigh" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("surfaces non-retryable provider errors with a bounded response body", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: { code: "moderation_blocked" } }), { status: 400 })

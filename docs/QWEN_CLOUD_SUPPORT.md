@@ -29,7 +29,7 @@ HTTP task and WebSocket hosts follow the configured base host. A custom `realtim
 | File ASR | `qwen.fileTranscriptionModel(id)` | Explicit submit/get; per-file success/failure; no automatic fetch of signed transcript URLs |
 | Realtime | `qwen.realtimeModel(id).connect()` | Audio/Omni model profiles over WebSocket; typed Cloud options and MCP approval extension |
 | Browser / native RTC | `connectQwenWebRTC`, `createQwenSDPExchange`, `connectQwenAOQ` | Browser SDP/media lifecycle and an injected official native AOQ engine; optional `@zhivex-ai/qwen/browser` entry point |
-| Images | `qwen.imageGenerationModel!(id)` | Image 3.0 generation/editing with validated options |
+| Images | `qwen.imageGenerationModel!(id)` | Image 2.1 and Image 3.0 generation/editing with validated options |
 | Video | `qwen.videoGenerationModel!(id)` | Asynchronous tasks, model-specific media mapping; retrieve completion through `qwen.tasks` |
 | Image translation | `qwen.imageTranslationModel().translate()` | Native synchronous/asynchronous translation |
 | Worlds | `qwen.worlds(id)` | HappyOyster lifecycle and interaction APIs; browser RTC uses an explicit official-SDK bridge |

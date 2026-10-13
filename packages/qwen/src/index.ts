@@ -12,7 +12,7 @@ export { createQwenWorldRTC } from "./world-rtc.js";
 export type * from "./world-rtc.js";
 import type { QwenCloudRealtimeSession } from "./cloud-realtime.js";
 export type { QwenCloudRealtimeOptions, QwenRealtimeMCPServer, QwenCloudRealtimeSession } from "./cloud-realtime.js";
-import { createQwenImageTranslationModel, validateWan30, validateQwenImage30, validateHappyHorse, prepareViduVideo, validateViduImage, type QwenImageTranslationModel } from "./cloud-media.js";
+import { createQwenImageTranslationModel, validateWan30, validateQwenImage21, validateQwenImage30, validateHappyHorse, prepareViduVideo, validateViduImage, type QwenImageTranslationModel } from "./cloud-media.js";
 export type * from "./cloud-media.js";
 import { createQwenWorldsClient, type QwenWorldsClient, type QwenWorldModelId } from "./worlds.js";
 export type * from "./worlds.js";
@@ -2751,6 +2751,7 @@ class QwenImageGenerationModel implements ImageGenerationModel {
       parameters.size = sizeFromAspectRatio[input.aspectRatio];
     }
     if (input.negativePrompt !== undefined) parameters.negative_prompt = input.negativePrompt;
+    if (/^qwen-image-2\.1(?:$|-)/.test(this.modelId)) validateQwenImage21(input, parameters);
     if (/^qwen-image-3\.0(?:$|-)/.test(this.modelId)) validateQwenImage30(input, parameters);
     if (vidu) {
       parameters.n ??= 1;
@@ -2792,6 +2793,7 @@ class QwenImageGenerationModel implements ImageGenerationModel {
         json.data ??
         [];
       if (vidu && (typeof json.output?.task_id !== "string" || !json.output.task_id)) throw new ValidationError("Vidu image submission returned no task ID.");
+      if (/^qwen-image-2\.1(?:$|-)/.test(this.modelId) && (!Array.isArray(data) || !data.length)) throw new ValidationError("Qwen Image 2.1 returned no images.");
       if (/^qwen-image-3\.0(?:$|-)/.test(this.modelId) && (!Array.isArray(data) || !data.length)) throw new ValidationError("Qwen Image 3.0 returned no images.");
       return {
         images: data.map((item: any) => normalizeGeneratedMedia(item, input.outputMimeType ?? "image/png")),

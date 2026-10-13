@@ -4,7 +4,7 @@ import { defaultModelCatalog } from "../src/index.js";
 it.each([
   ["openai", "gpt-6-sol", 0.002, 0.0002, 0.0025, 0.01],
   ["openai", "gpt-6-luna", 0.0001, 0.00001, 0.000125, 0.0005],
-  ["anthropic", "claude-sonnet-5-5", 0.002, 0.0002, 0.0025, 0.01],
+  ["anthropic", "claude-sonnet-5-5", 0.002, 0.0001, 0.0025, 0.01],
   ["anthropic", "claude-opus-5-5", 0.004, 0.0002, 0.005, 0.02],
   ["anthropic", "claude-haiku-5-5", 0.0001, 0.00001, 0.000125, 0.0005],
 ] as const)("publishes verified per-1k pricing for %s/%s", (provider, modelId, input, cached, write, output) => {

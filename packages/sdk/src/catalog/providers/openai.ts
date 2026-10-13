@@ -12,6 +12,9 @@ export const openaiCatalogFragment = defineModelCatalogFragment({
     "https://developers.openai.com/api/docs/models/gpt-6-luna",
     "https://developers.openai.com/api/docs/models/gpt-6-astra",
     "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+    "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare",
+    "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst",
+    "https://developers.openai.com/api/docs/guides/image-generation",
     "catalog-release:2026-08-16",
     "https://developers.openai.com/api/docs/guides/live"],
   entries: [
@@ -218,6 +221,26 @@ export const openaiCatalogFragment = defineModelCatalogFragment({
         "chat",
         "tools",
         "speed"
+      ]
+    },
+    {
+      "provider": "openai",
+      "modelId": "gpt-image-2.5-flare",
+      "aliases": [
+        "gpt-image-2.5-flare-2026-09-08"
+      ],
+      "recommendedFor": [
+        "vision"
+      ]
+    },
+    {
+      "provider": "openai",
+      "modelId": "gpt-image-2.5-sunburst",
+      "aliases": [
+        "gpt-image-2.5-sunburst-2026-09-08"
+      ],
+      "recommendedFor": [
+        "vision"
       ]
     },
     {

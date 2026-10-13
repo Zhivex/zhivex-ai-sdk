@@ -2390,6 +2390,46 @@ describe("qwen adapter", () => {
     expect(body.parameters.response_format).toBe("url");
   });
 
+  it("validates Qwen Image 2.1 before the synchronous generation request", async () => {
+    const provider = createQwen({ apiKey: "qwen-secret", fetch: fetchMock as typeof fetch });
+    const images = Array.from({ length: 10 }, () => ({ uri: "https://example.com/ref.png", mediaType: "image/png" as const }));
+    await expect(provider.imageGenerationModel!("qwen-image-2.1-pro").generateImage({
+      prompt: "a product icon",
+      negativePrompt: "watermark"
+    })).rejects.toThrow("negative_prompt");
+    await expect(provider.imageGenerationModel!("qwen-image-2.1-turbo").generateImage({
+      prompt: "a product icon",
+      providerOptions: { parameters: { negative_prompt: "watermark" } }
+    })).rejects.toThrow("negative_prompt");
+    await expect(provider.imageGenerationModel!("qwen-image-2.1-pro").generateImage({
+      prompt: "edit",
+      images: [...images, images[0]!],
+      size: "512*512"
+    })).rejects.toThrow("at most 10");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValueOnce(Response.json({
+      output: { choices: [{ message: { content: [{ image: "https://example.com/image.png" }] } }] }
+    }));
+    const result = await provider.imageGenerationModel!("qwen-image-2.1-pro").generateImage({
+      prompt: "a product icon",
+      images,
+      count: 1,
+      size: "512*512",
+      providerOptions: { prompt_extend: false, watermark: false }
+    });
+    expect(result.images[0]?.uri).toBe("https://example.com/image.png");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+    );
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toMatchObject({ "X-DashScope-Async": "enable" });
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.model).toBe("qwen-image-2.1-pro");
+    expect(body.parameters).toMatchObject({ n: 1, size: "512*512", prompt_extend: false, watermark: false });
+    expect(body.parameters.negative_prompt).toBeUndefined();
+    expect(body.input.messages[0].content).toHaveLength(11);
+  });
+
   it("routes text and multimodal rerank models to their documented endpoints", async () => {
     fetchMock
       .mockResolvedValueOnce(Response.json({ results: [{ index: 1, relevance_score: 0.9 }] }))

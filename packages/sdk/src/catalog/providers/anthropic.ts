@@ -2,10 +2,11 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const anthropicCatalogFragment = defineModelCatalogFragment({
   provider: "anthropic",
-  revision: "2026-10-07",
-  verifiedAt: "2026-10-07",
-  pricingEffectiveAt: "2026-10-07",
+  revision: "2026-10-13",
+  verifiedAt: "2026-10-13",
+  pricingEffectiveAt: "2026-10-13",
   sources: [
+    "https://platform.claude.com/docs/en/about-claude/pricing",
     "https://platform.claude.com/docs/en/models/haiku-5-5/overview",
     "https://platform.claude.com/docs/en/models/sonnet-5-5/overview",
     "https://platform.claude.com/docs/en/models/opus-5-5/overview",
@@ -31,7 +32,7 @@ export const anthropicCatalogFragment = defineModelCatalogFragment({
       provider: "anthropic",
       modelId: "claude-sonnet-5-5",
       inputCostPer1kTokens: 0.002,
-      cachedInputCostPer1kTokens: 0.0002,
+      cachedInputCostPer1kTokens: 0.0001,
       cacheWriteCostPer1kTokens: 0.0025,
       outputCostPer1kTokens: 0.01,
       recommendedFor: ["chat", "reasoning", "tools", "vision", "speed"]
