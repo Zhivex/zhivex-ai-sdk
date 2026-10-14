@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { assertTrustedEndpoint, isPrivateNetworkHostname } from "../src/index.js";
+import { assertTrustedEndpoint, isLoopbackHostname, isPrivateNetworkHostname } from "../src/index.js";
 
 describe("trusted endpoint validation", () => {
   it("rejects credentials and disallowed protocols", () => {
@@ -90,5 +90,54 @@ describe("trusted endpoint validation", () => {
       protocols: ["https"],
       allowedHosts: ["media.example.com"]
     })).toThrow("is not trusted");
+  });
+
+  it("blocks alternate IPv4 literals, embedded forms, and cloud metadata hosts", () => {
+    for (const endpoint of [
+      "https://2130706433",
+      "https://0x7f000001",
+      "https://0177.0.0.1",
+      "https://127.1",
+      "https://127.0.1",
+      "https://[::7f00:1]",
+      "https://[::127.0.0.1]",
+      "https://[0:0:0:0:0:0:0:1]",
+      "https://[2002:7f00:1::]",
+      "https://[64:ff9b::127.0.0.1]",
+      "https://[64:ff9b:1::7f00:1]",
+      "https://[::ffff:a9fe:a9fe]",
+      "https://[fd00:ec2::254]",
+      "https://[ff02::1]",
+      "https://2130706433.nip.io/latest",
+      "https://127.1.nip.io/latest",
+      "https://0177.0.0.1.nip.io/latest",
+      "https://0x7f.0.0.1.nip.io/latest",
+      "https://metadata.google.internal/computeMetadata/v1/",
+      "https://metadata.goog/",
+      "https://169.254.169.254/latest/meta-data/"
+    ]) {
+      expect(() => assertTrustedEndpoint(endpoint, { protocols: ["https"] }), endpoint).toThrow("private");
+    }
+
+    expect(assertTrustedEndpoint("https://8.8.8.8", { protocols: ["https"] }).hostname).toBe("8.8.8.8");
+    expect(assertTrustedEndpoint("https://[2001:4860:4860::8888]", { protocols: ["https"] }).hostname).toBe("[2001:4860:4860::8888]");
+    expect(assertTrustedEndpoint("https://[::ffff:8.8.8.8]", { protocols: ["https"] }).hostname).toBe("[::ffff:808:808]");
+    expect(assertTrustedEndpoint("https://[2002:808:808::]", { protocols: ["https"] }).hostname).toBe("[2002:808:808::]");
+    expect(assertTrustedEndpoint("https://[64:ff9b::8.8.8.8]", { protocols: ["https"] }).hostname).toBe("[64:ff9b::808:808]");
+    expect(isPrivateNetworkHostname("cdn.203.0.113.5.example.com")).toBe(false);
+    expect(isPrivateNetworkHostname("10.example.com")).toBe(false);
+    expect(isLoopbackHostname("127.0.0.1")).toBe(true);
+    expect(isLoopbackHostname("[::1]")).toBe(true);
+    expect(isLoopbackHostname("127.1")).toBe(true);
+    expect(isLoopbackHostname("::ffff:127.0.0.1")).toBe(true);
+    expect(isLoopbackHostname("127.1.nip.io")).toBe(false);
+    expect(assertTrustedEndpoint("http://[::1]:11434", {
+      protocols: ["http"],
+      allowLoopback: true
+    }).hostname).toBe("[::1]");
+    expect(() => assertTrustedEndpoint("http://127.1.nip.io", {
+      protocols: ["http"],
+      allowLoopback: true
+    })).toThrow("private");
   });
 });

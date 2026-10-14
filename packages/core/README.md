@@ -96,7 +96,7 @@ policy in <https://github.com/Zhivex/zhivex-ai-sdk/blob/main/STABILITY.md>.
 - `createHttpTool()` propagates caller cancellation and idempotency, rejects redirects by default, validates its timeout, and bounds response bodies. Override `maxResponseBytes` or `redirect` only for an application-owned endpoint.
 - `parseUIMessageRequest()` validates the runtime message/part shape and bounds request bytes, message count, and JSONL line size.
 - The default browser WebSocket connection rejects oversized incoming frames. Set `maxIncomingFrameBytes` only when the provider contract requires a different bound.
-- `assertTrustedEndpoint()` rejects credentials, unsafe schemes, private/loopback hosts, embedded private-IP DNS aliases, and allowlist boundary tricks unless a trusted server configuration explicitly opts in. Because it is synchronous, arbitrary DNS rebinding still requires an application-owned host allowlist plus resolver and egress controls.
+- `assertTrustedEndpoint()` rejects credentials, unsafe schemes, and private, loopback, link-local, or metadata hosts unless a trusted server configuration explicitly opts in. Blocked hosts include IPv4 and IPv6 literals (mapped, compatible, 6to4, NAT64, and Teredo), decimal and dotted aliases, and embedded private-IP DNS names. Because it is synchronous, arbitrary DNS rebinding still requires an application-owned host allowlist plus resolver and egress controls.
 
 Repository and full documentation:
 
