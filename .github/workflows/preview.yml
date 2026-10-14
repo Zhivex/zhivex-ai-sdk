@@ -1,5 +1,10 @@
 # Pull request previews on pkg.pr.new. This file is read from the default branch
 # (pull_request_target) so the author check cannot be removed by the pull request.
+# Previews run only for a same-repository branch whose author is an owner, member,
+# or collaborator. Fork pull requests are skipped, including when the author is an
+# owner, member, or collaborator. A maintainer can push that branch into this
+# repository and open the pull request from there. Do not check out fork code from
+# this workflow.
 # It grants no token permissions and must not gain secrets, id-token, or an npm environment.
 # Preview tarballs are not npm releases and have no npm provenance.
 
@@ -21,7 +26,7 @@ concurrency:
 jobs:
   preview:
     name: Publish pkg.pr.new preview
-    if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+    if: github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

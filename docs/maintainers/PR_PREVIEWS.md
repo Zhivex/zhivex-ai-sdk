@@ -16,7 +16,12 @@ The workflow comment on the pull request lists the exact URLs. Stable and prerel
 
 ## Who can publish a preview
 
-The workflow runs on `pull_request_target`, so GitHub reads it from the default branch. A pull request cannot delete the author check by editing the workflow file. The job runs only when `github.event.pull_request.author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR`. Other authors, including contributors and first-time contributors, skip the job.
+The workflow runs on `pull_request_target`, so GitHub reads it from the default branch. A pull request cannot delete the author check by editing the workflow file. The job runs only when both of these are true:
+
+- `github.event.pull_request.head.repo.full_name == github.repository`, so the head branch is in this repository.
+- `github.event.pull_request.author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR`.
+
+Fork pull requests do not get a preview, including when the author is an owner, member, or collaborator. Push the branch into this repository and open the pull request from that branch. Other authors, including contributors and first-time contributors, also skip the job. The workflow does not check out fork code.
 
 The checked-out commit is the pull request head. The workflow sets `permissions: {}`, checks out with `persist-credentials: false`, installs with `--ignore-scripts`, and unsets `GITHUB_TOKEN`, `GH_TOKEN`, `NPM_TOKEN`, and `NODE_AUTH_TOKEN` before install, build, and upload. It must not gain a secret, an OIDC `id-token`, or the `npm` environment.
 

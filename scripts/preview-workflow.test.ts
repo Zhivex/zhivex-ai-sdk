@@ -10,8 +10,11 @@ describe("pull request package previews", () => {
     expect(workflow).toContain("pull_request_target:");
     expect(workflow).not.toContain("pull_request:");
     expect(workflow).toContain("permissions: {}");
-    expect(workflow).toContain('["OWNER","MEMBER","COLLABORATOR"]');
+    expect(workflow).toContain(
+      "github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.pull_request.author_association)"
+    );
     expect(workflow).not.toContain("CONTRIBUTOR");
+    expect(workflow).not.toContain("allow-unsafe-pr-checkout");
     expect(workflow).toContain("ref: ${{ github.event.pull_request.head.sha }}");
     expect(workflow).toContain("persist-credentials: false");
     expect(workflow).toContain("bun install --frozen-lockfile --ignore-scripts");
@@ -31,6 +34,8 @@ describe("pull request package previews", () => {
     expect(workflow).toContain("unset GITHUB_TOKEN GH_TOKEN NPM_TOKEN NODE_AUTH_TOKEN");
     expect(workflow).toContain("they have no npm provenance attestation.");
     expect(guide).toContain("no npm provenance attestation");
+    expect(guide).toContain("head.repo.full_name == github.repository");
+    expect(guide).toContain("Fork pull requests do not get a preview");
     expect(guide).toContain("OWNER");
     expect(guide).toContain("MEMBER");
     expect(guide).toContain("COLLABORATOR");
