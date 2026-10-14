@@ -32,12 +32,14 @@ const textModel = (entry: {
     cachedInputCostPer1kTokens: per1k(perMillion.cachedInput),
     outputCostPer1kTokens: per1k(perMillion.output),
     costPer1kTokens: per1k(perMillion.input),
-    longContextPricing: {
-      inputTokenThreshold: 200_000,
-      inputTokenThresholdInclusive: true,
-      inputMultiplier: 2,
-      outputMultiplier: 2
-    },
+  // Docs bill every token once the prompt reaches 200k (`>=`). The snapshot keeps the
+  // exclusive comparator at 199_999 so integer counts match that boundary and stay
+  // valid for published core releases that reject unknown long-context fields.
+  longContextPricing: {
+    inputTokenThreshold: 199_999,
+    inputMultiplier: 2,
+    outputMultiplier: 2
+  },
     recommendedFor,
     evidence: priceEvidence
   };

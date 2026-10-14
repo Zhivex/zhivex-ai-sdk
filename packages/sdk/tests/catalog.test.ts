@@ -225,8 +225,7 @@ describe("SDK model catalog ownership", () => {
       cachedInputCostPer1kTokens: 0.0005,
       outputCostPer1kTokens: 0.006,
       longContextPricing: {
-        inputTokenThreshold: 200_000,
-        inputTokenThresholdInclusive: true,
+        inputTokenThreshold: 199_999,
         inputMultiplier: 2,
         outputMultiplier: 2
       }
@@ -249,7 +248,11 @@ describe("SDK model catalog ownership", () => {
       "grok-4.20-0309-reasoning",
       "grok-4.20-multi-agent-0309"
     ]) {
-      expect(defaultModelCatalog.find("xai", modelId)?.longContextPricing?.inputTokenThresholdInclusive).toBe(true);
+      expect(defaultModelCatalog.find("xai", modelId)?.longContextPricing).toEqual({
+        inputTokenThreshold: 199_999,
+        inputMultiplier: 2,
+        outputMultiplier: 2
+      });
     }
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "xai")).toMatchObject({
       revision: "2026-10-14",

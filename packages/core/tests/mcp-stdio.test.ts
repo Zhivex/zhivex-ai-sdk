@@ -76,7 +76,7 @@ describe("MCP stdio client", () => {
   it("answers unsupported server requests and reads resources and prompts", async () => {
     const client = openClient("server-request");
     expect(await client.listResources!()).toMatchObject({ nextCursor: "next" });
-    expect(client.stderr()).toContain("method-not-found");
+    await expect.poll(() => client.stderr(), { interval: 10, timeout: 1_000 }).toContain("method-not-found");
     expect(await client.listResourceTemplates!()).toMatchObject({
       resourceTemplates: [{ uriTemplate: "bcra://variables/{id}", name: "variable" }]
     });

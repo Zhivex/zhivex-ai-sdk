@@ -64,7 +64,7 @@ compatibility export will therefore not receive later catalog revisions.
 
 Pricing metadata establishes currency, unit, and snapshot scope. Catalog prices are routing and cost-estimation inputs tied to that package snapshot, not an authoritative billing source; verify current upstream pricing before billing users. Entries without a snapshot estimate omit cost fields. Region-specific, batch, priority, provisioned-throughput, tool, storage, and other provider-specific charges are not implied unless the catalog metadata explicitly includes them.
 
-`longContextPricing` multiplies input, cached input, cache-write, and output rates after the request crosses `inputTokenThreshold`. The comparison is exclusive (`inputTokens > threshold`) unless `inputTokenThresholdInclusive` is `true`, which bills the threshold itself at the higher rate (`>=`). Omitting the flag preserves catalogs that already used the exclusive comparison.
+`longContextPricing` multiplies input, cached input, cache-write, and output rates after the request crosses `inputTokenThreshold`. The comparison is exclusive (`inputTokens > threshold`) unless `inputTokenThresholdInclusive` is `true`, which bills the threshold itself at the higher rate (`>=`). Omitting the flag preserves catalogs that already used the exclusive comparison. The xAI snapshot encodes the documented inclusive 200,000-token tier as an exclusive threshold of 199,999. Integer token counts then match `>= 200,000`, and the snapshot stays readable by published core releases that reject unknown long-context fields.
 
 ## Capability Boundary
 
