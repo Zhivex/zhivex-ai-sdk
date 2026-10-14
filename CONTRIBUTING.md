@@ -56,7 +56,7 @@ Published packages are managed with Changesets. Add a changeset for user-facing 
 bunx changeset
 ```
 
-Publishing is performed from the protected `release.yml` GitHub Actions workflow with npm trusted publishing. Local `bun run release` is deliberately blocked without the GitHub OIDC environment.
+Publishing is performed from the protected `release.yml` GitHub Actions workflow with npm trusted publishing. There is no local publish command.
 
 Changesets generates per-package changelogs during `bun run version-packages`. Documentation-only changes do not require a package bump unless they also change published behavior or npm-facing metadata.
 
