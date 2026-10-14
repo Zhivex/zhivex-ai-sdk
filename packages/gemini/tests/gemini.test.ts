@@ -1394,6 +1394,103 @@ describe("gemini adapter", () => {
     }
   );
 
+  it("maps Gemini 4 Argon reasoning to thinkingLevel and keeps the provider medium default", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "hello from argon" }] }
+          }
+        ]
+      })
+    );
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("gemini-4-argon");
+    expect(model.capabilities.reasoningEfforts).toEqual(["low", "medium", "high"]);
+
+    await generateText({
+      model,
+      prompt: "hello",
+      reasoning: { effort: "medium" }
+    });
+
+    const reasoned = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      generationConfig: { thinkingConfig?: { thinkingLevel?: string; thinkingBudget?: number }; temperature?: number };
+    };
+    expect(reasoned.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "medium" });
+    expect(reasoned.generationConfig.thinkingConfig).not.toHaveProperty("thinkingBudget");
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            finishReason: "STOP",
+            content: { parts: [{ text: "default thinking" }] }
+          }
+        ]
+      })
+    );
+    await generateText({ model, prompt: "hello" });
+    const omitted = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)) as {
+      generationConfig: { thinkingConfig?: { thinkingBudget?: number; thinkingLevel?: string } };
+    };
+    expect(omitted.generationConfig.thinkingConfig).toBeUndefined();
+  });
+
+  it("rejects Argon budgets, sampling controls, and pre-Gemini-3 effort errors", async () => {
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("gemini-4-argon");
+
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      reasoning: { budgetTokens: 512 }
+    })).rejects.toThrow('Provider "gemini" uses "reasoning.effort" for Gemini 4 models and does not support "reasoning.budgetTokens".');
+
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      providerOptions: { generationConfig: { thinkingConfig: { thinking_budget: 256 } } }
+    })).rejects.toThrow(`requires thinking levels instead of budgets for model "gemini-4-argon"`);
+
+    await expect(generateText({ model, prompt: "hello", temperature: 0.2 })).rejects.toThrow(
+      'does not support generation control "temperature" for model "gemini-4-argon"'
+    );
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      providerOptions: { generation_config: { top_p: 0.9, top_k: 20 } }
+    })).rejects.toThrow('does not support generation control "top_p" for model "gemini-4-argon"');
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      reasoning: { effort: "minimal" }
+    })).rejects.toThrow('does not support reasoning effort "minimal"');
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      providerOptions: { generationConfig: { thinkingConfig: { thinkingLevel: "MINIMAL" } } }
+    })).rejects.toThrow('does not support thinking level "MINIMAL" for model "gemini-4-argon"');
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "family" }] } }]
+      })
+    );
+    await generateText({
+      model: provider("gemini-4"),
+      prompt: "hello",
+      reasoning: { effort: "high" }
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      generationConfig: { thinkingConfig: { thinkingLevel: string; thinkingBudget?: number } };
+    };
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "high" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it.each(["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "rejects deprecated sampling controls locally for %s",
     async (modelId) => {

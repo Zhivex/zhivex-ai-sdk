@@ -253,7 +253,7 @@ const anthropicSupports: IntegrationLanguageProvider["supports"] = {
   embeddings: false,
   reasoning: anthropicReasoning
 };
-const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
+const isGemini3Model = (modelId: string) => /^gemini-[34]([.-]|$)/.test(modelId);
 
 const createGeminiSupports = (modelId: string): IntegrationLanguageProvider["supports"] => ({
   streaming: true,

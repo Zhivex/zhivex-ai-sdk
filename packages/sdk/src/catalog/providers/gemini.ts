@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const geminiCatalogFragment = defineModelCatalogFragment({
   provider: "gemini",
-  revision: "2026-10-13",
-  verifiedAt: "2026-10-13",
+  revision: "2026-10-14",
+  verifiedAt: "2026-10-14",
   pricingEffectiveAt: "2026-08-30",
   sources: [
     "https://ai.google.dev/gemini-api/docs/models",
@@ -12,6 +12,16 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     "https://ai.google.dev/gemini-api/docs/pricing"
   ],
   entries: [
+    {
+      provider: "gemini",
+      modelId: "gemini-4-argon",
+      // Current introductory price through 2026-11-30. The catalog stores one rate;
+      // from 2026-12-01 the published price is $4/$20 per 1M tokens and $0.20 cached.
+      inputCostPer1kTokens: 0.002,
+      cachedInputCostPer1kTokens: 0.0001,
+      outputCostPer1kTokens: 0.01,
+      recommendedFor: ["chat", "reasoning", "vision", "tools"]
+    },
     { provider: "gemini", modelId: "gemini-3.8-live" },
     { provider: "gemini", modelId: "gemini-3.8-live-extended-thinking" },
     {

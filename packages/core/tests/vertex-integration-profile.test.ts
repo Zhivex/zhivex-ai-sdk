@@ -23,6 +23,7 @@ describe("Vertex integration route contracts", () => {
   });
   it("separates Gemini, Claude and managed partner authentication and reasoning", () => {
     expect(vertexIntegrationProfile("gemini-3.7-flash")).toMatchObject({ requiresBearer: false, omitTemperature: true, supports: { embeddings: true, reasoning: { effort: "low" } } });
+    expect(vertexIntegrationProfile("gemini-4-argon")).toMatchObject({ requiresBearer: false, omitTemperature: true, supports: { embeddings: true, reasoning: { effort: "low" } } });
     const claude = vertexIntegrationProfile("claude-sonnet-4-6");
     expect(claude).toMatchObject({ requiresBearer: true, omitTemperature: true, supports: { embeddings: false, structuredOutputMode: "native" } });
     expect(claude.toolChoiceForTool("sum")).toBe("auto");

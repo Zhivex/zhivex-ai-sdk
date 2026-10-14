@@ -32,7 +32,7 @@ export const vertexIntegrationProfile = (modelId: string) => {
   const gemini = /^gemini-/.test(modelId);
   const claude = /^claude-/.test(modelId);
   const reasoning = !model.capabilities.reasoning ? undefined
-    : gemini ? /^gemini-3/.test(modelId) ? { effort: "low" as const } : { budgetTokens: 256 }
+    : gemini ? /^gemini-[34]([.-]|$)/.test(modelId) ? { effort: "low" as const } : { budgetTokens: 256 }
     : partnerProfile.thinkingControl !== undefined ? { effort: "low" as const }
     : claude ? { budgetTokens: 1024 } : undefined;
   const supports: IntegrationLanguageProvider["supports"] = {
@@ -42,7 +42,7 @@ export const vertexIntegrationProfile = (modelId: string) => {
   };
   return {
     supports, requiresBearer: !gemini,
-    omitTemperature: claude || /^gemini-3\.(?:[678]-flash|5-flash-lite)/.test(modelId),
+    omitTemperature: claude || /^gemini-3\.(?:[678]-flash|5-flash-lite)/.test(modelId) || modelId === "gemini-4-argon",
     toolChoiceForTool: (toolName: string) => claude || /^openai\/gpt-oss-/.test(modelId) ? "auto" as const : { type: "tool" as const, toolName },
     textMaxTokens: 256, toolMaxTokens: 512, reasoningMaxTokens: claude ? 2048 : 512,
     omitTemperatureForReasoning: claude

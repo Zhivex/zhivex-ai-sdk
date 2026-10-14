@@ -64,7 +64,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(250);
+    expect(entries).toHaveLength(252);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
@@ -106,7 +106,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(250);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(252);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-10-13",
       verifiedAt: "2026-10-13",
@@ -136,7 +136,7 @@ describe("SDK model catalog ownership", () => {
     expect(entry?.recommendedFor).toBeUndefined();
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "anthropic")?.revision).toBe("2026-10-13");
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "bedrock")?.revision).toBe("2026-10-07");
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-13");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-14");
   });
 
   it("records the October 2026 frontier inventory without inventing token prices", () => {
@@ -159,6 +159,19 @@ describe("SDK model catalog ownership", () => {
       expect(entry?.inputCostPer1kTokens).toBeUndefined();
       expect(entry?.lifecycle).toBeUndefined();
     }
+    expect(defaultModelCatalog.find("gemini", "gemini-4-argon")).toMatchObject({
+      inputCostPer1kTokens: 0.002,
+      cachedInputCostPer1kTokens: 0.0001,
+      outputCostPer1kTokens: 0.01,
+      recommendedFor: ["chat", "reasoning", "vision", "tools"]
+    });
+    expect(defaultModelCatalog.find("vertex", "gemini-4-argon")).toMatchObject({
+      inputCostPer1kTokens: 0.002,
+      cachedInputCostPer1kTokens: 0.0001,
+      outputCostPer1kTokens: 0.01
+    });
+    expect(defaultModelCatalog.find("gemini", "gemini-4-argon-cyber-permissive")).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "gemini-4-argon-cyber-permissive")).toBeUndefined();
     expect(defaultModelCatalog.find("gemini", "gemini-3.7-flash")?.lifecycle).toMatchObject({
       deprecatedAt: "2026-10-08",
       source: "https://ai.google.dev/gemini-api/docs/changelog"

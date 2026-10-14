@@ -1,7 +1,7 @@
 import { toBase64 } from "./encoding.js";
 import { normalizeInteractionUsage, normalizeGenerateContentUsage } from "./usage.js";
 import { systemInstruction, mapMessages, toGeminiSchema, mapTools } from "./messages.js";
-import { modelCapabilities, assertCurrentGeminiGenerateInput, assertCurrentGeminiInteractionBody, generationConfig } from "./model-profiles.js";
+import { modelCapabilities, assertCurrentGeminiGenerateInput, assertCurrentGeminiInteractionBody, generationConfig, usesGeminiThinkingLevel } from "./model-profiles.js";
 import { createGeminiSearchUsage } from "./search-usage.js";
 import { createGroundingCollector } from "./grounding.js";
 import { toJSONSchema } from "zod";
@@ -3109,6 +3109,7 @@ export const createGemini = (
   });
 };
 
+export { usesGeminiThinkingLevel };
 export const geminiMcpTools = createMcpToolSet;
 export {
   googleCodeExecutionTool,
