@@ -4,6 +4,6 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "references": [{ "path": "../core" }, { "path": "../anthropic" }, { "path": "../openai" }],
+  "references": [{ "path": "../core" }, { "path": "../anthropic" }, { "path": "../gemini" }, { "path": "../openai" }],
   "include": ["src"]
 }

@@ -72,14 +72,23 @@ describe("authenticated runtime WebSocket transport", () => {
   });
   it("bounds cumulative binary queue bytes before the message count limit", async () => {
     const fixture = await start();
-    fixture.server.on("connection", socket => socket.on("message", () => {
-      const frame = Buffer.alloc(1024 * 1024);
-      for (let index = 0; index < 33; index++) socket.send(frame, { binary: true });
-    }));
+    const overflowed = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("client did not close after the byte limit")), 5_000);
+      fixture.server.on("connection", socket => {
+        socket.on("close", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        socket.on("message", () => {
+          const frame = Buffer.alloc(1024 * 1024);
+          for (let index = 0; index < 33; index += 1) socket.send(frame, { binary: true });
+        });
+      });
+    });
     try {
       const connection = await openWebSocketConnection(fixture.url, { authorization: "Bearer synthetic" });
       await connection.sendJson({ start: true });
-      await new Promise(resolve => setTimeout(resolve, 150));
+      await overflowed;
       await expect(connection.recvFrame!()).rejects.toThrow("receive buffer exceeded");
       await connection.close();
     } finally { await fixture.close(); }

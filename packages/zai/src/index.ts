@@ -11,12 +11,14 @@ import {
   isCallableToolDefinition,
   normalizeFinishReason,
   providerDataPart,
+  openAICompatibleJsonHeaders,
+  openAICompatibleReasoningContent,
+  openOpenAICompatibleStream,
   readErrorBodyWithLimit,
   readJsonWithLimit,
   serializeJsonValue,
-  streamSSE,
+  withOpenAICompatibleAttempt,
   withRetry,
-  withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
   type JsonValue,
@@ -171,17 +173,7 @@ const mapContentParts = (modelId: string, message: ModelMessage): string | ZAIMe
 };
 
 const reasoningContentFromMessage = (message: ModelMessage) =>
-  message.parts
-    .filter((part) => {
-      if (part.type !== "provider-data" || part.provider !== "zai" || !isJsonObject(part.data)) {
-        return false;
-      }
-      return part.data.type === "reasoning_content" && typeof part.data.reasoningContent === "string";
-    })
-    .map((part) =>
-      part.type === "provider-data" && isJsonObject(part.data) ? String(part.data.reasoningContent) : ""
-    )
-    .join("");
+  openAICompatibleReasoningContent(message, "zai");
 
 const hasReasoningHistory = (messages: ModelMessage[]) =>
   messages.some((message) => reasoningContentFromMessage(message).length > 0);
@@ -516,10 +508,7 @@ const resolveRequestOptions = (modelId: string, input: ModelGenerateInput<ZAILan
   };
 };
 
-const jsonHeaders = (apiKey: string) => ({
-  "content-type": "application/json",
-  authorization: `Bearer ${apiKey}`
-});
+const jsonHeaders = openAICompatibleJsonHeaders;
 
 const parseRetryAfterMs = (value: string | null) => {
   if (!value) {
@@ -718,8 +707,7 @@ class ZAILanguageModel implements LanguageModel<ZAILanguageModelOptions> {
   }
 
   async generate(input: ModelGenerateInput<ZAILanguageModelOptions>): Promise<GenerateResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    try {
+    return withOpenAICompatibleAttempt(input, async (signal) => {
       const options = resolveRequestOptions(this.modelId, input);
       const tools = mapTools(input.tools);
       const json = await withRetry(async () => {
@@ -762,18 +750,14 @@ class ZAILanguageModel implements LanguageModel<ZAILanguageModelOptions> {
         usage: mapUsage((json as any).usage),
         rawResponse: json
       };
-    } finally {
-      cleanup();
-    }
+    });
   }
 
   async stream(input: ModelGenerateInput<ZAILanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    let response: Response;
-    try {
+    return openOpenAICompatibleStream(input, async (signal) => {
       const options = resolveRequestOptions(this.modelId, input);
       const tools = mapTools(input.tools);
-      response = await withRetry(async () => {
+      return withRetry(async () => {
         const result = await this.fetcher(`${this.baseURL}/chat/completions`, {
           method: "POST",
           headers: jsonHeaders(this.apiKey),
@@ -799,99 +783,71 @@ class ZAILanguageModel implements LanguageModel<ZAILanguageModelOptions> {
         await assertResponseOk(result);
         return result;
       }, { ...input, abortSignal: signal });
-    } catch (error) {
-      cleanup();
-      throw error;
-    }
-
-    return (async function* (): AsyncGenerator<StreamEvent> {
-      try {
-        const toolBuffers = new Map<number, { id: string; name: string; args: string }>();
-        let lastFinishReason: string | undefined;
-        let lastUsage: any;
-
-        for await (const event of streamSSE(response)) {
-          if (event.data === "[DONE]") {
-            break;
-          }
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(event.data) as unknown;
-          } catch (error) {
-            throw new ParseError("Z.ai streaming response contained invalid JSON.", { cause: error });
-          }
-          const json = assertNoErrorPayload(parsed) as any;
-          const choice = json.choices?.[0];
-          const delta = choice?.delta;
-          const usage = json.usage ?? choice?.usage;
-          if (usage) {
-            lastUsage = usage;
-          }
-          if (delta?.reasoning_content) {
-            yield {
-              type: "provider-data",
-              provider: "zai",
-              data: { type: "reasoning_content", reasoningContent: delta.reasoning_content }
-            } satisfies StreamEvent;
-          }
-          if (delta?.content) {
-            yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;
-          }
-          if (delta?.tool_calls !== undefined && !Array.isArray(delta.tool_calls)) {
-            throw new ParseError("Z.ai streaming tool_calls must be an array.");
-          }
-          for (const toolCall of delta?.tool_calls ?? []) {
-            if (!isJsonObject(toolCall)) {
-              throw new ParseError("Z.ai returned a malformed streaming tool call.");
-            }
-            if (!Number.isSafeInteger(toolCall.index) || (toolCall.index as number) < 0) {
-              throw new ParseError("Z.ai streaming tool calls require a non-negative integer index.");
-            }
-            const index = toolCall.index as number;
-            const existing = toolBuffers.get(index) ?? { id: "", name: "", args: "" };
-            existing.id = mergeStreamFragment(existing.id, toolCall.id);
-            const toolFunction = isJsonObject(toolCall.function) ? toolCall.function : undefined;
-            existing.name = mergeStreamFragment(existing.name, toolFunction?.name);
-            existing.args += typeof toolFunction?.arguments === "string" ? toolFunction.arguments : "";
-            toolBuffers.set(index, existing);
-          }
-          if (choice?.finish_reason === "tool_calls") {
-            for (const [index, toolCall] of [...toolBuffers.entries()].sort(([left], [right]) => left - right)) {
-              if (!toolCall.id || !toolCall.name) {
-                throw new ParseError("Z.ai fragmented tool calls require non-empty id and function name fields.");
-              }
-              yield {
-                type: "tool-call",
-                toolCall: {
-                  id: toolCall.id,
-                  name: toolCall.name,
-                  input: parseToolArguments(toolCall.args)
-                }
-              } satisfies StreamEvent;
-            }
-            toolBuffers.clear();
-          }
-          if (choice?.finish_reason) {
-            lastFinishReason = choice.finish_reason;
-          }
+    }, {
+      readPayload: (data) => {
+        try {
+          return JSON.parse(data) as unknown;
+        } catch (error) {
+          throw new ParseError("Z.ai streaming response contained invalid JSON.", { cause: error });
         }
-
-        if (toolBuffers.size) {
-          throw new ParseError("Z.ai streaming response ended before fragmented tool calls were completed.");
+      },
+      onChunk: (parsed, toolBuffers, state) => {
+        const events: StreamEvent[] = [];
+        const json = assertNoErrorPayload(parsed) as any;
+        const choice = json.choices?.[0];
+        const delta = choice?.delta;
+        const usage = json.usage ?? choice?.usage;
+        if (usage) state.usage = usage;
+        if (delta?.reasoning_content) {
+          events.push({
+            type: "provider-data",
+            provider: "zai",
+            data: { type: "reasoning_content", reasoningContent: delta.reasoning_content }
+          });
         }
-        if (!lastFinishReason) {
-          throw new ParseError("Z.ai streaming response ended without a finish reason.");
+        if (delta?.content) events.push({ type: "text-delta", textDelta: delta.content });
+        if (delta?.tool_calls !== undefined && !Array.isArray(delta.tool_calls)) {
+          throw new ParseError("Z.ai streaming tool_calls must be an array.");
         }
-        yield {
+        for (const toolCall of delta?.tool_calls ?? []) {
+          if (!isJsonObject(toolCall)) throw new ParseError("Z.ai returned a malformed streaming tool call.");
+          if (!Number.isSafeInteger(toolCall.index) || (toolCall.index as number) < 0) {
+            throw new ParseError("Z.ai streaming tool calls require a non-negative integer index.");
+          }
+          const index = toolCall.index as number;
+          const existing = toolBuffers.get(index) ?? { id: "", name: "", args: "" };
+          existing.id = mergeStreamFragment(existing.id, toolCall.id);
+          const toolFunction = isJsonObject(toolCall.function) ? toolCall.function : undefined;
+          existing.name = mergeStreamFragment(existing.name, toolFunction?.name);
+          existing.args += typeof toolFunction?.arguments === "string" ? toolFunction.arguments : "";
+          toolBuffers.set(index, existing);
+        }
+        if (choice?.finish_reason === "tool_calls") {
+          for (const [, toolCall] of [...toolBuffers.entries()].sort(([left], [right]) => left - right)) {
+            if (!toolCall.id || !toolCall.name) {
+              throw new ParseError("Z.ai fragmented tool calls require non-empty id and function name fields.");
+            }
+            events.push({
+              type: "tool-call",
+              toolCall: { id: toolCall.id, name: toolCall.name, input: parseToolArguments(toolCall.args) }
+            });
+          }
+          toolBuffers.clear();
+        }
+        if (choice?.finish_reason) state.finishReason = choice.finish_reason;
+        return events;
+      },
+      onDone: (tools, state) => {
+        if (tools.size) throw new ParseError("Z.ai streaming response ended before fragmented tool calls were completed.");
+        if (!state.finishReason) throw new ParseError("Z.ai streaming response ended without a finish reason.");
+        return [{
           type: "finish",
-          finishReason: normalizeZAIFinishReason(lastFinishReason),
-          providerFinishReason: lastFinishReason,
-          usage: mapUsage(lastUsage)
-        } satisfies StreamEvent;
-      } finally {
-        cleanup();
+          finishReason: normalizeZAIFinishReason(state.finishReason),
+          providerFinishReason: state.finishReason,
+          usage: mapUsage(state.usage)
+        }];
       }
-    })();
+    });
   }
 }
 

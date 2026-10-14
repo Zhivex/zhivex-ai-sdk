@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual } from "../deep-equal.js";
 import { synchronizeAgentCancellation } from "./cancellation-intent.js";
 import { observeChildState, reconcileChildRuns } from "./children.js";
 import {

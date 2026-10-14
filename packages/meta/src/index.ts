@@ -10,10 +10,14 @@ import {
   hostedTool,
   isCallableToolDefinition,
   normalizeFinishReason,
+  openAICompatibleJsonHeaders,
+  openOpenAICompatibleEvents,
+  openOpenAICompatibleStream,
   providerDataPart,
   readErrorBodyWithLimit,
   readJsonWithLimit,
   streamSSE,
+  withOpenAICompatibleAttempt,
   withRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
@@ -118,10 +122,7 @@ const capabilities: ModelCapabilities = {
   }
 };
 
-const jsonHeaders = (apiKey: string) => ({
-  "content-type": "application/json",
-  authorization: `Bearer ${apiKey}`
-});
+const jsonHeaders = openAICompatibleJsonHeaders;
 
 const stripProviderOptions = (options: Record<string, unknown> | undefined) => {
   if (!options) {
@@ -892,13 +893,10 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
   }
 
   async generate(input: ModelGenerateInput<MetaLanguageModelOptions>): Promise<GenerateResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-
-    try {
-      if (this.usesResponsesAPI(input)) {
-        return await this.generateViaResponses(input, signal);
-      }
-
+    if (this.usesResponsesAPI(input)) {
+      return withOpenAICompatibleAttempt(input, (signal) => this.generateViaResponses(input, signal));
+    }
+    return withOpenAICompatibleAttempt(input, async (signal) => {
       const response = await fetchMetaWithRetry(
         this.fetcher,
         `${this.baseURL}/chat/completions`,
@@ -934,54 +932,45 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
         usage: mapChatUsage(json.usage),
         rawResponse: json
       };
-    } finally {
-      cleanup();
-    }
+    });
   }
 
   async stream(input: ModelGenerateInput<MetaLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-
     if (this.usesResponsesAPI(input)) {
-      const previousResponse = getProviderResponseId(input.messages);
-      const messages =
-        previousResponse && previousResponse.index < input.messages.length - 1
-          ? input.messages.slice(previousResponse.index + 1)
-          : input.messages;
-      const response = await fetchMetaWithRetry(
-        this.fetcher,
-        `${this.baseURL}/responses`,
-        {
-          method: "POST",
-          headers: jsonHeaders(this.apiKey),
-          signal,
-          body: JSON.stringify({
-            ...stripProviderOptions(input.providerOptions),
-            model: this.modelId,
-            ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-            ...(messages.length ? { input: toResponsesInput(messages) } : {}),
-            tools: mapResponsesTools(input.tools),
-            tool_choice: mapToolChoice(input.toolChoice),
-            text: mapResponsesStructuredOutput(input),
-            temperature: input.temperature,
-            max_output_tokens: input.maxTokens,
-            ...mapResponsesReasoning(input),
-            stream: true
-          })
-        },
-        input
-      );
-
-      return (async function* () {
-        try {
-          yield* streamResponses(response);
-        } finally {
-          cleanup();
-        }
-      })();
+      return openOpenAICompatibleEvents(input, async (signal) => {
+        const previousResponse = getProviderResponseId(input.messages);
+        const messages =
+          previousResponse && previousResponse.index < input.messages.length - 1
+            ? input.messages.slice(previousResponse.index + 1)
+            : input.messages;
+        const response = await fetchMetaWithRetry(
+          this.fetcher,
+          `${this.baseURL}/responses`,
+          {
+            method: "POST",
+            headers: jsonHeaders(this.apiKey),
+            signal,
+            body: JSON.stringify({
+              ...stripProviderOptions(input.providerOptions),
+              model: this.modelId,
+              ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
+              ...(messages.length ? { input: toResponsesInput(messages) } : {}),
+              tools: mapResponsesTools(input.tools),
+              tool_choice: mapToolChoice(input.toolChoice),
+              text: mapResponsesStructuredOutput(input),
+              temperature: input.temperature,
+              max_output_tokens: input.maxTokens,
+              ...mapResponsesReasoning(input),
+              stream: true
+            })
+          },
+          input
+        );
+        return streamResponses(response);
+      });
     }
 
-    const response = await fetchMetaWithRetry(
+    return openOpenAICompatibleStream(input, (signal) => fetchMetaWithRetry(
       this.fetcher,
       `${this.baseURL}/chat/completions`,
       {
@@ -1003,77 +992,52 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
         })
       },
       input
-    );
-
-    return (async function* () {
-      try {
-        const toolBuffers = new Map<number, { id: string; name: string; args: string }>();
-        let lastFinishReason: string | undefined;
-        let lastUsage: any;
-
-        for await (const event of streamSSE(response)) {
-          if (event.data === "[DONE]") {
-            break;
-          }
-
-          const json = JSON.parse(event.data);
-          const choice = json.choices?.[0];
-          const delta = choice?.delta;
-
-          if (delta?.content) {
-            yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;
-          }
-
-          for (const toolCall of delta?.tool_calls ?? []) {
-            const index =
-              typeof toolCall.index === "number" && Number.isSafeInteger(toolCall.index) && toolCall.index >= 0
-                ? toolCall.index
-                : 0;
-            const existing = toolBuffers.get(index) ?? {
-              id: toolCall.id ?? `${index}`,
-              name: toolCall.function?.name ?? "",
-              args: ""
-            };
-            existing.id = toolCall.id ?? existing.id;
-            existing.name ||= toolCall.function?.name ?? "";
-            existing.args += toolCall.function?.arguments ?? "";
-            toolBuffers.set(index, existing);
-          }
-
-          if (choice?.finish_reason === "tool_calls") {
-            for (const [, toolCall] of [...toolBuffers.entries()].sort(([left], [right]) => left - right)) {
-              yield {
-                type: "tool-call",
-                toolCall: {
-                  id: toolCall.id,
-                  name: toolCall.name,
-                  input: JSON.parse(toolCall.args || "{}")
-                }
-              } satisfies StreamEvent;
-            }
-            toolBuffers.clear();
-          }
-
-          if (choice?.finish_reason) {
-            lastFinishReason = choice.finish_reason;
-          }
-          if (json.usage) {
-            lastUsage = json.usage;
-          }
+    ), {
+      readPayload: (data) => JSON.parse(data),
+      onChunk: (json, toolBuffers, state) => {
+        const events: StreamEvent[] = [];
+        const choice = json.choices?.[0];
+        const delta = choice?.delta;
+        if (delta?.content) events.push({ type: "text-delta", textDelta: delta.content });
+        for (const toolCall of delta?.tool_calls ?? []) {
+          const index =
+            typeof toolCall.index === "number" && Number.isSafeInteger(toolCall.index) && toolCall.index >= 0
+              ? toolCall.index
+              : 0;
+          const existing = toolBuffers.get(index) ?? {
+            id: toolCall.id ?? `${index}`,
+            name: toolCall.function?.name ?? "",
+            args: ""
+          };
+          existing.id = toolCall.id ?? existing.id;
+          existing.name ||= toolCall.function?.name ?? "";
+          existing.args += toolCall.function?.arguments ?? "";
+          toolBuffers.set(index, existing);
         }
-
-        if (lastFinishReason || lastUsage) {
-          yield {
-            type: "finish",
-            finishReason: normalizeFinishReason(lastFinishReason),
-            providerFinishReason: lastFinishReason,
-            usage: mapChatUsage(lastUsage)
-          } satisfies StreamEvent;
+        if (choice?.finish_reason === "tool_calls") {
+          for (const [, toolCall] of [...toolBuffers.entries()].sort(([left], [right]) => left - right)) {
+            events.push({
+              type: "tool-call",
+              toolCall: {
+                id: toolCall.id,
+                name: toolCall.name,
+                input: JSON.parse(toolCall.args || "{}")
+              }
+            });
+          }
+          toolBuffers.clear();
         }
-      } finally {
-        cleanup();
-      }
-    })();
+        if (choice?.finish_reason) state.finishReason = choice.finish_reason;
+        if (json.usage) state.usage = json.usage;
+        return events;
+      },
+      onDone: (_tools, state) => state.finishReason || state.usage ? [{
+        type: "finish",
+        finishReason: normalizeFinishReason(state.finishReason),
+        providerFinishReason: state.finishReason,
+        usage: mapChatUsage(state.usage)
+      }] : []
+    });
   }
 }
 

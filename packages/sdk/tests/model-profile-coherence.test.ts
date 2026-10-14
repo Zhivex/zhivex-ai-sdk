@@ -96,7 +96,7 @@ describe("model profiles through the SDK facade", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+  it.each(["gemini-4-argon", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "keeps curated %s reasoning metadata consistent with actual requests", async (id) => {
       const fetcher = vi.fn(async () => Response.json({ candidates: [{
         content: { parts: [{ text: "ready" }] }, finishReason: "STOP"

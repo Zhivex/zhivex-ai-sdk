@@ -10,12 +10,14 @@ import {
   isCallableToolDefinition,
   normalizeFinishReason,
   providerDataPart,
+  openAICompatibleJsonHeaders,
+  openAICompatibleReasoningContent,
+  openOpenAICompatibleStream,
   readErrorBodyWithLimit,
   readJsonWithLimit,
-  streamSSE,
   toolResultPayload,
+  withOpenAICompatibleAttempt,
   withRetry,
-  withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
   type JsonValue,
@@ -120,22 +122,9 @@ const modelCapabilities = (modelId: string): ModelCapabilities =>
     : capabilities;
 
 const reasoningContentFromMessage = (message: ModelMessage) =>
-  message.parts
-    .filter((part) => {
-      if (part.type !== "provider-data" || part.provider !== "deepseek") {
-        return false;
-      }
+  openAICompatibleReasoningContent(message, "deepseek");
 
-      const data = part.data as Record<string, unknown>;
-      return data.type === "reasoning_content" && typeof data.reasoningContent === "string";
-    })
-    .map((part) => (part.type === "provider-data" ? String((part.data as Record<string, unknown>).reasoningContent) : ""))
-    .join("");
-
-const jsonHeaders = (apiKey: string) => ({
-  "content-type": "application/json",
-  authorization: `Bearer ${apiKey}`
-});
+const jsonHeaders = openAICompatibleJsonHeaders;
 
 const assertResponseOk = async (response: Response) => {
   if (!response.ok) {
@@ -835,9 +824,7 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
   }
 
   async generate(input: ModelGenerateInput<DeepSeekLanguageModelOptions>): Promise<GenerateResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-
-    try {
+    return withOpenAICompatibleAttempt(input, async (signal) => {
       const options = resolveRequestOptions(this.baseURL, this.betaBaseURL, input);
       const json = await withRetry(
         async () => {
@@ -884,151 +871,109 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
         usage: mapUsage(json.usage),
         rawResponse: json
       };
-    } finally {
-      cleanup();
-    }
+    });
   }
 
   async stream(input: ModelGenerateInput<DeepSeekLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-    let response: Response;
-
-    try {
+    return openOpenAICompatibleStream(input, async (signal) => {
       const options = resolveRequestOptions(this.baseURL, this.betaBaseURL, input);
-      response = await withRetry(
-        async () => {
-          const result = await this.fetcher(`${options.requestBaseURL}/chat/completions`, {
-            method: "POST",
-            headers: jsonHeaders(this.apiKey),
-            signal,
-            body: stringifyDeepSeekRequest(this.modelId, {
-              ...options.bodyOptions,
-              model: this.modelId,
-              messages: mapMessages(
-                ensureJsonOutputInstruction(input.messages, options.responseFormat, input.structuredOutput),
-                this.modelId,
-                options.prefix,
-                input.toolResultFormat
-              ),
-              tools: mapTools(input.tools, options.strictTools),
-              tool_choice: options.toolChoice,
-              response_format: options.responseFormat,
-              temperature: options.temperature,
-              max_tokens: options.maxTokens,
-              stream: true,
-              stream_options: { include_usage: true },
-              ...(options.thinking ? { thinking: options.thinking } : {}),
-              ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {})
-            })
+      return withRetry(async () => {
+        const result = await this.fetcher(`${options.requestBaseURL}/chat/completions`, {
+          method: "POST",
+          headers: jsonHeaders(this.apiKey),
+          signal,
+          body: stringifyDeepSeekRequest(this.modelId, {
+            ...options.bodyOptions,
+            model: this.modelId,
+            messages: mapMessages(
+              ensureJsonOutputInstruction(input.messages, options.responseFormat, input.structuredOutput),
+              this.modelId,
+              options.prefix,
+              input.toolResultFormat
+            ),
+            tools: mapTools(input.tools, options.strictTools),
+            tool_choice: options.toolChoice,
+            response_format: options.responseFormat,
+            temperature: options.temperature,
+            max_tokens: options.maxTokens,
+            stream: true,
+            stream_options: { include_usage: true },
+            ...(options.thinking ? { thinking: options.thinking } : {}),
+            ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {})
+          })
+        });
+        await assertResponseOk(result);
+        return result;
+      }, { ...input, abortSignal: signal });
+    }, {
+      readPayload: (data) => JSON.parse(data),
+      onChunk: (json, toolBuffers, state) => {
+        const events: StreamEvent[] = [];
+        const choice = json.choices?.[0];
+        const delta = choice?.delta;
+        const usage = json.usage ?? choice?.usage;
+        if (!choice && usage) {
+          state.usage = usage;
+          if (state.finishReason && !state.finishEmitted) {
+            state.finishEmitted = true;
+            events.push({
+              type: "finish",
+              finishReason: normalizeDeepSeekFinishReason(state.finishReason),
+              providerFinishReason: state.finishReason,
+              usage: mapUsage(state.usage)
+            });
+          }
+          return events;
+        }
+        if (choice?.logprobs) {
+          events.push({
+            type: "provider-data",
+            provider: "deepseek",
+            data: { type: "logprobs", logprobs: choice.logprobs } as JsonValue
           });
-          await assertResponseOk(result);
-          return result;
-        },
-        { ...input, abortSignal: signal }
-      );
-    } catch (error) {
-      cleanup();
-      throw error;
-    }
-
-    return (async function* (): AsyncGenerator<StreamEvent> {
-      try {
-        const toolBuffers = new Map<number, { id: string; name: string; args: string }>();
-        let lastFinishReason: string | undefined;
-        let lastUsage: any;
-        let finishEmitted = false;
-
-        for await (const event of streamSSE(response)) {
-          if (event.data === "[DONE]") {
-            break;
-          }
-
-          const json = JSON.parse(event.data);
-          const choice = json.choices?.[0];
-          const delta = choice?.delta;
-          const usage = json.usage ?? choice?.usage;
-
-          if (!choice && usage) {
-            lastUsage = usage;
-            if (lastFinishReason && !finishEmitted) {
-              finishEmitted = true;
-              yield {
-                type: "finish",
-                finishReason: normalizeDeepSeekFinishReason(lastFinishReason),
-                providerFinishReason: lastFinishReason,
-                usage: mapUsage(lastUsage)
-              } satisfies StreamEvent;
-            }
-            continue;
-          }
-
-          if (choice?.logprobs) {
-            yield {
-              type: "provider-data",
-              provider: "deepseek",
-              data: {
-                type: "logprobs",
-                logprobs: choice.logprobs
-              } as JsonValue
-            } satisfies StreamEvent;
-          }
-
-          if (delta?.reasoning_content) {
-            yield {
-              type: "provider-data",
-              provider: "deepseek",
-              data: {
-                type: "reasoning_content",
-                reasoningContent: delta.reasoning_content
+        }
+        if (delta?.reasoning_content) {
+          events.push({
+            type: "provider-data",
+            provider: "deepseek",
+            data: { type: "reasoning_content", reasoningContent: delta.reasoning_content }
+          });
+        }
+        if (delta?.content) events.push({ type: "text-delta", textDelta: delta.content });
+        for (const toolCall of delta?.tool_calls ?? []) {
+          const index = typeof toolCall.index === "number" ? toolCall.index : 0;
+          const existing = toolBuffers.get(index) ?? { id: "", name: "", args: "" };
+          existing.id ||= toolCall.id ?? "";
+          existing.name ||= toolCall.function?.name ?? "";
+          existing.args += toolCall.function?.arguments ?? "";
+          toolBuffers.set(index, existing);
+        }
+        if (choice?.finish_reason === "tool_calls") {
+          for (const [index, toolCall] of toolBuffers) {
+            events.push({
+              type: "tool-call",
+              toolCall: {
+                id: toolCall.id || `${index}`,
+                name: toolCall.name,
+                input: JSON.parse(toolCall.args || "{}")
               }
-            } satisfies StreamEvent;
+            });
           }
-
-          if (delta?.content) {
-            yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;
-          }
-
-          for (const toolCall of delta?.tool_calls ?? []) {
-            const index = typeof toolCall.index === "number" ? toolCall.index : 0;
-            const existing = toolBuffers.get(index) ?? { id: "", name: "", args: "" };
-            existing.id ||= toolCall.id ?? "";
-            existing.name ||= toolCall.function?.name ?? "";
-            existing.args += toolCall.function?.arguments ?? "";
-            toolBuffers.set(index, existing);
-          }
-
-          if (choice?.finish_reason === "tool_calls") {
-            for (const [index, toolCall] of toolBuffers) {
-              yield {
-                type: "tool-call",
-                toolCall: {
-                  id: toolCall.id || `${index}`,
-                  name: toolCall.name,
-                  input: JSON.parse(toolCall.args || "{}")
-                }
-              } satisfies StreamEvent;
-            }
-            toolBuffers.clear();
-          }
-
-          if (choice?.finish_reason) {
-            lastFinishReason = choice.finish_reason;
-            lastUsage = usage ?? lastUsage;
-          }
+          toolBuffers.clear();
         }
-
-        if (lastFinishReason && !finishEmitted) {
-          yield {
-            type: "finish",
-            finishReason: normalizeDeepSeekFinishReason(lastFinishReason),
-            providerFinishReason: lastFinishReason,
-            usage: mapUsage(lastUsage)
-          } satisfies StreamEvent;
+        if (choice?.finish_reason) {
+          state.finishReason = choice.finish_reason;
+          state.usage = usage ?? state.usage;
         }
-      } finally {
-        cleanup();
-      }
-    })();
+        return events;
+      },
+      onDone: (_tools, state) => state.finishReason && !state.finishEmitted ? [{
+        type: "finish",
+        finishReason: normalizeDeepSeekFinishReason(state.finishReason),
+        providerFinishReason: state.finishReason,
+        usage: mapUsage(state.usage)
+      }] : []
+    });
   }
 }
 

@@ -1643,6 +1643,45 @@ describe("vertex adapter", () => {
     }
   );
 
+  it("maps Gemini 4 Argon on Vertex to thinkingLevel without a deprecated budget", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "hello from vertex argon" }] } }]
+      })
+    );
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "global",
+      fetch: fetchMock as typeof fetch
+    });
+    const model = provider("gemini-4-argon");
+    expect(model.capabilities.reasoningEfforts).toEqual(["low", "medium", "high"]);
+    expect(model.capabilities.computerUse).toBe(true);
+
+    await generateText({ model, prompt: "hello", reasoning: { effort: "high" } });
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      generationConfig: { thinkingConfig?: { thinkingLevel?: string; thinkingBudget?: number } };
+    };
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "high" });
+    expect(body.generationConfig.thinkingConfig).not.toHaveProperty("thinkingBudget");
+
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      reasoning: { budgetTokens: 256 }
+    })).rejects.toThrow('Provider "vertex" uses "reasoning.effort" for Gemini 4 models and does not support "reasoning.budgetTokens".');
+    await expect(generateText({ model, prompt: "hello", temperature: 0.4 })).rejects.toThrow(
+      'does not support generation control "temperature" for model "gemini-4-argon"'
+    );
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      providerOptions: { top_k: 8 }
+    })).rejects.toThrow('does not support generation control "top_k" for model "gemini-4-argon"');
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("enforces documented Vertex locations for the new stable models", async () => {
     const regionalProvider = createVertex({
       accessToken: "test",
@@ -1661,6 +1700,9 @@ describe("vertex adapter", () => {
     );
     expect(() => regionalProvider("gemini-3.5-flash-lite")).toThrow(
       'Vertex model "gemini-3.5-flash-lite" is not available in location "us-central1". Use "global", "us", "eu"'
+    );
+    expect(() => regionalProvider("gemini-4-argon")).toThrow(
+      'Vertex model "gemini-4-argon" is not available in location "us-central1". Use "global", "us", "eu"'
     );
     await expect(
       createContextCache({

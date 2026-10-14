@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const vertexCatalogFragment = defineModelCatalogFragment({
   provider: "vertex",
-  revision: "2026-10-13",
-  verifiedAt: "2026-10-13",
+  revision: "2026-10-14",
+  verifiedAt: "2026-10-14",
   pricingEffectiveAt: "2026-08-30",
   sources: [
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/sonnet-5-5",
@@ -23,6 +23,7 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     "https://docs.mistral.ai/inference/deployment/cloud-deployments/vertex",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/models/interactions-api",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/use-claude",
+    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-8-flash",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-7-flash",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-3-7-flash",
@@ -78,6 +79,21 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     { provider: "vertex", modelId: "claude-sonnet-5" },
     { provider: "vertex", modelId: "claude-opus-5" },
     { provider: "vertex", modelId: "claude-fable-5-1" },
+    {
+      "provider": "vertex",
+      "modelId": "gemini-4-argon",
+      // Current introductory price through 2026-11-30. The catalog stores one rate;
+      // from 2026-12-01 the published price is $4/$20 per 1M tokens and $0.20 cached.
+      "inputCostPer1kTokens": 0.002,
+      "cachedInputCostPer1kTokens": 0.0001,
+      "outputCostPer1kTokens": 0.01,
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "vision",
+        "tools"
+      ]
+    },
     {
       "provider": "vertex",
       "modelId": "gemini-3.8-flash",

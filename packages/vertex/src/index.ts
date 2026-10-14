@@ -26,6 +26,7 @@ export type { VertexChatModelOptions } from "./chat.js";
 import { createVertexClaudeModel } from "./anthropic.js";
 import { createVertexClaudeClient, type VertexClaudeClient } from "./token-counting.js";
 export type { VertexClaudeClient, VertexClaudeTokenCountInput, VertexClaudeTokenCountResult } from "./token-counting.js";
+import { usesGeminiThinkingLevel } from "@zhivex-ai/gemini";
 import { GoogleAuth } from "google-auth-library";
 import { toJSONSchema } from "zod";
 import {
@@ -1171,11 +1172,10 @@ const createVertexRealtimeEventParser = (transcriptionOnly = false) => {
   };
 };
 
-const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
-
 const isGemini3ProModel = (modelId: string) => /^gemini-3([.-].*)?pro([.-]|$)/.test(modelId);
 
 const usesCurrentGeminiRequestRules = (modelId: string) =>
+  modelId === "gemini-4-argon" ||
   modelId === "gemini-3.8-flash" ||
   modelId === "gemini-3.7-flash" ||
   modelId === "gemini-3.6-flash" ||
@@ -1189,7 +1189,7 @@ const currentGeminiReasoningEfforts: NonNullable<ModelCapabilities["reasoningEff
 ];
 
 const reasoningEffortsForModel = (modelId: string) =>
-  (modelId === "gemini-3.8-flash" || modelId === "gemini-3.7-flash")
+  (modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash" || modelId === "gemini-3.7-flash")
     ? (["low", "medium", "high"] satisfies NonNullable<ModelCapabilities["reasoningEfforts"]>)
     : currentGeminiReasoningEfforts;
 
@@ -1200,12 +1200,12 @@ const modelCapabilities = (
   usesCurrentGeminiRequestRules(modelId)
     ? {
         ...baseCapabilities,
-        computerUse: modelId === "gemini-3.8-flash",
+        computerUse: modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash",
         reasoningEfforts: [...reasoningEffortsForModel(modelId)],
         agentCapabilities: baseCapabilities.agentCapabilities
           ? {
               ...baseCapabilities.agentCapabilities,
-              computerUse: modelId === "gemini-3.8-flash"
+              computerUse: modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash"
             }
           : undefined
       }
@@ -1297,15 +1297,16 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
     return undefined;
   }
 
-  if (isGemini3Model(modelId)) {
+  if (usesGeminiThinkingLevel(modelId)) {
+    const family = /^gemini-4([.-]|$)/.test(modelId) ? "Gemini 4" : "Gemini 3";
     if (input.reasoning.budgetTokens !== undefined) {
       throw new UnsupportedFeatureError(
-        'Provider "vertex" uses "reasoning.effort" for Gemini 3 models and does not support "reasoning.budgetTokens".'
+        `Provider "vertex" uses "reasoning.effort" for ${family} models and does not support "reasoning.budgetTokens".`
       );
     }
 
     if (input.reasoning.effort === "none") {
-      throw new UnsupportedFeatureError('Provider "vertex" does not support "reasoning.effort=none" for Gemini 3 models.');
+      throw new UnsupportedFeatureError(`Provider "vertex" does not support "reasoning.effort=none" for ${family} models.`);
     }
 
     if (input.reasoning.effort === "xhigh") {
@@ -2782,7 +2783,7 @@ export const createVertex = (
     const supportedLocations =
       modelId === "gemini-3.7-flash" || modelId === "gemini-3.6-flash" || modelId === "gemini-3.5-transcribe-preview" || isVertexLiveTranscribeModel(modelId) || isGeminiLiveTranslateModel(modelId)
         ? ["global"]
-        : modelId === "gemini-3.8-flash" || modelId === "gemini-3.5-flash-lite"
+        : modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash" || modelId === "gemini-3.5-flash-lite"
           ? ["global", "us", "eu"]
           : undefined;
     if (supportedLocations && !supportedLocations.includes(location)) {

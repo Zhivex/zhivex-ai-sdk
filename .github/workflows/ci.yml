@@ -88,6 +88,9 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Browser and edge bundle check
+        run: bun run scripts/browser-bundle-check.ts
+
       - name: Packed React optional-entrypoint smoke
         run: bun run scripts/react-package-smoke.ts
 
@@ -311,6 +314,65 @@ jobs:
 
       - name: Certify installed SDK package against Postgres
         run: bun run smoke:packages:workflows-postgres
+
+  minimum-core:
+    name: Minimum core / ${{ matrix.package }} @ ${{ matrix.core }}
+    needs: minimum-core-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs['minimum-core-plan'].outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Test against the declared core floor
+        run: bun run scripts/test-minimum-core.ts --package ${{ matrix.package }}
+
+  minimum-core-plan:
+    name: Plan minimum core matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Emit package and core floor matrix
+        id: plan
+        run: |
+          {
+            echo 'matrix<<EOF'
+            bun scripts/minimum-core-matrix.ts
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
 
   provider-conformance-attestation:
     name: Provider conformance provenance

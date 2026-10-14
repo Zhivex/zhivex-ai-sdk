@@ -4,9 +4,12 @@ import type { ModelCapabilities, ModelGenerateInput, ModelMessage } from "@zhive
 import { capabilities } from "./capabilities.js";
 import { toGeminiSchema } from "./messages.js";
 
-const isGemini3Model = (modelId: string) => /^gemini-3([.-]|$)/.test(modelId);
+/** Gemini 3 and Gemini 4 select reasoning with thinkingLevel, not thinkingBudget. */
+export const usesGeminiThinkingLevel = (modelId: string) => /^gemini-[34]([.-]|$)/.test(modelId);
 
 const isGemini3ProModel = (modelId: string) => /^gemini-3([.-].*)?pro([.-]|$)/.test(modelId);
+
+const thinkingLevelFamily = (modelId: string) => /^gemini-4([.-]|$)/.test(modelId) ? "Gemini 4" : "Gemini 3";
 
 interface GeminiTextProfile {
   readonly reasoningEfforts: readonly NonNullable<ModelCapabilities["reasoningEfforts"]>[number][];
@@ -25,6 +28,8 @@ const profile = (efforts: GeminiTextProfile["reasoningEfforts"]): GeminiTextProf
 });
 
 export const geminiTextProfiles: Readonly<Record<string, GeminiTextProfile>> = Object.freeze({
+  // Provider default thinking level is medium when the request omits thinkingLevel.
+  "gemini-4-argon": profile(["low", "medium", "high"]),
   "gemini-3.8-flash": profile(["low", "medium", "high"]),
   "gemini-3.7-flash": profile(["low", "medium", "high"]),
   "gemini-3.6-flash": profile(["minimal", "low", "medium", "high"]),
@@ -184,15 +189,16 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
     return undefined;
   }
 
-  if (isGemini3Model(modelId)) {
+  if (usesGeminiThinkingLevel(modelId)) {
+    const family = thinkingLevelFamily(modelId);
     if (input.reasoning.budgetTokens !== undefined) {
       throw new UnsupportedFeatureError(
-        'Provider "gemini" uses "reasoning.effort" for Gemini 3 models and does not support "reasoning.budgetTokens".'
+        `Provider "gemini" uses "reasoning.effort" for ${family} models and does not support "reasoning.budgetTokens".`
       );
     }
 
     if (input.reasoning.effort === "none") {
-      throw new UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=none" for Gemini 3 models.');
+      throw new UnsupportedFeatureError(`Provider "gemini" does not support "reasoning.effort=none" for ${family} models.`);
     }
 
     if (input.reasoning.effort === "xhigh") {
