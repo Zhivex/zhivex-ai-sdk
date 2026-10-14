@@ -1,4 +1,5 @@
 import type { ModelCatalog, ModelCatalogEntry, ModelCatalogEvidenceField } from "./catalog-contracts.js";
+import { appliesLongContextPricing } from "./pricing.js";
 
 export interface AuxiliaryModelRoute {
   provider: string;
@@ -124,7 +125,7 @@ function estimate(entry: ModelCatalogEntry, usable: (field: ModelCatalogEvidence
   if (entry.inputCostPer1kTokens === undefined || entry.outputCostPer1kTokens === undefined || !usable("inputCostPer1kTokens") || !usable("outputCostPer1kTokens")) return undefined;
   const tier = entry.longContextPricing;
   if (tier && !usable("longContextPricing")) return undefined;
-  const elevated = tier !== undefined && input > tier.inputTokenThreshold;
+  const elevated = tier !== undefined && appliesLongContextPricing(input, tier);
   const value = (input * entry.inputCostPer1kTokens * (elevated ? tier.inputMultiplier : 1) + output * entry.outputCostPer1kTokens * (elevated ? tier.outputMultiplier : 1)) / 1000;
   return Number.isFinite(value) ? value : undefined;
 }

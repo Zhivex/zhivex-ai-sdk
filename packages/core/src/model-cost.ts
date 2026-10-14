@@ -1,6 +1,7 @@
 import type { ModelCatalog } from "./catalog.js";
-import type { TokenUsage } from "./types.js";
 import { ValidationError } from "./errors.js";
+import { appliesLongContextPricing } from "./pricing.js";
+import type { TokenUsage } from "./types.js";
 
 export interface ModelCostInput {
   catalog: ModelCatalog;
@@ -60,7 +61,9 @@ export const calculateModelCost = (input: ModelCostInput): ModelCostValuation =>
   const cached = cache("cachedInputTokens"), written = cache("cacheWriteTokens");
   if (usage?.inputTokens === undefined) unknown("inputTokens-missing");
   if (usage?.outputTokens === undefined) unknown("outputTokens-missing");
-  if (usage?.inputTokens !== undefined) result.longContext = entry?.longContextPricing !== undefined && usage.inputTokens > entry.longContextPricing.inputTokenThreshold;
+  if (usage?.inputTokens !== undefined) {
+    result.longContext = entry?.longContextPricing !== undefined && appliesLongContextPricing(usage.inputTokens, entry.longContextPricing);
+  }
   if (usage?.inputTokens !== undefined && ((cached ?? 0) + (written ?? 0) > usage.inputTokens)) throw new ValidationError("Cache tokens exceed normalized inputTokens.");
   if (usage?.reasoningTokens && input.reasoningAccounting === undefined) unknown("reasoning-accounting-unspecified");
   if (input.reasoningAccounting === "included" && usage?.reasoningTokens !== undefined && usage.outputTokens !== undefined && usage.reasoningTokens > usage.outputTokens) throw new ValidationError("Reasoning tokens exceed inclusive outputTokens.");

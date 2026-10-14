@@ -1,7 +1,7 @@
 import type { ModelCatalog } from "./catalog.js";
 import { ValidationError } from "./errors.js";
 import { createAgentRunSnapshot, replayAgentRun, type AgentRunSnapshot } from "./agent-evaluation.js";
-import type { LongContextPricing } from "./pricing.js";
+import { appliesLongContextPricing, type LongContextPricing } from "./pricing.js";
 import { createRedactionPolicy, type RedactionPolicy, type RedactionPolicyOptions } from "./safety-policy.js";
 import type {
   AgentRunStore,
@@ -583,14 +583,14 @@ export const estimateTokenCost = (
   const cacheWriteRate = pricing.cacheWriteCostPer1kTokens ?? inputRate;
   const outputRate = pricing.outputCostPer1kTokens ?? pricing.costPer1kTokens ?? pricing.totalCostPer1kTokens;
   const totalRate = pricing.totalCostPer1kTokens ?? pricing.costPer1kTokens;
-  const appliesLongContextPricing =
+  const longContext =
     normalizedUsage.inputTokens !== undefined &&
     pricing.longContextPricing !== undefined &&
-    normalizedUsage.inputTokens > pricing.longContextPricing.inputTokenThreshold;
-  const inputMultiplier = appliesLongContextPricing
+    appliesLongContextPricing(normalizedUsage.inputTokens, pricing.longContextPricing);
+  const inputMultiplier = longContext
     ? pricing.longContextPricing?.inputMultiplier ?? 1
     : 1;
-  const outputMultiplier = appliesLongContextPricing
+  const outputMultiplier = longContext
     ? pricing.longContextPricing?.outputMultiplier ?? 1
     : 1;
   const inputCost = (() => {
