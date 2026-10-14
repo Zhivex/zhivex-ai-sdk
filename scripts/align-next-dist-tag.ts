@@ -1,6 +1,4 @@
-import { execFileSync } from "node:child_process";
-
-import { compareVersions, releaseOidcErrors } from "./check-release-readiness.ts";
+import { compareVersions } from "./check-release-readiness.ts";
 
 export interface DistTagSnapshot {
   name: string;
@@ -12,6 +10,11 @@ export interface NextAlignment {
   name: string;
   from: string;
   to: string;
+}
+
+export interface NextDistTagCheck {
+  status: "ok" | "warn";
+  messages: string[];
 }
 
 const packageNamePattern = /^@zhivex-ai\/[a-z0-9][a-z0-9-]*$/;
@@ -30,6 +33,32 @@ export const planNextDistTagAlignment = (snapshots: readonly DistTagSnapshot[]):
     }
   }
   return planned.sort((left, right) => left.name.localeCompare(right.name));
+};
+
+export const summarizeNextDistTagCheck = (planned: readonly NextAlignment[]): NextDistTagCheck => {
+  if (planned.length === 0) {
+    return {
+      status: "ok",
+      messages: ["npm dist-tag next is not older than latest."]
+    };
+  }
+  return {
+    status: "warn",
+    messages: [
+      ...planned.map((alignment) =>
+        `${alignment.name}: npm dist-tag next (${alignment.from}) is older than latest (${alignment.to}). Publishing with --tag latest does not move next.`
+      ),
+      "Stale next dist-tags were not moved. This check does not fail the release."
+    ]
+  };
+};
+
+export const refuseDistTagMutation = (argv: readonly string[]) => {
+  if (argv.includes("--apply") || argv.includes("--check")) {
+    throw new Error(
+      "This check is read-only. Trusted publishing cannot move dist-tags; publish each channel with npm publish --tag."
+    );
+  }
 };
 
 const loadWorkspacePackageNames = async (): Promise<string[]> => {
@@ -60,46 +89,29 @@ const loadDistTagSnapshot = async (name: string): Promise<DistTagSnapshot> => {
   };
 };
 
-const applyAlignment = (alignment: NextAlignment) => {
-  execFileSync("npm", ["dist-tag", "add", `${alignment.name}@${alignment.to}`, "next"], {
-    stdio: "inherit"
-  });
-};
-
 const run = async () => {
-  const apply = process.argv.includes("--apply");
-  const check = process.argv.includes("--check");
-  if (apply && check) {
-    throw new Error("Use either --apply or --check.");
+  refuseDistTagMutation(process.argv);
+  let check: NextDistTagCheck;
+  try {
+    check = summarizeNextDistTagCheck(
+      planNextDistTagAlignment(
+        await Promise.all((await loadWorkspacePackageNames()).map((name) => loadDistTagSnapshot(name)))
+      )
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `warning: could not read npm dist-tags (${message}). This check does not fail the release.`
+    );
+    return;
   }
-  if (apply) {
-    const oidcErrors = releaseOidcErrors(process.env);
-    if (oidcErrors.length > 0) {
-      throw new Error(oidcErrors.join("\n"));
+  for (const message of check.messages) {
+    if (check.status === "warn") {
+      console.warn(`warning: ${message}`);
+    } else {
+      console.log(message);
     }
   }
-
-  const planned = planNextDistTagAlignment(
-    await Promise.all((await loadWorkspacePackageNames()).map((name) => loadDistTagSnapshot(name)))
-  );
-  if (planned.length === 0) {
-    console.log("npm dist-tag next is not older than latest.");
-    return;
-  }
-  for (const alignment of planned) {
-    console.log(`${alignment.name}: next ${alignment.from} -> ${alignment.to}`);
-  }
-  if (check) {
-    throw new Error(`${planned.length} npm dist-tag next value(s) are older than latest.`);
-  }
-  if (!apply) {
-    console.log("Dry run only. Re-run with --apply from the release workflow to move these tags.");
-    return;
-  }
-  for (const alignment of planned) {
-    applyAlignment(alignment);
-  }
-  console.log(`Moved ${planned.length} stale next dist-tag(s) onto latest.`);
 };
 
 if (import.meta.main) {

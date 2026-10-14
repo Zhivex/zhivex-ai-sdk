@@ -294,28 +294,26 @@ jobs:
             --generate-notes \
             --title "Zhivex AI SDK ${sdk_tag##*@}"
 
-  align_next:
-    name: Align next dist-tag to latest
+  verify_public:
+    name: Verify published packages on npm
     needs: publish
-    if: needs.publish.result == 'success' && inputs.channel == 'latest'
+    if: needs.publish.result == 'success' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: npm
+    timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write
 
     steps:
       - name: Checkout release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Setup Node for npm dist-tag
+      - name: Setup Node for public registry verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       - name: Setup Bun
@@ -323,8 +321,23 @@ jobs:
         with:
           bun-version: 1.4.2
 
-      - name: Install an npm CLI that can manage dist-tags with OIDC
-        run: npm install -g npm@11.21.0
+      - name: Download validated release source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-source-${{ github.sha }}
+          path: .release
 
-      - name: Point stale next tags at latest
-        run: bun scripts/align-next-dist-tag.ts --apply
+      - name: Verify validated package bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          shasum -a 512 -c .release/SHA512SUMS
+
+      - name: Verify published versions, dist-tags, and provenance
+        run: bun run scripts/check-release-readiness.ts --postpublish --tag=${{ inputs.channel }} --release-batch-file=.release/zhivex-release-batch.json
+
+      - name: Install published packages from the public registry
+        run: bun run scripts/install-published-release.ts --release-batch-file=.release/zhivex-release-batch.json
+
+      - name: Warn when next lags latest
+        run: bun run scripts/align-next-dist-tag.ts

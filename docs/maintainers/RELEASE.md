@@ -75,11 +75,11 @@ git status --short
 
 `bun run version-packages` also synchronizes the standalone Next.js starter pins for SDK, OpenAI, and React, the provider registry, and Bun workspace snapshots with the generated package versions. The snapshot synchronizer updates only workspace versions and internal ranges, preserving external resolutions byte for byte; external dependency or inventory changes require a real Bun lockfile regeneration. Run `bun run lock:check` to detect stale snapshots even when a frozen install accepts them. Review that diff and rerun `docs:check` and the internal Core range tests after versioning; providers that import new Core helpers must require the version that introduced them. For an already versioned, unpublished batch with stale snapshots, run `bun scripts/sync-lock-workspaces.ts` without repeating Changesets.
 
-Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The `validate` job has no OIDC permission: it checks out immutable committed source, installs dependencies without lifecycle scripts, scans for recognized secret signatures, repeats audit/typecheck/test/build and the packed Node consumer smoke, then produces the exact release batch as commit-bound SHA-512 tarballs. The separate `publish` job is the only OIDC trust boundary; it installs no dependencies and publishes only those downloaded, checksum-verified tarballs. Package tags are pushed only after npm integrity, dist-tags, and the signed SLSA provenance subject and source commit match the release. `gitHead` is also checked when npm provides it.
+Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The `validate` job has no OIDC permission: it checks out immutable committed source, installs dependencies without lifecycle scripts, scans for recognized secret signatures, repeats audit/typecheck/test/build and the packed Node consumer smoke, then produces the exact release batch as commit-bound SHA-512 tarballs. The separate `publish` job is the only OIDC trust boundary; it installs no dependencies and publishes only those downloaded, checksum-verified tarballs with `npm publish --tag`. Channel `latest` and channel `next` are selected in that same publish step. The workflow does not run `npm dist-tag`. Package tags are pushed only after npm integrity, dist-tags, and the signed SLSA provenance subject and source commit match the release. `gitHead` is also checked when npm provides it. After `publish` succeeds, `verify_public` checks the same versions, dist-tags, and provenance again from the public registry, then installs the published batch with retries. That job has `contents: read` only: no `npm` environment, no OIDC token, and no token that can publish or move dist-tags.
 
 Tag discovery comes from npm metadata rather than only from tags created inside the current runner. This lets a safe rerun recover every tag from a partially successful publish while excluding unchanged packages from older commits.
 
-`bun run release` is intentionally restricted to GitHub Actions with an available OIDC token. Do not add `NPM_TOKEN` to the workflow. If authentication fails, fix the npm trusted-publisher configuration and rerun the workflow; do not publish individual dependent packages around the failed batch.
+There is no local publish command. `scripts/release-artifacts.ts publish` runs only inside the `publish` job, and only with `npm publish --tag latest` or `npm publish --tag next` plus `--provenance`. Do not add `NPM_TOKEN` to the workflow. If authentication fails, fix the npm trusted-publisher configuration and rerun the workflow; do not publish individual dependent packages around the failed batch.
 
 Before the first OIDC release, configure every `@zhivex-ai/*` package on npm with this trusted publisher:
 
@@ -104,19 +104,25 @@ For packages included in the release, repeat `npm view <package> version dist-ta
 The automated postpublish gate retries registry reads for up to roughly one minute because newly
 published versions and dist-tags can become visible at slightly different times.
 
-If Changesets reports `packages published successfully` but the postpublish gate still expires,
-do not run `version-packages` again and do not try to republish immutable versions. Check every
-reported package and dist-tag with `npm view`, then rerun the release verification after registry
-propagation. npm can omit `gitHead` when publishing prebuilt tarballs, so the verifier reads the
-official registry attestation and binds its signed SLSA subject digest to npm integrity, the
-protected `release.yml` workflow, and the exact source commit. Contradictory `gitHead` and
-provenance evidence is rejected. A failed `publish` job also skips the tag-push job, so recover
-package tags only after all versions, dist-tags, integrity, and provenance are confirmed, and point
-them to that exact release source SHA.
+If the publish log shows the tarballs were accepted but the postpublish gate or `verify_public`
+still expires, do not run `version-packages` again and do not try to republish immutable versions.
+Check every reported package and dist-tag with `npm view`, then rerun the release workflow after
+registry propagation. A rerun selects only versions that are still unpublished. npm can omit
+`gitHead` when publishing prebuilt tarballs, so the verifier reads the official registry attestation
+and binds its signed SLSA subject digest to npm integrity, the protected `release.yml` workflow, and
+the exact source commit. Contradictory `gitHead` and provenance evidence is rejected. A failed
+`publish` job also skips the tag-push job and `verify_public`, so recover package tags only after
+all versions, dist-tags, integrity, and provenance are confirmed, and point them to that exact
+release source SHA.
+
+`verify_public` installs the release batch from `https://registry.npmjs.org` in a temporary project
+with `npm install --ignore-scripts`. It retries because a version can appear in registry metadata
+before its tarball can be fetched. The install drops `NPM_TOKEN` and `NODE_AUTH_TOKEN` from the
+child environment and does not publish. An empty batch skips the install.
 
 ## Prerelease To `next`
 
-Use this flow for prerelease validation. Publish only through the protected `release.yml` workflow with channel `next`; local release commands are workflow implementation details.
+Use this flow for prerelease validation. Publish only through the protected `release.yml` workflow with channel `next`. There is no local publish command.
 
 This repository uses Changesets 3. Its generated `pre.json` contains `mode` and
 `tag`; the older `initialVersions` and `changesets` fields are no longer required.
@@ -165,24 +171,27 @@ The prerelease version should be under `next`, not `latest`.
 
 ## Keep `next` From Falling Behind `latest`
 
-`npm publish --tag latest` does not move `next`. After `bunx changeset pre exit` and a stable publish, `next` stays on the last prerelease. That tag is older than `latest`, so `bun add @zhivex-ai/sdk@next` installs a downgrade. `bun run release:check` warns when this happens. It does not fail the publish: the pending stable batch must be able to ship before `next` is moved, and channel `next` cannot republish a stable version (`stable versions must publish to the latest dist-tag`).
+`npm publish --tag latest` does not move `next`, and `npm publish --tag next` does not move `latest`. Each channel is published only by the `publish` job. Trusted publishing with OIDC can run `npm publish`; it cannot run `npm dist-tag add` or `npm dist-tag rm`. A follow-up dist-tag job fails with npm `E403` after the packages are already published, so the workflow does not try.
 
-Dispatching `.github/workflows/release.yml` with channel `latest` publishes the unpublished batch, then the `align_next` job points each stale `next` tag at that package's `latest` version. The job does not publish packages and does not delete tags. A higher prerelease, such as `1.32.0-next.0` while `latest` is `1.31.0`, is left alone.
+`next` means the current prerelease channel. It exists while `changeset pre enter next` is in effect and channel `next` publishes `-next.N` versions. After `bunx changeset pre exit` and a stable publish, `next` stays on the last prerelease. That tag can be older than `latest`, so `bun add @zhivex-ai/sdk@next` can install a downgrade. `bun run release:check` warns when this happens and does not fail the publish: the pending stable batch must still be able to ship, and channel `next` cannot republish a stable version (`stable versions must publish to the latest dist-tag`).
 
-`align_next` uses the same protected `npm` environment and OIDC trusted publisher as `release.yml`. It upgrades npm to 11.21.0 because dist-tag operations need npm 11.21.0 or 12.2.0 or newer; `npm publish` alone still accepts the older 11.5.1 minimum. Trusted publishing does not allow dist-tag changes until an npm maintainer enables **Allow npm dist-tag** on each package's trusted publisher. That permission defaults to off and is separate from `npm publish`. This repository does not store an `NPM_TOKEN`. If the permission is still off, `align_next` fails after a successful publish; rerun that job after enabling it. Do not treat a red `align_next` job as a failed publish.
+`scripts/align-next-dist-tag.ts` is the same warning as a read-only registry check. `verify_public` runs it after publication, without OIDC. It prints the packages whose `next` tag is older than `latest` and exits successfully. It does not add, remove, or retarget dist-tags. A registry read failure in this check is also a warning. A higher prerelease, such as `1.33.0-next.0` while `latest` is `1.32.0`, is left alone because it is not older than `latest`.
 
-To remove `next` instead of pointing it at `latest`, an npm maintainer runs this from the authorized workflow or with a granular access token. Removal makes `@next` uninstallable until the next prerelease:
+```bash
+bun run scripts/align-next-dist-tag.ts
+```
+
+Removing a stale `next` tag is a separate maintainer action on npm, outside GitHub Actions, and only after the release freeze. Do not add `NPM_TOKEN` to the workflow to do it. Removal makes `@next` uninstallable until the next prerelease:
 
 ```bash
 npm dist-tag rm @zhivex-ai/sdk next
 ```
 
-Repeat for every `@zhivex-ai/*` package. Prefer moving `next` onto `latest` while the README still tells consumers to install `@next` for prerelease validation.
-Consumer docs install `@zhivex-ai/sdk` from `latest` or pin an exact version. The public `next` dist-tag can lag `latest`. Do not tell application developers to install `@next` unless you have just published a prerelease and confirmed that tag is newer than `latest`.
+Repeat for every `@zhivex-ai/*` package that still has a stale `next` tag. Consumer docs install `@zhivex-ai/sdk` from `latest` or pin an exact version. Do not tell application developers to install `@next` unless a prerelease was just published and `npm view @zhivex-ai/sdk dist-tags --json` shows `next` newer than `latest`.
 
 ## Fresh Install Smoke
 
-After publish, test a clean install in a temporary project. Use `latest` for stable releases:
+`verify_public` already installs the exact published versions from the public registry and retries while npm propagation catches up. For a manual check in a temporary project, use `latest` for stable releases:
 
 ```bash
 tmpdir="$(mktemp -d)"

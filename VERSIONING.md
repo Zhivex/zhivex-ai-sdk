@@ -55,7 +55,7 @@ Changesets is configured to update internal dependencies when needed, but packag
 
 Follow the [canonical Release Guide](./docs/maintainers/RELEASE.md) for validation, Changesets versioning, protected workflow dispatch, and registry verification. Agent changes additionally follow [Agent Release Readiness](./docs/maintainers/AGENT_RELEASE.md).
 
-Publishing runs only through `.github/workflows/release.yml` with `latest` or `next`, using npm Trusted Publishing and OIDC. Local release commands are workflow implementation details. Versioning or a successful local build is not proof of npm publication.
+Publishing runs only through `.github/workflows/release.yml` with `latest` or `next`, using npm Trusted Publishing and OIDC. There is no local publish command. Versioning or a successful local build is not proof of npm publication.
 
 ## Compatibility Expectations
 

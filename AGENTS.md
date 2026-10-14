@@ -108,8 +108,7 @@ This repo uses `changesets` with `access: public`, `baseBranch: main`, and `upda
 
 - Versioning should go through files in `.changeset/` whenever a published package changes.
 - During versioning, `changesets` will update internal package dependencies when needed.
-- Stable and prerelease publishing runs only from the protected `.github/workflows/release.yml` workflow with npm Trusted Publishing and OIDC.
-- `bun run release` and `bun run release:next` are workflow implementation commands, not local publishing instructions.
+- Stable and prerelease publishing runs only from the protected `.github/workflows/release.yml` workflow with npm Trusted Publishing and OIDC. There is no local publish command.
 
 ### When to Create a Changeset
 
