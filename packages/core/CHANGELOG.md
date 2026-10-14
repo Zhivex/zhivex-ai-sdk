@@ -1,5 +1,15 @@
 # @zhivex-ai/core
 
+## 1.33.0
+
+### Minor Changes
+
+- 56b07bf: Reject Chat Completions for `grok-4.7`, record xAI cached-input prices and context windows, encode the inclusive 200k tier as an exclusive 199,999-token threshold, and add Grok Imagine image, video, and voice adapters. `grok-voice-2.0` is marked deprecated.
+
+### Patch Changes
+
+- b5833e3: Reject private, loopback, link-local, and metadata hosts in `assertTrustedEndpoint`, including IPv6 and IPv4-mapped forms. Replace the Node-only deep-equal helper so Core can bundle for browser and edge. Share the OpenAI-compatible request and SSE loop across DeepSeek, Kimi, Meta, Z.ai, and Ollama, and raise those packages' Core floor to this release. Gateway and OpenRouter move to the same floor because their unit tests load those adapters.
+
 ## 1.32.0
 
 ### Minor Changes
