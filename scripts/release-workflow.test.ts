@@ -1,19 +1,25 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-const workflow = readFileSync(
-  new URL("../.github/workflows/release.yml", import.meta.url),
-  "utf8"
+const workflowsDirectory = new URL("../.github/workflows/", import.meta.url);
+const workflowSources = Object.fromEntries(
+  readdirSync(workflowsDirectory)
+    .filter((name) => name.endsWith(".yml"))
+    .sort()
+    .map((name) => [name, readFileSync(new URL(name, workflowsDirectory), "utf8")])
 );
-const ciWorkflow = readFileSync(
-  new URL("../.github/workflows/ci.yml", import.meta.url),
-  "utf8"
-);
-const codeqlWorkflow = readFileSync(
-  new URL("../.github/workflows/codeql.yml", import.meta.url),
-  "utf8"
-);
+
+const workflow = workflowSources["release.yml"];
+const ciWorkflow = workflowSources["ci.yml"];
+const codeqlWorkflow = workflowSources["codeql.yml"];
+const previewWorkflow = workflowSources["preview.yml"];
+const versionWorkflow = workflowSources["version-packages.yml"];
+const agentsGuide = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf8");
+const releaseGuide = readFileSync(new URL("../docs/maintainers/RELEASE.md", import.meta.url), "utf8");
+
+const actionUse = (source: string, action: string) =>
+  source.match(new RegExp(String.raw`uses:\s+${action.replaceAll("/", "\\/")}@[a-f0-9]{40}\s+#\s+v\d\S*`))?.[0];
 
 const jobSection = (name: string, nextName: string) => {
   const start = workflow.indexOf(`  ${name}:`);
@@ -33,7 +39,7 @@ describe("release workflow", () => {
   });
 
   it("tests packed packages through Node in CI and before publishing", () => {
-    expect(ciWorkflow).toContain("actions/setup-node@820762786026740c76f36085b0efc47a31fe5020");
+    expect(ciWorkflow).toContain("node-version: 24");
     expect(ciWorkflow).toContain("bun run scripts/package-consumer-smoke.ts");
     expect(workflow).toContain("bun run scripts/package-consumer-smoke.ts");
   });
@@ -80,8 +86,8 @@ describe("release workflow", () => {
     expect(workflow).toContain("shasum -a 512 -c .release/SHA512SUMS");
     expect(workflow).toContain('release-artifacts.ts publish --tag=latest --git-head="$GITHUB_SHA"');
     expect(workflow).toContain('release-artifacts.ts publish --tag=next --git-head="$GITHUB_SHA"');
-    expect(workflow).toContain("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
-    expect(workflow).toContain("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c");
+    expect(workflow).toContain("actions/upload-artifact@");
+    expect(workflow).toContain("actions/download-artifact@");
   });
 
   it("publishes each channel with npm publish --tag and does not move dist-tags", () => {
@@ -118,20 +124,91 @@ describe("release workflow", () => {
     expect(jobSection("validate", "publish")).toContain("bun run scripts/scan-secrets.ts");
   });
 
-  it("pins every third-party action to a full commit and uses current security majors", () => {
-    const actionReferences = [workflow, ciWorkflow, codeqlWorkflow]
-      .flatMap((value) => value.match(/uses:\s+\S+/g) ?? [])
-      .map((value) => value.replace(/^uses:\s+/, ""));
+  it("pins every action in every workflow to a full commit and a version comment", () => {
+    expect(Object.keys(workflowSources)).toEqual(
+      expect.arrayContaining([
+        "ci.yml",
+        "codeql.yml",
+        "preview.yml",
+        "release.yml",
+        "version-packages.yml"
+      ])
+    );
 
-    expect(actionReferences.length).toBeGreaterThan(0);
-    for (const reference of actionReferences) {
-      expect(reference).toMatch(/@[a-f0-9]{40}$/);
+    for (const [fileName, source] of Object.entries(workflowSources)) {
+      const usesLines = source.split("\n").filter((line) => /^\s*-\s+uses:/.test(line) || /^\s*uses:/.test(line));
+      expect(usesLines.length, fileName).toBeGreaterThan(0);
+      for (const line of usesLines) {
+        expect(line, `${fileName}: ${line.trim()}`).toMatch(/uses:\s+\S+@[a-f0-9]{40}\s+#\s+v\d/);
+      }
     }
-    expect(codeqlWorkflow).toContain(
-      "github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2"
+  });
+
+  it("keeps preview triggers and permissions free of secrets", () => {
+    expect(previewWorkflow).toContain("pull_request_target:");
+    expect(previewWorkflow).toContain("permissions: {}");
+    expect(previewWorkflow).not.toContain("secrets.");
+    expect(previewWorkflow).not.toContain("id-token:");
+    expect(previewWorkflow).not.toContain("NPM_TOKEN:");
+  });
+
+  it("opens a Version packages pull request without publishing", () => {
+    expect(versionWorkflow).toContain("workflow_dispatch:");
+    expect(versionWorkflow).toMatch(/push:\n\s+branches:\n\s+- main/);
+    expect(versionWorkflow).not.toContain("pull_request:");
+    expect(versionWorkflow).not.toContain("pull_request_target:");
+    expect(versionWorkflow).toContain("permissions: {}");
+    expect(versionWorkflow).toContain("contents: write");
+    expect(versionWorkflow).toContain("pull-requests: write");
+    expect(versionWorkflow).not.toContain("id-token:");
+    expect(versionWorkflow).not.toContain("environment:");
+    expect(versionWorkflow).not.toContain("NPM_TOKEN");
+    expect(versionWorkflow).not.toContain("npm publish");
+    expect(versionWorkflow).not.toMatch(/^\s+publish:/m);
+    expect(versionWorkflow).toContain("if: github.repository == 'Zhivex/zhivex-ai-sdk'");
+    expect(versionWorkflow).toContain("group: version-packages");
+    expect(versionWorkflow).toContain("cancel-in-progress: false");
+    expect(versionWorkflow).toContain("::notice title=Version packages skipped::");
+    expect(versionWorkflow).toContain("vars.RELEASE_APP_ID");
+    expect(versionWorkflow).toContain("secrets.RELEASE_APP_KEY");
+    expect(versionWorkflow).toContain("configured=false");
+    expect(versionWorkflow).toContain("steps.release-app.outputs.configured == 'true'");
+    expect(versionWorkflow).not.toMatch(/exit 1/);
+    expect(versionWorkflow).toContain("actions/create-github-app-token@");
+    expect(versionWorkflow).toContain("app-id: ${{ vars.RELEASE_APP_ID }}");
+    expect(versionWorkflow).toContain("private-key: ${{ secrets.RELEASE_APP_KEY }}");
+    expect(versionWorkflow).toContain("fetch-depth: 0");
+    expect(versionWorkflow).toContain("persist-credentials: true");
+    expect(versionWorkflow).toContain("token: ${{ steps.app-token.outputs.token }}");
+    expect(versionWorkflow).toContain("node-version: 24");
+    expect(versionWorkflow).toContain("bun-version: 1.4.2");
+    expect(versionWorkflow).toContain("bun install --frozen-lockfile --ignore-scripts");
+    expect(versionWorkflow).toContain("version: bun run version-packages");
+    expect(versionWorkflow).toContain("title: Version packages");
+    expect(versionWorkflow).toContain("commit: Version packages");
+    expect(versionWorkflow).toContain("GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}");
+    expect(actionUse(versionWorkflow, "actions/checkout")).toBe(actionUse(ciWorkflow, "actions/checkout"));
+    expect(actionUse(versionWorkflow, "actions/setup-node")).toBe(actionUse(ciWorkflow, "actions/setup-node"));
+    expect(actionUse(versionWorkflow, "oven-sh/setup-bun")).toBe(actionUse(ciWorkflow, "oven-sh/setup-bun"));
+    expect(actionUse(codeqlWorkflow, "github/codeql-action/init")).toMatch(/#\s+v\d/);
+    expect(actionUse(codeqlWorkflow, "github/codeql-action/analyze")).toBe(
+      actionUse(codeqlWorkflow, "github/codeql-action/init")?.replace("/init@", "/analyze@")
     );
-    expect(workflow).toContain(
-      "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
-    );
+  });
+
+  it("documents the manual publish path and the one-time release app", () => {
+    for (const guide of [agentsGuide, releaseGuide]) {
+      expect(guide).toContain("Version packages");
+      expect(guide).toContain("RELEASE_APP_ID");
+      expect(guide).toContain("RELEASE_APP_KEY");
+      expect(guide).toContain("workflow_dispatch");
+      expect(guide).toContain("Contents");
+      expect(guide).toContain("Pull requests");
+      expect(guide).toContain("Metadata");
+      expect(guide).toMatch(/only on (this repository|`Zhivex\/zhivex-ai-sdk`)/);
+    }
+    expect(releaseGuide).toContain(".github/workflows/version-packages.yml");
+    expect(agentsGuide).toContain("Publishing stays manual");
+    expect(releaseGuide).toContain("Publishing stays manual");
   });
 });

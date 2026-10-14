@@ -54,9 +54,41 @@ For a quick manual inspection of individual package contents without writing tar
 
 Repeat for any provider package included in the changesets.
 
+## Version Packages Pull Request
+
+Publishing stays manual. The path from a merged changeset to npm is:
+
+1. Merge the pull request that contains the changeset to `main`.
+2. `.github/workflows/version-packages.yml` runs on that push. The release GitHub App opens or updates a pull request titled `Version packages`.
+3. Review that pull request. `ci.yml` runs on it because the app token created the pull request. Merge it when the checks are green.
+4. Run Release (`workflow_dispatch` on `.github/workflows/release.yml`) from `main` and choose `latest` or `next`.
+
+The version workflow checks out `main` with `fetch-depth: 0`, installs with `bun install --frozen-lockfile --ignore-scripts`, and runs `version: bun run version-packages`. Its commit message and pull request title are `Version packages`. It has no publish input, no npm token, and no `npm` environment. An empty changeset list leaves `main` unchanged.
+
+`bun run version-packages` applies Changesets, then synchronizes the standalone Next.js starter pins for SDK, OpenAI, and React, the provider registry, and Bun workspace snapshots with the generated package versions. The snapshot synchronizer updates only workspace versions and internal ranges, preserving external resolutions byte for byte; external dependency or inventory changes require a real Bun lockfile regeneration. Run `bun run lock:check` to detect stale snapshots even when a frozen install accepts them. Review that diff in the `Version packages` pull request and rerun `docs:check` and the internal Core range tests after versioning; providers that import new Core helpers must require the version that introduced them. For an already versioned, unpublished batch with stale snapshots, run `bun scripts/sync-lock-workspaces.ts` without repeating Changesets.
+
+### One-time GitHub App
+
+Create this app once and install it only on `Zhivex/zhivex-ai-sdk`. Do not install it on other repositories.
+
+- Contents: Read and write
+- Pull requests: Read and write
+- Metadata: Read
+
+Leave the webhook inactive. The workflow only mints an installation token.
+
+Then set:
+
+- repository variable `RELEASE_APP_ID` to the App ID
+- repository secret `RELEASE_APP_KEY` to the app private key (the PEM file)
+
+`actions/create-github-app-token` uses those two values. The default `GITHUB_TOKEN` cannot open this pull request: GitHub does not run `ci.yml` for events created by the workflow token. If the variable or the secret is missing, the job posts a notice titled `Version packages skipped` and skips versioning. The push to `main` still succeeds.
+
 ## Stable Release To `latest`
 
-Use this flow only for stable releases. Apply versioning and commit the resulting package manifests and lockfile before publishing:
+Use this flow only for stable releases. Merge the `Version packages` pull request before publishing. That pull request is the version commit. Do not version the same changesets again on a local branch.
+
+Before dispatching Release, confirm the version pull request is green. These local gates match what `release.yml` repeats:
 
 ```bash
 bun run docs:check
@@ -64,18 +96,11 @@ bun run typecheck
 bun run test
 bun run build
 bun run smoke:providers
-bun run version-packages
-bun run docs:check
-bun run typecheck
-bun run test
-bun run build
 bun run smoke:packages
 git status --short
 ```
 
-`bun run version-packages` also synchronizes the standalone Next.js starter pins for SDK, OpenAI, and React, the provider registry, and Bun workspace snapshots with the generated package versions. The snapshot synchronizer updates only workspace versions and internal ranges, preserving external resolutions byte for byte; external dependency or inventory changes require a real Bun lockfile regeneration. Run `bun run lock:check` to detect stale snapshots even when a frozen install accepts them. Review that diff and rerun `docs:check` and the internal Core range tests after versioning; providers that import new Core helpers must require the version that introduced them. For an already versioned, unpublished batch with stale snapshots, run `bun scripts/sync-lock-workspaces.ts` without repeating Changesets.
-
-Push the committed release source to `main`, then dispatch `.github/workflows/release.yml` with channel `latest`. The `validate` job has no OIDC permission: it checks out immutable committed source, installs dependencies without lifecycle scripts, scans for recognized secret signatures, repeats audit/typecheck/test/build and the packed Node consumer smoke, then produces the exact release batch as commit-bound SHA-512 tarballs. The separate `publish` job is the only OIDC trust boundary; it installs no dependencies and publishes only those downloaded, checksum-verified tarballs with `npm publish --tag`. Channel `latest` and channel `next` are selected in that same publish step. The workflow does not run `npm dist-tag`. Package tags are pushed only after npm integrity, dist-tags, and the signed SLSA provenance subject and source commit match the release. `gitHead` is also checked when npm provides it. After `publish` succeeds, `verify_public` checks the same versions, dist-tags, and provenance again from the public registry, then installs the published batch with retries. That job has `contents: read` only: no `npm` environment, no OIDC token, and no token that can publish or move dist-tags.
+Dispatch `.github/workflows/release.yml` with channel `latest`. The `validate` job has no OIDC permission: it checks out immutable committed source, installs dependencies without lifecycle scripts, scans for recognized secret signatures, repeats audit/typecheck/test/build and the packed Node consumer smoke, then produces the exact release batch as commit-bound SHA-512 tarballs. The separate `publish` job is the only OIDC trust boundary; it installs no dependencies and publishes only those downloaded, checksum-verified tarballs with `npm publish --tag`. Channel `latest` and channel `next` are selected in that same publish step. The workflow does not run `npm dist-tag`. Package tags are pushed only after npm integrity, dist-tags, and the signed SLSA provenance subject and source commit match the release. `gitHead` is also checked when npm provides it. After `publish` succeeds, `verify_public` checks the same versions, dist-tags, and provenance again from the public registry, then installs the published batch with retries. That job has `contents: read` only: no `npm` environment, no OIDC token, and no token that can publish or move dist-tags.
 
 Tag discovery comes from npm metadata rather than only from tags created inside the current runner. This lets a safe rerun recover every tag from a partially successful publish while excluding unchanged packages from older commits.
 
@@ -133,32 +158,21 @@ See the [Changesets prerelease guide](https://changesets.dev/guide/prereleases#m
 `scripts/prerelease-lifecycle.test.ts` verifies `next.0` → `next.1` → stable using
 the installed CLI in a temporary workspace, without publishing anything.
 
+Enter pre mode and merge that state to `main`. Do not version the changesets in the same commit. The next push to `main` lets `.github/workflows/version-packages.yml` run `bun run version-packages`, which consumes the pending changesets under pre mode and opens the `Version packages` pull request.
+
 ```bash
 bunx changeset pre enter next
-bun run version-packages
-bun run docs:check
-bun run typecheck
-bun run test
-bun run build
-bun run smoke:packages
-bun run smoke:providers
 ```
 
-Commit and push the prerelease manifests, then dispatch `release.yml` with channel `next`. The workflow validates that pending versions use the `next` suffix and publishes with the explicit `next` dist-tag. Keep using that channel for follow-up prereleases while pre mode is active.
+Merge the pre-mode commit, then merge the `Version packages` pull request. Dispatch `release.yml` with `workflow_dispatch` and channel `next`. The workflow validates that pending versions use the `next` suffix and publishes with the explicit `next` dist-tag. Keep using that channel for follow-up prereleases while pre mode is active. Publishing stays manual.
 
-When the prerelease cycle is done:
+When the prerelease cycle is done, exit pre mode and merge that commit to `main`:
 
 ```bash
 bunx changeset pre exit
-bun run version-packages
-bun run docs:check
-bun run typecheck
-bun run test
-bun run build
-bun run smoke:packages
 ```
 
-Review the final stable versions and generated package changelogs before publishing to `latest`.
+The version workflow then opens the stable `Version packages` pull request. Review the final stable versions and generated package changelogs, merge that pull request, and dispatch Release with channel `latest`.
 
 After publishing a prerelease, verify:
 

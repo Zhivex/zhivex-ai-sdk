@@ -53,9 +53,9 @@ Changesets is configured to update internal dependencies when needed, but packag
 
 ## Release Expectations
 
-Follow the [canonical Release Guide](./docs/maintainers/RELEASE.md) for validation, Changesets versioning, protected workflow dispatch, and registry verification. Agent changes additionally follow [Agent Release Readiness](./docs/maintainers/AGENT_RELEASE.md).
+Follow the [canonical Release Guide](./docs/maintainers/RELEASE.md) for validation, the `Version packages` pull request, protected workflow dispatch, and registry verification. Agent changes additionally follow [Agent Release Readiness](./docs/maintainers/AGENT_RELEASE.md).
 
-Publishing runs only through `.github/workflows/release.yml` with `latest` or `next`, using npm Trusted Publishing and OIDC. There is no local publish command. Versioning or a successful local build is not proof of npm publication.
+A merge to `main` runs `.github/workflows/version-packages.yml`, which opens or updates a pull request titled `Version packages`. Merging that pull request is the version commit. Publishing stays manual: dispatch `.github/workflows/release.yml` with `workflow_dispatch`. Publishing runs only through that workflow with `latest` or `next`, using npm Trusted Publishing and OIDC. There is no local publish command. Versioning or a successful local build is not proof of npm publication.
 
 ## Compatibility Expectations
 

@@ -1,0 +1,93 @@
+# Opens or updates the "Version packages" pull request after a merge to main.
+# The GitHub App token is required so that pull request triggers ci.yml.
+# A pull request opened with the default GITHUB_TOKEN does not trigger other workflows.
+# This workflow has no publish input. Publishing stays on release.yml via workflow_dispatch.
+# If RELEASE_APP_ID or RELEASE_APP_KEY is missing, the job posts a notice and skips
+# versioning with a successful result. A missing one-time setup must not fail main.
+
+name: Version packages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: version-packages
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Version packages
+    if: github.repository == 'Zhivex/zhivex-ai-sdk'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Skip when the release GitHub App is not configured
+        id: release-app
+        env:
+          RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+          HAS_RELEASE_APP_KEY: ${{ secrets.RELEASE_APP_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_APP_ID}" ] || [ "${HAS_RELEASE_APP_KEY}" != "true" ]; then
+            echo "::notice title=Version packages skipped::Set repository variable RELEASE_APP_ID and secret RELEASE_APP_KEY. Create a GitHub App with Contents and Pull requests read and write plus Metadata read, install it only on Zhivex/zhivex-ai-sdk, and store the App ID and private key. This job skips versioning until both are set."
+            echo "Version packages skipped until RELEASE_APP_ID and RELEASE_APP_KEY are set." >> "$GITHUB_STEP_SUMMARY"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release app token
+        if: steps.release-app.outputs.configured == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Checkout
+        if: steps.release-app.outputs.configured == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # The app token has to stay in the git remote so changesets can push the version branch.
+          persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Setup Node
+        if: steps.release-app.outputs.configured == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Setup Bun
+        if: steps.release-app.outputs.configured == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install dependencies
+        if: steps.release-app.outputs.configured == 'true'
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Create or update the Version packages pull request
+        if: steps.release-app.outputs.configured == 'true'
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          version: bun run version-packages
+          title: Version packages
+          commit: Version packages
+        env:
+          # v1 reads GITHUB_TOKEN before the github-token input. The app token
+          # must replace the job token or ci.yml will not run on the pull request.
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

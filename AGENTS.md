@@ -108,7 +108,18 @@ This repo uses `changesets` with `access: public`, `baseBranch: main`, and `upda
 
 - Versioning should go through files in `.changeset/` whenever a published package changes.
 - During versioning, `changesets` will update internal package dependencies when needed.
+- A merge to `main` runs `.github/workflows/version-packages.yml`. The release GitHub App opens or updates a pull request titled `Version packages`. A maintainer reviews and merges that pull request, then runs Release (`workflow_dispatch` on `.github/workflows/release.yml`). Publishing stays manual. The version workflow has no publish input.
 - Stable and prerelease publishing runs only from the protected `.github/workflows/release.yml` workflow with npm Trusted Publishing and OIDC. There is no local publish command.
+
+### One-time release app
+
+The version workflow mints a GitHub App token so the `Version packages` pull request triggers `ci.yml`. A pull request opened with the default `GITHUB_TOKEN` does not trigger other workflows. Create the app once and install it only on `Zhivex/zhivex-ai-sdk`:
+
+- Contents: Read and write
+- Pull requests: Read and write
+- Metadata: Read
+
+Set the repository variable `RELEASE_APP_ID` to the App ID and the repository secret `RELEASE_APP_KEY` to the app private key. If either value is missing, the job posts a notice and skips versioning. It does not fail the push to `main`.
 
 ### When to Create a Changeset
 
@@ -127,7 +138,7 @@ A changeset is usually not needed if:
 
 ### Publishing Procedure
 
-Follow [the canonical release guide](docs/maintainers/RELEASE.md) for validation, versioning, protected workflow dispatch, and postpublish verification. The supported channels are `latest` (stable) and `next` (prerelease). Do not publish locally or use another prerelease tag.
+Follow [the canonical release guide](docs/maintainers/RELEASE.md) for validation, the `Version packages` pull request, protected workflow dispatch, and postpublish verification. The supported channels are `latest` (stable) and `next` (prerelease). Do not publish locally or use another prerelease tag. Publishing stays manual: merge the version pull request, then dispatch Release.
 
 Use [agent release readiness](docs/maintainers/AGENT_RELEASE.md) for additional agent-specific gates.
 
