@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual } from "./deep-equal.js";
 import { ConflictError, ValidationError } from "./errors.js";
 import { normalizeAgentRunState } from "./agent-state.js";
 import type { AgentRunState, AgentRunStore, AgentTaskOutcome, AgentToolCallJournalEntry, AgentToolReconciliationEvidence } from "./types.js";
