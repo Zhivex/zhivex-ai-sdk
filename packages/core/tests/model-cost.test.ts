@@ -23,6 +23,27 @@ it("rejects impossible counters and keeps fast-tier costs unknown", () => {
   expect(calculateModelCost({ ...base, usage: { inputTokens: 10, outputTokens: 10, speed: "fast" }, cacheAssumption: "none" }).amount).toBeNull();
 });
 
+it("applies an inclusive long-context threshold at the boundary", () => {
+  const inclusive = createModelCatalog([{
+    provider: "test",
+    modelId: "inclusive",
+    inputCostPer1kTokens: 2,
+    cachedInputCostPer1kTokens: 0.5,
+    outputCostPer1kTokens: 6,
+    longContextPricing: { inputTokenThreshold: 1000, inputTokenThresholdInclusive: true, inputMultiplier: 2, outputMultiplier: 2 }
+  }], { snapshotVersion: "fixture-1", pricing: { version: "price-1", currency: "USD", unit: "per_1k_tokens", source: "fixture" } });
+  const atThreshold = calculateModelCost({
+    catalog: inclusive,
+    provider: "test",
+    modelId: "inclusive",
+    reasoningAccounting: "included",
+    usage: { inputTokens: 1000, cachedInputTokens: 200, cacheWriteTokens: 0, outputTokens: 100 }
+  });
+  expect(atThreshold.longContext).toBe(true);
+  expect(atThreshold.components.cachedInput?.ratePer1kTokens).toBe(1);
+  expect(inclusive.find("test", "inclusive")?.longContextPricing?.inputTokenThresholdInclusive).toBe(true);
+});
+
 it("requires explicit reasoning accounting and supports additional reasoning", () => {
   const usage = { inputTokens: 100, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 10, reasoningTokens: 5 };
   expect(calculateModelCost({ ...base, usage, reasoningAccounting: undefined }).amount).toBeNull();

@@ -47,6 +47,7 @@ bun run examples/gateway/stream-routing.ts
 bun run examples/gateway/object-routing.ts
 bun run examples/providers/openai.ts
 bun run examples/providers/xai.ts
+bun run examples/providers/xai-media.ts
 bun run examples/providers/deepseek.ts
 bun run examples/providers/zai.ts
 ```

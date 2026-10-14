@@ -214,6 +214,11 @@ describe("model catalog stable snapshot contract", () => {
       "output multiplier",
       { inputTokenThreshold: 1, inputMultiplier: 2, outputMultiplier: Number.POSITIVE_INFINITY },
       "outputMultiplier"
+    ],
+    [
+      "threshold inclusivity",
+      { inputTokenThreshold: 1, inputTokenThresholdInclusive: "yes", inputMultiplier: 2, outputMultiplier: 2 },
+      "inputTokenThresholdInclusive"
     ]
   ])("rejects invalid long-context %s", (_name, longContextPricing, expectedMessage) => {
     expect(() =>

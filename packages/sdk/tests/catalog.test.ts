@@ -36,10 +36,10 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-10-13",
+      snapshotVersion: "2026-10-14",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-10-13",
+        version: "2026-10-14",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
@@ -64,7 +64,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(252);
+    expect(entries).toHaveLength(257);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
@@ -106,7 +106,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(252);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(257);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-10-13",
       verifiedAt: "2026-10-13",
@@ -218,6 +218,49 @@ describe("SDK model catalog ownership", () => {
     expect(defaultModelCatalog.find("openrouter", "google/gemini-nano-banana-2.1")?.inputCostPer1kTokens).toBeUndefined();
     expect(defaultModelCatalog.find("openai", "gpt-6.1-sol")?.recommendedFor).toContain("tools");
     expect(defaultModelCatalog.find("xai", "grok-4.7")?.recommendedFor).toContain("reasoning");
+    expect(defaultModelCatalog.find("xai", "grok-4.7")).toMatchObject({
+      contextWindowTokens: 500_000,
+      contextWindowType: "combined",
+      inputCostPer1kTokens: 0.002,
+      cachedInputCostPer1kTokens: 0.0005,
+      outputCostPer1kTokens: 0.006,
+      longContextPricing: {
+        inputTokenThreshold: 199_999,
+        inputMultiplier: 2,
+        outputMultiplier: 2
+      }
+    });
+    expect(defaultModelCatalog.find("xai", "grok-4.5")?.cachedInputCostPer1kTokens).toBeCloseTo(0.0003);
+    expect(defaultModelCatalog.find("xai", "grok-4.3")).toMatchObject({
+      contextWindowTokens: 1_000_000,
+      inputCostPer1kTokens: 0.00125,
+      cachedInputCostPer1kTokens: 0.0002,
+      outputCostPer1kTokens: 0.0025
+    });
+    expect(defaultModelCatalog.find("xai", "grok-build-0.1")?.contextWindowTokens).toBe(256_000);
+    expect(defaultModelCatalog.find("xai", "grok-4.20-0309-non-reasoning")?.recommendedFor).toEqual([
+      "chat",
+      "tools",
+      "vision"
+    ]);
+    for (const modelId of [
+      "grok-4.6",
+      "grok-4.20-0309-reasoning",
+      "grok-4.20-multi-agent-0309"
+    ]) {
+      expect(defaultModelCatalog.find("xai", modelId)?.longContextPricing).toEqual({
+        inputTokenThreshold: 199_999,
+        inputMultiplier: 2,
+        outputMultiplier: 2
+      });
+    }
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "xai")).toMatchObject({
+      revision: "2026-10-14",
+      verifiedAt: "2026-10-14",
+      pricingEffectiveAt: "2026-10-14",
+      modelCount: 8,
+      sources: expect.arrayContaining(["https://docs.x.ai/docs/models"])
+    });
     expect(defaultModelCatalog.find("kimi", "kimi-k2.5")).toBeUndefined();
     expect(defaultModelCatalog.find("openrouter", "google/gemini-3.8-flash-tts")).toBeUndefined();
     for (const id of ["qwen-image-2.1-pro", "qwen-image-2.1-turbo"]) {

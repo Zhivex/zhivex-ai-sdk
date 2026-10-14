@@ -19,17 +19,17 @@ export const listDefaultModelCatalogFragments = (): ModelCatalogProviderSnapshot
 export const defaultModelCatalog = createModelCatalog(
   defaultModelCatalogFragments.flatMap((fragment) => fragment.entries),
   {
-    snapshotVersion: "2026-10-13",
-    publishedAt: "2026-10-13T00:00:00.000Z",
+    snapshotVersion: "2026-10-14",
+    publishedAt: "2026-10-14T00:00:00.000Z",
     policy: {
       data: "rolling",
       updates: "package-release"
     },
     pricing: {
-      version: "2026-10-13",
+      version: "2026-10-14",
       currency: "USD",
       unit: "per_1k_tokens",
-      effectiveAt: "2026-10-13",
+      effectiveAt: "2026-10-14",
       source: "zhivex-ai-sdk-default-catalog"
     }
   }

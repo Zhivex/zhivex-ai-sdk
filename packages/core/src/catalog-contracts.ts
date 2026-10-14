@@ -184,6 +184,9 @@ const cloneEntry = (entry: ModelCatalogEntry): ModelCatalogEntry => ({
     : {
         longContextPricing: {
           inputTokenThreshold: entry.longContextPricing.inputTokenThreshold,
+          ...(entry.longContextPricing.inputTokenThresholdInclusive === undefined
+            ? {}
+            : { inputTokenThresholdInclusive: entry.longContextPricing.inputTokenThresholdInclusive }),
           inputMultiplier: entry.longContextPricing.inputMultiplier,
           outputMultiplier: entry.longContextPricing.outputMultiplier
         }
@@ -314,7 +317,12 @@ const validateEntry = (entry: ModelCatalogEntry, index: number): void => {
     if (typeof pricing !== "object" || pricing === null || Array.isArray(pricing)) {
       throw new TypeError(`${path}.longContextPricing must be an object`);
     }
-    const pricingFields = new Set(["inputTokenThreshold", "inputMultiplier", "outputMultiplier"]);
+    const pricingFields = new Set([
+      "inputTokenThreshold",
+      "inputTokenThresholdInclusive",
+      "inputMultiplier",
+      "outputMultiplier"
+    ]);
     for (const field of Object.keys(pricing)) {
       if (!pricingFields.has(field)) {
         throw new TypeError(`${path}.longContextPricing.${field} is not supported`);
@@ -322,6 +330,12 @@ const validateEntry = (entry: ModelCatalogEntry, index: number): void => {
     }
     if (!Number.isSafeInteger(pricing.inputTokenThreshold) || pricing.inputTokenThreshold <= 0) {
       throw new TypeError(`${path}.longContextPricing.inputTokenThreshold must be a positive safe integer`);
+    }
+    if (
+      pricing.inputTokenThresholdInclusive !== undefined &&
+      typeof pricing.inputTokenThresholdInclusive !== "boolean"
+    ) {
+      throw new TypeError(`${path}.longContextPricing.inputTokenThresholdInclusive must be a boolean`);
     }
     for (const field of ["inputMultiplier", "outputMultiplier"] as const) {
       const value = pricing[field];
