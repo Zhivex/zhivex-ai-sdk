@@ -447,6 +447,81 @@ describe("xai adapter", () => {
     expect(body.reasoning).toEqual({ effort: "xhigh" });
   });
 
+  it("rejects Chat Completions for Grok 4.7 before sending", async () => {
+    const xai = createXAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(
+      generateText({
+        model: xai("grok-4.7"),
+        prompt: "hello",
+        providerOptions: { apiMode: "chat" }
+      })
+    ).rejects.toThrow(
+      'Provider "xai" model "grok-4.7" accepts the Responses API only. Omit apiMode or set it to "responses". See https://docs.x.ai/developers/grok-4-7.'
+    );
+    await expect(
+      streamText({
+        model: xai("grok-4.7"),
+        prompt: "hello",
+        providerOptions: { apiMode: "chat" }
+      }).collect()
+    ).rejects.toThrow("accepts the Responses API only");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not advertise file search for Grok 4.7 and still forwards collections file_search", async () => {
+    const xai = createXAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    expect(xai("grok-4.7").capabilities.fileSearch).toBe(false);
+    expect(xai("grok-4.7").capabilities.agentCapabilities?.hostedFileSearch).toBe(false);
+    expect(xai("grok-4.5").capabilities.fileSearch).toBe(true);
+    expect(xai("grok-4.5").capabilities.agentCapabilities?.hostedFileSearch).toBe(true);
+    expect(xai("grok-4.5").capabilities.reasoningEfforts).toEqual(["low", "medium", "high", "xhigh"]);
+
+    fetchMock.mockResolvedValueOnce(responseMessage("resp_47_files", "found"));
+    await generateText({
+      model: xai("grok-4.7"),
+      prompt: "search the collection",
+      tools: { files: xAIFileSearchTool({ vector_store_ids: ["collection-47"] }) }
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      tools: Array<Record<string, unknown>>;
+    };
+    expect(body.tools).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "file_search", vector_store_ids: ["collection-47"] })])
+    );
+  });
+
+  it("accepts Grok 4.3 reasoning efforts including none and xhigh", async () => {
+    const xai = createXAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    expect(xai("grok-4.3").capabilities.reasoningEfforts).toEqual(["none", "low", "medium", "high", "xhigh"]);
+
+    fetchMock.mockResolvedValueOnce(responseMessage("resp_43", "done"));
+    await generateText({ model: xai("grok-4.3"), prompt: "hello", reasoning: { effort: "none" } });
+    fetchMock.mockResolvedValueOnce(responseMessage("resp_43_x", "done"));
+    await generateText({ model: xai("grok-4.3"), prompt: "hello", reasoning: { effort: "xhigh" } });
+    const efforts = fetchMock.mock.calls.map(
+      (call) => (JSON.parse(String((call[1] as RequestInit).body)) as { reasoning?: { effort?: string } }).reasoning?.effort
+    );
+    expect(efforts).toEqual(["none", "xhigh"]);
+  });
+
+  it("routes Grok 4.7 to the US regional endpoint and rejects other models there", async () => {
+    const xai = createXAI({ apiKey: "test", region: "us", fetch: fetchMock as typeof fetch });
+    fetchMock.mockResolvedValueOnce(responseMessage("resp_us", "done"));
+    await generateText({ model: xai("grok-4.7"), prompt: "hello" });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://us.api.x.ai/v1/responses");
+
+    await expect(generateText({ model: xai("grok-4.5"), prompt: "hello" })).rejects.toThrow(
+      "US regional endpoint currently serves grok-4.7 and grok-4.6 only"
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    expect(() => createXAI({ apiKey: "test", region: "us", baseURL: "https://api.x.ai/v1" })).toThrow(
+      "accepts baseURL or region, not both"
+    );
+    expect(() => createXAI({ apiKey: "test", region: "eu" as "us" })).toThrow('region must be "global" or "us"');
+  });
+
   it("models Grok 4.7 as always-reasoning with the same efforts as 4.6", async () => {
     const xai = createXAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
     expect(xai("grok-4.7").capabilities.reasoningEfforts).toEqual(["low", "medium", "high", "xhigh"]);
