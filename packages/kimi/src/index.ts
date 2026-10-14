@@ -10,14 +10,17 @@ import {
   isCallableToolDefinition,
   createMergedAbortSignal,
   normalizeFinishReason,
+  openAICompatibleJsonHeaders,
+  openAICompatibleReasoningContent,
+  openOpenAICompatibleStream,
   providerDataPart,
   serializeJsonValue,
-  streamSSE,
   readErrorBodyWithLimit,
   readJsonWithLimit,
   tool,
   withRetry,
   withResponseRetry,
+  withOpenAICompatibleAttempt,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type GenerateResult,
@@ -245,22 +248,9 @@ const callKimiFormula = async (
 };
 
 const reasoningContentFromMessage = (message: ModelMessage) =>
-  message.parts
-    .filter((part) => {
-      if (part.type !== "provider-data" || part.provider !== "kimi") {
-        return false;
-      }
+  openAICompatibleReasoningContent(message, "kimi");
 
-      const data = part.data as Record<string, unknown>;
-      return data.type === "reasoning_content" && typeof data.reasoningContent === "string";
-    })
-    .map((part) => (part.type === "provider-data" ? String((part.data as Record<string, unknown>).reasoningContent) : ""))
-    .join("");
-
-const jsonHeaders = (apiKey: string) => ({
-  "content-type": "application/json",
-  authorization: `Bearer ${apiKey}`
-});
+const jsonHeaders = openAICompatibleJsonHeaders;
 
 const parseJson = async (response: Response) => {
   if (!response.ok) {
@@ -647,9 +637,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
   }
 
   async generate(input: ModelGenerateInput<KimiLanguageModelOptions>): Promise<GenerateResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-
-    try {
+    return withOpenAICompatibleAttempt(input, async (signal) => {
       assertKimiRequestCompatibility(this.modelId, input);
       const reasoning = mapReasoning(this.modelId, input);
       const providerOptions = mapProviderOptions(this.modelId, input.providerOptions);
@@ -697,9 +685,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
         },
         rawResponse: json
       };
-    } finally {
-      cleanup();
-    }
+    });
   }
 
   async stream(input: ModelGenerateInput<KimiLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
@@ -707,8 +693,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
     const reasoning = mapReasoning(this.modelId, input);
     const providerOptions = mapProviderOptions(this.modelId, input.providerOptions);
 
-    const { signal, cleanup } = withTimeoutSignal(input);
-    const response = await withResponseRetry(
+    return openOpenAICompatibleStream(input, (signal) => withResponseRetry(
       () =>
         this.fetcher(`${this.baseURL}/chat/completions`, {
           method: "POST",
@@ -730,84 +715,61 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
         }),
       { ...input, abortSignal: signal },
       "Kimi"
-    ).catch((error) => { cleanup(); throw error; });
-
-    return (async function* () {
-      try {
-        let lastFinishReason: string | undefined;
-        let lastUsage: any;
-        const toolBuffers = new Map<number, { id: string; name: string; args: string }>();
-
-        for await (const event of streamSSE(response)) {
-          if (event.data === "[DONE]") {
-            break;
-          }
-
-          const json = JSON.parse(event.data);
-          if (json.usage) lastUsage = json.usage;
-          const choice = json.choices?.[0];
-          const delta = choice?.delta;
-
-          if (delta?.reasoning_content) {
-            yield {
-              type: "provider-data",
-              provider: "kimi",
-              data: {
-                type: "reasoning_content",
-                reasoningContent: delta.reasoning_content
-              }
-            } satisfies StreamEvent;
-          }
-
-          if (delta?.content) {
-            yield { type: "text-delta", textDelta: delta.content } satisfies StreamEvent;
-          }
-
-          for (const toolCall of delta?.tool_calls ?? []) {
-            const index = typeof toolCall.index === "number" ? toolCall.index : 0;
-            const existing = toolBuffers.get(index) ?? {
-              id: "",
-              name: toolCall.function?.name ?? "",
-              args: ""
-            };
-            existing.id ||= toolCall.id ?? `${index}`;
-            existing.name ||= toolCall.function?.name ?? "";
-            existing.args += toolCall.function?.arguments ?? "";
-            toolBuffers.set(index, existing);
-          }
-
-          if (choice?.finish_reason === "tool_calls") {
-            for (const [index, toolCall] of toolBuffers) {
-              yield {
-                type: "tool-call",
-                toolCall: {
-                  id: toolCall.id || `${index}`,
-                  name: toolCall.name,
-                  input: JSON.parse(toolCall.args || "{}")
-                }
-              } satisfies StreamEvent;
-            }
-            toolBuffers.clear();
-          }
-
-          if (choice?.finish_reason) lastFinishReason = choice.finish_reason;
+    ), {
+      readPayload: (data) => JSON.parse(data),
+      onChunk: (json, toolBuffers, state) => {
+        const events: StreamEvent[] = [];
+        if (json.usage) state.usage = json.usage;
+        const choice = json.choices?.[0];
+        const delta = choice?.delta;
+        if (delta?.reasoning_content) {
+          events.push({
+            type: "provider-data",
+            provider: "kimi",
+            data: { type: "reasoning_content", reasoningContent: delta.reasoning_content }
+          });
         }
-        if (!lastFinishReason) throw new ConfigurationError("Kimi stream ended without a finish reason.");
-        yield {
+        if (delta?.content) events.push({ type: "text-delta", textDelta: delta.content });
+        for (const toolCall of delta?.tool_calls ?? []) {
+          const index = typeof toolCall.index === "number" ? toolCall.index : 0;
+          const existing = toolBuffers.get(index) ?? { id: "", name: toolCall.function?.name ?? "", args: "" };
+          existing.id ||= toolCall.id ?? `${index}`;
+          existing.name ||= toolCall.function?.name ?? "";
+          existing.args += toolCall.function?.arguments ?? "";
+          toolBuffers.set(index, existing);
+        }
+        if (choice?.finish_reason === "tool_calls") {
+          for (const [index, toolCall] of toolBuffers) {
+            events.push({
+              type: "tool-call",
+              toolCall: {
+                id: toolCall.id || `${index}`,
+                name: toolCall.name,
+                input: JSON.parse(toolCall.args || "{}")
+              }
+            });
+          }
+          toolBuffers.clear();
+        }
+        if (choice?.finish_reason) state.finishReason = choice.finish_reason;
+        return events;
+      },
+      onDone: (_tools, state) => {
+        if (!state.finishReason) throw new ConfigurationError("Kimi stream ended without a finish reason.");
+        const lastUsage = state.usage as { prompt_tokens?: number; cached_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+        return [{
           type: "finish",
-          finishReason: normalizeFinishReason(lastFinishReason),
-          providerFinishReason: lastFinishReason,
+          finishReason: normalizeFinishReason(state.finishReason),
+          providerFinishReason: state.finishReason,
           usage: lastUsage ? {
             inputTokens: lastUsage.prompt_tokens,
             cachedInputTokens: lastUsage.cached_tokens,
             outputTokens: lastUsage.completion_tokens,
             totalTokens: lastUsage.total_tokens
           } : undefined
-        } satisfies StreamEvent;
-      } finally {
-        cleanup();
+        }];
       }
-    })();
+    });
   }
 }
 

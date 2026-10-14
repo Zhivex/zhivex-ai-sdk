@@ -18,6 +18,8 @@ import {
   readErrorBodyWithLimit,
   readJsonWithLimit,
   serializeJsonValue,
+  openOpenAICompatibleEvents,
+  withOpenAICompatibleAttempt,
   withRetry,
   withResponseRetry,
   withTimeoutSignal,
@@ -529,9 +531,7 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-
-    try {
+    return withOpenAICompatibleAttempt(input, async (signal) => {
       const response = await withResponseRetry(
         () =>
           this.fetcher(apiEndpoint(this.baseURL, "chat"), {
@@ -563,17 +563,11 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
         },
         rawResponse: json
       };
-    } catch (error) {
-      throw normalizeOllamaError(error);
-    } finally {
-      cleanup();
-    }
+    }, normalizeOllamaError);
   }
 
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
-    const { signal, cleanup } = withTimeoutSignal(input);
-
-    try {
+    return openOpenAICompatibleEvents(input, async (signal) => {
       const response = await withResponseRetry(
         () =>
           this.fetcher(apiEndpoint(this.baseURL, "chat"), {
@@ -587,8 +581,7 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
       );
 
       return (async function* () {
-        try {
-          for await (const json of parseJsonLines(response)) {
+        for await (const json of parseJsonLines(response)) {
             const assistantMessage = parseAssistantMessage(json.message);
 
             for (const part of assistantMessage.parts) {
@@ -627,15 +620,9 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
                 }
               } satisfies StreamEvent;
             }
-          }
-        } finally {
-          cleanup();
         }
       })();
-    } catch (error) {
-      cleanup();
-      throw normalizeOllamaError(error);
-    }
+    }, normalizeOllamaError);
   }
 }
 

@@ -711,6 +711,19 @@ export { imageInputToDataUrl } from "./image-input.js";
 export { createChatCompletionsModel } from "./chat-completions.js";
 export { streamChatCompletions } from "./chat-completions-stream.js";
 export type { ChatCompletionsTransportOptions } from "./chat-completions.js";
+export {
+  openAICompatibleJsonHeaders,
+  openAICompatibleReasoningContent,
+  openOpenAICompatibleEvents,
+  openOpenAICompatibleStream,
+  streamOpenAICompatibleChat,
+  withOpenAICompatibleAttempt
+} from "./openai-compatible.js";
+export type {
+  OpenAICompatibleStreamProfile,
+  OpenAICompatibleStreamState,
+  OpenAICompatibleToolCallBuffer
+} from "./openai-compatible.js";
 export type { DocumentExtractionInput, DocumentExtractionPage, DocumentExtractionResult, TextCompletionInput } from "./types.js";
 
 export { createAgentBudgetCoordinator } from "./agent-budget-coordinator.js";

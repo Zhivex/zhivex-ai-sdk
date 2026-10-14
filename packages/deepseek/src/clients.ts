@@ -4,6 +4,7 @@ import {
   ValidationError,
   assertTrustedEndpoint,
   normalizeFinishReason,
+  openAICompatibleJsonHeaders,
   readErrorBodyWithLimit,
   readJsonWithLimit,
   streamSSE,
@@ -123,10 +124,7 @@ export interface DeepSeekClients {
   files: FilesClient;
 }
 
-const jsonHeaders = (apiKey: string) => ({
-  "content-type": "application/json",
-  authorization: `Bearer ${apiKey}`
-});
+const jsonHeaders = openAICompatibleJsonHeaders;
 
 const trimURL = (value: string) => value.replace(/\/+$/, "");
 

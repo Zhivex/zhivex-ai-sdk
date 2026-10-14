@@ -84,7 +84,7 @@
       "name": "@zhivex-ai/deepseek",
       "version": "0.5.7",
       "dependencies": {
-        "@zhivex-ai/core": "^1.24.0",
+        "@zhivex-ai/core": "^1.32.0",
         "zod": "^4.6.3",
       },
     },
@@ -92,7 +92,7 @@
       "name": "@zhivex-ai/gateway",
       "version": "1.6.0",
       "dependencies": {
-        "@zhivex-ai/core": "^1.31.0",
+        "@zhivex-ai/core": "^1.32.0",
         "zod": "^4.6.3",
       },
     },
@@ -108,7 +108,7 @@
       "name": "@zhivex-ai/kimi",
       "version": "0.7.12",
       "dependencies": {
-        "@zhivex-ai/core": "^1.30.1",
+        "@zhivex-ai/core": "^1.32.0",
         "zod": "^4.6.3",
       },
     },
@@ -116,7 +116,7 @@
       "name": "@zhivex-ai/meta",
       "version": "0.2.9",
       "dependencies": {
-        "@zhivex-ai/core": "^1.24.0",
+        "@zhivex-ai/core": "^1.32.0",
         "zod": "^4.6.3",
       },
     },
@@ -124,7 +124,7 @@
       "name": "@zhivex-ai/ollama",
       "version": "0.5.7",
       "dependencies": {
-        "@zhivex-ai/core": "^1.30.1",
+        "@zhivex-ai/core": "^1.32.0",
         "zod": "^4.6.3",
       },
     },
@@ -140,7 +140,7 @@
       "name": "@zhivex-ai/openrouter",
       "version": "0.6.1",
       "dependencies": {
-        "@zhivex-ai/core": "^1.30.1",
+        "@zhivex-ai/core": "^1.32.0",
         "zod": "^4.6.3",
       },
     },
@@ -209,7 +209,7 @@
       "name": "@zhivex-ai/zai",
       "version": "0.2.4",
       "dependencies": {
-        "@zhivex-ai/core": "^1.24.0",
+        "@zhivex-ai/core": "^1.32.0",
         "zod": "^4.6.3",
       },
     },
