@@ -1,5 +1,14 @@
 # @zhivex-ai/gemini
 
+## 0.13.1
+
+### Patch Changes
+
+- b5833e3: Add Gemini 4 Argon (`gemini-4-argon`) on the Gemini API and Vertex. Reasoning uses `thinkingLevel` with efforts low, medium, and high, and the catalog records the introductory token price through 2026-11-30.
+- Updated dependencies [b5833e3]
+- Updated dependencies [56b07bf]
+  - @zhivex-ai/core@1.33.0
+
 ## 0.13.0
 
 ### Minor Changes
