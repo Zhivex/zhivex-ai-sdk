@@ -4,6 +4,7 @@ import {
   UnsupportedFeatureError,
   assertTrustedEndpoint,
   createProviderAdapter,
+  type AudioResponseLimits,
   hostedTool,
   isHostedToolDefinition,
   normalizeMessages,
@@ -20,24 +21,54 @@ import {
   type GenerateResult,
   type GroundedGenerateResult,
   type GroundedLanguageModel,
+  type ImageGenerationModel,
   type JsonValue,
   type LanguageModel,
   type ModelCapabilities,
   type ModelGenerateInput,
   type ModelMessage,
+  type SpeechModel,
   type StreamEvent,
+  type TranscriptionModel,
   type ToolSet,
-  type UploadedFile
+  type UploadedFile,
+  type VideoGenerationModel
 } from "@zhivex-ai/core/provider";
 
 import { createOpenAI } from "@zhivex-ai/openai";
 
+import {
+  createXAIMedia,
+  type XAIImageGenerationOptions,
+  type XAISpeechOptions,
+  type XAITranscriptionOptions,
+  type XAIVideoGenerationOptions
+} from "./media.js";
+
+export {
+  XAI_DEPRECATED_MODELS,
+  XAI_IMAGE_MODELS,
+  XAI_SPEECH_TO_SPEECH_MODEL,
+  XAI_SPEECH_TO_TEXT_MODEL,
+  XAI_TEXT_TO_SPEECH_MODEL,
+  XAI_VIDEO_MODELS
+} from "./media.js";
+export type {
+  XAIImageGenerationOptions,
+  XAISpeechOptions,
+  XAITranscriptionOptions,
+  XAIVideoGenerationOptions
+} from "./media.js";
+
 export interface XAIProviderOptions {
   apiKey?: string;
   baseURL?: string;
+  /** `us` selects https://us.api.x.ai/v1. Do not combine with baseURL. */
+  region?: "global" | "us";
   headers?: Record<string, string>;
   fetch?: typeof globalThis.fetch;
   allowUnsafeEndpoints?: boolean;
+  responseLimits?: AudioResponseLimits;
 }
 
 const encodeXAIResourceId = (value: string) => {
@@ -128,6 +159,7 @@ const baseCapabilities: ModelCapabilities = {
 };
 
 const normalizedModelId = (modelId: string) => modelId.trim().toLowerCase();
+const isGrok43 = (modelId: string) => /^grok-4\.3(?:[-@]|$)/.test(normalizedModelId(modelId));
 const isGrok45 = (modelId: string) => /^grok-4\.5(?:[-@]|$)/.test(normalizedModelId(modelId));
 const isGrok46 = (modelId: string) => /^grok-4\.6(?:[-@]|$)/.test(normalizedModelId(modelId));
 const isGrok47 = (modelId: string) => /^grok-4\.7(?:[-@]|$)/.test(normalizedModelId(modelId));
@@ -136,19 +168,27 @@ const isNonReasoningModel = (modelId: string) => /non-reasoning/.test(normalized
 const isGrokXHighReasoning = (modelId: string) => isGrok46(modelId) || isGrok47(modelId);
 const isAlwaysReasoningModel = (modelId: string) => isGrok45(modelId) || isGrokXHighReasoning(modelId);
 
-const modelCapabilities = (modelId: string): ModelCapabilities => ({
-  ...baseCapabilities,
-  reasoning: !isNonReasoningModel(modelId),
-  reasoningEfforts: isNonReasoningModel(modelId)
-    ? undefined
-    : isGrokXHighReasoning(modelId)
-      ? ["low", "medium", "high", "xhigh"]
-      : isGrok45(modelId)
-      ? ["low", "medium", "high"]
-      : isGrok420MultiAgent(modelId)
+const modelCapabilities = (modelId: string): ModelCapabilities => {
+  // The grok-4.7 model page and developer guide do not list file search.
+  // Collections search docs still show file_search on grok-4.7, so requests are not rejected.
+  const fileSearch = !isGrok47(modelId);
+  return {
+    ...baseCapabilities,
+    fileSearch,
+    reasoning: !isNonReasoningModel(modelId),
+    reasoningEfforts: isNonReasoningModel(modelId)
+      ? undefined
+      : isGrokXHighReasoning(modelId) || isGrok45(modelId) || isGrok420MultiAgent(modelId)
         ? ["low", "medium", "high", "xhigh"]
-        : ["none", "low", "medium", "high"]
-});
+        : isGrok43(modelId)
+          ? ["none", "low", "medium", "high", "xhigh"]
+          : ["none", "low", "medium", "high"],
+    agentCapabilities: {
+      ...baseCapabilities.agentCapabilities!,
+      hostedFileSearch: fileSearch
+    }
+  };
+};
 
 const jsonHeaders = (apiKey: string) => ({
   "content-type": "application/json",
@@ -200,7 +240,20 @@ const remapToolsForOpenAITransport = (tools: ToolSet | undefined): ToolSet | und
       )
     : undefined;
 
-const validateXAIInput = (modelId: string, input: ModelGenerateInput<XAILanguageModelOptions>) => {
+const isUsRegionalEndpoint = (baseURL: string) => {
+  try {
+    return new URL(baseURL).hostname === "us.api.x.ai";
+  } catch {
+    return false;
+  }
+};
+
+const validateXAIInput = (modelId: string, input: ModelGenerateInput<XAILanguageModelOptions>, baseURL: string) => {
+  if (isUsRegionalEndpoint(baseURL) && !isGrok46(modelId) && !isGrok47(modelId)) {
+    throw new UnsupportedFeatureError(
+      `Provider "xai" US regional endpoint currently serves grok-4.7 and grok-4.6 only. Model "${modelId}" is not available at https://us.api.x.ai/v1.`
+    );
+  }
   const reasoning = input.reasoning;
   if (reasoning?.budgetTokens !== undefined) {
     throw new UnsupportedFeatureError('Provider "xai" does not support "reasoning.budgetTokens".');
@@ -226,6 +279,11 @@ const validateXAIInput = (modelId: string, input: ModelGenerateInput<XAILanguage
   }
 
   const providerOptions = input.providerOptions;
+  if (isGrok47(modelId) && providerOptions?.apiMode === "chat") {
+    throw new UnsupportedFeatureError(
+      `Provider "xai" model "${modelId}" accepts the Responses API only. Omit apiMode or set it to "responses". See https://docs.x.ai/developers/grok-4-7.`
+    );
+  }
   if (
     providerOptions?.apiMode === "chat" &&
     Object.values(input.tools ?? {}).some(isHostedToolDefinition)
@@ -309,13 +367,14 @@ class XAILanguageModel implements LanguageModel<XAILanguageModelOptions> {
   constructor(
     readonly modelId: string,
     private readonly delegate: LanguageModel,
-    private readonly defaultHeaders: Record<string, string>
+    private readonly defaultHeaders: Record<string, string>,
+    private readonly baseURL: string
   ) {
     this.capabilities = modelCapabilities(modelId);
   }
 
   async generate(input: ModelGenerateInput<XAILanguageModelOptions>): Promise<GenerateResult> {
-    validateXAIInput(this.modelId, input);
+    validateXAIInput(this.modelId, input, this.baseURL);
     try {
       return remapGenerateResult(await this.delegate.generate(prepareTransportInput(input, this.defaultHeaders)));
     } catch (error) {
@@ -324,7 +383,7 @@ class XAILanguageModel implements LanguageModel<XAILanguageModelOptions> {
   }
 
   async stream(input: ModelGenerateInput<XAILanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
-    validateXAIInput(this.modelId, input);
+    validateXAIInput(this.modelId, input, this.baseURL);
     if (!this.delegate.stream) {
       throw new UnsupportedFeatureError('Provider "xai" transport does not support streaming.');
     }
@@ -592,20 +651,36 @@ export const xAIFilePart = (fileId: string, mediaType = "application/octet-strea
   filename
 });
 
+const resolveXAIBaseURL = (options: XAIProviderOptions) => {
+  const region = options.region as string | undefined;
+  if (region !== undefined && region !== "global" && region !== "us") {
+    throw new ConfigurationError('Provider "xai" region must be "global" or "us".');
+  }
+  if (options.baseURL !== undefined && options.region !== undefined) {
+    throw new ConfigurationError('Provider "xai" accepts baseURL or region, not both.');
+  }
+  const raw = options.baseURL ?? (options.region === "us" ? "https://us.api.x.ai/v1" : "https://api.x.ai/v1");
+  return assertTrustedEndpoint(raw, {
+    label: "xAI baseURL",
+    protocols: ["https"],
+    allowUnsafe: options.allowUnsafeEndpoints
+  }).toString().replace(/\/+$/, "");
+};
+
 export const createXAI = (
   options: XAIProviderOptions = {}
 ): CallableProviderAdapter<LanguageModel<XAILanguageModelOptions>> & {
   files: FilesClient<XAIFileOptions>;
   rawFetch: typeof globalThis.fetch;
+  imageGenerationModel: (modelId: string) => ImageGenerationModel<XAIImageGenerationOptions>;
+  videoGenerationModel: (modelId: string) => VideoGenerationModel<XAIVideoGenerationOptions>;
+  speechModel: (modelId: string) => SpeechModel<XAISpeechOptions>;
+  transcriptionModel: (modelId: string) => TranscriptionModel<XAITranscriptionOptions>;
 } => {
   const apiKey = options.apiKey ?? process.env.XAI_API_KEY;
   if (!apiKey) throw new ConfigurationError("Missing xAI API key.");
 
-  const baseURL = assertTrustedEndpoint(options.baseURL ?? "https://api.x.ai/v1", {
-    label: "xAI baseURL",
-    protocols: ["https"],
-    allowUnsafe: options.allowUnsafeEndpoints
-  }).toString().replace(/\/+$/, "");
+  const baseURL = resolveXAIBaseURL(options);
   const fetcher = options.fetch ?? globalThis.fetch;
   const defaultHeaders = Object.fromEntries(
     Object.entries(options.headers ?? {}).filter(
@@ -617,13 +692,15 @@ export const createXAI = (
       apiKey, baseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints,
       // This delegate implements the wire protocol; xAI owns model feature policy.
       modelCapabilities: { [modelId]: modelCapabilities(modelId) },
-    }).languageModel(modelId), defaultHeaders);
+    }).languageModel(modelId), defaultHeaders, baseURL);
+  const media = createXAIMedia({ apiKey, baseURL, fetcher, responseLimits: options.responseLimits });
 
   return createProviderAdapter({
     name: "xai",
     languageModel,
     groundedLanguageModel: (modelId) => new XAIGroundedLanguageModel(modelId, languageModel(modelId)),
     files: new XAIFilesClient(apiKey, baseURL, fetcher),
-    rawFetch: fetcher
+    rawFetch: fetcher,
+    ...media
   });
 };
