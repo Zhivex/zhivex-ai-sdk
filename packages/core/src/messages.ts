@@ -192,6 +192,7 @@ export const isHostedToolClass = (
 
 const emptyAgentCapabilities: AgentCapabilities = {
   supportTier: "tier-c",
+  durableAgent: false,
   toolChoiceNone: false,
   approvalRequests: false,
   hostedWebSearch: false,

@@ -304,11 +304,14 @@ const betaSymbols = [
   "deleteFile",
   "deleteFileSearchStore",
   "deleteInteraction",
+  "deriveAgentSupportTier",
   "deriveLegacyModelCapabilities",
   "deserializeUIMessage",
   "fetchPredictionOperation",
   "getAgentCapabilities",
   "getAgentSupportTier",
+  "hasApprovalCapableRemoteMcp",
+  "hasRealtimeApprovalEquivalent",
   "getBatch",
   "getContextCache",
   "updateContextCache",
@@ -342,7 +345,8 @@ const betaSymbols = [
   "renderProviderConformanceMarkdown",
   "createToolAuditRecords",
   "uploadFile",
-  "uploadToFileSearchStore"
+  "uploadToFileSearchStore",
+  "TIER_A_MINIMUM_HOSTED_TOOLS"
 ] as const;
 
 const experimentalSymbols = [

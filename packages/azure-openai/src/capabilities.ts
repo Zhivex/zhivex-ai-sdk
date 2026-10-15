@@ -16,6 +16,7 @@ export const capabilities: ModelCapabilities = {
   webSearch: true,
   agentCapabilities: {
     supportTier: "tier-a",
+    durableAgent: true,
     toolChoiceNone: true,
     approvalRequests: true,
     hostedWebSearch: true,

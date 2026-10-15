@@ -24,6 +24,10 @@ export interface ProviderAgentSupport {
   hostedToolSummary?: string;
   structuredOutputSummary?: string;
   reasoningSummary?: string;
+  /** Display label when one matrix row covers more than one runtime tier. */
+  agentTierLabel?: string;
+  /** Date and status from the agent live-certification record. Independent of tier. */
+  liveCertified?: string;
   notes?: string;
 }
 
@@ -63,7 +67,7 @@ export type ProviderSupportMatrixEntry =
       provider?: string;
       modelId?: string;
       model: LanguageModel;
-      summary?: Partial<Pick<ProviderAgentSupport, "hostedToolSummary" | "structuredOutputSummary" | "reasoningSummary" | "notes">>;
+      summary?: Partial<Pick<ProviderAgentSupport, "hostedToolSummary" | "structuredOutputSummary" | "reasoningSummary" | "agentTierLabel" | "liveCertified" | "notes">>;
     };
 
 const boolText = (value: boolean): string => (value ? "yes" : "no");
@@ -188,7 +192,8 @@ export const renderProviderSupportMatrix = (
     "Reasoning",
     "Web search",
     "Hosted tools / MCP",
-    "Agent tier"
+    "Agent tier",
+    "Live certified"
   ];
 
   return [
@@ -209,7 +214,8 @@ export const renderProviderSupportMatrix = (
         entry.reasoningSummary ?? boolText(entry.reasoning),
         boolText(entry.webSearch),
         entry.hostedToolSummary ?? boolText(entry.hostedTools),
-        tierText(entry.agentTier)
+        entry.agentTierLabel ?? tierText(entry.agentTier),
+        entry.liveCertified ?? "not recorded"
       ])
     )
   ].join("\n");

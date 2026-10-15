@@ -80,7 +80,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     model: openai("gpt-4o-mini"),
     summary: {
       reasoningSummary: "`effort`",
-      hostedToolSummary: "model-dependent Responses hosted tools including image generation, remote MCP, shell/apply patch harness"
+      hostedToolSummary: "model-dependent Responses hosted tools including image generation, remote MCP, shell/apply patch harness",
+      liveCertified: "not recorded"
     }
   },
   {
@@ -88,7 +89,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     model: xai("grok-4.5"),
     summary: {
       reasoningSummary: "Grok 4.7 / 4.6 / 4.5 `low` / `medium` / `high` / `xhigh`",
-      hostedToolSummary: "Responses Web Search, X Search, code execution, Collections search, Files API, prompt caching"
+      hostedToolSummary: "Responses Web Search, X Search, code execution, Collections search, Files API, prompt caching",
+      liveCertified: "not recorded"
     }
   },
   {
@@ -96,7 +98,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     model: meta("muse-spark-1.2"),
     summary: {
       reasoningSummary: "`effort`",
-      hostedToolSummary: "Responses web search, tool search, Files API, prompt caching"
+      hostedToolSummary: "Responses web search, tool search, Files API, prompt caching",
+      liveCertified: "not certified"
     }
   },
   {
@@ -104,7 +107,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     model: azure("gpt-4o-mini"),
     summary: {
       reasoningSummary: "`effort`",
-      hostedToolSummary: "model-dependent Responses hosted tools, remote MCP, shell/apply patch harness"
+      hostedToolSummary: "model-dependent Responses hosted tools, remote MCP, shell/apply patch harness",
+      liveCertified: "not recorded"
     }
   },
   {
@@ -113,7 +117,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       structuredOutputSummary: "native",
       reasoningSummary: "Opus 5 `low` / `medium` / `high` / `xhigh` / `max`",
-      hostedToolSummary: "native MCP, web search, code execution"
+      hostedToolSummary: "native MCP, web search, code execution",
+      liveCertified: "not recorded"
     }
   },
   {
@@ -122,7 +127,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       structuredOutputSummary: "native",
       reasoningSummary: "model-dependent",
-      hostedToolSummary: "native"
+      hostedToolSummary: "native",
+      liveCertified: "2026-08-05 pass; 2026-09-19 not certified"
     }
   },
   {
@@ -131,7 +137,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       structuredOutputSummary: "native",
       reasoningSummary: "model-dependent",
-      hostedToolSummary: "native"
+      hostedToolSummary: "native",
+      liveCertified: "2026-09-19 local pass; not release-certified"
     }
   },
   {
@@ -140,7 +147,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       structuredOutputSummary: "native",
       reasoningSummary: "`effort` + `budgetTokens`",
-      hostedToolSummary: "server tools"
+      hostedToolSummary: "server tools",
+      liveCertified: "not recorded"
     }
   },
   {
@@ -149,7 +157,9 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       structuredOutputSummary: "JSON object + schema prompt",
       reasoningSummary: "Responses effort / Chat budget",
-      hostedToolSummary: "Responses hosted tools; Cloud files, batch, multimodal embeddings, rerank, ASR, TTS, image, video, realtime"
+      hostedToolSummary: "Responses hosted tools; Cloud files, batch, multimodal embeddings, rerank, ASR, TTS, image, video, realtime",
+      agentTierLabel: "Tier B text Responses / Tier A Omni 3.8 realtime",
+      liveCertified: "2026-08-05 pass; 2026-09-19 source pass"
     }
   },
   {
@@ -158,7 +168,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       structuredOutputSummary: "native",
       reasoningSummary: "K3 `max`; K2.x model-dependent",
-      hostedToolSummary: "Formula tools via Chat Completions"
+      hostedToolSummary: "Formula tools via Chat Completions",
+      liveCertified: "not recorded"
     }
   },
   {
@@ -167,7 +178,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       structuredOutputSummary: "JSON object",
       reasoningSummary: "`none` / `high` / `max`",
-      hostedToolSummary: "no"
+      hostedToolSummary: "no",
+      liveCertified: "2026-08-05 pass; 2026-09-19 streaming not certified"
     }
   },
   {
@@ -176,7 +188,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       structuredOutputSummary: "JSON object + schema prompt",
       reasoningSummary: "5.3/5.3 Flash `low` / `high` / `max`; 5.2 mapped",
-      hostedToolSummary: "no"
+      hostedToolSummary: "no",
+      liveCertified: "not recorded"
     }
   },
   {
@@ -185,6 +198,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       hostedToolSummary: "Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP",
       reasoningSummary: "endpoint-dependent",
+      agentTierLabel: "Tier B Converse / Tier A OpenAI-compatible",
+      liveCertified: "not recorded",
       notes: "README row combines Bedrock Converse and Bedrock OpenAI-compatible runtime.",
       // README documents Bedrock's two runtime modes in one row.
       // Converse is Tier B while the OpenAI-compatible runtime is Tier A.
@@ -197,7 +212,8 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
     summary: {
       structuredOutputSummary: "native",
       hostedToolSummary: "no",
-      reasoningSummary: "model-dependent"
+      reasoningSummary: "model-dependent",
+      liveCertified: "not recorded"
     }
   }
 ];
@@ -226,32 +242,32 @@ describe("provider parity documentation", () => {
   it("keeps the provider compatibility matrix aligned with runtime provider metadata", async () => {
     const rendered = [
       [
-        "| OpenAI | yes | yes | yes | native | yes | no | no | no | no | `effort` | yes | model-dependent Responses hosted tools including image generation, remote MCP, shell/apply patch harness | Tier A |",
-        "| OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent; GPT-5.6 `max` / `pro` / context | yes | model-dependent Responses hosted tools including image generation, remote MCP, shell/apply patch harness | Tier A |"
+        "| OpenAI | yes | yes | yes | native | yes | no | no | no | no | `effort` | yes | model-dependent Responses hosted tools including image generation, remote MCP, shell/apply patch harness | Tier A | not recorded |",
+        "| OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent; GPT-5.6 `max` / `pro` / context | yes | model-dependent Responses hosted tools including image generation, remote MCP, shell/apply patch harness | Tier A | not recorded |"
       ],
       [
-        "| Azure OpenAI | yes | yes | yes | native | yes | no | no | no | no | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |",
-        "| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A |"
+        "| Azure OpenAI | yes | yes | yes | native | yes | no | no | no | no | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A | not recorded |",
+        "| Azure OpenAI | yes | yes | yes | native | yes | yes | yes | yes | yes | `effort` | yes | model-dependent Responses hosted tools, remote MCP, shell/apply patch harness | Tier A | not recorded |"
       ],
       [
-        "| Gemini | yes | yes | yes | native | yes | yes | no | no | no | model-dependent | yes | native | Tier B |",
-        "| Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B |"
+        "| Gemini | yes | yes | yes | native | yes | yes | no | no | no | model-dependent | yes | native | Tier B | 2026-08-05 pass; 2026-09-19 not certified |",
+        "| Gemini | yes | yes | yes | native | yes | yes | yes | yes | yes | model-dependent | yes | native | Tier B | 2026-08-05 pass; 2026-09-19 not certified |"
       ],
       [
-        "| Vertex | yes | yes | yes | native | yes | yes | no | no | no | model-dependent | yes | native | Tier B |",
-        "| Vertex | yes | yes | yes | native | yes | yes | yes | yes | no | model-dependent | yes | native | Tier B |"
+        "| Vertex | yes | yes | yes | native | yes | yes | no | no | no | model-dependent | yes | native | Tier B | 2026-09-19 local pass; not release-certified |",
+        "| Vertex | yes | yes | yes | native | yes | yes | yes | yes | no | model-dependent | yes | native | Tier B | 2026-09-19 local pass; not release-certified |"
       ],
       [
-        "| Qwen | yes | yes | yes | JSON object + schema prompt | yes | no | no | no | no | Responses effort / Chat budget | yes | Responses hosted tools; Cloud files, batch, multimodal embeddings, rerank, ASR, TTS, image, video, realtime | Tier B |",
-        "| Qwen | yes | yes | yes | JSON object + schema prompt | yes | model-dependent | yes | yes | no | Responses effort / Chat budget | yes | Responses hosted tools; Cloud files, batch, multimodal embeddings, rerank, ASR, TTS, image, video, realtime | Tier B |"
+        "| Qwen | yes | yes | yes | JSON object + schema prompt | yes | no | no | no | no | Responses effort / Chat budget | yes | Responses hosted tools; Cloud files, batch, multimodal embeddings, rerank, ASR, TTS, image, video, realtime | Tier B text Responses / Tier A Omni 3.8 realtime | 2026-08-05 pass; 2026-09-19 source pass |",
+        "| Qwen | yes | yes | yes | JSON object + schema prompt | yes | model-dependent | yes | yes | no | Responses effort / Chat budget | yes | Responses hosted tools; Cloud files, batch, multimodal embeddings, rerank, ASR, TTS, image, video, realtime | Tier B text Responses / Tier A Omni 3.8 realtime | 2026-08-05 pass; 2026-09-19 source pass |"
       ],
       [
-        "| Kimi | yes | yes | yes | native | no | no | no | no | no | K3 `max`; K2.x model-dependent | no | Formula tools via Chat Completions | Tier C |",
-        "| Kimi | yes | yes | yes | native | no | no | no | no | no | K3 `max`; K2.x model-dependent | Formula tool | Formula tools via Chat Completions | Tier C |"
+        "| Kimi | yes | yes | yes | native | no | no | no | no | no | K3 `max`; K2.x model-dependent | no | Formula tools via Chat Completions | Tier C | not recorded |",
+        "| Kimi | yes | yes | yes | native | no | no | no | no | no | K3 `max`; K2.x model-dependent | Formula tool | Formula tools via Chat Completions | Tier C | not recorded |"
       ],
       [
-        "| Bedrock | yes | yes | yes | native | no | no | no | no | no | endpoint-dependent | no | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier B |",
-        "| Bedrock | yes | yes | endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier B / A by runtime |"
+        "| Bedrock | yes | yes | yes | native | no | no | no | no | no | endpoint-dependent | no | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier B Converse / Tier A OpenAI-compatible | not recorded |",
+        "| Bedrock | yes | yes | endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier B Converse / Tier A OpenAI-compatible | not recorded |"
       ]
     ].reduce(
       (table, [from, to]) => table.replace(from, to),

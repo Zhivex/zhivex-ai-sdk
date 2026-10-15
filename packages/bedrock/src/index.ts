@@ -148,6 +148,7 @@ const capabilities: ModelCapabilities = {
   webSearch: false,
   agentCapabilities: {
     supportTier: "tier-b",
+    durableAgent: true,
     toolChoiceNone: true,
     approvalRequests: false,
     hostedWebSearch: false,
@@ -169,6 +170,7 @@ const openAICompatibleCapabilities: ModelCapabilities = {
   webSearch: true,
   agentCapabilities: {
     supportTier: "tier-a",
+    durableAgent: true,
     toolChoiceNone: true,
     approvalRequests: true,
     hostedWebSearch: true,

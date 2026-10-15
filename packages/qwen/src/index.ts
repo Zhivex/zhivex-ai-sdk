@@ -532,6 +532,7 @@ const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
     agentCapabilities: {
       ...capabilities.agentCapabilities!,
       supportTier: tools && !omni ? "tier-b" : "tier-c",
+      durableAgent: Boolean(tools && !omni),
       toolChoiceNone: tools,
       hostedWebSearch: tools && !omni,
       hostedFileSearch: tools && !omni && !omni38,
@@ -3137,13 +3138,36 @@ const encodeRealtimeData = (data: string | Uint8Array | ArrayBuffer) => {
 class QwenRealtimeModel implements RealtimeModel {
   readonly provider = "qwen";
   get capabilities() {
-    if (isQwenCloudRealtime(this.modelId)) return {
-      ...realtimeCapabilities, vision: !isQwenAudioRealtime(this.modelId), webSearch: true,
-      agentCapabilities: { ...realtimeCapabilities.agentCapabilities!, hostedWebSearch: true, remoteMcp: isQwenOmni38Realtime(this.modelId) },
-      realtime: { ...realtimeCapabilities.realtime!, imageInput: !isQwenAudioRealtime(this.modelId) }
-    };
+    if (isQwenCloudRealtime(this.modelId)) {
+      const omniRealtime = isQwenOmni38Realtime(this.modelId);
+      return {
+        ...realtimeCapabilities, vision: !isQwenAudioRealtime(this.modelId), webSearch: true,
+        agentCapabilities: {
+          ...realtimeCapabilities.agentCapabilities!,
+          hostedWebSearch: true,
+          // Only Omni 3.8 realtime emits mcp_approval_request. Text Responses does not.
+          remoteMcp: omniRealtime,
+          approvalRequests: omniRealtime,
+          durableAgent: true,
+          supportTier: omniRealtime ? "tier-a" : "tier-b"
+        },
+        realtime: { ...realtimeCapabilities.realtime!, imageInput: !isQwenAudioRealtime(this.modelId) }
+      };
+    }
     if (!isLiveTranslate38(this.modelId)) return realtimeCapabilities;
-    return { ...realtimeCapabilities, tools: false, realtime: { ...realtimeCapabilities.realtime!, tools: false } };
+    return {
+      ...realtimeCapabilities,
+      tools: false,
+      agentCapabilities: {
+        ...realtimeCapabilities.agentCapabilities!,
+        durableAgent: false,
+        supportTier: "tier-c",
+        hostedWebSearch: false,
+        remoteMcp: false,
+        approvalRequests: false
+      },
+      realtime: { ...realtimeCapabilities.realtime!, tools: false }
+    };
   }
 
   constructor(

@@ -27,6 +27,7 @@ export const capabilities: ModelCapabilities = {
   webSearch: true,
   agentCapabilities: {
     supportTier: "tier-b",
+    durableAgent: true,
     toolChoiceNone: true,
     approvalRequests: false,
     hostedWebSearch: true,
@@ -192,6 +193,8 @@ export const realtimeCapabilities = (modelId: string): ModelCapabilities => {
     webSearch: !translation,
     agentCapabilities: {
       ...capabilities.agentCapabilities!,
+      supportTier: translation ? "tier-c" : "tier-b",
+      durableAgent: !translation,
       toolChoiceNone: !translation,
       hostedWebSearch: !translation,
       hostedFileSearch: false,

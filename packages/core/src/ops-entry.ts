@@ -35,6 +35,13 @@ export {
   inspectProviderAgentSupport,
   renderProviderSupportMatrix
 } from "./provider-parity.js";
+export {
+  deriveAgentSupportTier,
+  hasApprovalCapableRemoteMcp,
+  hasRealtimeApprovalEquivalent,
+  TIER_A_MINIMUM_HOSTED_TOOLS
+} from "./support-tier.js";
+export type { TierAMinimumHostedTool } from "./support-tier.js";
 export type {
   AgentCapabilities,
   AgentMemoryContext,

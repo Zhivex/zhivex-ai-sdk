@@ -16,7 +16,9 @@ export const capabilities: ModelCapabilities = {
   webSearch: true,
   agentCapabilities: {
     supportTier: "tier-b",
+    durableAgent: true,
     toolChoiceNone: true,
+    // Text Responses exposes MCP and does not emit approval requests.
     approvalRequests: false,
     hostedWebSearch: true,
     hostedFileSearch: true,

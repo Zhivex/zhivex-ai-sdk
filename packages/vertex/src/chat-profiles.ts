@@ -9,7 +9,7 @@ const baseline: ModelCapabilities = {
   toolChoice: false, parallelToolCalls: false, vision: false, files: false,
   audioInput: false, audioOutput: false, embeddings: false, reasoning: false,
   webSearch: false, toolHistory: "json",
-  agentCapabilities: { supportTier: "tier-b", toolChoiceNone: false, approvalRequests: false,
+  agentCapabilities: { supportTier: "tier-c", durableAgent: false, toolChoiceNone: false, approvalRequests: false,
     hostedWebSearch: false, hostedFileSearch: false, remoteMcp: false,
     computerUse: false, codeExecution: false, toolsets: false }
 };
@@ -59,7 +59,12 @@ export const vertexChatProfile = (id: string): { capabilities: ModelCapabilities
   return {
     thinkingControl,
     capabilities: { ...baseline, ...declared, tools, toolChoice: tools, parallelToolCalls: tools,
-      agentCapabilities: { ...baseline.agentCapabilities!, toolChoiceNone: tools },
+      agentCapabilities: {
+        ...baseline.agentCapabilities!,
+        toolChoiceNone: tools,
+        durableAgent: tools,
+        supportTier: tools ? "tier-b" : "tier-c"
+      },
       ...(profile.thinkingControl === "effort" ? { reasoningEfforts: ["low", "medium", "high"] } : {})
     }
   };

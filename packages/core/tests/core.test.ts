@@ -899,7 +899,7 @@ describe("core helpers", () => {
     ]);
 
     expect(renderProviderSupportMatrix(matrix)).toContain(
-      "| OpenAI | yes | yes | yes | native | yes | yes | no | yes | yes | `effort` | yes | remote MCP | Tier A |"
+      "| OpenAI | yes | yes | yes | native | yes | yes | no | yes | yes | `effort` | yes | remote MCP | Tier A | not recorded |"
     );
 
     const providerOnlyReport = createProviderSupportDriftReport(matrix, {
@@ -1290,6 +1290,7 @@ describe("core helpers", () => {
 
     expect(capabilities).toEqual({
       supportTier: "tier-c",
+      durableAgent: false,
       toolChoiceNone: false,
       approvalRequests: false,
       hostedWebSearch: false,
