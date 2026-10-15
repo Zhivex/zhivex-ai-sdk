@@ -1,5 +1,16 @@
 # @zhivex-ai/azure-openai
 
+## 0.7.8
+
+### Patch Changes
+
+- d3f6e4c: Retry Azure millisecond `retry-after` headers, and fix Bedrock Converse and Azure OpenAI production gaps: typed retries, stream termination, stop reasons, tool-choice history, reasoning round-trip, Entra token providers, deployment base models, Responses URLs, and verified catalog ids. Bedrock Converse reports agent support Tier B. The OpenAI-compatible Bedrock runtime and Azure OpenAI stay Tier A.
+- d3f6e4c: Honor Bedrock and Azure reasoning requests that the adapters already map. Older Claude `effort: "none"` no longer enables a default thinking budget. Bedrock advertises adaptive `max` and OpenAI-compatible reasoning mode and context. Azure `providerOptions.baseModel` feeds reasoning validation when core calls `resolveCapabilities`. Core 1.30.1 does not, so those checks still use the deployments map.
+- Updated dependencies [d3f6e4c]
+- Updated dependencies [d3f6e4c]
+- Updated dependencies [0e7c9f6]
+  - @zhivex-ai/core@1.34.0
+
 ## 0.7.7
 
 ### Patch Changes
