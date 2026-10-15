@@ -73,7 +73,7 @@ describe("bedrock adapter", () => {
       audioInput: false,
       audioOutput: false,
       embeddings: false,
-      reasoning: false,
+      reasoning: true,
       webSearch: false
     }
   });
@@ -318,7 +318,8 @@ describe("bedrock adapter", () => {
 
     expect(clientMock).toHaveBeenCalledWith({
       region: "us-east-1",
-      token: { token: "bedrock-key" }
+      token: { token: "bedrock-key" },
+      maxAttempts: 1
     });
   });
 
@@ -569,18 +570,32 @@ describe("bedrock adapter", () => {
     expect(command.input.toolConfig).toBeUndefined();
   });
 
-  it("rejects common reasoning config for Bedrock", async () => {
-    const provider = createBedrock({ region: "us-east-1" });
-
-    await expect(
-      generateText({
-        model: provider("anthropic.claude-3-5-sonnet"),
-        prompt: "hello",
-        reasoning: {
-          effort: "low"
+  it("maps Claude budget thinking without rejecting common reasoning config", async () => {
+    sendMock.mockResolvedValueOnce({
+      stopReason: "end_turn",
+      output: {
+        message: {
+          content: [{ text: "hello from bedrock" }]
         }
-      })
-    ).rejects.toThrow('Model "bedrock/anthropic.claude-3-5-sonnet" does not support reasoning.');
+      }
+    });
+
+    const provider = createBedrock({ region: "us-east-1" });
+    await generateText({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "hello",
+      reasoning: {
+        effort: "low"
+      }
+    });
+
+    const command = sendMock.mock.calls[0]?.[0] as {
+      input: { additionalModelRequestFields?: { thinking?: { type?: string; budget_tokens?: number } } };
+    };
+    expect(command.input.additionalModelRequestFields?.thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 1024
+    });
   });
 
   it("streams tool calls and text through ConverseStream", async () => {

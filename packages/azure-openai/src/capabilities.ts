@@ -36,6 +36,16 @@ const normalizeModelId = (modelId: string) => modelId.trim().toLowerCase();
 export const isAzureAstraModel = (modelId: string) =>
   /^gpt-6-astra(?:$|-\d{4}-\d{2}-\d{2})/.test(normalizeModelId(modelId));
 
+/** Chat models that reject `max_tokens` and require `max_completion_tokens`. */
+export const isAzureReasoningChatModel = (modelId: string) =>
+  /^(?:gpt-5|gpt-6|o1|o3|o4|codex-mini)(?:$|[^a-z0-9])/.test(normalizeModelId(modelId));
+
+/** Deployment names that already look like a published model id, so no opaque-name warning is needed. */
+export const isKnownAzureModelFamily = (modelId: string) =>
+  /^(?:gpt-4o|gpt-4\.1|gpt-5|gpt-6|o1|o3|o4|codex-mini|text-embedding-|whisper|tts-|gpt-4o-mini-tts|gpt-4o-mini-transcribe|gpt-4o-transcribe)/.test(
+    normalizeModelId(modelId)
+  );
+
 const supportsAzureOpenAIToolSearch = (modelId: string) =>
   isAzureAstraModel(modelId) || /^gpt-5\.4(?:$|-20|-pro)/.test(normalizeModelId(modelId));
 

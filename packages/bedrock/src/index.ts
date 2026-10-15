@@ -4,6 +4,7 @@ import {
   BedrockRuntimeClient,
   ConverseCommand,
   ConverseStreamCommand,
+  type BedrockRuntimeClientConfig,
   type ContentBlock,
   type ConverseCommandInput,
   type Message
@@ -29,6 +30,7 @@ import {
   withResponseRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
+  type FinishReason,
   type GenerateResult,
   type JsonValue,
   type LanguageModel,
@@ -44,12 +46,26 @@ import {
   type ModelGenerateInput,
   type ModelMessage,
   type StreamEvent,
+  type TokenUsage,
   type ToolSet
 } from "@zhivex-ai/core/provider";
 
 export interface BedrockProviderOptions {
   client?: BedrockRuntimeClient;
+  /**
+   * AWS region. When omitted, the AWS SDK resolves `AWS_REGION`, `AWS_DEFAULT_REGION`,
+   * and the shared config profile on its own.
+   */
   region?: string;
+  /** Static credentials or an AWS credential provider. Assume-role callers can pass `fromTemporaryCredentials()`. */
+  credentials?: BedrockRuntimeClientConfig["credentials"];
+  /** Shared config profile for this client. Does not mutate `AWS_PROFILE`. */
+  profile?: string;
+  /**
+   * SDK attempt budget, including the first call. Defaults to 1 so `maxRetries` is the only retry layer.
+   * Inject your own `client` to keep the AWS SDK retry mode.
+   */
+  maxAttempts?: number;
   runtime?: "converse" | "openai";
   baseURL?: string;
   apiKey?: string;
@@ -128,11 +144,11 @@ const capabilities: ModelCapabilities = {
   audioInput: false,
   audioOutput: false,
   embeddings: false,
-  reasoning: false,
+  reasoning: true,
   webSearch: false,
   agentCapabilities: {
     supportTier: "tier-c",
-    toolChoiceNone: false,
+    toolChoiceNone: true,
     approvalRequests: false,
     hostedWebSearch: false,
     hostedFileSearch: false,
@@ -248,6 +264,224 @@ const toBedrockImageFormat = (mediaType: string) => {
   return subtype as "png" | "jpeg" | "gif" | "webp";
 };
 
+const BEDROCK_REASONING_TYPE = "reasoning_content";
+
+const stripBedrockModelId = (modelId: string) => {
+  const arn = modelId.match(/(?:foundation-model|inference-profile)\/([^/]+)$/);
+  const raw = arn?.[1] ?? modelId;
+  return raw.replace(/^(?:global|us|eu|apac|jp|au|in)\./, "");
+};
+
+const isClaudeModel = (modelId: string) => /anthropic\.claude|claude-/.test(stripBedrockModelId(modelId));
+
+const usesAdaptiveClaudeThinking = (modelId: string) => {
+  const id = stripBedrockModelId(modelId);
+  return /claude-(?:fable|mythos)(?:-|$)/.test(id)
+    || /claude-(?:opus|sonnet)-4\.(?:[6-9]|[1-9]\d)/.test(id)
+    || /claude-(?:opus|sonnet|haiku)-[5-9]/.test(id);
+};
+
+const isNova2Model = (modelId: string) => /amazon\.nova-2/.test(stripBedrockModelId(modelId));
+
+const readsReasoningContent = (modelId: string) => {
+  const id = stripBedrockModelId(modelId);
+  return /deepseek\.r1|deepseek-r1/.test(id) || /gpt-oss/.test(id);
+};
+
+const bytesToBase64 = (value: Uint8Array | string) =>
+  typeof value === "string" ? value : Buffer.from(value).toString("base64");
+
+const reasoningProviderData = (block: {
+  reasoningText?: { text?: string; signature?: string };
+  redactedContent?: Uint8Array | string;
+}): JsonValue => ({
+  type: BEDROCK_REASONING_TYPE,
+  replay: true,
+  ...(block.reasoningText?.text || block.reasoningText?.signature
+    ? {
+        reasoningText: {
+          ...(block.reasoningText.text ? { text: block.reasoningText.text } : {}),
+          ...(block.reasoningText.signature ? { signature: block.reasoningText.signature } : {})
+        }
+      }
+    : {}),
+  ...(block.redactedContent ? { redactedContent: bytesToBase64(block.redactedContent) } : {})
+});
+
+const reasoningContentBlock = (part: ModelMessage["parts"][number]): ContentBlock[] | undefined => {
+  if (part.type !== "provider-data" || part.provider !== "bedrock" || !part.data || typeof part.data !== "object") {
+    return undefined;
+  }
+  const data = part.data as Record<string, unknown>;
+  if (data.type !== BEDROCK_REASONING_TYPE || data.replay !== true) {
+    return [];
+  }
+  const reasoningText = data.reasoningText;
+  const text = reasoningText && typeof reasoningText === "object"
+    ? reasoningText as { text?: unknown; signature?: unknown }
+    : undefined;
+  const redacted = typeof data.redactedContent === "string" ? data.redactedContent : undefined;
+  if (!text?.text && !text?.signature && !redacted) {
+    return [];
+  }
+  return [{
+    reasoningContent: {
+      ...(typeof text?.text === "string" || typeof text?.signature === "string"
+        ? {
+            reasoningText: {
+              text: typeof text.text === "string" ? text.text : "",
+              ...(typeof text.signature === "string" ? { signature: text.signature } : {})
+            }
+          }
+        : {}),
+      ...(redacted ? { redactedContent: Buffer.from(redacted, "base64") } : {})
+    }
+  } as ContentBlock];
+};
+
+const historyHasToolBlocks = (messages: ModelMessage[]) =>
+  messages.some((message) => message.parts.some((part) => part.type === "tool-call" || part.type === "tool-result"));
+
+const mapBedrockStopReason = (reason: string | undefined): FinishReason | undefined => {
+  if (!reason) {
+    return undefined;
+  }
+  switch (reason) {
+    case "end_turn":
+    case "stop_sequence":
+      return "stop";
+    case "max_tokens":
+    case "model_context_window_exceeded":
+      return "length";
+    case "tool_use":
+      return "tool-calls";
+    case "guardrail_intervened":
+    case "content_filtered":
+      return "content-filter";
+    case "malformed_model_output":
+    case "malformed_tool_use":
+      return "error";
+    default:
+      return normalizeFinishReason(reason);
+  }
+};
+
+const bedrockUsage = (usage: {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheWriteInputTokens?: number;
+} | undefined): TokenUsage | undefined => usage ? {
+  inputTokens: usage.inputTokens,
+  outputTokens: usage.outputTokens,
+  totalTokens: usage.totalTokens ?? ((usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)),
+  ...(usage.cacheReadInputTokens !== undefined ? { cachedInputTokens: usage.cacheReadInputTokens } : {}),
+  ...(usage.cacheWriteInputTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteInputTokens } : {})
+} : undefined;
+
+const parseToolInput = (raw: string, effectsPossible: boolean): JsonValue => {
+  try {
+    const value = raw ? JSON.parse(raw) as unknown : {};
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("Bedrock tool input must be a JSON object.");
+    }
+    return value as JsonValue;
+  } catch (cause) {
+    throw new ProviderToolCallError({
+      provider: "bedrock",
+      transport: "converse",
+      diagnosticCode: "BEDROCK_MALFORMED_TOOL_USE",
+      reason: "invalid_json",
+      retryable: false,
+      effectsPossible,
+      cause
+    });
+  }
+};
+
+const claudeThinkingFields = (modelId: string, input: ModelGenerateInput): Record<string, unknown> => {
+  const reasoning = input.reasoning;
+  if (!reasoning) {
+    return {};
+  }
+  if (usesAdaptiveClaudeThinking(modelId)) {
+    if (reasoning.budgetTokens !== undefined) {
+      throw new UnsupportedFeatureError(
+        'Provider "bedrock" does not support "reasoning.budgetTokens" for this Claude model; use "reasoning.effort".'
+      );
+    }
+    const effort = reasoning.effort;
+    if (effort === "none") {
+      if (/claude-(?:fable|mythos)(?:-|$)/.test(stripBedrockModelId(modelId))) {
+        throw new UnsupportedFeatureError('Provider "bedrock" cannot disable thinking for Claude Fable or Claude Mythos.');
+      }
+      return { thinking: { type: "disabled" } };
+    }
+    if (effort !== undefined && !["low", "medium", "high", "xhigh", "max"].includes(effort)) {
+      throw new UnsupportedFeatureError(`Provider "bedrock" does not support reasoning effort "${effort}" for this Claude model.`);
+    }
+    return {
+      thinking: { type: "adaptive" },
+      ...(effort ? { output_config: { effort } } : {})
+    };
+  }
+
+  const budget = reasoning.budgetTokens ?? 1024;
+  if (!Number.isSafeInteger(budget) || budget < 1024) {
+    throw new ValidationError('Bedrock extended thinking requires "reasoning.budgetTokens" of at least 1024.');
+  }
+  if (input.maxTokens !== undefined && budget >= input.maxTokens) {
+    throw new ValidationError('Bedrock extended thinking requires "reasoning.budgetTokens" to be less than "maxTokens".');
+  }
+  return { thinking: { type: "enabled", budget_tokens: budget } };
+};
+
+const novaReasoningFields = (input: ModelGenerateInput): Record<string, unknown> => {
+  const reasoning = input.reasoning;
+  if (!reasoning) {
+    return {};
+  }
+  if (reasoning.budgetTokens !== undefined) {
+    throw new UnsupportedFeatureError('Provider "bedrock" does not support "reasoning.budgetTokens" for Amazon Nova 2.');
+  }
+  const effort = reasoning.effort;
+  if (effort === "none") {
+    return { reasoningConfig: { type: "disabled" } };
+  }
+  if (effort === "high" && (input.temperature !== undefined || input.maxTokens !== undefined)) {
+    throw new ValidationError('Amazon Nova 2 reasoning effort "high" cannot be combined with temperature or maxTokens.');
+  }
+  if (effort !== undefined && effort !== "low" && effort !== "medium" && effort !== "high") {
+    throw new UnsupportedFeatureError(`Provider "bedrock" does not support reasoning effort "${effort}" for Amazon Nova 2.`);
+  }
+  return {
+    reasoningConfig: {
+      type: "enabled",
+      ...(effort ? { maxReasoningEffort: effort } : {})
+    }
+  };
+};
+
+const bedrockReasoningFields = (modelId: string, input: ModelGenerateInput): Record<string, unknown> => {
+  if (!input.reasoning) {
+    return {};
+  }
+  if (isClaudeModel(modelId)) {
+    return claudeThinkingFields(modelId, input);
+  }
+  if (isNova2Model(modelId)) {
+    return novaReasoningFields(input);
+  }
+  if (readsReasoningContent(modelId)) {
+    if (input.reasoning.budgetTokens !== undefined) {
+      throw new UnsupportedFeatureError('Provider "bedrock" does not support "reasoning.budgetTokens" for this model.');
+    }
+    return {};
+  }
+  throw new UnsupportedFeatureError(`Provider "bedrock" does not support reasoning for model "${modelId}".`);
+};
+
 const mapMessagePart = (part: ModelMessage["parts"][number]): ContentBlock[] => {
   switch (part.type) {
     case "text":
@@ -275,6 +509,8 @@ const mapMessagePart = (part: ModelMessage["parts"][number]): ContentBlock[] => 
           }
         }
       ];
+    case "provider-data":
+      return reasoningContentBlock(part) ?? [];
     default:
       return [];
   }
@@ -576,10 +812,22 @@ const parseAssistantMessage = (message: { content?: ContentBlock[] } | undefined
   const parts: ModelMessage["parts"] = [];
 
   for (const block of message?.content ?? []) {
-    const chunk = block as any;
+    const chunk = block as {
+      text?: string;
+      toolUse?: { toolUseId: string; name: string; input?: JsonValue };
+      reasoningContent?: {
+        reasoningText?: { text?: string; signature?: string };
+        redactedContent?: Uint8Array | string;
+      };
+    };
 
     if (chunk.text) {
       parts.push({ type: "text", text: chunk.text });
+      continue;
+    }
+
+    if (chunk.reasoningContent) {
+      parts.push(providerDataPart("bedrock", reasoningProviderData(chunk.reasoningContent)));
       continue;
     }
 
@@ -601,21 +849,95 @@ const parseAssistantMessage = (message: { content?: ContentBlock[] } | undefined
   };
 };
 
-const normalizeBedrockError = (error: unknown) => {
-  const err = error as { name?: string; message?: string; $metadata?: { httpStatusCode?: number } };
-  const message = err.message || "Bedrock request failed.";
-  const lower = message.toLowerCase();
-  const status = err.$metadata?.httpStatusCode;
+const RETRYABLE_BEDROCK_ERRORS: Record<string, number> = {
+  ThrottlingException: 429,
+  ServiceUnavailableException: 503,
+  ModelNotReadyException: 429,
+  InternalServerException: 500,
+  ModelTimeoutException: 408,
+  ModelStreamErrorException: 500
+};
 
-  if (status === 401 || status === 403 || lower.includes("accessdenied") || lower.includes("credential")) {
+const bedrockRetryAfterMs = (error: unknown) => {
+  const headers = (error as { $response?: { headers?: Record<string, string | undefined> } }).$response?.headers;
+  const header = headers?.["retry-after"] ?? headers?.["Retry-After"];
+  return header && /^\d+(?:\.\d+)?$/.test(header.trim()) ? Number(header) * 1_000 : undefined;
+};
+
+const isSdkError = (error: unknown): error is {
+  name?: string;
+  message?: string;
+  $metadata?: { httpStatusCode?: number };
+} => Boolean(error) && typeof error === "object";
+
+/**
+ * Classify AWS SDK failures by exception name. Message text is not a signal:
+ * retryable faults such as ModelTimeoutException often mention "model".
+ */
+const normalizeBedrockError = (error: unknown): Error => {
+  if (
+    error instanceof ConfigurationError ||
+    error instanceof ValidationError ||
+    error instanceof UnsupportedFeatureError ||
+    error instanceof ProviderHTTPError ||
+    error instanceof ProviderToolCallError
+  ) {
+    return error;
+  }
+
+  const err = isSdkError(error) ? error : undefined;
+  const message = err?.message || "Bedrock request failed.";
+  const status = err?.$metadata?.httpStatusCode;
+  const name = err?.name;
+  const retryAfterMs = bedrockRetryAfterMs(error);
+
+  if (
+    name === "AccessDeniedException" ||
+    name === "UnrecognizedClientException" ||
+    status === 401 ||
+    status === 403
+  ) {
     return new ConfigurationError(message, { cause: error });
   }
 
-  if (status === 400 || lower.includes("validation") || lower.includes("model")) {
+  const retryableStatus = name ? RETRYABLE_BEDROCK_ERRORS[name] : undefined;
+  if (retryableStatus !== undefined) {
+    return new ProviderHTTPError(message, status ?? retryableStatus, { cause: error, retryAfterMs });
+  }
+
+  if (name === "ValidationException" || status === 400 || name === "ServiceQuotaExceededException") {
     return new ValidationError(message, { cause: error });
   }
 
+  if (name === "ResourceNotFoundException") {
+    return new ConfigurationError(message, { cause: error });
+  }
+
+  if (status === 408 || status === 429 || (status !== undefined && status >= 500)) {
+    return new ProviderHTTPError(message, status, { cause: error, retryAfterMs });
+  }
+
   return error instanceof Error ? error : new Error(message);
+};
+
+const STREAM_FAULTS: Record<string, string> = {
+  internalServerException: "InternalServerException",
+  modelStreamErrorException: "ModelStreamErrorException",
+  validationException: "ValidationException",
+  throttlingException: "ThrottlingException",
+  serviceUnavailableException: "ServiceUnavailableException"
+};
+
+const streamFaultError = (event: Record<string, unknown>) => {
+  for (const [key, name] of Object.entries(STREAM_FAULTS)) {
+    const value = event[key];
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+    const fault = value as { message?: string; $metadata?: { httpStatusCode?: number } };
+    return { name, message: fault.message || name, $metadata: fault.$metadata };
+  }
+  return undefined;
 };
 
 class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions> {
@@ -633,9 +955,25 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
       typeof providerOptions.outputConfig === "object" && providerOptions.outputConfig
         ? (providerOptions.outputConfig as Record<string, unknown>)
         : undefined;
-    const { outputConfig: _outputConfig, ...otherProviderOptions } = providerOptions;
+    const {
+      outputConfig: _outputConfig,
+      additionalModelRequestFields: userRequestFields,
+      ...otherProviderOptions
+    } = providerOptions;
+    const generatedFields = bedrockReasoningFields(this.modelId, input);
+    const userFields =
+      userRequestFields && typeof userRequestFields === "object" && !Array.isArray(userRequestFields)
+        ? userRequestFields as Record<string, unknown>
+        : {};
+    const additionalModelRequestFields = { ...generatedFields, ...userFields };
     const textFormat = mapStructuredOutput(input.structuredOutput);
-    const tools = input.toolChoice === "none" ? undefined : mapTools(input.tools);
+    const keepTools = input.toolChoice !== "none" || historyHasToolBlocks(input.messages);
+    if (input.toolChoice === "none" && keepTools && !input.tools) {
+      throw new ValidationError(
+        'Bedrock requires tool definitions when toolChoice is "none" and the history contains tool blocks.'
+      );
+    }
+    const tools = keepTools ? mapTools(input.tools) : undefined;
     const toolChoice = input.toolChoice === "none" ? undefined : mapToolChoice(input.toolChoice);
 
     return {
@@ -662,6 +1000,9 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
             } as ConverseCommandInput["outputConfig"]
           }
         : {}),
+      ...(Object.keys(additionalModelRequestFields).length
+        ? { additionalModelRequestFields: additionalModelRequestFields as ConverseCommandInput["additionalModelRequestFields"] }
+        : {}),
       ...otherProviderOptions
     };
   }
@@ -670,15 +1011,15 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      if (input.reasoning) {
-        throw new UnsupportedFeatureError('Provider "bedrock" does not support "reasoning".');
-      }
-
       const commandInput = this.toCommandInput(input);
 
-      const response = await withRetry(() => this.client.send(new ConverseCommand(commandInput), { abortSignal: signal }), input).catch((error) => {
-        throw normalizeBedrockError(error);
-      });
+      const response = await withRetry(async () => {
+        try {
+          return await this.client.send(new ConverseCommand(commandInput), { abortSignal: signal });
+        } catch (error) {
+          throw normalizeBedrockError(error);
+        }
+      }, input);
 
       const assistantMessage = parseAssistantMessage(response.output?.message);
       const text = assistantMessage.parts
@@ -689,14 +1030,9 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
       return {
         messages: [assistantMessage],
         text,
-        finishReason: normalizeFinishReason(response.stopReason),
+        finishReason: mapBedrockStopReason(response.stopReason),
         providerFinishReason: response.stopReason,
-        usage: {
-          inputTokens: response.usage?.inputTokens,
-          outputTokens: response.usage?.outputTokens,
-          totalTokens:
-            response.usage?.totalTokens ?? ((response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0))
-        },
+        usage: bedrockUsage(response.usage),
         rawResponse: response
       };
     } finally {
@@ -709,96 +1045,170 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
 
     let response;
     try {
-      if (input.reasoning) {
-        throw new UnsupportedFeatureError('Provider "bedrock" does not support "reasoning".');
-      }
-
       const commandInput = this.toCommandInput(input);
-      response = await withRetry(
-        () => this.client.send(new ConverseStreamCommand(commandInput), { abortSignal: signal }),
-        input
-      ).catch((error) => {
-        throw normalizeBedrockError(error);
-      });
+      response = await withRetry(async () => {
+        try {
+          return await this.client.send(new ConverseStreamCommand(commandInput), { abortSignal: signal });
+        } catch (error) {
+          throw normalizeBedrockError(error);
+        }
+      }, input);
     } catch (error) {
       cleanup();
       throw error;
     }
 
     return (async function* () {
+      let effectsPossible = false;
+      let sawMessageStop = false;
+      let finishEmitted = false;
+      let stopReason: string | undefined;
+      let usage: TokenUsage | undefined;
+      const toolBuffers = new Map<number, { id: string; name: string; input: string }>();
+      const reasoningBuffers = new Map<number, { text: string; signature?: string; redactedContent?: string }>();
+
+      const finishEvent = (): StreamEvent => ({
+        type: "finish",
+        ...(stopReason
+          ? { finishReason: mapBedrockStopReason(stopReason), providerFinishReason: stopReason }
+          : {}),
+        ...(usage ? { usage } : {})
+      });
+
+      const interrupted = (error: unknown) => {
+        if (error instanceof ProviderToolCallError) {
+          return error;
+        }
+        const normalized = normalizeBedrockError(error);
+        if (!effectsPossible) {
+          return normalized;
+        }
+        return new ProviderToolCallError({
+          provider: "bedrock",
+          transport: "converse",
+          diagnosticCode: "BEDROCK_STREAM_INTERRUPTED",
+          reason: "stream_truncated",
+          effectsPossible: true,
+          ...(usage ? { usage } : {}),
+          cause: normalized
+        });
+      };
+
       try {
-        const toolBuffers = new Map<number, { id: string; name: string; input: string }>();
         const stream = response.stream;
         if (!stream) {
           throw new ValidationError("Bedrock streaming response did not include a stream.");
         }
 
-        for await (const event of stream as AsyncIterable<Record<string, any>>) {
-          if (event.contentBlockStart?.start?.toolUse) {
-            toolBuffers.set(event.contentBlockStart.contentBlockIndex, {
-              id: event.contentBlockStart.start.toolUse.toolUseId,
-              name: event.contentBlockStart.start.toolUse.name,
-              input: ""
-            });
-            continue;
-          }
+        try {
+          for await (const event of stream as AsyncIterable<Record<string, any>>) {
+            const fault = streamFaultError(event);
+            if (fault) {
+              throw fault;
+            }
 
-          if (event.contentBlockDelta?.delta?.text) {
-            yield {
-              type: "text-delta",
-              textDelta: event.contentBlockDelta.delta.text
-            } satisfies StreamEvent;
-            continue;
-          }
+            if (event.contentBlockStart?.start?.toolUse) {
+              toolBuffers.set(event.contentBlockStart.contentBlockIndex, {
+                id: event.contentBlockStart.start.toolUse.toolUseId,
+                name: event.contentBlockStart.start.toolUse.name,
+                input: ""
+              });
+              continue;
+            }
 
-          if (event.contentBlockDelta?.delta?.toolUse) {
-            const index = event.contentBlockDelta.contentBlockIndex;
-            const current = toolBuffers.get(index) ?? {
-              id: `${index}`,
-              name: "",
-              input: ""
-            };
-            current.input += event.contentBlockDelta.delta.toolUse.input ?? "";
-            toolBuffers.set(index, current);
-            continue;
-          }
-
-          if (event.contentBlockStop) {
-            const current = toolBuffers.get(event.contentBlockStop.contentBlockIndex);
-            if (current) {
+            if (event.contentBlockDelta?.delta?.text) {
               yield {
-                type: "tool-call",
-                toolCall: {
+                type: "text-delta",
+                textDelta: event.contentBlockDelta.delta.text
+              } satisfies StreamEvent;
+              continue;
+            }
+
+            const reasoningDelta = event.contentBlockDelta?.delta?.reasoningContent;
+            if (reasoningDelta) {
+              const index = event.contentBlockDelta.contentBlockIndex as number;
+              const current = reasoningBuffers.get(index) ?? { text: "" };
+              if (typeof reasoningDelta.text === "string" && reasoningDelta.text) {
+                current.text += reasoningDelta.text;
+                yield {
+                  type: "provider-data",
+                  provider: "bedrock",
+                  data: { type: "reasoning_delta", text: reasoningDelta.text }
+                } satisfies StreamEvent;
+              }
+              if (typeof reasoningDelta.signature === "string") {
+                current.signature = reasoningDelta.signature;
+              }
+              if (reasoningDelta.redactedContent) {
+                current.redactedContent = bytesToBase64(reasoningDelta.redactedContent);
+              }
+              reasoningBuffers.set(index, current);
+              continue;
+            }
+
+            if (event.contentBlockDelta?.delta?.toolUse) {
+              const index = event.contentBlockDelta.contentBlockIndex;
+              const current = toolBuffers.get(index) ?? {
+                id: `${index}`,
+                name: "",
+                input: ""
+              };
+              current.input += event.contentBlockDelta.delta.toolUse.input ?? "";
+              toolBuffers.set(index, current);
+              continue;
+            }
+
+            if (event.contentBlockStop) {
+              const index = event.contentBlockStop.contentBlockIndex as number;
+              const current = toolBuffers.get(index);
+              if (current) {
+                const toolCall = {
                   id: current.id,
                   name: current.name,
-                  input: JSON.parse(current.input || "{}")
-                }
-              } satisfies StreamEvent;
-            }
-            continue;
-          }
-
-          if (event.messageStop) {
-            yield {
-              type: "finish",
-              finishReason: normalizeFinishReason(event.messageStop.stopReason),
-              providerFinishReason: event.messageStop.stopReason
-            } satisfies StreamEvent;
-            continue;
-          }
-
-          if (event.metadata?.usage) {
-            yield {
-              type: "finish",
-              usage: {
-                inputTokens: event.metadata.usage.inputTokens,
-                outputTokens: event.metadata.usage.outputTokens,
-                totalTokens:
-                  event.metadata.usage.totalTokens ??
-                  ((event.metadata.usage.inputTokens ?? 0) + (event.metadata.usage.outputTokens ?? 0))
+                  input: parseToolInput(current.input, effectsPossible)
+                };
+                effectsPossible = true;
+                yield { type: "tool-call", toolCall } satisfies StreamEvent;
               }
-            } satisfies StreamEvent;
+              const reasoning = reasoningBuffers.get(index);
+              if (reasoning && (reasoning.text || reasoning.signature || reasoning.redactedContent)) {
+                yield {
+                  type: "provider-data",
+                  provider: "bedrock",
+                  data: reasoningProviderData({
+                    ...(reasoning.text || reasoning.signature
+                      ? { reasoningText: { text: reasoning.text, ...(reasoning.signature ? { signature: reasoning.signature } : {}) } }
+                      : {}),
+                    ...(reasoning.redactedContent ? { redactedContent: reasoning.redactedContent } : {})
+                  })
+                } satisfies StreamEvent;
+              }
+              continue;
+            }
+
+            if (event.messageStop) {
+              sawMessageStop = true;
+              stopReason = event.messageStop.stopReason;
+              continue;
+            }
+
+            if (event.metadata?.usage) {
+              usage = bedrockUsage(event.metadata.usage);
+              if (sawMessageStop && !finishEmitted) {
+                finishEmitted = true;
+                yield finishEvent();
+              }
+            }
           }
+        } catch (error) {
+          throw interrupted(error);
+        }
+
+        if (!sawMessageStop) {
+          throw interrupted(new ConfigurationError("Bedrock Converse stream ended without messageStop."));
+        }
+        if (!finishEmitted) {
+          yield finishEvent();
         }
       } finally {
         cleanup();
@@ -1096,18 +1506,26 @@ export const createBedrock = (
   const client =
     options.client ??
     (() => {
-      const region = options.region ?? process.env.AWS_REGION;
-      if (!region) {
-        throw new ConfigurationError("Missing AWS region for Bedrock.");
+      const config: BedrockRuntimeClientConfig = {
+        maxAttempts: options.maxAttempts ?? 1
+      };
+      if (options.region) {
+        config.region = options.region;
       }
-      return new BedrockRuntimeClient(
-        options.apiKey
-          ? {
-              region,
-              token: { token: options.apiKey }
-            }
-          : { region }
-      );
+      if (options.profile) {
+        config.profile = options.profile;
+      }
+      if (options.credentials) {
+        config.credentials = options.credentials;
+      }
+      if (options.apiKey) {
+        config.token = { token: options.apiKey };
+      }
+      try {
+        return new BedrockRuntimeClient(config);
+      } catch (error) {
+        throw new ConfigurationError("Failed to create the Bedrock runtime client.", { cause: error });
+      }
     })();
 
   return createProviderAdapter({

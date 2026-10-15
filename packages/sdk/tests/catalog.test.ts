@@ -64,7 +64,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(257);
+    expect(entries).toHaveLength(270);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
@@ -106,7 +106,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(257);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(270);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-10-13",
       verifiedAt: "2026-10-13",
@@ -135,7 +135,15 @@ describe("SDK model catalog ownership", () => {
     expect(entry?.inputCostPer1kTokens).toBeUndefined();
     expect(entry?.recommendedFor).toBeUndefined();
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "anthropic")?.revision).toBe("2026-10-13");
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "bedrock")?.revision).toBe("2026-10-07");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "bedrock")?.revision).toBe("2026-10-15");
+    expect(defaultModelCatalog.find("bedrock", "anthropic.claude-3-5-sonnet")).toBeUndefined();
+    expect(defaultModelCatalog.find("bedrock", "anthropic.claude-sonnet-5-5")?.modelId).toBe("anthropic.claude-sonnet-5-5");
+    expect(defaultModelCatalog.find("bedrock", "us.anthropic.claude-haiku-4-5-20251001-v1:0")?.modelId).toBe(
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    );
+    expect(defaultModelCatalog.find("bedrock", "amazon.nova-2-lite-v1:0")?.modelId).toBe("amazon.nova-2-lite-v1:0");
+    expect(defaultModelCatalog.find("azure-openai", "gpt-5.4-nano")?.modelId).toBe("gpt-5.4-nano");
+    expect(defaultModelCatalog.find("azure-openai", "text-embedding-3-large")?.inputCostPer1kTokens).toBeUndefined();
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-14");
   });
 

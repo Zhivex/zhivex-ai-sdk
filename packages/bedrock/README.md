@@ -18,10 +18,11 @@ The default runtime uses Bedrock Runtime Converse through `@aws-sdk/client-bedro
 import { createBedrock } from "@zhivex-ai/bedrock";
 
 const bedrock = createBedrock({
-  region: process.env.AWS_REGION
+  region: process.env.AWS_REGION,
+  profile: process.env.AWS_PROFILE
 });
 
-const model = bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0");
+const model = bedrock("anthropic.claude-haiku-5-5");
 ```
 
 For production, prefer the standard AWS SDK credential chain: IAM roles, IAM Identity Center / SSO, profiles, or temporary credentials. For exploration and development, Amazon Bedrock API keys are also supported by setting the official `AWS_BEARER_TOKEN_BEDROCK` environment variable before creating the client:
@@ -41,6 +42,10 @@ const bedrock = createBedrock({
 ```
 
 Long-term Bedrock API keys are best kept to exploration and development. For production applications, use short-term credentials or IAM-based AWS SDK authentication.
+
+`region` is optional. When it is omitted, the AWS SDK resolves `AWS_REGION`, `AWS_DEFAULT_REGION`, and the shared config profile. Pass `credentials` for a static identity or an AWS credential provider such as `fromTemporaryCredentials()`, and `profile` to select a shared config profile without mutating `AWS_PROFILE`. Clients constructed by this adapter use `maxAttempts: 1` so `maxRetries` is the only retry layer. Inject your own `client` to keep the AWS SDK retry mode.
+
+Converse accepts `reasoning` for Claude (adaptive thinking on current Sonnet, Opus, and Haiku 5 models; `budgetTokens` on older Claude models), Amazon Nova 2 (`reasoningConfig`), and DeepSeek R1 / gpt-oss (reasoning blocks are round-tripped). The signature is stored as provider data and sent back on the next turn. `toolChoice: "none"` keeps tool definitions when the history already contains tool blocks.
 
 For Bedrock Mantle/OpenAI-compatible endpoints, opt in with `runtime: "openai"`. This mode sends generation requests to `${baseURL}/responses` and is the path for endpoint-dependent Responses features such as server tools or stateful Responses.
 
@@ -98,7 +103,7 @@ const tools = await createBedrockAgentCoreMcpToolSet(
 
 const result = await runAgent(
   {
-    model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
+    model: bedrock("anthropic.claude-haiku-5-5"),
     tools,
     maxSteps: 4
   },

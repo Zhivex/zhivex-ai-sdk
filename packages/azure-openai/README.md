@@ -53,6 +53,14 @@ Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
 
+## Authentication, deployments, and retries
+
+Pass `apiKey` or a `tokenProvider` function, not both. `tokenProvider` is called on every request and sends `Authorization: Bearer`. It ignores `AZURE_OPENAI_API_KEY`. `azureEntraTokenProvider(credential)` adapts a structural `getToken()` credential, so `@azure/identity` stays optional and is not a dependency. Use scope `https://cognitiveservices.azure.com/.default` for classic Azure OpenAI or `https://ai.azure.com/.default` for Foundry. A 401 becomes `AzureOpenAIAuthenticationError` and is not retried. The caller needs the Cognitive Services OpenAI User role.
+
+Map opaque deployment names with `deployments: { "my-gpt": { model: "gpt-5" } }` or `providerOptions.baseModel`. Capabilities are taken from the deployments map at construction. `baseModel` on a single call selects the token-limit field and Responses versus Chat. Reasoning chat models (`gpt-5`, `gpt-6`, `o1`, `o3`, `o4`, `codex-mini`) send `max_completion_tokens` even when `reasoning` is omitted.
+
+Responses requests always go to `{endpoint}/openai/v1/responses` and include `model`, including when `apiVersion` selects the dated deployment path for Chat Completions. Calls that omit `maxRetries` retry twice. `retry-after-ms` and `x-ms-retry-after-ms` are honored with a small jitter. An HTTP 400 whose error code is `content_filter` is `AzureOpenAIContentFilterError` and is not retried. Usage reports cached input tokens and reasoning tokens when Azure sends them.
+
 ## GPT-6 Astra and Responses deployments
 
 `azure("gpt-6-astra")` selects Responses by default for generation, structured output, callable tools, and streaming. For an opaque deployment name, select `providerOptions: { apiMode: "responses" }` explicitly; model-specific capability validation can only recognize the model ID supplied to the factory. Responses uses native `reasoning.effort` and flat named-function tool choices. Astra rejects unsupported reasoning efforts, temperature, and `top_p` before fetch. Azure deployment availability, API versions, and quotas remain account-specific.
