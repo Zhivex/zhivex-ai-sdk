@@ -1,5 +1,15 @@
 # @zhivex-ai/openai
 
+## 0.16.2
+
+### Patch Changes
+
+- d3f6e4c: Type `service_tier` on OpenAI language model options, including `ultrafast`, and keep forwarding it with other provider options.
+- Updated dependencies [d3f6e4c]
+- Updated dependencies [d3f6e4c]
+- Updated dependencies [0e7c9f6]
+  - @zhivex-ai/core@1.34.0
+
 ## 0.16.1
 
 ### Patch Changes

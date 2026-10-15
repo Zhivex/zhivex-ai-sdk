@@ -1,5 +1,18 @@
 # @zhivex-ai/gateway
 
+## 1.7.0
+
+### Minor Changes
+
+- 0e7c9f6: Add an experimental fail-closed egress allowlist, beta Latin American redaction detectors, and configurable generateText and streamText redaction for tool inputs and tool results. Agent definitions can carry the same options, and a gateway denies a target before cache or network access.
+
+### Patch Changes
+
+- Updated dependencies [d3f6e4c]
+- Updated dependencies [d3f6e4c]
+- Updated dependencies [0e7c9f6]
+  - @zhivex-ai/core@1.34.0
+
 ## 1.6.1
 
 ### Patch Changes

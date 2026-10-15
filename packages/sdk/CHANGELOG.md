@@ -1,5 +1,21 @@
 # @zhivex-ai/sdk
 
+## 1.33.0
+
+### Minor Changes
+
+- 0e7c9f6: Add an experimental fail-closed egress allowlist, beta Latin American redaction detectors, and configurable generateText and streamText redaction for tool inputs and tool results. Agent definitions can carry the same options, and a gateway denies a target before cache or network access.
+
+### Patch Changes
+
+- d3f6e4c: Retry Azure millisecond `retry-after` headers, and fix Bedrock Converse and Azure OpenAI production gaps: typed retries, stream termination, stop reasons, tool-choice history, reasoning round-trip, Entra token providers, deployment base models, Responses URLs, and verified catalog ids. Bedrock Converse reports agent support Tier B. The OpenAI-compatible Bedrock runtime and Azure OpenAI stay Tier A.
+- d3f6e4c: Honor Bedrock and Azure reasoning requests that the adapters already map. Older Claude `effort: "none"` no longer enables a default thinking budget. Bedrock advertises adaptive `max` and OpenAI-compatible reasoning mode and context. Azure `providerOptions.baseModel` feeds reasoning validation when core calls `resolveCapabilities`. Core 1.30.1 does not, so those checks still use the deployments map.
+- d3f6e4c: Recommend `grok-imagine-image-2.0` for xAI image generation and record the `grok-imagine-image-quality` retirement on 2026-11-02. Mark OpenAI and Azure OpenAI `gpt-4o-mini` catalog entries deprecated through the 2027-01-14 shutdown and stop recommending them.
+- Updated dependencies [d3f6e4c]
+- Updated dependencies [d3f6e4c]
+- Updated dependencies [0e7c9f6]
+  - @zhivex-ai/core@1.34.0
+
 ## 1.32.2
 
 ### Patch Changes

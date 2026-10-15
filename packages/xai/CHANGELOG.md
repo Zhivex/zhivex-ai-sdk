@@ -1,5 +1,17 @@
 # @zhivex-ai/xai
 
+## 0.3.1
+
+### Patch Changes
+
+- d3f6e4c: Mark `grok-imagine-image-quality` deprecated ahead of its 2026-11-02 retirement and point callers at `grok-imagine-image-2.0`. The slug still sends as-is until xAI retires it. `grok-imagine-image-2.0` continues to accept `quality: "auto"`.
+- Updated dependencies [d3f6e4c]
+- Updated dependencies [d3f6e4c]
+- Updated dependencies [0e7c9f6]
+- Updated dependencies [d3f6e4c]
+  - @zhivex-ai/core@1.34.0
+  - @zhivex-ai/openai@0.16.2
+
 ## 0.3.0
 
 ### Minor Changes
