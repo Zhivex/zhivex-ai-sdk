@@ -20,7 +20,7 @@
   "cli.d.ts": "fc31d996538a1b3071e3a17c47daadfec60f6aaaca49b15425a87f807064b6e1",
   "evals.d.ts": "d388a91aef516e1d13a1dbb7707e08596b6af0f010b217a073ab7d886266e499",
   "experimental.d.ts": "caf30db90d13acb87a916a7a0fe627128b80d72b05967bf6dcbb503b05bb1c23",
-  "index.d.ts": "c4fbaaa1fbf1f73ee175b39bfba6af58dfb4504e491f6d45ace3e234b8872b34",
+  "index.d.ts": "2757adb279c140cd1ef8783f5d929bb4ee02c454e2d14b2679ed71a77a7049c9",
   "mcp-http.d.ts": "1fc87fdf9a0f8d938b8a1447b9af01f391cace4b520662b0c9beb83e99a2d20d",
   "mcp-stdio-browser.d.ts": "671cb086eda611a2b9a1395a53630eabc31159a437a01c1489aeab11491a34ac",
   "mcp-stdio.d.ts": "0ef7d888605edf63085ceafd91b7ab8ed84b1aee1038188323ded9b3a61593ca",

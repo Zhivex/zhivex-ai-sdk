@@ -3137,7 +3137,7 @@ const encodeRealtimeData = (data: string | Uint8Array | ArrayBuffer) => {
 
 class QwenRealtimeModel implements RealtimeModel {
   readonly provider = "qwen";
-  get capabilities() {
+  get capabilities(): ModelCapabilities {
     if (isQwenCloudRealtime(this.modelId)) {
       const omniRealtime = isQwenOmni38Realtime(this.modelId);
       return {
