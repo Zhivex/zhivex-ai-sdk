@@ -4,6 +4,8 @@ import {
   groundedCapabilities,
   modelCapabilities,
   isAzureAstraModel,
+  isAzureReasoningChatModel,
+  isKnownAzureModelFamily,
   realtimeCapabilities,
   speechCapabilities,
   supportsAzureOpenAIHostedHarnessTools,
@@ -15,6 +17,7 @@ import {
   CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
+  ProviderToolCallError,
   assertTrustedEndpoint,
   decodeBase64WithLimit,
   readBodyWithLimit,
@@ -35,7 +38,6 @@ import {
   streamChatCompletions,
   toToolSet,
   toolResultPayload,
-  withRetry,
   withResponseRetry,
   withTimeoutSignal,
   type AudioFrame,
@@ -60,14 +62,55 @@ import {
   type RealtimeTokenResult,
   type SpeechModel,
   type SpeechResult,
+  type RetryOptions,
   type StreamEvent,
+  type TokenUsage,
   type ToolDefinition,
   type TranscriptionModel,
   type TranscriptionResult
 } from "@zhivex-ai/core/provider";
 
+export interface AzureOpenAIDeploymentConfig {
+  /**
+   * Base model id used for capabilities, Responses vs Chat, and token-limit fields.
+   * The deployment name is still what gets sent as `model` on the v1 API.
+   */
+  model: string;
+}
+
+/**
+ * Structural match for `@azure/identity` credentials. This package does not depend on that SDK.
+ * Typical scopes are `https://cognitiveservices.azure.com/.default` and `https://ai.azure.com/.default`.
+ */
+export interface AzureTokenCredential {
+  getToken(scope: string | string[]): Promise<{ token: string; expiresOnTimestamp?: number } | null>;
+}
+
+export const azureEntraTokenProvider = (
+  credential: AzureTokenCredential,
+  scope = "https://cognitiveservices.azure.com/.default"
+) => async () => {
+  const result = await credential.getToken(scope);
+  if (!result?.token) {
+    throw new ConfigurationError("Azure token credential did not return a token.");
+  }
+  return result.token;
+};
+
 export interface AzureOpenAIProviderOptions {
   apiKey?: string;
+  /**
+   * Entra ID (or other) bearer token factory. Called on every request.
+   * Mutually exclusive with `apiKey`. When set, `AZURE_OPENAI_API_KEY` is ignored.
+   */
+  tokenProvider?: () => string | Promise<string>;
+  /** Maps an opaque deployment name to the base model that should drive capabilities and request shape. */
+  deployments?: Record<string, AzureOpenAIDeploymentConfig>;
+  /**
+   * Default retry count for this provider when a call omits `maxRetries`.
+   * Azure throttling is common enough that the default is 2. Pass `0` to disable.
+   */
+  maxRetries?: number;
   endpoint?: string;
   apiVersion?: string;
   fetch?: typeof globalThis.fetch;
@@ -283,6 +326,13 @@ export type AzureOpenAIProviderData =
 export interface AzureOpenAILanguageModelOptions {
   /** Explicitly select Responses for opaque deployment names. */
   apiMode?: "auto" | "chat" | "responses";
+  /**
+   * Base model id when `modelId` is an opaque deployment name.
+   * Overrides the provider `deployments` map for request shape on this call.
+   * Reasoning validation uses it when core calls `resolveCapabilities`.
+   * Core 1.30.1 does not, so set `deployments` for those checks.
+   */
+  baseModel?: string;
   top_p?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
@@ -293,10 +343,113 @@ export interface AzureOpenAILanguageModelOptions {
   [key: string]: unknown;
 }
 
-const jsonHeaders = (apiKey: string) => ({
-  "content-type": "application/json",
-  "api-key": apiKey
+interface AzureAuth {
+  headers: (extra?: Record<string, string>) => Promise<Record<string, string>>;
+  maxRetries: number;
+}
+
+const AZURE_AUTH_HINT =
+  "Assign the Cognitive Services OpenAI User role and request a token for https://cognitiveservices.azure.com/.default or https://ai.azure.com/.default.";
+
+export class AzureOpenAIAuthenticationError extends ConfigurationError {
+  readonly status = 401;
+}
+
+export class AzureOpenAIContentFilterError extends ProviderHTTPError {
+  readonly code = "content_filter";
+
+  constructor(message: string, options?: { cause?: unknown; responseBody?: unknown }) {
+    super(message, 400, options);
+  }
+}
+
+const contentFilterCode = (body: unknown) => {
+  if (typeof body !== "string" || !body.trim()) {
+    return false;
+  }
+  try {
+    const json = JSON.parse(body) as { code?: unknown; error?: { code?: unknown } };
+    return json.code === "content_filter" || json.error?.code === "content_filter";
+  } catch {
+    return false;
+  }
+};
+
+const classifyAzureError = (error: unknown) => {
+  if (!(error instanceof ProviderHTTPError) || error instanceof AzureOpenAIContentFilterError) {
+    return error;
+  }
+  if (error.status === 401) {
+    return new AzureOpenAIAuthenticationError(
+      `Azure OpenAI request failed with status 401. ${AZURE_AUTH_HINT}`,
+      { cause: error }
+    );
+  }
+  if (error.status === 400 && contentFilterCode(error.responseBody)) {
+    return new AzureOpenAIContentFilterError("Azure OpenAI rejected the request with content_filter.", {
+      cause: error,
+      responseBody: error.responseBody
+    });
+  }
+  return error;
+};
+
+const sendAzure = (
+  operation: () => Promise<Response>,
+  options: RetryOptions | undefined,
+  defaultMaxRetries: number
+) => withResponseRetry(
+  operation,
+  { ...options, maxRetries: options?.maxRetries ?? defaultMaxRetries },
+  "Azure OpenAI"
+).catch((error) => {
+  throw classifyAzureError(error);
 });
+
+const warnedDeployments = new Set<string>();
+
+const noteOpaqueDeployment = (deployment: string, resolvedModel: string) => {
+  if (
+    resolvedModel !== deployment ||
+    isKnownAzureModelFamily(deployment) ||
+    warnedDeployments.has(deployment) ||
+    !deployment ||
+    deployment === "." ||
+    deployment === ".." ||
+    /[\\/?#\s]/.test(deployment)
+  ) {
+    return;
+  }
+  warnedDeployments.add(deployment);
+  console.warn(
+    `Azure OpenAI deployment "${deployment}" does not match a known model id. Pass deployments or providerOptions.baseModel so capabilities and token limits are not inferred from the deployment name.`
+  );
+};
+
+const azureUsage = (usage: {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
+  completion_tokens_details?: { reasoning_tokens?: number };
+  input_tokens_details?: { cached_tokens?: number };
+  output_tokens_details?: { reasoning_tokens?: number };
+} | undefined): TokenUsage | undefined => {
+  if (!usage) {
+    return undefined;
+  }
+  const cached = usage.prompt_tokens_details?.cached_tokens ?? usage.input_tokens_details?.cached_tokens;
+  const reasoning = usage.completion_tokens_details?.reasoning_tokens ?? usage.output_tokens_details?.reasoning_tokens;
+  return {
+    inputTokens: usage.prompt_tokens ?? usage.input_tokens,
+    outputTokens: usage.completion_tokens ?? usage.output_tokens,
+    totalTokens: usage.total_tokens,
+    ...(cached !== undefined ? { cachedInputTokens: cached } : {}),
+    ...(reasoning !== undefined ? { reasoningTokens: reasoning } : {})
+  };
+};
 
 const AZURE_OPENAI_JSON_RESPONSE_MAX_BYTES = 128 * 1024 * 1024;
 const AZURE_OPENAI_REALTIME_AUDIO_MAX_BYTES = 16 * 1024 * 1024;
@@ -312,9 +465,9 @@ const parseJson = async (
 ) => {
   if (!response.ok) {
     const body = await readErrorBodyWithLimit(response, options.errorBodyBytes);
-    throw new ProviderHTTPError(`Azure OpenAI request failed with status ${response.status}.`, response.status, {
+    throw classifyAzureError(new ProviderHTTPError(`Azure OpenAI request failed with status ${response.status}.`, response.status, {
       responseBody: body
-    });
+    }));
   }
   return readJsonWithLimit<any>(response, {
     maxBytes: options.maxBytes ?? AZURE_OPENAI_JSON_RESPONSE_MAX_BYTES,
@@ -721,14 +874,21 @@ const mapReasoning = (input: ModelGenerateInput) => {
     throw new UnsupportedFeatureError('Provider "azure-openai" does not support "reasoning.budgetTokens".');
   }
 
-  return {
-    reasoning_effort: input.reasoning.effort,
-    max_completion_tokens: input.maxTokens
-  };
+  return input.reasoning.effort === undefined ? {} : { reasoning_effort: input.reasoning.effort };
+};
+
+const chatTokenFields = (modelId: string, input: ModelGenerateInput) => {
+  if (input.maxTokens === undefined) {
+    return {};
+  }
+  if (input.reasoning || isAzureReasoningChatModel(modelId)) {
+    return { max_completion_tokens: input.maxTokens };
+  }
+  return { max_tokens: input.maxTokens };
 };
 
 const azureBodyOptions = (input: Pick<ModelGenerateInput, "providerOptions">) => {
-  const { apiMode: _apiMode, ...body } = input.providerOptions ?? {};
+  const { apiMode: _apiMode, baseModel: _baseModel, ...body } = input.providerOptions ?? {};
   return body;
 };
 
@@ -1017,7 +1177,11 @@ const parseResponsesAssistantMessage = (json: any): ModelMessage => {
   };
 };
 
-const normalizeResponsesFinishReason = (status: string | undefined, hasToolCalls: boolean) => {
+const normalizeResponsesFinishReason = (
+  status: string | undefined,
+  hasToolCalls: boolean,
+  incompleteReason?: string
+) => {
   if (hasToolCalls) {
     return "tool-calls" as const;
   }
@@ -1030,154 +1194,197 @@ const normalizeResponsesFinishReason = (status: string | undefined, hasToolCalls
     return "error" as const;
   }
 
+  if (status === "incomplete") {
+    if (incompleteReason === "content_filter") {
+      return "content-filter" as const;
+    }
+    if (incompleteReason === "max_output_tokens") {
+      return "length" as const;
+    }
+  }
+
   return normalizeFinishReason(status);
+};
+
+const parseResponseArguments = (raw: string): JsonValue => {
+  try {
+    const value = raw ? JSON.parse(raw) as unknown : {};
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("Azure OpenAI tool arguments must be a JSON object.");
+    }
+    return value as JsonValue;
+  } catch (cause) {
+    throw new ProviderToolCallError({
+      provider: "azure-openai",
+      transport: "responses",
+      diagnosticCode: "AZURE_OPENAI_MALFORMED_TOOL_USE",
+      reason: "invalid_json",
+      retryable: false,
+      effectsPossible: false,
+      cause
+    });
+  }
 };
 
 const streamResponses = async function* (
   response: Response
 ): AsyncGenerator<StreamEvent, void, undefined> {
-  const toolBuffers = new Map<string, { callId: string; name: string; args: string; emitted: boolean }>();
-  let sawToolCalls = false;
+  const toolBuffers = new Map<string, { callId: string; name: string; args: string }>();
+  const hostedCalls: Array<{ id: string; name: string; input: JsonValue }> = [];
+  let sawTerminal = false;
+  let providerEffectsPossible = false;
 
-  const emitToolCall = (key: string) => {
-    const toolCall = toolBuffers.get(key);
-    if (!toolCall || toolCall.emitted || !toolCall.name) {
-      return undefined;
-    }
-
-    toolCall.emitted = true;
-    sawToolCalls = true;
-
-    return {
-      type: "tool-call",
-      toolCall: {
-        id: toolCall.callId,
-        name: toolCall.name,
-        input: JSON.parse(toolCall.args || "{}")
-      }
-    } satisfies StreamEvent;
+  const bufferTool = (key: string) => {
+    const existing = toolBuffers.get(key) ?? { callId: key, name: "", args: "" };
+    toolBuffers.set(key, existing);
+    return existing;
   };
 
-  for await (const event of streamSSE(response)) {
-    if (event.data === "[DONE]") {
-      return;
-    }
-
-    const json = JSON.parse(event.data);
-    const type = json.type as string | undefined;
-
-    if (type === "response.output_text.delta" && typeof json.delta === "string") {
-      yield { type: "text-delta", textDelta: json.delta } satisfies StreamEvent;
-      continue;
-    }
-
-    if (type === "response.output_item.added" || type === "response.output_item.done") {
-      const item = json.item;
-      if (item?.type === "function_call") {
-        const key = item.id ?? json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
-        const existing = toolBuffers.get(key) ?? {
-          callId: item.call_id ?? key,
-          name: item.name ?? "",
-          args: "",
-          emitted: false
-        };
-        existing.callId = item.call_id ?? existing.callId;
-        existing.name ||= item.name ?? "";
-        if (typeof item.arguments === "string") {
-          existing.args = item.arguments;
+  const releaseCalls = function* () {
+    for (const toolCall of toolBuffers.values()) {
+      if (!toolCall.callId || !toolCall.name) {
+        throw new ConfigurationError("Incomplete Azure OpenAI function call.");
+      }
+      yield {
+        type: "tool-call",
+        toolCall: {
+          id: toolCall.callId,
+          name: toolCall.name,
+          input: parseResponseArguments(toolCall.args)
         }
-        toolBuffers.set(key, existing);
+      } satisfies StreamEvent;
+    }
+    for (const toolCall of hostedCalls) {
+      yield { type: "tool-call", toolCall } satisfies StreamEvent;
+    }
+  };
 
-        if (type === "response.output_item.done") {
-          const emitted = emitToolCall(key);
-          if (emitted) {
-            yield emitted;
-          }
-        }
+  const interrupted = (error: unknown) => {
+    if (error instanceof ProviderToolCallError || !providerEffectsPossible) {
+      return error;
+    }
+    return new ProviderToolCallError({
+      provider: "azure-openai",
+      transport: "responses",
+      diagnosticCode: "AZURE_OPENAI_STREAM_INTERRUPTED",
+      reason: "stream_truncated",
+      retryable: false,
+      effectsPossible: true,
+      cause: error
+    });
+  };
+
+  try {
+    for await (const event of streamSSE(response)) {
+      if (event.data === "[DONE]") {
+        break;
       }
 
-      if (item?.type === "shell_call" && type === "response.output_item.done") {
-        yield {
-          type: "tool-call",
-          toolCall: {
+      let json: Record<string, any>;
+      try {
+        json = JSON.parse(event.data) as Record<string, any>;
+      } catch (cause) {
+        throw new ConfigurationError("Azure OpenAI response stream event was not valid JSON.", { cause });
+      }
+      const type = json.type as string | undefined;
+
+      if (type === "response.output_text.delta" && typeof json.delta === "string") {
+        yield { type: "text-delta", textDelta: json.delta } satisfies StreamEvent;
+        continue;
+      }
+
+      if (type === "error") {
+        throw new ConfigurationError("Azure OpenAI reported a response stream error.");
+      }
+
+      if (type === "response.output_item.added" || type === "response.output_item.done") {
+        const item = json.item;
+        if (item?.type === "function_call") {
+          const key = item.id ?? json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
+          const existing = bufferTool(String(key));
+          existing.callId = item.call_id ?? existing.callId;
+          existing.name ||= item.name ?? "";
+          if (typeof item.arguments === "string") {
+            existing.args = item.arguments;
+          }
+        }
+
+        if (item?.type === "shell_call" && type === "response.output_item.done") {
+          hostedCalls.push({
             id: item.call_id ?? item.id ?? `${json.output_index ?? "shell"}`,
             name: "shell",
             input: parseShellCallInput(item) as JsonValue
-          }
-        } satisfies StreamEvent;
-        sawToolCalls = true;
-      }
+          });
+        }
 
-      if (item?.type === "apply_patch_call" && type === "response.output_item.done") {
-        yield {
-          type: "tool-call",
-          toolCall: {
+        if (item?.type === "apply_patch_call" && type === "response.output_item.done") {
+          hostedCalls.push({
             id: item.call_id ?? item.id ?? `${json.output_index ?? "apply_patch"}`,
             name: "apply_patch",
             input: parseApplyPatchCallInput(item) as JsonValue
-          }
-        } satisfies StreamEvent;
-        sawToolCalls = true;
+          });
+        }
+
+        const providerData = parseResponsesProviderData(item);
+        if (providerData && type === "response.output_item.done") {
+          providerEffectsPossible = true;
+          yield {
+            type: "provider-data",
+            provider: "azure-openai",
+            data: providerData
+          } satisfies StreamEvent;
+        }
+        continue;
       }
 
-      const providerData = parseResponsesProviderData(item);
-      if (providerData && type === "response.output_item.done") {
+      if (type === "response.function_call_arguments.delta" || type === "response.function_call_arguments.done") {
+        const key = json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
+        const existing = bufferTool(String(key));
+        if (type === "response.function_call_arguments.delta") {
+          existing.args += typeof json.delta === "string" ? json.delta : "";
+        } else if (typeof json.arguments === "string") {
+          existing.args = json.arguments;
+        }
+        continue;
+      }
+
+      if (type === "response.completed" || type === "response.failed" || type === "response.incomplete") {
+        sawTerminal = true;
+        const responseData = json.response ?? {};
+        const status = typeof responseData.status === "string" ? responseData.status : type.slice("response.".length);
+        const usage = azureUsage(responseData.usage);
+        const incompleteReason = typeof responseData.incomplete_details?.reason === "string"
+          ? responseData.incomplete_details.reason
+          : undefined;
+        if (status === "completed") {
+          yield* releaseCalls();
+        }
         yield {
-          type: "provider-data",
-          provider: "azure-openai",
-          data: providerData
+          type: "finish",
+          finishReason: normalizeResponsesFinishReason(status, status === "completed" && (toolBuffers.size > 0 || hostedCalls.length > 0), incompleteReason),
+          providerFinishReason: status,
+          usage
         } satisfies StreamEvent;
+        if (status === "failed") {
+          throw new ProviderToolCallError({
+            provider: "azure-openai",
+            transport: "responses",
+            diagnosticCode: "AZURE_OPENAI_RESPONSE_FAILED",
+            reason: "response_failed",
+            retryable: false,
+            effectsPossible: providerEffectsPossible,
+            ...(usage ? { usage } : {})
+          });
+        }
+        return;
       }
-      continue;
     }
+  } catch (error) {
+    throw interrupted(error);
+  }
 
-    if (type === "response.function_call_arguments.delta") {
-      const key = json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
-      const existing = toolBuffers.get(key) ?? {
-        callId: key,
-        name: "",
-        args: "",
-        emitted: false
-      };
-      existing.args += typeof json.delta === "string" ? json.delta : "";
-      toolBuffers.set(key, existing);
-      continue;
-    }
-
-    if (type === "response.function_call_arguments.done") {
-      const key = json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
-      const existing = toolBuffers.get(key) ?? {
-        callId: key,
-        name: "",
-        args: "",
-        emitted: false
-      };
-      if (typeof json.arguments === "string") {
-        existing.args = json.arguments;
-      }
-      toolBuffers.set(key, existing);
-      const emitted = emitToolCall(key);
-      if (emitted) {
-        yield emitted;
-      }
-      continue;
-    }
-
-    if (type === "response.completed" || type === "response.failed" || type === "response.incomplete") {
-      const responseData = json.response ?? {};
-      yield {
-        type: "finish",
-        finishReason: normalizeResponsesFinishReason(responseData.status, sawToolCalls),
-        providerFinishReason: responseData.status,
-        usage: responseData.usage
-          ? {
-              inputTokens: responseData.usage.input_tokens,
-              outputTokens: responseData.usage.output_tokens,
-              totalTokens: responseData.usage.total_tokens
-            }
-          : undefined
-      } satisfies StreamEvent;
-    }
+  if (!sawTerminal) {
+    throw interrupted(new ConfigurationError("Azure OpenAI response stream ended without a terminal event."));
   }
 };
 
@@ -1218,33 +1425,46 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
 
   constructor(
     readonly modelId: string,
-    private readonly apiKey: string,
+    private readonly auth: AzureAuth,
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch,
-    private readonly resolveURL: (modelId: string, path: AzurePath) => string
+    private readonly resolveURL: (modelId: string, path: AzurePath) => string,
+    private readonly baseModel: string
   ) {
-    this.capabilities = modelCapabilities(modelId);
+    this.capabilities = modelCapabilities(baseModel);
+  }
+
+  resolveCapabilities(input: { providerOptions?: { baseModel?: string } }) {
+    return modelCapabilities(this.resolvedModel(input));
+  }
+
+  private resolvedModel(input: { providerOptions?: { baseModel?: string } }) {
+    const override = input.providerOptions?.baseModel;
+    const model = typeof override === "string" && override.trim() ? override.trim() : this.baseModel;
+    noteOpaqueDeployment(this.modelId, model);
+    return model;
   }
 
   async generate(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
+    const resolvedModel = this.resolvedModel(input);
     try {
-      if (useAzureResponses(this.modelId, input)) {
-        assertResponsesToolsSupported(this.modelId, input.tools);
+      if (useAzureResponses(resolvedModel, input)) {
+        assertResponsesToolsSupported(resolvedModel, input.tools);
         const previousResponse = getProviderResponseId(input.messages);
         const messages =
           previousResponse && previousResponse.index < input.messages.length - 1
             ? input.messages.slice(previousResponse.index + 1)
             : input.messages;
-        const response = await withResponseRetry(
-          () =>
+        const response = await sendAzure(
+          async () =>
             this.fetcher(this.resolveURL(this.modelId, "responses"), {
               method: "POST",
-              headers: jsonHeaders(this.apiKey),
+              headers: await this.auth.headers({ "content-type": "application/json" }),
               signal,
               body: JSON.stringify({
                 ...azureResponsesBodyOptions(input),
-                model: this.baseURL.endsWith("/openai/v1") ? this.modelId : undefined,
+                model: this.modelId,
                 ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
                 ...(messages.length ? { input: toResponsesInput(messages) } : {}),
                 tools: mapResponsesTools(input.tools),
@@ -1256,7 +1476,7 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
               })
             }),
           { ...input, abortSignal: signal },
-          "Azure OpenAI"
+          this.auth.maxRetries
         );
 
         const json = await parseJson(response);
@@ -1266,22 +1486,18 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
         return {
           messages: [assistantMessage],
           text: assistantMessage.parts.filter((part) => part.type === "text").map((part) => part.text).join(""),
-          finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls),
+          finishReason: normalizeResponsesFinishReason(json.status, hasToolCalls, json.incomplete_details?.reason),
           providerFinishReason: json.status,
-          usage: {
-            inputTokens: json.usage?.input_tokens,
-            outputTokens: json.usage?.output_tokens,
-            totalTokens: json.usage?.total_tokens
-          },
+          usage: azureUsage(json.usage),
           rawResponse: json
         };
       }
 
-      const response = await withResponseRetry(
-        () =>
+      const response = await sendAzure(
+        async () =>
           this.fetcher(this.resolveURL(this.modelId, "chat/completions"), {
             method: "POST",
-            headers: jsonHeaders(this.apiKey),
+            headers: await this.auth.headers({ "content-type": "application/json" }),
             signal,
             body: JSON.stringify({
               ...azureBodyOptions(input),
@@ -1291,13 +1507,13 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
               tool_choice: mapToolChoice(input.toolChoice),
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
-              ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
+              ...chatTokenFields(resolvedModel, input),
               ...mapReasoning(input),
               stream: false
             })
           }),
         { ...input, abortSignal: signal },
-        "Azure OpenAI"
+        this.auth.maxRetries
       );
 
       const json = await parseJson(response);
@@ -1310,11 +1526,7 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
         text: assistantMessage.parts.filter((part) => part.type === "text").map((part) => part.text).join(""),
         finishReason: normalizeFinishReason(choice?.finish_reason),
         providerFinishReason: choice?.finish_reason,
-        usage: {
-          inputTokens: json.usage?.prompt_tokens,
-          outputTokens: json.usage?.completion_tokens,
-          totalTokens: json.usage?.total_tokens
-        },
+        usage: azureUsage(json.usage),
         rawResponse: json
       };
     } finally {
@@ -1324,18 +1536,19 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
 
   async stream(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
+    const resolvedModel = this.resolvedModel(input);
     try {
-      if (useAzureResponses(this.modelId, input)) {
-        assertResponsesToolsSupported(this.modelId, input.tools);
-        const response = await withResponseRetry(
-          () =>
+      if (useAzureResponses(resolvedModel, input)) {
+        assertResponsesToolsSupported(resolvedModel, input.tools);
+        const response = await sendAzure(
+          async () =>
             this.fetcher(this.resolveURL(this.modelId, "responses"), {
               method: "POST",
-              headers: jsonHeaders(this.apiKey),
+              headers: await this.auth.headers({ "content-type": "application/json" }),
               signal,
               body: JSON.stringify({
                 ...azureResponsesBodyOptions(input),
-                model: this.baseURL.endsWith("/openai/v1") ? this.modelId : undefined,
+                model: this.modelId,
                 input: toResponsesInput(input.messages),
                 tools: mapResponsesTools(input.tools),
                 tool_choice: typeof input.toolChoice === "object" ? { type: "function", name: input.toolChoice.toolName } : mapToolChoice(input.toolChoice),
@@ -1347,7 +1560,7 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
               })
             }),
           { ...input, abortSignal: signal },
-          "Azure OpenAI"
+          this.auth.maxRetries
         );
 
         return (async function* () {
@@ -1360,11 +1573,11 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
         })();
       }
 
-      const response = await withResponseRetry(
-        () =>
+      const response = await sendAzure(
+        async () =>
           this.fetcher(this.resolveURL(this.modelId, "chat/completions"), {
             method: "POST",
-            headers: jsonHeaders(this.apiKey),
+            headers: await this.auth.headers({ "content-type": "application/json" }),
             signal,
             body: JSON.stringify({
               ...azureBodyOptions(input),
@@ -1374,14 +1587,14 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
               tool_choice: mapToolChoice(input.toolChoice),
               response_format: mapStructuredOutput(input),
               temperature: input.temperature,
-              ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
+              ...chatTokenFields(resolvedModel, input),
               ...mapReasoning(input),
               stream: true,
               stream_options: { include_usage: true }
             })
           }),
         { ...input, abortSignal: signal },
-        "Azure OpenAI"
+        this.auth.maxRetries
       );
 
       return (async function* () {
@@ -1404,7 +1617,7 @@ class AzureOpenAIEmbeddingModel implements EmbeddingModel {
 
   constructor(
     readonly modelId: string,
-    private readonly apiKey: string,
+    private readonly auth: AzureAuth,
     private readonly baseURL: string,
     private readonly fetcher: typeof globalThis.fetch,
     private readonly resolveURL: (modelId: string, path: AzurePath) => string
@@ -1420,18 +1633,19 @@ class AzureOpenAIEmbeddingModel implements EmbeddingModel {
 
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
-        () =>
+      const response = await sendAzure(
+        async () =>
           this.fetcher(this.resolveURL(this.modelId, "embeddings"), {
             method: "POST",
-            headers: jsonHeaders(this.apiKey),
+            headers: await this.auth.headers({ "content-type": "application/json" }),
             signal,
             body: JSON.stringify({
               model: this.baseURL.endsWith("/openai/v1") ? this.modelId : undefined,
               input: values
             })
           }),
-        { ...input, abortSignal: signal }
+        { ...input, abortSignal: signal },
+        this.auth.maxRetries
       );
 
       const json = await parseJson(response);
@@ -1455,7 +1669,7 @@ class AzureOpenAITranscriptionModel implements TranscriptionModel {
 
   constructor(
     readonly modelId: string,
-    private readonly apiKey: string,
+    private readonly auth: AzureAuth,
     private readonly urlResolver: (modelId: string, path: AzurePath) => string,
     private readonly fetcher: typeof globalThis.fetch,
     private readonly responseLimits = resolveAudioResponseLimits()
@@ -1489,16 +1703,17 @@ class AzureOpenAITranscriptionModel implements TranscriptionModel {
     }
 
     try {
-      const response = await withRetry(
-        () =>
+      const response = await sendAzure(
+        async () =>
           this.fetcher(this.urlResolver(this.modelId, "audio/transcriptions"), {
             method: "POST",
             redirect: "error",
-            headers: { "api-key": this.apiKey },
+            headers: await this.auth.headers(),
             signal,
             body: form
           }),
-        input
+        input,
+        this.auth.maxRetries
       );
 
       const json = await parseJson(response, {
@@ -1523,7 +1738,7 @@ class AzureOpenAISpeechModel implements SpeechModel {
 
   constructor(
     readonly modelId: string,
-    private readonly apiKey: string,
+    private readonly auth: AzureAuth,
     private readonly urlResolver: (modelId: string, path: AzurePath) => string,
     private readonly fetcher: typeof globalThis.fetch,
     private readonly responseLimits = resolveAudioResponseLimits()
@@ -1541,11 +1756,11 @@ class AzureOpenAISpeechModel implements SpeechModel {
     const { signal, cleanup, abort } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
-        () =>
+      const response = await sendAzure(
+        async () =>
           this.fetcher(this.urlResolver(this.modelId, "audio/speech"), {
             method: "POST",
-            headers: jsonHeaders(this.apiKey),
+            headers: await this.auth.headers({ "content-type": "application/json" }),
             signal,
             body: JSON.stringify({
               ...input.providerOptions,
@@ -1554,14 +1769,15 @@ class AzureOpenAISpeechModel implements SpeechModel {
               voice: input.voice ?? "alloy"
             })
           }),
-        input
+        input,
+        this.auth.maxRetries
       );
 
       if (!response.ok) {
         const body = await readErrorBodyWithLimit(response, this.responseLimits.errorBodyBytes);
-        throw new ProviderHTTPError(`Azure OpenAI request failed with status ${response.status}.`, response.status, {
+        throw classifyAzureError(new ProviderHTTPError(`Azure OpenAI request failed with status ${response.status}.`, response.status, {
           responseBody: body
-        });
+        }));
       }
 
       return {
@@ -1586,7 +1802,7 @@ class AzureOpenAIGroundedLanguageModel implements GroundedLanguageModel {
 
   constructor(
     readonly modelId: string,
-    private readonly apiKey: string,
+    private readonly auth: AzureAuth,
     private readonly urlResolver: (modelId: string, path: AzurePath) => string,
     private readonly fetcher: typeof globalThis.fetch
   ) {}
@@ -1604,11 +1820,11 @@ class AzureOpenAIGroundedLanguageModel implements GroundedLanguageModel {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
-        () =>
+      const response = await sendAzure(
+        async () =>
           this.fetcher(this.urlResolver(this.modelId, "responses"), {
             method: "POST",
-            headers: jsonHeaders(this.apiKey),
+            headers: await this.auth.headers({ "content-type": "application/json" }),
             signal,
             body: JSON.stringify({
               ...input.providerOptions,
@@ -1619,18 +1835,15 @@ class AzureOpenAIGroundedLanguageModel implements GroundedLanguageModel {
               max_output_tokens: input.maxTokens
             })
           }),
-        input
+        input,
+        this.auth.maxRetries
       );
 
       const json = await parseJson(response);
       return {
         text: json.output_text ?? "",
         sources: extractSources(json),
-        usage: {
-          inputTokens: json.usage?.input_tokens,
-          outputTokens: json.usage?.output_tokens,
-          totalTokens: json.usage?.total_tokens
-        },
+        usage: azureUsage(json.usage),
         finishReason: normalizeFinishReason(json.status),
         providerFinishReason: json.status,
         rawResponse: json
@@ -1647,7 +1860,7 @@ class AzureOpenAIRealtimeModel implements RealtimeModel {
 
   constructor(
     readonly modelId: string,
-    private readonly apiKey: string,
+    private readonly auth: AzureAuth,
     private readonly endpoint: string,
     private readonly apiVersion: string | undefined,
     private readonly fetcher: typeof globalThis.fetch,
@@ -1675,7 +1888,7 @@ class AzureOpenAIRealtimeModel implements RealtimeModel {
     );
     const connection = await (this.connectionFactory ?? openWebSocketConnection)(
       url.toString(),
-      { "api-key": this.apiKey },
+      await this.auth.headers(),
       options
     );
 
@@ -1773,12 +1986,12 @@ class AzureOpenAIRealtimeModel implements RealtimeModel {
       timeoutMs: options?.timeoutMs
     });
     try {
-      const response = await withRetry(
-        () =>
+      const response = await sendAzure(
+        async () =>
           this.fetcher(url, {
             method: "POST",
             redirect: "error",
-            headers: jsonHeaders(this.apiKey),
+            headers: await this.auth.headers({ "content-type": "application/json" }),
             body: JSON.stringify({
               ...(expiresAfter ? { expires_after: expiresAfter } : {}),
               session: mapRealtimeSessionConfig(
@@ -1790,7 +2003,9 @@ class AzureOpenAIRealtimeModel implements RealtimeModel {
               )
             }),
             signal
-          })
+          }),
+        { abortSignal: signal, timeoutMs: options?.timeoutMs },
+        this.auth.maxRetries
       );
       const payload = await parseJson(response);
     const secret = payload.client_secret;
@@ -1836,10 +2051,29 @@ export const createAzureOpenAI = (
 ): CallableProviderAdapter<LanguageModel<AzureOpenAILanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
 } => {
-  const apiKey = options.apiKey ?? process.env.AZURE_OPENAI_API_KEY;
-  if (!apiKey) {
+  if (options.tokenProvider && options.apiKey) {
+    throw new ConfigurationError("Azure OpenAI tokenProvider and apiKey are mutually exclusive.");
+  }
+  const apiKey = options.tokenProvider ? undefined : options.apiKey ?? process.env.AZURE_OPENAI_API_KEY;
+  if (!options.tokenProvider && !apiKey) {
     throw new ConfigurationError("Missing Azure OpenAI API key.");
   }
+  if (options.maxRetries !== undefined && (!Number.isSafeInteger(options.maxRetries) || options.maxRetries < 0)) {
+    throw new ConfigurationError('Azure OpenAI "maxRetries" must be a non-negative safe integer.');
+  }
+  const auth: AzureAuth = {
+    maxRetries: options.maxRetries ?? 2,
+    headers: async (extra = {}) => {
+      if (options.tokenProvider) {
+        const token = await options.tokenProvider();
+        if (!token) {
+          throw new ConfigurationError("Azure OpenAI token provider returned an empty token.");
+        }
+        return { ...extra, authorization: `Bearer ${token}` };
+      }
+      return { ...extra, "api-key": apiKey! };
+    }
+  };
 
   const endpoint = options.endpoint ?? process.env.AZURE_OPENAI_ENDPOINT;
   if (!endpoint) {
@@ -1876,23 +2110,28 @@ export const createAzureOpenAI = (
   const fetcher = rejectCredentialedRedirects(rawFetch);
   const responseLimits = resolveAudioResponseLimits(options.responseLimits);
 
-  const resolveURL = (modelId: string, path: AzurePath) =>
-    baseURL.includes("{deployment}")
+  const resolveURL = (modelId: string, path: AzurePath) => {
+    if (path === "responses") {
+      return `${normalizedTrustedEndpoint}/openai/v1/responses`;
+    }
+    return baseURL.includes("{deployment}")
       ? baseURL.replace("{deployment}", encodeAzureDeployment(modelId)).replace(/\?api-version=.*$/, `/${path}?api-version=${encodeURIComponent(apiVersion!)}`)
       : `${baseURL}/${path}`;
+  };
+  const baseModelFor = (modelId: string) => options.deployments?.[modelId]?.model ?? modelId;
 
   return createProviderAdapter({
     name: "azure-openai",
     languageModel: (modelId) =>
-      new AzureOpenAILanguageModel(modelId, apiKey, baseURL, fetcher, resolveURL),
+      new AzureOpenAILanguageModel(modelId, auth, baseURL, fetcher, resolveURL, baseModelFor(modelId)),
     embeddingModel: (modelId) =>
-      new AzureOpenAIEmbeddingModel(modelId, apiKey, baseURL, fetcher, resolveURL),
-    transcriptionModel: (modelId) => new AzureOpenAITranscriptionModel(modelId, apiKey, resolveURL, fetcher, responseLimits),
-    speechModel: (modelId) => new AzureOpenAISpeechModel(modelId, apiKey, resolveURL, fetcher, responseLimits),
+      new AzureOpenAIEmbeddingModel(modelId, auth, baseURL, fetcher, resolveURL),
+    transcriptionModel: (modelId) => new AzureOpenAITranscriptionModel(modelId, auth, resolveURL, fetcher, responseLimits),
+    speechModel: (modelId) => new AzureOpenAISpeechModel(modelId, auth, resolveURL, fetcher, responseLimits),
     realtimeModel: (modelId) =>
       new AzureOpenAIRealtimeModel(
         modelId,
-        apiKey,
+        auth,
         normalizedTrustedEndpoint,
         apiVersion,
         fetcher,
@@ -1901,7 +2140,7 @@ export const createAzureOpenAI = (
         browserTokenURL,
         options.allowUnsafeEndpoints
       ),
-    groundedLanguageModel: (modelId) => new AzureOpenAIGroundedLanguageModel(modelId, apiKey, resolveURL, fetcher),
+    groundedLanguageModel: (modelId) => new AzureOpenAIGroundedLanguageModel(modelId, auth, resolveURL, fetcher),
     rawFetch
   });
 };

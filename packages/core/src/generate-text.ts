@@ -133,13 +133,17 @@ const withToolTimeout = async <T>(
   });
 };
 
-const validateReasoning = (options: Pick<AnyGenerateTextOptions, "model" | "reasoning">) => {
+const validateReasoning = (
+  options: Pick<AnyGenerateTextOptions, "model" | "reasoning" | "providerOptions">
+) => {
   const { reasoning } = options;
   if (!reasoning) {
     return;
   }
 
-  if (!options.model.capabilities.reasoning) {
+  const capabilities = options.model.resolveCapabilities?.({ providerOptions: options.providerOptions })
+    ?? options.model.capabilities;
+  if (!capabilities.reasoning) {
     throw new UnsupportedFeatureError(
       `Model "${options.model.provider}/${options.model.modelId}" does not support reasoning.`
     );
@@ -162,7 +166,6 @@ const validateReasoning = (options: Pick<AnyGenerateTextOptions, "model" | "reas
     throw new ValidationError('The "reasoning.budgetTokens" field must be a positive integer.');
   }
 
-  const capabilities = options.model.capabilities;
   if (
     reasoning.effort !== undefined &&
     ((capabilities.reasoningEfforts !== undefined &&

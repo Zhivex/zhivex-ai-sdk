@@ -2,32 +2,34 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const bedrockCatalogFragment = defineModelCatalogFragment({
   provider: "bedrock",
-  revision: "2026-10-07",
-  verifiedAt: "2026-10-07",
-  pricingEffectiveAt: "2026-10-07",
+  revision: "2026-10-15",
+  verifiedAt: "2026-10-15",
   sources: [
-    "https://platform.claude.com/docs/en/models/haiku-5-5/overview",
-    "catalog-release:2026-08-16"
+    "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-5-5.html",
+    "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html",
+    "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-4-5.html",
+    "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html"
   ],
   entries: [
     {
-      "provider": "bedrock",
-      "modelId": "anthropic.claude-haiku-5-5",
-      "recommendedFor": [
-        "chat",
-        "reasoning",
-        "speed",
-        "tools",
-        "vision"
-      ]
+      provider: "bedrock",
+      modelId: "anthropic.claude-haiku-5-5",
+      recommendedFor: ["chat", "reasoning", "speed", "tools", "vision"]
     },
     {
-      "provider": "bedrock",
-      "modelId": "anthropic.claude-3-5-sonnet",
-      "costPer1kTokens": 0.003,
-      "recommendedFor": [
-        "reasoning"
-      ]
+      provider: "bedrock",
+      modelId: "anthropic.claude-sonnet-5-5",
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    },
+    {
+      provider: "bedrock",
+      modelId: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      recommendedFor: ["chat", "reasoning", "speed", "tools", "vision"]
+    },
+    {
+      provider: "bedrock",
+      modelId: "amazon.nova-2-lite-v1:0",
+      recommendedFor: ["chat", "reasoning", "speed", "tools", "vision"]
     }
   ]
 });

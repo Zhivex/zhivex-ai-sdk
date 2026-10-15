@@ -167,7 +167,7 @@ const kimiTextModelId = process.env.KIMI_INTEGRATION_MODEL ?? "kimi-k3";
 const isKimiK3Model = /^kimi-k3(?:$|-)/i.test(kimiTextModelId);
 
 const bedrockRegion = process.env.AWS_REGION;
-const bedrockTextModelId = process.env.BEDROCK_INTEGRATION_MODEL ?? "anthropic.claude-3-5-sonnet";
+const bedrockTextModelId = process.env.BEDROCK_INTEGRATION_MODEL ?? "anthropic.claude-haiku-5-5";
 const bedrockOpenAIBaseURL = process.env.BEDROCK_OPENAI_BASE_URL;
 const bedrockOpenAIApiKey = process.env.BEDROCK_API_KEY ?? process.env.AWS_BEARER_TOKEN_BEDROCK;
 const bedrockOpenAITextModelId = process.env.BEDROCK_OPENAI_INTEGRATION_MODEL ?? "openai.gpt-oss-120b-1:0";

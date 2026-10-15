@@ -478,10 +478,28 @@ export type OpenAIProviderData =
   | OpenAIPromptCacheBreakpointData
   | OpenAIResponsesOutputData;
 
+/**
+ * Processing tier forwarded as `service_tier`.
+ * Chat and Responses document `auto`, `default`, `flex`, `scale`, `fast`, and `priority`.
+ * `ultrafast` is the Responses tier for `gpt-6.1-sol` and `gpt-6-astra`.
+ * @see https://developers.openai.com/api/docs/changelog
+ * @see https://developers.openai.com/api/docs/guides/ultrafast-mode
+ */
+export type OpenAIServiceTier =
+  | "auto"
+  | "default"
+  | "flex"
+  | "scale"
+  | "fast"
+  | "priority"
+  | "ultrafast";
+
 export interface OpenAILanguageModelOptions {
   apiMode?: "auto" | "chat" | "responses";
   headers?: Record<string, string>;
   betas?: string[];
+  /** Forwarded on Chat Completions and Responses. Untyped provider options still pass through. */
+  service_tier?: OpenAIServiceTier;
   top_p?: number;
   frequency_penalty?: number;
   presence_penalty?: number;

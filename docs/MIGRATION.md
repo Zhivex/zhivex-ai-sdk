@@ -317,7 +317,7 @@ Tiers describe how much of the agent surface an adapter covers. They are not a q
 | `@zhivex-ai/bedrock` with `runtime: "openai"` | Tier A |
 | `@zhivex-ai/xai`, `@zhivex-ai/meta`, `@zhivex-ai/anthropic`, `@zhivex-ai/gemini`, `@zhivex-ai/vertex`, `@zhivex-ai/qwen`, `@zhivex-ai/deepseek`, `@zhivex-ai/zai` | Tier B |
 | `@zhivex-ai/openrouter`, `@zhivex-ai/kimi`, `@zhivex-ai/ollama` | basic (Tier C) |
-| `@zhivex-ai/bedrock` Converse | basic (Tier C) |
+| `@zhivex-ai/bedrock` Converse | Tier B |
 
 Factories you will import: `createOpenAI`, `createAzureOpenAI`, `createBedrock`, `createXAI`, `createMeta`, `createAnthropic`, `createGemini`, `createVertex`, `createQwen`, `createDeepSeek`, `createZAI`, `createOpenRouter`, `createKimi`, `createOllama`.
 

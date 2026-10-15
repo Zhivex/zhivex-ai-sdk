@@ -86,8 +86,9 @@ describe("September provider model contracts", () => {
     const model = createAzureOpenAI({ apiKey: "test", endpoint: "https://example.openai.azure.com", apiVersion: "2025-04-01-preview", fetch })("my-deployment");
     await model.generate({ ...input, providerOptions: { apiMode: "responses", reasoning_effort: "high" } });
     const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toContain("/deployments/my-deployment/responses?api-version=");
+    expect(url).toBe("https://example.openai.azure.com/openai/v1/responses");
     const body = JSON.parse(String(init.body));
+    expect(body.model).toBe("my-deployment");
     expect(body.reasoning).toEqual({ effort: "high" });
     expect(body).not.toHaveProperty("reasoning_effort");
     expect(body).not.toHaveProperty("apiMode");

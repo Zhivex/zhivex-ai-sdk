@@ -176,6 +176,9 @@ export const wrapLanguageModel = <TProviderOptions extends ProviderOptions>(
 
   const wrappedModel: LanguageModelWithTelemetry<TProviderOptions> = {
     ...model,
+    ...(model.resolveCapabilities
+      ? { resolveCapabilities: (input: Pick<ModelGenerateInput<TProviderOptions>, "providerOptions">) => model.resolveCapabilities!(input) }
+      : {}),
     generate(input: ModelGenerateInput<TProviderOptions>): Promise<GenerateResult> {
       return runGenerate(input);
     },

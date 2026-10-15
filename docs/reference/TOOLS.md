@@ -266,7 +266,7 @@ const tools = await createBedrockAgentCoreMcpToolSet(
 
 const result = await runAgent(
   {
-    model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
+    model: bedrock("anthropic.claude-haiku-5-5"),
     tools,
     maxSteps: 4
   },
