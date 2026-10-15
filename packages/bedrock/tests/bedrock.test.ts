@@ -60,7 +60,7 @@ describe("bedrock adapter", () => {
     providerName: "bedrock",
     modelId: "anthropic.claude-3-5-sonnet",
     createModel: () => createBedrock({ region: "us-east-1" })("anthropic.claude-3-5-sonnet"),
-    expectedAgentTier: "tier-c",
+    expectedAgentTier: "tier-b",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -81,7 +81,7 @@ describe("bedrock adapter", () => {
   runAgentProviderContractSuite({
     providerName: "bedrock",
     modelId: "anthropic.claude-3-5-sonnet",
-    expectedAgentTier: "tier-c",
+    expectedAgentTier: "tier-b",
     createModel: () => createBedrock({ region: "us-east-1" })("anthropic.claude-3-5-sonnet"),
     mockSimpleRun: () => {
       sendMock.mockResolvedValueOnce({

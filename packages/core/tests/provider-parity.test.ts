@@ -187,7 +187,7 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
       reasoningSummary: "endpoint-dependent",
       notes: "README row combines Bedrock Converse and Bedrock OpenAI-compatible runtime.",
       // README documents Bedrock's two runtime modes in one row.
-      // Converse is Tier C while the OpenAI-compatible runtime is Tier A.
+      // Converse is Tier B while the OpenAI-compatible runtime is Tier A.
       structuredOutputSummary: "native"
     }
   },
@@ -217,7 +217,7 @@ const expectedDrift: ProviderSupportDriftExpectedMatrix = {
     { provider: "openrouter", agentTier: "tier-c", portableToolLoop: true, hostedTools: true },
     { provider: "kimi", agentTier: "tier-c", portableToolLoop: true, embeddings: false },
     { provider: "ollama", agentTier: "tier-c", toolChoice: false, embeddings: true },
-    { provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet", agentTier: "tier-c" },
+    { provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet", agentTier: "tier-b" },
     { provider: "bedrock", modelId: "openai.gpt-oss-120b-1:0", agentTier: "tier-a", remoteMcp: true }
   ]
 };
@@ -250,8 +250,8 @@ describe("provider parity documentation", () => {
         "| Kimi | yes | yes | yes | native | no | no | no | no | no | K3 `max`; K2.x model-dependent | Formula tool | Formula tools via Chat Completions | Tier C |"
       ],
       [
-        "| Bedrock | yes | yes | yes | native | no | no | no | no | no | endpoint-dependent | no | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C |",
-        "| Bedrock | yes | yes | endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier C / A by runtime |"
+        "| Bedrock | yes | yes | yes | native | no | no | no | no | no | endpoint-dependent | no | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier B |",
+        "| Bedrock | yes | yes | endpoint-dependent | native | no | no | no | no | no | endpoint-dependent | endpoint-dependent | Converse baseline or Mantle/OpenAI-compatible Responses hosted tools and remote MCP | Tier B / A by runtime |"
       ]
     ].reduce(
       (table, [from, to]) => table.replace(from, to),
