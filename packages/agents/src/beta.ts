@@ -13,6 +13,7 @@ export {
   createAgentAuditRecord,
   createReadOnlyToolApprovalPolicy,
   createSensitiveDataPolicy,
+  createLatamSensitiveDataPolicy,
   createToolAuditRecords,
   fingerprintAgentHarness,
   getAgentCapabilities,
@@ -25,6 +26,8 @@ export type {
   AgentAuditRecordOptions,
   ReadOnlyToolApprovalPolicyOptions,
   SensitiveDataPolicyOptions,
+  LatamCountry,
+  LatamSensitiveDataPolicyOptions,
   ToolAuditRecord,
   ToolAuditRecordOptions
 } from "@zhivex-ai/core/beta";

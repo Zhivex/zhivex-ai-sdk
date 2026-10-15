@@ -26,6 +26,7 @@ export {
   createRegexScorer,
   createReadOnlyToolApprovalPolicy,
   createSensitiveDataPolicy,
+  createLatamSensitiveDataPolicy,
   createToolAuditRecords,
   createToolCallScorer,
   deleteBatch,

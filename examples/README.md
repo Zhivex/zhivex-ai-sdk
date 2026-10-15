@@ -4,7 +4,7 @@ This folder contains runnable TypeScript examples for the main public surfaces o
 
 ## Layout
 
-- `sdk/`: high-level SDK and core helpers
+- `sdk/`: high-level SDK and core helpers, including `sdk/governed-quickstart.ts` (mock provider, no credentials)
 - `agents/`: agent-only facade examples for `@zhivex-ai/agents`
 - `providers/`: one quick-start per provider package
 - `gateway/`: routing and fallback examples

@@ -9,7 +9,7 @@ Production adoption path:
 1. Start with `Runner + SessionService`.
 2. Use `createPostgresSessionService()` for shared or serverless production state.
 3. Keep provider credentials, tools, database clients, and safety policies on the server.
-4. Wrap tool-using agents with `createProductionSafetyPolicy()` before exposing them to real users.
+4. Wrap tool-using agents with `createProductionSafetyPolicy()` before exposing them to real users. The [Governance kit](./GOVERNANCE.md) shows the real budget, redaction, audit, approval, and egress calls.
 5. Export redacted trace summaries and tool-call audit records from server-side runs.
 6. Use app-owned retrievers and vector stores for long-term semantic memory.
 

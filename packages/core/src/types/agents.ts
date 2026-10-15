@@ -1,4 +1,5 @@
 import type { BoundedReplayBroadcastOptions } from "../bounded-broadcast.js";
+import type { EgressDeclaration, EgressPolicy } from "../egress-types.js";
 import type {
   z
 } from "zod";
@@ -39,6 +40,7 @@ import type {
   StreamEvent
 } from "./stream.js";
 import type {
+  GenerationRedaction,
   ProviderOptionsOf
 } from "./generation.js";
 import type {
@@ -373,6 +375,12 @@ export interface AgentDefinition<
   inputGuardrails?: AgentInputGuardrail<TContext>[];
   outputGuardrails?: AgentOutputGuardrail<TContext, TOutput>[];
   providerOptions?: ProviderOptionsOf<TModel>;
+  /** Experimental public beta. Inherited by subagents that do not set their own policy. */
+  egressPolicy?: EgressPolicy;
+  /** Declared region and endpoint. A child declaration replaces the parent declaration. */
+  egress?: EgressDeclaration;
+  /** `false` on a run or subagent disables redaction even when the parent defines a policy. */
+  redaction?: GenerationRedaction;
   subagents?: AgentSubAgentDefinition[];
   /** Immutable identity of the capsule/spec that owns durable resume semantics. */
   harness?: AgentHarnessBinding;
@@ -441,6 +449,11 @@ export type AgentRunInput<
     maxTokens?: number;
     reasoning?: ReasoningConfig;
     providerOptions?: ProviderOptionsOf<TModel>;
+    /** Replaces the agent policy for this run. Omit it to inherit. */
+    egressPolicy?: EgressPolicy;
+    egress?: EgressDeclaration;
+    /** `false` disables the agent redaction policy for this run. */
+    redaction?: GenerationRedaction;
     policy?: AgentRunPolicy;
     metadata?: Record<string, JsonValue>;
   };

@@ -21,7 +21,8 @@ import {
   type HierarchicalAgentTrace
 } from "./agent-trace.js";
 import { createRedactionPolicy, type RedactionPolicy, type RedactionPolicyOptions } from "./safety-policy.js";
-import { createAgentAuditRecord, createToolAuditRecords, type AgentAuditRecord, type AgentAuditRecordOptions, type ToolAuditRecord, type ToolAuditRecordOptions } from "./production-agent-kit.js";
+import { createAgentAuditRecord, createToolAuditRecords, PRODUCTION_AGENT_KIT_SCHEMA_VERSION, type AgentAuditRecord, type AgentAuditRecordOptions, type ToolAuditRecord, type ToolAuditRecordOptions } from "./production-agent-kit.js";
+import type { EgressAuditRecord } from "./egress-types.js";
 import { inspectProviderAgentSupport, type ProviderAgentSupport } from "./provider-parity.js";
 import { createRunner, type RunnerRunInput, type RunnerRunOutput, type RunnerStreamResult, type SessionService } from "./runner.js";
 import { toToolSet } from "./tool-registry.js";
@@ -206,6 +207,8 @@ export interface AgentRunLedgerOptions extends AgentAuditRecordOptions, ToolAudi
   includeTimeline?: boolean;
   pricing?: AgentRunCostPricing;
   trace?: AgentTraceOptions;
+  /** One egress decision per provider call. Omitted from the ledger when unset. */
+  egressAudit?: EgressAuditRecord[];
 }
 
 const resolveLedgerRedaction = (
@@ -282,6 +285,8 @@ export interface AgentRunLedger {
   summary: AgentTraceSummary;
   cost?: CostEstimate;
   metadata?: Record<string, JsonValue>;
+  /** Present only when the caller supplies egress decisions. Prompts are not part of this record. */
+  egressAudit?: EgressAuditRecord[];
 }
 
 export interface AgentRunLedgerDiffChange {
@@ -1210,6 +1215,7 @@ export const normalizeAgentRunLedger = (value: unknown): AgentRunLedger => {
   if (input.cost !== undefined) {
     controlPlaneRecord(input.cost, "AgentRunLedger.cost");
   }
+  const egressAudit = normalizeEgressAudit(input.egressAudit);
 
   return {
     schemaVersion: AGENT_CONTROL_PLANE_SCHEMA_VERSION,
@@ -1230,8 +1236,44 @@ export const normalizeAgentRunLedger = (value: unknown): AgentRunLedger => {
     cost: input.cost === undefined
       ? undefined
       : cloneControlPlaneJson(input.cost as CostEstimate, "AgentRunLedger.cost"),
-    metadata: cloneControlPlaneMetadata(input.metadata, "AgentRunLedger.metadata")
+    metadata: cloneControlPlaneMetadata(input.metadata, "AgentRunLedger.metadata"),
+    ...(egressAudit === undefined ? {} : { egressAudit })
   };
+};
+
+const normalizeEgressAudit = (value: unknown): EgressAuditRecord[] | undefined => {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new ValidationError("AgentRunLedger.egressAudit must be an array.");
+  }
+  return value.map((entry, index) => {
+    const name = `AgentRunLedger.egressAudit[${index}]`;
+    const record = controlPlaneRecord(entry, name);
+    if (record.schemaVersion !== PRODUCTION_AGENT_KIT_SCHEMA_VERSION) {
+      throw new ValidationError(`${name}.schemaVersion is not supported.`);
+    }
+    if (record.type !== "egress_call_audit") {
+      throw new ValidationError(`${name}.type must be "egress_call_audit".`);
+    }
+    if (record.decision !== "allowed" && record.decision !== "denied") {
+      throw new ValidationError(`${name}.decision must be "allowed" or "denied".`);
+    }
+    const decision: EgressAuditRecord["decision"] = record.decision === "allowed" ? "allowed" : "denied";
+    const region = controlPlaneOptionalString(record.region, `${name}.region`);
+    const endpoint = controlPlaneOptionalString(record.endpoint, `${name}.endpoint`);
+    return {
+      schemaVersion: PRODUCTION_AGENT_KIT_SCHEMA_VERSION,
+      type: "egress_call_audit",
+      id: controlPlaneString(record.id, `${name}.id`),
+      decision,
+      provider: controlPlaneString(record.provider, `${name}.provider`),
+      modelId: controlPlaneString(record.modelId, `${name}.modelId`),
+      ...(region === undefined ? {} : { region }),
+      ...(endpoint === undefined ? {} : { endpoint }),
+      reason: controlPlaneString(record.reason, `${name}.reason`, true),
+      createdAt: controlPlaneFiniteNumber(record.createdAt, `${name}.createdAt`)
+    };
+  });
 };
 
 export const migrateAgentRunLedger = (
@@ -1297,7 +1339,8 @@ export const createAgentRunLedger = (
     cost: options.pricing ? estimateAgentRunCost(state, options.pricing) : undefined,
     metadata: options.includeMetadata && audit.metadata
       ? audit.metadata
-      : undefined
+      : undefined,
+    ...(options.egressAudit === undefined ? {} : { egressAudit: options.egressAudit })
   });
 };
 

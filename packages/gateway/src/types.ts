@@ -1,6 +1,7 @@
 import type {
   AgentApprovalResponse,
   AgentDefinition,
+  EgressPolicy,
   AgentRunInput,
   AgentCapabilities,
   AgentHookFailurePolicy,
@@ -64,7 +65,8 @@ export type GatewayAttemptReasonCode =
   | "provider-success"
   | "circuit-open"
   | "admission-denied"
-  | "budget-denied";
+  | "budget-denied"
+  | "egress-denied";
 export type GatewayRouteDecisionReasonCode =
   | "routing-speed"
   | "routing-balanced"
@@ -90,6 +92,10 @@ export interface GatewayModelTarget {
   modelId: string;
   /** Identifies a separately configured endpoint/region/credential. */
   deploymentId?: string;
+  /** Declared region checked by an egress policy. Distinct deployments stay on deploymentId. */
+  region?: string;
+  /** Declared hostname or absolute http(s) URL checked by an egress policy. */
+  endpoint?: string;
 }
 
 export interface GatewayRequest {
@@ -243,6 +249,8 @@ export interface GatewayRoutingScoreContext {
 }
 
 export interface GatewayConfig {
+  /** Experimental public beta. Checked once per provider attempt, before cache and network. */
+  egressPolicy?: EgressPolicy;
   /** Experimental, explicit destinations for decide(); independent of chat routing. */
   decisions?: Readonly<Record<string, import("./decisions.js").GatewayDecisionTarget>>;
   /** Explicit deployment registrations; unknown IDs never fall back to the default adapter. */

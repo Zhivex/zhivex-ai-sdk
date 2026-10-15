@@ -1,5 +1,5 @@
 {
-  "beta.d.ts": "9f19ba9d0b734e5c4de30f61af229208414d4df7c53061cb494adc96cc738ad8",
+  "beta.d.ts": "eb2f9e2f4b7bead4b6120158e0f6b64c279e649e391123a6674d4eebda820933",
   "catalog.d.ts": "fdcb0311bc05ba4d88f48c92704703b4293bbbe1abf3b103c081275adf833557",
   "catalog/fragment.d.ts": "65f1341b35eda2e77f120828341c74038590e6190d56ef86c00898b4b59c9a23",
   "catalog/fragments.d.ts": "72eb2f241853bc50bd992e385c06d41e5b93a79861749214b0c8e1826ed1717b",
@@ -19,8 +19,8 @@
   "catalog/providers/zai.d.ts": "eb4205c2b8d65b1cf46fbc21138e241e132f0565f71610bba04adb6ecfbd27f6",
   "cli.d.ts": "fc31d996538a1b3071e3a17c47daadfec60f6aaaca49b15425a87f807064b6e1",
   "evals.d.ts": "d388a91aef516e1d13a1dbb7707e08596b6af0f010b217a073ab7d886266e499",
-  "experimental.d.ts": "e2cf003ace31ccbf3615362484c836ff4a2657b6606c005725eaf622f4fccbd7",
-  "index.d.ts": "15f364f78bb4b512bf71341f0146e7b7d846f94a02ed7ca538efbbea59d678b8",
+  "experimental.d.ts": "caf30db90d13acb87a916a7a0fe627128b80d72b05967bf6dcbb503b05bb1c23",
+  "index.d.ts": "c4fbaaa1fbf1f73ee175b39bfba6af58dfb4504e491f6d45ace3e234b8872b34",
   "mcp-http.d.ts": "1fc87fdf9a0f8d938b8a1447b9af01f391cace4b520662b0c9beb83e99a2d20d",
   "mcp-stdio-browser.d.ts": "671cb086eda611a2b9a1395a53630eabc31159a437a01c1489aeab11491a34ac",
   "mcp-stdio.d.ts": "0ef7d888605edf63085ceafd91b7ab8ed84b1aee1038188323ded9b3a61593ca",

@@ -45,6 +45,9 @@ export const prepareSubagentsForAgent = <TModel extends LanguageModel>(
         onTelemetryEvent: subagent.agent.onTelemetryEvent ?? onTelemetryEvent,
         toolApprovalPolicy: subagent.agent.toolApprovalPolicy ?? toolApprovalPolicy,
         toolExecution: subagent.agent.toolExecution ?? toolExecution,
+        egressPolicy: subagent.agent.egressPolicy ?? agent.egressPolicy,
+        egress: subagent.agent.egress ?? agent.egress,
+        redaction: subagent.agent.redaction !== undefined ? subagent.agent.redaction : agent.redaction,
         executionEnvironment: subagent.agent.executionEnvironment ?? executionEnvironment,
         compaction: subagent.agent.compaction ?? compaction,
         metadata: cloneMetadata(defaultMetadata, subagent.agent.metadata)

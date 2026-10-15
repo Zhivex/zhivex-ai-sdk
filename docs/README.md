@@ -4,7 +4,7 @@ Guides for adopting the SDK. The [provider compatibility matrix](./reference/PRO
 
 ## Application guides
 
-- [Quickstart](./QUICKSTART.md) and [Next.js integration](./NEXTJS.md)
+- [Quickstart](./QUICKSTART.md), [governance kit](./GOVERNANCE.md), and [Next.js integration](./NEXTJS.md)
 - [Agents](./AGENTS.md), [workflows](./WORKFLOWS.md), and [workspace agents](./WORKSPACE_AGENTS.md)
 - [Production](./PRODUCTION.md), [observability](./OBSERVABILITY.md), and [artifacts](./ARTIFACTS.md)
 - [Catalog](./MODEL_CATALOG.md), [context limits](./CATALOG_COMPACTION.md), [durable compaction](./DURABLE_COMPACTION.md), and [evaluations](./MODEL_EVALUATIONS.md)

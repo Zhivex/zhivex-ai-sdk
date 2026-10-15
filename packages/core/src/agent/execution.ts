@@ -411,6 +411,11 @@ const createGenerateOptions = <
           subagent.agent.executionEnvironment ??
           input.executionEnvironment ??
           agent.executionEnvironment,
+        egressPolicy: subagent.agent.egressPolicy ?? (input.egressPolicy !== undefined ? input.egressPolicy : agent.egressPolicy),
+        egress: subagent.agent.egress ?? (input.egress !== undefined ? input.egress : agent.egress),
+        redaction: subagent.agent.redaction !== undefined
+          ? subagent.agent.redaction
+          : input.redaction !== undefined ? input.redaction : agent.redaction,
         compaction: subagent.agent.compaction ?? (
           input.compaction === false
             ? undefined
@@ -792,6 +797,9 @@ const createGenerateOptions = <
           }
         : undefined,
     providerOptions: input.providerOptions ?? agent.providerOptions,
+    egressPolicy: input.egressPolicy !== undefined ? input.egressPolicy : agent.egressPolicy,
+    egress: input.egress !== undefined ? input.egress : agent.egress,
+    redaction: input.redaction !== undefined ? input.redaction : agent.redaction,
     abortSignal,
     timeoutMs: input.timeoutMs,
     maxRetries: input.maxRetries,

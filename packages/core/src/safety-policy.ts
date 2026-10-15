@@ -22,7 +22,8 @@ export type ApprovalPolicyPreset = SafetyPolicyPreset;
 export interface RedactionRule {
   name?: string;
   pattern: RegExp | string;
-  replacement?: string;
+  /** A function may return the original match when a check digit is invalid. */
+  replacement?: string | ((match: string) => string);
 }
 
 export interface RedactionPolicyOptions {
@@ -295,7 +296,7 @@ export const createApprovalPolicy = (options: ApprovalPolicyOptions = {}): ToolA
   };
 };
 
-const compileRule = (rule: RedactionRule): { pattern: RegExp; replacement: string } => ({
+const compileRule = (rule: RedactionRule): { pattern: RegExp; replacement: string | ((match: string) => string) } => ({
   pattern: typeof rule.pattern === "string" ? new RegExp(rule.pattern, "g") : rule.pattern,
   replacement: rule.replacement ?? "[REDACTED]"
 });
@@ -310,7 +311,14 @@ export const createRedactionPolicy = (options: RedactionPolicyOptions = {}): Red
   const compiled = rules.map(compileRule);
 
   const redactText = (text: string) =>
-    compiled.reduce((current, rule) => current.replace(rule.pattern, rule.replacement), text);
+    compiled.reduce((current, rule) => {
+      const pattern = new RegExp(rule.pattern.source, rule.pattern.flags);
+      if (typeof rule.replacement === "function") {
+        const replace = rule.replacement;
+        return current.replace(pattern, (match) => replace(match));
+      }
+      return current.replace(pattern, rule.replacement);
+    }, text);
 
   const redactUnknown = (value: unknown): unknown => {
     if (typeof value === "string") {
