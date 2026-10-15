@@ -319,6 +319,7 @@ describe("bedrock adapter", () => {
     expect(clientMock).toHaveBeenCalledWith({
       region: "us-east-1",
       token: { token: "bedrock-key" },
+      authSchemePreference: ["httpBearerAuth"],
       maxAttempts: 1
     });
   });

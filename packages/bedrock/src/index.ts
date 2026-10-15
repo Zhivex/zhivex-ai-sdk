@@ -1520,6 +1520,7 @@ export const createBedrock = (
       }
       if (options.apiKey) {
         config.token = { token: options.apiKey };
+        config.authSchemePreference = ["httpBearerAuth"];
       }
       try {
         return new BedrockRuntimeClient(config);
