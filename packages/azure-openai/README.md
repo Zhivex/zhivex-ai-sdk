@@ -53,9 +53,17 @@ Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
 
+## Authentication, deployments, and retries
+
+Pass `apiKey` or a `tokenProvider` function, not both. `tokenProvider` is called on every request and sends `Authorization: Bearer`. It ignores `AZURE_OPENAI_API_KEY`. `azureEntraTokenProvider(credential)` adapts a structural `getToken()` credential, so `@azure/identity` stays optional and is not a dependency. Use scope `https://cognitiveservices.azure.com/.default` for classic Azure OpenAI or `https://ai.azure.com/.default` for Foundry. A 401 becomes `AzureOpenAIAuthenticationError` and is not retried. The caller needs the Cognitive Services OpenAI User role.
+
+Map opaque deployment names with `deployments: { "my-gpt": { model: "gpt-5" } }` or `providerOptions.baseModel`. The deployments map selects capabilities at construction. `baseModel` on a single call overrides that model for token limits and Responses versus Chat. Reasoning validation uses that per-call model when core calls `LanguageModel.resolveCapabilities`. `@zhivex-ai/core` 1.30.1 does not, so keep the base model in `deployments` for model-specific reasoning checks on that release. Reasoning chat models (`gpt-5`, `gpt-6`, `o1`, `o3`, `o4`, `codex-mini`) send `max_completion_tokens` even when `reasoning` is omitted.
+
+Responses requests always go to `{endpoint}/openai/v1/responses` and include `model`, including when `apiVersion` selects the dated deployment path for Chat Completions. Calls that omit `maxRetries` retry twice. `retry-after-ms` and `x-ms-retry-after-ms` are honored with a small jitter. An HTTP 400 whose error code is `content_filter` is `AzureOpenAIContentFilterError` and is not retried. Usage reports cached input tokens and reasoning tokens when Azure sends them.
+
 ## GPT-6 Astra and Responses deployments
 
-`azure("gpt-6-astra")` selects Responses by default for generation, structured output, callable tools, and streaming. For an opaque deployment name, select `providerOptions: { apiMode: "responses" }` explicitly; model-specific capability validation can only recognize the model ID supplied to the factory. Responses uses native `reasoning.effort` and flat named-function tool choices. Astra rejects unsupported reasoning efforts, temperature, and `top_p` before fetch. Azure deployment availability, API versions, and quotas remain account-specific.
+`azure("gpt-6-astra")` selects Responses by default for generation, structured output, callable tools, and streaming. For an opaque deployment name, select `providerOptions: { apiMode: "responses", baseModel: "gpt-6-astra" }` when the deployment name is not the model id. Reasoning validation uses that per-call `baseModel` on a core that calls `resolveCapabilities`. On core 1.30.1, put `gpt-6-astra` in `deployments` instead. Responses uses native `reasoning.effort` and flat named-function tool choices. Astra rejects unsupported reasoning efforts, temperature, and `top_p` before fetch. Azure deployment availability, API versions, and quotas remain account-specific.
 
 See [Microsoft's model contracts](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure). Azure pricing is not copied from OpenAI's direct API.
 

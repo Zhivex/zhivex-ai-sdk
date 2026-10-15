@@ -246,6 +246,37 @@ describe("xAI image, video, and voice", () => {
     expect(remote.get("file")).toBeNull();
   });
 
+  it("marks grok-imagine-image-quality deprecated and still sends the slug", async () => {
+    expect(XAI_DEPRECATED_MODELS["grok-imagine-image-quality"]).toContain("grok-imagine-image-2.0");
+    expect(XAI_DEPRECATED_MODELS["grok-imagine-image-quality"]).toContain("2026-11-02");
+    expect(XAI_DEPRECATED_MODELS["grok-imagine-image-quality"]).toContain('quality "low"');
+
+    fetchMock.mockResolvedValueOnce(Response.json({ data: [{ url: "https://cdn.example.test/quality.jpg" }] }));
+    const image = await generateImage({
+      model: provider().imageGenerationModel("grok-imagine-image-quality"),
+      prompt: "Keep the current slug"
+    });
+    expect(image.images[0]?.uri).toBe("https://cdn.example.test/quality.jpg");
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({
+      model: "grok-imagine-image-quality",
+      prompt: "Keep the current slug"
+    });
+  });
+
+  it("accepts quality auto on grok-imagine-image-2.0", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ data: [{ url: "https://cdn.example.test/auto.jpg" }] }));
+    await generateImage({
+      model: provider().imageGenerationModel("grok-imagine-image-2.0"),
+      prompt: "Auto quality",
+      providerOptions: { quality: "auto" }
+    });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({
+      model: "grok-imagine-image-2.0",
+      prompt: "Auto quality",
+      quality: "auto"
+    });
+  });
+
   it("marks grok-voice-2.0 deprecated and refuses grok-voice-3.0 as REST speech", () => {
     expect(XAI_DEPRECATED_MODELS["grok-voice-2.0"]).toContain("grok-voice-3.0");
     const xai = provider();

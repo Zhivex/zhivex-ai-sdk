@@ -57,8 +57,8 @@ Capability differs by adapter. Tiers describe agent support in this SDK:
 | Tier | Providers |
 | --- | --- |
 | Tier A | OpenAI, Azure OpenAI, and Bedrock with `runtime: "openai"` |
-| Tier B | xAI, Meta, Anthropic, Gemini, Vertex, Qwen, DeepSeek, and Z.ai |
-| basic (Tier C) | OpenRouter, Kimi, Ollama, and Bedrock Converse |
+| Tier B | xAI, Meta, Anthropic, Gemini, Vertex, Qwen, DeepSeek, Z.ai, and Bedrock Converse |
+| basic (Tier C) | OpenRouter, Kimi, and Ollama |
 
 Tier A includes approval-capable hosted tools or remote MCP. Tier B is strong tool-using agent support with provider-specific gaps. basic (Tier C) covers basic tool loops. Many unsupported combinations are rejected before the request is sent.
 

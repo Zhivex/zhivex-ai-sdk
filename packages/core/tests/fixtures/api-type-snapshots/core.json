@@ -133,7 +133,7 @@
   "types/media.d.ts": "d1cc0b92c87b1c14334df6c17edade42628cc1e56d6a64d737f967879c9bae06",
   "types/messages.d.ts": "d8ae8579d1a8490251b7e08be47465e250d841768ad8ac871dba5548e9c699c4",
   "types/middleware.d.ts": "61dac05e0b9c64226bd80c35c051c65ae4ffc9fc624ef8c3f040198ed5a3e939",
-  "types/model-tools.d.ts": "73d8b5108619b97f84537791dcb238cd07c68f62501b3b9792e3730cff1d33bd",
+  "types/model-tools.d.ts": "66439379409b4ff4f2f9adf8bd12a6ee5b9840cb21918260240d06c9a812d0b3",
   "types/persistence.d.ts": "c6c2cb8115a3dffcc7f18f830b3c9205db3df2c7e3df3f3c578b19aca3fe014e",
   "types/provider-resources.d.ts": "20d657aa82cf4a5e70af3d5eb5bdc85cd8f8bdf1f433c548d23bddf407a08b23",
   "types/provider.d.ts": "64495770710c52cef884dfa1b9c5452cd8df38e31a1b2553568a3de748c37eed",
