@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { hostedTool, ProviderHTTPError, streamText, tool, UnsupportedFeatureError, type StreamEvent } from "@zhivex-ai/core";
+import { generateText, hostedTool, ProviderHTTPError, streamText, tool, UnsupportedFeatureError, type StreamEvent } from "@zhivex-ai/core";
 import { createBedrock } from "../src/index.js";
 
 const modelFor = (fetcher: typeof fetch) =>
@@ -143,6 +143,47 @@ describe("Bedrock OpenAI-compatible Mantle runtime", () => {
       stream: true
     });
     expect(events.at(-1)).toMatchObject({ type: "finish", finishReason: "stop" });
+  });
+
+  it("accepts advertised reasoning effort, mode, and context through generateText and streamText", async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      id: "resp_1",
+      status: "completed",
+      output: [{ type: "message", content: [{ type: "output_text", text: "ok" }] }]
+    }));
+    const model = modelFor(fetcher);
+    expect(model.capabilities.reasoningEfforts).toEqual(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
+    expect(model.capabilities.reasoningModes).toEqual(["standard", "pro"]);
+    expect(model.capabilities.reasoningContexts).toEqual(["auto", "current_turn", "all_turns"]);
+
+    await generateText({
+      model,
+      prompt: "hi",
+      reasoning: { effort: "max", mode: "pro", context: "all_turns" }
+    });
+    expect(requestBody(fetcher).reasoning).toEqual({
+      effort: "max",
+      mode: "pro",
+      context: "all_turns"
+    });
+
+    fetcher.mockResolvedValueOnce(new Response(sse([
+      { data: { type: "response.output_text.delta", delta: "ok" } },
+      { data: { type: "response.completed", response: { status: "completed" } } }
+    ])));
+    await streamText({
+      model,
+      prompt: "hi",
+      reasoning: { effort: "max", mode: "standard", context: "current_turn" }
+    }).collect();
+    const streamed = JSON.parse(String((fetcher.mock.calls[1]?.[1] as RequestInit).body)) as {
+      reasoning?: Record<string, unknown>;
+    };
+    expect(streamed.reasoning).toEqual({
+      effort: "max",
+      mode: "standard",
+      context: "current_turn"
+    });
   });
 
   it("keeps providerOptions.reasoning when input.reasoning is omitted and rejects budget tokens", async () => {

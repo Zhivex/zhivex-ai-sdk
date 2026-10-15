@@ -162,6 +162,10 @@ const capabilities: ModelCapabilities = {
 const openAICompatibleCapabilities: ModelCapabilities = {
   ...capabilities,
   reasoning: true,
+  // The OpenAI-compatible mapper forwards every shared effort, mode, and context.
+  reasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+  reasoningModes: ["standard", "pro"],
+  reasoningContexts: ["auto", "current_turn", "all_turns"],
   webSearch: true,
   agentCapabilities: {
     supportTier: "tier-a",
@@ -282,7 +286,38 @@ const usesAdaptiveClaudeThinking = (modelId: string) => {
     || /claude-(?:opus|sonnet|haiku)-[5-9]/.test(id);
 };
 
+const isFableOrMythos = (modelId: string) =>
+  /claude-(?:fable|mythos)(?:-|$)/.test(stripBedrockModelId(modelId));
+
+const adaptiveClaudeEfforts: NonNullable<ModelCapabilities["reasoningEfforts"]> = [
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max"
+];
+
+const nova2Efforts: NonNullable<ModelCapabilities["reasoningEfforts"]> = ["none", "low", "medium", "high"];
+
 const isNova2Model = (modelId: string) => /amazon\.nova-2/.test(stripBedrockModelId(modelId));
+
+const converseReasoningEfforts = (modelId: string): ModelCapabilities["reasoningEfforts"] | undefined => {
+  if (usesAdaptiveClaudeThinking(modelId)) {
+    return isFableOrMythos(modelId)
+      ? adaptiveClaudeEfforts.filter((effort) => effort !== "none")
+      : [...adaptiveClaudeEfforts];
+  }
+  if (isNova2Model(modelId)) {
+    return nova2Efforts;
+  }
+  return undefined;
+};
+
+const capabilitiesForConverseModel = (modelId: string): ModelCapabilities => {
+  const reasoningEfforts = converseReasoningEfforts(modelId);
+  return reasoningEfforts ? { ...capabilities, reasoningEfforts } : capabilities;
+};
 
 const readsReasoningContent = (modelId: string) => {
   const id = stripBedrockModelId(modelId);
@@ -414,18 +449,23 @@ const claudeThinkingFields = (modelId: string, input: ModelGenerateInput): Recor
     }
     const effort = reasoning.effort;
     if (effort === "none") {
-      if (/claude-(?:fable|mythos)(?:-|$)/.test(stripBedrockModelId(modelId))) {
+      if (isFableOrMythos(modelId)) {
         throw new UnsupportedFeatureError('Provider "bedrock" cannot disable thinking for Claude Fable or Claude Mythos.');
       }
       return { thinking: { type: "disabled" } };
     }
-    if (effort !== undefined && !["low", "medium", "high", "xhigh", "max"].includes(effort)) {
+    if (effort !== undefined && !adaptiveClaudeEfforts.includes(effort)) {
       throw new UnsupportedFeatureError(`Provider "bedrock" does not support reasoning effort "${effort}" for this Claude model.`);
     }
     return {
       thinking: { type: "adaptive" },
       ...(effort ? { output_config: { effort } } : {})
     };
+  }
+
+  // Older Claude thinking is budget-based. "none" must not fall through to the default budget.
+  if (reasoning.effort === "none") {
+    return {};
   }
 
   const budget = reasoning.budgetTokens ?? 1024;
@@ -453,7 +493,7 @@ const novaReasoningFields = (input: ModelGenerateInput): Record<string, unknown>
   if (effort === "high" && (input.temperature !== undefined || input.maxTokens !== undefined)) {
     throw new ValidationError('Amazon Nova 2 reasoning effort "high" cannot be combined with temperature or maxTokens.');
   }
-  if (effort !== undefined && effort !== "low" && effort !== "medium" && effort !== "high") {
+  if (effort !== undefined && !nova2Efforts.includes(effort)) {
     throw new UnsupportedFeatureError(`Provider "bedrock" does not support reasoning effort "${effort}" for Amazon Nova 2.`);
   }
   return {
@@ -1053,12 +1093,14 @@ const streamFaultError = (event: Record<string, unknown>) => {
 
 class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions> {
   readonly provider = "bedrock";
-  readonly capabilities = capabilities;
+  readonly capabilities: ModelCapabilities;
 
   constructor(
     readonly modelId: string,
     private readonly client: BedrockRuntimeClient
-  ) {}
+  ) {
+    this.capabilities = capabilitiesForConverseModel(modelId);
+  }
 
   private toCommandInput(input: ModelGenerateInput): ConverseCommandInput {
     const providerOptions = (input.providerOptions ?? {}) as Record<string, unknown>;

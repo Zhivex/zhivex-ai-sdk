@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ConfigurationError, ProviderToolCallError, createTextMessage, generateText } from "@zhivex-ai/core";
+import { ConfigurationError, ProviderToolCallError, createTextMessage, generateText, streamText, wrapLanguageModel } from "@zhivex-ai/core";
 
 import {
   AzureOpenAIAuthenticationError,
@@ -221,6 +221,49 @@ describe("Azure OpenAI audit fixes", () => {
         // drain
       }
     })()).rejects.toBeInstanceOf(ConfigurationError);
+  });
+
+  it("validates reasoning effort against a per-call baseModel on an opaque deployment", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({
+      id: "resp_1",
+      status: "completed",
+      output: [{ type: "message", content: [{ type: "output_text", text: "ok" }] }]
+    }));
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      deployments: { prod: { model: "gpt-4o-mini" } },
+      fetch: fetcher
+    });
+    const model = provider("prod");
+    expect(model.capabilities.reasoningEfforts).toBeUndefined();
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      reasoning: { effort: "max" }
+    })).rejects.toThrow(/does not support reasoning effort "max"/);
+    expect(fetcher).not.toHaveBeenCalled();
+
+    const wrapped = wrapLanguageModel(model, [{ name: "noop" }]);
+    await generateText({
+      model: wrapped,
+      prompt: "hello",
+      reasoning: { effort: "max" },
+      providerOptions: { baseModel: "gpt-6-astra" }
+    });
+    expect(bodyOf(fetcher).reasoning).toEqual({ effort: "max" });
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://example.openai.azure.com/openai/v1/responses");
+
+    fetcher.mockResolvedValueOnce(new Response(
+      'data: {"type":"response.output_text.delta","delta":"ok"}\n\ndata: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}}\n\n'
+    ));
+    await streamText({
+      model: provider("my-deploy"),
+      prompt: "hello",
+      reasoning: { effort: "max" },
+      providerOptions: { baseModel: "gpt-6-astra" }
+    }).collect();
+    expect(bodyOf(fetcher).reasoning).toEqual({ effort: "max" });
   });
 
   it("maps cached and reasoning tokens on chat completions", async () => {

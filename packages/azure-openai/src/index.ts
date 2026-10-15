@@ -326,7 +326,10 @@ export type AzureOpenAIProviderData =
 export interface AzureOpenAILanguageModelOptions {
   /** Explicitly select Responses for opaque deployment names. */
   apiMode?: "auto" | "chat" | "responses";
-  /** Base model id when `modelId` is an opaque deployment name. Overrides the provider `deployments` map for this call. */
+  /**
+   * Base model id when `modelId` is an opaque deployment name.
+   * Overrides the provider `deployments` map for this call, including reasoning validation.
+   */
   baseModel?: string;
   top_p?: number;
   frequency_penalty?: number;
@@ -1427,6 +1430,10 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
     private readonly baseModel: string
   ) {
     this.capabilities = modelCapabilities(baseModel);
+  }
+
+  resolveCapabilities(input: { providerOptions?: { baseModel?: string } }) {
+    return modelCapabilities(this.resolvedModel(input));
   }
 
   private resolvedModel(input: { providerOptions?: { baseModel?: string } }) {

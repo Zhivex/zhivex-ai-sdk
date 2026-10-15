@@ -7,6 +7,7 @@ import {
   ValidationError,
   createTextMessage,
   generateText,
+  streamText,
   tool
 } from "@zhivex-ai/core";
 import { z } from "zod";
@@ -433,6 +434,46 @@ describe("Bedrock Converse audit fixes", () => {
     expect(commandInput().additionalModelRequestFields).toEqual({
       thinking: { type: "disabled" },
       output_config: { effort: "low" }
+    });
+  });
+
+  it("accepts adaptive Claude effort max through generateText and streamText", async () => {
+    sendMock.mockResolvedValueOnce(textResponse("end_turn"));
+    const provider = createBedrock({ region: "us-east-1" });
+    const model = provider("us.anthropic.claude-sonnet-5-5");
+    expect(model.capabilities.reasoningEfforts).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+    expect(model.capabilities.reasoningModes).toBeUndefined();
+    expect(model.capabilities.reasoningContexts).toBeUndefined();
+    expect(provider("anthropic.claude-fable-5").capabilities.reasoningEfforts).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]);
+    expect(provider("amazon.nova-2-lite-v1:0").capabilities.reasoningEfforts).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high"
+    ]);
+
+    await generateText({ model, prompt: "hello", reasoning: { effort: "max" } });
+    expect(commandInput().additionalModelRequestFields).toEqual({
+      thinking: { type: "adaptive" },
+      output_config: { effort: "max" }
+    });
+
+    sendMock.mockResolvedValueOnce({
+      stream: (async function* () {
+        yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: "ok" } } };
+        yield { messageStop: { stopReason: "end_turn" } };
+      })()
+    });
+    await streamText({ model, prompt: "hello", reasoning: { effort: "max" } }).collect();
+    expect(commandInput().additionalModelRequestFields).toEqual({
+      thinking: { type: "adaptive" },
+      output_config: { effort: "max" }
     });
   });
 });

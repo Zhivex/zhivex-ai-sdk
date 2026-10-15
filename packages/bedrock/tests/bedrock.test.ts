@@ -599,6 +599,37 @@ describe("bedrock adapter", () => {
     });
   });
 
+  it("does not enable legacy Claude thinking when effort is none", async () => {
+    sendMock.mockResolvedValueOnce({
+      stopReason: "end_turn",
+      output: { message: { content: [{ text: "hello" }] } }
+    });
+    const provider = createBedrock({ region: "us-east-1" });
+    await generateText({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "hello",
+      reasoning: { effort: "none" }
+    });
+    const generated = sendMock.mock.calls[0]?.[0] as { input: { additionalModelRequestFields?: unknown } };
+    expect(generated.input.additionalModelRequestFields).toBeUndefined();
+
+    sendMock.mockResolvedValueOnce({
+      stream: (async function* () {
+        yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: "ok" } } };
+        yield { messageStop: { stopReason: "end_turn" } };
+      })()
+    });
+    await streamText({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "hello",
+      reasoning: { effort: "none", budgetTokens: 2048 }
+    }).collect();
+    const streamed = sendMock.mock.calls[1]?.[0] as {
+      input: { additionalModelRequestFields?: { thinking?: unknown } };
+    };
+    expect(streamed.input.additionalModelRequestFields?.thinking).toBeUndefined();
+  });
+
   it("streams tool calls and text through ConverseStream", async () => {
     sendMock.mockResolvedValueOnce({
       stream: (async function* () {
