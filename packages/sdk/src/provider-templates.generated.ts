@@ -33,7 +33,7 @@ export const providerTemplates: Readonly<Record<"vertex" | "openai" | "xai" | "m
   },
   "meta": {
     "packageName": "@zhivex-ai/meta",
-    "packageVersion": "0.2.10",
+    "packageVersion": "0.2.11",
     "factoryName": "createMeta",
     "envName": "MODEL_API_KEY",
     "defaultModel": "muse-spark-1.2"
@@ -54,21 +54,21 @@ export const providerTemplates: Readonly<Record<"vertex" | "openai" | "xai" | "m
   },
   "kimi": {
     "packageName": "@zhivex-ai/kimi",
-    "packageVersion": "0.7.13",
+    "packageVersion": "0.7.14",
     "factoryName": "createKimi",
     "envName": "KIMI_API_KEY",
     "defaultModel": "kimi-k3"
   },
   "deepseek": {
     "packageName": "@zhivex-ai/deepseek",
-    "packageVersion": "0.5.8",
+    "packageVersion": "0.5.9",
     "factoryName": "createDeepSeek",
     "envName": "DEEPSEEK_API_KEY",
     "defaultModel": "deepseek-v4-flash"
   },
   "zai": {
     "packageName": "@zhivex-ai/zai",
-    "packageVersion": "0.2.5",
+    "packageVersion": "0.2.6",
     "factoryName": "createZAI",
     "envName": "ZAI_API_KEY",
     "defaultModel": "glm-5.3"
