@@ -84,7 +84,7 @@ const transcript = await transcribeAudio({
 });
 ```
 
-Image models are `grok-imagine-image`, `grok-imagine-image-2.0`, and `grok-imagine-image-quality`. Video models are `grok-imagine-video`, `grok-imagine-video-1.5`, and `grok-imagine-video-1.5-lite`. Video generation polls `GET /v1/videos/{request_id}` and returns the temporary video URL.
+Image models are `grok-imagine-image` and `grok-imagine-image-2.0`. Prefer `grok-imagine-image-2.0`. Its `quality` option accepts `low`, `medium`, and `auto` (the default when `quality` is omitted). `grok-imagine-image-quality` is deprecated as of 2026-09-02 and retires on 2026-11-02. Existing callers can keep sending that slug until then. After retirement, xAI serves it as `grok-imagine-image-2.0` with `quality` set to `low`. See the [migration guide](https://docs.x.ai/developers/migration/imagine-image-quality-nov-2). Video models are `grok-imagine-video`, `grok-imagine-video-1.5`, and `grok-imagine-video-1.5-lite`. Video generation polls `GET /v1/videos/{request_id}` and returns the temporary video URL.
 
 `grok-tts` is text-to-speech (`POST /v1/tts`). `grok-voice-transcribe-2.0` is speech-to-text (`POST /v1/stt`). `grok-voice-3.0` is the speech-to-speech model. `grok-voice-2.0` is deprecated and is rejected.
 

@@ -1879,6 +1879,45 @@ describe("openai adapter", () => {
     expect(body.input[1].content[0].prompt_cache_breakpoint).toEqual({ mode: "explicit" });
   });
 
+  it("forwards typed service_tier ultrafast and untyped provider options", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_tier",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "fast" }] }]
+      })
+    );
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("gpt-6.1-sol"),
+      prompt: "fast",
+      providerOptions: {
+        service_tier: "ultrafast",
+        metadata: { lane: "passthrough" }
+      }
+    });
+    const responseCall = fetchMock.mock.calls[0] as [string, RequestInit] | undefined;
+    expect(String(responseCall?.[0])).toContain("/responses");
+    const responsesBody = JSON.parse(String(responseCall?.[1].body));
+    expect(responsesBody.service_tier).toBe("ultrafast");
+    expect(responsesBody.metadata).toEqual({ lane: "passthrough" });
+    expect(responsesBody).not.toHaveProperty("apiMode");
+
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ choices: [{ finish_reason: "stop", message: { content: "chat" } }] })
+    );
+    await generateText({
+      model: provider("gpt-5.6"),
+      prompt: "chat",
+      providerOptions: { apiMode: "chat", service_tier: "fast", metadata: { lane: "passthrough" } }
+    });
+    const chatBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/chat/completions");
+    expect(chatBody.service_tier).toBe("fast");
+    expect(chatBody.metadata).toEqual({ lane: "passthrough" });
+    expect(chatBody).not.toHaveProperty("apiMode");
+  });
+
   it("maps named GPT-5.6 tool choice to the Responses shape", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({

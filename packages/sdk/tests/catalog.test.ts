@@ -36,7 +36,7 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-10-14",
+      snapshotVersion: "2026-10-15",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
         version: "2026-10-14",
@@ -64,7 +64,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(257);
+    expect(entries).toHaveLength(272);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
@@ -106,12 +106,12 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(257);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(272);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
-      revision: "2026-10-13",
-      verifiedAt: "2026-10-13",
+      revision: "2026-10-15",
+      verifiedAt: "2026-10-15",
       pricingEffectiveAt: "2026-10-13",
-      sources: ["https://developers.openai.com/api/docs/models/gpt-4o-mini", "https://developers.openai.com/api/docs/guides/conversation-state", "https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare", "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst", "https://developers.openai.com/api/docs/guides/image-generation", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
+      sources: ["https://developers.openai.com/api/docs/models/gpt-4o-mini", "https://developers.openai.com/api/docs/deprecations", "https://developers.openai.com/api/docs/guides/conversation-state", "https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare", "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst", "https://developers.openai.com/api/docs/guides/image-generation", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
     });
     expect(fragments.find((fragment) => fragment.provider === "zai")).toMatchObject({
       revision: "2026-08-26",
@@ -135,7 +135,15 @@ describe("SDK model catalog ownership", () => {
     expect(entry?.inputCostPer1kTokens).toBeUndefined();
     expect(entry?.recommendedFor).toBeUndefined();
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "anthropic")?.revision).toBe("2026-10-13");
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "bedrock")?.revision).toBe("2026-10-07");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "bedrock")?.revision).toBe("2026-10-15");
+    expect(defaultModelCatalog.find("bedrock", "anthropic.claude-3-5-sonnet")).toBeUndefined();
+    expect(defaultModelCatalog.find("bedrock", "anthropic.claude-sonnet-5-5")?.modelId).toBe("anthropic.claude-sonnet-5-5");
+    expect(defaultModelCatalog.find("bedrock", "us.anthropic.claude-haiku-4-5-20251001-v1:0")?.modelId).toBe(
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    );
+    expect(defaultModelCatalog.find("bedrock", "amazon.nova-2-lite-v1:0")?.modelId).toBe("amazon.nova-2-lite-v1:0");
+    expect(defaultModelCatalog.find("azure-openai", "gpt-5.4-nano")?.modelId).toBe("gpt-5.4-nano");
+    expect(defaultModelCatalog.find("azure-openai", "text-embedding-3-large")?.inputCostPer1kTokens).toBeUndefined();
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-14");
   });
 
@@ -243,6 +251,31 @@ describe("SDK model catalog ownership", () => {
       "tools",
       "vision"
     ]);
+    expect(defaultModelCatalog.find("xai", "grok-imagine-image-2.0")?.recommendedFor).toEqual(["vision"]);
+    expect(defaultModelCatalog.find("xai", "grok-imagine-image-quality")).toMatchObject({
+      lifecycle: {
+        deprecatedAt: "2026-09-02",
+        retiredAt: "2026-11-02",
+        source: "https://docs.x.ai/developers/migration/imagine-image-quality-nov-2"
+      }
+    });
+    expect(defaultModelCatalog.find("xai", "grok-imagine-image-quality")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("openai", "gpt-4o-mini")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("openai", "gpt-4o-mini")?.lifecycle).toEqual({
+      deprecatedAt: "2026-10-14",
+      retiredAt: "2027-01-14",
+      source: "https://developers.openai.com/api/docs/deprecations"
+    });
+    expect(defaultModelCatalog.find("azure-openai", "gpt-4o-mini")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("azure-openai", "gpt-4o-mini")?.lifecycle).toEqual({
+      deprecatedAt: "2026-10-14",
+      retiredAt: "2027-01-14",
+      source: "https://developers.openai.com/api/docs/deprecations"
+    });
+    for (const id of ["gpt-4o", "gpt-4.1", "gpt-4.1-mini"]) {
+      expect(defaultModelCatalog.find("openai", id)).toBeUndefined();
+      expect(defaultModelCatalog.find("azure-openai", id)).toBeUndefined();
+    }
     for (const modelId of [
       "grok-4.6",
       "grok-4.20-0309-reasoning",
@@ -255,10 +288,10 @@ describe("SDK model catalog ownership", () => {
       });
     }
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "xai")).toMatchObject({
-      revision: "2026-10-14",
-      verifiedAt: "2026-10-14",
+      revision: "2026-10-15",
+      verifiedAt: "2026-10-15",
       pricingEffectiveAt: "2026-10-14",
-      modelCount: 8,
+      modelCount: 10,
       sources: expect.arrayContaining(["https://docs.x.ai/docs/models"])
     });
     expect(defaultModelCatalog.find("kimi", "kimi-k2.5")).toBeUndefined();

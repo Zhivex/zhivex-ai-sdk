@@ -10,7 +10,7 @@ const bedrock = createBedrock({
 // For Bedrock API key exploration, set AWS_BEARER_TOKEN_BEDROCK in the
 // environment or pass it explicitly as `apiKey` alongside `region`.
 const result = await generateText({
-  model: bedrock("anthropic.claude-3-5-sonnet"),
+  model: bedrock("anthropic.claude-haiku-5-5"),
   prompt: "Say hello from the Bedrock adapter."
 });
 

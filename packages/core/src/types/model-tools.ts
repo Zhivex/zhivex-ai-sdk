@@ -193,6 +193,14 @@ export interface LanguageModel<TProviderOptions extends ProviderOptions = Provid
   readonly provider: string;
   readonly modelId: string;
   readonly capabilities: ModelCapabilities;
+  /**
+   * Capabilities for this call. Use this when a request selects a different model
+   * than the one fixed at construction, such as Azure `providerOptions.baseModel`.
+   * `generateText` and `streamText` consult it before reasoning validation.
+   */
+  resolveCapabilities?(
+    input: Pick<ModelGenerateInput<TProviderOptions>, "providerOptions">
+  ): ModelCapabilities;
   generate(input: ModelGenerateInput<TProviderOptions>): Promise<GenerateResult>;
   stream?(input: ModelGenerateInput<TProviderOptions>): Promise<AsyncIterable<StreamEvent>>;
 }

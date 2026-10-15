@@ -73,9 +73,15 @@ export const XAI_TEXT_TO_SPEECH_MODEL = "grok-tts";
 export const XAI_SPEECH_TO_TEXT_MODEL = "grok-voice-transcribe-2.0";
 export const XAI_SPEECH_TO_SPEECH_MODEL = "grok-voice-3.0";
 
-/** grok-voice-2.0 is the deprecated speech-to-speech model. Speech-to-speech uses grok-voice-3.0. */
+/**
+ * Deprecated xAI model ids and the migration to use instead.
+ * `grok-imagine-image-quality` still resolves until its 2026-11-02 retirement.
+ * See https://docs.x.ai/developers/migration/imagine-image-quality-nov-2.
+ */
 export const XAI_DEPRECATED_MODELS = Object.freeze({
-  "grok-voice-2.0": "Deprecated speech-to-speech model. Use grok-voice-3.0."
+  "grok-voice-2.0": "Deprecated speech-to-speech model. Use grok-voice-3.0.",
+  "grok-imagine-image-quality":
+    'Deprecated on 2026-09-02 and retired on 2026-11-02. Migrate to "grok-imagine-image-2.0" and set quality to "low", "medium", or "auto". After retirement, xAI serves this slug as "grok-imagine-image-2.0" with quality "low". This adapter keeps sending the slug, and the request shape stays the same.'
 });
 
 const IMAGE_ASPECT_RATIOS = new Set([

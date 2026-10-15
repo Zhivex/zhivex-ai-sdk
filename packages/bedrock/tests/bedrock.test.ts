@@ -60,7 +60,7 @@ describe("bedrock adapter", () => {
     providerName: "bedrock",
     modelId: "anthropic.claude-3-5-sonnet",
     createModel: () => createBedrock({ region: "us-east-1" })("anthropic.claude-3-5-sonnet"),
-    expectedAgentTier: "tier-c",
+    expectedAgentTier: "tier-b",
     expectedCapabilities: {
       streaming: true,
       tools: true,
@@ -73,7 +73,7 @@ describe("bedrock adapter", () => {
       audioInput: false,
       audioOutput: false,
       embeddings: false,
-      reasoning: false,
+      reasoning: true,
       webSearch: false
     }
   });
@@ -81,7 +81,7 @@ describe("bedrock adapter", () => {
   runAgentProviderContractSuite({
     providerName: "bedrock",
     modelId: "anthropic.claude-3-5-sonnet",
-    expectedAgentTier: "tier-c",
+    expectedAgentTier: "tier-b",
     createModel: () => createBedrock({ region: "us-east-1" })("anthropic.claude-3-5-sonnet"),
     mockSimpleRun: () => {
       sendMock.mockResolvedValueOnce({
@@ -318,7 +318,9 @@ describe("bedrock adapter", () => {
 
     expect(clientMock).toHaveBeenCalledWith({
       region: "us-east-1",
-      token: { token: "bedrock-key" }
+      token: { token: "bedrock-key" },
+      authSchemePreference: ["httpBearerAuth"],
+      maxAttempts: 1
     });
   });
 
@@ -569,18 +571,63 @@ describe("bedrock adapter", () => {
     expect(command.input.toolConfig).toBeUndefined();
   });
 
-  it("rejects common reasoning config for Bedrock", async () => {
-    const provider = createBedrock({ region: "us-east-1" });
-
-    await expect(
-      generateText({
-        model: provider("anthropic.claude-3-5-sonnet"),
-        prompt: "hello",
-        reasoning: {
-          effort: "low"
+  it("maps Claude budget thinking without rejecting common reasoning config", async () => {
+    sendMock.mockResolvedValueOnce({
+      stopReason: "end_turn",
+      output: {
+        message: {
+          content: [{ text: "hello from bedrock" }]
         }
-      })
-    ).rejects.toThrow('Model "bedrock/anthropic.claude-3-5-sonnet" does not support reasoning.');
+      }
+    });
+
+    const provider = createBedrock({ region: "us-east-1" });
+    await generateText({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "hello",
+      reasoning: {
+        effort: "low"
+      }
+    });
+
+    const command = sendMock.mock.calls[0]?.[0] as {
+      input: { additionalModelRequestFields?: { thinking?: { type?: string; budget_tokens?: number } } };
+    };
+    expect(command.input.additionalModelRequestFields?.thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 1024
+    });
+  });
+
+  it("does not enable legacy Claude thinking when effort is none", async () => {
+    sendMock.mockResolvedValueOnce({
+      stopReason: "end_turn",
+      output: { message: { content: [{ text: "hello" }] } }
+    });
+    const provider = createBedrock({ region: "us-east-1" });
+    await generateText({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "hello",
+      reasoning: { effort: "none" }
+    });
+    const generated = sendMock.mock.calls[0]?.[0] as { input: { additionalModelRequestFields?: unknown } };
+    expect(generated.input.additionalModelRequestFields).toBeUndefined();
+
+    sendMock.mockResolvedValueOnce({
+      stream: (async function* () {
+        yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: "ok" } } };
+        yield { messageStop: { stopReason: "end_turn" } };
+      })()
+    });
+    await streamText({
+      model: provider("anthropic.claude-3-5-sonnet"),
+      prompt: "hello",
+      reasoning: { effort: "none", budgetTokens: 2048 }
+    }).collect();
+    const streamed = sendMock.mock.calls[1]?.[0] as {
+      input: { additionalModelRequestFields?: { thinking?: unknown } };
+    };
+    expect(streamed.input.additionalModelRequestFields?.thinking).toBeUndefined();
   });
 
   it("streams tool calls and text through ConverseStream", async () => {
@@ -704,12 +751,13 @@ describe("bedrock adapter", () => {
       baseURL: "https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1",
       fetch: fetchMock as typeof fetch
     });
+    expect(() => bedrockCodeExecutionTool({ container: { type: "auto" } })).toThrow(/does not support code execution/);
+
     await generateText({
       model: provider("openai.gpt-oss-120b-1:0"),
       prompt: "inspect",
       tools: {
         web: bedrockWebSearchTool({ search_context_size: "small" }),
-        code: bedrockCodeExecutionTool({ container: { type: "auto" } }),
         mcp: bedrockRemoteMcpTool({
           server_label: "docs",
           server_url: "https://example.com/mcp"
@@ -722,16 +770,17 @@ describe("bedrock adapter", () => {
     expect(body.tools).toEqual(
       expect.arrayContaining([
         { type: "web_search", search_context_size: "small" },
-        { type: "code_interpreter", container: { type: "auto" } },
         expect.objectContaining({ type: "mcp", server_label: "docs", server_url: "https://example.com/mcp" })
       ])
     );
+    expect(body.tools.some((tool) => tool.type === "code_interpreter")).toBe(false);
 
     const capabilities = getAgentCapabilities(provider("openai.gpt-oss-120b-1:0"));
     expect(capabilities.supportTier).toBe("tier-a");
     expect(capabilities.approvalRequests).toBe(true);
     expect(capabilities.remoteMcp).toBe(true);
-    expect(capabilities.codeExecution).toBe(true);
+    expect(capabilities.codeExecution).toBe(false);
+    expect(capabilities.computerUse).toBe(false);
   });
 
   it("rejects non-Bedrock hosted tools in OpenAI-compatible Responses mode", async () => {
