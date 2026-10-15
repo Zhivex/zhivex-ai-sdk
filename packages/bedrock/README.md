@@ -47,7 +47,9 @@ Long-term Bedrock API keys are best kept to exploration and development. For pro
 
 Converse accepts `reasoning` for Claude (adaptive thinking on current Sonnet, Opus, and Haiku 5 models; `budgetTokens` on older Claude models), Amazon Nova 2 (`reasoningConfig`), and DeepSeek R1 / gpt-oss (reasoning blocks are round-tripped). The signature is stored as provider data and sent back on the next turn. `toolChoice: "none"` keeps tool definitions when the history already contains tool blocks. That portable tool loop is agent Tier B. It does not emit provider approval requests. `runtime: "openai"` is Tier A because that path exposes Responses hosted tools, remote MCP, and approval requests.
 
-For Bedrock Mantle/OpenAI-compatible endpoints, opt in with `runtime: "openai"`. This mode sends generation requests to `${baseURL}/responses` and is the path for endpoint-dependent Responses features such as server tools or stateful Responses.
+For Bedrock Mantle/OpenAI-compatible endpoints, opt in with `runtime: "openai"`. This mode sends generation requests to `${baseURL}/responses` and is the path for endpoint-dependent Responses features such as server tools or stateful Responses. Shared `reasoning` is sent as Responses `reasoning` (`effort`, and `summary: "auto"` when thoughts are requested). `providerOptions.reasoning` still passes through and is merged underneath those fields. A specific `toolChoice` uses the Responses shape `{ "type": "function", "name" }`.
+
+Mantle does not accept OpenAI `code_interpreter`. This runtime reports `codeExecution: false`, and `bedrockCodeExecutionTool()` rejects the tool before a request is sent. The tool types Mantle accepts are `function`, `mcp`, `custom`, `apply_patch`, `namespace`, `tool_search`, and `computer`. HTTP 4xx and 5xx responses, including a stream whose body looks complete, fail the stream with that status.
 
 ```ts
 import { bedrockServerTool, createBedrock } from "@zhivex-ai/bedrock";

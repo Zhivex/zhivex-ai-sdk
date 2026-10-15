@@ -720,12 +720,13 @@ describe("bedrock adapter", () => {
       baseURL: "https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1",
       fetch: fetchMock as typeof fetch
     });
+    expect(() => bedrockCodeExecutionTool({ container: { type: "auto" } })).toThrow(/does not support code execution/);
+
     await generateText({
       model: provider("openai.gpt-oss-120b-1:0"),
       prompt: "inspect",
       tools: {
         web: bedrockWebSearchTool({ search_context_size: "small" }),
-        code: bedrockCodeExecutionTool({ container: { type: "auto" } }),
         mcp: bedrockRemoteMcpTool({
           server_label: "docs",
           server_url: "https://example.com/mcp"
@@ -738,16 +739,17 @@ describe("bedrock adapter", () => {
     expect(body.tools).toEqual(
       expect.arrayContaining([
         { type: "web_search", search_context_size: "small" },
-        { type: "code_interpreter", container: { type: "auto" } },
         expect.objectContaining({ type: "mcp", server_label: "docs", server_url: "https://example.com/mcp" })
       ])
     );
+    expect(body.tools.some((tool) => tool.type === "code_interpreter")).toBe(false);
 
     const capabilities = getAgentCapabilities(provider("openai.gpt-oss-120b-1:0"));
     expect(capabilities.supportTier).toBe("tier-a");
     expect(capabilities.approvalRequests).toBe(true);
     expect(capabilities.remoteMcp).toBe(true);
-    expect(capabilities.codeExecution).toBe(true);
+    expect(capabilities.codeExecution).toBe(false);
+    expect(capabilities.computerUse).toBe(false);
   });
 
   it("rejects non-Bedrock hosted tools in OpenAI-compatible Responses mode", async () => {

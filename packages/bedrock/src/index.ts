@@ -171,7 +171,8 @@ const openAICompatibleCapabilities: ModelCapabilities = {
     hostedFileSearch: false,
     remoteMcp: true,
     computerUse: false,
-    codeExecution: true,
+    // Mantle's Responses tool enum does not include code_interpreter.
+    codeExecution: false,
     toolsets: false
   }
 };
@@ -725,12 +726,23 @@ const mapOpenAITools = (tools: ModelGenerateInput["tools"]) =>
           );
         }
 
+        rejectMantleCodeExecution(definition.type, definition.toolClass);
+
         return {
           type: definition.type,
           ...(definition.config && typeof definition.config === "object" ? definition.config : {})
         };
       })
     : undefined;
+
+const MANTLE_CODE_EXECUTION_MESSAGE =
+  'Provider "bedrock" does not support code execution on the OpenAI-compatible runtime. Mantle accepts function, mcp, custom, apply_patch, namespace, tool_search, and computer.';
+
+const rejectMantleCodeExecution = (type: string | undefined, toolClass: string | undefined) => {
+  if (toolClass === "code-execution" || type === "code_interpreter" || type === "code_execution") {
+    throw new UnsupportedFeatureError(MANTLE_CODE_EXECUTION_MESSAGE);
+  }
+};
 
 const mapOpenAIToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
   if (!toolChoice) {
@@ -739,12 +751,111 @@ const mapOpenAIToolChoice = (toolChoice: ModelGenerateInput["toolChoice"]) => {
   if (typeof toolChoice === "string") {
     return toolChoice;
   }
+  // Responses API force-tool shape. Chat Completions nests the name under function.
   return {
     type: "function",
-    function: {
-      name: toolChoice.toolName
+    name: toolChoice.toolName
+  };
+};
+
+const mapOpenAICompatibleReasoning = (input: ModelGenerateInput) => {
+  if (!input.reasoning) {
+    return {};
+  }
+  if (input.reasoning.budgetTokens !== undefined) {
+    throw new UnsupportedFeatureError(
+      'Provider "bedrock" does not support "reasoning.budgetTokens" on the OpenAI-compatible runtime. Use "reasoning.effort".'
+    );
+  }
+  const providerReasoning = input.providerOptions?.reasoning;
+  const base =
+    providerReasoning && typeof providerReasoning === "object" && !Array.isArray(providerReasoning)
+      ? providerReasoning as Record<string, unknown>
+      : {};
+  return {
+    reasoning: {
+      ...base,
+      ...(input.reasoning.effort !== undefined ? { effort: input.reasoning.effort } : {}),
+      ...(input.reasoning.mode !== undefined ? { mode: input.reasoning.mode } : {}),
+      ...(input.reasoning.context !== undefined ? { context: input.reasoning.context } : {}),
+      ...(input.reasoning.includeThoughts ? { summary: "auto" } : {})
     }
   };
+};
+
+const openAICompatibleRequestBody = (
+  modelId: string,
+  input: ModelGenerateInput<BedrockOpenAICompatibleLanguageModelOptions>,
+  messages: ModelMessage[],
+  previousResponseId: string | undefined,
+  stream: boolean
+) => ({
+  ...input.providerOptions,
+  model: modelId,
+  ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+  input: mapOpenAIInput(messages),
+  tools: mapOpenAITools(input.tools),
+  tool_choice: mapOpenAIToolChoice(input.toolChoice),
+  temperature: input.temperature,
+  max_output_tokens: input.maxTokens,
+  ...mapOpenAICompatibleReasoning(input),
+  stream
+});
+
+const httpStatusFromProviderError = (error: unknown): number | undefined => {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const record = error as Record<string, unknown>;
+  const numeric = (value: unknown) => {
+    if (typeof value === "number" && Number.isInteger(value) && value >= 400 && value <= 599) {
+      return value;
+    }
+    if (typeof value === "string" && /^[45]\d\d$/.test(value)) {
+      return Number(value);
+    }
+    return undefined;
+  };
+  const status = numeric(record.status) ?? numeric(record.status_code) ?? numeric(record.code);
+  if (status) {
+    return status;
+  }
+  const code = typeof record.code === "string" ? record.code : undefined;
+  const type = typeof record.type === "string" ? record.type : undefined;
+  if (code === "invalid_api_key" || code === "authentication_error" || type === "authentication_error") {
+    return 401;
+  }
+  if (code === "permission_denied" || code === "access_denied" || type === "permission_error") {
+    return 403;
+  }
+  return undefined;
+};
+
+/**
+ * Mantle can end a stream with a nested error and no response.failed, or with a
+ * completed-looking terminal event that still carries an HTTP failure. Those must
+ * not become an empty successful finish.
+ */
+const openAIStreamHttpFailure = (sseEvent: string | undefined, json: any): ProviderHTTPError | undefined => {
+  const type = typeof json?.type === "string" ? json.type : undefined;
+  if (type === "response.failed" || type === "response.incomplete") {
+    return undefined;
+  }
+  const nestedError = json?.error && typeof json.error === "object" ? json.error : undefined;
+  const responseError = json?.response?.error && typeof json.response.error === "object" ? json.response.error : undefined;
+  const responseStatus = typeof json?.response?.status === "string" ? json.response.status : undefined;
+  const errorEvent = type === "error" || sseEvent === "error" || (nestedError && type === undefined);
+  const completedWithFailure = type === "response.completed" && (responseError || nestedError || responseStatus === "failed");
+  if (!errorEvent && !completedWithFailure) {
+    return undefined;
+  }
+  const status = httpStatusFromProviderError(nestedError)
+    ?? httpStatusFromProviderError(responseError)
+    ?? httpStatusFromProviderError(json)
+    ?? 400;
+  return new ProviderHTTPError(`Bedrock OpenAI-compatible stream failed with status ${status}.`, status, {
+    responseBody: JSON.stringify(json)
+  });
 };
 
 const parseOpenAICompatibleMessage = (json: any): ModelMessage => {
@@ -1245,17 +1356,7 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
               authorization: `Bearer ${this.apiKey}`
             },
             signal,
-            body: JSON.stringify({
-              ...input.providerOptions,
-              model: this.modelId,
-              ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-              input: mapOpenAIInput(messages),
-              tools: mapOpenAITools(input.tools),
-              tool_choice: mapOpenAIToolChoice(input.toolChoice),
-              temperature: input.temperature,
-              max_output_tokens: input.maxTokens,
-              stream: false
-            })
+            body: JSON.stringify(openAICompatibleRequestBody(this.modelId, input, messages, previousResponse?.responseId, false))
           }),
         { ...input, abortSignal: signal },
         "Bedrock"
@@ -1309,17 +1410,7 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
             authorization: `Bearer ${this.apiKey}`
           },
           signal,
-          body: JSON.stringify({
-            ...input.providerOptions,
-            model: this.modelId,
-            ...(previousResponse ? { previous_response_id: previousResponse.responseId } : {}),
-            input: mapOpenAIInput(messages),
-            tools: mapOpenAITools(input.tools),
-            tool_choice: mapOpenAIToolChoice(input.toolChoice),
-            temperature: input.temperature,
-            max_output_tokens: input.maxTokens,
-            stream: true
-          })
+          body: JSON.stringify(openAICompatibleRequestBody(this.modelId, input, messages, previousResponse?.responseId, true))
         }),
       { ...input, abortSignal: signal },
       "Bedrock"
@@ -1333,7 +1424,21 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
           if (event.data === "[DONE]") {
             break;
           }
-          const json = JSON.parse(event.data);
+          let json: any;
+          try {
+            json = JSON.parse(event.data);
+          } catch (error) {
+            if (event.event === "error") {
+              throw new ProviderHTTPError("Bedrock OpenAI-compatible stream failed with status 400.", 400, {
+                responseBody: event.data
+              });
+            }
+            throw error;
+          }
+          const httpFailure = openAIStreamHttpFailure(event.event, json);
+          if (httpFailure) {
+            throw httpFailure;
+          }
           if (json.type === "response.output_text.delta" && typeof json.delta === "string") {
             yield { type: "text-delta", textDelta: json.delta } satisfies StreamEvent;
           }
@@ -1383,7 +1488,6 @@ class BedrockOpenAICompatibleLanguageModel implements LanguageModel<BedrockOpenA
             });
             return;
           }
-          if (json.type === "error") throw new ConfigurationError("Bedrock reported a response stream error.");
         }
         throw new ConfigurationError("Bedrock response stream ended without a terminal event.");
       } finally {
@@ -1554,14 +1658,9 @@ export const bedrockWebSearchTool = (config: BedrockWebSearchToolConfig = {}) =>
     config: config as unknown as JsonValue
   });
 
-export const bedrockCodeExecutionTool = (config: BedrockCodeExecutionToolConfig = {}) =>
-  hostedTool({
-    name: "code_interpreter",
-    provider: "bedrock",
-    type: "code_interpreter",
-    toolClass: "code-execution",
-    config: config as unknown as JsonValue
-  });
+export const bedrockCodeExecutionTool = (_config: BedrockCodeExecutionToolConfig = {}) => {
+  throw new UnsupportedFeatureError(MANTLE_CODE_EXECUTION_MESSAGE);
+};
 
 export const bedrockRemoteMcpTool = (config: BedrockRemoteMcpToolConfig) =>
   hostedTool({
