@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { enforceEgressPolicy } from "./egress-policy.js";
 import {
   createHeldTextRedactor,
+  holdbackForPolicy,
   redactToolCall,
   resolveGenerationRedaction,
   sealGenerateResult,
@@ -1260,7 +1261,10 @@ export const streamText = <
       const stepMessages: ModelMessage[] = [];
       let textBuffer = "";
       const textRedactor = activeRedaction?.output
-        ? createHeldTextRedactor((text) => activeRedaction.policy.redactText(text))
+        ? createHeldTextRedactor(
+          (text) => activeRedaction.policy.redactText(text),
+          holdbackForPolicy(activeRedaction.policy)
+        )
         : undefined;
       const generatedImages: NonNullable<GenerateResult["images"]> = [];
       let finishReason = normalizeFinishReason("stop");

@@ -66,9 +66,9 @@ redaction.redactText("20-12345678-6");
 
 ### On generateText and streamText
 
-Pass the policy as `redaction`. User and system text, assistant text, tool-call arguments, and tool results are redacted. Set a channel to `false` to keep it. Pass `redaction: false` on a run to disable an agent policy for that call.
+Pass the policy as `redaction`. User and system text, assistant text, tool-call arguments, and tool results are redacted. Set a channel to `false` to keep it. Omit `redaction`, or pass `false`, to leave text unchanged. An empty object uses the default credential policy.
 
-The current tool execution still receives the original model arguments. The provider request, the stream, and the returned transcript use the redacted copy. Output text is held for a short tail so an identifier split across stream deltas is replaced before it is emitted. A resumed approval that must replay the original tool arguments should set `toolInputs: false`.
+The current tool execution still receives the original model arguments. The provider request, the stream, and the returned transcript use the redacted copy. Streamed output keeps a tail long enough for the longest bounded match, and withholds the whole answer until the stream ends when a pattern is unbounded, so a later match cannot reveal a prefix. A resumed approval that must replay the original tool arguments should set `toolInputs: false`.
 
 ```ts
 import { generateText } from "@zhivex-ai/sdk";

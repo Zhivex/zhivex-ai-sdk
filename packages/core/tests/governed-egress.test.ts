@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { Agent, createMockLanguageModel, tool } from "../src/index.js";
+import { Agent, createMockLanguageModel, createRedactionPolicy, tool } from "../src/index.js";
 import {
   createEgressPolicy,
   EgressDeniedError,
@@ -14,7 +14,8 @@ import {
   isValidCbu,
   isValidCuit,
   isValidCvu,
-  isValidCard
+  isValidCard,
+  isValidRfc
 } from "../src/latam-redaction.js";
 import type { LanguageModel, ModelGenerateInput } from "../src/types.js";
 
@@ -280,6 +281,17 @@ describe("LatAm redaction presets", () => {
     expect(policy.redactText("person@example.com")).toBe("person@example.com");
   });
 
+  it("redacts persona moral and persona fisica RFCs when the check digit matches", () => {
+    expect(isValidRfc("SAT970701NN3")).toBe(true);
+    expect(isValidRfc(RFC)).toBe(true);
+    expect(isValidRfc("SAT970701NN0")).toBe(false);
+    const redacted = policy.redactText(`moral SAT970701NN3 fisica ${RFC} bad SAT970701NN0`);
+    expect(redacted).not.toContain("SAT970701NN3");
+    expect(redacted).not.toContain(RFC);
+    expect(redacted).toContain("[REDACTED:RFC]");
+    expect(redacted).toContain("SAT970701NN0");
+  });
+
   it("limits detectors to the requested countries", () => {
     expect(createLatamSensitiveDataPolicy({ countries: ["AR"] }).redactText(CPF)).toBe(CPF);
     expect(createLatamSensitiveDataPolicy({ includeCards: false }).redactText(CARD_TEXT)).toBe(CARD_TEXT);
@@ -362,6 +374,29 @@ describe("generation redaction", () => {
     expect(result.text).toBe(CUIT);
   });
 
+  it("treats an empty redaction bag as the default policy", async () => {
+    const seen: ModelGenerateInput[] = [];
+    const model = capturingModel([{
+      text: "ok",
+      messages: [{ role: "assistant", parts: [{ type: "text", text: "ok" }] }],
+      finishReason: "stop"
+    }], seen);
+    const secret = "Bearer abcdefghijklmnop";
+    await generateText({ model, prompt: secret, redaction: {} });
+    expect(JSON.stringify(seen[0]?.messages)).toContain("[REDACTED]");
+    expect(JSON.stringify(seen[0]?.messages)).not.toContain("abcdefghijklmnop");
+
+    const untouched: ModelGenerateInput[] = [];
+    const plain = capturingModel([{
+      text: secret,
+      messages: [{ role: "assistant", parts: [{ type: "text", text: secret }] }],
+      finishReason: "stop"
+    }], untouched);
+    const result = await generateText({ model: plain, prompt: secret });
+    expect(JSON.stringify(untouched[0]?.messages)).toContain(secret);
+    expect(result.text).toBe(secret);
+  });
+
   it("accepts a redaction option bag for prompts", async () => {
     const seen: ModelGenerateInput[] = [];
     const model = capturingModel([{
@@ -376,6 +411,47 @@ describe("generation redaction", () => {
     });
     expect(JSON.stringify(seen[0]?.messages)).toContain("[REDACTED]");
     expect(JSON.stringify(seen[0]?.messages)).not.toContain("person@example.com");
+  });
+
+  const streamedTextOf = async (
+    text: string,
+    redaction: Parameters<typeof streamText>[0]["redaction"]
+  ) => {
+    const deltas = [...text].map((textDelta) => ({ type: "text-delta" as const, textDelta }));
+    const model = createMockLanguageModel({
+      streamEvents: [[...deltas, { type: "finish", finishReason: "stop" }]]
+    });
+    const streamed = streamText({ model, prompt: "stream", redaction });
+    const textParts: string[] = [];
+    const eventParts: string[] = [];
+    for await (const delta of streamed.textStream) textParts.push(delta);
+    for await (const event of streamed.eventStream) {
+      if (event.type === "text-delta") eventParts.push(event.textDelta);
+    }
+    const collected = await streamed.collect();
+    return { textParts, eventParts, collected: collected.text };
+  };
+
+  it("does not stream a prefix of a custom match longer than the old 48 character holdback", async () => {
+    const secret = "S".repeat(80);
+    const redaction = createRedactionPolicy({
+      rules: [{ pattern: /S{80}/g, replacement: "[REDACTED:LONG]" }]
+    });
+    const bounded = {
+      ...redaction,
+      rules: [{ pattern: /S{80}/g, replacement: "[REDACTED:LONG]" }],
+      redactText: (text: string) => text.replace(/S{80}/g, "[REDACTED:LONG]")
+    };
+    const expected = `before [REDACTED:LONG] after`;
+    for (const policy of [redaction, bounded]) {
+      const { textParts, eventParts, collected } = await streamedTextOf(`before ${secret} after`, policy);
+      expect(collected).toBe(expected);
+      expect(textParts.join("")).toBe(expected);
+      expect(eventParts.join("")).toBe(expected);
+      for (const part of [...textParts, ...eventParts]) {
+        expect(part.includes("S".repeat(8))).toBe(false);
+      }
+    }
   });
 
   it("holds split stream deltas until a check digit can be validated", async () => {

@@ -140,11 +140,14 @@ export const isValidCurp = (value: string): boolean => {
 };
 
 export const rfcCheckDigit = (body: string): string => {
+  // Persona moral is 11 characters. SAT weights it with a leading space so both
+  // kinds use positions 13 down to 2.
+  const weighted = body.length === 11 ? ` ${body}` : body;
   let sum = 0;
-  for (let index = 0; index < body.length; index += 1) {
-    const value = RFC_ALPHABET.indexOf(body[index] ?? "");
+  for (let index = 0; index < weighted.length; index += 1) {
+    const value = RFC_ALPHABET.indexOf(weighted[index] ?? "");
     if (value < 0) return "";
-    sum += value * (body.length + 1 - index);
+    sum += value * (weighted.length + 1 - index);
   }
   const check = 11 - (sum % 11);
   if (check === 11) return "0";
