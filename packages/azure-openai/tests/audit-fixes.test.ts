@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ConfigurationError, ProviderToolCallError, createTextMessage, generateText, streamText, wrapLanguageModel } from "@zhivex-ai/core";
+import {
+  ConfigurationError,
+  ProviderToolCallError,
+  UnsupportedFeatureError,
+  createTextMessage,
+  generateText,
+  streamText,
+  wrapLanguageModel
+} from "@zhivex-ai/core";
 
 import {
   AzureOpenAIAuthenticationError,
@@ -244,25 +252,52 @@ describe("Azure OpenAI audit fixes", () => {
     })).rejects.toThrow(/does not support reasoning effort "max"/);
     expect(fetcher).not.toHaveBeenCalled();
 
+    const call = {
+      messages: [createTextMessage("user", "hello")],
+      reasoning: { effort: "max" as const },
+      providerOptions: { baseModel: "gpt-6-astra" },
+      maxRetries: 0
+    };
     const wrapped = wrapLanguageModel(model, [{ name: "noop" }]);
-    await generateText({
-      model: wrapped,
-      prompt: "hello",
-      reasoning: { effort: "max" },
-      providerOptions: { baseModel: "gpt-6-astra" }
-    });
+    let coreHonorsPerCallBaseModel = true;
+    try {
+      await generateText({
+        model: wrapped,
+        prompt: "hello",
+        reasoning: { effort: "max" },
+        providerOptions: { baseModel: "gpt-6-astra" }
+      });
+    } catch (error) {
+      // Published core 1.30.1 validates construction-time capabilities and does not call resolveCapabilities.
+      // Workspace core must still accept the per-call base model through generateText.
+      if (process.env.ZHIVEX_MINIMUM_CORE_PACKAGE !== "azure-openai") {
+        throw error;
+      }
+      coreHonorsPerCallBaseModel = false;
+      expect(error).toBeInstanceOf(UnsupportedFeatureError);
+      expect((error as Error).message).toMatch(/does not support reasoning effort "max"/);
+      await model.generate(call);
+    }
     expect(bodyOf(fetcher).reasoning).toEqual({ effort: "max" });
     expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://example.openai.azure.com/openai/v1/responses");
 
     fetcher.mockResolvedValueOnce(new Response(
       'data: {"type":"response.output_text.delta","delta":"ok"}\n\ndata: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}}\n\n'
     ));
-    await streamText({
-      model: provider("my-deploy"),
-      prompt: "hello",
-      reasoning: { effort: "max" },
-      providerOptions: { baseModel: "gpt-6-astra" }
-    }).collect();
+    if (coreHonorsPerCallBaseModel) {
+      await streamText({
+        model: provider("my-deploy"),
+        prompt: "hello",
+        reasoning: { effort: "max" },
+        providerOptions: { baseModel: "gpt-6-astra" }
+      }).collect();
+    } else {
+      const events = [];
+      for await (const event of await provider("my-deploy").stream!(call)) {
+        events.push(event);
+      }
+      expect(events.some((event) => event.type === "text-delta")).toBe(true);
+    }
     expect(bodyOf(fetcher).reasoning).toEqual({ effort: "max" });
   });
 

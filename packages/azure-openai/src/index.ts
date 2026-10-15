@@ -328,7 +328,9 @@ export interface AzureOpenAILanguageModelOptions {
   apiMode?: "auto" | "chat" | "responses";
   /**
    * Base model id when `modelId` is an opaque deployment name.
-   * Overrides the provider `deployments` map for this call, including reasoning validation.
+   * Overrides the provider `deployments` map for request shape on this call.
+   * Reasoning validation uses it when core calls `resolveCapabilities`.
+   * Core 1.30.1 does not, so set `deployments` for those checks.
    */
   baseModel?: string;
   top_p?: number;
