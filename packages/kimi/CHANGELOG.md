@@ -1,5 +1,11 @@
 # @zhivex-ai/kimi
 
+## 0.7.14
+
+### Patch Changes
+
+- 1bf939d: Raise the `@zhivex-ai/core` dependency floor to 1.34.0 for DeepSeek, Kimi, Meta, Ollama, OpenRouter, and Z.ai. Their unit tests import Core helpers from this checkout, so the declared floor has to match the workspace Core version.
+
 ## 0.7.13
 
 ### Patch Changes
