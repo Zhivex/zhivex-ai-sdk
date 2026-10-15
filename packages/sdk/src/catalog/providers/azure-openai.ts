@@ -7,6 +7,7 @@ export const azureOpenaiCatalogFragment = defineModelCatalogFragment({
   pricingEffectiveAt: "2026-08-16",
   sources: [
     "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure",
+    "https://developers.openai.com/api/docs/deprecations",
     "catalog-release:2026-08-16"],
   entries: [
     {
@@ -104,10 +105,11 @@ export const azureOpenaiCatalogFragment = defineModelCatalogFragment({
       "provider": "azure-openai",
       "modelId": "gpt-4o-mini",
       "costPer1kTokens": 0.0006,
-      "recommendedFor": [
-        "chat",
-        "tools"
-      ]
+      "lifecycle": {
+        "deprecatedAt": "2026-10-14",
+        "retiredAt": "2027-01-14",
+        "source": "https://developers.openai.com/api/docs/deprecations"
+      }
     }
   ]
 });
