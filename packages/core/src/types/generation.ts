@@ -1,4 +1,5 @@
 import type { BoundedReplayBroadcastOptions } from "../bounded-broadcast.js";
+import type { EgressDeclaration, EgressPolicy } from "../egress-types.js";
 import type {
   z,
   ZodTypeAny
@@ -7,6 +8,7 @@ import type {
   AgentApprovalRequest,
   AgentApprovalResolution,
   FinishReason,
+  JsonValue,
   ProviderOptions,
   ReasoningConfig,
   RetryOptions,
@@ -46,6 +48,46 @@ import type {
 export type ProviderOptionsOf<TModel extends LanguageModel> = TModel extends LanguageModel<infer TProviderOptions>
   ? TProviderOptions
   : ProviderOptions;
+
+/**
+ * Result of `createRedactionPolicy` or `createLatamSensitiveDataPolicy`.
+ * Declared structurally so generation contracts do not import the policy module.
+ */
+export interface GenerationRedactionPolicy {
+  redactText(text: string): string;
+  redactJson<T extends JsonValue | undefined>(value: T): T;
+  redactMessages(messages: ModelMessage[]): ModelMessage[];
+}
+
+/** Option bag accepted by `createRedactionPolicy`. */
+export interface GenerationRedactionPolicyOptions {
+  rules?: Array<{
+    name?: string;
+    pattern: RegExp | string;
+    replacement?: string | ((match: string) => string);
+  }>;
+  includeEmails?: boolean;
+  replacement?: string;
+}
+
+/** Per-channel switches. Every channel defaults to on when a policy is set. */
+export interface GenerationRedactionOptions {
+  policy?: GenerationRedactionPolicy | GenerationRedactionPolicyOptions;
+  /** User and system text. */
+  input?: boolean;
+  /** Tool-call arguments in provider requests, stream events, and returned transcripts. */
+  toolInputs?: boolean;
+  /** Tool results before they are stored, streamed, or sent back to the model. */
+  toolResults?: boolean;
+  /** Assistant text. */
+  output?: boolean;
+}
+
+export type GenerationRedaction =
+  | GenerationRedactionOptions
+  | GenerationRedactionPolicy
+  | GenerationRedactionPolicyOptions
+  | false;
 
 export type GenerateTextOptions<
   TModel extends LanguageModel = LanguageModel,
@@ -103,6 +145,15 @@ export type GenerateTextOptions<
     reasoning?: ReasoningConfig;
     providerOptions?: ProviderOptionsOf<TModel>;
     structuredOutput?: StructuredOutputConfig;
+    /**
+     * Experimental public beta. Fail closed before the provider call.
+     * The caller declares `egress.region` and `egress.endpoint`; adapters do not reveal a private base URL.
+     */
+    egressPolicy?: EgressPolicy;
+    /** Region and endpoint for this call. A conflict with the model or provider options is denied. */
+    egress?: EgressDeclaration;
+    /** `false` leaves text, tool arguments, and tool results unchanged. */
+    redaction?: GenerationRedaction;
   };
 
 export interface GenerateTextStep {

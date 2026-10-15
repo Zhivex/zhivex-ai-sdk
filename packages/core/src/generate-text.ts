@@ -1,5 +1,15 @@
 import { validateMaxSteps } from "./validate-max-steps.js";
 import { createHash } from "node:crypto";
+import { enforceEgressPolicy } from "./egress-policy.js";
+import {
+  createHeldTextRedactor,
+  redactToolCall,
+  resolveGenerationRedaction,
+  sealGenerateResult,
+  sealModelMessages,
+  sealToolResults,
+  type ActiveGenerationRedaction
+} from "./generation-redaction.js";
 
 import { normalizeMessages as buildMessages } from "./normalize-messages.js";
 import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
@@ -222,6 +232,28 @@ export const aggregateTokenUsage = (usages: Array<TokenUsage | undefined>): Toke
 
   return aggregate;
 };
+
+const presentOutput = (
+  output: GenerateTextOutput,
+  active: ActiveGenerationRedaction | undefined
+): GenerateTextOutput => {
+  if (!active) return output;
+  return {
+    ...output,
+    text: active.output ? active.policy.redactText(output.text) : output.text,
+    messages: sealModelMessages(output.messages, active),
+    toolResults: sealToolResults(output.toolResults, active),
+    steps: output.steps.map((step) => ({
+      request: { ...step.request, messages: sealModelMessages(step.request.messages, active) },
+      response: sealGenerateResult(step.response, active)
+    }))
+  };
+};
+
+const assertEgress = (options: AnyGenerateTextOptions) =>
+  options.egressPolicy
+    ? enforceEgressPolicy(options.egressPolicy, options.model, options.egress, options.providerOptions)
+    : Promise.resolve();
 
 const toRequest = (options: AnyGenerateTextOptions, messages: ModelMessage[]): ModelGenerateInput => ({
   messages: structuredClone(messages),
@@ -880,6 +912,7 @@ export const generateText = async <
   // enumerable symbol survives runtime context spreads but never enters JSON state.
   options = { ...options, toolContext: { ...options.toolContext,
     [Symbol.for("@zhivex-ai/core/tool-execution-scope")]: Object.freeze({}) } };
+  const activeRedaction = resolveGenerationRedaction(options.redaction);
   const maxSteps = validateMaxSteps(options.maxSteps);
   const allMessages = buildMessages(options);
   const steps: GenerateTextOutput["steps"] = [];
@@ -914,14 +947,14 @@ export const generateText = async <
     });
     if (preflight.approvalRequests.length) {
       approvalRequests.push(...preflight.approvalRequests);
-      return {
+      return presentOutput({
         text: "",
         finishReason: "tool-calls",
         steps,
         messages: allMessages,
         toolResults,
         approvalRequests
-      };
+      }, activeRedaction);
     }
     await options.onBeforeToolExecution?.({ request, step, toolCalls: pendingToolCalls });
     let recoveredToolResults: ToolExecutionResult[];
@@ -935,32 +968,34 @@ export const generateText = async <
       if (!(error instanceof ToolExecutionSuspendedError)) {
         throw error;
       }
-      toolResults.push(...error.completedResults);
-      for (const result of error.completedResults) {
+      const visibleResults = sealToolResults(error.completedResults, activeRedaction);
+      toolResults.push(...visibleResults);
+      for (const result of visibleResults) {
         allMessages.push({ role: "tool", parts: [toolResultPart(result)] });
       }
-      if (error.completedResults.length) {
+      if (visibleResults.length) {
         await options.onToolExecutionComplete?.({
           request,
           step,
-          toolResults: error.completedResults
+          toolResults: visibleResults
         });
       }
       approvalRequests.push(...error.approvals);
-      return {
+      return presentOutput({
         text: "",
         finishReason: "tool-calls",
         steps,
         messages: allMessages,
         toolResults,
         approvalRequests
-      };
+      }, activeRedaction);
     }
-    toolResults.push(...recoveredToolResults);
-    for (const result of recoveredToolResults) {
+    const visibleRecovered = sealToolResults(recoveredToolResults, activeRedaction);
+    toolResults.push(...visibleRecovered);
+    for (const result of visibleRecovered) {
       allMessages.push({ role: "tool", parts: [toolResultPart(result)] });
     }
-    await options.onToolExecutionComplete?.({ request, step, toolResults: recoveredToolResults });
+    await options.onToolExecutionComplete?.({ request, step, toolResults: visibleRecovered });
   }
 
   for (let step = 0; (maxSteps === "unlimited" || step < maxSteps); step += 1) {
@@ -972,8 +1007,9 @@ export const generateText = async <
     if (preparedMessages) {
       allMessages.splice(0, allMessages.length, ...structuredClone(preparedMessages));
     }
-    const request = toRequest(options, allMessages);
+    const request = toRequest(options, sealModelMessages(allMessages, activeRedaction));
     await options.onBeforeModelStep?.({ request, step: absoluteStep });
+    await assertEgress(options);
     const startedAt = Date.now();
     let response: GenerateResult;
     try {
@@ -982,16 +1018,18 @@ export const generateText = async <
       throw withPossibleToolEffects(error, effectsPossible);
     }
     stepTimings.set(request, { startedAt, finishedAt: Date.now() });
-    steps.push({ request, response });
-    finalResult = response;
 
     const responseMessages = resultMessages(response);
-    if (responseMessages.length) {
-      allMessages.push(...responseMessages);
-      generatedMessages.push(...responseMessages);
+    const toolCalls = extractToolCalls(responseMessages);
+    const storedResponse = sealGenerateResult({ ...response, messages: responseMessages }, activeRedaction);
+    const storedMessages = storedResponse.messages ?? [];
+    steps.push({ request, response: storedResponse });
+    finalResult = storedResponse;
+    if (storedMessages.length) {
+      allMessages.push(...storedMessages);
+      generatedMessages.push(...storedMessages);
     }
 
-    const toolCalls = extractToolCalls(responseMessages);
     const preflight = await preflightModelResponse(toolCalls, options, {
       request, step: absoluteStep, tools: resolvedTools
     }, response, steps.map(step => step.response.usage));
@@ -1000,7 +1038,7 @@ export const generateText = async <
     }
     await options.onModelStep?.({
       request,
-      response,
+      response: storedResponse,
       step: absoluteStep,
       toolCalls,
       approvalRequests: preflight?.approvalRequests ?? []
@@ -1021,39 +1059,41 @@ export const generateText = async <
       if (!(error instanceof ToolExecutionSuspendedError)) {
         throw error;
       }
-      toolResults.push(...error.completedResults);
-      for (const result of error.completedResults) {
+      const visibleSuspended = sealToolResults(error.completedResults, activeRedaction);
+      toolResults.push(...visibleSuspended);
+      for (const result of visibleSuspended) {
         allMessages.push({
           role: "tool",
           parts: [toolResultPart(result)]
         });
       }
-      if (error.completedResults.length) {
+      if (visibleSuspended.length) {
         await options.onToolExecutionComplete?.({
           request,
           step: absoluteStep,
-          toolResults: error.completedResults
+          toolResults: visibleSuspended
         });
       }
       approvalRequests.push(...error.approvals);
       break;
     }
-    toolResults.push(...currentToolResults);
+    const visibleResults = sealToolResults(currentToolResults, activeRedaction);
+    toolResults.push(...visibleResults);
 
-    for (const result of currentToolResults) {
+    for (const result of visibleResults) {
       allMessages.push({
         role: "tool",
         parts: [toolResultPart(result)]
       });
     }
-    await options.onToolExecutionComplete?.({ request, step: absoluteStep, toolResults: currentToolResults });
+    await options.onToolExecutionComplete?.({ request, step: absoluteStep, toolResults: visibleResults });
   }
 
   if (!finalResult) {
     throw new ParseError("Model did not return a result.");
   }
 
-  return {
+  return presentOutput({
     text: getTextFromMessages(generatedMessages),
     finishReason: finalResult.finishReason,
     providerFinishReason: finalResult.providerFinishReason,
@@ -1062,7 +1102,7 @@ export const generateText = async <
     messages: allMessages,
     toolResults,
     approvalRequests
-  };
+  }, activeRedaction);
 };
 
 export const streamText = <
@@ -1075,6 +1115,7 @@ export const streamText = <
   // enumerable symbol survives runtime context spreads but never enters JSON state.
   options = { ...options, toolContext: { ...options.toolContext,
     [Symbol.for("@zhivex-ai/core/tool-execution-scope")]: Object.freeze({}) } };
+  const activeRedaction = resolveGenerationRedaction(options.redaction);
   const maxSteps = validateMaxSteps(options.maxSteps);
   const baseMessages = buildMessages(options);
   const tools = toToolSet(options.tools);
@@ -1142,14 +1183,14 @@ export const streamText = <
         }
         await publish({ type: "finish", finishReason: "tool-calls" }, true);
         broadcast.close();
-        return {
+        return presentOutput({
           text: "",
           finishReason: "tool-calls",
           steps,
           messages: allMessages,
           toolResults,
           approvalRequests
-        };
+        }, activeRedaction);
       }
       await options.onBeforeToolExecution?.({ request, step, toolCalls: pendingToolCalls });
       let recoveredToolResults: ToolExecutionResult[];
@@ -1163,16 +1204,17 @@ export const streamText = <
         if (!(error instanceof ToolExecutionSuspendedError)) {
           throw error;
         }
-        toolResults.push(...error.completedResults);
-        for (const result of error.completedResults) {
+        const visibleResults = sealToolResults(error.completedResults, activeRedaction);
+        toolResults.push(...visibleResults);
+        for (const result of visibleResults) {
           await publish({ type: "tool-result", toolResult: result });
           allMessages.push({ role: "tool", parts: [toolResultPart(result)] });
         }
-        if (error.completedResults.length) {
+        if (visibleResults.length) {
           await options.onToolExecutionComplete?.({
             request,
             step,
-            toolResults: error.completedResults
+            toolResults: visibleResults
           });
         }
         approvalRequests.push(...error.approvals);
@@ -1181,21 +1223,22 @@ export const streamText = <
         }
         await publish({ type: "finish", finishReason: "tool-calls" }, true);
         broadcast.close();
-        return {
+        return presentOutput({
           text: "",
           finishReason: "tool-calls",
           steps,
           messages: allMessages,
           toolResults,
           approvalRequests
-        };
+        }, activeRedaction);
       }
-      toolResults.push(...recoveredToolResults);
-      for (const result of recoveredToolResults) {
+      const visibleRecovered = sealToolResults(recoveredToolResults, activeRedaction);
+      toolResults.push(...visibleRecovered);
+      for (const result of visibleRecovered) {
         await publish({ type: "tool-result", toolResult: result });
         allMessages.push({ role: "tool", parts: [toolResultPart(result)] });
       }
-      await options.onToolExecutionComplete?.({ request, step, toolResults: recoveredToolResults });
+      await options.onToolExecutionComplete?.({ request, step, toolResults: visibleRecovered });
     }
 
     for (let step = 0; (maxSteps === "unlimited" || step < maxSteps); step += 1) {
@@ -1208,27 +1251,43 @@ export const streamText = <
       if (preparedMessages) {
         allMessages.splice(0, allMessages.length, ...structuredClone(preparedMessages));
       }
-      const request = toRequest(options, allMessages);
+      const request = toRequest(options, sealModelMessages(allMessages, activeRedaction));
       await options.onBeforeModelStep?.({ request, step: absoluteStep });
+      await assertEgress(options);
       const startedAt = Date.now();
       options.abortSignal?.throwIfAborted();
       const stream = await streamModel(request);
       const stepMessages: ModelMessage[] = [];
       let textBuffer = "";
+      const textRedactor = activeRedaction?.output
+        ? createHeldTextRedactor((text) => activeRedaction.policy.redactText(text))
+        : undefined;
       const generatedImages: NonNullable<GenerateResult["images"]> = [];
       let finishReason = normalizeFinishReason("stop");
       let providerFinishReason: string | undefined;
       let providerRequestCount: number | undefined;
       let usage = undefined;
+      let pendingFinish: Extract<StreamEvent, { type: "finish" }> | undefined;
 
       for await (const event of stream) {
         options.abortSignal?.throwIfAborted();
         // The runner catch publishes one terminal error and rejects collect().
         // Do not execute tool calls accumulated from a failed provider response.
         if (event.type === "error") throw event.error;
-        await publish(event);
 
-        if (event.type === "text-delta") {
+        if (event.type === "text-delta" && textRedactor) {
+          textBuffer += event.textDelta;
+          const textDelta = textRedactor.push(event.textDelta);
+          if (textDelta) await publish({ ...event, textDelta });
+        } else if (event.type === "tool-call" && activeRedaction?.toolInputs) {
+          await publish({ ...event, toolCall: redactToolCall(event.toolCall, activeRedaction.policy) });
+        } else if (event.type === "finish" && textRedactor) {
+          pendingFinish = event;
+        } else {
+          await publish(event);
+        }
+
+        if (event.type === "text-delta" && !textRedactor) {
           textBuffer += event.textDelta;
         }
 
@@ -1267,6 +1326,12 @@ export const streamText = <
           providerRequestCount = event.providerRequestCount;
         }
       }
+      if (textRedactor) {
+        const tail = textRedactor.flush();
+        if (tail) await publish({ type: "text-delta", textDelta: tail });
+        textBuffer = textRedactor.value();
+      }
+      if (pendingFinish) await publish(pendingFinish);
       stepTimings.set(request, { startedAt, finishedAt: Date.now() });
 
       if (textBuffer) {
@@ -1278,22 +1343,23 @@ export const streamText = <
         }
       }
 
-      finalResult = {
-        messages: stepMessages,
+      const toolCalls = extractToolCalls(stepMessages);
+      const sealedStepMessages = sealModelMessages(stepMessages, activeRedaction);
+      finalResult = sealGenerateResult({
+        messages: sealedStepMessages,
         text: textBuffer,
         images: generatedImages.length ? generatedImages : undefined,
         finishReason,
         providerFinishReason,
         usage,
         ...(providerRequestCount !== undefined ? { providerRequestCount } : {})
-      };
+      }, activeRedaction);
 
       steps.push({ request, response: finalResult });
-      allMessages.push(...stepMessages);
-      generatedMessages.push(...stepMessages);
+      allMessages.push(...(finalResult.messages ?? sealedStepMessages));
+      generatedMessages.push(...(finalResult.messages ?? sealedStepMessages));
 
       options.abortSignal?.throwIfAborted();
-      const toolCalls = extractToolCalls(stepMessages);
       const preflight = await preflightModelResponse(toolCalls, options, {
         request, step: absoluteStep, tools: resolvedTools
       }, finalResult, steps.map(step => step.response.usage), publish);
@@ -1326,19 +1392,20 @@ export const streamText = <
         if (!(error instanceof ToolExecutionSuspendedError)) {
           throw error;
         }
-        toolResults.push(...error.completedResults);
-        for (const result of error.completedResults) {
+        const visibleSuspended = sealToolResults(error.completedResults, activeRedaction);
+        toolResults.push(...visibleSuspended);
+        for (const result of visibleSuspended) {
           await publish({ type: "tool-result", toolResult: result });
           allMessages.push({
             role: "tool",
             parts: [toolResultPart(result)]
           });
         }
-        if (error.completedResults.length) {
+        if (visibleSuspended.length) {
           await options.onToolExecutionComplete?.({
             request,
             step: absoluteStep,
-            toolResults: error.completedResults
+            toolResults: visibleSuspended
           });
         }
         approvalRequests.push(...error.approvals);
@@ -1347,16 +1414,17 @@ export const streamText = <
         }
         break;
       }
-      toolResults.push(...currentToolResults);
+      const visibleResults = sealToolResults(currentToolResults, activeRedaction);
+      toolResults.push(...visibleResults);
 
-      for (const toolResult of currentToolResults) {
+      for (const toolResult of visibleResults) {
         await publish({ type: "tool-result", toolResult });
         allMessages.push({
           role: "tool",
           parts: [toolResultPart(toolResult)]
         });
       }
-      await options.onToolExecutionComplete?.({ request, step: absoluteStep, toolResults: currentToolResults });
+      await options.onToolExecutionComplete?.({ request, step: absoluteStep, toolResults: visibleResults });
     }
 
     if (!finalResult) {
@@ -1373,7 +1441,7 @@ export const streamText = <
     }, true);
     broadcast.close();
 
-    return {
+    return presentOutput({
       text: getTextFromMessages(generatedMessages),
       finishReason: finalResult.finishReason,
       providerFinishReason: finalResult.providerFinishReason,
@@ -1382,7 +1450,7 @@ export const streamText = <
       messages: allMessages,
       toolResults,
       approvalRequests
-    };
+    }, activeRedaction);
   };
 
   finalResultPromise = runner().catch(async (error) => {

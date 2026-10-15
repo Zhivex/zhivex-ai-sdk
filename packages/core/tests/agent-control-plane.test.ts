@@ -840,4 +840,38 @@ describe("agent control plane", () => {
       children: [expect.objectContaining({ runId: "child", status: "cancel_requested" })]
     });
   });
+
+  it("stores optional egress decisions on the run ledger without prompts", () => {
+    const record = {
+      schemaVersion: 1 as const,
+      type: "egress_call_audit" as const,
+      id: "egress-1",
+      decision: "allowed" as const,
+      provider: "openai",
+      modelId: "gpt-agent",
+      reason: "allow rule matched",
+      createdAt: 10,
+      prompt: "must not survive"
+    };
+    const ledger = createAgentRunLedger(baseState(), {
+      egressAudit: [record] as unknown as NonNullable<ReturnType<typeof createAgentRunLedger>["egressAudit"]>
+    });
+    expect(ledger.egressAudit).toEqual([{
+      schemaVersion: 1,
+      type: "egress_call_audit",
+      id: "egress-1",
+      decision: "allowed",
+      provider: "openai",
+      modelId: "gpt-agent",
+      reason: "allow rule matched",
+      createdAt: 10
+    }]);
+    expect(JSON.stringify(ledger.egressAudit)).not.toContain("must not survive");
+    expect(normalizeAgentRunLedger(ledger).egressAudit).toEqual(ledger.egressAudit);
+    expect(createAgentRunLedger(baseState())).not.toHaveProperty("egressAudit");
+    expect(() => normalizeAgentRunLedger({
+      ...ledger,
+      egressAudit: [{ ...record, decision: "maybe" }]
+    })).toThrow('decision must be "allowed" or "denied"');
+  });
 });

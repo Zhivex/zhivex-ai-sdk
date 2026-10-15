@@ -22,6 +22,15 @@ export {
 } from "./google.js";
 export type { ExperimentalRawProviderOptions } from "./raw-provider-options.js";
 export { runComputerUse, ComputerUseExecutionError } from "./computer-use.js";
+export { createEgressPolicy, EgressDeniedError } from "./egress-policy.js";
+export type {
+  EgressAllowRule,
+  EgressAuditRecord,
+  EgressCallTarget,
+  EgressDeclaration,
+  EgressPolicy,
+  EgressPolicyOptions
+} from "./egress-policy.js";
 export type { ComputerUseCallbackContext, ComputerAction, ComputerUseEnvironment, ComputerUseResult, RunComputerUseOptions } from "./computer-use.js";
 
 export { experimentalDecisionHelpers } from "./decision-helpers.js";

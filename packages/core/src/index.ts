@@ -602,6 +602,17 @@ export {
   createToolAuditRecords,
   PRODUCTION_AGENT_KIT_SCHEMA_VERSION
 } from "./production-agent-kit.js";
+export { createLatamSensitiveDataPolicy } from "./latam-redaction.js";
+export type { LatamCountry, LatamSensitiveDataPolicyOptions } from "./latam-redaction.js";
+export { createEgressPolicy, EgressDeniedError } from "./egress-policy.js";
+export type {
+  EgressAllowRule,
+  EgressAuditRecord,
+  EgressCallTarget,
+  EgressDeclaration,
+  EgressPolicy,
+  EgressPolicyOptions
+} from "./egress-policy.js";
 export type {
   AgentAuditRecord,
   AgentAuditRecordOptions,

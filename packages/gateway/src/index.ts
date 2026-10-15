@@ -141,8 +141,14 @@ type RouteRequiredCapabilities = NonNullable<GatewayRequest["requiredCapabilitie
   toolChoice?: boolean;
 };
 
+type EgressDeniedErrorShape = Error & { code: "EGRESS_DENIED" };
+
+const isEgressDeniedError = (error: unknown): error is EgressDeniedErrorShape =>
+  error instanceof Error && error.name === "EgressDeniedError" &&
+  (error as { code?: unknown }).code === "EGRESS_DENIED";
+
 type ErrorDisposition = {
-  error: GatewayError | ProviderToolCallError;
+  error: GatewayError | ProviderToolCallError | EgressDeniedErrorShape;
   retrySameTarget: boolean;
   fallbackNextTarget: boolean;
   retryAfterMs?: number;
@@ -586,6 +592,7 @@ const normalizeError = (error: unknown): ErrorDisposition => {
     return { error, retrySameTarget: replaySafe, fallbackNextTarget: replaySafe };
   }
   if (error instanceof GatewayBudgetError || error instanceof GatewayDeadlineError) return { error, retrySameTarget: false, fallbackNextTarget: false };
+  if (isEgressDeniedError(error)) return { error, retrySameTarget: false, fallbackNextTarget: true };
   if (error instanceof ValidationError || error instanceof ConflictError || error instanceof GuardrailTriggeredError) {
     return {
       error: new GatewayError(redactSensitiveErrorMessage(error.message), false),
@@ -1364,7 +1371,7 @@ export const createGateway = (config: GatewayConfig) => {
     };
     const dispositionFor = (error: unknown): ErrorDisposition => {
       const disposition = normalizeError(error);
-      if (context.toolHistory && !(disposition.error instanceof ProviderToolCallError)) {
+      if (context.toolHistory && !(disposition.error instanceof ProviderToolCallError) && !isEgressDeniedError(disposition.error)) {
         disposition.error = new GatewayError(
           "Gateway provider failed while continuing tool history.",
           disposition.error.retryable
@@ -1401,6 +1408,7 @@ export const createGateway = (config: GatewayConfig) => {
 
     const throwFinalError = (lastAttemptError?: ErrorDisposition["error"]): never => {
       if (lastAttemptError instanceof ProviderToolCallError) throw lastAttemptError;
+      if (isEgressDeniedError(lastAttemptError)) throw lastAttemptError;
       if (context.attempts.at(-1)?.reasonCode === "circuit-open") throw new GatewayCircuitOpenError();
       if (context.attempts.at(-1)?.reasonCode === "admission-denied") throw new GatewayAdmissionError();
       throw new GatewayError(
@@ -1486,12 +1494,14 @@ export const createGateway = (config: GatewayConfig) => {
 
             if (error instanceof ProviderToolCallError) recordInternalRequests(error.providerRequestCount);
             const disposition = dispositionFor(error);
-            lastAttemptError = disposition.error;
+            if (!isEgressDeniedError(error) || !lastAttemptError || isEgressDeniedError(lastAttemptError)) {
+              lastAttemptError = disposition.error;
+            }
             permit?.end(disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
             await context.recordAttempt(
               createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                 retry,
-                reasonCode: error instanceof GatewayAdmissionError ? "admission-denied" : error instanceof GatewayBudgetError ? "budget-denied" : "provider-error",
+                reasonCode: isEgressDeniedError(error) ? "egress-denied" : error instanceof GatewayAdmissionError ? "admission-denied" : error instanceof GatewayBudgetError ? "budget-denied" : "provider-error",
                 errorMessage: disposition.error.message,
                 ...(error instanceof ProviderToolCallError ? {
                   usage: error.usage, confirmedUsage: error.confirmedUsage,
@@ -1691,12 +1701,14 @@ export const createGateway = (config: GatewayConfig) => {
 
             if (error instanceof ProviderToolCallError) recordInternalRequests(error.providerRequestCount);
             const disposition = dispositionFor(error);
-            lastAttemptError = disposition.error;
+            if (!isEgressDeniedError(error) || !lastAttemptError || isEgressDeniedError(lastAttemptError)) {
+              lastAttemptError = disposition.error;
+            }
             permit?.end(disposition.retrySameTarget ? "retryable-error" : "neutral", disposition.retryAfterMs);
             await context.recordAttempt(
               createAttempt(candidate.target, false, Date.now() - attemptStartedAt, candidate.targetRank, {
                 retry,
-                reasonCode: error instanceof GatewayAdmissionError ? "admission-denied" : error instanceof GatewayBudgetError ? "budget-denied" : "provider-error",
+                reasonCode: isEgressDeniedError(error) ? "egress-denied" : error instanceof GatewayAdmissionError ? "admission-denied" : error instanceof GatewayBudgetError ? "budget-denied" : "provider-error",
                 errorMessage: disposition.error.message,
                 ...(error instanceof ProviderToolCallError ? {
                   usage: error.usage, confirmedUsage: error.confirmedUsage,

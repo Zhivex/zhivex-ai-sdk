@@ -20,6 +20,8 @@ export {
   createSensitiveDataPolicy,
   createToolAuditRecords
 } from "./production-agent-kit.js";
+export { createLatamSensitiveDataPolicy } from "./latam-redaction.js";
+export type { LatamCountry, LatamSensitiveDataPolicyOptions } from "./latam-redaction.js";
 export {
   cancelBatch,
   cancelInteraction,

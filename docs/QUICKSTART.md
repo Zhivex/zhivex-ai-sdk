@@ -1,11 +1,14 @@
 # Quickstart
 
-This is the canonical Zhivex adoption path: install one provider, get the first response, add a persistent `Runner`, then connect the same server-side runner to React. It is intentionally narrower than the full API surface.
+This is the canonical Zhivex adoption path: install one provider, get the first response, then add a persistent `Runner`. Steps 1 to 3 are the 10-minute path. Connecting React is optional and comes after that.
 
 Target time from a clean project:
 
 - first provider response: under 5 minutes;
-- persistent chat with UI: under 15 minutes when starting from the provided starter.
+- persistent server-side agent: under 10 minutes;
+- optional React chat: under 15 minutes when starting from the provided starter.
+
+Governance controls (budgets, redaction, audit records, signed approvals, and the experimental egress allowlist) are documented in the [Governance kit](./GOVERNANCE.md). `examples/sdk/governed-quickstart.ts` is the credential-free copy that CI runs with a mock provider.
 
 For advanced tools, approvals, routing, evaluation, and workflows, continue with the [Agents Guide](./AGENTS.md) after this path works.
 
@@ -117,6 +120,8 @@ console.log(second.session.events.map((event) => event.type));
 ```
 
 Run it with `bun run runner.ts`. The file-backed service persists session state across process restarts and is appropriate for local development. Use `createPostgresSessionService()` for shared or serverless production state.
+
+Before exposing the same agent to real users, wrap it with the [production preset](./GOVERNANCE.md#production-preset). That adds the review-sensitive approval policy, email and credential redaction, and the default budget.
 
 ## 4. Connect React
 

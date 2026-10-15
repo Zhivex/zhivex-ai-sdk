@@ -116,6 +116,7 @@ These APIs are supported and documented, but they may still change between minor
 - Callable-provider construction and explicit merged-abort cleanup
 - Discriminated model capability profiles and legacy-capability derivation
 - Comparative model evaluation suites, scorers, reports, comparisons, and gates
+- `createLatamSensitiveDataPolicy` on `@zhivex-ai/sdk/beta`. It is a technical detector for selected Latin American identifiers and payment cards, not a legal-compliance determination.
 - AI SDK UI v7 interoperability exported from `@zhivex-ai/react/compat`, including message adapters, bounded request parsing, stream responses, and the `useChat` transport
 
 New application code can import these runtime values explicitly from
@@ -136,6 +137,7 @@ These areas are available for evaluation, but they should not be treated as long
 - Advanced tool registry helpers: `createAdvancedToolRegistry`, `AdvancedToolRegistry`, `createHttpTool`, `testToolDefinition`, `testToolRegistry`, `createToolTestFixture`, `recordToolTestFixture`, `runToolTestFixture`, `createToolPermissionPreset`, and `inspectToolRegistry`
 - Provider-specific `providerOptions` shapes beyond the documented shared behavior
 - Explicit raw provider-option passthrough created with `experimentalRawProviderOptions()`
+- `createEgressPolicy` and `EgressDeniedError` (public beta, stability `experimental`). A fail-closed provider, model, region, and endpoint allowlist checked before the provider call.
 - Agent/provider features currently described as support-tier dependent
 
 Experimental areas may change faster than the rest of the SDK. Production adopters should isolate them behind an application-owned service layer.

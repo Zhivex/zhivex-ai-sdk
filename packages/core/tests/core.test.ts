@@ -513,6 +513,15 @@ describe("core helpers", () => {
     await expect(Promise.resolve(createApprovalPolicy({ preset: "locked-down" })({ ...baseRequest, tool: normal }))).resolves.toMatchObject({
       approved: false
     });
+    await expect(Promise.resolve(createApprovalPolicy({
+      sensitiveToolNames: ["Shutdown"],
+      allowToolNames: ["weather"],
+      denyToolNames: ["shutdown"]
+    })({
+      ...baseRequest,
+      toolCall: { id: "call", name: "shutdown", input: {} },
+      tool: { ...normal, name: "shutdown" }
+    }))).resolves.toMatchObject({ approved: false });
   });
 
   it("redacts common secrets in messages and json metadata", () => {

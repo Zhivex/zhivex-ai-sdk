@@ -48,6 +48,9 @@ export class Agent<
   inputGuardrails?: AgentDefinition<TModel, TContext, TOutput, TContextInput>["inputGuardrails"];
   outputGuardrails?: AgentDefinition<TModel, TContext, TOutput, TContextInput>["outputGuardrails"];
   providerOptions?: AgentDefinition<TModel>["providerOptions"];
+  egressPolicy?: AgentDefinition<TModel>["egressPolicy"];
+  egress?: AgentDefinition<TModel>["egress"];
+  redaction?: AgentDefinition<TModel>["redaction"];
   subagents?: AgentDefinition<TModel>["subagents"];
   harness?: AgentDefinition<TModel>["harness"];
   executionEnvironment?: AgentDefinition<TModel, TContext>["executionEnvironment"];
@@ -87,6 +90,9 @@ export class Agent<
       inputGuardrails: this.inputGuardrails,
       outputGuardrails: this.outputGuardrails,
       providerOptions: this.providerOptions,
+      egressPolicy: this.egressPolicy,
+      egress: this.egress,
+      redaction: this.redaction,
       subagents: this.subagents,
       harness: this.harness,
       executionEnvironment: this.executionEnvironment,

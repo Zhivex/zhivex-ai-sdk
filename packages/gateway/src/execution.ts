@@ -9,6 +9,15 @@ export const cachedResults = new WeakSet<GenerateResult>();
 const reportedTokens = (usage?: TokenUsage) => usage?.totalTokens !== undefined && Number.isSafeInteger(usage.totalTokens) && usage.totalTokens >= 0 ? usage.totalTokens : undefined;
 /** Provider dispatch, resource lifetimes and exact caching are shared by every routed operation. */
 export const createGatewayExecutor = (config: GatewayConfig) => {
+  const authorize = async (target: GatewayModelTarget) => {
+    if (!config.egressPolicy) return;
+    await config.egressPolicy.assert({
+      provider: target.provider,
+      model: target.modelId,
+      region: target.region,
+      endpoint: target.endpoint
+    });
+  };
   const flights = new Map<string, { promise: Promise<GenerateResult>; controller: AbortController; users: number }>();
   let settlementFailures = 0, droppedCacheWrites = 0;
   const cacheWrites = new Set<Promise<void>>();
@@ -79,6 +88,7 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
     diagnostics: () => ({ settlementFailures, pendingSettlements: settlements.size, pendingCacheWrites: cacheWrites.size, droppedCacheWrites, inFlightCacheKeys: flights.size }),
     flush: async () => { await Promise.all([...settlements, ...cacheWrites]); },
     async generate(model: LanguageModel, target: GatewayModelTarget, input: ModelGenerateInput, scope?: string, cacheScope?: string): Promise<GenerateResult> {
+      await authorize(target);
       // Cache only pure text model steps; never replay tool calls, provider state or effects.
       const eligible = config.cache && cacheScope?.trim() && !input.tools?.length && !input.providerOptions && input.messages.every(m => m.parts.every(p => p.type === "text"));
       if (!eligible) return generate(model, target, input, scope);
@@ -135,6 +145,7 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
       return result;
     },
     async stream(model: LanguageModel, target: GatewayModelTarget, input: ModelGenerateInput, scope?: string): Promise<AsyncIterable<StreamEvent>> {
+      await authorize(target);
       const lease = await begin(target, input, scope);
       try {
         lease.start();

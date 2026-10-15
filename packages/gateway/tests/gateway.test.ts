@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createAgentHandoff, createInMemoryAgentRunStore, defaultModelCatalog, type ModelCapabilities, type ProviderAdapter } from "@zhivex-ai/core";
+import { createAgentHandoff, createEgressPolicy, createInMemoryAgentRunStore, defaultModelCatalog, EgressDeniedError, type ModelCapabilities, type ProviderAdapter } from "@zhivex-ai/core";
 import { createGateway } from "../src/index.ts";
 
 const createAdapter = (
@@ -170,6 +170,56 @@ describe("gateway", () => {
     expect(result.text).toBe("hello from fallback");
     expect(result.attempts).toHaveLength(4);
     expect(result.providerUsed).toBe("bedrock");
+  });
+
+  it("rejects a disallowed target before the adapter runs and can continue to an allowed fallback", async () => {
+    const denied = vi.fn().mockResolvedValue({ text: "should not run" });
+    const allowed = vi.fn().mockResolvedValue({ text: "allowed provider" });
+    const egressPolicy = createEgressPolicy({
+      allow: [{ provider: "bedrock", model: "anthropic.claude-3-5-sonnet", region: "*", endpoint: "*" }]
+    });
+    const gateway = createGateway({
+      adapters: {
+        gemini: createAdapter(denied),
+        bedrock: createAdapter(allowed)
+      },
+      egressPolicy,
+      maxRetries: 2,
+      retryBackoffMs: 1
+    });
+
+    const result = await gateway.generate({
+      primary: { provider: "gemini", modelId: "gemini-2.0-pro", region: "us-central1" },
+      fallbacks: [{ provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet", endpoint: "https://bedrock-runtime.us-east-1.amazonaws.com" }],
+      messages: [{ role: "user", content: "hello" }]
+    });
+
+    expect(denied).not.toHaveBeenCalled();
+    expect(allowed).toHaveBeenCalledTimes(1);
+    expect(result.text).toBe("allowed provider");
+    expect(result.attempts.map((attempt) => attempt.reasonCode)).toEqual(["egress-denied", "provider-success"]);
+    expect(egressPolicy.records.map((record) => record.decision)).toEqual(["denied", "allowed"]);
+  });
+
+  it("throws EgressDeniedError when every candidate is outside the allowlist", async () => {
+    const first = vi.fn().mockResolvedValue({ text: "no" });
+    const second = vi.fn().mockResolvedValue({ text: "no" });
+    const gateway = createGateway({
+      adapters: {
+        gemini: createAdapter(first),
+        bedrock: createAdapter(second)
+      },
+      egressPolicy: createEgressPolicy({ allow: [] }),
+      retryBackoffMs: 1
+    });
+
+    await expect(gateway.generate({
+      primary: { provider: "gemini", modelId: "gemini-2.0-pro" },
+      fallbacks: [{ provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet" }],
+      messages: [{ role: "user", content: "hello" }]
+    })).rejects.toBeInstanceOf(EgressDeniedError);
+    expect(first).not.toHaveBeenCalled();
+    expect(second).not.toHaveBeenCalled();
   });
 
   it("preserves images when the adapter declares vision support", async () => {
