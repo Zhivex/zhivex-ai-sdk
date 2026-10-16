@@ -36,10 +36,10 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-10-15",
+      snapshotVersion: "2026-10-16",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-10-14",
+        version: "2026-10-16",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
@@ -64,7 +64,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(272);
+    expect(entries).toHaveLength(274);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
@@ -106,7 +106,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(272);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(274);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-10-15",
       verifiedAt: "2026-10-15",
@@ -216,6 +216,44 @@ describe("SDK model catalog ownership", () => {
       inputCostPer1kTokens: 0.004,
       cachedInputCostPer1kTokens: 0.0002,
       outputCostPer1kTokens: 0.02
+    });
+    expect(defaultModelCatalog.find("openrouter", "meta/muse-spark-open")).toMatchObject({
+      inputCostPer1kTokens: 0.00125,
+      cachedInputCostPer1kTokens: 0.00015,
+      outputCostPer1kTokens: 0.00425,
+      costPer1kTokens: 0.00125,
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    });
+    expect(defaultModelCatalog.find("meta", "muse-spark-open")).toBeUndefined();
+    expect(defaultModelCatalog.find("ollama", "muse-spark-open")).toMatchObject({
+      inputCostPer1kTokens: 0.00125,
+      cachedInputCostPer1kTokens: 0.00015,
+      outputCostPer1kTokens: 0.00425,
+      costPer1kTokens: 0.00125,
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    });
+    expect(defaultModelCatalog.find("openrouter", "openai/gpt-4o-mini")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("openrouter", "openai/gpt-4o-mini")?.costPer1kTokens).toBe(0.0007);
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "openrouter")).toMatchObject({
+      revision: "2026-10-16",
+      verifiedAt: "2026-10-16",
+      pricingEffectiveAt: "2026-10-16",
+      modelCount: 11,
+      sources: expect.arrayContaining([
+        "https://openrouter.ai/meta/muse-spark-open",
+        "https://research.meta.ai/blog/muse-spark-open",
+        "https://dev.meta.ai/docs/muse-spark-open"
+      ])
+    });
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "ollama")).toMatchObject({
+      revision: "2026-10-16",
+      verifiedAt: "2026-10-16",
+      pricingEffectiveAt: "2026-10-16",
+      modelCount: 10,
+      sources: expect.arrayContaining([
+        "https://ollama.com/library/muse-spark-open",
+        "https://research.meta.ai/blog/muse-spark-open"
+      ])
     });
     expect(defaultModelCatalog.find("openrouter", "openai/gpt-6.1-sol")?.longContextPricing).toEqual({
       inputTokenThreshold: 272000, inputMultiplier: 2, outputMultiplier: 1.5

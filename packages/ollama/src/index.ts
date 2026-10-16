@@ -139,7 +139,11 @@ const isGptOssModel = (modelId: string) => /(?:^|[/:-])gpt-oss(?=$|[/:-])/i.test
 const isMuseGlimmerModel = (modelId: string) =>
   /(?:^|[/:-])muse-glimmer(?=$|[/:-])/i.test(modelId);
 
+const isMuseSparkOpenModel = (modelId: string) =>
+  /(?:^|[/:-])muse-spark-open(?=$|[/:-])/i.test(modelId);
+
 const isKnownThinkingModel = (modelId: string) =>
+  isMuseSparkOpenModel(modelId) ||
   /(?:^|[/:-])(?:qwen3(?:\.[58])?|gpt-oss|deepseek-(?:r1|v3\.1)|gemma4|muse-glimmer)(?=$|[/:-])/i.test(
     modelId
   );
@@ -157,6 +161,8 @@ const capabilitiesForModel = (modelId: string, directCloud: boolean): ModelCapab
       ? ["low", "medium", "high"]
       : isMuseGlimmerModel(modelId)
         ? ["none", "low", "medium", "high"]
+        : isMuseSparkOpenModel(modelId)
+          ? ["low", "medium", "high", "xhigh"]
       : ["none", "low", "medium", "high", "max"]
     : undefined
 });
@@ -193,15 +199,12 @@ const providerErrorFromPayload = (payload: Record<string, unknown>, fallbackStat
   );
 };
 
-const validateNativeThink = (value: unknown) => {
-  if (
-    value !== undefined &&
-    typeof value !== "boolean" &&
-    value !== "low" &&
-    value !== "medium" &&
-    value !== "high" &&
-    value !== "max"
-  ) {
+const validateNativeThink = (modelId: string, value: unknown) => {
+  const named = value === "low" || value === "medium" || value === "high" || value === "max" || value === "xhigh";
+  if (value !== undefined && typeof value !== "boolean" && !named) {
+    throw new ValidationError('Ollama "think" must be a boolean or "low", "medium", "high", or "max".');
+  }
+  if (value === "xhigh" && !isMuseSparkOpenModel(modelId)) {
     throw new ValidationError('Ollama "think" must be a boolean or "low", "medium", "high", or "max".');
   }
 };
@@ -209,7 +212,7 @@ const validateNativeThink = (value: unknown) => {
 const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
   const reasoning = input.reasoning;
   const nativeThink = input.providerOptions?.think;
-  validateNativeThink(nativeThink);
+  validateNativeThink(modelId, nativeThink);
 
   if (!reasoning) {
     if (isGptOssModel(modelId) && (typeof nativeThink === "boolean" || nativeThink === "max")) {
@@ -222,7 +225,19 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
         'Ollama Muse Glimmer models support "think" as a boolean or "low", "medium", or "high".'
       );
     }
-    return nativeThink as boolean | "low" | "medium" | "high" | "max" | undefined;
+    if (
+      isMuseSparkOpenModel(modelId) &&
+      nativeThink !== undefined &&
+      nativeThink !== "low" &&
+      nativeThink !== "medium" &&
+      nativeThink !== "high" &&
+      nativeThink !== "xhigh"
+    ) {
+      throw new UnsupportedFeatureError(
+        'Ollama Muse Spark Open requires "think" to be "low", "medium", "high", or "xhigh".'
+      );
+    }
+    return nativeThink as boolean | "low" | "medium" | "high" | "max" | "xhigh" | undefined;
   }
   if (nativeThink !== undefined) {
     throw new ValidationError('Do not combine shared "reasoning" with Ollama "providerOptions.think".');
@@ -240,8 +255,12 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
   }
 
   const effort = reasoning.effort;
-  if (effort === "minimal" || effort === "xhigh") {
-    throw new UnsupportedFeatureError(`Provider "ollama" does not support reasoning effort "${effort}".`);
+  if (effort === "minimal" || (effort === "xhigh" && !isMuseSparkOpenModel(modelId))) {
+    throw new UnsupportedFeatureError(
+      isMuseSparkOpenModel(modelId)
+        ? 'Ollama Muse Spark Open supports reasoning effort "low", "medium", "high", or "xhigh".'
+        : `Provider "ollama" does not support reasoning effort "${effort}".`
+    );
   }
   if (effort === "none" && reasoning.includeThoughts) {
     throw new UnsupportedFeatureError(
@@ -271,6 +290,11 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
   if (isMuseGlimmerModel(modelId) && think === "max") {
     throw new UnsupportedFeatureError(
       'Ollama Muse Glimmer models support reasoning effort "none", "low", "medium", or "high".'
+    );
+  }
+  if (isMuseSparkOpenModel(modelId) && (typeof think === "boolean" || think === "max")) {
+    throw new UnsupportedFeatureError(
+      'Ollama Muse Spark Open supports reasoning effort "low", "medium", "high", or "xhigh".'
     );
   }
   return think;

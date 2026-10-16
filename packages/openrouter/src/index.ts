@@ -284,6 +284,15 @@ class OpenRouterLanguageModel implements LanguageModel<OpenRouterLanguageModelOp
     if (!this.capabilities.reasoning && (input.reasoning || input.providerOptions?.reasoning)) {
       throw new UnsupportedFeatureError(`OpenRouter model "${this.modelId}" has no declared reasoning support.`);
     }
+    if (
+      input.reasoning?.effort !== undefined &&
+      this.capabilities.reasoningEfforts !== undefined &&
+      !this.capabilities.reasoningEfforts.includes(input.reasoning.effort)
+    ) {
+      throw new UnsupportedFeatureError(
+        `OpenRouter model "${this.modelId}" does not support reasoning effort "${input.reasoning.effort}".`
+      );
+    }
   }
 
   async generate(input: ModelGenerateInput<OpenRouterLanguageModelOptions>): Promise<GenerateResult> {

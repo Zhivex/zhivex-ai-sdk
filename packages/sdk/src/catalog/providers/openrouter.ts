@@ -2,11 +2,14 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const openrouterCatalogFragment = defineModelCatalogFragment({
   provider: "openrouter",
-  revision: "2026-10-13",
-  verifiedAt: "2026-10-13",
-  pricingEffectiveAt: "2026-10-13",
+  revision: "2026-10-16",
+  verifiedAt: "2026-10-16",
+  pricingEffectiveAt: "2026-10-16",
   sources: [
     "https://openrouter.ai/api/v1/models",
+    "https://openrouter.ai/meta/muse-spark-open",
+    "https://research.meta.ai/blog/muse-spark-open",
+    "https://dev.meta.ai/docs/muse-spark-open",
     "catalog-release:2026-08-16"
   ],
   entries: [
@@ -97,6 +100,20 @@ export const openrouterCatalogFragment = defineModelCatalogFragment({
     },
     {
       "provider": "openrouter",
+      "modelId": "meta/muse-spark-open",
+      "inputCostPer1kTokens": 0.00125,
+      "cachedInputCostPer1kTokens": 0.00015,
+      "outputCostPer1kTokens": 0.00425,
+      "costPer1kTokens": 0.00125,
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
+    {
+      "provider": "openrouter",
       "modelId": "meta/muse-glimmer-30b",
       "inputCostPer1kTokens": 0.00035,
       "cachedInputCostPer1kTokens": 0.00004,
@@ -112,11 +129,7 @@ export const openrouterCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "openrouter",
       "modelId": "openai/gpt-4o-mini",
-      "costPer1kTokens": 0.0007,
-      "recommendedFor": [
-        "chat",
-        "tools"
-      ]
+      "costPer1kTokens": 0.0007
     }
   ]
 });
