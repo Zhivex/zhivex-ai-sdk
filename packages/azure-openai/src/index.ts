@@ -271,14 +271,52 @@ const assertAzureOpenAIToolPathInsideRoot = async (rootDir: string | undefined, 
   }
 
   const path = await import("node:path");
+  const fs = await import("node:fs/promises");
   const root = path.resolve(rootDir);
-  const target = path.resolve(root, targetPath);
-  const relative = path.relative(root, target);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  const lexical = path.resolve(root, targetPath);
+  const lexicalRelative = path.relative(root, lexical);
+  const escapes = (relative: string) => path.isAbsolute(relative) || relative.split(path.sep).includes("..");
+  if (escapes(lexicalRelative)) {
     throw new Error(`Azure OpenAI ${label} path escapes rootDir.`);
   }
 
-  return target;
+  let rootReal: string;
+  try {
+    const rootStat = await fs.lstat(root);
+    if (rootStat.isSymbolicLink()) {
+      throw new Error(`Azure OpenAI ${label} path escapes rootDir.`);
+    }
+    rootReal = await fs.realpath(root);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("escapes rootDir")) throw error;
+    throw new Error(`Azure OpenAI ${label} rootDir is not an accessible directory.`);
+  }
+
+  const missing: string[] = [];
+  let current = lexical;
+  let resolvedExisting = rootReal;
+  while (true) {
+    try {
+      resolvedExisting = await fs.realpath(current);
+      break;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") throw new Error(`Azure OpenAI ${label} path escapes rootDir.`);
+      const parent = path.dirname(current);
+      if (parent === current) throw new Error(`Azure OpenAI ${label} path escapes rootDir.`);
+      missing.push(path.basename(current));
+      current = parent;
+    }
+  }
+  const resolved = missing.length === 0 ? resolvedExisting : path.resolve(resolvedExisting, ...missing.reverse());
+  const relative = path.relative(rootReal, resolved);
+  if (
+    escapes(relative) ||
+    (resolved !== rootReal && !resolved.startsWith(`${rootReal}${path.sep}`))
+  ) {
+    throw new Error(`Azure OpenAI ${label} path escapes rootDir.`);
+  }
+  return resolved;
 };
 
 export interface AzureOpenAIMcpApprovalRequest {
@@ -2294,7 +2332,8 @@ const applyAzureOpenAIPatchOperation = async (
   config: AzureOpenAIApplyPatchToolConfig
 ) => {
   if (config.rootDir) {
-    await assertAzureOpenAIToolPathInsideRoot(config.rootDir, operation.path, "apply_patch");
+    const safePath = await assertAzureOpenAIToolPathInsideRoot(config.rootDir, operation.path, "apply_patch");
+    return config.applyOperation({ ...operation, path: safePath });
   }
 
   return config.applyOperation(operation);

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { lstat, readdir, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -13,16 +14,20 @@ import {
   type AgentStoreScope
 } from "@zhivex-ai/core";
 
-import type { DockerClient, DockerCreateSpec, DockerExecResult } from "./docker-client.js";
+import type { DockerClient, DockerContainerInspection, DockerCreateSpec, DockerExecResult } from "./docker-client.js";
 import { createNodeDockerClient } from "./docker-client.js";
 import { SandboxError } from "./errors.js";
-import { normalizeAllowlist, startAllowlistProxy, type AllowlistProxy } from "./network.js";
+import { allowlistProxyQuotaDefaults, normalizeAllowlist, startAllowlistProxy, type AllowlistProxy } from "./network.js";
 import { assertRelativeWorkspacePath, assertWorkspaceRoot, commandBaseName, resolveWorkspacePath } from "./paths.js";
 import { createMemorySandboxLeaseStore, createMemorySandboxSnapshotStore, type SandboxLease, type SandboxLeaseStore, type SandboxSnapshot, type SandboxSnapshotStore } from "./stores.js";
 import { decodeCappedText } from "./stream.js";
 import { packTar, stripTarRoot, unpackTar, type TarEntry } from "./tar.js";
 
 const encoder = new TextEncoder();
+let sourceBytesRead = 0;
+
+/** Bytes actually read while importing a host source tree. Tests use this to prove early aborts. */
+export const sandboxSourceBytesRead = () => sourceBytesRead;
 
 export const dockerSandboxSecurityDefaults = Object.freeze({
   image: "alpine:3.21",
@@ -98,6 +103,8 @@ export interface DockerSandboxOptions {
   leases?: SandboxLeaseStore;
   snapshots?: SandboxSnapshotStore;
   snapshot?: "workspace-tar" | "docker-commit";
+  /** Stable id for containers this environment is allowed to sweep. Defaults to a random per-instance id. */
+  ownerId?: string;
   clock?: () => number;
 }
 
@@ -252,6 +259,11 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
   ].sort();
   const snapshotMode = options.snapshot ?? "workspace-tar";
   const undeclaredTools = options.undeclaredTools ?? "deny";
+  const ownerId = options.ownerId ?? randomUUID();
+  if (!/^[A-Za-z0-9_.:-]{8,128}$/.test(ownerId)) {
+    throw new SandboxError("OWNER", "Sandbox owner id must be 8-128 characters of letters, digits, and . _ : -.");
+  }
+  const networkQuotas = allowlist ? allowlistProxyQuotaDefaults : undefined;
   const manifest: AgentExecutionEnvironmentManifest = {
     schemaVersion: 1,
     id: options.id ?? "docker-sandbox",
@@ -288,13 +300,20 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       maxConcurrentProcesses: limits.maxConcurrentProcesses,
       maxMemoryMb: limits.memoryBytes / (1024 * 1024),
       maxWorkspaceBytes: limits.maxWorkspaceBytes,
-      maxFileWriteBytes: limits.maxFileBytes
+      maxFileWriteBytes: limits.maxFileBytes,
+      ...(networkQuotas
+        ? { maxNetworkRequests: networkQuotas.maxRequests, maxNetworkBytes: networkQuotas.maxBytes }
+        : {})
     },
     metadata: {
       sandbox: "docker",
       image,
+      user: user.user,
+      nanoCpus: limits.nanoCpus,
+      pidsLimit: limits.pidsLimit,
       snapshot: snapshotMode,
-      declaredPaths
+      declaredPaths,
+      ...(networkQuotas ? { networkQuotas } : {})
     }
   };
   const workspaceId = manifest.workspace?.id;
@@ -309,24 +328,45 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
   const proxies = new Map<string, { proxy: AllowlistProxy; networkId: string; gateway: string }>();
   const proxyKey = (runId: string, scopeKey: string) => `${scopeKey}\0${runId}`;
 
-  const seedEntries = async (): Promise<TarEntry[]> => {
+  const seedEntries = async (signal?: AbortSignal): Promise<TarEntry[]> => {
+    const budget = { remaining: limits.maxWorkspaceBytes };
+    const claim = (bytes: Uint8Array, label: string) => {
+      if (bytes.byteLength > limits.maxFileBytes) {
+        throw new SandboxError("LIMIT", `Sandbox file ${label} exceeds maxFileBytes.`);
+      }
+      if (bytes.byteLength > budget.remaining) {
+        throw new SandboxError("LIMIT", "Declared workspace files exceed maxWorkspaceBytes.");
+      }
+      budget.remaining -= bytes.byteLength;
+      return bytes;
+    };
     const entries: TarEntry[] = [];
     for (const directory of options.workspace.directories ?? []) {
+      throwIfSourceAborted(signal);
       entries.push({ path: assertRelativeWorkspacePath(directory), type: "directory", mode: 0o755, uid: user.uid, gid: user.gid });
     }
     for (const file of options.workspace.files ?? []) {
+      throwIfSourceAborted(signal);
       const content = typeof file.contents === "string" ? encoder.encode(file.contents) : file.contents;
       entries.push({
         path: assertRelativeWorkspacePath(file.path),
         type: "file",
-        content: await boundedBytes(content, limits.maxFileBytes, file.path),
+        content: claim(content, file.path),
         mode: file.mode ?? 0o644,
         uid: user.uid,
         gid: user.gid
       });
     }
     if (options.workspace.source) {
-      entries.push(...await readSourceTree(options.workspace.source.root, options.workspace.source.include, limits, user.uid, user.gid));
+      entries.push(...await readSourceTree(
+        options.workspace.source.root,
+        options.workspace.source.include,
+        limits,
+        user.uid,
+        user.gid,
+        budget,
+        signal
+      ));
     }
     const total = entries.reduce((sum, entry) => sum + (entry.content?.byteLength ?? 0), 0);
     if (total > limits.maxWorkspaceBytes) {
@@ -357,6 +397,7 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
     try {
       const proxy = await startAllowlistProxy({
         host: listenHost,
+        quotas: allowlistProxyQuotaDefaults,
         policy: {
           allowedDomains: allowlist.domains,
           allowedPorts: allowlist.ports,
@@ -390,6 +431,7 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
     labels: {
       "zhivex.sandbox": "1",
       "zhivex.environment-id": manifest.id,
+      "zhivex.owner": ownerId,
       "zhivex.run-id": runId,
       "zhivex.fingerprint": binding.fingerprint
     },
@@ -428,8 +470,8 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       createdId = created.Id;
       await docker.startContainer(created.Id);
       if (workspaceTar) await restoreTar(created.Id, workspaceTar);
-      else if (!imageId) {
-        const entries = withParents(await seedEntries(), user.uid, user.gid);
+        else if (!imageId) {
+        const entries = withParents(await seedEntries(signal), user.uid, user.gid);
         if (entries.length) await docker.putArchive(created.Id, workspaceRoot, packTar(entries));
       }
       throwIfCancelled();
@@ -474,16 +516,25 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
     if (archived.tar.byteLength > limits.maxWorkspaceBytes * 2 + 65_536) {
       throw new SandboxError("LIMIT", "Workspace snapshot exceeds the configured size limit.");
     }
+    const previous = await snapshots.load(lease.runId, lease.scopeKey);
     let imageId: string | undefined;
     if (snapshotMode === "docker-commit") {
       const committed = await docker.commitContainer(
         lease.containerId,
         "zhivex-sandbox",
-        `${lease.runId.replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 40) || "snapshot"}-${randomUUID().slice(0, 8)}`
+        `${lease.runId.replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 40) || "snapshot"}-${randomUUID().slice(0, 8)}`,
+        {
+          "zhivex.sandbox": "1",
+          "zhivex.owner": ownerId,
+          "zhivex.fingerprint": binding.fingerprint,
+          "zhivex.run-id": lease.runId
+        }
       );
       imageId = committed.Id;
     }
-    const snapshot: SandboxSnapshot = {
+    const carried = collectImageIds(previous?.pendingImageIds, previous?.imageId);
+    const pendingImageIds = carried.filter(id => id !== imageId);
+    const snapshot = withPendingImages({
       schemaVersion: 1,
       id: `snap_${randomUUID()}`,
       runId: lease.runId,
@@ -492,9 +543,98 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       imageId,
       workspaceTar: archived.tar,
       createdAt: clock()
-    };
-    await snapshots.save(snapshot);
-    return snapshot;
+    }, pendingImageIds);
+    try {
+      await snapshots.save(snapshot);
+    } catch (error) {
+      if (imageId) await retainUnsavedImage(previous, imageId);
+      throw error;
+    }
+    if (!pendingImageIds.length) return snapshot;
+    const { retained, failure } = await deleteSnapshotImages(pendingImageIds);
+    if (retained.length !== pendingImageIds.length) {
+      try {
+        await snapshots.save(withPendingImages(snapshot, retained));
+      } catch (saveError) {
+        if (failure) throw failure;
+        throw saveError;
+      }
+    }
+    if (failure) throw failure;
+    return withPendingImages(snapshot, retained);
+  };
+
+  const removeSnapshotImage = async (imageId: string) => {
+    await docker.removeImage(imageId).catch((error: unknown) => {
+      if (error instanceof SandboxError && error.code === "NOT_FOUND") return;
+      throw error;
+    });
+  };
+
+  const deleteSnapshotImages = async (ids: readonly string[]) => {
+    const retained: string[] = [];
+    let failure: unknown;
+    for (const id of ids) {
+      try {
+        await removeSnapshotImage(id);
+      } catch (error) {
+        retained.push(id);
+        failure ??= error;
+      }
+    }
+    return { retained, failure };
+  };
+
+  const retainUnsavedImage = async (previous: SandboxSnapshot | undefined, imageId: string) => {
+    if (previous) {
+      const pending = collectImageIds(previous.pendingImageIds, imageId).filter(id => id !== previous.imageId);
+      try {
+        await snapshots.save(withPendingImages(previous, pending));
+        return;
+      } catch {
+        // The replacement record was not stored. Delete the untracked image instead.
+      }
+    }
+    await removeSnapshotImage(imageId).catch(() => undefined);
+  };
+
+  const loadSnapshot = async (runId: string, scopeKey: string) => snapshots.load(runId, scopeKey).catch((error: unknown) => {
+    if (error instanceof SandboxError && (error.code === "NOT_FOUND" || error.code === "STORE_ID")) return undefined;
+    throw error;
+  });
+
+  const retryPendingSnapshotImages = async (runId: string, scopeKey: string) => {
+    const stored = await loadSnapshot(runId, scopeKey);
+    if (!stored?.pendingImageIds?.length) return;
+    const pending = collectImageIds(stored.pendingImageIds).filter(id => id !== stored.imageId);
+    const { retained, failure } = await deleteSnapshotImages(pending);
+    if (retained.length !== pending.length) {
+      try {
+        await snapshots.save(withPendingImages(stored, retained));
+      } catch (saveError) {
+        if (failure) throw failure;
+        throw saveError;
+      }
+    }
+    if (failure) throw failure;
+  };
+
+  const discardSnapshot = async (runId: string, scopeKey: string) => {
+    const stored = await loadSnapshot(runId, scopeKey);
+    if (!stored) return;
+    const ids = collectImageIds(stored.pendingImageIds, stored.imageId);
+    const { retained, failure } = await deleteSnapshotImages(ids);
+    if (retained.length > 0) {
+      const imageId = stored.imageId && retained.includes(stored.imageId) ? stored.imageId : undefined;
+      try {
+        await snapshots.save(withPendingImages({ ...stored, imageId }, retained.filter(id => id !== imageId)));
+      } catch (saveError) {
+        if (failure) throw failure;
+        throw saveError;
+      }
+      throw failure ?? new SandboxError("DOCKER_API", "Sandbox snapshot image could not be removed.");
+    }
+    await snapshots.remove(runId, scopeKey);
   };
 
   const openSession = (initial: SandboxLease): DockerSandboxSession => {
@@ -594,6 +734,7 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         assertOpen();
         await touch();
         const absolute = resolveWorkspacePath(workspaceRoot, filePath);
+        await assertResolvedWorkspacePath(docker, lease.containerId, workspaceRoot, absolute);
         const archived = await docker.getArchive(lease.containerId, absolute, limits.maxFileBytes + 8_192);
         if (archived.stat.linkTarget) {
           throw new SandboxError("SYMLINK_DENIED", "Sandbox file reads do not follow symlinks.");
@@ -610,6 +751,7 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         if (access !== "read-write") throw new SandboxError("READ_ONLY", "Sandbox workspace is read-only.");
         await touch();
         const absolute = resolveWorkspacePath(workspaceRoot, filePath);
+        await assertResolvedWorkspacePath(docker, lease.containerId, workspaceRoot, absolute);
         const bytes = await boundedBytes(typeof contents === "string" ? encoder.encode(contents) : contents, limits.maxFileBytes, filePath);
         const relative = absolute.slice(workspaceRoot.length + 1);
         await docker.putArchive(lease.containerId, workspaceRoot, packTar(withParents([{
@@ -625,6 +767,7 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         assertOpen();
         await touch();
         const absolute = resolveWorkspacePath(workspaceRoot, filePath);
+        await assertResolvedWorkspacePath(docker, lease.containerId, workspaceRoot, absolute);
         const listCap = Math.max(limits.maxProcessOutputBytes, 65_536);
         const result = await containerExec(["/bin/ls", "-1A", absolute], limits.maxProcessRuntimeMs, undefined, undefined, listCap);
         if (result.truncated) {
@@ -645,7 +788,13 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         await touch();
         const marker = `zhivex_${randomUUID()}`;
         const seconds = String(Math.max(1, Math.ceil(timeoutMs / 1000)));
-        const result = await containerExec(["/usr/bin/timeout", "-s", "KILL", seconds, ...command], timeoutMs, execOptions?.signal, marker);
+        const groupScript = 'sec="$1"; shift; setsid /usr/bin/timeout -s KILL "$sec" "$@" & leader=$!; wait "$leader"; status=$?; kill -KILL -"$leader" 2>/dev/null; exit "$status"';
+        const result = await containerExec(
+          ["/bin/sh", "-c", groupScript, marker, seconds, ...command],
+          timeoutMs,
+          execOptions?.signal,
+          marker
+        );
         const stdout = decodeCappedText(result.stdout, limits.maxProcessOutputBytes);
         const stderr = decodeCappedText(result.stderr, limits.maxProcessOutputBytes);
         return {
@@ -684,7 +833,7 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
           await docker.removeContainer(lease.containerId).catch((error: unknown) => {
             if (!(error instanceof SandboxError) || error.code !== "NOT_FOUND") throw error;
           });
-          await snapshots.remove(lease.runId, lease.scopeKey);
+          await discardSnapshot(lease.runId, lease.scopeKey);
         } finally {
           if (lease.networkId) await docker.removeNetwork(lease.networkId).catch(() => undefined);
           const proxy = proxies.get(proxyKey(lease.runId, lease.scopeKey));
@@ -722,6 +871,7 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
           const expired = { ...existing, status: "expired" as const, revision: existing.revision + 1 };
           await leases.compareAndSwap(expired, existing.revision).catch(() => undefined);
         }
+        await discardSnapshot(request.runId, scopeKey);
         throw new SandboxError("LEASE_EXPIRED", `Sandbox lease for run "${request.runId}" has expired.`);
       }
       if (!existing) {
@@ -729,13 +879,19 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         return openSession(lease);
       }
       let running = false;
+      let inspection: DockerContainerInspection | undefined;
       try {
-        running = (await docker.inspectContainer(existing.containerId)).State.Running;
+        inspection = await docker.inspectContainer(existing.containerId);
+        running = inspection.State.Running;
       } catch (error) {
         if (!(error instanceof SandboxError) || error.code !== "NOT_FOUND") throw error;
       }
       const proxyAlive = !allowlist || proxies.has(proxyKey(request.runId, scopeKey));
       if (running && proxyAlive) {
+        const host = inspection?.HostConfig;
+        if (host && (host.NanoCpus !== limits.nanoCpus || host.PidsLimit !== limits.pidsLimit || host.Memory !== limits.memoryBytes)) {
+          throw new ConflictError(`Execution environment binding changed for agent run "${request.runId}".`);
+        }
         const renewed = { ...existing, expiresAt: clock() + ttl, revision: existing.revision + 1 };
         await leases.compareAndSwap(renewed, existing.revision);
         return openSession(renewed);
@@ -762,7 +918,13 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
     async sweep(now = clock()) {
       const removed: string[] = [];
       for (const lease of await leases.list()) {
-        if (lease.environmentId !== manifest.id || lease.status !== "active" || lease.expiresAt > now) continue;
+        if (lease.environmentId !== manifest.id || lease.fingerprint !== binding.fingerprint) continue;
+        if (lease.status === "active" && lease.expiresAt > now) {
+          await retryPendingSnapshotImages(lease.runId, lease.scopeKey);
+          continue;
+        }
+        await discardSnapshot(lease.runId, lease.scopeKey);
+        if (lease.status !== "active") continue;
         await docker.removeContainer(lease.containerId).catch(() => undefined);
         if (lease.networkId) await docker.removeNetwork(lease.networkId).catch(() => undefined);
         const proxy = proxies.get(proxyKey(lease.runId, lease.scopeKey));
@@ -773,13 +935,50 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       }
       const active = new Set((await leases.list()).filter(lease => lease.status === "active").map(lease => lease.containerId));
       for (const container of await docker.listContainers("zhivex.sandbox=1")) {
-        if (container.Labels["zhivex.environment-id"] !== manifest.id || active.has(container.Id)) continue;
+        const labels = container.Labels;
+        if (labels["zhivex.environment-id"] !== manifest.id) continue;
+        if (labels["zhivex.owner"] !== ownerId || labels["zhivex.fingerprint"] !== binding.fingerprint) continue;
+        if (active.has(container.Id)) continue;
         await docker.removeContainer(container.Id).catch(() => undefined);
         removed.push(container.Id);
       }
       return { removedContainerIds: removed };
     }
   };
+};
+
+const IMAGE_ID = /^[A-Za-z0-9:_./@+-]{1,200}$/;
+
+const collectImageIds = (...groups: Array<string | readonly string[] | undefined>) => {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const group of groups) {
+    if (group === undefined) continue;
+    const values = typeof group === "string" ? [group] : group;
+    if (!Array.isArray(values)) {
+      throw new SandboxError("SNAPSHOT_INVALID", "Sandbox snapshot image ids are not usable.");
+    }
+    for (const id of values) {
+      if (typeof id !== "string" || !IMAGE_ID.test(id)) {
+        throw new SandboxError("SNAPSHOT_INVALID", "Sandbox snapshot image id is not usable.");
+      }
+      if (seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  if (ids.length > 32) {
+    throw new SandboxError("SNAPSHOT_INVALID", "Sandbox snapshot has too many images waiting for deletion.");
+  }
+  return ids;
+};
+
+const withPendingImages = (snapshot: SandboxSnapshot, pending: readonly string[]): SandboxSnapshot => {
+  const next: SandboxSnapshot = { ...snapshot };
+  if (pending.length) next.pendingImageIds = [...pending];
+  else delete next.pendingImageIds;
+  if (!next.imageId) delete next.imageId;
+  return next;
 };
 
 const withParents = (entries: readonly TarEntry[], uid: number, gid: number): TarEntry[] => {
@@ -831,24 +1030,63 @@ const boundedBytes = async (bytes: Uint8Array, max: number, label: string) => {
   return bytes;
 };
 
+const throwIfSourceAborted = (signal?: AbortSignal) => {
+  if (signal?.aborted) throw new SandboxError("CANCELLED", "Sandbox source import was cancelled.");
+};
+
+const assertResolvedWorkspacePath = async (
+  docker: DockerClient,
+  containerId: string,
+  workspaceRoot: string,
+  absolute: string
+) => {
+  const suffix: string[] = [];
+  let probe = absolute;
+  while (true) {
+    try {
+      const canonical = await docker.realpath(containerId, probe);
+      const rebuilt = suffix.length === 0 ? canonical : path.posix.join(canonical, ...suffix);
+      if (rebuilt !== absolute || (rebuilt !== workspaceRoot && !rebuilt.startsWith(`${workspaceRoot}/`))) {
+        throw new SandboxError("SYMLINK_DENIED", "Sandbox paths do not follow symlinks.");
+      }
+      return;
+    } catch (error) {
+      if (!(error instanceof SandboxError) || error.code !== "NOT_FOUND") throw error;
+      if (probe === workspaceRoot || probe === "/") {
+        throw new SandboxError("NOT_FOUND", `Sandbox path ${absolute} was not found.`);
+      }
+      const parent = path.posix.dirname(probe);
+      if (parent === probe) throw new SandboxError("NOT_FOUND", `Sandbox path ${absolute} was not found.`);
+      suffix.unshift(path.posix.basename(probe));
+      probe = parent;
+    }
+  }
+};
+
 const readSourceTree = async (
   root: string,
   include: readonly string[],
   limits: ResolvedLimits,
   uid: number,
-  gid: number
+  gid: number,
+  budget: { remaining: number },
+  signal?: AbortSignal
 ): Promise<TarEntry[]> => {
-  const realRoot = await path.resolve(root);
+  sourceBytesRead = 0;
+  const realRoot = path.resolve(root);
   const rootStat = await lstat(realRoot);
-  if (!rootStat.isDirectory()) throw new SandboxError("WORKSPACE_SOURCE", "Sandbox source root must be a directory.");
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new SandboxError("WORKSPACE_SOURCE", "Sandbox source root must be a directory.");
+  }
   const entries: TarEntry[] = [];
   for (const relative of include) {
+    throwIfSourceAborted(signal);
     const safe = assertRelativeWorkspacePath(relative);
     const absolute = path.resolve(realRoot, safe);
     if (absolute !== realRoot && !absolute.startsWith(`${realRoot}${path.sep}`)) {
       throw new SandboxError("PATH_ESCAPE", `Source path ${relative} escapes the source root.`);
     }
-    await copySource(absolute, safe, entries, limits, uid, gid, 0);
+    await copySource(absolute, safe, entries, limits, uid, gid, 0, budget, signal);
   }
   return entries;
 };
@@ -860,8 +1098,11 @@ const copySource = async (
   limits: ResolvedLimits,
   uid: number,
   gid: number,
-  depth: number
+  depth: number,
+  budget: { remaining: number },
+  signal?: AbortSignal
 ) => {
+  throwIfSourceAborted(signal);
   if (depth > 32 || entries.length > 1000) {
     throw new SandboxError("LIMIT", "Sandbox source copy exceeds the file or depth limit.");
   }
@@ -870,16 +1111,51 @@ const copySource = async (
   if (info.isDirectory()) {
     entries.push({ path: relative, type: "directory", mode: 0o755, uid, gid });
     for (const name of (await readdir(absolute)).sort()) {
-      await copySource(path.join(absolute, name), `${relative}/${name}`, entries, limits, uid, gid, depth + 1);
+      await copySource(path.join(absolute, name), `${relative}/${name}`, entries, limits, uid, gid, depth + 1, budget, signal);
     }
     return;
   }
   if (!info.isFile()) throw new SandboxError("WORKSPACE_SOURCE", `Source path ${relative} is not a regular file.`);
-  const content = new Uint8Array(await readFile(absolute));
-  if (content.byteLength > limits.maxFileBytes) {
+  if (info.size > limits.maxFileBytes) {
     throw new SandboxError("LIMIT", `Source file ${relative} exceeds maxFileBytes.`);
   }
+  if (info.size > budget.remaining) {
+    throw new SandboxError("LIMIT", `Source file ${relative} exceeds maxWorkspaceBytes.`);
+  }
+  const content = await readBoundedFile(absolute, relative, limits.maxFileBytes, budget.remaining);
+  budget.remaining -= content.byteLength;
   entries.push({ path: relative, type: "file", content, mode: 0o644, uid, gid });
+};
+
+const readBoundedFile = async (absolute: string, relative: string, maxFileBytes: number, remaining: number) => {
+  const cap = Math.min(maxFileBytes, remaining);
+  const handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) throw new SandboxError("WORKSPACE_SOURCE", `Source path ${relative} is not a regular file.`);
+    if (info.size > maxFileBytes) throw new SandboxError("LIMIT", `Source file ${relative} exceeds maxFileBytes.`);
+    if (info.size > remaining) throw new SandboxError("LIMIT", `Source file ${relative} exceeds maxWorkspaceBytes.`);
+    const target = new Uint8Array(info.size);
+    let offset = 0;
+    while (offset < info.size) {
+      const chunk = await handle.read(target, offset, Math.min(65_536, info.size - offset), offset);
+      if (chunk.bytesRead <= 0) break;
+      offset += chunk.bytesRead;
+      sourceBytesRead += chunk.bytesRead;
+      if (offset > cap) throw new SandboxError("LIMIT", `Source file ${relative} exceeds maxFileBytes.`);
+    }
+    if (offset !== info.size) {
+      throw new SandboxError("WORKSPACE_SOURCE", `Source file ${relative} changed while it was read.`);
+    }
+    return target;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new SandboxError("SYMLINK_DENIED", `Refusing to copy symlink ${relative}.`);
+    }
+    throw error;
+  } finally {
+    await handle.close();
+  }
 };
 
 const authorizeTool = (

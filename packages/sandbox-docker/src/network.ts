@@ -8,6 +8,25 @@ import { SandboxError } from "./errors.js";
 
 const CONNECT_TIMEOUT_MS = 10_000;
 
+/** Host-side limits for one allowlist proxy. These are enforced before any tunnel bytes flow. */
+export const allowlistProxyQuotaDefaults = Object.freeze({
+  maxConnections: 16,
+  maxInFlight: 4,
+  maxRequests: 128,
+  maxBytes: 8_388_608,
+  idleMs: 30_000,
+  tunnelMs: 60_000
+});
+
+export interface AllowlistProxyQuotas {
+  maxConnections: number;
+  maxInFlight: number;
+  maxRequests: number;
+  maxBytes: number;
+  idleMs: number;
+  tunnelMs: number;
+}
+
 const bareAddress = (address: string) =>
   address.trim().toLowerCase().replace(/^\[/, "").replace(/\]$/, "").split("%")[0] ?? "";
 
@@ -129,10 +148,21 @@ export interface AllowlistProxy {
   close(): Promise<void>;
 }
 
+const resolveQuotas = (input: Partial<AllowlistProxyQuotas> | undefined): AllowlistProxyQuotas => {
+  const quotas = { ...allowlistProxyQuotaDefaults, ...input };
+  for (const [name, value] of Object.entries(quotas)) {
+    if (!Number.isSafeInteger(value) || value < 1) {
+      throw new SandboxError("LIMIT", `Allowlist proxy quota ${name} must be a positive integer.`);
+    }
+  }
+  return quotas;
+};
+
 export const startAllowlistProxy = async (options: {
   policy: AllowlistPolicy;
   host?: string;
   resolveHost?: (hostname: string) => Promise<string[]>;
+  quotas?: Partial<AllowlistProxyQuotas>;
 }): Promise<AllowlistProxy> => {
   const normalized = normalizeAllowlist(options.policy);
   const domains = new Set(normalized.domains);
@@ -156,13 +186,24 @@ export const startAllowlistProxy = async (options: {
     return addresses;
   };
 
+  const quotas = resolveQuotas(options.quotas);
   const tracked = new Set<Socket>();
+  let inFlight = 0;
+  let requests = 0;
+  let transferred = 0;
   const server: Server = createServer((_request: IncomingMessage, response: ServerResponse) => {
     response.writeHead(405);
     response.end("Sandbox allowlist proxy accepts CONNECT only.");
   });
   server.on("connection", socket => {
+    if (tracked.size >= quotas.maxConnections) {
+      socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+      return;
+    }
     tracked.add(socket);
+    socket.setTimeout(quotas.idleMs);
+    socket.on("timeout", () => socket.destroy());
+    socket.on("data", () => socket.setTimeout(quotas.idleMs));
     socket.on("close", () => tracked.delete(socket));
   });
 
@@ -172,8 +213,28 @@ export const startAllowlistProxy = async (options: {
     void (async () => {
       const target = connectTarget(request.url ?? "");
       let upstream: Socket | undefined;
+      let counted = false;
+      let tunnelTimer: ReturnType<typeof setTimeout> | undefined;
+      const closeBoth = () => {
+        if (tunnelTimer) clearTimeout(tunnelTimer);
+        if (!socket.destroyed) socket.destroy();
+        if (upstream && !upstream.destroyed) upstream.destroy();
+      };
       try {
+        if (!tracked.has(socket)) {
+          socket.destroy();
+          return;
+        }
+        requests += 1;
+        if (requests > quotas.maxRequests || transferred >= quotas.maxBytes) {
+          throw new SandboxError("NETWORK_DENIED", "Allowlist proxy quota is exhausted.");
+        }
+        if (inFlight >= quotas.maxInFlight) {
+          throw new SandboxError("NETWORK_DENIED", "Allowlist proxy connection limit reached.");
+        }
         if (!target) throw new SandboxError("NETWORK_DENIED", "CONNECT target is missing a host.");
+        inFlight += 1;
+        counted = true;
         await authorize(target.host, target.port);
         const fresh = await resolveWithin(resolveHost(target.host));
         const chosen = fresh[0];
@@ -199,19 +260,37 @@ export const startAllowlistProxy = async (options: {
         if (!options.policy.allowPrivateNetworks && isPrivateAddress(chosen)) {
           throw new SandboxError("NETWORK_DENIED", `Allowlist host ${target.host} resolves to a private address.`);
         }
+        inFlight -= 1;
+        counted = false;
         socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-        if (head.length) upstream.write(head);
-        upstream.pipe(socket);
-        socket.pipe(upstream);
-        const closeBoth = () => {
-          if (!socket.destroyed) socket.destroy();
-          if (upstream && !upstream.destroyed) upstream.destroy();
+        if (head.length) {
+          transferred += head.length;
+          if (transferred > quotas.maxBytes) throw new SandboxError("NETWORK_DENIED", "Allowlist proxy byte quota is exhausted.");
+          upstream.write(head);
+        }
+        tunnelTimer = setTimeout(closeBoth, quotas.tunnelMs);
+        const relay = (from: Socket, to: Socket) => {
+          from.on("data", (chunk: Buffer) => {
+            transferred += chunk.length;
+            if (transferred > quotas.maxBytes) {
+              closeBoth();
+              return;
+            }
+            from.setTimeout(quotas.idleMs);
+            if (!to.write(chunk)) from.pause();
+          });
+          to.on("drain", () => from.resume());
         };
+        upstream.setTimeout(quotas.idleMs);
+        upstream.on("timeout", closeBoth);
+        relay(socket, upstream);
+        relay(upstream, socket);
         socket.on("close", () => upstream?.destroy());
         upstream.on("close", () => socket.destroy());
         socket.on("error", closeBoth);
         upstream.on("error", closeBoth);
       } catch {
+        if (counted) inFlight -= 1;
         upstream?.destroy();
         if (!socket.destroyed) socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       }
