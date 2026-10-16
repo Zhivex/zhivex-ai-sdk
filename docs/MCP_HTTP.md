@@ -149,3 +149,7 @@ approval. Resources and prompts remain explicitly requested untrusted data.
 Protocol upgrades and additional capabilities require their own tests and release
 notes. Existing error codes, no-replay behavior, approval defaults, host-owned
 credentials, and local-only `close()` semantics are compatibility commitments.
+
+To expose Zhivex tools and agents to an MCP client, use the experimental
+[MCP server](./MCP_SERVER.md). That server is a separate entrypoint and does
+not change this client.
