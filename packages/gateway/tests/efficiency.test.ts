@@ -256,6 +256,46 @@ describe("gateway efficiency", () => {
     spy.mockRestore();
   });
 
+  it("surfaces a failed agent stream setup without unhandled rejections", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (error: unknown) => {
+      rejections.push(error);
+    };
+    process.on("unhandledRejection", onRejection);
+    const setupError = new RangeError("maxHistory must be a positive integer.");
+    const spy = vi.spyOn(gatewayAgents, "streamAgent").mockImplementation(() => {
+      throw setupError;
+    });
+    const gateway = createGateway({
+      maxRetries: 0,
+      adapters: { openai: adapter(model()) }
+    });
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+    try {
+      const collected = gateway.streamAgent({ primary: target, prompt: "hello" });
+      const eventIterator = collected.eventStream[Symbol.asyncIterator]();
+      const textIterator = collected.textStream[Symbol.asyncIterator]();
+      await expect(collected.collect()).rejects.toBe(setupError);
+      await settle();
+      expect(rejections).toEqual([]);
+
+      await expect(eventIterator.next()).rejects.toBe(setupError);
+      await expect(textIterator.next()).rejects.toBe(setupError);
+      await expect(eventIterator.return?.()).rejects.toBe(setupError);
+      await settle();
+      expect(rejections).toEqual([]);
+
+      const streamed = gateway.streamAgent({ primary: target, prompt: "hello" });
+      await expect(streamed.eventStream[Symbol.asyncIterator]().next()).rejects.toBe(setupError);
+      await expect(streamed.textStream[Symbol.asyncIterator]().next()).rejects.toBe(setupError);
+      await settle();
+      expect(rejections).toEqual([]);
+    } finally {
+      spy.mockRestore();
+      process.off("unhandledRejection", onRejection);
+    }
+  });
+
   it("keeps jittered backoff inside the exponential ceiling and Retry-After cap", async () => {
     vi.useFakeTimers();
     try {

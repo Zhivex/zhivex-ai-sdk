@@ -173,20 +173,21 @@ type GatewayAgentsModule = typeof import("./agents.js");
 let gatewayAgentsModule: Promise<GatewayAgentsModule> | undefined;
 const loadGatewayAgents = (): Promise<GatewayAgentsModule> => (gatewayAgentsModule ??= import("./agents.js"));
 
-const deferIterable = <T>(ready: Promise<AsyncIterable<T>>): AsyncIterable<T> => ({
+const deferIterable = <T>(open: () => Promise<AsyncIterable<T>>): AsyncIterable<T> => ({
   [Symbol.asyncIterator](): AsyncIterator<T> {
-    const opened = ready.then((source) => source[Symbol.asyncIterator]());
+    let opened: Promise<AsyncIterator<T>> | undefined;
+    const iterator = () => (opened ??= open().then((source) => source[Symbol.asyncIterator]()));
     return {
       async next() {
-        return (await opened).next();
+        return (await iterator()).next();
       },
       async return(value) {
-        const iterator = await opened;
-        return iterator.return ? iterator.return(value) : { done: true, value: undefined };
+        const current = await iterator();
+        return current.return ? current.return(value) : { done: true, value: undefined };
       },
       async throw(error) {
-        const iterator = await opened;
-        if (iterator.throw) return iterator.throw(error);
+        const current = await iterator();
+        if (current.throw) return current.throw(error);
         throw error;
       }
     };
@@ -2110,8 +2111,8 @@ export const createGateway = (config: GatewayConfig) => {
       void pending.catch(() => undefined);
 
       return {
-        eventStream: deferIterable(pending.then((result) => result.eventStream)),
-        textStream: deferIterable(pending.then((result) => result.textStream)),
+        eventStream: deferIterable(() => pending.then((result) => result.eventStream)),
+        textStream: deferIterable(() => pending.then((result) => result.textStream)),
         collect: async () => {
           const result = await (await pending).collect();
           return enrichAgentResult(
