@@ -30,6 +30,8 @@ export interface SandboxSnapshot {
   scopeKey: string;
   mode: "workspace-tar" | "docker-commit";
   imageId?: string;
+  /** Images still to delete after a replacement. Empty once every deletion has succeeded. */
+  pendingImageIds?: string[];
   workspaceTar: Uint8Array;
   createdAt: number;
 }
@@ -98,7 +100,11 @@ export const createMemorySandboxSnapshotStore = (): SandboxSnapshotStore => {
       const record = records.get(leaseKey(runId, scopeKey));
       if (!record) return undefined;
       assertSnapshotIdentity(record, runId, scopeKey);
-      return { ...record, workspaceTar: new Uint8Array(record.workspaceTar) };
+      return {
+        ...record,
+        workspaceTar: new Uint8Array(record.workspaceTar),
+        ...(record.pendingImageIds ? { pendingImageIds: [...record.pendingImageIds] } : {})
+      };
     },
     async save(snapshot) {
       assertStoreRunId(snapshot.runId);
@@ -106,7 +112,8 @@ export const createMemorySandboxSnapshotStore = (): SandboxSnapshotStore => {
       assertSnapshotIdentity(snapshot, snapshot.runId, snapshot.scopeKey);
       records.set(leaseKey(snapshot.runId, snapshot.scopeKey), {
         ...snapshot,
-        workspaceTar: new Uint8Array(snapshot.workspaceTar)
+        workspaceTar: new Uint8Array(snapshot.workspaceTar),
+        ...(snapshot.pendingImageIds ? { pendingImageIds: [...snapshot.pendingImageIds] } : {})
       });
     },
     async remove(runId, scopeKey) {
@@ -140,13 +147,13 @@ const assertScopeKey = (scopeKey: string) => {
   }
 };
 
-/** Join a scope file and refuse a normalized path that leaves the scope directory. */
+/** Join a scope file and refuse a path whose segments leave the scope directory. */
 const scopeFile = (directory: string, scopeKey: string, name: string) => {
   assertScopeKey(scopeKey);
   const scopeDir = path.resolve(directory, scopeDirectory(scopeKey));
   const resolved = path.resolve(scopeDir, name);
   const relative = path.relative(scopeDir, resolved);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  if (path.isAbsolute(relative) || relative.split(path.sep).includes("..")) {
     throw new SandboxError("STORE_ID", "Sandbox store path escapes its scope directory.");
   }
   return resolved;

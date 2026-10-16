@@ -385,7 +385,8 @@ const assertOpenAIToolPathInsideRoot = async (rootDir: string | undefined, targe
   const root = path.resolve(rootDir);
   const lexical = path.resolve(root, targetPath);
   const lexicalRelative = path.relative(root, lexical);
-  if (lexicalRelative.startsWith("..") || path.isAbsolute(lexicalRelative)) {
+  const escapes = (relative: string) => path.isAbsolute(relative) || relative.split(path.sep).includes("..");
+  if (escapes(lexicalRelative)) {
     throw new Error(`OpenAI ${label} path escapes rootDir.`);
   }
 
@@ -420,8 +421,7 @@ const assertOpenAIToolPathInsideRoot = async (rootDir: string | undefined, targe
   const resolved = missing.length === 0 ? resolvedExisting : path.resolve(resolvedExisting, ...missing.reverse());
   const relative = path.relative(rootReal, resolved);
   if (
-    relative.startsWith("..") ||
-    path.isAbsolute(relative) ||
+    escapes(relative) ||
     (resolved !== rootReal && !resolved.startsWith(`${rootReal}${path.sep}`))
   ) {
     throw new Error(`OpenAI ${label} path escapes rootDir.`);

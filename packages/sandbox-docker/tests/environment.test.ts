@@ -5,6 +5,7 @@ import path from "node:path";
 import { Agent, ConflictError, createMockLanguageModel, createTextMessage } from "@zhivex-ai/core";
 import { describe, expect, it } from "vitest";
 
+import { SandboxError } from "../src/errors.js";
 import { sandboxSourceBytesRead } from "../src/environment.js";
 import { createDockerSandboxEnvironment, createDockerSandboxTools } from "../src/index.js";
 import { createMemoryDockerClient } from "../src/memory-docker-client.js";
@@ -430,6 +431,139 @@ describe("docker sandbox environment", () => {
     await terminal.release({ status: "completed" });
     expect(docker.imageCount()).toBe(0);
     expect(await snapshots.load("run-terminal-image", scopeKey)).toBeUndefined();
+  });
+
+  it("keeps a replaced docker-commit image until deletion succeeds", async () => {
+    let now = 1_000;
+    const docker = createMemoryDockerClient();
+    const snapshots = createMemorySandboxSnapshotStore();
+    const blocked = new Set<string>();
+    const removeImage = docker.removeImage.bind(docker);
+    docker.removeImage = async id => {
+      if (blocked.has(id)) throw new Error("image delete failed");
+      await removeImage(id);
+    };
+    const scopeKey = JSON.stringify(["", "", ""]);
+    const sandbox = createDockerSandboxEnvironment({
+      docker,
+      snapshots,
+      assurance: "best-effort",
+      snapshot: "docker-commit",
+      clock: () => now,
+      leaseTtlMs: 50_000,
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "v" }] }
+    });
+    const session = await sandbox.acquire({ runId: "run-replace-image" });
+    await session.snapshot();
+    const firstId = (await snapshots.load("run-replace-image", scopeKey))?.imageId;
+    expect(firstId).toBeTruthy();
+    blocked.add(firstId ?? "");
+    await expect(session.snapshot()).rejects.toThrow(/image delete failed/);
+    const replaced = await snapshots.load("run-replace-image", scopeKey);
+    expect(replaced?.imageId).not.toBe(firstId);
+    expect(replaced?.pendingImageIds).toEqual([firstId]);
+    expect(docker.imageCount()).toBe(2);
+    await expect(sandbox.sweep(now)).rejects.toThrow(/image delete failed/);
+    expect(docker.imageCount()).toBe(2);
+    blocked.delete(firstId ?? "");
+    await sandbox.sweep(now);
+    const settled = await snapshots.load("run-replace-image", scopeKey);
+    expect(settled?.pendingImageIds).toBeUndefined();
+    expect(settled?.imageId).toBe(replaced?.imageId);
+    expect(docker.imageCount()).toBe(1);
+    await session.release({ status: "waiting_approval" });
+  });
+
+  it("deletes a snapshot image before dropping the record and retries a failed deletion", async () => {
+    let now = 1_000;
+    const docker = createMemoryDockerClient();
+    const snapshots = createMemorySandboxSnapshotStore();
+    let fail = true;
+    const removeImage = docker.removeImage.bind(docker);
+    docker.removeImage = async id => {
+      if (fail) throw new Error("image delete failed");
+      await removeImage(id);
+    };
+    const scopeKey = JSON.stringify(["", "", ""]);
+    const sandbox = createDockerSandboxEnvironment({
+      docker,
+      snapshots,
+      assurance: "best-effort",
+      snapshot: "docker-commit",
+      clock: () => now,
+      leaseTtlMs: 50,
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "v" }] }
+    });
+    const session = await sandbox.acquire({ runId: "run-discard-image" });
+    await session.snapshot();
+    const imageId = (await snapshots.load("run-discard-image", scopeKey))?.imageId;
+    await expect(session.release({ status: "completed" })).rejects.toThrow(/image delete failed/);
+    expect((await snapshots.load("run-discard-image", scopeKey))?.imageId).toBe(imageId);
+    expect(docker.imageCount()).toBe(1);
+    now = 5_000;
+    await expect(sandbox.sweep(now)).rejects.toThrow(/image delete failed/);
+    expect(docker.imageCount()).toBe(1);
+    fail = false;
+    await sandbox.sweep(now);
+    expect(docker.imageCount()).toBe(0);
+    expect(await snapshots.load("run-discard-image", scopeKey)).toBeUndefined();
+
+    const gone = createDockerSandboxEnvironment({
+      docker,
+      snapshots,
+      assurance: "best-effort",
+      snapshot: "docker-commit",
+      clock: () => now,
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "v" }] }
+    });
+    docker.removeImage = async () => {
+      throw new SandboxError("NOT_FOUND", "missing image");
+    };
+    const terminal = await gone.acquire({ runId: "run-missing-image" });
+    await terminal.snapshot();
+    await terminal.release({ status: "completed" });
+    expect(await snapshots.load("run-missing-image", scopeKey)).toBeUndefined();
+  });
+
+  it("remembers a committed image when the replacement snapshot cannot be saved", async () => {
+    const docker = createMemoryDockerClient();
+    const inner = createMemorySandboxSnapshotStore();
+    let rejectNext = false;
+    const snapshots = {
+      load: (runId: string, scopeKey: string) => inner.load(runId, scopeKey),
+      async save(snapshot: Parameters<typeof inner.save>[0]) {
+        if (rejectNext) {
+          rejectNext = false;
+          throw new Error("store save failed");
+        }
+        await inner.save(snapshot);
+      },
+      remove: (runId: string, scopeKey: string) => inner.remove(runId, scopeKey)
+    };
+    const scopeKey = JSON.stringify(["", "", ""]);
+    const sandbox = createDockerSandboxEnvironment({
+      docker,
+      snapshots,
+      assurance: "best-effort",
+      snapshot: "docker-commit",
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "v" }] }
+    });
+    const session = await sandbox.acquire({ runId: "run-save-image" });
+    await session.snapshot();
+    const firstId = (await inner.load("run-save-image", scopeKey))?.imageId;
+    rejectNext = true;
+    await expect(session.snapshot()).rejects.toThrow(/store save failed/);
+    const retained = await inner.load("run-save-image", scopeKey);
+    expect(retained?.imageId).toBe(firstId);
+    expect(retained?.pendingImageIds).toHaveLength(1);
+    expect(docker.imageCount()).toBe(2);
+    await session.snapshot();
+    const settled = await inner.load("run-save-image", scopeKey);
+    expect(settled?.pendingImageIds).toBeUndefined();
+    expect(settled?.imageId).not.toBe(firstId);
+    expect(docker.imageCount()).toBe(1);
+    await session.release({ status: "completed" });
+    expect(docker.imageCount()).toBe(0);
   });
 
   it("reports snapshot cleanup failures and removes the snapshot on retry", async () => {

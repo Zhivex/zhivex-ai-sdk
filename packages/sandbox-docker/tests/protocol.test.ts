@@ -10,7 +10,7 @@ import { commandBaseName, resolveWorkspacePath } from "../src/paths.js";
 import { packTar, stripTarRoot, unpackTar } from "../src/tar.js";
 import { decodeCappedText, encodeDockerStreamFrame, readMultiplexedStream } from "../src/stream.js";
 import { isPrivateAddress, startAllowlistProxy } from "../src/network.js";
-import { createFileSandboxLeaseStore, createFileSandboxSnapshotStore, createMemorySandboxSnapshotStore } from "../src/stores.js";
+import { createFileSandboxLeaseStore, createFileSandboxSnapshotStore, createMemorySandboxLeaseStore, createMemorySandboxSnapshotStore } from "../src/stores.js";
 import { createServer } from "node:net";
 
 
@@ -400,8 +400,36 @@ describe("sandbox file stores", () => {
       await expect(snapshots.save({ ...snapshot, runId: ".", scopeKey: scopeB })).rejects.toThrow(/cannot be '\.' or '\.\.'/);
       const memory = createMemorySandboxSnapshotStore();
       await expect(memory.save({ ...snapshot, runId: ".." })).rejects.toThrow(/cannot be '\.' or '\.\.'/);
+      await snapshots.save({ ...snapshot, runId: "..run", scopeKey: scopeB });
+      expect((await snapshots.load("..run", scopeB))?.runId).toBe("..run");
+      await memory.save({ ...snapshot, runId: "..run" });
+      expect((await memory.load("..run", scopeA))?.runId).toBe("..run");
+      const scopeDir = createHash("sha256").update(scopeB).digest("hex");
+      const savedPath = path.join(directory, "snapshots", scopeDir, `${encodeURIComponent("..run")}.json`);
+      expect(path.relative(path.join(directory, "snapshots", scopeDir), savedPath).split(path.sep)).not.toContain("..");
+      const lease = {
+        schemaVersion: 1 as const,
+        runId: "..run",
+        scopeKey: scopeB,
+        environmentId: "docker-sandbox",
+        fingerprint: "sha256:abc",
+        containerId: "container",
+        revision: 0,
+        status: "active" as const,
+        createdAt: 1,
+        expiresAt: 2
+      };
+      const fileLeases = createFileSandboxLeaseStore(path.join(directory, "leases"));
+      const memoryLeases = createMemorySandboxLeaseStore();
+      await fileLeases.compareAndSwap(lease, undefined);
+      await memoryLeases.compareAndSwap(lease, undefined);
+      expect((await fileLeases.load("..run", scopeB))?.containerId).toBe("container");
+      expect((await memoryLeases.load("..run", scopeB))?.containerId).toBe("container");
+      await expect(fileLeases.compareAndSwap({ ...lease, runId: ".." }, undefined)).rejects.toThrow(/cannot be '\.' or '\.\.'/);
+      await expect(memoryLeases.compareAndSwap({ ...lease, runId: "." }, undefined)).rejects.toThrow(/cannot be '\.' or '\.\.'/);
       expect(new TextDecoder().decode((await snapshots.load("kept", scopeA))?.workspaceTar ?? new Uint8Array())).toBe("tar");
-      const file = await findFile(path.join(directory, "snapshots"), ".json");
+      const keptScope = createHash("sha256").update(scopeA).digest("hex");
+      const file = path.join(directory, "snapshots", keptScope, `${encodeURIComponent("kept")}.json`);
       const raw = JSON.parse(await (await import("node:fs/promises")).readFile(file, "utf8")) as { runId: string };
       raw.runId = "other";
       await writeFile(file, JSON.stringify(raw));

@@ -718,6 +718,10 @@ describe("azure openai adapter", () => {
       expect(applyOperation).toHaveBeenCalledWith(expect.objectContaining({
         path: nodePath.join(root, "sub", "new.txt")
       }));
+      await patch.execute?.({ operation: { type: "create_file", path: "..note.txt", diff: "x" } });
+      expect(applyOperation).toHaveBeenCalledWith(expect.objectContaining({
+        path: nodePath.join(root, "..note.txt")
+      }));
     } finally {
       await rm(parent, { recursive: true, force: true });
     }

@@ -532,7 +532,9 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       );
       imageId = committed.Id;
     }
-    const snapshot: SandboxSnapshot = {
+    const carried = collectImageIds(previous?.pendingImageIds, previous?.imageId);
+    const pendingImageIds = carried.filter(id => id !== imageId);
+    const snapshot = withPendingImages({
       schemaVersion: 1,
       id: `snap_${randomUUID()}`,
       runId: lease.runId,
@@ -541,12 +543,25 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       imageId,
       workspaceTar: archived.tar,
       createdAt: clock()
-    };
-    await snapshots.save(snapshot);
-    if (previous?.imageId && previous.imageId !== snapshot.imageId) {
-      await removeSnapshotImage(previous.imageId);
+    }, pendingImageIds);
+    try {
+      await snapshots.save(snapshot);
+    } catch (error) {
+      if (imageId) await retainUnsavedImage(previous, imageId);
+      throw error;
     }
-    return snapshot;
+    if (!pendingImageIds.length) return snapshot;
+    const { retained, failure } = await deleteSnapshotImages(pendingImageIds);
+    if (retained.length !== pendingImageIds.length) {
+      try {
+        await snapshots.save(withPendingImages(snapshot, retained));
+      } catch (saveError) {
+        if (failure) throw failure;
+        throw saveError;
+      }
+    }
+    if (failure) throw failure;
+    return withPendingImages(snapshot, retained);
   };
 
   const removeSnapshotImage = async (imageId: string) => {
@@ -556,13 +571,70 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
     });
   };
 
+  const deleteSnapshotImages = async (ids: readonly string[]) => {
+    const retained: string[] = [];
+    let failure: unknown;
+    for (const id of ids) {
+      try {
+        await removeSnapshotImage(id);
+      } catch (error) {
+        retained.push(id);
+        failure ??= error;
+      }
+    }
+    return { retained, failure };
+  };
+
+  const retainUnsavedImage = async (previous: SandboxSnapshot | undefined, imageId: string) => {
+    if (previous) {
+      const pending = collectImageIds(previous.pendingImageIds, imageId).filter(id => id !== previous.imageId);
+      try {
+        await snapshots.save(withPendingImages(previous, pending));
+        return;
+      } catch {
+        // The replacement record was not stored. Delete the untracked image instead.
+      }
+    }
+    await removeSnapshotImage(imageId).catch(() => undefined);
+  };
+
+  const loadSnapshot = async (runId: string, scopeKey: string) => snapshots.load(runId, scopeKey).catch((error: unknown) => {
+    if (error instanceof SandboxError && (error.code === "NOT_FOUND" || error.code === "STORE_ID")) return undefined;
+    throw error;
+  });
+
+  const retryPendingSnapshotImages = async (runId: string, scopeKey: string) => {
+    const stored = await loadSnapshot(runId, scopeKey);
+    if (!stored?.pendingImageIds?.length) return;
+    const pending = collectImageIds(stored.pendingImageIds).filter(id => id !== stored.imageId);
+    const { retained, failure } = await deleteSnapshotImages(pending);
+    if (retained.length !== pending.length) {
+      try {
+        await snapshots.save(withPendingImages(stored, retained));
+      } catch (saveError) {
+        if (failure) throw failure;
+        throw saveError;
+      }
+    }
+    if (failure) throw failure;
+  };
+
   const discardSnapshot = async (runId: string, scopeKey: string) => {
-    const stored = await snapshots.load(runId, scopeKey).catch((error: unknown) => {
-      if (error instanceof SandboxError && (error.code === "NOT_FOUND" || error.code === "STORE_ID")) return undefined;
-      throw error;
-    });
+    const stored = await loadSnapshot(runId, scopeKey);
+    if (!stored) return;
+    const ids = collectImageIds(stored.pendingImageIds, stored.imageId);
+    const { retained, failure } = await deleteSnapshotImages(ids);
+    if (retained.length > 0) {
+      const imageId = stored.imageId && retained.includes(stored.imageId) ? stored.imageId : undefined;
+      try {
+        await snapshots.save(withPendingImages({ ...stored, imageId }, retained.filter(id => id !== imageId)));
+      } catch (saveError) {
+        if (failure) throw failure;
+        throw saveError;
+      }
+      throw failure ?? new SandboxError("DOCKER_API", "Sandbox snapshot image could not be removed.");
+    }
     await snapshots.remove(runId, scopeKey);
-    if (stored?.imageId) await removeSnapshotImage(stored.imageId);
   };
 
   const openSession = (initial: SandboxLease): DockerSandboxSession => {
@@ -847,11 +919,12 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       const removed: string[] = [];
       for (const lease of await leases.list()) {
         if (lease.environmentId !== manifest.id || lease.fingerprint !== binding.fingerprint) continue;
-        if (lease.status !== "active" || lease.expiresAt > now) {
-          if (lease.status !== "active") await discardSnapshot(lease.runId, lease.scopeKey);
+        if (lease.status === "active" && lease.expiresAt > now) {
+          await retryPendingSnapshotImages(lease.runId, lease.scopeKey);
           continue;
         }
         await discardSnapshot(lease.runId, lease.scopeKey);
+        if (lease.status !== "active") continue;
         await docker.removeContainer(lease.containerId).catch(() => undefined);
         if (lease.networkId) await docker.removeNetwork(lease.networkId).catch(() => undefined);
         const proxy = proxies.get(proxyKey(lease.runId, lease.scopeKey));
@@ -872,6 +945,40 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       return { removedContainerIds: removed };
     }
   };
+};
+
+const IMAGE_ID = /^[A-Za-z0-9:_./@+-]{1,200}$/;
+
+const collectImageIds = (...groups: Array<string | readonly string[] | undefined>) => {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const group of groups) {
+    if (group === undefined) continue;
+    const values = typeof group === "string" ? [group] : group;
+    if (!Array.isArray(values)) {
+      throw new SandboxError("SNAPSHOT_INVALID", "Sandbox snapshot image ids are not usable.");
+    }
+    for (const id of values) {
+      if (typeof id !== "string" || !IMAGE_ID.test(id)) {
+        throw new SandboxError("SNAPSHOT_INVALID", "Sandbox snapshot image id is not usable.");
+      }
+      if (seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  if (ids.length > 32) {
+    throw new SandboxError("SNAPSHOT_INVALID", "Sandbox snapshot has too many images waiting for deletion.");
+  }
+  return ids;
+};
+
+const withPendingImages = (snapshot: SandboxSnapshot, pending: readonly string[]): SandboxSnapshot => {
+  const next: SandboxSnapshot = { ...snapshot };
+  if (pending.length) next.pendingImageIds = [...pending];
+  else delete next.pendingImageIds;
+  if (!next.imageId) delete next.imageId;
+  return next;
 };
 
 const withParents = (entries: readonly TarEntry[], uid: number, gid: number): TarEntry[] => {

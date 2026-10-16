@@ -80,7 +80,7 @@ Clients that open sockets directly have no external route. Proxy-aware clients a
 
 ## Snapshots
 
-The workspace lives on a tmpfs, so `docker commit` does not contain it. The default snapshot is a tar of `/workspace`. `snapshot: "docker-commit"` also commits an image and still stores the tar, which is what restore uses. Replacing a snapshot deletes the previous image. Terminal release and lease expiry delete the snapshot and its image.
+The workspace lives on a tmpfs, so `docker commit` does not contain it. The default snapshot is a tar of `/workspace`. `snapshot: "docker-commit"` also commits an image and still stores the tar, which is what restore uses. Replacing a snapshot keeps every previous image id until that image is deleted, and a later snapshot or sweep retries the deletion. Terminal release and lease expiry delete the image before removing the snapshot record. An image that Docker already reports as missing is treated as deleted.
 
 `sweep()` expires leases this process owns and removes only containers labeled with this environment's owner id and manifest fingerprint. Pass the same `ownerId` when several processes share one lease store and should clean up each other's orphans. A different owner or fingerprint is left alone.
 
