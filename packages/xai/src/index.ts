@@ -147,6 +147,7 @@ const baseCapabilities: ModelCapabilities = {
   webSearch: true,
   agentCapabilities: {
     supportTier: "tier-b",
+    durableAgent: true,
     toolChoiceNone: true,
     approvalRequests: false,
     hostedWebSearch: true,

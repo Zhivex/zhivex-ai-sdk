@@ -67,6 +67,7 @@ export const createVertexClaudeModel = (modelId: string, endpoint: string, fetch
       webSearch: true,
       agentCapabilities: {
         supportTier: "tier-b",
+        durableAgent: true,
         toolChoiceNone: true,
         approvalRequests: false,
         hostedWebSearch: true,

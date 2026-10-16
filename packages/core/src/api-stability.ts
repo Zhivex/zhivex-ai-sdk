@@ -125,6 +125,7 @@ const stableSymbols = [
   "decodeBase64WithLimit",
   "defaultModelCatalog",
   "diffAgentRunLedgers",
+  "deriveAgentSupportTier",
   "evaluateAgentBudgetPreflight",
   "audioPart",
   "embed",
@@ -149,6 +150,8 @@ const stableSymbols = [
   "getAgentBudgetStatus",
   "getAgentApprovalRequestFromPart",
   "getAgentApprovalRequests",
+  "hasApprovalCapableRemoteMcp",
+  "hasRealtimeApprovalEquivalent",
   "getTextFromMessages",
   "getTextFromParts",
   "getToolCallsFromEvents",
@@ -260,7 +263,8 @@ const stableSymbols = [
   "withRetry",
   "withResponseRetry",
   "withTimeoutSignal",
-  "wrapLanguageModel"
+  "wrapLanguageModel",
+  "TIER_A_MINIMUM_HOSTED_TOOLS"
 ] as const;
 
 const betaSymbols = [

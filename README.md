@@ -66,13 +66,13 @@ Human approval queues (`createAgentApprovalQueue`) are (beta).
 
 Capability differs by adapter. Tiers describe agent support in this SDK:
 
-| Tier | Providers |
+| Tier | Surfaces |
 | --- | --- |
-| Tier A | OpenAI, Azure OpenAI, and Bedrock with `runtime: "openai"` |
-| Tier B | xAI, Meta, Anthropic, Gemini, Vertex, Qwen, DeepSeek, Z.ai, and Bedrock Converse |
-| basic (Tier C) | OpenRouter, Kimi, and Ollama |
+| Tier A | OpenAI text and realtime conversation, Azure OpenAI text and realtime, Bedrock with `runtime: "openai"`, Qwen 3.8 Omni Flash realtime |
+| Tier B | xAI, Meta, Anthropic, Gemini and Vertex text, Qwen text Responses, Qwen Audio realtime, DeepSeek, Z.ai, Bedrock Converse |
+| Tier C | OpenRouter, Kimi, Ollama, Qwen Omni language models, Qwen LiveTranslate, and other tool-less media or realtime surfaces |
 
-Tier A includes approval-capable hosted tools or remote MCP. Tier B is strong tool-using agent support with provider-specific gaps. basic (Tier C) covers basic tool loops. Many unsupported combinations are rejected before the request is sent.
+`deriveAgentSupportTier()` computes the tier from capability flags. Tier A requires callable tools, approval-capable remote MCP, and hosted web search, or the same approvals on a tool-capable realtime session. Tier B requires callable tools and `durableAgent`. Tier C is everything else. Live certification is a separate column in the capability matrix. Many unsupported combinations are rejected before the request is sent.
 
 The [full capability matrix](./docs/reference/PROVIDERS.md#provider-compatibility) is the source of truth.
 

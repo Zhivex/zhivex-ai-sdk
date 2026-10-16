@@ -110,10 +110,12 @@ const capabilities: ModelCapabilities = {
   contextCaching: true,
   agentCapabilities: {
     supportTier: "tier-b",
+    durableAgent: true,
     toolChoiceNone: false,
     approvalRequests: false,
     hostedWebSearch: true,
     hostedFileSearch: false,
+    // Muse Responses has no mcp tool type, so this surface cannot be Tier A.
     remoteMcp: false,
     computerUse: false,
     codeExecution: false,

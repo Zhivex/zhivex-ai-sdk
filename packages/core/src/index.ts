@@ -657,6 +657,13 @@ export {
   validateMessageParts
 } from "./messages.js";
 export {
+  deriveAgentSupportTier,
+  hasApprovalCapableRemoteMcp,
+  hasRealtimeApprovalEquivalent,
+  TIER_A_MINIMUM_HOSTED_TOOLS
+} from "./support-tier.js";
+export type { TierAMinimumHostedTool } from "./support-tier.js";
+export {
   CallbackRealtimeSession,
   encodeAudioFrame,
   encodeMediaFrame,

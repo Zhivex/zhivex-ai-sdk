@@ -284,6 +284,7 @@ const isModelCapabilities = (value: unknown): value is ModelCapabilities => {
         "toolsets"
       ]) ||
       !hasOptionalBooleanFields(agent, [
+        "durableAgent",
         "shell",
         "applyPatch",
         "toolSearch",
@@ -378,6 +379,9 @@ const cloneCapabilities = (capabilities: ModelCapabilities): ModelResolutionCapa
       : {
           agentCapabilities: Object.freeze({
             supportTier: capabilities.agentCapabilities.supportTier,
+            ...(capabilities.agentCapabilities.durableAgent === undefined
+              ? {}
+              : { durableAgent: capabilities.agentCapabilities.durableAgent }),
             toolChoiceNone: capabilities.agentCapabilities.toolChoiceNone,
             approvalRequests: capabilities.agentCapabilities.approvalRequests,
             hostedWebSearch: capabilities.agentCapabilities.hostedWebSearch,

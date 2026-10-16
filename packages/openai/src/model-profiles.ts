@@ -21,6 +21,7 @@ export const capabilities: ModelCapabilities = {
   webSearch: true,
   agentCapabilities: {
     supportTier: "tier-a",
+    durableAgent: true,
     toolChoiceNone: true,
     approvalRequests: true,
     hostedWebSearch: true,
@@ -241,6 +242,9 @@ export const realtimeCapabilities = (
       isOpenAIRealtimeTranscriptionModel(modelId)
         ? "tier-c"
         : "tier-a",
+    durableAgent:
+      !isOpenAIRealtimeTranslationModel(modelId) &&
+      !isOpenAIRealtimeTranscriptionModel(modelId),
     toolChoiceNone:
       !isOpenAIRealtimeTranslationModel(modelId) &&
       !isOpenAIRealtimeTranscriptionModel(modelId),

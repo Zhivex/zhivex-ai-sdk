@@ -78,11 +78,11 @@ Use Bun 1.4.2 for the repository build and Bun 1.3.7 on PATH for the Bun consume
 
 The [provider compatibility matrix](./docs/reference/PROVIDERS.md#provider-compatibility) is the source of truth for current feature coverage. Tier C providers are basic (Tier C).
 
-At a high level:
+Tiers are derived per runtime surface by `deriveAgentSupportTier()` in `@zhivex-ai/core`. A package can expose more than one tier. Live certification is a separate record in [Agent live certification](./docs/maintainers/AGENT_LIVE_CERTIFICATION.md) and is not an input to the tier.
 
-- `Tier A`: strongest hosted-agent story, approval-capable remote MCP or equivalent, and best fit for advanced agent workflows
-- `Tier B`: strong tool-using agent support with some provider-specific gaps
-- `Tier C`: usable for basic loops, but not the default recommendation for full hosted-agent positioning
+- `Tier A`: callable tools, approval-capable remote MCP (`remoteMcp` and `approvalRequests`), and the minimum hosted-tool set. That set is hosted web search, the hosted tool shared by the current text Tier A surfaces (OpenAI chat, Azure OpenAI chat, and Bedrock `runtime: "openai"`). A tool-capable realtime session with approval-capable remote MCP is the documented equivalent when the session API does not advertise hosted web search.
+- `Tier B`: callable tools and `durableAgent`, meaning the surface can run the SDK durable agent loop. This is independent of live certification.
+- `Tier C`: every other surface.
 
 ## What Zhivex Should Support Well
 
