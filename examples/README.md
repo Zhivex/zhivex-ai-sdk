@@ -72,6 +72,8 @@ The `examples/sdk/runner-session.ts` example is deterministic and does not requi
 
 `examples/sdk/mcp-stdio-bcra.ts` wires the experimental stdio client into `createMcpToolRegistry()` and an `Agent`. It spawns `npx -y mcp-bcra` and allowlists exchange-rate, variable, and entity tools. Build the workspace first so `@zhivex-ai/sdk/mcp-stdio` resolves. The script needs network access to the published `mcp-bcra` package and the public BCRA APIs. It does not call debtor or cheque lookups.
 
+`examples/sdk/mcp-server.ts` is deterministic and does not require provider credentials. It exposes an echo tool, an approval-gated tool, and a mock agent through the experimental MCP server, then calls them from an in-process Streamable HTTP client and a stdio stream pair.
+
 For migration-oriented snippets from direct provider SDKs, Vercel AI SDK Core, and simple custom tool loops, see `docs/MIGRATION.md`. The offline script for that guide is:
 
 ```bash
