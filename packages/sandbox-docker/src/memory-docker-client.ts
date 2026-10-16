@@ -17,6 +17,13 @@ interface MemoryNode {
   linkTarget: string;
 }
 
+interface MemoryProcess {
+  pid: number;
+  pgid: number;
+  marker: string;
+  alive: boolean;
+}
+
 interface MemoryContainer {
   id: string;
   spec: DockerCreateSpec;
@@ -24,10 +31,13 @@ interface MemoryContainer {
   oomKilled: boolean;
   exitCode: number;
   files: Map<string, MemoryNode>;
+  processes: MemoryProcess[];
+  nextPid: number;
 }
 
 interface MemoryImage {
   files: Map<string, MemoryNode>;
+  labels: Record<string, string>;
 }
 
 const empty = new Uint8Array();
@@ -49,6 +59,9 @@ export interface MemoryDockerClient extends DockerClient {
   createdContainerIds(): string[];
   removedNetworkIds(): string[];
   imageCount(): number;
+  commands(): string[][];
+  descendantCount(containerId?: string): number;
+  retune(id: string, patch: Partial<Pick<DockerCreateSpec, "nanoCpus" | "pidsLimit" | "memoryBytes">>): void;
 }
 
 export const createMemoryDockerClient = (): MemoryDockerClient => {
@@ -58,6 +71,7 @@ export const createMemoryDockerClient = (): MemoryDockerClient => {
   const networks = new Map<string, { id: string; gateway: string }>();
   const removedNetworks: string[] = [];
   const createdIds: string[] = [];
+  const commandLog: string[][] = [];
 
   const requireContainer = (id: string) => {
     const container = containers.get(id);
@@ -85,7 +99,9 @@ export const createMemoryDockerClient = (): MemoryDockerClient => {
   };
 
   const archiveOf = (files: Map<string, MemoryNode>, containerPath: string): { tar: Uint8Array; stat: DockerPathStat } => {
-    const node = files.get(containerPath);
+    const resolved = resolveMemoryPath(files, containerPath, true);
+    const node = resolved.node;
+    const containerPathName = resolved.path;
     if (!node) throw new SandboxError("NOT_FOUND", `Sandbox path ${containerPath} was not found.`);
     if (node.type === "file" || node.type === "symlink") {
       return {
@@ -99,11 +115,11 @@ export const createMemoryDockerClient = (): MemoryDockerClient => {
         stat: { name: basename(containerPath), size: node.content.byteLength, mode: node.mode, linkTarget: node.linkTarget }
       };
     }
-    const rootName = basename(containerPath);
+    const rootName = basename(containerPathName);
     const entries: TarEntry[] = [{ path: rootName, type: "directory", mode: node.mode }];
-    const prefix = containerPath.endsWith("/") ? containerPath : `${containerPath}/`;
+    const prefix = containerPathName.endsWith("/") ? containerPathName : `${containerPathName}/`;
     for (const [key, child] of files) {
-      if (!key.startsWith(prefix) || key === containerPath) continue;
+      if (!key.startsWith(prefix) || key === containerPathName) continue;
       entries.push({
         path: `${rootName}/${key.slice(prefix.length)}`,
         type: child.type,
@@ -121,7 +137,10 @@ export const createMemoryDockerClient = (): MemoryDockerClient => {
   const runExec = (container: MemoryContainer, options: DockerExecOptions): DockerExecResult => {
     let argv = options.cmd;
     let timeoutSeconds: number | undefined;
-    if ((argv[0] === "/bin/timeout" || argv[0] === "/usr/bin/timeout") && argv[1] === "-s" && argv[2] === "KILL") {
+    if (argv[0] === "/bin/sh" && argv[1] === "-c" && argv[2]?.includes("/usr/bin/timeout")) {
+      timeoutSeconds = Number(argv[4]);
+      argv = argv.slice(5);
+    } else if ((argv[0] === "/bin/timeout" || argv[0] === "/usr/bin/timeout") && argv[1] === "-s" && argv[2] === "KILL") {
       timeoutSeconds = Number(argv[3]);
       argv = argv.slice(4);
     }
@@ -156,12 +175,22 @@ export const createMemoryDockerClient = (): MemoryDockerClient => {
     createdContainerIds: () => [...createdIds],
     removedNetworkIds: () => [...removedNetworks],
     imageCount: () => images.size,
+    commands: () => commandLog.map(command => [...command]),
+    descendantCount(containerId) {
+      const selected = containerId ? [containers.get(containerId)].filter((container): container is MemoryContainer => Boolean(container)) : [...containers.values()];
+      return selected.reduce((sum, container) => sum + container.processes.filter(process => process.alive).length, 0);
+    },
+    retune(id, patch) {
+      const container = containers.get(id);
+      if (!container) throw new SandboxError("NOT_FOUND", `Sandbox container ${id} was not found.`);
+      container.spec = { ...container.spec, ...patch };
+    },
     async createContainer(spec) {
       const id = `mem_${randomUUID()}`;
       const image = images.get(spec.image);
       const files = image ? cloneFiles(image.files) : new Map<string, MemoryNode>();
       if (!image) seed(files);
-      containers.set(id, { id, spec: structuredClone(spec), running: false, oomKilled: false, exitCode: 0, files });
+      containers.set(id, { id, spec: structuredClone(spec), running: false, oomKilled: false, exitCode: 0, files, processes: [], nextPid: 100 });
       createdIds.push(id);
       return { Id: id };
     },
@@ -180,6 +209,11 @@ export const createMemoryDockerClient = (): MemoryDockerClient => {
           Status: container.running ? "running" : "exited",
           OOMKilled: container.oomKilled,
           ExitCode: container.exitCode
+        },
+        HostConfig: {
+          NanoCpus: container.spec.nanoCpus,
+          PidsLimit: container.spec.pidsLimit,
+          Memory: container.spec.memoryBytes
         }
       };
     },
@@ -207,18 +241,35 @@ export const createMemoryDockerClient = (): MemoryDockerClient => {
       return archiveOf(requireContainer(id).files, containerPath);
     },
     async exec(id, options) {
-      return runExec(requireContainer(id), options);
+      const container = requireContainer(id);
+      commandLog.push([...options.cmd]);
+      if (options.marker && !options.skipTerminate) spawnDescendant(container, options.marker);
+      try {
+        if (options.signal?.aborted) {
+          throw new SandboxError("CANCELLED", "Sandbox command was cancelled.");
+        }
+        if (options.cmd[0] === "/bin/kill") applyKill(container, options.cmd);
+        return runExec(container, options);
+      } finally {
+        if (options.marker && !options.skipTerminate) killMarkedGroup(container, options.marker);
+      }
     },
-    async commitContainer(id, _repo, tag) {
+    async realpath(id, containerPath) {
+      return resolveMemoryPath(requireContainer(id).files, containerPath, true).path;
+    },
+    async commitContainer(id, _repo, tag, labels) {
       const container = requireContainer(id);
       const imageId = `sha256:${tag}`;
-      images.set(imageId, { files: cloneFiles(container.files) });
+      images.set(imageId, { files: cloneFiles(container.files), labels: { ...(labels ?? {}) } });
       while (images.size > maxImages) {
         const oldest = images.keys().next().value;
         if (oldest === undefined) break;
         images.delete(oldest);
       }
       return { Id: imageId };
+    },
+    async removeImage(id) {
+      images.delete(id);
     },
     async createNetwork(name) {
       const id = `net_${name}`;
@@ -241,19 +292,96 @@ const readFile = (container: MemoryContainer, containerPath: string) => {
 };
 
 const listDirectory = (container: MemoryContainer, containerPath: string) => {
-  const directory = container.files.get(containerPath);
-  if (!directory || directory.type !== "directory") {
+  let resolved: { path: string; node: MemoryNode };
+  try {
+    resolved = resolveMemoryPath(container.files, containerPath, true);
+  } catch {
     return { exitCode: 1, stdout: empty, stderr: text(`ls: ${containerPath}: No such file or directory\n`) };
   }
-  const prefix = containerPath.endsWith("/") ? containerPath : `${containerPath}/`;
+  if (resolved.node.type !== "directory") {
+    return { exitCode: 1, stdout: empty, stderr: text(`ls: ${containerPath}: Not a directory\n`) };
+  }
+  const directoryPath = resolved.path;
+  const prefix = directoryPath.endsWith("/") ? directoryPath : `${directoryPath}/`;
   const names = new Set<string>();
   for (const key of container.files.keys()) {
-    if (!key.startsWith(prefix) || key === containerPath) continue;
+    if (!key.startsWith(prefix) || key === directoryPath) continue;
     const name = key.slice(prefix.length).split("/")[0];
     if (name) names.add(name);
   }
   const listing = [...names].sort();
   return { exitCode: 0, stdout: text(listing.length ? `${listing.join("\n")}\n` : ""), stderr: empty };
+};
+
+const normalizePosix = (value: string) => {
+  const parts: string[] = [];
+  for (const part of value.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  return `/${parts.join("/")}`;
+};
+
+/** Follow container symlinks the way tar and ls do, including intermediate components. */
+const resolveMemoryPath = (files: Map<string, MemoryNode>, containerPath: string, followFinal: boolean) => {
+  const hops = { count: 0 };
+  const walk = (target: string): { path: string; node: MemoryNode } => {
+    const parts = normalizePosix(target).split("/").filter(Boolean);
+    let current = "/";
+    if (parts.length === 0) {
+      const root = files.get("/");
+      if (!root) throw new SandboxError("NOT_FOUND", `Sandbox path ${containerPath} was not found.`);
+      return { path: "/", node: root };
+    }
+    let node: MemoryNode | undefined;
+    for (let index = 0; index < parts.length; index += 1) {
+      const next = current === "/" ? `/${parts[index]}` : `${current}/${parts[index]}`;
+      const child = files.get(next);
+      if (!child) throw new SandboxError("NOT_FOUND", `Sandbox path ${containerPath} was not found.`);
+      const last = index === parts.length - 1;
+      if (child.type === "symlink" && (!last || followFinal)) {
+        hops.count += 1;
+        if (hops.count > 32) throw new SandboxError("SYMLINK_DENIED", "Sandbox path contains a symlink loop.");
+        const link = child.linkTarget.startsWith("/") ? child.linkTarget : `${current === "/" ? "" : current}/${child.linkTarget}`;
+        const rest = parts.slice(index + 1);
+        const combined = rest.length ? `${normalizePosix(link)}/${rest.join("/")}` : link;
+        return walk(combined);
+      }
+      if (!last && child.type !== "directory") {
+        throw new SandboxError("NOT_FOUND", `Sandbox path ${containerPath} was not found.`);
+      }
+      current = next;
+      node = child;
+    }
+    if (!node) throw new SandboxError("NOT_FOUND", `Sandbox path ${containerPath} was not found.`);
+    return { path: current, node };
+  };
+  return walk(containerPath);
+};
+
+const spawnDescendant = (container: MemoryContainer, marker: string) => {
+  const pgid = container.nextPid++;
+  const child = container.nextPid++;
+  container.processes.push(
+    { pid: pgid, pgid, marker, alive: true },
+    { pid: child, pgid, marker, alive: true }
+  );
+};
+
+const killMarkedGroup = (container: MemoryContainer, marker: string) => {
+  for (const process of container.processes) {
+    if (process.marker === marker) process.alive = false;
+  }
+};
+
+const applyKill = (container: MemoryContainer, argv: readonly string[]) => {
+  const targets = new Set(argv.filter(arg => arg !== "-KILL" && arg !== "--" && (arg.startsWith("-") || /^\d+$/.test(arg))));
+  for (const process of container.processes) {
+    if (targets.has(String(process.pid)) || targets.has(`-${process.pid}`) || targets.has(`-${process.pgid}`)) {
+      process.alive = false;
+    }
+  }
 };
 
 const sleepResult = (requested: number, timeoutSeconds: number | undefined) => {
