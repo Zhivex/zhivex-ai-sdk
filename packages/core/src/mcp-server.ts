@@ -485,35 +485,43 @@ const executeAgent = async (
     return toolError("VALIDATION_ERROR", `Agent "${name}" rejected its arguments.`);
   }
   const value = cloned;
-  const mapped = entry.toRunInput
-    ? entry.toRunInput(value)
-    : { prompt: typeof value.prompt === "string" ? value.prompt : "" };
+  let mapped: { prompt: string; system?: string; maxSteps?: number | "unlimited" };
+  try {
+    const raw = entry.toRunInput
+      ? entry.toRunInput(value)
+      : { prompt: typeof value.prompt === "string" ? value.prompt : "" };
+    if (!raw || typeof raw.prompt !== "string") {
+      return toolError("VALIDATION_ERROR", `Agent "${name}" rejected its arguments.`);
+    }
+    mapped = raw;
+  } catch {
+    return toolError("AGENT_FAILED", `Agent "${name}" failed.`);
+  }
   if (mapped.prompt.length === 0) {
     return toolError("VALIDATION_ERROR", `Agent "${name}" requires a prompt.`);
   }
 
   const definition = agentDefinitionOf(entry.agent);
-  const streamed = streamAgent(definition, {
-    prompt: mapped.prompt,
-    ...(mapped.system !== undefined ? { system: mapped.system } : {}),
-    ...(mapped.maxSteps !== undefined ? { maxSteps: mapped.maxSteps } : {}),
-    abortSignal: call.signal,
-    timeoutMs: call.timeoutMs
-  });
+  let streamed: ReturnType<typeof streamAgent>;
+  try {
+    streamed = streamAgent(definition, {
+      prompt: mapped.prompt,
+      ...(mapped.system !== undefined ? { system: mapped.system } : {}),
+      ...(mapped.maxSteps !== undefined ? { maxSteps: mapped.maxSteps } : {}),
+      abortSignal: call.signal,
+      timeoutMs: call.timeoutMs
+    });
+  } catch {
+    return toolError("AGENT_FAILED", `Agent "${name}" failed.`);
+  }
   const consume = (async () => {
     for await (const event of streamed.eventStream) {
       const message = progressText(event);
       if (message) await call.emitProgress(message);
     }
   })();
-  let output: Awaited<ReturnType<typeof streamed.collect>>;
-  const collected = streamed.collect();
-  collected.catch(() => undefined);
-  try {
-    output = await withDeadline(call, () => collected);
-    await consume;
-  } catch (error) {
-    await consume.catch(() => undefined);
+  consume.catch(() => undefined);
+  const failed = (error: unknown): ToolPayload => {
     if (error instanceof McpServerError && error.code === "TIMEOUT") {
       return toolError("TIMEOUT", `Agent "${name}" timed out. Reconcile the run before retrying.`);
     }
@@ -521,6 +529,15 @@ const executeAgent = async (
       return toolError("CANCELLED", `Agent "${name}" was cancelled.`);
     }
     return toolError("AGENT_FAILED", `Agent "${name}" failed.`);
+  };
+  let output: Awaited<ReturnType<typeof streamed.collect>>;
+  const collected = streamed.collect();
+  collected.catch(() => undefined);
+  try {
+    output = await withDeadline(call, () => collected);
+    await withDeadline(call, () => consume);
+  } catch (error) {
+    return failed(error);
   }
 
   if (output.status === "waiting_approval") {
@@ -819,10 +836,42 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
   const fetch = async (request: Request): Promise<Response> => {
     if (lifetime.signal.aborted || state.closed) return empty(503);
     if (!originAllowed(request, options)) return empty(403);
-    try {
-      await options.authenticate?.(request);
-    } catch (error) {
-      return authStatus(error);
+    const bound = async <T>(run: () => Promise<T>): Promise<T> => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new McpServerError("TIMEOUT", "MCP operation timed out.")), timeoutMs);
+      const onAbort = () => controller.abort(request.signal.reason);
+      if (request.signal.aborted) onAbort();
+      else request.signal.addEventListener("abort", onAbort, { once: true });
+      const pending = run();
+      pending.catch(() => undefined);
+      try {
+        if (controller.signal.aborted) {
+          throw controller.signal.reason instanceof Error
+            ? controller.signal.reason
+            : new McpServerError("TIMEOUT", "MCP operation timed out.");
+        }
+        return await Promise.race([
+          pending,
+          new Promise<never>((_resolve, reject) => {
+            const fail = () => reject(controller.signal.reason instanceof Error
+              ? controller.signal.reason
+              : new McpServerError("TIMEOUT", "MCP operation timed out."));
+            controller.signal.addEventListener("abort", fail, { once: true });
+          })
+        ]);
+      } finally {
+        clearTimeout(timer);
+        request.signal.removeEventListener("abort", onAbort);
+      }
+    };
+    if (options.authenticate) {
+      try {
+        await bound(() => Promise.resolve(options.authenticate!(request)));
+      } catch (error) {
+        if (error instanceof McpServerError && error.code === "TIMEOUT") return empty(408);
+        if (request.signal.aborted) return empty(408);
+        return authStatus(error);
+      }
     }
     const method = request.method.toUpperCase();
     if (method === "GET") return empty(405, { Allow: "POST, DELETE" });
@@ -836,19 +885,31 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
     if (!accept.includes("application/json") && !accept.includes("text/event-stream")) return empty(406);
     const contentType = header(request, "content-type")?.split(";")[0]?.trim();
     if (contentType !== "application/json") return empty(415);
+    const boundedJson = (status: number, body: unknown, extra?: HeadersInit): Response => {
+      if (byteLength(JSON.stringify(body)) <= maxResponseBytes) return jsonResponse(status, body, extra);
+      const id = isRecord(body) ? requestId(body.id) ?? null : null;
+      const named = rpcError(id, -32603, "MCP response exceeded byte limit.");
+      if (byteLength(JSON.stringify(named)) <= maxResponseBytes) return jsonResponse(status, named, extra);
+      const anonymous = rpcError(null, -32603, "MCP response exceeded byte limit.");
+      if (byteLength(JSON.stringify(anonymous)) <= maxResponseBytes) return jsonResponse(status, anonymous);
+      return empty(status);
+    };
     const protocol = header(request, "mcp-protocol-version");
     if (protocol !== null && protocol !== MCP_SERVER_PROTOCOL_VERSION) {
-      return jsonResponse(400, rpcError(null, -32600, "Unsupported MCP protocol version."));
+      return boundedJson(400, rpcError(null, -32600, "Unsupported MCP protocol version."));
     }
 
     let payload: unknown;
     try {
-      payload = JSON.parse(await readLimited(request, maxRequestBytes));
+      payload = JSON.parse(await bound(() => readLimited(request, maxRequestBytes)));
     } catch (error) {
+      await request.body?.cancel().catch(() => undefined);
+      if (error instanceof McpServerError && error.code === "TIMEOUT") return empty(408);
+      if (request.signal.aborted) return empty(408);
       if (error instanceof McpServerError && error.code === "LIMIT_EXCEEDED") return empty(413);
-      return jsonResponse(400, rpcError(null, -32700, "Parse error."));
+      return boundedJson(400, rpcError(null, -32700, "Parse error."));
     }
-    if (Array.isArray(payload)) return jsonResponse(400, rpcError(null, -32600, "MCP batch requests are not supported."));
+    if (Array.isArray(payload)) return boundedJson(400, rpcError(null, -32600, "MCP batch requests are not supported."));
 
     const sessionHeader = header(request, "mcp-session-id");
     const existing = sessionHeader ? sessionsById.get(sessionHeader) : undefined;
@@ -866,16 +927,17 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
 
     const outcome = await dispatch(async () => undefined);
     if (outcome.kind === "accepted") return empty(202);
-    const encoded = JSON.stringify(outcome.message);
-    if (byteLength(encoded) > maxResponseBytes) {
-      return jsonResponse(200, rpcError(requestId(incoming?.id) ?? null, -32603, "MCP response exceeded byte limit."));
-    }
-    if (isInitialize && isRecord(outcome.message) && "result" in outcome.message) {
+    if (
+      isInitialize
+      && isRecord(outcome.message)
+      && "result" in outcome.message
+      && byteLength(JSON.stringify(outcome.message)) <= maxResponseBytes
+    ) {
       const id = (options.sessionId ?? (() => crypto.randomUUID()))();
       sessionsById.set(id, session);
       return jsonResponse(200, outcome.message, { "Mcp-Session-Id": id });
     }
-    return jsonResponse(200, outcome.message);
+    return boundedJson(200, outcome.message);
   };
 
   return {
@@ -900,6 +962,7 @@ const sseResponse = (
     }
   });
   let sent = 0;
+  const limitFrame = encoder.encode(`event: message\ndata: ${JSON.stringify(rpcError(null, -32603, "MCP response exceeded byte limit."))}\n\n`);
   const emit = async (message: unknown) => {
     const bytes = encoder.encode(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
     if (sent + bytes.byteLength > maxBytes) {
@@ -908,15 +971,27 @@ const sseResponse = (
     sent += bytes.byteLength;
     controller.enqueue(bytes);
   };
-  void dispatch(emit).then(async (outcome) => {
-    if (outcome.kind === "response") await emit(outcome.message);
-    controller.close();
-  }).catch(() => {
+  const finish = () => {
     try {
-      controller.enqueue(encoder.encode(`event: message\ndata: ${JSON.stringify(rpcError(null, -32603, "MCP response exceeded byte limit."))}\n\n`));
       controller.close();
     } catch {
-      controller.error(new McpServerError("LIMIT_EXCEEDED", "MCP response exceeded byte limit."));
+      /* The stream is already closed. */
+    }
+  };
+  void dispatch(emit).then(async (outcome) => {
+    if (outcome.kind === "response") {
+      try {
+        await emit(outcome.message);
+      } catch {
+        if (sent + limitFrame.byteLength <= maxBytes) controller.enqueue(limitFrame);
+      }
+    }
+    finish();
+  }).catch(() => {
+    try {
+      if (sent + limitFrame.byteLength <= maxBytes) controller.enqueue(limitFrame);
+    } finally {
+      finish();
     }
   });
   return new Response(body, {
@@ -1010,11 +1085,13 @@ export function createMcpStdioServer(options: McpStdioServerOptions): McpStdioSe
         if (!toolCall) await task;
       }
     }
-  })().catch(() => undefined);
+  })().catch(() => {
+    void failSession("MCP input failed.");
+  });
 
   return {
     async close() {
-      lifetime.abort();
+      lifetime.abort(closedReason());
       await reader.cancel().catch(() => undefined);
       await pump.catch(() => undefined);
       try {

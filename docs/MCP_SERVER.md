@@ -101,6 +101,10 @@ receive the final tool result; progress for that call is dropped. Stdio writes
 each progress notification as its own line before the response.
 `initialize` stays a JSON response so `Mcp-Session-Id` can be set.
 
+The progress drain shares the call deadline. If the agent event stream stays
+open after the run or the timeout, the MCP call still returns. A throwing
+`toRunInput` becomes `AGENT_FAILED` and does not reject the HTTP handler.
+
 A completed run returns the agent text as the tool `content` text and
 `{ status, runId, outputText }` as `structuredContent`.
 
@@ -166,7 +170,13 @@ A timeout or cancellation after `execute` has started returns `TIMEOUT` or
 `CANCELLED` and tells the client to reconcile. The side effect may already
 have happened. `LIMIT_EXCEEDED` on a result also means the tool or agent
 already ran; the payload is not included. Oversized HTTP requests return 413
-and are not dispatched.
+and are not dispatched. Authentication and reading the body use the same
+deadline; if either does not finish, the response is an empty `408`.
+
+Every HTTP JSON body is checked against `maxResponseBytes`. When the result
+does not fit, the server returns a JSON-RPC error if that error fits, and an
+empty body when it does not. SSE does the same for the final frame: a fallback
+error is written only when it fits, then the stream closes.
 
 `notifications/cancelled` aborts the matching in-flight call. Numeric and
 string JSON-RPC ids stay distinct, so `1` does not cancel `"1"`. The server
@@ -174,7 +184,9 @@ does not invent an idempotency key.
 
 An outbound stdio message larger than `maxMessageBytes` is replaced by a
 JSON-RPC error when that error fits. When even the error does not fit, the
-session ends instead of leaving the client waiting.
+session ends instead of leaving the client waiting. An unterminated inbound
+line over the same cap, invalid UTF-8, or a failed read also ends the session
+and closes stdout.
 
 ## Stdio
 

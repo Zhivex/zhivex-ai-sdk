@@ -682,4 +682,160 @@ describe("experimental MCP server", () => {
       await session.close();
     }
   });
+
+  it("returns before a stuck agent event stream and hides mapper failures", async () => {
+    const model = createMockLanguageModel();
+    model.stream = () => Promise.resolve((async function* () {
+      await new Promise(() => undefined);
+    })());
+    const server = createMcpServer({
+      timeoutMs: 30,
+      agents: {
+        stuck: {
+          agent: new Agent({ name: "stuck", model })
+        },
+        mapper: {
+          agent: new Agent({
+            name: "mapper",
+            model: createMockLanguageModel({
+              streamEvents: [[{ type: "text-delta", textDelta: "nope" }, { type: "finish", finishReason: "stop" }]]
+            })
+          }),
+          toRunInput: () => {
+            throw new Error("secret mapper");
+          }
+        }
+      }
+    });
+    const result = await Promise.race([
+      useHttp(server, async (client) => ({
+        stuck: await client.callTool({ name: "stuck", arguments: { prompt: "go" } }),
+        mapper: await client.callTool({ name: "mapper", arguments: { prompt: "go" } })
+      })),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("agent call was not bounded")), 1_000))
+    ]);
+    expect(result.stuck.structuredContent).toMatchObject({ code: "TIMEOUT" });
+    expect(result.mapper.isError).toBe(true);
+    expect(result.mapper.structuredContent).toMatchObject({ code: "AGENT_FAILED" });
+    expect(JSON.stringify(result.mapper)).not.toContain("secret");
+  });
+
+  it("keeps HTTP responses inside maxResponseBytes, including the fallback error", async () => {
+    const server = createMcpServer({
+      tools: {
+        wide: tool({
+          name: "wide",
+          schema: z.object({}),
+          execute: () => ({ value: "x".repeat(2_000) })
+        })
+      }
+    });
+    const tiny = createMcpHttpServer(server, { maxResponseBytes: 8 });
+    const initialize = await tiny.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "limit", version: "1" } }
+      })
+    }));
+    const tinyBody = await initialize.text();
+    expect(new TextEncoder().encode(tinyBody).byteLength).toBeLessThanOrEqual(8);
+    await tiny.close();
+
+    const http = createMcpHttpServer(createMcpServer({
+      tools: {
+        wide: tool({
+          name: "wide",
+          schema: z.object({}),
+          execute: () => ({ value: "x".repeat(2_000) })
+        })
+      }
+    }), { maxResponseBytes: 400 });
+    const headers = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
+    const initialized = await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "limit", version: "1" } }
+      })
+    }));
+    const session = initialized.headers.get("mcp-session-id");
+    expect(session).toBeTruthy();
+    await initialized.text();
+    const accepted = await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": session ?? "" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })
+    }));
+    expect(accepted.status).toBe(202);
+    const streamed = await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": session ?? "" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 9,
+        method: "tools/call",
+        params: { name: "wide", arguments: {}, _meta: { progressToken: 1 } }
+      })
+    }));
+    const body = await streamed.text();
+    expect(new TextEncoder().encode(body).byteLength).toBeLessThanOrEqual(400);
+    expect(body).not.toContain("x".repeat(20));
+    expect(body).toContain("MCP response exceeded byte limit.");
+    await http.close();
+  });
+
+  it("times out a hanging auth hook and a body that never ends", async () => {
+    const http = createMcpHttpServer(createMcpServer({ timeoutMs: 30 }), {
+      authenticate: () => new Promise(() => undefined)
+    });
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const stalledAuth = await Promise.race([
+      http.fetch(new Request("https://mcp.test/mcp", { method: "POST", headers, body: "{}" })),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("auth was not bounded")), 500))
+    ]);
+    expect(stalledAuth.status).toBe(408);
+    await http.close();
+
+    const open = createMcpHttpServer(createMcpServer({ timeoutMs: 30 }));
+    const body = new ReadableStream<Uint8Array>({ start() { /* never closes */ } });
+    const stalledBody = await Promise.race([
+      open.fetch(new Request("https://mcp.test/mcp", { method: "POST", headers, body, duplex: "half" })),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("body read was not bounded")), 500))
+    ]);
+    expect(stalledBody.status).toBe(408);
+    await open.close();
+  });
+
+  it("closes stdio when an unterminated line exceeds the message cap", async () => {
+    const input = new TransformStream<Uint8Array, Uint8Array>();
+    const output = new TransformStream<Uint8Array, Uint8Array>();
+    const session = createMcpStdioServer({
+      server: createMcpServer(),
+      input: input.readable,
+      output: output.writable,
+      maxMessageBytes: 32
+    });
+    const reader = output.readable.getReader();
+    const writer = input.writable.getWriter();
+    await writer.write(new TextEncoder().encode("x".repeat(64)));
+    let done = false;
+    const deadline = Date.now() + 500;
+    while (!done && Date.now() < deadline) {
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 20))
+      ]);
+      if (!next) continue;
+      done = next.done;
+    }
+    expect(done).toBe(true);
+    await session.close();
+  });
 });
