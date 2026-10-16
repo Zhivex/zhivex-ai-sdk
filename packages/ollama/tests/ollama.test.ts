@@ -542,6 +542,56 @@ describe("ollama adapter", () => {
     });
   });
 
+  it("maps Muse Spark Open reasoning to the documented effort ladder", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ message: { content: "answer", thinking: "trace" }, done_reason: "stop" }));
+
+    const provider = createOllama({ fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("muse-spark-open"),
+      prompt: "answer",
+      reasoning: { effort: "xhigh" }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body)) as { model: string; think: string };
+    expect(body.model).toBe("muse-spark-open");
+    expect(body.think).toBe("xhigh");
+    expect(provider("muse-spark-open").capabilities).toMatchObject({
+      streaming: true,
+      tools: true,
+      vision: true,
+      reasoning: true,
+      reasoningEfforts: ["low", "medium", "high", "xhigh"]
+    });
+    expect(provider("muse-spark-open:cloud").capabilities).toMatchObject({
+      reasoning: true,
+      reasoningEfforts: ["low", "medium", "high", "xhigh"],
+      structuredOutput: false,
+      tools: true,
+      vision: true
+    });
+
+    await expect(
+      provider("muse-spark-open").generate({
+        messages: [createTextMessage("user", "hello")],
+        reasoning: { effort: "none" }
+      })
+    ).rejects.toThrow('supports reasoning effort "low", "medium", "high", or "xhigh"');
+    await expect(
+      provider("muse-spark-open").generate({
+        messages: [createTextMessage("user", "hello")],
+        reasoning: { effort: "max" }
+      })
+    ).rejects.toThrow('supports reasoning effort "low", "medium", "high", or "xhigh"');
+    await expect(
+      provider("muse-spark-open:cloud").generate({
+        messages: [createTextMessage("user", "hello")],
+        providerOptions: { think: false }
+      })
+    ).rejects.toThrow('requires "think" to be "low", "medium", "high", or "xhigh"');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects unsupported max reasoning for Muse Glimmer", async () => {
     const provider = createOllama({ fetch: fetchMock as typeof fetch });
 

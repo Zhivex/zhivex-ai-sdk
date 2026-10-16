@@ -3,6 +3,7 @@ import { z } from "zod";
 import { generateText, tool } from "../src/index.js";
 import { createOpenAI, openAIToolSearchTool } from "../../openai/src/index.js";
 import { createOpenRouter } from "../../openrouter/src/index.js";
+import { createOllama } from "../../ollama/src/index.js";
 import { createGemini } from "../../gemini/src/index.js";
 import { defaultModelCatalog } from "../src/catalog.js";
 
@@ -111,4 +112,34 @@ describe("model profiles through the SDK facade", () => {
       expect(fetcher).toHaveBeenCalledTimes(1);
     }
   );
+
+  it("keeps Muse Spark Open catalog recommendations inside adapter capabilities", () => {
+    const routes = [
+      {
+        provider: "openrouter" as const,
+        modelId: "meta/muse-spark-open",
+        model: createOpenRouter({ apiKey: "test" })("meta/muse-spark-open")
+      },
+      {
+        provider: "ollama" as const,
+        modelId: "muse-spark-open",
+        model: createOllama()("muse-spark-open")
+      }
+    ];
+    for (const route of routes) {
+      const entry = defaultModelCatalog.find(route.provider, route.modelId);
+      expect(entry?.recommendedFor).toEqual(["chat", "reasoning", "tools", "vision"]);
+      expect(entry?.inputCostPer1kTokens).toBe(0.00125);
+      expect(entry?.cachedInputCostPer1kTokens).toBe(0.00015);
+      expect(entry?.outputCostPer1kTokens).toBe(0.00425);
+      expect(route.model.capabilities).toMatchObject({
+        streaming: true,
+        tools: true,
+        vision: true,
+        reasoning: true,
+        reasoningEfforts: ["low", "medium", "high", "xhigh"]
+      });
+    }
+    expect(defaultModelCatalog.find("meta", "muse-spark-open")).toBeUndefined();
+  });
 });

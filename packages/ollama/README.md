@@ -47,6 +47,8 @@ The shared reasoning contract maps `effort: "none"` to `think: false`. Recognize
 
 Meta Muse Glimmer is recognized under both current Ollama IDs, `muse-glimmer:30b` and `muse-glimmer:30b-mlx`. Its controllable reasoning maps `none`, `low`, `medium`, and `high` to Ollama's native `think` field; `max` is rejected because Ollama does not document that strength for Glimmer.
 
+Muse Spark Open is recognized as `muse-spark-open` and `muse-spark-open:cloud`. Shared reasoning maps `low`, `medium`, `high`, and `xhigh` to `think`. The model always reasons, and its documented ladder does not include `none` or `max`, so those values are rejected.
+
 Returned `message.thinking` content is preserved as Ollama `provider-data`, including streamed deltas, and is sent back with assistant tool calls during multi-step loops. `budgetTokens`, reasoning `mode`/`context`, and hiding thinking while an explicit effort is active are rejected instead of being silently ignored.
 
 Use either the shared `reasoning` option or native `providerOptions.think`, not both. Shared reasoning is advertised only for recognized thinking-model families; custom or newly released models can use `providerOptions.think` as the explicit escape hatch.
