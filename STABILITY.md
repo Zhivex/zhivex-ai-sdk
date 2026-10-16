@@ -23,6 +23,7 @@ Supported public imports should come from published package entrypoints such as:
 - `@zhivex-ai/deepseek`
 - `@zhivex-ai/zai`
 - `@zhivex-ai/gateway`
+- `@zhivex-ai/sandbox-docker`
 
 Focused published entrypoints are also supported: `@zhivex-ai/core/contracts`,
 `@zhivex-ai/core/runtime`, `@zhivex-ai/core/workflows`, `@zhivex-ai/core/ui`,
@@ -31,8 +32,10 @@ Focused published entrypoints are also supported: `@zhivex-ai/core/contracts`,
 `@zhivex-ai/core/evals`, `@zhivex-ai/core/realtime`, `@zhivex-ai/core/control-plane`,
 `@zhivex-ai/core/ops`, `@zhivex-ai/core/beta`, `@zhivex-ai/core/experimental`,
 `@zhivex-ai/core/provider-google`, `@zhivex-ai/core/mcp-http`,
-`@zhivex-ai/core/mcp-stdio`, `@zhivex-ai/sdk/mcp-http`,
-`@zhivex-ai/sdk/mcp-stdio`,
+`@zhivex-ai/core/mcp-stdio`, `@zhivex-ai/core/mcp-server`,
+`@zhivex-ai/core/mcp-server-stdio`, `@zhivex-ai/core/a2a`, `@zhivex-ai/sdk/mcp-http`,
+`@zhivex-ai/sdk/mcp-stdio`, `@zhivex-ai/sdk/mcp-server`,
+`@zhivex-ai/sdk/mcp-server-stdio`, `@zhivex-ai/sdk/a2a`,
 `@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/workflows`, `@zhivex-ai/sdk/ui`,
 `@zhivex-ai/sdk/evals`, `@zhivex-ai/sdk/catalog`, `@zhivex-ai/sdk/beta`, and
 `@zhivex-ai/sdk/experimental`. The package roots remain backward compatible.
@@ -139,6 +142,7 @@ These areas are available for evaluation, but they should not be treated as long
 - Explicit raw provider-option passthrough created with `experimentalRawProviderOptions()`
 - `createEgressPolicy` and `EgressDeniedError` (public beta, stability `experimental`). A fail-closed provider, model, region, and endpoint allowlist checked before the provider call.
 - Agent/provider features currently described as support-tier dependent
+- `@zhivex-ai/sandbox-docker`: reference Docker `executionEnvironment` (`createDockerSandboxEnvironment`, `createDockerSandboxTools`). It is not part of `@zhivex-ai/sdk`, and it is not a hosted sandbox.
 
 Experimental areas may change faster than the rest of the SDK. Production adopters should isolate them behind an application-owned service layer.
 The same runtime cohort is available from `@zhivex-ai/sdk/experimental`.
@@ -148,6 +152,21 @@ The local MCP stdio transport is also Experimental, with its own entrypoints
 `MCP_STDIO_API_STABILITY_MANIFEST` classifies every runtime export.
 `createMcpStdioClient` spawns a child process, so it stays off the root export
 and off `@zhivex-ai/sdk/experimental`. Browser bundles resolve a stub that throws.
+
+The MCP server is Experimental on its own entrypoints
+`@zhivex-ai/sdk/mcp-server`, `@zhivex-ai/core/mcp-server`,
+`@zhivex-ai/sdk/mcp-server-stdio`, and `@zhivex-ai/core/mcp-server-stdio`.
+See [MCP server](docs/MCP_SERVER.md). `MCP_SERVER_API_STABILITY_MANIFEST`
+classifies every runtime export of the server entry. It stays off the root
+export because agent streaming uses `node:crypto`. Browser bundles of the
+stdio binder resolve a stub that throws.
+
+Agent2Agent (A2A) protocol 1.0 is Experimental, with its own entrypoints
+`@zhivex-ai/sdk/a2a` and `@zhivex-ai/core/a2a`. See [A2A](docs/A2A.md).
+`A2A_API_STABILITY_MANIFEST` classifies every runtime export.
+`createA2aAgentServer` binds an HTTP socket, so it stays off the root export
+and off `@zhivex-ai/sdk/experimental`. Browser bundles keep the client and throw
+from the server factory.
 
 ## Provider Scope
 

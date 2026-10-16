@@ -182,7 +182,7 @@ Read-only governance is fail-closed: a tool must declare a non-empty explicit pe
 
 New states use `AGENT_RUN_STATE_SCHEMA_VERSION`. `normalizeAgentRunState()` accepts legacy states without a version or revision, while rejecting unknown future schema versions; `migrateAgentRunState()` is the explicit application-boundary helper.
 
-Capsules created through `createAgentCapsule()` bind a canonical harness fingerprint to the run. Agents may also define `executionEnvironment` to acquire and authorize an app-owned boundary, plus `compaction` to replace an old context prefix with a durable summary before a provider request. The environment adapter is responsible for real isolation; this package does not provide a managed sandbox.
+Capsules created through `createAgentCapsule()` bind a canonical harness fingerprint to the run. Agents may also define `executionEnvironment` to acquire and authorize an app-owned boundary, plus `compaction` to replace an old context prefix with a durable summary before a provider request. The environment adapter is responsible for real isolation. This package does not start containers. The experimental reference Docker adapter lives in `@zhivex-ai/sandbox-docker`.
 
 ## Provider Tiers
 

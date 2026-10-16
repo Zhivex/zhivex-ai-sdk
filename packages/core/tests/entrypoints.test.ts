@@ -209,6 +209,23 @@ describe("core public entrypoints", () => {
         import: "./dist/mcp-stdio.js",
         default: "./dist/mcp-stdio.js"
       },
+      "./a2a": {
+        types: "./dist/a2a.d.ts",
+        browser: "./dist/a2a-browser.js",
+        bun: "./dist/a2a.js",
+        node: "./dist/a2a.js",
+        import: "./dist/a2a.js",
+        default: "./dist/a2a.js"
+      },
+      "./mcp-server": { types: "./dist/mcp-server.d.ts", import: "./dist/mcp-server.js" },
+      "./mcp-server-stdio": {
+        types: "./dist/mcp-server-stdio.d.ts",
+        browser: "./dist/mcp-server-stdio-browser.js",
+        bun: "./dist/mcp-server-stdio.js",
+        node: "./dist/mcp-server-stdio.js",
+        import: "./dist/mcp-server-stdio.js",
+        default: "./dist/mcp-server-stdio.js"
+      },
       "./evals": { types: "./dist/evals-entry.d.ts", import: "./dist/evals-entry.js" },
       "./realtime": { types: "./dist/realtime-entry.d.ts", import: "./dist/realtime-entry.js" },
       "./control-plane": { types: "./dist/control-plane-entry.d.ts", import: "./dist/control-plane-entry.js" },
