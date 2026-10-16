@@ -716,7 +716,7 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         await touch();
         const marker = `zhivex_${randomUUID()}`;
         const seconds = String(Math.max(1, Math.ceil(timeoutMs / 1000)));
-        const groupScript = 'setsid /usr/bin/timeout -s KILL "$1" "${@:2}" & leader=$!; wait "$leader"; status=$?; kill -KILL -"$leader" 2>/dev/null; exit "$status"';
+        const groupScript = 'sec="$1"; shift; setsid /usr/bin/timeout -s KILL "$sec" "$@" & leader=$!; wait "$leader"; status=$?; kill -KILL -"$leader" 2>/dev/null; exit "$status"';
         const result = await containerExec(
           ["/bin/sh", "-c", groupScript, marker, seconds, ...command],
           timeoutMs,

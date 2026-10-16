@@ -345,6 +345,9 @@ describe("docker sandbox environment", () => {
     expect(docker.commands().some(command => command.join(" ").includes("kill -KILL"))).toBe(false);
     expect((await session.exec(["/bin/echo", "hi"])).exitCode).toBe(0);
     expect(docker.descendantCount(session.containerId)).toBe(0);
+    const wrapper = docker.commands().find(command => command[0] === "/bin/sh" && command[1] === "-c");
+    expect(wrapper?.[2]).toContain("shift");
+    expect(wrapper?.[2]).not.toContain("${@:");
     expect(docker.commands().some(command => command.join(" ").includes("kill -KILL"))).toBe(true);
     expect((await session.exec(["/bin/sleep", "30"], { timeoutMs: 1000 })).timedOut).toBe(true);
     expect(docker.descendantCount(session.containerId)).toBe(0);
