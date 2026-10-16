@@ -234,6 +234,7 @@ Use the smallest pattern that matches the workflow:
 
 - Handoffs: sequential ownership transfer from one agent to another.
 - Subagents: model-driven delegation inside an agent loop through generated tool calls.
+- Remote A2A agents: experimental JSON-RPC delegation through `createRemoteA2aAgentTool()`. See [A2A](./A2A.md).
 - `runAgentGroup()`: deterministic fan-out from application code.
 - Workflows: explicit deterministic control flow with sequential, parallel, and loop steps.
 

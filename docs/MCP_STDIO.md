@@ -118,3 +118,6 @@ decision. See `examples/sdk/mcp-stdio-bcra.ts`.
 - Process-group shutdown is POSIX. Windows signals the direct child only.
 - The host owns the executable, arguments, working directory, environment, and network policy of the child. The SDK does not sandbox it.
 - `close()` cannot undo a tool effect that already happened.
+
+The reverse direction, exposing Zhivex tools and agents on stdio or Streamable
+HTTP, is the experimental [MCP server](./MCP_SERVER.md).
