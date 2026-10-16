@@ -8,6 +8,7 @@ This folder contains runnable TypeScript examples for the main public surfaces o
 - `agents/`: agent-only facade examples for `@zhivex-ai/agents`
 - `providers/`: one quick-start per provider package
 - `gateway/`: routing and fallback examples
+- `sandbox-docker/`: deterministic workspace-agent example for the experimental Docker execution environment
 - `next-runner/`: standalone Next.js App Router starter using `@zhivex-ai/react` with a bounded, persistent server-side Runner
 - `migration/`: offline end-to-end script for the Vercel AI SDK Core migration guide
 - `_shared.ts`: tiny helpers used by the examples
@@ -57,6 +58,8 @@ The `examples/sdk/runner-session.ts` example is deterministic and does not requi
 `examples/sdk/workflow.ts` is deterministic and does not require provider credentials. It runs a two-step workflow, persists sessions and workflow state to private local files, recreates the workflow state service, and replays the saved run without another model call.
 
 `examples/sdk/full-agent.ts` is deterministic and does not require provider credentials. It is the fastest smoke for the stable `Agent` class, local tool loops, serializable run state, and streaming from the aggregator package.
+
+`examples/sandbox-docker/workspace-agent.ts` is deterministic and does not require Docker or provider credentials. It pauses a workspace agent for write approval and resumes that run on the same in-memory container. The real container test is `bun run test:integration:sandbox-docker` where a Docker daemon is available.
 
 `examples/agents/full-agent.ts` and `examples/agents/approval-hitl.ts` are deterministic and do not require provider credentials. They show the smaller `@zhivex-ai/agents` facade, including a local-tool human-in-the-loop interrupt, approval queue, replay-bound resume, and approval history.
 

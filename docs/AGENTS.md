@@ -109,7 +109,7 @@ Legacy states without a schema version or revision are normalized. Unknown futur
 
 Capsules created with `createAgentCapsule()` bind a canonical SHA-256 harness fingerprint to their agent definition. Resume with `capsule.agent`; a mismatched id, version, fingerprint, or execution-environment binding is rejected before model or tool work. The legacy migration flags in `AgentRunPolicy` are explicit one-time escape hatches, not compatibility defaults.
 
-Use `executionEnvironment` when the application has a container, microVM, remote worker, or policy boundary that must own tool execution. The runtime acquires it once per run, authorizes every call during atomic batch preflight, reauthorizes immediately before execution, and releases it with the final status. The adapter must provide the actual isolation; the SDK contract alone is not a sandbox.
+Use `executionEnvironment` when the application has a container, microVM, remote worker, or policy boundary that must own tool execution. The runtime acquires it once per run, authorizes every call during atomic batch preflight, reauthorizes immediately before execution, and releases it with the final status. The adapter must provide the actual isolation; the SDK contract alone is not a sandbox. `@zhivex-ai/sandbox-docker` is the experimental reference Docker adapter. It is not a hosted sandbox and it does not include a local Unix fallback.
 
 Use `compaction` to bound active model context without rewriting prior completed runs through `AgentMemoryStore`. The runtime preserves leading system messages and a recent atomic tool tail, persists the compacted messages and digests before the provider call, resets the step snapshot offset at that boundary, and exposes compactions in replay and streaming.
 

@@ -19,7 +19,8 @@ export const workspaceAliases = {
   "@zhivex-ai/anthropic": resolve(import.meta.dirname, "packages/anthropic/src/index.ts"),
   "@zhivex-ai/gemini": resolve(import.meta.dirname, "packages/gemini/src/index.ts"),
   "@zhivex-ai/react": resolve(import.meta.dirname, "packages/react/src/index.ts"),
-  "@zhivex-ai/sdk": resolve(import.meta.dirname, "packages/sdk/src/index.ts")
+  "@zhivex-ai/sdk": resolve(import.meta.dirname, "packages/sdk/src/index.ts"),
+  "@zhivex-ai/sandbox-docker": resolve(import.meta.dirname, "packages/sandbox-docker/src/index.ts")
 };
 
 export default defineConfig({

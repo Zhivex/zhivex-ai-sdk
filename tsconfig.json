@@ -18,6 +18,7 @@
     { "path": "./packages/azure-openai" },
     { "path": "./packages/openrouter" },
     { "path": "./packages/gateway" },
+    { "path": "./packages/sandbox-docker" },
     { "path": "./packages/react" },
     { "path": "./packages/sdk" }
   ]

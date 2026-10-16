@@ -2,7 +2,7 @@
 
 Workspace agents are agents that can inspect or modify a filesystem, run commands, or apply patches. They are powerful and risky. Treat them as a production safety boundary, not just a tool-calling convenience.
 
-Zhivex AI SDK supports workspace-style agents through the same portable agent runtime plus provider-specific harness tools where available. It does not currently ship a managed sandbox service, browser workspace, hosted VNC session, or operator UI.
+Zhivex AI SDK supports workspace-style agents through the same portable agent runtime plus provider-specific harness tools where available. `@zhivex-ai/sandbox-docker` is an experimental reference Docker `executionEnvironment`. The SDK still does not ship a hosted sandbox, a browser workspace, a hosted VNC session, or an operator UI.
 
 ## Current Capability
 
@@ -30,6 +30,43 @@ For each active run, the adapter:
 Tool callbacks, credentials, clients, and acquired handles are not serialized. They must be supplied again by the application on resume. An adapter declaring `assurance: "enforced"` is responsible for making the declared filesystem, network, process, resource, and tenancy controls real. The SDK wrapper supplies durable binding and authorization sequencing; it does not turn an in-process callback into a container or microVM.
 
 Use `createAgentExecutionEnvironmentBinding()` from `@zhivex-ai/sdk` or `@zhivex-ai/agents/beta` when constructing the acquired session. The runtime independently recomputes the manifest fingerprint and rejects a session that differs from the durable run.
+
+## Reference Docker Sandbox
+
+`@zhivex-ai/sandbox-docker` implements that contract with one container per run. It is a separate package so Docker stays out of `core` and the aggregated SDK. Install it only when the application will run a local or self-hosted Docker daemon:
+
+```bash
+bun add @zhivex-ai/sandbox-docker @zhivex-ai/sdk
+```
+
+```ts
+import { Agent } from "@zhivex-ai/sdk";
+import { createDockerSandboxEnvironment, createDockerSandboxTools } from "@zhivex-ai/sandbox-docker";
+
+const sandbox = createDockerSandboxEnvironment({
+  workspace: {
+    id: "repo",
+    files: [{ path: "README.md", contents: "# workspace\n" }]
+  },
+  shell: { allow: ["echo"] }
+});
+
+const agent = new Agent({
+  model,
+  executionEnvironment: sandbox,
+  tools: createDockerSandboxTools()
+});
+```
+
+The default profile uses `alpine:3.21`, user `65534:65534`, a read-only root filesystem, network mode `none`, dropped capabilities, memory and CPU limits, and a tmpfs at `/workspace`. Declared files and directories are copied in. The host tree is not bind-mounted. Shell commands are argv-only, denied until you pass an allowlist, and capped by timeout and output size. Writes and `sandbox_exec` require interrupt approval.
+
+There is no local Unix fallback. A host process cannot honestly claim network-off, a non-root user, cgroup limits, and filesystem confinement at the same time without a kernel sandbox, and that sandbox is easy to get wrong. Use Docker or keep execution app-owned.
+
+`network.mode: "allowlist"` is opt-in. It attaches an internal Docker network and an in-process HTTP CONNECT proxy. Direct sockets still have no external route. The proxy can reach other ports on the Docker gateway, so this is not a microVM. Leave the default `deny` in place unless the workload needs filtered proxy egress.
+
+Snapshots store a tar of `/workspace` because that directory is a tmpfs and `docker commit` would miss it. `snapshot: "docker-commit"` also records an image id. Pause statuses keep the container and refresh the snapshot. Terminal statuses remove the container, the snapshot, and any allowlist network. Resume with the same environment object, or the same Docker client and lease/snapshot stores. A changed fingerprint fails before execution. An expired lease is not replaced with an empty workspace.
+
+`examples/sandbox-docker/workspace-agent.ts` walks the approval pause and reattach path with the in-memory Docker double. It does not need a daemon. Set `ZHIVEX_SANDBOX_DOCKER=1` to run the real-container integration test where Docker is installed.
 
 ## Provider Harness Tools
 
@@ -147,7 +184,7 @@ Store ledgers with the proposed patch, test output, approval records, and final 
 
 ## Competitive Boundary
 
-OpenAI Agents SDK and some product frameworks emphasize managed sandbox execution, workspace snapshots, voice/realtime surfaces, or operator UIs. Zhivex positions workspace agents as a portable SDK runtime plus a first-class, app-owned execution-environment contract.
+OpenAI Agents SDK and some product frameworks emphasize hosted sandbox execution, workspace snapshots, voice/realtime surfaces, or operator UIs. Zhivex positions workspace agents as a portable SDK runtime plus a first-class, app-owned execution-environment contract. `@zhivex-ai/sandbox-docker` is a reference container adapter for that contract. It does not make Zhivex a hosted sandbox platform.
 
 That means Zhivex is a good fit when:
 
@@ -156,7 +193,7 @@ That means Zhivex is a good fit when:
 - audit records and explicit state are required
 - the product wants to route between OpenAI, Azure OpenAI, and other providers by capability
 
-Do not present Zhivex as a hosted sandbox platform unless the release also includes managed isolated execution, workspace snapshots, and a user-facing operator UI.
+Do not present Zhivex as a hosted sandbox platform. The Docker package is a self-hosted reference boundary. A hosted product would still need managed isolated execution, workspace snapshots operated as a service, and a user-facing operator UI.
 
 ## Release Checklist
 
