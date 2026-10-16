@@ -155,7 +155,9 @@ describe("node docker client", () => {
         const cmd = commands.get(id) ?? [];
         const payload = cmd[0] === "/bin/tar" && cmd.includes("-c")
           ? Buffer.from(packTar([{ path: "note.txt", type: "file", content: Buffer.from("note"), mode: 0o644 }]))
-          : Buffer.from("abcdef");
+          : cmd[0] === "/usr/bin/realpath"
+            ? Buffer.from(`${cmd[1] ?? ""}\n`)
+            : Buffer.from("abcdef");
         response.writeHead(200, { "Content-Type": "application/vnd.docker.raw-stream" });
         response.end(Buffer.from(encodeDockerStreamFrame(1, payload)));
         return;
@@ -206,6 +208,8 @@ describe("node docker client", () => {
       const kills = [...commands.values()].filter(command => command[0] === "/bin/kill");
       expect(kills.length).toBe(killsBefore + 1);
       expect(kills.at(-1)).toEqual(expect.arrayContaining(["-KILL", "--", "-42"]));
+      expect(await docker.realpath("c", "/workspace/README.md")).toBe("/workspace/README.md");
+      expect([...commands.values()].some(command => command[0] === "/usr/bin/realpath" && command[1] === "/workspace/README.md")).toBe(true);
       await expect(docker.removeImage("sha256:abc")).resolves.toBeUndefined();
       await expect(docker.exec("c", {
         cmd: ["/bin/echo", "fail-please"],

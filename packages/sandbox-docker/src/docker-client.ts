@@ -319,7 +319,8 @@ export const createNodeDockerClient = (options: NodeDockerClientOptions = {}): D
         throw new SandboxError("PATH_INVALID", "Sandbox realpath requires an absolute container path.");
       }
       const result = await this.exec(id, {
-        cmd: ["/bin/realpath", containerPath],
+        // Alpine busybox links this applet at /usr/bin/realpath. /bin/realpath is absent.
+        cmd: ["/usr/bin/realpath", containerPath],
         user: "",
         workingDir: "/",
         timeoutMs: 5_000,
