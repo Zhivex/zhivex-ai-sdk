@@ -176,7 +176,14 @@ const loadGatewayAgents = (): Promise<GatewayAgentsModule> => (gatewayAgentsModu
 const deferIterable = <T>(open: () => Promise<AsyncIterable<T>>): AsyncIterable<T> => ({
   [Symbol.asyncIterator](): AsyncIterator<T> {
     let opened: Promise<AsyncIterator<T>> | undefined;
-    const iterator = () => (opened ??= open().then((source) => source[Symbol.asyncIterator]()));
+    // Catch immediately: await still rethrows, but abandoning the iterator cannot.
+    const iterator = () => {
+      if (opened) return opened;
+      const pendingIterator = open().then((source) => source[Symbol.asyncIterator]());
+      void pendingIterator.catch(() => undefined);
+      opened = pendingIterator;
+      return pendingIterator;
+    };
     return {
       async next() {
         return (await iterator()).next();
@@ -602,6 +609,7 @@ const createIdleEventReader = (
   streamIdleTimeoutMs: number | false
 ) => {
   let armed = false;
+  let disposed = false;
   let rejectPending: ((error: unknown) => void) | undefined;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -617,7 +625,7 @@ const createIdleEventReader = (
 
   const onIdle = () => {
     idleTimer = undefined;
-    if (!armed) return;
+    if (disposed || !armed) return;
     armed = false;
     control.abort(new GatewayError(
       `Provider stream was idle for more than ${streamIdleTimeoutMs}ms.`,
@@ -626,6 +634,7 @@ const createIdleEventReader = (
   };
 
   const nextEvent = (): Promise<IteratorResult<StreamEvent>> => {
+    if (disposed) return Promise.reject(new DOMException("Gateway stream consumer closed.", "AbortError"));
     const pending = iterator.next();
     if (control.signal.aborted) {
       void Promise.resolve(pending).catch(() => undefined);
@@ -634,6 +643,7 @@ const createIdleEventReader = (
     }
     armed = true;
     if (streamIdleTimeoutMs !== false) {
+      // refresh() does not restart a timer that dispose() already cleared.
       if (idleTimer) idleTimer.refresh();
       else idleTimer = setTimeout(onIdle, streamIdleTimeoutMs);
     }
@@ -657,9 +667,12 @@ const createIdleEventReader = (
   return {
     nextEvent,
     dispose: () => {
+      disposed = true;
       armed = false;
       rejectPending = undefined;
-      if (idleTimer) clearTimeout(idleTimer);
+      const timer = idleTimer;
+      idleTimer = undefined;
+      if (timer) clearTimeout(timer);
       control.signal.removeEventListener("abort", failPending);
     }
   };
