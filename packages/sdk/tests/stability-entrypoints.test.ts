@@ -9,6 +9,12 @@ import * as coreMcpStdioBrowser from "../../core/src/mcp-stdio-browser.js";
 import * as a2a from "../src/a2a.js";
 import * as coreA2a from "../../core/src/a2a.js";
 import * as coreA2aBrowser from "../../core/src/a2a-browser.js";
+import * as mcpServer from "../src/mcp-server.js";
+import * as coreMcpServer from "../../core/src/mcp-server.js";
+import * as mcpServerStdio from "../src/mcp-server-stdio.js";
+import * as coreMcpServerStdio from "../../core/src/mcp-server-stdio.js";
+import * as mcpServerStdioBrowser from "../src/mcp-server-stdio-browser.js";
+import * as coreMcpServerStdioBrowser from "../../core/src/mcp-server-stdio-browser.js";
 import * as beta from "../src/beta.js";
 import * as experimental from "../src/experimental.js";
 import * as coreExperimental from "../../core/src/experimental-entry.js";
@@ -54,6 +60,23 @@ describe("Experimental A2A entrypoints", () => {
     for (const level of Object.values(a2a.A2A_API_STABILITY_MANIFEST)) expect(level).toBe("experimental");
     expect(coreA2aBrowser.A2A_API_STABILITY_MANIFEST).toEqual(a2a.A2A_API_STABILITY_MANIFEST);
     expect(() => coreA2aBrowser.createA2aAgentServer()).toThrow(coreA2aBrowser.A2aProtocolError);
+  });
+});
+
+describe("Experimental MCP server entrypoints", () => {
+  it("classifies every opt-in export and preserves core/SDK parity", () => {
+    expect(Object.keys(mcpServer).sort()).toEqual(Object.keys(coreMcpServer).sort());
+    expect(Object.keys(mcpServer.MCP_SERVER_API_STABILITY_MANIFEST).sort()).toEqual(Object.keys(mcpServer).sort());
+    expect(Object.isFrozen(mcpServer.MCP_SERVER_API_STABILITY_MANIFEST)).toBe(true);
+    for (const level of Object.values(mcpServer.MCP_SERVER_API_STABILITY_MANIFEST)) expect(level).toBe("experimental");
+    expect(mcpServer.MCP_SERVER_PROTOCOL_VERSION).toBe("2025-11-25");
+    expect(Object.keys(mcpServerStdio).sort()).toEqual(Object.keys(coreMcpServerStdio).sort());
+    expect(Object.keys(mcpServerStdio.MCP_SERVER_STDIO_API_STABILITY_MANIFEST).sort()).toEqual(Object.keys(mcpServerStdio).sort());
+    expect(Object.isFrozen(mcpServerStdio.MCP_SERVER_STDIO_API_STABILITY_MANIFEST)).toBe(true);
+    for (const level of Object.values(mcpServerStdio.MCP_SERVER_STDIO_API_STABILITY_MANIFEST)) expect(level).toBe("experimental");
+    expect(mcpServerStdioBrowser.MCP_SERVER_STDIO_API_STABILITY_MANIFEST).toEqual(coreMcpServerStdioBrowser.MCP_SERVER_STDIO_API_STABILITY_MANIFEST);
+    expect(mcpServerStdioBrowser.MCP_SERVER_STDIO_API_STABILITY_MANIFEST).toEqual(mcpServerStdio.MCP_SERVER_STDIO_API_STABILITY_MANIFEST);
+    expect(() => mcpServerStdioBrowser.serveMcpStdio()).toThrow(mcpServerStdioBrowser.McpServerError);
   });
 });
 

@@ -101,7 +101,7 @@ The same concepts exist for Python in the [Zhivex AI SDK for Python](https://git
 
 - [Docs site](https://sdk.zhivex.ai) and the [guide index](./docs/README.md)
 - [Quickstart](./docs/QUICKSTART.md), [governance kit](./docs/GOVERNANCE.md), [agents](./docs/AGENTS.md), [production](./docs/PRODUCTION.md), and [Next.js](./docs/NEXTJS.md)
-- [Migration](./docs/MIGRATION.md), [workflows](./docs/WORKFLOWS.md), [MCP HTTP](./docs/MCP_HTTP.md), [experimental A2A](./docs/A2A.md), and [gateway routing](./docs/GATEWAY.md)
+- [Migration](./docs/MIGRATION.md), [workflows](./docs/WORKFLOWS.md), [MCP HTTP](./docs/MCP_HTTP.md), [experimental MCP server](./docs/MCP_SERVER.md), [experimental A2A](./docs/A2A.md), and [gateway routing](./docs/GATEWAY.md)
 - [Examples](./examples/README.md), [stability](./STABILITY.md), [support](./SUPPORT.md), and [versioning](./VERSIONING.md)
 
 ## Supported Packages
