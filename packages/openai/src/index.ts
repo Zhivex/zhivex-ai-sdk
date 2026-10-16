@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { createOpenAIDecisionModel } from "./decision.js";
 import { computerInputSchema, computerScreenshotSchema } from "./computer.js";
 export { openAIComputerTool, OpenAIComputerExecutionError } from "./computer.js";
@@ -34,7 +35,6 @@ import {
   ProviderResponseTooLargeError,
   ProviderToolCallError,
   assertTrustedEndpoint,
-  withManualRedirect,
   resolveAudioResponseLimits,
   openWebSocketConnection,
   hostedTool,

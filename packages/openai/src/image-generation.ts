@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { Buffer } from "node:buffer";
 
 import {
@@ -6,7 +7,6 @@ import {
   UnsupportedFeatureError,
   ValidationError,
   assertTrustedEndpoint,
-  withManualRedirect,
   decodeBase64WithLimit,
   hostedTool,
   readErrorBodyWithLimit,
