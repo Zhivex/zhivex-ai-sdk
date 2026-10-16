@@ -42,6 +42,8 @@ export interface A2aClientMessage {
 
 const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
 const DEFAULT_TIMEOUT_MS = 60_000;
+/** Node schedules a longer delay as 1 ms. Matches the signed 32-bit timer range. */
+const MAX_TIMEOUT_MS = 2_147_483_647;
 const remoteToolSchema = z.object({
   prompt: z.string().min(1),
   taskId: z.string().min(1).optional(),
@@ -70,38 +72,78 @@ export class RemoteA2aAgent {
   }
 
   card(): Promise<A2aAgentCard> {
-    this.#cardPromise ??= this.#loadCard();
+    if (!this.#cardPromise) {
+      const pending = this.#withDeadline((signal) => this.#loadCard(signal)).catch((error: unknown) => {
+        if (this.#cardPromise === pending) this.#cardPromise = undefined;
+        throw error;
+      });
+      this.#cardPromise = pending;
+    }
     return this.#cardPromise;
   }
 
   async send(input: A2aClientMessage): Promise<A2aTask> {
-    const result = await this.#rpc("SendMessage", await this.#sendParams(input));
-    return taskFromResult(result);
+    return this.#withDeadline(async (signal) => {
+      const result = await this.#rpc("SendMessage", await this.#sendParams(input), signal);
+      return taskFromResult(result);
+    });
   }
 
   async *stream(input: A2aClientMessage): AsyncGenerator<A2aStreamResponse> {
-    const response = await this.#request(await this.#endpoint(), await this.#sendParams(input), "SendStreamingMessage");
-    if (!response.ok || !response.body) {
-      throw new A2aProtocolError("PROTOCOL_ERROR", "A2A streaming request failed.");
+    const timeoutMs = timeoutLimit(this.#options.timeoutMs, DEFAULT_TIMEOUT_MS);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await raceSignal(controller.signal, (async () => {
+        const [url, params] = await Promise.all([this.#endpoint(), this.#sendParams(input)]);
+        return this.#request(url, params, "SendStreamingMessage", controller.signal);
+      })());
+      if (controller.signal.aborted) {
+        throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out.");
+      }
+      if (!response.ok || !response.body) {
+        throw new A2aProtocolError("PROTOCOL_ERROR", "A2A streaming request failed.");
+      }
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.includes("text/event-stream")) {
+        throw new A2aProtocolError("PROTOCOL_ERROR", "A2A streaming response was not an event stream.");
+      }
+      yield* readEventStream(
+        response,
+        limit(this.#options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES),
+        controller.signal
+      );
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out.");
+      }
+      if (error instanceof A2aProtocolError) throw error;
+      throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request failed.");
+    } finally {
+      clearTimeout(timer);
     }
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.includes("text/event-stream")) {
-      throw new A2aProtocolError("PROTOCOL_ERROR", "A2A streaming response was not an event stream.");
-    }
-    yield* readEventStream(response, limit(this.#options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES));
   }
 
   async getTask(id: string, historyLength?: number): Promise<A2aTask> {
-    const params: Record<string, unknown> = { id };
-    if (historyLength !== undefined) params.historyLength = historyLength;
-    return asTask(await this.#rpc("GetTask", params));
+    return this.#withDeadline(async (signal) => {
+      const params: Record<string, unknown> = { id };
+      const tenant = await this.#interfaceTenant();
+      if (tenant) params.tenant = tenant;
+      if (historyLength !== undefined) params.historyLength = historyLength;
+      return asTask(await this.#rpc("GetTask", params, signal));
+    });
   }
 
   async cancelTask(id: string): Promise<A2aTask> {
-    return asTask(await this.#rpc("CancelTask", { id }));
+    return this.#withDeadline(async (signal) => {
+      const params: Record<string, unknown> = { id };
+      const tenant = await this.#interfaceTenant();
+      if (tenant) params.tenant = tenant;
+      return asTask(await this.#rpc("CancelTask", params, signal));
+    });
   }
 
-  async #loadCard(): Promise<A2aAgentCard> {
+  async #loadCard(signal: AbortSignal): Promise<A2aAgentCard> {
     if (this.#options.card) {
       await this.#endpoint();
       return this.#options.card;
@@ -113,11 +155,12 @@ export class RemoteA2aAgent {
       if (error instanceof A2aProtocolError) throw error;
       throw new A2aProtocolError("DESTINATION_REJECTED", "A2A destination rejected by policy.");
     }
-    const response = await this.#request(cardUrl, undefined, undefined);
+    const response = await this.#request(cardUrl, undefined, undefined, signal);
+    if (signal.aborted) throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out.");
     if (!response.ok) {
       throw new A2aProtocolError("PROTOCOL_ERROR", "A2A agent card request failed.");
     }
-    const body = await readBoundedJson(response, limit(this.#options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES));
+    const body = await readBoundedJson(response, limit(this.#options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES), signal);
     if (!isRecord(body)) {
       throw new A2aProtocolError("PROTOCOL_ERROR", "A2A agent card was not an object.");
     }
@@ -125,7 +168,13 @@ export class RemoteA2aAgent {
   }
 
   async #endpoint(): Promise<URL> {
-    this.#rpcUrl ??= this.#resolveEndpoint();
+    if (!this.#rpcUrl) {
+      const pending = this.#resolveEndpoint().catch((error: unknown) => {
+        if (this.#rpcUrl === pending) this.#rpcUrl = undefined;
+        throw error;
+      });
+      this.#rpcUrl = pending;
+    }
     return this.#rpcUrl;
   }
 
@@ -161,21 +210,56 @@ export class RemoteA2aAgent {
     return params;
   }
 
-  async #rpc(method: string, params: Record<string, unknown>): Promise<unknown> {
-    const response = await this.#request(await this.#endpoint(), params, method);
-    const body = await readBoundedJson(response, limit(this.#options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES));
+  async #interfaceTenant(): Promise<string | undefined> {
+    const card = await this.card();
+    const selected = card.supportedInterfaces?.find((candidate) =>
+      candidate.protocolBinding === "JSONRPC" && candidate.protocolVersion === A2A_PROTOCOL_VERSION
+    );
+    return selected?.tenant ? selected.tenant : undefined;
+  }
+
+  async #rpc(method: string, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
+    const response = await this.#request(await this.#endpoint(), params, method, signal);
+    if (signal.aborted) throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out.");
+    const body = await readBoundedJson(response, limit(this.#options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES), signal);
     if (!response.ok && !isRecord(body)) {
       throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request failed.");
     }
     return unwrapRpc(body);
   }
 
-  async #request(url: URL, params: Record<string, unknown> | undefined, method: string | undefined): Promise<Response> {
+  /**
+   * One deadline covers destination checks, header callbacks, fetch, and body
+   * reads. `fetch` resolves when headers arrive, so the timer must stay armed
+   * until `readBoundedJson` or `readEventStream` finishes.
+   */
+  async #withDeadline<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const timeoutMs = timeoutLimit(this.#options.timeoutMs, DEFAULT_TIMEOUT_MS);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await raceSignal(controller.signal, operation(controller.signal));
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out.");
+      }
+      if (error instanceof A2aProtocolError) throw error;
+      throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request failed.");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async #request(
+    url: URL,
+    params: Record<string, unknown> | undefined,
+    method: string | undefined,
+    signal: AbortSignal
+  ): Promise<Response> {
     const headers = new Headers(await resolveHeaders(this.#options.headers));
+    if (signal.aborted) throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out.");
     headers.set("a2a-version", A2A_PROTOCOL_VERSION);
     if (method) headers.set("content-type", "application/json");
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), limit(this.#options.timeoutMs, DEFAULT_TIMEOUT_MS));
     try {
       return await this.#fetch(url, {
         method: method ? "POST" : "GET",
@@ -187,13 +271,12 @@ export class RemoteA2aAgent {
           params
         }) : undefined,
         redirect: "error",
-        signal: controller.signal
+        signal
       });
     } catch (error) {
+      if (signal.aborted) throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out.");
       if (error instanceof A2aProtocolError) throw error;
       throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request failed.");
-    } finally {
-      clearTimeout(timer);
     }
   }
 }
@@ -258,6 +341,36 @@ const limit = (value: number | undefined, fallback: number): number => {
   return resolved;
 };
 
+const timeoutLimit = (value: number | undefined, fallback: number): number => {
+  const resolved = limit(value, fallback);
+  if (resolved > MAX_TIMEOUT_MS) {
+    throw new A2aProtocolError("INVALID_PARAMS", "A2A timeout exceeds the timer range.");
+  }
+  return resolved;
+};
+
+const raceSignal = async <T>(signal: AbortSignal, operation: Promise<T>): Promise<T> => {
+  if (signal.aborted) {
+    void operation.catch(() => undefined);
+    throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out.");
+  }
+  let rejectAbort: ((error: A2aProtocolError) => void) | undefined;
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+    onAbort = () => reject(new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out."));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  void aborted.catch(() => undefined);
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+    rejectAbort?.(new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out."));
+    void operation.catch(() => undefined);
+  }
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -293,8 +406,8 @@ const textFromTask = (task: A2aTask): string => {
     .join("");
 };
 
-const readBoundedJson = async (response: Response, maxBytes: number): Promise<unknown> => {
-  const text = await readBoundedText(response, maxBytes);
+const readBoundedJson = async (response: Response, maxBytes: number, signal: AbortSignal): Promise<unknown> => {
+  const text = await readBoundedText(response, maxBytes, signal);
   try {
     return JSON.parse(text) as unknown;
   } catch (error) {
@@ -303,7 +416,7 @@ const readBoundedJson = async (response: Response, maxBytes: number): Promise<un
   }
 };
 
-const readBoundedText = async (response: Response, maxBytes: number): Promise<string> => {
+const readBoundedText = async (response: Response, maxBytes: number, signal: AbortSignal): Promise<string> => {
   const reader = response.body?.getReader();
   if (!reader) return "";
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -311,13 +424,14 @@ const readBoundedText = async (response: Response, maxBytes: number): Promise<st
   let text = "";
   try {
     while (true) {
-      const chunk = await reader.read();
+      const chunk = await readChunk(reader, signal);
       if (chunk.done) return text + decoder.decode();
       bytes += chunk.value.byteLength;
       if (bytes > maxBytes) throw new A2aProtocolError("LIMIT_EXCEEDED", "A2A response exceeded byte limit.");
       text += decoder.decode(chunk.value, { stream: true });
     }
   } catch (error) {
+    if (signal.aborted) throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out.");
     if (error instanceof A2aProtocolError) throw error;
     throw new A2aProtocolError("PROTOCOL_ERROR", "Invalid A2A response.");
   } finally {
@@ -326,7 +440,35 @@ const readBoundedText = async (response: Response, maxBytes: number): Promise<st
   }
 };
 
-async function* readEventStream(response: Response, maxBytes: number): AsyncGenerator<A2aStreamResponse> {
+const readChunk = (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal
+): Promise<ReadableStreamReadResult<Uint8Array>> => {
+  if (signal.aborted) return Promise.reject(new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out."));
+  return new Promise((resolve, reject) => {
+    const fail = () => {
+      void reader.cancel().catch(() => undefined);
+      reject(new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out."));
+    };
+    signal.addEventListener("abort", fail, { once: true });
+    reader.read().then(
+      (chunk) => {
+        signal.removeEventListener("abort", fail);
+        resolve(chunk);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", fail);
+        reject(signal.aborted ? new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out.") : error);
+      }
+    );
+  });
+};
+
+async function* readEventStream(
+  response: Response,
+  maxBytes: number,
+  signal: AbortSignal
+): AsyncGenerator<A2aStreamResponse> {
   const reader = response.body?.getReader();
   if (!reader) return;
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -361,7 +503,7 @@ async function* readEventStream(response: Response, maxBytes: number): AsyncGene
   };
   try {
     while (true) {
-      const chunk = await reader.read();
+      const chunk = await readChunk(reader, signal);
       buffer += chunk.done ? decoder.decode() : decoder.decode(chunk.value, { stream: true });
       if (!chunk.done) {
         bytes += chunk.value.byteLength;
@@ -379,6 +521,7 @@ async function* readEventStream(response: Response, maxBytes: number): AsyncGene
       if (chunk.done) return;
     }
   } catch (error) {
+    if (signal.aborted) throw new A2aProtocolError("PROTOCOL_ERROR", "A2A request timed out.");
     if (error instanceof A2aProtocolError) throw error;
     throw new A2aProtocolError("PROTOCOL_ERROR", "Invalid A2A event stream.");
   } finally {

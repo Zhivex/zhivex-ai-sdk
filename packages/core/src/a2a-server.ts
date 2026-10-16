@@ -37,6 +37,7 @@ import type {
 
 const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
 const MAX_HISTORY = 32;
+const INT32_MAX = 2_147_483_647;
 const MAX_TASKS = 100;
 const MAX_STORED_TEXT = 256 * 1024;
 const INDEX_TASKS = "a2aTaskIndex";
@@ -131,6 +132,7 @@ export const createA2aAgentServer = async <TModel extends LanguageModel>(
   const inflight = new Map<string, Flight>();
   let card: A2aAgentCard | undefined;
   let closed = false;
+  let closing: Promise<void> | undefined;
 
   const withUserLock = async <T>(userId: string, operation: () => Promise<T>): Promise<T> => {
     const previous = tails.get(userId) ?? Promise.resolve();
@@ -452,16 +454,25 @@ export const createA2aAgentServer = async <TModel extends LanguageModel>(
 
   const server = createServer((request, response) => {
     void handle(request, response).catch((error) => {
-      if (response.headersSent || response.writableEnded) {
-        response.end();
-        return;
-      }
       const protocol = error instanceof A2aProtocolError
         ? error
         : new A2aProtocolError("INTERNAL", "Internal error.");
-      writeError(response, null, protocol);
+      const release = () => {
+        if (protocol.code === "LIMIT_EXCEEDED") request.destroy();
+      };
+      try {
+        if (response.headersSent || response.writableEnded || response.destroyed) {
+          if (!response.writableEnded && !response.destroyed) response.end();
+          release();
+          return;
+        }
+        writeError(response, null, protocol, release);
+      } catch {
+        release();
+      }
     });
   });
+  server.on("error", () => undefined);
 
   const handle = async (request: IncomingMessage, response: ServerResponse) => {
     if (closed) {
@@ -511,14 +522,18 @@ export const createA2aAgentServer = async <TModel extends LanguageModel>(
       }
     } catch (error) {
       const protocol = error instanceof A2aProtocolError ? error : new A2aProtocolError("INVALID_REQUEST", "Request payload validation error.");
-      writeError(response, isRecord(payload) && (typeof payload.id === "string" || typeof payload.id === "number") ? payload.id : null, protocol);
+      writeError(response, isRecord(payload) ? jsonRpcId(payload.id) : null, protocol);
       return;
     }
     let userId: string;
     try {
       userId = await authenticate(request);
-    } catch {
-      writeError(response, rpc.id, new A2aProtocolError("AUTH_REQUIRED", "Authentication required."));
+    } catch (error) {
+      if (request.socket?.destroyed || response.destroyed || closed) return;
+      const protocol = error instanceof A2aProtocolError && error.code === "AUTH_REQUIRED"
+        ? error
+        : new A2aProtocolError("AUTH_REQUIRED", "Authentication required.");
+      writeError(response, rpc.id, protocol);
       return;
     }
     let method: string;
@@ -551,11 +566,29 @@ export const createA2aAgentServer = async <TModel extends LanguageModel>(
 
   const authenticate = async (request: IncomingMessage): Promise<string> => {
     if (!options.authenticate) return options.userId as string;
-    const result = await options.authenticate(request);
-    if (!result || !isA2aIdentifier(result.userId)) {
-      throw new A2aProtocolError("AUTH_REQUIRED", "Authentication required.");
+    let fail: (() => void) | undefined;
+    let rejectGone: ((error: A2aProtocolError) => void) | undefined;
+    const socket = request.socket;
+    const gone = new Promise<never>((_resolve, reject) => {
+      rejectGone = reject;
+      fail = () => reject(new A2aProtocolError("INTERNAL", "Internal error."));
+      if (!socket || socket.destroyed || closed) fail();
+      else socket.once("close", fail);
+    });
+    void gone.catch(() => undefined);
+    try {
+      const result = await Promise.race([Promise.resolve(options.authenticate(request)), gone]);
+      if (!socket || socket.destroyed || closed) {
+        throw new A2aProtocolError("INTERNAL", "Internal error.");
+      }
+      if (!result || !isA2aIdentifier(result.userId)) {
+        throw new A2aProtocolError("AUTH_REQUIRED", "Authentication required.");
+      }
+      return result.userId;
+    } finally {
+      socket?.off("close", fail ?? (() => undefined));
+      rejectGone?.(new A2aProtocolError("INTERNAL", "Internal error."));
     }
-    return result.userId;
   };
 
   const dispatch = async (
@@ -626,48 +659,73 @@ export const createA2aAgentServer = async <TModel extends LanguageModel>(
     }
   };
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(options.port ?? 0, host, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    server.close();
-    throw new A2aProtocolError("INTERNAL", "Internal error.");
-  }
-  const advertisedHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
-  const origin = options.publicBaseUrl
-    ? publicOrigin(options.publicBaseUrl)
-    : `http://${advertisedHost}:${address.port}`;
-  const url = origin;
-  const rpcUrl = new URL(rpcPath, `${origin}/`).href;
-  card = createA2aAgentCard({
-    name: options.card.name,
-    description: options.card.description,
-    version: options.card.version,
-    skills: options.card.skills,
-    documentationUrl: options.card.documentationUrl,
-    url: rpcUrl
-  });
-
-  return {
-    url,
-    cardUrl: new URL("/.well-known/agent-card.json", `${origin}/`).href,
-    rpcUrl,
-    card,
-    async close() {
-      closed = true;
-      for (const flight of inflight.values()) flight.abort.abort();
-      await Promise.allSettled([...tails.values()]);
-      await Promise.allSettled([...inflight.values()].map((flight) => flight.done));
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => error ? reject(error) : resolve());
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const fail = (error: Error) => {
+        server.off("error", fail);
+        reject(error);
+      };
+      server.once("error", fail);
+      server.listen(options.port ?? 0, host, () => {
+        server.off("error", fail);
+        resolve();
       });
+    });
+  } catch (error) {
+    await shutdown().catch(() => undefined);
+    throw error;
+  }
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new A2aProtocolError("INTERNAL", "Internal error.");
     }
-  };
+    const advertisedHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : formatHost(host);
+    const origin = options.publicBaseUrl
+      ? publicOrigin(options.publicBaseUrl)
+      : `http://${advertisedHost}:${address.port}`;
+    const url = origin;
+    const rpcUrl = new URL(rpcPath, `${origin}/`).href;
+    card = createA2aAgentCard({
+      name: options.card.name,
+      description: options.card.description,
+      version: options.card.version,
+      skills: options.card.skills,
+      documentationUrl: options.card.documentationUrl,
+      url: rpcUrl
+    });
+    return {
+      url,
+      cardUrl: new URL("/.well-known/agent-card.json", `${origin}/`).href,
+      rpcUrl,
+      card,
+      close() {
+        closing ??= shutdown();
+        return closing;
+      }
+    };
+  } catch (error) {
+    await shutdown();
+    throw error instanceof A2aProtocolError ? error : new A2aProtocolError("INTERNAL", "Internal error.");
+  }
+
+  function shutdown(): Promise<void> {
+    closed = true;
+    for (const flight of inflight.values()) flight.abort.abort();
+    try {
+      server.closeAllConnections();
+    } catch {
+      // Listen can fail before the server has connections to close.
+    }
+    return Promise.allSettled([...tails.values()])
+      .then(() => Promise.allSettled([...inflight.values()].map((flight) => flight.done)))
+      .then(() => new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);
+          else resolve();
+        });
+      }));
+  }
 };
 
 interface ParsedSend {
@@ -806,6 +864,12 @@ const resolveApprovals = (
   });
 };
 
+const jsonRpcId = (value: unknown): string | number | null => {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return null;
+};
+
 const parseRpc = (value: unknown): RpcRequest => {
   if (Array.isArray(value) || !isRecord(value)) {
     throw new A2aProtocolError("INVALID_REQUEST", "Request payload validation error.");
@@ -813,14 +877,14 @@ const parseRpc = (value: unknown): RpcRequest => {
   if (value.jsonrpc !== "2.0" || typeof value.method !== "string" || value.method.length === 0 || value.method.length > 200) {
     throw new A2aProtocolError("INVALID_REQUEST", "Request payload validation error.");
   }
-  if (value.id !== undefined && typeof value.id !== "string" && typeof value.id !== "number") {
+  if (value.id !== undefined && value.id !== null && jsonRpcId(value.id) === null) {
     throw new A2aProtocolError("INVALID_REQUEST", "Request payload validation error.");
   }
   if (value.params !== undefined && !isRecord(value.params)) {
     throw new A2aProtocolError("INVALID_PARAMS", "Invalid parameters.");
   }
   return {
-    id: value.id === undefined ? null : value.id,
+    id: value.id === undefined || value.id === null ? null : jsonRpcId(value.id),
     method: value.method,
     params: isRecord(value.params) ? value.params : {}
   };
@@ -839,10 +903,10 @@ const requiredId = (value: unknown): string => {
 
 const optionalHistory = (value: unknown): number | undefined => {
   if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > MAX_HISTORY) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > INT32_MAX) {
     throw new A2aProtocolError("INVALID_PARAMS", "Invalid parameters.");
   }
-  return value;
+  return Math.min(value, MAX_HISTORY);
 };
 
 const stamp = (message: A2aMessage, contextId: string, taskId: string): A2aMessage => ({
@@ -896,7 +960,7 @@ const headerValue = (request: IncomingMessage, name: string): string | undefined
 
 const readBody = async (request: IncomingMessage, maxBytes: number): Promise<Buffer> => {
   const declared = request.headers["content-length"];
-  if (typeof declared === "string" && Number(declared) > maxBytes) {
+  if (typeof declared === "string" && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) {
     throw new A2aProtocolError("LIMIT_EXCEEDED", "A2A request exceeded byte limit.");
   }
   const chunks: Buffer[] = [];
@@ -910,21 +974,36 @@ const readBody = async (request: IncomingMessage, maxBytes: number): Promise<Buf
   return Buffer.concat(chunks);
 };
 
-const writeJson = (response: ServerResponse, status: number, payload: JsonValue) => {
+const writeJson = (
+  response: ServerResponse,
+  status: number,
+  payload: JsonValue,
+  onFinish?: () => void
+) => {
   const body = JSON.stringify(payload);
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "content-length": Buffer.byteLength(body)
   });
-  response.end(body);
+  response.end(body, () => onFinish?.());
 };
 
-const writeError = (response: ServerResponse, id: string | number | null, error: A2aProtocolError) => {
+const writeError = (
+  response: ServerResponse,
+  id: string | number | null,
+  error: A2aProtocolError,
+  onFinish?: () => void
+) => {
   writeJson(response, httpStatusForA2aCode(error.jsonRpcCode), {
     jsonrpc: "2.0",
     id,
     error: { code: error.jsonRpcCode, message: error.message }
-  });
+  }, onFinish);
+};
+
+const formatHost = (value: string): string => {
+  if (value.startsWith("[") && value.endsWith("]")) return value;
+  return value.includes(":") ? `[${value}]` : value;
 };
 
 const publicOrigin = (value: string): string => {

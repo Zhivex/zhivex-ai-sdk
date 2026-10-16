@@ -44,16 +44,33 @@ envelope whose `result` is a `task`, `artifactUpdate`, or `statusUpdate`.
 
 Pass `authenticate` to require a caller-defined check on every JSON-RPC
 request. The Agent Card stays public. When the hook is omitted, pass a
-single-tenant `userId`. The default bind address is `127.0.0.1`. Request
-bodies default to 1 MiB (`maxRequestBytes`).
+single-tenant `userId`. The default bind address is `127.0.0.1`. An IPv6
+bind address is bracketed in the advertised URL, for example
+`http://[::1]:port/rpc`. `0.0.0.0` and `::` are still advertised as
+`127.0.0.1`. Request bodies default to 1 MiB (`maxRequestBytes`). A
+`Content-Length` that is not a decimal integer, or that is larger than the
+limit, is rejected before the body is buffered. `historyLength` above the 32
+messages stored on a task is clamped to that cap. Values outside the int32
+range `0..2147483647` are rejected. JSON-RPC ids of type string, number
+(including `0`), or `null` are echoed. The server stops waiting on
+`authenticate` when the client disconnects or the server closes; the hook
+itself stays host-owned.
 
 ## Client
 
 `RemoteA2aAgent` fetches the Agent Card, selects the JSON-RPC interface whose
 `protocolVersion` is `1.0`, and calls `send`, `stream`, `getTask`, and
-`cancelTask`. `createRemoteA2aAgentTool` wraps that client as a Zhivex tool
-so a parent agent can delegate through `tools`. An input-required remote task
-is returned to the parent instead of blocking it.
+`cancelTask`. `getTask` and `cancelTask` repeat that interface's `tenant`
+when the card sets one, the same way `send` does. `createRemoteA2aAgentTool`
+wraps that client as a Zhivex tool so a parent agent can delegate through
+`tools`. An input-required remote task is returned to the parent instead of
+blocking it.
+
+`timeoutMs` defaults to 60 seconds and must be a positive safe integer no
+greater than `2147483647`. The deadline covers destination checks, the
+`headers` callback, header receipt, and response body or event-stream
+consumption. A stalled body rejects with `A2A request timed out.` A failed
+card or endpoint lookup is not cached, so a later call can retry.
 
 Every card and RPC URL passes `assertA2aDestination` before `fetch`.
 Non-loopback URLs also pass `checkMcpDestination` with purpose `"server"`.

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -27,6 +28,7 @@ import {
   createA2aAgentServer,
   createRemoteA2aAgent,
   createRemoteA2aAgentTool,
+  type A2aAgentCard,
   type A2aAgentServer,
   type A2aTask
 } from "../src/a2a.js";
@@ -578,6 +580,356 @@ describe("A2A JSON-RPC server", () => {
     expect(result.status).toBe("completed");
     expect(result.outputText).toBe("delegated");
     expect(result.toolResults[0]?.output).toMatchObject({ state: "TASK_STATE_COMPLETED", text: "echo:ping" });
+  });
+
+  it("clamps historyLength, echoes JSON-RPC ids, and rejects an undeclared tenant", async () => {
+    const { server } = await start();
+    const sent = await rpc(server.rpcUrl, "SendMessage", {
+      message: { messageId: "msg_hist", role: "ROLE_USER", parts: [{ text: "ping" }] },
+      configuration: { historyLength: 100 }
+    });
+    expect(sent.status).toBe(200);
+    expect(sent.body.error).toBeUndefined();
+    const history = sent.body.result?.task?.history ?? [];
+    expect(history.length).toBeGreaterThan(0);
+    expect(history.length).toBeLessThanOrEqual(32);
+
+    const taskId = sent.body.result?.task?.id ?? "";
+    const clamped = await rpc(server.rpcUrl, "GetTask", { id: taskId, historyLength: 2_147_483_647 });
+    expect(clamped.body.error).toBeUndefined();
+    expect((clamped.body.result?.history ?? []).length).toBeLessThanOrEqual(32);
+    const one = await rpc(server.rpcUrl, "GetTask", { id: taskId, historyLength: 1 });
+    expect(one.body.result?.history).toHaveLength(1);
+
+    const negative = await rpc(server.rpcUrl, "GetTask", { id: taskId, historyLength: -1 });
+    expect(negative.body.error?.code).toBe(A2A_JSON_RPC_ERROR.invalidParams);
+    const fraction = await rpc(server.rpcUrl, "GetTask", { id: taskId, historyLength: 1.5 });
+    expect(fraction.body.error?.code).toBe(A2A_JSON_RPC_ERROR.invalidParams);
+    const aboveInt32 = await rpc(server.rpcUrl, "GetTask", { id: taskId, historyLength: 2_147_483_648 });
+    expect(aboveInt32.body.error?.code).toBe(A2A_JSON_RPC_ERROR.invalidParams);
+
+    const tenant = await rpc(server.rpcUrl, "GetTask", { id: taskId, tenant: "tenant_a" });
+    expect(tenant.body.error?.code).toBe(A2A_JSON_RPC_ERROR.invalidParams);
+
+    const nullId = await fetch(server.rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", "a2a-version": A2A_PROTOCOL_VERSION },
+      body: JSON.stringify({ jsonrpc: "2.0", id: null, method: "GetTask", params: { id: taskId } })
+    });
+    expect(await nullId.json()).toMatchObject({ id: null, result: { id: taskId } });
+
+    const zeroId = await fetch(server.rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", "a2a-version": A2A_PROTOCOL_VERSION },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "GetTask", params: { id: taskId } })
+    });
+    expect(await zeroId.json()).toMatchObject({ id: 0, result: { id: taskId } });
+
+    const badId = await fetch(server.rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", "a2a-version": A2A_PROTOCOL_VERSION },
+      body: JSON.stringify({ jsonrpc: "2.0", id: { bad: true }, method: "GetTask", params: { id: taskId } })
+    });
+    expect(await badId.json()).toMatchObject({ id: null, error: { code: A2A_JSON_RPC_ERROR.invalidRequest } });
+  });
+
+  it("rejects an oversized Content-Length without waiting for the rest of the body", async () => {
+    const { server } = await start(128);
+    const target = new URL(server.rpcUrl);
+    const body = await new Promise<string>((resolve, reject) => {
+      let settled = false;
+      const req = httpRequest({
+        hostname: target.hostname,
+        port: target.port,
+        path: target.pathname,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "a2a-version": A2A_PROTOCOL_VERSION,
+          "content-length": "10000000"
+        }
+      }, (response: IncomingMessage) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () => {
+          if (settled) return;
+          settled = true;
+          resolve(Buffer.concat(chunks).toString("utf8"));
+        });
+      });
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        req.destroy();
+        reject(new Error("A2A request stalled"));
+      }, 1000);
+      req.on("error", (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      });
+      req.write("{}");
+    });
+    expect(JSON.parse(body)).toMatchObject({
+      id: null,
+      error: { code: A2A_JSON_RPC_ERROR.limitExceeded }
+    });
+  });
+
+  it("closes the listener when advertised URL setup fails and brackets IPv6 hosts", async () => {
+    const probe = createServer();
+    const port = await new Promise<number>((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(0, "127.0.0.1", () => {
+        const address = probe.address();
+        resolve(typeof address === "object" && address ? address.port : 0);
+      });
+    });
+    await new Promise<void>((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+
+    await expect(createA2aAgentServer({
+      appName: "a2a-origin",
+      userId: "user_1",
+      port,
+      publicBaseUrl: "ftp://example.com",
+      agent: createAgent({ model: echoModel(), maxSteps: 1 }),
+      sessionService: createInMemorySessionService(),
+      card: { name: "Origin", description: "Invalid public origin." }
+    })).rejects.toMatchObject({ code: "INVALID_PARAMS" });
+
+    const rebound = createServer();
+    await new Promise<void>((resolve, reject) => {
+      rebound.once("error", reject);
+      rebound.listen(port, "127.0.0.1", () => rebound.close(() => resolve()));
+    });
+
+    try {
+      const server = await createA2aAgentServer({
+        appName: "a2a-ipv6",
+        userId: "user_1",
+        host: "::1",
+        agent: createAgent({ model: echoModel(), maxSteps: 1 }),
+        sessionService: createInMemorySessionService(),
+        card: { name: "Local", description: "IPv6 loopback." }
+      });
+      servers.push(server);
+      expect(server.rpcUrl).toMatch(/^http:\/\/\[::1\]:\d+\/rpc$/);
+      expect(server.cardUrl).toMatch(/^http:\/\/\[::1\]:\d+\/\.well-known\/agent-card\.json$/);
+      expect((await fetch(server.cardUrl)).status).toBe(200);
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? String(error.code) : "";
+      if (code !== "EADDRNOTAVAIL" && code !== "EAFNOSUPPORT" && code !== "EACCES") throw error;
+    }
+  });
+
+  it("abandons a hanging authenticate hook when the server closes", async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const server = await createA2aAgentServer({
+      appName: "a2a-auth-close",
+      authenticate: () => gate.then(() => ({ userId: "user_1" })),
+      agent: createAgent({ model: echoModel(), maxSteps: 1 }),
+      sessionService: createInMemorySessionService(),
+      card: { name: "Slow auth", description: "Hangs until released." }
+    });
+    servers.push(server);
+    const target = new URL(server.rpcUrl);
+    const req = httpRequest({
+      hostname: target.hostname,
+      port: target.port,
+      path: target.pathname,
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "a2a-version": A2A_PROTOCOL_VERSION
+      }
+    });
+    req.on("error", () => undefined);
+    req.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "GetTask", params: { id: "task_missing" } }));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const outcome = await Promise.race([
+      server.close().then(() => "closed"),
+      new Promise((resolve) => setTimeout(() => resolve("hung"), 1000))
+    ]);
+    release?.();
+    expect(outcome).toBe("closed");
+  });
+});
+
+describe("A2A client deadlines", () => {
+  const tenantCard: A2aAgentCard = {
+    name: "Remote",
+    description: "Remote agent",
+    version: "1.0.0",
+    capabilities: { streaming: true },
+    defaultInputModes: ["text/plain"],
+    defaultOutputModes: ["text/plain"],
+    skills: [],
+    supportedInterfaces: [{
+      url: "https://example.com/rpc",
+      protocolBinding: "JSONRPC",
+      protocolVersion: A2A_PROTOCOL_VERSION,
+      tenant: "tenant_a"
+    }]
+  };
+
+  const stall = (): Response => new Response(new ReadableStream({
+    pull() {
+      return new Promise<void>(() => undefined);
+    }
+  }), {
+    status: 200,
+    headers: { "content-type": "application/json" }
+  });
+
+  it("keeps the timeout active until the body is consumed", async () => {
+    const cardAgent = createRemoteA2aAgent({
+      url: "https://example.com",
+      timeoutMs: 50,
+      fetch: (async () => stall()) as typeof fetch
+    });
+    await expect(cardAgent.card()).rejects.toMatchObject({
+      code: "PROTOCOL_ERROR",
+      message: "A2A request timed out."
+    });
+
+    const methods = [
+      (agent: ReturnType<typeof createRemoteA2aAgent>) => agent.send({ text: "ping" }),
+      (agent: ReturnType<typeof createRemoteA2aAgent>) => agent.getTask("task_1"),
+      (agent: ReturnType<typeof createRemoteA2aAgent>) => agent.cancelTask("task_1")
+    ];
+    for (const call of methods) {
+      const agent = createRemoteA2aAgent({
+        url: "https://example.com",
+        card: tenantCard,
+        timeoutMs: 50,
+        fetch: (async () => stall()) as typeof fetch
+      });
+      await expect(call(agent)).rejects.toMatchObject({ message: "A2A request timed out." });
+    }
+  });
+
+  it("retries a card lookup after a timeout and rejects an out-of-range timer", async () => {
+    let calls = 0;
+    const agent = createRemoteA2aAgent({
+      url: "https://example.com",
+      timeoutMs: 50,
+      fetch: (async () => {
+        calls += 1;
+        if (calls === 1) return stall();
+        return Response.json(tenantCard);
+      }) as typeof fetch
+    });
+    await expect(agent.card()).rejects.toMatchObject({ message: "A2A request timed out." });
+    await expect(agent.card()).resolves.toMatchObject({ name: "Remote" });
+    expect(calls).toBe(2);
+
+    let fetched = 0;
+    const huge = createRemoteA2aAgent({
+      url: "https://example.com",
+      card: tenantCard,
+      timeoutMs: 2_147_483_648,
+      fetch: (async () => {
+        fetched += 1;
+        return Response.json({});
+      }) as typeof fetch
+    });
+    await expect(huge.getTask("task_1")).rejects.toMatchObject({
+      code: "INVALID_PARAMS",
+      message: "A2A timeout exceeds the timer range."
+    });
+    expect(fetched).toBe(0);
+  });
+
+  it("sends the selected interface tenant on get and cancel and bounds header callbacks", async () => {
+    const calls: Array<{ method: string; params: { tenant?: string } }> = [];
+    const agent = createRemoteA2aAgent({
+      url: "https://example.com",
+      card: tenantCard,
+      fetch: (async (_url, init) => {
+        const payload = JSON.parse(String(init?.body)) as { method: string; id: string; params: { tenant?: string } };
+        calls.push({ method: payload.method, params: payload.params });
+        const task = { id: "task_1", contextId: "ctx_1", status: { state: "TASK_STATE_COMPLETED" } };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: payload.id,
+          result: payload.method === "SendMessage" ? { task } : task
+        });
+      }) as typeof fetch
+    });
+    await agent.send({ text: "ping" });
+    await agent.getTask("task_1");
+    await agent.cancelTask("task_1");
+    expect(calls.map((call) => call.method)).toEqual(["SendMessage", "GetTask", "CancelTask"]);
+    expect(calls.every((call) => call.params.tenant === "tenant_a")).toBe(true);
+
+    let headersCalled = 0;
+    const slowHeaders = createRemoteA2aAgent({
+      url: "https://example.com",
+      card: tenantCard,
+      timeoutMs: 50,
+      headers: () => new Promise(() => undefined),
+      fetch: (async () => {
+        headersCalled += 1;
+        return Response.json({});
+      }) as typeof fetch
+    });
+    await expect(slowHeaders.getTask("task_1")).rejects.toMatchObject({ message: "A2A request timed out." });
+    expect(headersCalled).toBe(0);
+  });
+
+  it("times out a stalled event stream, rejects fatal framing, and caps response bytes", async () => {
+    const encoder = new TextEncoder();
+    const stalled = createRemoteA2aAgent({
+      url: "https://example.com",
+      card: tenantCard,
+      timeoutMs: 80,
+      fetch: (async () => new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: "rpc_1",
+            result: { task: { id: "task_1", contextId: "ctx_1", status: { state: "TASK_STATE_WORKING" } } }
+          })}\n\n`));
+        }
+      }), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })) as typeof fetch
+    });
+    const iterator = stalled.stream({ text: "ping" });
+    expect((await iterator.next()).value?.task?.status.state).toBe("TASK_STATE_WORKING");
+    await expect(iterator.next()).rejects.toMatchObject({ message: "A2A request timed out." });
+
+    const framed = createRemoteA2aAgent({
+      url: "https://example.com",
+      card: tenantCard,
+      fetch: (async () => new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("data: not-json\n\n"));
+          controller.close();
+        }
+      }), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })) as typeof fetch
+    });
+    await expect(framed.stream({ text: "ping" }).next()).rejects.toMatchObject({
+      message: "Invalid A2A event stream."
+    });
+
+    const oversized = createRemoteA2aAgent({
+      url: "https://example.com",
+      maxResponseBytes: 32,
+      fetch: (async () => new Response(JSON.stringify(tenantCard), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })) as typeof fetch
+    });
+    await expect(oversized.card()).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
   });
 });
 
