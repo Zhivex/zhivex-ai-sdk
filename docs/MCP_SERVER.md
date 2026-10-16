@@ -153,7 +153,10 @@ still needs `authenticate` and should set `allowedHosts`.
 `POST` requires `Content-Type: application/json` and an `Accept` value that
 includes `application/json` or `text/event-stream`. `MCP-Protocol-Version`,
 when present, must be `2025-11-25`. `initialize` creates a session and returns
-`Mcp-Session-Id`. Later requests without that session, and `DELETE` of an
+`Mcp-Session-Id`. A custom `sessionId` must be visible ASCII (`0x21`–`0x7E`),
+at most 128 characters, and must not match a session that is still stored.
+Anything else returns a JSON-RPC error and does not store or replace a session.
+Later requests without that session, and `DELETE` of an
 unknown session, return 404. At `maxSessions` (default 128), `initialize` drops the least recently
 used session that has no in-flight call. If every retained session is busy,
 `initialize` returns 503 and does not store the new session. Idle sessions are
@@ -204,8 +207,10 @@ does not invent an idempotency key.
 An outbound stdio message larger than `maxMessageBytes` is replaced by a
 JSON-RPC error when that error fits. When even the error does not fit, the
 session ends instead of leaving the client waiting. An unterminated inbound
-line over the same cap, invalid UTF-8, or a failed read also ends the session
-and closes stdout.
+line over the same cap, including a tail left after a newline in the same
+chunk, invalid UTF-8, or a failed read also ends the session
+and closes stdout. Tool execution context ids keep the JSON-RPC id type, so
+numeric `1` and string `"1"` become `mcp_n:1` and `mcp_s:1`.
 
 ## Stdio
 

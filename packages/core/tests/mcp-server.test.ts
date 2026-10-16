@@ -1821,4 +1821,181 @@ describe("experimental MCP server", () => {
     expect(response.headers.get("mcp-session-id")).toBeNull();
     await http.close();
   });
+
+  it("keeps JSON-RPC id types distinct in the tool execution context", async () => {
+    const ids: string[] = [];
+    const http = createMcpHttpServer(createMcpServer({
+      tools: {
+        echo: tool({
+          name: "echo",
+          schema: z.object({}),
+          execute: (_input, context) => {
+            ids.push(context?.toolCall.id ?? "");
+            return { ok: true };
+          }
+        })
+      }
+    }), { sessionId: () => "ids" });
+    const headers = { "Content-Type": "application/json", Accept: "application/json", "Mcp-Session-Id": "ids" };
+    const post = (body: unknown) => http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body)
+    }));
+    await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "ids", version: "1" } }
+      })
+    }));
+    await post({ jsonrpc: "2.0", method: "notifications/initialized" });
+    const [numeric, text] = await Promise.all([
+      post({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "echo", arguments: {} } }),
+      post({ jsonrpc: "2.0", id: "1", method: "tools/call", params: { name: "echo", arguments: {} } })
+    ]);
+    expect(numeric.ok).toBe(true);
+    expect(text.ok).toBe(true);
+    expect([...ids].sort()).toEqual(["mcp_n:1", "mcp_s:1"]);
+    await http.close();
+  });
+
+  it("rejects a session id that collides with a live session", async () => {
+    let started = 0;
+    let sawAbort = false;
+    const http = createMcpHttpServer(createMcpServer({
+      timeoutMs: 30_000,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: (_input, context) => new Promise(() => {
+            started += 1;
+            context?.abortSignal?.addEventListener("abort", () => {
+              sawAbort = true;
+            });
+          })
+        })
+      }
+    }), { sessionId: () => "live" });
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const initialize = (id: number) => http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "live", version: "1" } }
+      })
+    }));
+    const first = await initialize(1);
+    expect(first.headers.get("mcp-session-id")).toBe("live");
+    await first.text();
+    await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": "live" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })
+    }));
+    const pending = http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": "live" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "hang", arguments: {} } })
+    }));
+    const startedAt = Date.now();
+    while (started < 1 && Date.now() - startedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(started).toBe(1);
+    const collision = await initialize(2);
+    const collisionBody = await collision.text();
+    expect(JSON.parse(collisionBody)).toMatchObject({ id: 2, error: { code: -32603, message: "MCP server failed." } });
+    expect(collision.headers.get("mcp-session-id")).toBeNull();
+    const deleted = await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "DELETE",
+      headers: { "Mcp-Session-Id": "live" }
+    }));
+    expect(deleted.status).toBe(200);
+    const deadline = Date.now() + 500;
+    while (!sawAbort && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(sawAbort).toBe(true);
+    await http.close();
+    await pending.catch(() => undefined);
+  });
+
+  it("rejects session ids that are not legal HTTP header values", async () => {
+    const cases = ["bad\nsecret", "bad secret", "sécret", "你"];
+    for (const generated of cases) {
+      const http = createMcpHttpServer(createMcpServer(), {
+        sessionId: () => generated
+      });
+      const response = await http.fetch(new Request("https://mcp.test/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "header", version: "1" } }
+        })
+      }));
+      const body = await response.text();
+      expect(response.status).toBe(200);
+      expect(JSON.parse(body)).toMatchObject({ id: 1, error: { code: -32603, message: "MCP server failed." } });
+      expect(response.headers.get("mcp-session-id")).toBeNull();
+      expect(body).not.toContain("secret");
+      expect(body).not.toContain(generated);
+      const follow = await http.fetch(new Request("https://mcp.test/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "Mcp-Session-Id": "bad secret"
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "ping" })
+      }));
+      expect(follow.status).toBe(404);
+      await http.close();
+    }
+  });
+
+  it("closes stdio when a newline is followed by an oversized unterminated tail", async () => {
+    const input = new TransformStream<Uint8Array, Uint8Array>();
+    const output = new TransformStream<Uint8Array, Uint8Array>();
+    const session = createMcpStdioServer({
+      server: createMcpServer(),
+      input: input.readable,
+      output: output.writable,
+      maxMessageBytes: 48
+    });
+    const reader = output.readable.getReader();
+    const writer = input.writable.getWriter();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    await writer.write(encoder.encode(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "ping"
+    })}\n${"x".repeat(64)}`));
+    let buffered = "";
+    let done = false;
+    const deadline = Date.now() + 1_000;
+    while (!done && Date.now() < deadline) {
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 20))
+      ]);
+      if (!next) continue;
+      if (next.value) buffered += decoder.decode(next.value);
+      done = next.done;
+    }
+    expect(done).toBe(true);
+    expect(buffered).toContain("\"id\":1");
+    await session.close();
+  });
 });

@@ -133,6 +133,11 @@ export interface McpHttpServerOptions {
   maxSessions?: number;
   /** Idle sessions with no in-flight call are dropped after this many milliseconds. */
   sessionTtlMs?: number;
+  /**
+   * Value sent as `Mcp-Session-Id`. It must be visible ASCII (`0x21`–`0x7E`),
+   * at most 128 characters, and must not match a session that is still stored.
+   * Any other result fails `initialize` and stores nothing.
+   */
   sessionId?: () => string;
 }
 
@@ -187,6 +192,16 @@ interface Session {
 /** Numeric `1` and string `"1"` are different JSON-RPC ids and must not share a slot. */
 const inflightKey = (id: string | number): string =>
   typeof id === "number" ? `n:${id}` : `s:${id}`;
+
+/** Visible ASCII that can be stored and returned in `Mcp-Session-Id`. */
+const legalSessionId = (value: unknown): value is string => {
+  if (typeof value !== "string" || value.length === 0 || value.length > 128) return false;
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code < 0x21 || code > 0x7e) return false;
+  }
+  return true;
+};
 
 const closedReason = () => new DOMException("MCP server is closed.", "AbortError");
 
@@ -401,7 +416,7 @@ const executionContext = (
   call: CallContext
 ): ToolExecutionContext => ({
   abortSignal: call.signal,
-  toolCall: { id: `mcp_${String(call.requestId)}`, name: definition.name, input },
+  toolCall: { id: `mcp_${inflightKey(call.requestId)}`, name: definition.name, input },
   step: 0,
   model: placeholderModel
 });
@@ -1059,7 +1074,7 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
       let id: string;
       try {
         const generated = (options.sessionId ?? (() => crypto.randomUUID()))();
-        if (typeof generated !== "string" || generated.length === 0 || generated.length > 128) {
+        if (!legalSessionId(generated) || sessionsById.has(generated)) {
           return boundedJson(200, rpcError(requestId(incoming?.id) ?? null, -32603, "MCP server failed."));
         }
         id = generated;
@@ -1214,9 +1229,6 @@ export function createMcpStdioServer(options: McpStdioServerOptions): McpStdioSe
         break;
       }
       buffered += decoder.decode(chunk.value, { stream: true });
-      if (byteLength(buffered) > maxMessageBytes && !buffered.includes("\n")) {
-        throw new McpServerError("LIMIT_EXCEEDED", "MCP message exceeded byte limit.");
-      }
       let newline = buffered.indexOf("\n");
       while (newline !== -1) {
         const line = buffered.slice(0, newline).replace(/\r$/, "");
@@ -1258,6 +1270,9 @@ export function createMcpStdioServer(options: McpStdioServerOptions): McpStdioSe
           await writeMessage(rpcError(requestKey ?? null, -32603, "MCP server failed."));
         });
         if (!toolCall) await task;
+      }
+      if (byteLength(buffered) > maxMessageBytes) {
+        throw new McpServerError("LIMIT_EXCEEDED", "MCP message exceeded byte limit.");
       }
     }
   })().catch(() => {
