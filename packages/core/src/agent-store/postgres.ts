@@ -230,19 +230,23 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
       if (existingOwner) return { claimed: false, state: existingOwner };
       const normalized = normalizeAgentRunState({ ...state, ...(scope ? { scope } : {}) });
       const updatedAt = Date.now();
-
-      await options.client.query(
+      const runKey = await physicalKey(normalized.runId, scope);
+      const inserted = await options.client.query<{ run_id?: string; runId?: string }>(
         `INSERT INTO ${tableName} (run_id, state_json, updated_at_ms)
          VALUES ($1, $2::jsonb, $3)
-         ON CONFLICT(run_id) DO NOTHING`,
-        [await physicalKey(normalized.runId, scope), normalized, updatedAt]
+         ON CONFLICT(run_id) DO NOTHING
+         RETURNING run_id`,
+        [runKey, normalized, updatedAt]
       );
+      if (!getRecordField(inserted.rows[0], ["run_id", "runId"])) {
+        throw new ConflictError("Agent run identity already exists.");
+      }
       const claim = await options.client.query<{ run_id?: string; runId?: string }>(
         `INSERT INTO ${idempotencyTableName} (idempotency_key, run_id, updated_at_ms)
          VALUES ($1, $2, $3)
          ON CONFLICT(idempotency_key) DO NOTHING
          RETURNING run_id`,
-        [dbKey(state.idempotencyKey, scope), await physicalKey(normalized.runId, scope), updatedAt]
+        [dbKey(state.idempotencyKey, scope), runKey, updatedAt]
       );
       const claimedRunId = getRecordField(claim.rows[0], ["run_id", "runId"]);
       if (claimedRunId === await physicalKey(normalized.runId, scope)) {

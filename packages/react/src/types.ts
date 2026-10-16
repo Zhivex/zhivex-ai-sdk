@@ -7,10 +7,10 @@ import type {
   AgentApprovalResponse,
   AgentCompactionRecord,
   AgentStatus,
-  AgentStep,
   ContentPart,
   JsonValue,
   TokenUsage,
+  UIAgentStepSummary,
   UIMessage,
   UIMessageChunk
 } from "@zhivex-ai/core";
@@ -41,7 +41,7 @@ export type ChatActivity =
     }
   | {
       type: "step-finish";
-      step: AgentStep;
+      step: UIAgentStepSummary;
     }
   | {
       type: "approval-request";

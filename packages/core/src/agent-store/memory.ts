@@ -83,10 +83,13 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
       }
 
       const normalized = normalizeAgentRunState(state);
-      removeParentIndex(states.get(runKey(normalized.runId, scope)));
+      const key = runKey(normalized.runId, scope);
+      if (states.has(key)) {
+        throw new ConflictError("Agent run identity already exists.");
+      }
       const stored = cloneState({ ...normalized, ...(scope ? { scope } : {}) });
-      states.set(runKey(normalized.runId, scope), stored);
-      idempotencyKeys.set(idempotencyKey(state.idempotencyKey, scope), runKey(normalized.runId, scope));
+      states.set(key, stored);
+      idempotencyKeys.set(idempotencyKey(state.idempotencyKey, scope), key);
       if (normalized.parentRunId) {
         const parentKey = scopedKey(scope, normalized.parentRunId);
         const children = parentRunIds.get(parentKey) ?? new Set<string>();

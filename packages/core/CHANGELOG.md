@@ -1,5 +1,18 @@
 # @zhivex-ai/core
 
+## Unreleased
+
+### Breaking Changes
+
+- UI message streams from `toUIMessageStream`, `toUIMessageStreamResponse`, and `toUIAgentStreamResponse` omit `agent-run-finish` unless `includeAgentRunFinish` is `true`. `agent-step-finish` chunks are now a status summary (`index`, `status`, and optional timestamps, token `usage`, and `error.message`). They no longer include request messages, provider options, response text, or tool results. Set `includeAgentRunFinish: true` only for a trusted server consumer that is allowed to receive the full `AgentRunState`. `streamAgent().eventStream` is unchanged.
+
+### Patch Changes
+
+- `generateText` and `streamText` reject duplicate tool-call IDs with `ValidationError` before approval policy and tool execution. Approval decisions are stored per call, so one call cannot overwrite another call's denial.
+- Workflow state `userId` must match the authenticated caller. A caller-supplied `sessionId` must match the state, and a state `workflowId` must match the workflow definition. Caller-supplied execution claims are ignored. A persisted step takes a 15-minute execution claim; a concurrent resume fails with `ConflictError` before the step runs.
+- Runner approval resumes compare-and-swap the loaded session revision. The losing resume fails with `ConflictError` before the approved tool runs.
+- Memory, SQLite, and PostgreSQL idempotency claims are insert-only. Claiming a new idempotency key for an existing run id throws `ConflictError` and leaves the stored run unchanged.
+
 ## 1.34.0
 
 ### Minor Changes

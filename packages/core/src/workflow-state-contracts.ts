@@ -4,11 +4,26 @@ import type { AgentApprovalRequest, AgentStatus, JsonValue } from "./types.js";
 
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
+const readExecutionClaim = (value: unknown): WorkflowExecutionClaim | undefined => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const claim = value as { ownerId?: unknown; expiresAt?: unknown };
+  if (typeof claim.ownerId !== "string" || claim.ownerId.length === 0 || typeof claim.expiresAt !== "number" || !Number.isFinite(claim.expiresAt)) {
+    return undefined;
+  }
+  return { ownerId: claim.ownerId, expiresAt: claim.expiresAt };
+};
+
 export const WORKFLOW_RUN_STATE_SCHEMA_VERSION = 1 as const;
 export const WORKFLOW_STATE_RECORD_SCHEMA_VERSION = 1 as const;
 
 export type WorkflowStatus = "running" | "completed" | "waiting_approval" | "failed";
 export type WorkflowStepStatus = "pending" | "running" | "completed" | "waiting_approval" | "failed";
+
+/** Short-lived fence that blocks a second worker from running the same persisted step. */
+export interface WorkflowExecutionClaim {
+  ownerId: string;
+  expiresAt: number;
+}
 
 export interface WorkflowStepResult {
   id: string;
@@ -41,6 +56,8 @@ export interface WorkflowRunState {
   currentStepIndex: number;
   session?: AgentSession;
   metadata?: Record<string, JsonValue>;
+  /** Present only while a worker owns the step. Callers cannot supply this field. */
+  executionClaim?: WorkflowExecutionClaim;
   createdAt: number;
   updatedAt: number;
 }
@@ -123,6 +140,7 @@ export const normalizeWorkflowRunState = (value: unknown): WorkflowRunState => {
     currentStepIndex: state.currentStepIndex,
     session: state.session ? cloneJson(state.session) : undefined,
     metadata: state.metadata ? cloneJson(state.metadata) : undefined,
+    executionClaim: readExecutionClaim(state.executionClaim),
     createdAt: state.createdAt,
     updatedAt: state.updatedAt
   };

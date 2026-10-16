@@ -6,11 +6,13 @@ import type {
   SessionService
 } from "./runner.js";
 import type { AgentApprovalRequest, AgentApprovalResponse, AgentStatus, JsonValue, LanguageModel } from "./types.js";
+import { ConflictError, ValidationError } from "./errors.js";
 import {
   migrateWorkflowRunState,
   normalizeWorkflowRunState,
   WORKFLOW_RUN_STATE_SCHEMA_VERSION,
   type PersistedWorkflowRunState,
+  type WorkflowExecutionClaim,
   type WorkflowRunState,
   type WorkflowRunStateMigrationTarget,
   type WorkflowStateService,
@@ -28,6 +30,7 @@ export {
 } from "./workflow-state-contracts.js";
 export type {
   PersistedWorkflowRunState,
+  WorkflowExecutionClaim,
   WorkflowRunState,
   WorkflowRunStateMigrationTarget,
   WorkflowStatus,
@@ -37,6 +40,7 @@ export type {
 
 const randomId = createSecureId;
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const WORKFLOW_EXECUTION_CLAIM_TTL_MS = 15 * 60 * 1000;
 
 export interface WorkflowPromptContext {
   workflowId?: string;
@@ -378,15 +382,45 @@ export const loadWorkflowState = async (
   };
 };
 
-export const saveWorkflowState = async (
-  workflow: WorkflowDefinition,
+interface WorkflowPersistenceCursor {
+  workflowRevision?: number;
+  sessionRevision?: number;
+}
+
+const sessionWithWorkflowReference = (
+  session: AgentSession,
+  workflowKey: string,
   state: WorkflowRunState
-): Promise<AgentSession | undefined> => {
+): AgentSession => ({
+  ...session,
+  updatedAt: Date.now(),
+  metadata: {
+    ...(session.metadata ?? {}),
+    workflowStateRefs: {
+      ...(
+        session.metadata?.workflowStateRefs &&
+        typeof session.metadata.workflowStateRefs === "object" &&
+        !Array.isArray(session.metadata.workflowStateRefs)
+          ? session.metadata.workflowStateRefs as Record<string, JsonValue>
+          : {}
+      ),
+      [workflowKey]: {
+        runId: state.runId,
+        status: state.status,
+        updatedAt: state.updatedAt
+      }
+    }
+  }
+});
+
+const persistWorkflowState = async (
+  workflow: WorkflowDefinition,
+  state: WorkflowRunState,
+  cursor?: WorkflowPersistenceCursor
+): Promise<{ session?: AgentSession; cursor: WorkflowPersistenceCursor }> => {
   const definition = validateWorkflow(workflow);
   const persistence = definition.persistence;
-  if (!persistence) {
-    return undefined;
-  }
+  if (!persistence) return { cursor: {} };
 
   const lookup = {
     appName: persistence.appName,
@@ -400,37 +434,25 @@ export const saveWorkflowState = async (
       ...lookup,
       metadata: {}
     });
+  const sessionSaveOptions = cursor?.sessionRevision !== undefined
+    ? { expectedRevision: cursor.sessionRevision }
+    : undefined;
+  const nextSessionRevision = (cursor?.sessionRevision ?? existing?.revision ?? 1) + 1;
 
   if (persistence.workflowStateService) {
     const workflowKey = workflowPersistenceKey(definition);
-    await persistence.workflowStateService.saveWorkflowState({
+    const record = await persistence.workflowStateService.saveWorkflowState({
       ...lookup,
       workflowKey,
-      state: toPersistedWorkflowState(normalizeWorkflowRunState(state))
+      state: toPersistedWorkflowState(normalizeWorkflowRunState(state)),
+      ...(cursor?.workflowRevision !== undefined ? { expectedRevision: cursor.workflowRevision } : {})
     });
-    const next: AgentSession = {
-      ...session,
-      updatedAt: Date.now(),
-      metadata: {
-        ...(session.metadata ?? {}),
-        workflowStateRefs: {
-          ...(
-            session.metadata?.workflowStateRefs &&
-            typeof session.metadata.workflowStateRefs === "object" &&
-            !Array.isArray(session.metadata.workflowStateRefs)
-              ? session.metadata.workflowStateRefs as Record<string, JsonValue>
-              : {}
-          ),
-          [workflowKey]: {
-            runId: state.runId,
-            status: state.status,
-            updatedAt: state.updatedAt
-          }
-        }
-      }
+    const next = sessionWithWorkflowReference(session, workflowKey, state);
+    await persistence.sessionService.saveSession(next, sessionSaveOptions);
+    return {
+      session: cloneJson(next),
+      cursor: { workflowRevision: record.revision, sessionRevision: nextSessionRevision }
     };
-    await persistence.sessionService.saveSession(next);
-    return cloneJson(next);
   }
 
   const metadataKey = workflowMetadataKey(definition);
@@ -444,8 +466,37 @@ export const saveWorkflowState = async (
       [metadataKey]: workflowRuns as unknown as JsonValue
     }
   };
-  await persistence.sessionService.saveSession(next);
-  return cloneJson(next);
+  await persistence.sessionService.saveSession(next, sessionSaveOptions);
+  return { session: cloneJson(next), cursor: { sessionRevision: nextSessionRevision } };
+};
+
+export const saveWorkflowState = async (
+  workflow: WorkflowDefinition,
+  state: WorkflowRunState
+): Promise<AgentSession | undefined> => (await persistWorkflowState(workflow, state)).session;
+
+const bindCallerWorkflowState = (
+  workflow: WorkflowDefinition,
+  input: WorkflowRunInput,
+  state: WorkflowRunState
+): WorkflowRunState => {
+  if (state.userId !== input.userId) {
+    throw new ValidationError("Workflow state userId does not match the authenticated user.");
+  }
+  if (input.sessionId !== undefined && state.sessionId !== input.sessionId) {
+    throw new ValidationError("Workflow state sessionId does not match the authenticated session.");
+  }
+  if (state.workflowId !== undefined && state.workflowId !== workflow.id) {
+    throw new ValidationError("Workflow state workflowId does not match the workflow definition.");
+  }
+  const bound = normalizeState(state);
+  delete bound.executionClaim;
+  return {
+    ...bound,
+    userId: input.userId,
+    sessionId: input.sessionId ?? bound.sessionId,
+    workflowId: bound.workflowId ?? workflow.id
+  };
 };
 
 const resolveInitialState = async (
@@ -453,7 +504,7 @@ const resolveInitialState = async (
   input: WorkflowRunInput
 ): Promise<WorkflowRunState> => {
   if (input.state) {
-    return normalizeState(input.state);
+    return bindCallerWorkflowState(workflow, input, normalizeState(input.state));
   }
 
   if (input.resumeFromPersistedState && input.sessionId) {
@@ -462,20 +513,62 @@ const resolveInitialState = async (
       sessionId: input.sessionId
     });
     if (persisted) {
-      return normalizeState(persisted);
+      return bindCallerWorkflowState(workflow, input, normalizeState(persisted));
     }
   }
 
   return createBaseState(workflow, input);
 };
 
+const claimIsActive = (claim: WorkflowExecutionClaim | undefined, now: number) =>
+  Boolean(claim && claim.expiresAt > now);
+
+const claimWorkflowExecution = async (
+  workflow: WorkflowDefinition,
+  state: WorkflowRunState,
+  ownerId: string
+): Promise<WorkflowPersistenceCursor> => {
+  const definition = validateWorkflow(workflow);
+  const persistence = definition.persistence;
+  if (!persistence) return {};
+  const now = Date.now();
+  const loaded = await loadWorkflowState(definition, {
+    userId: state.userId,
+    sessionId: state.sessionId
+  });
+  if (claimIsActive(loaded?.executionClaim, now) && loaded?.executionClaim?.ownerId !== ownerId) {
+    throw new ConflictError("Workflow execution is already claimed.");
+  }
+  const cursor: WorkflowPersistenceCursor = {};
+  if (persistence.workflowStateService) {
+    const record = await persistence.workflowStateService.loadWorkflowState({
+      appName: persistence.appName,
+      userId: state.userId,
+      sessionId: state.sessionId,
+      workflowKey: workflowPersistenceKey(definition)
+    });
+    cursor.workflowRevision = record?.revision ?? 0;
+  }
+  const session = await persistence.sessionService.loadSession({
+    appName: persistence.appName,
+    userId: state.userId,
+    sessionId: state.sessionId
+  });
+  if (session) cursor.sessionRevision = session.revision;
+  state.executionClaim = { ownerId, expiresAt: now + WORKFLOW_EXECUTION_CLAIM_TTL_MS };
+  state.updatedAt = now;
+  return (await persistWorkflowState(definition, state, cursor)).cursor;
+};
+
 const finalizeWorkflowOutput = async (
   workflow: WorkflowDefinition,
-  state: WorkflowRunState
+  state: WorkflowRunState,
+  cursor?: WorkflowPersistenceCursor
 ): Promise<WorkflowRunOutput> => {
-  const session = await saveWorkflowState(workflow, state);
-  if (session) {
-    state.session = session;
+  delete state.executionClaim;
+  const saved = await persistWorkflowState(workflow, state, cursor);
+  if (saved.session) {
+    state.session = saved.session;
   }
   return toOutput(state);
 };
@@ -675,18 +768,20 @@ const runTaskStep = async (
     isApprovalResume?: boolean;
   }
 ): Promise<WorkflowStepExecution> => {
+  const userId = input.userId;
+  const sessionId = input.sessionId ?? state.sessionId;
   const runnerInput: RunnerRunInput = options.isApprovalResume
     ? {
-        userId: state.userId,
-        sessionId: state.sessionId,
+        userId,
+        sessionId,
         approvals: input.approvals,
         abortSignal: input.abortSignal,
         sessionMetadata: input.sessionMetadata,
         eventMetadata: input.eventMetadata
       }
     : {
-        userId: state.userId,
-        sessionId: state.sessionId,
+        userId,
+        sessionId,
         prompt: await resolveTaskPrompt(workflow, state, step, input),
         system: step.system,
         abortSignal: input.abortSignal,
@@ -1068,6 +1163,9 @@ export const runWorkflow = async (
   state.updatedAt = Date.now();
   const telemetryContext = workflowTelemetryContext(definition, state);
   let terminalEventEmitted = false;
+  let executionClaimed = false;
+  let persistenceCursor: WorkflowPersistenceCursor = {};
+  const claimOwnerId = randomId("wfx");
 
   await emitWorkflowTelemetry(observer, {
     ...telemetryContext,
@@ -1097,7 +1195,13 @@ export const runWorkflow = async (
     status: WorkflowTelemetryTerminalStatus,
     error?: Error
   ): Promise<WorkflowRunOutput> => {
-    const output = await finalizeWorkflowOutput(definition, state);
+    const output = await finalizeWorkflowOutput(
+      definition,
+      state,
+      executionClaimed && persistenceCursor.workflowRevision !== undefined
+        ? { workflowRevision: persistenceCursor.workflowRevision }
+        : undefined
+    );
     await emitWorkflowFinish(status, error);
     return output;
   };
@@ -1114,6 +1218,10 @@ export const runWorkflow = async (
     const startIndex = waitingIndex >= 0 ? waitingIndex : state.currentStepIndex;
 
     for (let index = startIndex; index < definition.steps.length; index += 1) {
+      if (!executionClaimed) {
+        persistenceCursor = await claimWorkflowExecution(definition, state, claimOwnerId);
+        executionClaimed = true;
+      }
       const step = definition.steps[index]!;
       const stepKind = workflowStepKind(step);
       const startedAt = Date.now();

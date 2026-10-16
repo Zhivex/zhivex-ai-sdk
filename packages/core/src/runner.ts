@@ -421,7 +421,7 @@ export const createFileSessionService = (options: FileSessionServiceOptions): Se
     }
     return undefined;
   };
-  const save = async (session: AgentSession, saveOptions?: SessionSaveOptions): Promise<void> => {
+  const writeSession = async (session: AgentSession, saveOptions?: SessionSaveOptions): Promise<AgentSession> => {
     const existing = await load(session);
     assertExpectedRevision(existing, saveOptions?.expectedRevision, "AgentSession");
     const next = normalizeAgentSession({ ...session, schemaVersion: SESSION_SCHEMA_VERSION, updatedAt: Date.now() });
@@ -440,6 +440,24 @@ export const createFileSessionService = (options: FileSessionServiceOptions): Se
         throw error;
       }
     }
+    return cloneSession(next);
+  };
+  const sessionLocks = new Map<string, Promise<void>>();
+  const withSessionLock = async <T>(key: string, operation: () => Promise<T>): Promise<T> => {
+    const previous = sessionLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => gate, () => gate);
+    sessionLocks.set(key, tail);
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (sessionLocks.get(key) === tail) sessionLocks.delete(key);
+    }
   };
 
   return {
@@ -448,22 +466,23 @@ export const createFileSessionService = (options: FileSessionServiceOptions): Se
     },
 
     async createSession(input) {
-      const session = createEmptySession(input);
-      await save(session);
-      return cloneSession(session);
+      return withSessionLock(sessionKey(input), () => writeSession(createEmptySession(input)));
     },
 
     async saveSession(session, options) {
-      await save(session, options);
+      await withSessionLock(sessionKey(session), () => writeSession(session, options));
     },
 
     async appendEvent(input) {
-      const existing = await load(input);
-      assertExpectedRevision(existing, input.expectedRevision, "AgentSession");
-      const base = existing ?? createEmptySession(input);
-      const next = appendEventToSession(base, input.event);
-      await save(next);
-      return cloneSession(next);
+      return withSessionLock(sessionKey(input), async () => {
+        const existing = await load(input);
+        assertExpectedRevision(existing, input.expectedRevision, "AgentSession");
+        const base = existing ?? createEmptySession(input);
+        return writeSession(
+          appendEventToSession(base, input.event),
+          input.expectedRevision === undefined ? undefined : { expectedRevision: input.expectedRevision }
+        );
+      });
     }
   };
 };
@@ -824,27 +843,48 @@ const messagesFromInput = (input: RunnerRunInput): ModelMessage[] =>
 const appendEvent = async (
   service: SessionService,
   session: AgentSession,
-  event: SessionEvent
+  event: SessionEvent,
+  fence = false
 ): Promise<AgentSession> =>
   service.appendEvent({
     appName: session.appName,
     userId: session.userId,
     sessionId: session.sessionId,
-    event
+    event,
+    ...(fence ? { expectedRevision: session.revision } : {})
   });
 
 const saveRunState = async (
   service: SessionService,
   session: AgentSession,
-  state: AgentRunState
+  state: AgentRunState,
+  fence = false
 ): Promise<AgentSession> => {
   const next: AgentSession = {
     ...session,
     updatedAt: Date.now(),
     lastRunState: cloneJson(state)
   };
-  await service.saveSession(next);
-  return cloneSession(next);
+  await service.saveSession(next, fence ? { expectedRevision: session.revision } : undefined);
+  return cloneSession(fence ? { ...next, revision: session.revision + 1 } : next);
+};
+
+const persistRunFailure = async (
+  service: SessionService,
+  session: AgentSession,
+  error: unknown,
+  metadata: Record<string, JsonValue> | undefined,
+  fence = false
+): Promise<never> => {
+  try {
+    const failedSession = await appendEvent(service, session, createRunFailedEvent(session, error, metadata), fence);
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+      session: failedSession
+    });
+  } catch (persistError) {
+    if (persistError instanceof ConflictError) throw error;
+    throw persistError;
+  }
 };
 
 const createRunStartedEvent = (session: AgentSession, metadata?: Record<string, JsonValue>): SessionEvent =>
@@ -936,7 +976,11 @@ export const createRunner = <TModel extends LanguageModel>(
     } as AgentRunInput<TModel>;
   };
 
-  const recordUserMessage = async (session: AgentSession, input: RunnerRunInput<TModel>): Promise<AgentSession> => {
+  const recordUserMessage = async (
+    session: AgentSession,
+    input: RunnerRunInput<TModel>,
+    fence: boolean
+  ): Promise<AgentSession> => {
     if (input.approvals?.length && !input.prompt && !input.messages?.length) {
       return session;
     }
@@ -955,28 +999,38 @@ export const createRunner = <TModel extends LanguageModel>(
         sessionId: session.sessionId,
         messages,
         metadata: toSerializableMetadata(input.eventMetadata)
-      })
+      }),
+      fence
     );
   };
 
   const finalizeSuccessfulRun = async (
     session: AgentSession,
     output: AgentRunOutput,
-    metadata: Record<string, JsonValue> | undefined
+    metadata: Record<string, JsonValue> | undefined,
+    fence: boolean
   ): Promise<AgentSession> => {
-    let next = await appendEvent(options.sessionService, session, createRunFinishedEvent(session, output, metadata));
+    let next = await appendEvent(options.sessionService, session, createRunFinishedEvent(session, output, metadata), fence);
     const approvalEvent = createApprovalEvent(next, output, metadata);
     if (approvalEvent) {
-      next = await appendEvent(options.sessionService, next, approvalEvent);
+      next = await appendEvent(options.sessionService, next, approvalEvent, fence);
     }
-    return saveRunState(options.sessionService, next, output.state);
+    return saveRunState(options.sessionService, next, output.state, fence);
   };
 
   return {
     async run(input) {
       const initialSession = await resolveSession(input);
-      let session = await recordUserMessage(initialSession, input);
-      session = await appendEvent(options.sessionService, session, createRunStartedEvent(session, toSerializableMetadata(input.eventMetadata)));
+      // Fence only a resume of the loaded snapshot. Fresh runs, including
+      // parallel workflow branches that share a session, keep append semantics.
+      const fence = Boolean(input.approvals?.length && initialSession.lastRunState);
+      let session = await recordUserMessage(initialSession, input, fence);
+      session = await appendEvent(
+        options.sessionService,
+        session,
+        createRunStartedEvent(session, toSerializableMetadata(input.eventMetadata)),
+        fence
+      );
 
       try {
         const agentInput = createAgentInput(initialSession, input);
@@ -984,52 +1038,44 @@ export const createRunner = <TModel extends LanguageModel>(
           input.approvals?.length && initialSession.lastRunState
             ? await resumeAgent(options.agent, agentInput as AgentRunInput<TModel> & { state: AgentRunState })
             : await runAgent(options.agent, agentInput);
-        const finalSession = await finalizeSuccessfulRun(session, output, toSerializableMetadata(input.eventMetadata));
+        const finalSession = await finalizeSuccessfulRun(session, output, toSerializableMetadata(input.eventMetadata), fence);
         return {
           session: finalSession,
           output
         };
       } catch (error) {
-        const failedSession = await appendEvent(
-          options.sessionService,
-          session,
-          createRunFailedEvent(session, error, toSerializableMetadata(input.eventMetadata))
-        );
-        throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
-          session: failedSession
-        });
+        return persistRunFailure(options.sessionService, session, error, toSerializableMetadata(input.eventMetadata), fence);
       }
     },
 
     stream(input) {
       const setup = (async () => {
         const initialSession = await resolveSession(input);
-        let session = await recordUserMessage(initialSession, input);
-        session = await appendEvent(options.sessionService, session, createRunStartedEvent(session, toSerializableMetadata(input.eventMetadata)));
+        const fence = Boolean(input.approvals?.length && initialSession.lastRunState);
+        let session = await recordUserMessage(initialSession, input, fence);
+        session = await appendEvent(
+          options.sessionService,
+          session,
+          createRunStartedEvent(session, toSerializableMetadata(input.eventMetadata)),
+          fence
+        );
         const agentInput = createAgentInput(initialSession, input);
         const stream =
           input.approvals?.length && initialSession.lastRunState
             ? streamAgent(options.agent, agentInput as AgentRunInput<TModel> & { state: AgentRunState })
             : streamAgent(options.agent, agentInput);
 
-        return { session, stream };
+        return { session, stream, fence };
       })();
 
       const collect = async (): Promise<RunnerRunOutput> => {
-        const { session, stream } = await setup;
+        const { session, stream, fence } = await setup;
         try {
           const output = await stream.collect();
-          const finalSession = await finalizeSuccessfulRun(session, output, toSerializableMetadata(input.eventMetadata));
+          const finalSession = await finalizeSuccessfulRun(session, output, toSerializableMetadata(input.eventMetadata), fence);
           return { session: finalSession, output };
         } catch (error) {
-          const failedSession = await appendEvent(
-            options.sessionService,
-            session,
-            createRunFailedEvent(session, error, toSerializableMetadata(input.eventMetadata))
-          );
-          throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
-            session: failedSession
-          });
+          return persistRunFailure(options.sessionService, session, error, toSerializableMetadata(input.eventMetadata), fence);
         }
       };
 

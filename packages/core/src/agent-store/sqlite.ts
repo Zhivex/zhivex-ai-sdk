@@ -37,6 +37,13 @@ import {
   defaultMemoryMessages
 } from "./shared.js";
 
+const mutationCount = (result: unknown): number | undefined => {
+  if (!result || typeof result !== "object") return undefined;
+  const record = result as { changes?: unknown; rowCount?: unknown };
+  const value = record.changes ?? record.rowCount;
+  return typeof value === "number" ? value : undefined;
+};
+
 const prepareSqliteStatement = <TResult extends Record<string, unknown>>(
   db: SqliteDatabaseLike,
   sql: string
@@ -118,6 +125,11 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
     ON CONFLICT(run_id) DO UPDATE SET
       state_json = excluded.state_json,
       updated_at_ms = excluded.updated_at_ms
+  `);
+  const insertRunStatement = prepareSqliteStatement(options.db, `
+    INSERT INTO ${tableName} (run_id, state_json, updated_at_ms)
+    VALUES (?, ?, ?)
+    ON CONFLICT(run_id) DO NOTHING
   `);
   const deleteStatement = prepareSqliteStatement(options.db, `DELETE FROM ${tableName} WHERE run_id = ?`);
   const findIdempotencyStatement = prepareSqliteStatement<{ state_json?: string; stateJson?: string }>(
@@ -259,8 +271,22 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
 
         const normalized = normalizeAgentRunState({ ...state, ...(scope ? { scope } : {}) });
         const updatedAt = Date.now();
-        saveStatement.run([physicalKey(normalized.runId, scope), serialize(normalized), updatedAt]);
-        saveIdempotencyStatement.run([dbKey(state.idempotencyKey, scope), physicalKey(normalized.runId, scope), updatedAt]);
+        const runKey = physicalKey(normalized.runId, scope);
+        const inserted = insertRunStatement.run([runKey, serialize(normalized), updatedAt]);
+        const storedJson = getRecordField(loadStatement.get([runKey]), ["state_json", "stateJson"]);
+        const stored = typeof storedJson === "string" ? deserialize(storedJson) : undefined;
+        if (
+          mutationCount(inserted) === 0 ||
+          !stored ||
+          stored.runId !== normalized.runId ||
+          stored.idempotencyKey !== normalized.idempotencyKey
+        ) {
+          throw new ConflictError("Agent run identity already exists.");
+        }
+        const idempotencyInsert = saveIdempotencyStatement.run([dbKey(state.idempotencyKey, scope), runKey, updatedAt]);
+        if (mutationCount(idempotencyInsert) === 0) {
+          throw new ConflictError("Agent run identity already exists.");
+        }
         if (normalized.parentRunId) {
           saveParentStatement.run([physicalKey(normalized.runId, scope), dbKey(normalized.parentRunId, scope), updatedAt]);
         }

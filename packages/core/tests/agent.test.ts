@@ -2203,7 +2203,7 @@ describe("agent runtime", () => {
     });
 
     const chunks = [];
-    for await (const chunk of toUIMessageStream(stream, "assistant-1")) {
+    for await (const chunk of toUIMessageStream(stream, { messageId: "assistant-1", includeAgentRunFinish: true })) {
       chunks.push(chunk);
     }
 
