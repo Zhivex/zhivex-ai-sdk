@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { streamVertexGenerateContent, validateVertexGenerateContent } from "./generate-content-stream.js";
 import { normalizeVertexTranscriptionConfig, transcriptionRequest, transcriptionResponse, type VertexTranscriptionResult, type VertexTranscriptionModel as VertexTranscriptionModelContract } from "./transcription.js";
 export type { VertexAudioTranscriptionConfig, VertexAudioTranscription, VertexTranscriptionOptions, VertexTranscriptionResult, VertexTranscriptionModel } from "./transcription.js";
@@ -48,7 +49,6 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   assertTrustedEndpoint,
-  withManualRedirect,
   createMcpToolSet,
   createProviderAdapter,
   decodeBase64WithLimit,

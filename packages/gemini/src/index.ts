@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { toBase64 } from "./encoding.js";
 import { normalizeInteractionUsage, normalizeGenerateContentUsage } from "./usage.js";
 import { systemInstruction, mapMessages, toGeminiSchema, mapTools } from "./messages.js";
@@ -25,7 +26,6 @@ import {
   ValidationError,
   UnsupportedFeatureError,
   assertTrustedEndpoint,
-  withManualRedirect,
   createMcpToolSet,
   createProviderAdapter,
   decodeBase64WithLimit,

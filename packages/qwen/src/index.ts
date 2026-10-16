@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { createPortableQwenDecisionModel } from "./portable-decision.js";
 import { qwenSearchUsage } from "./search-usage.js";
 import { createAnnotationCollector } from "./annotations.js";
@@ -49,7 +50,6 @@ import {
   ProviderToolCallError,
   ValidationError,
   assertTrustedEndpoint,
-  withManualRedirect,
   readBodyWithLimit,
   readErrorBodyWithLimit,
   readJsonWithLimit,

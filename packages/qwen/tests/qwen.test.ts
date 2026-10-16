@@ -2231,6 +2231,17 @@ describe("qwen adapter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects a credentialed Qwen redirect before replaying the request", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(generateText({ model: provider("qwen-plus"), prompt: "hello" })).rejects.toThrow(
+      "Credentialed provider request was redirected."
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+  });
+
   it("exposes Qwen speech and media models", async () => {
     fetchMock
       .mockResolvedValueOnce(
