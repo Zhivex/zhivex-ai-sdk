@@ -209,6 +209,14 @@ describe("core public entrypoints", () => {
         import: "./dist/mcp-stdio.js",
         default: "./dist/mcp-stdio.js"
       },
+      "./a2a": {
+        types: "./dist/a2a.d.ts",
+        browser: "./dist/a2a-browser.js",
+        bun: "./dist/a2a.js",
+        node: "./dist/a2a.js",
+        import: "./dist/a2a.js",
+        default: "./dist/a2a.js"
+      },
       "./mcp-server": { types: "./dist/mcp-server.d.ts", import: "./dist/mcp-server.js" },
       "./mcp-server-stdio": {
         types: "./dist/mcp-server-stdio.d.ts",

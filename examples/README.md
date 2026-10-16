@@ -74,6 +74,8 @@ The `examples/sdk/runner-session.ts` example is deterministic and does not requi
 
 `examples/sdk/mcp-server.ts` is deterministic and does not require provider credentials. It exposes an echo tool, an approval-gated tool, and a mock agent through the experimental MCP server, then calls them from an in-process Streamable HTTP client and a stdio stream pair.
 
+`examples/sdk/a2a-roundtrip.ts` is deterministic and does not require provider credentials. It serves one agent over experimental A2A 1.0 JSON-RPC, calls it with `RemoteA2aAgent`, and delegates again through `createRemoteA2aAgentTool()`. Build the workspace first. The script imports workspace source, and the A2A entrypoint resolves through the built package export.
+
 For migration-oriented snippets from direct provider SDKs, Vercel AI SDK Core, and simple custom tool loops, see `docs/MIGRATION.md`. The offline script for that guide is:
 
 ```bash

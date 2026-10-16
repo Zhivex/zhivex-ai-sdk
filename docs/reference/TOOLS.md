@@ -209,6 +209,7 @@ The SDK now exposes MCP helpers across the providers that support it:
 - `@zhivex-ai/core` and `@zhivex-ai/sdk`: `createMcpToolSet()` wraps an MCP client that can `listTools()` and `callTool()` into local callable tools.
 - `@zhivex-ai/sdk/mcp-stdio` and `@zhivex-ai/core/mcp-stdio`: experimental `createMcpStdioClient()` speaks newline-delimited JSON-RPC to a local stdio server. See [MCP stdio](../MCP_STDIO.md). It is a separate entrypoint so browser bundles do not spawn a process.
 - `@zhivex-ai/sdk/mcp-server` and `@zhivex-ai/core/mcp-server`: experimental server that exposes local tools and agents to MCP clients over Streamable HTTP and stdio. Tools that require approval are not executed. See [MCP server](../MCP_SERVER.md).
+- `@zhivex-ai/sdk/a2a` and `@zhivex-ai/core/a2a`: experimental Agent2Agent 1.0. `createRemoteA2aAgentTool()` exposes a remote agent as a parent-agent tool. See [A2A](../A2A.md).
 - `@zhivex-ai/core` and `@zhivex-ai/sdk`: `createToolRegistry()` and `createMcpToolRegistry()` help compose local tools, MCP-derived tools, and hosted tools into one registry before converting to a `ToolSet`.
 - `@zhivex-ai/openai` and `@zhivex-ai/azure-openai`: remote MCP servers map to native Responses API MCP tools, including approval request/response flow.
 - `@zhivex-ai/anthropic`: MCP toolsets map to Anthropic `mcp_servers` plus `mcp_toolset`.
