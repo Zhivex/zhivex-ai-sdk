@@ -3,6 +3,7 @@ import {
   ProviderHTTPError,
   ValidationError,
   assertTrustedEndpoint,
+  withManualRedirect,
   normalizeFinishReason,
   openAICompatibleJsonHeaders,
   readErrorBodyWithLimit,
@@ -155,16 +156,26 @@ const deepSeekFileId = (value: string) => {
   return encodeURIComponent(value);
 };
 
+const rejectOversizedDeepSeekFile = () => {
+  throw new ValidationError("DeepSeek file uploads must not exceed 64 MiB.");
+};
+
 const fileDataBytes = async (data: FileUploadInput["data"]) => {
   if (typeof data === "string") {
-    return new TextEncoder().encode(data);
+    if (data.length > DEEPSEEK_FILE_MAX_BYTES) rejectOversizedDeepSeekFile();
+    const bytes = new TextEncoder().encode(data);
+    if (bytes.byteLength > DEEPSEEK_FILE_MAX_BYTES) rejectOversizedDeepSeekFile();
+    return bytes;
   }
   if (data instanceof Uint8Array) {
+    if (data.byteLength > DEEPSEEK_FILE_MAX_BYTES) rejectOversizedDeepSeekFile();
     return data;
   }
   if (data instanceof ArrayBuffer) {
+    if (data.byteLength > DEEPSEEK_FILE_MAX_BYTES) rejectOversizedDeepSeekFile();
     return new Uint8Array(data);
   }
+  if (data.size > DEEPSEEK_FILE_MAX_BYTES) rejectOversizedDeepSeekFile();
   return new Uint8Array(await data.arrayBuffer());
 };
 
@@ -221,10 +232,8 @@ class DeepSeekFilesClientImpl implements FilesClient {
     if (!DEEPSEEK_FILE_MEDIA_TYPES.has(mediaType)) {
       throw new ValidationError("DeepSeek Vision file uploads support JPEG, PNG, GIF, and WebP images.");
     }
-    const bytes = await fileDataBytes(input.data);
-    if (bytes.byteLength > DEEPSEEK_FILE_MAX_BYTES) {
-      throw new ValidationError("DeepSeek file uploads must not exceed 64 MiB.");
-    }
+    if (input.data instanceof Blob && input.data.size > DEEPSEEK_FILE_MAX_BYTES) rejectOversizedDeepSeekFile();
+    const bytes = input.data instanceof Blob ? undefined : await fileDataBytes(input.data);
     const expiresAfterSeconds = input.providerOptions?.expiresAfterSeconds;
     if (
       expiresAfterSeconds !== undefined &&
@@ -237,8 +246,10 @@ class DeepSeekFilesClientImpl implements FilesClient {
 
     const form = new FormData();
     const filename = input.filename ?? input.displayName ?? input.name ?? "image";
-    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    form.set("file", new File([buffer], filename, { type: mediaType }));
+    const file = input.data instanceof Blob
+      ? new File([input.data], filename, { type: mediaType })
+      : new File([bytes!.buffer.slice(bytes!.byteOffset, bytes!.byteOffset + bytes!.byteLength) as ArrayBuffer], filename, { type: mediaType });
+    form.set("file", file);
     form.set("purpose", "user_data");
     if (expiresAfterSeconds !== undefined) {
       form.set("expires_after[anchor]", "created_at");
@@ -651,7 +662,7 @@ export const createDeepSeekClients = (options: DeepSeekClientsOptions = {}): Dee
       }
     ).toString()
   );
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const fetcher = withManualRedirect(options.fetch ?? globalThis.fetch);
 
   return {
     fim: new DeepSeekFIMClientImpl(apiKey, betaBaseURL, fetcher),

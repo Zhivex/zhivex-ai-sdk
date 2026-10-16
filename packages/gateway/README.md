@@ -402,12 +402,16 @@ capability, cost, quality-floor or circuit exclusions. It is local and determini
 not a learned optimal policy.
 
 A target may supply `deploymentId`. Register it in
-`deployments: { "region-a": { provider: "openai", adapter } }` with an adapter
-configured for that endpoint, region and credential. Unknown or mismatched IDs
-are skipped without silently using the default adapter. Deduplication, metrics,
-circuits, quotas, quality profiles, cache partitions and attempt diagnostics
-include deployment identity. Catalog pricing still uses provider/model identity;
-deployment-specific negotiated tariffs require a separate pricing design.
+`deployments: { "region-a": { provider: "openai", adapter, region, endpoint } }`
+with an adapter configured for that endpoint, region and credential. `region`
+and `endpoint` are the server-owned destination an egress policy authorizes.
+Caller `region`, `endpoint`, and matching `providerOptions` must agree with
+that registration or be omitted. Unknown or mismatched IDs are skipped without
+silently using the default adapter, so a caller-supplied allowlisted label
+cannot select another destination. Deduplication, metrics, circuits, quotas, quality
+profiles, cache partitions and attempt diagnostics include deployment identity.
+Catalog pricing still uses provider/model identity; deployment-specific
+negotiated tariffs require a separate pricing design.
 
 Optional affinity requires adaptive routing and both `cacheScope` and
 `affinityKey`. After a successful attempt, subsequent invocations may reuse that

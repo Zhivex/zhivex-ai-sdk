@@ -84,6 +84,7 @@ export {
   createLatamSensitiveDataPolicy,
   createEgressPolicy,
   EgressDeniedError,
+  enforceEgressPolicy,
   createSubAgentTool,
   prepareSubagentsForAgent,
   createWorkflow,

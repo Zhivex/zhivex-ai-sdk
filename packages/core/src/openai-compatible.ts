@@ -100,6 +100,9 @@ export const openOpenAICompatibleStream = async (
   return (async function* () {
     try {
       yield* streamOpenAICompatibleChat(response, profile);
+    } catch (error) {
+      await response.body?.cancel().catch(() => undefined);
+      throw error;
     } finally {
       cleanup();
     }

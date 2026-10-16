@@ -222,6 +222,76 @@ describe("gateway", () => {
     expect(second).not.toHaveBeenCalled();
   });
 
+  it("authorizes a deployment from its registration instead of caller labels", async () => {
+    const generate = vi.fn().mockResolvedValue({ text: "private" });
+    const egressPolicy = createEgressPolicy({
+      allow: [
+        { provider: "gemini", model: "gemini-2.0-pro", region: "eu-west-1", endpoint: "https://private.example" },
+        { provider: "gemini", model: "gemini-2.0-pro", region: "allowed", endpoint: "https://allowed.example" }
+      ]
+    });
+    const gateway = createGateway({
+      adapters: { gemini: createAdapter(generate) },
+      deployments: {
+        private: {
+          provider: "gemini",
+          adapter: createAdapter(generate),
+          region: "eu-west-1",
+          endpoint: "https://private.example"
+        }
+      },
+      egressPolicy,
+      retryBackoffMs: 1
+    });
+
+    await expect(gateway.generate({
+      primary: {
+        provider: "gemini",
+        modelId: "gemini-2.0-pro",
+        deploymentId: "private",
+        region: "allowed",
+        endpoint: "https://allowed.example"
+      },
+      messages: [{ role: "user", content: "hello" }],
+      providerOptions: { baseURL: "https://smuggled.example" }
+    })).rejects.toBeInstanceOf(EgressDeniedError);
+    expect(generate).not.toHaveBeenCalled();
+    expect(egressPolicy.records[0]).toMatchObject({
+      decision: "denied",
+      region: "eu-west-1",
+      endpoint: "https://private.example"
+    });
+
+    const allowed = await gateway.generate({
+      primary: {
+        provider: "gemini",
+        modelId: "gemini-2.0-pro",
+        deploymentId: "private"
+      },
+      messages: [{ role: "user", content: "hello" }]
+    });
+    expect(allowed.text).toBe("private");
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(egressPolicy.records.at(-1)).toMatchObject({
+      decision: "allowed",
+      region: "eu-west-1",
+      endpoint: "https://private.example"
+    });
+
+    generate.mockClear();
+    await expect(gateway.generate({
+      primary: {
+        provider: "gemini",
+        modelId: "gemini-2.0-pro",
+        deploymentId: "missing",
+        region: "allowed",
+        endpoint: "https://allowed.example"
+      },
+      messages: [{ role: "user", content: "hello" }]
+    })).rejects.toThrow("no adapter is registered");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
   it("preserves images when the adapter declares vision support", async () => {
     const inspect = vi.fn().mockImplementation(async () => ({ text: "ok" }));
 

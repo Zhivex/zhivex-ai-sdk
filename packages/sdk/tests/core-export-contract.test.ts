@@ -11,6 +11,7 @@ import * as sdk from "../src/index.js";
 // added here with an architectural reason.
 const intentionallyCoreOnly = [
   "assertTrustedEndpoint",
+  "withManualRedirect",
   "collectUIMessage",
   "createAgentHandoffMessage",
   "decodeBase64WithLimit",

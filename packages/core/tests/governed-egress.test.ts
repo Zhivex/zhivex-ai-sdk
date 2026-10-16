@@ -5,6 +5,7 @@ import { Agent, createMockLanguageModel, createRedactionPolicy, tool } from "../
 import {
   createEgressPolicy,
   EgressDeniedError,
+  enforceEgressPolicy,
   type EgressAuditRecord
 } from "../src/egress-policy.js";
 import { generateText, streamText } from "../src/generate-text.js";
@@ -134,6 +135,33 @@ describe("egress policy", () => {
     expect(called).toBe(false);
     expect(policy.records).toHaveLength(1);
     expect(policy.records[0]?.reason).toContain("region");
+  });
+
+  it("records the authoritative destination when a caller label disagrees", async () => {
+    const policy = createEgressPolicy({
+      allow: [{ provider: "gemini", model: "gemini-2.0-pro", region: "allowed", endpoint: "https://allowed.example" }]
+    });
+
+    const error = await enforceEgressPolicy(
+      policy,
+      {
+        provider: "gemini",
+        modelId: "gemini-2.0-pro",
+        region: "eu-west-1",
+        endpoint: "https://private.example"
+      },
+      { region: "allowed", endpoint: "https://allowed.example" },
+      { baseURL: "https://smuggled.example" },
+      { authoritativeDestination: true }
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(EgressDeniedError);
+    expect(policy.records[0]).toMatchObject({
+      decision: "denied",
+      region: "eu-west-1",
+      endpoint: "https://private.example",
+      reason: "declared region does not match the configured destination"
+    });
   });
 
   it("does not call the provider when an allow audit sink throws", async () => {

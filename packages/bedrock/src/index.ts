@@ -18,6 +18,7 @@ import {
   UnsupportedFeatureError,
   ValidationError,
   assertTrustedEndpoint,
+  withManualRedirect,
   createProviderAdapter,
   createMcpToolSet,
   hostedTool,
@@ -1547,7 +1548,7 @@ class BedrockAgentCoreMcpClient implements McpClient {
 
   constructor(private readonly options: BedrockAgentCoreMcpClientOptions) {
     this.endpoint = createBedrockAgentCoreMcpEndpoint(options);
-    this.fetcher = options.fetch ?? globalThis.fetch;
+    this.fetcher = withManualRedirect(options.fetch ?? globalThis.fetch);
     this.sessionId = options.sessionId;
   }
 
@@ -1642,7 +1643,7 @@ export const createBedrock = (
       protocols: ["https"],
       allowUnsafe: options.allowUnsafeEndpoints
     }).toString().replace(/\/+$/, "");
-    const fetcher = options.fetch ?? globalThis.fetch;
+    const fetcher = withManualRedirect(options.fetch ?? globalThis.fetch);
     return createProviderAdapter({
       name: "bedrock",
       languageModel: (modelId) => new BedrockOpenAICompatibleLanguageModel(modelId, apiKey, baseURL, fetcher)

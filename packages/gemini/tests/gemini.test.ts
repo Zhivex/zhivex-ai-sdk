@@ -680,6 +680,18 @@ describe("gemini adapter", () => {
     expect(deleted.name).toBe("files/abc");
   });
 
+  it("rejects an oversized Gemini upload before reading the blob", async () => {
+    const arrayBuffer = vi.fn();
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(provider.files!.upload({
+      data: { size: 64 * 1024 * 1024 + 1, arrayBuffer } as unknown as Blob,
+      mediaType: "text/plain"
+    })).rejects.toThrow("must not exceed 64 MiB");
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects untrusted Gemini resumable upload URLs before sending file bytes", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(null, {

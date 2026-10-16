@@ -446,6 +446,18 @@ describe("DeepSeek provider-specific clients", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects an oversized DeepSeek upload before reading the blob", async () => {
+    const arrayBuffer = vi.fn();
+    const clients = createDeepSeekClients({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(clients.files.upload({
+      data: { size: 64 * 1024 * 1024 + 1, arrayBuffer } as unknown as Blob,
+      mediaType: "image/png"
+    })).rejects.toThrow("must not exceed 64 MiB");
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("does not duplicate the beta segment when baseURL already targets beta", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({ choices: [{ index: 0, text: "ok", finish_reason: "stop" }] })

@@ -1,4 +1,7 @@
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -58,7 +61,7 @@ describe("release workflow", () => {
 
   it("keeps validation outside the npm OIDC trust boundary", () => {
     const validateJob = jobSection("validate", "publish");
-    const publishJob = jobSection("publish", "push_tags");
+    const publishJob = jobSection("publish", "collect_tags");
 
     expect(validateJob).toContain("bun run test");
     expect(validateJob).toContain("bun run build");
@@ -66,6 +69,9 @@ describe("release workflow", () => {
     expect(validateJob).not.toContain("id-token: write");
     expect(publishJob).toContain("needs: validate");
     expect(publishJob).toContain("id-token: write");
+    expect(publishJob).not.toContain("actions/checkout");
+    expect(publishJob).not.toContain("bun ");
+    expect(publishJob).not.toContain("scripts/");
     expect(publishJob).not.toContain("bun run test");
     expect(publishJob).not.toContain("bun run build");
     expect(publishJob).not.toContain("bun install");
@@ -74,12 +80,25 @@ describe("release workflow", () => {
   it("publishes only commit-bound tarballs verified with SHA-512", () => {
     expect(workflow).toContain('release-artifacts.ts prepare --git-head="$GITHUB_SHA"');
     expect(workflow).toContain(".release/tarballs/*.tgz");
-    expect(jobSection("publish", "push_tags")).toContain(
+    const publishJob = jobSection("publish", "collect_tags");
+    expect(publishJob).toContain(
       "name: release-source-${{ github.sha }}\n          path: .release"
     );
+    expect(publishJob).toContain("shasum -a 512 -c .release/SHA512SUMS");
+    expect(publishJob).toContain('"publish"');
+    expect(publishJob).toContain('"--provenance"');
+    expect(publishJob).not.toContain("release-artifacts.ts publish");
+    const scriptStart = publishJob.indexOf("node <<'END_PUBLISH'\n");
+    const scriptEnd = publishJob.indexOf("\n          END_PUBLISH", scriptStart);
+    const source = publishJob.slice(scriptStart + "node <<'END_PUBLISH'\n".length, scriptEnd).replace(/^ {10}/gm, "");
+    const directory = mkdtempSync(path.join(tmpdir(), "zhivex-publish-"));
+    const scriptPath = path.join(directory, "publish.cjs");
+    writeFileSync(scriptPath, source);
+    execFileSync("node", ["--check", scriptPath], { stdio: "pipe" });
+    rmSync(directory, { recursive: true, force: true });
     expect(workflow).toContain("shasum -a 512 -c .release/SHA512SUMS");
-    expect(workflow).toContain('release-artifacts.ts publish --tag=latest --git-head="$GITHUB_SHA"');
-    expect(workflow).toContain('release-artifacts.ts publish --tag=next --git-head="$GITHUB_SHA"');
+    expect(jobSection("collect_tags", "push_tags")).toContain('bun scripts/collect-release-tags.ts --git-head="$GITHUB_SHA"');
+    expect(jobSection("collect_tags", "push_tags")).not.toContain("id-token:");
     expect(workflow).toContain("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
     expect(workflow).toContain("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c");
   });
@@ -133,5 +152,18 @@ describe("release workflow", () => {
     expect(workflow).toContain(
       "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
     );
+  });
+
+  it("refuses the repository publish command so the OIDC job cannot run it", () => {
+    try {
+      execFileSync("bun", ["scripts/release-artifacts.ts", "publish", "--tag=latest"], {
+        encoding: "utf8",
+        stdio: "pipe"
+      });
+      throw new Error("publish command exited successfully");
+    } catch (error) {
+      const stderr = String((error as { stderr?: string }).stderr ?? "");
+      expect(stderr).toContain("checksum-verified tarballs");
+    }
   });
 });

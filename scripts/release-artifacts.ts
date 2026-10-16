@@ -211,34 +211,11 @@ const run = () => {
     return;
   }
   if (command === "publish") {
-    if (
-      process.env.GITHUB_ACTIONS !== "true" ||
-      !process.env.ACTIONS_ID_TOKEN_REQUEST_URL ||
-      !process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
-    ) {
-      throw new Error("Publishing requires GitHub Actions trusted publishing with OIDC.");
-    }
-    const tag = argument("tag") ?? "latest";
-    if (tag !== "latest" && tag !== "next") {
-      throw new Error(`Unsupported release tag: ${tag}`);
-    }
-    const entries = validateReleaseArtifacts({
-      manifest: readJson<ReleaseArtifactManifest>(path.join(releaseDirectory, "release-artifacts.json")),
-      batch: readJson<unknown>(batchFile),
-      artifactDirectory,
-      expectedGitHead: gitHead
-    });
-    for (const entry of entries) {
-      execFileSync(
-        "npm",
-        ["publish", path.join(artifactDirectory, entry.tarball), "--tag", tag, "--access", "public", "--provenance"],
-        { cwd: repoRoot, stdio: "inherit" }
-      );
-    }
-    console.log(`Published ${entries.length} verified release tarball(s) with dist-tag ${tag}.`);
-    return;
+    throw new Error(
+      "OIDC publish jobs must publish the checksum-verified tarballs directly. This repository command is not available to that job."
+    );
   }
-  throw new Error("Usage: release-artifacts.ts prepare|publish [--tag=latest|next] [--git-head=<sha>]");
+  throw new Error("Usage: release-artifacts.ts prepare [--git-head=<sha>]");
 };
 
 if (import.meta.main) {

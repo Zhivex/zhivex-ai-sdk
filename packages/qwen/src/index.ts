@@ -49,6 +49,7 @@ import {
   ProviderToolCallError,
   ValidationError,
   assertTrustedEndpoint,
+  withManualRedirect,
   readBodyWithLimit,
   readErrorBodyWithLimit,
   readJsonWithLimit,
@@ -3316,7 +3317,8 @@ export const createQwen = (
       : `${realtimeEndpoint.origin}/api-ws/v1/inference`), {
     label: "Qwen inferenceURL", protocols: ["wss"], allowedHosts: [new URL(baseURL).hostname], allowUnsafe: options.allowUnsafeEndpoints
   }).toString();
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = withManualRedirect(rawFetch);
   const responseLimits = resolveAudioResponseLimits(options.responseLimits);
   const speechAudioMaxRedirects = options.speechAudioMaxRedirects ?? 3;
   if (!Number.isInteger(speechAudioMaxRedirects) || speechAudioMaxRedirects < 0 || speechAudioMaxRedirects > 10) {
@@ -3367,7 +3369,7 @@ export const createQwen = (
     imageTranslationModel: (modelId = "qwen-mt-image-2.0") => createQwenImageTranslationModel(modelId, apiKey, taskBaseURL, fetcher),
     worlds: (modelId: QwenWorldModelId) => createQwenWorldsClient(modelId, apiKey, taskBaseURL, fetcher),
     temporaryKeys: createQwenTemporaryKeysClient(apiKey, taskBaseURL, fetcher),
-    rawFetch: fetcher
+    rawFetch
   }) as QwenProvider;
 };
 

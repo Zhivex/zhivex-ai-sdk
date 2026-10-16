@@ -34,6 +34,7 @@ import {
   ProviderResponseTooLargeError,
   ProviderToolCallError,
   assertTrustedEndpoint,
+  withManualRedirect,
   resolveAudioResponseLimits,
   openWebSocketConnection,
   hostedTool,
@@ -2631,7 +2632,8 @@ export const createOpenAI = (
         allowUnsafe: options.allowUnsafeEndpoints
       }).toString()
     : undefined;
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = withManualRedirect(rawFetch);
   const responseLimits = resolveOpenAIResponseLimits(options.responseLimits);
 
   return createProviderAdapter({
@@ -2671,7 +2673,7 @@ export const createOpenAI = (
       );
     },
     groundedLanguageModel: (modelId) => new OpenAIGroundedLanguageModel(modelId, apiKey, baseURL, fetcher),
-    rawFetch: fetcher,
+    rawFetch,
     agents: new OpenAIAgentsClient(baseURL, apiKey, fetcher, options.allowUnsafeEndpoints)
   });
 };

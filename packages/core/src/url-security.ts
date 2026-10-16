@@ -1,4 +1,4 @@
-import { ConfigurationError } from "./errors.js";
+import { ConfigurationError, ProviderHTTPError } from "./errors.js";
 
 export interface TrustedEndpointOptions {
   label?: string;
@@ -306,4 +306,31 @@ export const assertTrustedEndpoint = (
   }
 
   return url;
+};
+
+const isRedirectResponse = (response: Response) =>
+  response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400);
+
+const manualRedirects = new WeakMap<typeof globalThis.fetch, typeof globalThis.fetch>();
+
+/**
+ * Credentialed provider fetches do not follow redirects. Callers that already
+ * set `redirect` keep that policy, including a manual loop that revalidates
+ * each hop. Every other request uses `redirect: "manual"` and rejects 3xx.
+ * The same fetcher returns the same wrapper so provider delegates stay comparable.
+ */
+export const withManualRedirect = (fetcher: typeof globalThis.fetch): typeof globalThis.fetch => {
+  const cached = manualRedirects.get(fetcher);
+  if (cached) return cached;
+  const wrapped: typeof globalThis.fetch = async (input, init) => {
+    if (init?.redirect) return fetcher(input, init);
+    const response = await fetcher(input, { ...init, redirect: "manual" });
+    if (isRedirectResponse(response)) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new ProviderHTTPError("Credentialed provider request was redirected.", response.status || 302);
+    }
+    return response;
+  };
+  manualRedirects.set(fetcher, wrapped);
+  return wrapped;
 };

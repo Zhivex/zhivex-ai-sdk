@@ -7,6 +7,7 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   assertTrustedEndpoint,
+  withManualRedirect,
   createProviderAdapter,
   hostedTool,
   isCallableToolDefinition,
@@ -400,12 +401,13 @@ export const createOpenRouter = (
     protocols: ["https"],
     allowUnsafe: options.allowUnsafeEndpoints
   }).toString().replace(/\/+$/, "");
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = withManualRedirect(rawFetch);
 
   return createProviderAdapter({
     name: "openrouter",
     languageModel: (modelId) => new OpenRouterLanguageModel(modelId, apiKey, baseURL, options.appName, options.appURL, fetcher, options),
-    rawFetch: fetcher
+    rawFetch
   });
 };
 

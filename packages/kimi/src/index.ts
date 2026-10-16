@@ -6,6 +6,7 @@ import {
   UnsupportedFeatureError,
   ValidationError,
   assertTrustedEndpoint,
+  withManualRedirect,
   createProviderAdapter,
   isCallableToolDefinition,
   createMergedAbortSignal,
@@ -788,12 +789,13 @@ export const createKimi = (
     protocols: ["https"],
     allowUnsafe: options.allowUnsafeEndpoints
   }).toString().replace(/\/+$/, "");
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = withManualRedirect(rawFetch);
 
   return createProviderAdapter({
     name: "kimi",
     languageModel: (modelId) => new KimiLanguageModel(modelId, apiKey, baseURL, fetcher),
-    rawFetch: fetcher
+    rawFetch
   });
 };
 

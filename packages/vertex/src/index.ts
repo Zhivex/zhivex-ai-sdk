@@ -48,6 +48,7 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   assertTrustedEndpoint,
+  withManualRedirect,
   createMcpToolSet,
   createProviderAdapter,
   decodeBase64WithLimit,
@@ -2765,7 +2766,7 @@ export const createVertex = (
       ? baseURL
       : `https://${veoLocation}-aiplatform.googleapis.com/${apiVersion}/projects/${projectId}/locations/${veoLocation}`);
   const rawFetch = options.fetch ?? globalThis.fetch;
-  const fetcher = createVertexAuthenticatedFetch(rawFetch, auth);
+  const fetcher = createVertexAuthenticatedFetch(withManualRedirect(rawFetch), auth);
   const interactions = createVertexInteractionsClient(baseURL, fetcher, () => {
     if (auth.type !== "bearer" || !/\/projects\/[^/]+\/locations\/[^/]+$/.test(baseURL)) throw new ConfigurationError("Vertex Interactions requires Google Cloud bearer credentials and a project-scoped endpoint.");
   });
