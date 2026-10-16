@@ -2219,6 +2219,18 @@ describe("qwen adapter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects an oversized Qwen upload before reading the blob", async () => {
+    const arrayBuffer = vi.fn();
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(provider.files!.upload({
+      data: { size: 64 * 1024 * 1024 + 1, arrayBuffer } as unknown as Blob,
+      mediaType: "text/plain"
+    })).rejects.toThrow("must not exceed 64 MiB");
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("exposes Qwen speech and media models", async () => {
     fetchMock
       .mockResolvedValueOnce(

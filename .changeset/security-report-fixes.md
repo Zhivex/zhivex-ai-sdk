@@ -14,4 +14,4 @@
 "@zhivex-ai/zai": patch
 ---
 
-Gateway deployments authorize the registered region and endpoint. Credentialed provider fetches reject redirects. Gemini and DeepSeek file uploads reject bodies over 64 MiB before they are read. Meta streams cap tool-call state. The A2A server authenticates a JSON-RPC request before reading its body.
+Gateway deployments authorize the registered region and endpoint. Credentialed provider fetches reject redirects. Gemini, DeepSeek, and Qwen file uploads reject bodies over 64 MiB before they are read. Meta streams cap tool-call state. The A2A server authenticates a JSON-RPC request before reading its body.

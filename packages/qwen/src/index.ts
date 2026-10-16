@@ -302,8 +302,33 @@ const mediaValue = (input: MediaInput) => {
   return toDataURL(input.data, input.mediaType);
 };
 
+const QWEN_UPLOAD_MAX_BYTES = 64 * 1024 * 1024;
+
+const rejectOversizedQwenUpload = () => {
+  throw new ValidationError("Qwen file uploads must not exceed 64 MiB.");
+};
+
+const uploadFileBytes = async (data: string | Uint8Array | ArrayBuffer | Blob): Promise<Uint8Array> => {
+  if (typeof data === "string") {
+    if (data.length > QWEN_UPLOAD_MAX_BYTES) rejectOversizedQwenUpload();
+    const bytes = Uint8Array.from(Buffer.from(data, "base64"));
+    if (bytes.byteLength > QWEN_UPLOAD_MAX_BYTES) rejectOversizedQwenUpload();
+    return bytes;
+  }
+  if (data instanceof Uint8Array) {
+    if (data.byteLength > QWEN_UPLOAD_MAX_BYTES) rejectOversizedQwenUpload();
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    if (data.byteLength > QWEN_UPLOAD_MAX_BYTES) rejectOversizedQwenUpload();
+    return new Uint8Array(data);
+  }
+  if (data.size > QWEN_UPLOAD_MAX_BYTES) rejectOversizedQwenUpload();
+  return new Uint8Array(await data.arrayBuffer());
+};
+
 const createFile = async (data: string | Uint8Array | ArrayBuffer | Blob, mediaType: string, filename: string) => {
-  const bytes = await toUint8Array(data);
+  const bytes = await uploadFileBytes(data);
   return new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], filename, { type: mediaType });
 };
 
