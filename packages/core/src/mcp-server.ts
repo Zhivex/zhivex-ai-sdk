@@ -89,6 +89,11 @@ export interface McpServerOptions {
   timeoutMs?: number;
   /** Maximum serialized tool or agent result. Oversized results are withheld. */
   maxResultBytes?: number;
+  /**
+   * In-flight `tools/call` requests per session. Further calls return a JSON-RPC
+   * error and do not execute.
+   */
+  maxConcurrentCalls?: number;
 }
 
 export interface McpServer {
@@ -97,7 +102,7 @@ export interface McpServer {
   close(): void;
 }
 
-export type McpServerHttpAuth = (request: Request) => void | Promise<void>;
+export type McpServerHttpAuth = (request: Request, signal: AbortSignal) => void | Promise<void>;
 
 export interface McpHttpServerOptions {
   /**
@@ -106,8 +111,12 @@ export interface McpHttpServerOptions {
    * with a fixed message.
    */
   authenticate?: McpServerHttpAuth;
+  /**
+   * Request deadline. When shorter than the server `timeoutMs`, it wins.
+   * A longer value is clamped down to the server limit.
+   */
   timeoutMs?: number;
-  /** POST body cap. Declared and observed sizes are both enforced. */
+  /** POST body cap. Reading stops as soon as the cap is crossed. */
   maxRequestBytes?: number;
   /** Cap for a single HTTP response, including SSE progress frames. */
   maxResponseBytes?: number;
@@ -119,8 +128,10 @@ export interface McpHttpServerOptions {
    * Non-browser clients that omit `Origin` are accepted.
    */
   allowedOrigins?: readonly string[];
-  /** Retained `initialize` sessions. The oldest idle session is dropped at the cap. */
+  /** Retained `initialize` sessions. The least recently used idle session is dropped at the cap. */
   maxSessions?: number;
+  /** Idle sessions with no in-flight call are dropped after this many milliseconds. */
+  sessionTtlMs?: number;
   sessionId?: () => string;
 }
 
@@ -146,6 +157,8 @@ const TOOL_NAME = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_SESSIONS = 128;
+const DEFAULT_SESSION_TTL_MS = 15 * 60 * 1000;
+const DEFAULT_MAX_CONCURRENT_CALLS = 8;
 const DEFAULT_RESULT_BYTES = 1024 * 1024;
 const DEFAULT_REQUEST_BYTES = 1024 * 1024;
 const DEFAULT_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -163,6 +176,7 @@ interface JsonRpc {
 interface Session {
   phase: "new" | "accepted" | "ready";
   inflight: Map<string, AbortController>;
+  lastUsed: number;
 }
 
 /** Numeric `1` and string `"1"` are different JSON-RPC ids and must not share a slot. */
@@ -202,6 +216,7 @@ interface ServerState {
   tools: RegisteredTool[];
   timeoutMs: number;
   maxResultBytes: number;
+  maxConcurrentCalls: number;
   closed: boolean;
   lifetime: AbortController;
 }
@@ -386,19 +401,27 @@ const executionContext = (
   model: placeholderModel
 });
 
+const parseArguments = (schema: ZodTypeAny, args: unknown) => {
+  try {
+    return schema.safeParse(args);
+  } catch {
+    return undefined;
+  }
+};
+
 const executeTool = async (
   definition: ToolDefinition,
   args: Record<string, unknown>,
   call: CallContext
 ): Promise<ToolPayload> => {
-  const parsed = definition.schema.safeParse(args);
-  if (!parsed.success) {
-    return toolError("VALIDATION_ERROR", `Tool "${definition.name}" rejected its arguments.`, {
+  const parsed = parseArguments(definition.schema, args);
+  if (!parsed?.success) {
+    return toolError("VALIDATION_ERROR", `Tool "${definition.name}" rejected its arguments.`, parsed ? {
       issues: parsed.error.issues.slice(0, 20).map((issue: { code: string; path: ReadonlyArray<PropertyKey> }) => ({
         code: issue.code,
         path: issue.path.filter((segment): segment is string | number => typeof segment === "string" || typeof segment === "number")
       }))
-    });
+    } : undefined);
   }
   let input: JsonValue;
   try {
@@ -491,14 +514,14 @@ const executeAgent = async (
       executed: false
     });
   }
-  const parsed = schema.safeParse(args);
+  const parsed = parseArguments(schema, args);
   let cloned: unknown;
   try {
-    cloned = parsed.success ? jsonClone(parsed.data) : undefined;
+    cloned = parsed?.success ? jsonClone(parsed.data) : undefined;
   } catch {
     cloned = undefined;
   }
-  if (!parsed.success || !isRecord(cloned)) {
+  if (!parsed?.success || !isRecord(cloned)) {
     return toolError("VALIDATION_ERROR", `Agent "${name}" rejected its arguments.`);
   }
   const value = cloned;
@@ -609,15 +632,20 @@ const withDeadline = async <T>(call: CallContext, run: () => Promise<T>): Promis
   if (call.signal.aborted) {
     throw call.signal.reason instanceof Error ? call.signal.reason : new McpServerError("TIMEOUT", "MCP operation timed out.");
   }
-  return Promise.race([
-    run(),
-    new Promise<never>((_resolve, reject) => {
-      const fail = () => reject(call.signal.reason instanceof Error
-        ? call.signal.reason
-        : new McpServerError("TIMEOUT", "MCP operation timed out."));
-      call.signal.addEventListener("abort", fail, { once: true });
-    })
-  ]);
+  let fail: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      run(),
+      new Promise<never>((_resolve, reject) => {
+        fail = () => reject(call.signal.reason instanceof Error
+          ? call.signal.reason
+          : new McpServerError("TIMEOUT", "MCP operation timed out."));
+        call.signal.addEventListener("abort", fail, { once: true });
+      })
+    ]);
+  } finally {
+    if (fail) call.signal.removeEventListener("abort", fail);
+  }
 };
 
 const rpcResult = (id: string | number, result: unknown) => ({ jsonrpc: "2.0" as const, id, result });
@@ -704,6 +732,9 @@ const handleMessage = async (
     if (!params || !name || !tool || (params.arguments !== undefined && !isRecord(params.arguments))) {
       return { kind: "response", message: rpcError(id, -32602, "Invalid MCP tools/call params.") };
     }
+    if (session.inflight.size >= state.maxConcurrentCalls) {
+      return { kind: "response", message: rpcError(id, -32000, "MCP session call limit exceeded.") };
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new McpServerError("TIMEOUT", "MCP operation timed out.")), timeoutMs);
     const onAbort = () => controller.abort(signal.reason);
@@ -715,7 +746,7 @@ const handleMessage = async (
     try {
       const result = await tool.call(isRecord(params.arguments) ? params.arguments : {}, {
         signal: controller.signal,
-        timeoutMs: state.timeoutMs,
+        timeoutMs,
         maxResultBytes: state.maxResultBytes,
         progressToken: token,
         requestId: id,
@@ -733,6 +764,7 @@ const handleMessage = async (
     } finally {
       clearTimeout(timer);
       session.inflight.delete(inflightKey(id));
+      session.lastUsed = Date.now();
       signal.removeEventListener("abort", onAbort);
     }
   }
@@ -757,6 +789,7 @@ export function createMcpServer(options: McpServerOptions = {}): McpServer {
     tools: registerTools(options),
     timeoutMs: timeoutMsOf(options.timeoutMs, DEFAULT_TIMEOUT_MS),
     maxResultBytes: positive(options.maxResultBytes, DEFAULT_RESULT_BYTES),
+    maxConcurrentCalls: positive(options.maxConcurrentCalls, DEFAULT_MAX_CONCURRENT_CALLS),
     closed: false,
     lifetime: new AbortController()
   };
@@ -797,7 +830,7 @@ const originAllowed = (request: Request, options: McpHttpServerOptions): boolean
   return true;
 };
 
-const readLimited = async (request: Request, maxBytes: number): Promise<string> => {
+const readLimited = async (request: Request, maxBytes: number, signal: AbortSignal): Promise<string> => {
   const declared = header(request, "content-length");
   if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) {
     throw new McpServerError("LIMIT_EXCEEDED", "MCP request exceeded byte limit.");
@@ -807,18 +840,38 @@ const readLimited = async (request: Request, maxBytes: number): Promise<string> 
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let bytes = 0;
   let text = "";
+  const cancelRead = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  if (signal.aborted) cancelRead();
+  else signal.addEventListener("abort", cancelRead, { once: true });
   try {
     while (true) {
+      if (signal.aborted) {
+        throw signal.reason instanceof McpServerError
+          ? signal.reason
+          : new McpServerError("TIMEOUT", "MCP operation timed out.");
+      }
       const chunk = await reader.read();
       if (chunk.done) return text + decoder.decode();
       bytes += chunk.value.byteLength;
-      if (bytes > maxBytes) throw new McpServerError("LIMIT_EXCEEDED", "MCP request exceeded byte limit.");
+      if (bytes > maxBytes) {
+        text = "";
+        throw new McpServerError("LIMIT_EXCEEDED", "MCP request exceeded byte limit.");
+      }
       text += decoder.decode(chunk.value, { stream: true });
     }
   } catch (error) {
+    text = "";
     if (error instanceof McpServerError) throw error;
+    if (signal.aborted) {
+      throw signal.reason instanceof McpServerError
+        ? signal.reason
+        : new McpServerError("TIMEOUT", "MCP operation timed out.");
+    }
     throw new McpServerError("PROTOCOL_ERROR", "Invalid MCP request body.");
   } finally {
+    signal.removeEventListener("abort", cancelRead);
     await reader.cancel().catch(() => undefined);
   }
 };
@@ -845,26 +898,36 @@ const authStatus = (error: unknown): Response => {
  */
 export function createMcpHttpServer(server: McpServer, options: McpHttpServerOptions = {}): McpHttpServer {
   const state = requireState(server);
-  const timeoutMs = timeoutMsOf(options.timeoutMs, state.timeoutMs);
+  const timeoutMs = Math.min(timeoutMsOf(options.timeoutMs, state.timeoutMs), state.timeoutMs);
   const maxSessions = positive(options.maxSessions, DEFAULT_MAX_SESSIONS);
+  const sessionTtlMs = timeoutMsOf(options.sessionTtlMs, DEFAULT_SESSION_TTL_MS);
   const maxRequestBytes = positive(options.maxRequestBytes, DEFAULT_REQUEST_BYTES);
   const maxResponseBytes = positive(options.maxResponseBytes, DEFAULT_RESPONSE_BYTES);
   const sessionsById = new Map<string, Session>();
   const lifetime = new AbortController();
   state.lifetime.signal.addEventListener("abort", () => lifetime.abort(state.lifetime.signal.reason), { once: true });
+  const expireSessions = () => {
+    const now = Date.now();
+    for (const [id, entry] of sessionsById) {
+      if (entry.inflight.size === 0 && now - entry.lastUsed >= sessionTtlMs) sessionsById.delete(id);
+    }
+  };
+  const sweeper = setInterval(expireSessions, Math.min(sessionTtlMs, 60_000));
+  (sweeper as { unref?: () => void }).unref?.();
 
   const fetch = async (request: Request): Promise<Response> => {
     if (lifetime.signal.aborted || state.closed) return empty(503);
     if (!originAllowed(request, options)) return empty(403);
-    const bound = async <T>(run: () => Promise<T>): Promise<T> => {
+    const bound = async <T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new McpServerError("TIMEOUT", "MCP operation timed out.")), timeoutMs);
       const linked = createMergedAbortSignal(request.signal, lifetime.signal);
       const onAbort = () => controller.abort(linked.signal?.reason);
       if (linked.signal?.aborted) onAbort();
       else linked.signal?.addEventListener("abort", onAbort, { once: true });
-      const pending = run();
+      const pending = run(controller.signal);
       pending.catch(() => undefined);
+      let fail: (() => void) | undefined;
       try {
         if (controller.signal.aborted) {
           throw controller.signal.reason instanceof Error
@@ -874,7 +937,7 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
         return await Promise.race([
           pending,
           new Promise<never>((_resolve, reject) => {
-            const fail = () => reject(controller.signal.reason instanceof Error
+            fail = () => reject(controller.signal.reason instanceof Error
               ? controller.signal.reason
               : new McpServerError("TIMEOUT", "MCP operation timed out."));
             controller.signal.addEventListener("abort", fail, { once: true });
@@ -882,13 +945,14 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
         ]);
       } finally {
         clearTimeout(timer);
+        if (fail) controller.signal.removeEventListener("abort", fail);
         linked.cleanup();
         linked.signal?.removeEventListener("abort", onAbort);
       }
     };
     if (options.authenticate) {
       try {
-        await bound(() => Promise.resolve(options.authenticate!(request)));
+        await bound((signal) => Promise.resolve(options.authenticate!(request, signal)));
       } catch (error) {
         if (lifetime.signal.aborted || state.closed) return empty(503);
         if (error instanceof McpServerError && error.code === "TIMEOUT") return empty(408);
@@ -898,9 +962,15 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
     }
     const method = request.method.toUpperCase();
     if (method === "GET") return empty(405, { Allow: "POST, DELETE" });
+    expireSessions();
     if (method === "DELETE") {
       const id = header(request, "mcp-session-id");
-      if (!id || !sessionsById.delete(id)) return empty(404);
+      const current = id ? sessionsById.get(id) : undefined;
+      if (!id || !current) return empty(404);
+      for (const controller of current.inflight.values()) {
+        controller.abort(new DOMException("MCP session was deleted.", "AbortError"));
+      }
+      sessionsById.delete(id);
       return empty(200);
     }
     if (method !== "POST") return empty(405, { Allow: "POST, DELETE" });
@@ -924,7 +994,7 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
 
     let payload: unknown;
     try {
-      payload = JSON.parse(await bound(() => readLimited(request, maxRequestBytes)));
+      payload = JSON.parse(await bound((signal) => readLimited(request, maxRequestBytes, signal)));
     } catch (error) {
       await request.body?.cancel().catch(() => undefined);
       if (lifetime.signal.aborted || state.closed) return empty(503);
@@ -937,19 +1007,22 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
 
     const sessionHeader = header(request, "mcp-session-id");
     const existing = sessionHeader ? sessionsById.get(sessionHeader) : undefined;
+    if (existing) existing.lastUsed = Date.now();
     const incoming = isRecord(payload) ? payload : undefined;
     const isInitialize = incoming?.method === "initialize" && requestId(incoming.id) !== undefined;
     if (!isInitialize && !existing) return empty(404);
-    const session = existing ?? { phase: "new" as const, inflight: new Map<string, AbortController>() };
+    const session = existing ?? { phase: "new" as const, inflight: new Map<string, AbortController>(), lastUsed: Date.now() };
     const streamProgress = !isInitialize && accept.includes("text/event-stream") && progressTokenOf(incoming?.params) !== undefined;
+
+    if (streamProgress) {
+      return sseResponse(maxResponseBytes, [request.signal, lifetime.signal], (emit, signal) =>
+        handleMessage(state, session, payload, emit, signal, timeoutMs)
+      );
+    }
+
     const linked = createMergedAbortSignal(request.signal, lifetime.signal);
-    const dispatch = (emit: (message: unknown) => Promise<void>) =>
-      handleMessage(state, session, payload, emit, linked.signal ?? request.signal, timeoutMs)
-        .finally(() => linked.cleanup());
-
-    if (streamProgress) return sseResponse(maxResponseBytes, dispatch);
-
-    const outcome = await dispatch(async () => undefined);
+    const outcome = await handleMessage(state, session, payload, async () => undefined, linked.signal ?? request.signal, timeoutMs)
+      .finally(() => linked.cleanup());
     if (outcome.kind === "accepted") return empty(202);
     if (
       isInitialize
@@ -958,7 +1031,9 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
       && byteLength(JSON.stringify(outcome.message)) <= maxResponseBytes
     ) {
       while (sessionsById.size >= maxSessions) {
-        const idle = [...sessionsById.entries()].find(([, entry]) => entry.inflight.size === 0);
+        const idle = [...sessionsById.entries()]
+          .filter(([, entry]) => entry.inflight.size === 0)
+          .sort((left, right) => left[1].lastUsed - right[1].lastUsed)[0];
         if (!idle) return empty(503);
         sessionsById.delete(idle[0]);
       }
@@ -972,7 +1047,11 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
   return {
     fetch,
     async close() {
+      clearInterval(sweeper);
       lifetime.abort(closedReason());
+      for (const entry of sessionsById.values()) {
+        for (const controller of entry.inflight.values()) controller.abort(closedReason());
+      }
       sessionsById.clear();
       server.close();
     }
@@ -981,47 +1060,71 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
 
 const sseResponse = (
   maxBytes: number,
-  dispatch: (emit: (message: unknown) => Promise<void>) => Promise<{ kind: "response"; message: unknown } | { kind: "accepted" }>
+  parents: AbortSignal[],
+  dispatch: (
+    emit: (message: unknown) => Promise<void>,
+    signal: AbortSignal
+  ) => Promise<{ kind: "response"; message: unknown } | { kind: "accepted" }>
 ): Response => {
   const encoder = new TextEncoder();
-  let controller!: ReadableStreamDefaultController<Uint8Array>;
-  const body = new ReadableStream<Uint8Array>({
-    start(control) {
-      controller = control;
-    }
-  });
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let closed = false;
+  const cancelled = new AbortController();
+  const linked = createMergedAbortSignal(...parents, cancelled.signal);
+  const signal = linked.signal ?? cancelled.signal;
   let sent = 0;
   const limitFrame = encoder.encode(`event: message\ndata: ${JSON.stringify(rpcError(null, -32603, "MCP response exceeded byte limit."))}\n\n`);
+  const safeEnqueue = (bytes: Uint8Array) => {
+    if (closed || !controller) return;
+    try {
+      controller.enqueue(bytes);
+    } catch {
+      closed = true;
+    }
+  };
+  const finish = () => {
+    if (closed) return;
+    closed = true;
+    try {
+      controller?.close();
+    } catch {
+      /* The stream is already closed. */
+    }
+  };
   const emit = async (message: unknown) => {
+    if (closed || signal.aborted) return;
     const bytes = encoder.encode(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
     if (sent + bytes.byteLength > maxBytes) {
       throw new McpServerError("LIMIT_EXCEEDED", "MCP response exceeded byte limit.");
     }
     sent += bytes.byteLength;
-    controller.enqueue(bytes);
+    safeEnqueue(bytes);
   };
-  const finish = () => {
-    try {
-      controller.close();
-    } catch {
-      /* The stream is already closed. */
+  const body = new ReadableStream<Uint8Array>({
+    start(control) {
+      controller = control;
+    },
+    cancel() {
+      closed = true;
+      if (!cancelled.signal.aborted) cancelled.abort(new DOMException("MCP response was cancelled.", "AbortError"));
     }
-  };
-  void dispatch(emit).then(async (outcome) => {
-    if (outcome.kind === "response") {
+  });
+  void dispatch(emit, signal).then(async (outcome) => {
+    if (outcome.kind === "response" && !closed) {
       try {
         await emit(outcome.message);
-      } catch {
-        if (sent + limitFrame.byteLength <= maxBytes) controller.enqueue(limitFrame);
+      } catch (error) {
+        if (error instanceof McpServerError && error.code === "LIMIT_EXCEEDED" && sent + limitFrame.byteLength <= maxBytes) {
+          safeEnqueue(limitFrame);
+        }
       }
     }
     finish();
   }).catch(() => {
-    try {
-      if (sent + limitFrame.byteLength <= maxBytes) controller.enqueue(limitFrame);
-    } finally {
-      finish();
-    }
+    if (!closed && sent + limitFrame.byteLength <= maxBytes) safeEnqueue(limitFrame);
+    finish();
+  }).finally(() => {
+    linked.cleanup();
   });
   return new Response(body, {
     status: 200,
@@ -1037,7 +1140,7 @@ const sseResponse = (
 export function createMcpStdioServer(options: McpStdioServerOptions): McpStdioServerSession {
   const state = requireState(options.server);
   const maxMessageBytes = positive(options.maxMessageBytes, DEFAULT_RESPONSE_BYTES);
-  const session: Session = { phase: "new", inflight: new Map() };
+  const session: Session = { phase: "new", inflight: new Map(), lastUsed: Date.now() };
   const lifetime = new AbortController();
   state.lifetime.signal.addEventListener("abort", () => lifetime.abort(state.lifetime.signal.reason), { once: true });
   const encoder = new TextEncoder();

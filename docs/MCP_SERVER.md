@@ -135,10 +135,12 @@ outside MCP.
 that can pass a standard `Request` (Node, Bun, or a platform adapter). One
 transport owns one server: `close()` aborts that server and any in-flight call.
 
-Authentication runs before the body is read. Throw `McpServerError` with
-`AUTH_REQUIRED` for 401 and `WWW-Authenticate: Bearer`, or `AUTH_REJECTED` for
-403. Any other throw is also 401 with a fixed body-less response. The hook is
-not OAuth. The host checks its own bearer token, session, or network identity.
+Authentication runs before the body is read. The hook receives the request
+and an `AbortSignal` that aborts on timeout, client disconnect, or `close()`.
+Throw `McpServerError` with `AUTH_REQUIRED` for 401 and `WWW-Authenticate: Bearer`,
+or `AUTH_REJECTED` for 403. Any other throw is also 401 with a fixed body-less
+response. The hook is not OAuth. The host checks its own bearer token, session,
+or network identity.
 
 When `allowedHosts` is set, the `Host` header must match exactly. If the
 runtime does not expose `Host`, the host of `request.url` is used. When
@@ -152,10 +154,12 @@ still needs `authenticate` and should set `allowedHosts`.
 includes `application/json` or `text/event-stream`. `MCP-Protocol-Version`,
 when present, must be `2025-11-25`. `initialize` creates a session and returns
 `Mcp-Session-Id`. Later requests without that session, and `DELETE` of an
-unknown session, return 404. `DELETE` of a live session returns 200 and drops
-it. At `maxSessions` (default 128), `initialize` drops the oldest session that
-has no in-flight call. If every retained session is busy, `initialize` returns
-503 and does not store the new session. `GET` returns 405 with
+unknown session, return 404. At `maxSessions` (default 128), `initialize` drops the least recently
+used session that has no in-flight call. If every retained session is busy,
+`initialize` returns 503 and does not store the new session. Idle sessions are
+dropped after `sessionTtlMs` (default 15 minutes). A session with an in-flight
+call is kept. `DELETE` aborts that session's in-flight calls and returns 200.
+`GET` returns 405 with
 `Allow: POST, DELETE`. There is no server-initiated SSE stream. JSON-RPC
 batches are rejected. `notifications/initialized` is required before
 `tools/list` and `tools/call`. `ping` is answered earlier. Unknown methods
@@ -165,19 +169,24 @@ return JSON-RPC `-32601`.
 
 | Option | Default | Applies to |
 | --- | --- | --- |
-| `timeoutMs` | 30 seconds | One tool call, including `isEnabled` and guardrails, or one agent run. HTTP may set a shorter request timeout. Must be a positive safe integer no greater than 2147483647. |
+| `timeoutMs` | 30 seconds | One tool call, including `isEnabled` and guardrails, or one agent run. An HTTP timeout shorter than the server timeout wins; a longer HTTP timeout is clamped to the server timeout. Must be a positive safe integer no greater than 2147483647. |
 | `maxResultBytes` | 1 MiB | Serialized tool or agent result. The body is withheld. |
-| `maxRequestBytes` | 1 MiB | HTTP `Content-Length` and the bytes actually read. |
+| `maxRequestBytes` | 1 MiB | HTTP `Content-Length` and the bytes actually read. Reading stops when the cap is crossed. |
 | `maxResponseBytes` | 4 MiB | One HTTP JSON body or the SSE frames of one POST. |
 | `maxMessageBytes` | 4 MiB | One stdio line, inbound or outbound. |
 | `maxSessions` | 128 | HTTP sessions retained after a successful `initialize`. |
+| `sessionTtlMs` | 15 minutes | Idle HTTP sessions. A session with an in-flight call is kept. |
+| `maxConcurrentCalls` | 8 | In-flight `tools/call` requests on one session, HTTP or stdio. |
 
 A timeout or cancellation after `execute` has started returns `TIMEOUT` or
 `CANCELLED` and tells the client to reconcile. The side effect may already
 have happened. `LIMIT_EXCEEDED` on a result also means the tool or agent
 already ran; the payload is not included. Oversized HTTP requests return 413
-and are not dispatched. Authentication and reading the body use the same
-deadline; if either does not finish, the response is an empty `408`.
+and are not dispatched. The server stops reading once `maxRequestBytes` is
+crossed and discards the partial body. A request that fits is assembled before
+`JSON.parse`. Authentication and reading the body use the same deadline and
+the same abort signal; if either does not finish, the response is an empty
+`408`. `close()` during either returns an empty `503`.
 
 Every HTTP JSON body is checked against `maxResponseBytes`. When the result
 does not fit, the server returns a JSON-RPC error if that error fits, and an
@@ -219,7 +228,6 @@ HTTP+SSE, or the 2026 transport revision.
 - Progress on HTTP requires a progress token and `Accept: text/event-stream`.
 - `GET` does not open a long-lived server stream.
 - `allowedHosts` is opt-in. A present `Origin` is rejected unless `allowedOrigins` lists it. Clients that omit `Origin` are accepted, so a network listener still needs `authenticate`.
-- Sessions have no idle timeout. The cap drops the oldest idle session, and a session with an in-flight call is kept. There is no cap on concurrent calls inside one session.
-- `authenticate` is not given an abort signal. A hook that ignores the deadline can keep running after the 408 or 503 response.
-- Work that ignores `AbortSignal` can continue after the MCP result is already `TIMEOUT`, `CANCELLED`, or the transport has closed.
+- A hook or tool that ignores `AbortSignal` can continue after the MCP result is already `TIMEOUT`, `CANCELLED`, or the transport has closed. The server does not kill that work.
+- Stdio keeps reading while stdout is stalled, so cancellation still arrives. In-flight calls are capped, and each outbound line is capped, which bounds the queued writes.
 - A timed-out or oversized result can mean the tool already ran. Reconcile before retrying.

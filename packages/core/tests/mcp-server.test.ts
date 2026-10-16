@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -1074,5 +1075,505 @@ describe("experimental MCP server", () => {
     expect(sawAbort).toBe(true);
     expect(done).toBe(true);
     await session.close();
+  });
+
+  it("clamps the HTTP timeout to the server call limit", async () => {
+    const server = createMcpServer({
+      timeoutMs: 40,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: () => new Promise(() => undefined)
+        })
+      }
+    });
+    const result = await Promise.race([
+      useHttp(server, (client) => client.callTool({ name: "hang", arguments: {} }), { timeoutMs: 30_000 }),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("HTTP timeout extended the server limit")), 500))
+    ]);
+    expect(result.structuredContent).toMatchObject({ code: "TIMEOUT" });
+  });
+
+  it("contains schema parse failures", async () => {
+    const schema = z.object({ value: z.string() }).superRefine(() => {
+      throw new Error("secret refinement");
+    });
+    const server = createMcpServer({
+      tools: {
+        refined: tool({
+          name: "refined",
+          schema,
+          execute: () => ({ ok: true })
+        })
+      },
+      agents: {
+        refined: {
+          name: "refined-agent",
+          schema,
+          agent: new Agent({ name: "refined-agent", model: createMockLanguageModel() })
+        }
+      }
+    });
+    const result = await useHttp(server, async (client) => ({
+      tool: await client.callTool({ name: "refined", arguments: { value: "ok" } }),
+      agent: await client.callTool({ name: "refined-agent", arguments: { value: "ok" } })
+    }));
+    expect(result.tool.structuredContent).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(result.agent.structuredContent).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(JSON.stringify(result)).not.toContain("\"ok\":true");
+  });
+
+  it("aborts an SSE call when the client cancels the body", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (error: unknown) => {
+      rejections.push(error);
+    };
+    process.on("unhandledRejection", onRejection);
+    let started = false;
+    let sawAbort = false;
+    const http = createMcpHttpServer(createMcpServer({
+      timeoutMs: 30_000,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: (_input, context) => new Promise(() => {
+            started = true;
+            context?.abortSignal?.addEventListener("abort", () => {
+              sawAbort = true;
+            });
+          })
+        })
+      }
+    }));
+    const headers = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
+    try {
+      const initialized = await http.fetch(new Request("https://mcp.test/mcp", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "sse", version: "1" } }
+        })
+      }));
+      const session = initialized.headers.get("mcp-session-id") ?? "";
+      await initialized.text();
+      const accepted = await http.fetch(new Request("https://mcp.test/mcp", {
+        method: "POST",
+        headers: { ...headers, "Mcp-Session-Id": session },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })
+      }));
+      expect(accepted.status).toBe(202);
+      const call = await http.fetch(new Request("https://mcp.test/mcp", {
+        method: "POST",
+        headers: { ...headers, "Mcp-Session-Id": session },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "hang", arguments: {}, _meta: { progressToken: 1 } }
+        })
+      }));
+      expect(call.headers.get("content-type")).toContain("text/event-stream");
+      const startedAt = Date.now();
+      while (!started && Date.now() - startedAt < 1_000) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(started).toBe(true);
+      await call.body?.cancel();
+      const deadline = Date.now() + 500;
+      while (!sawAbort && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(sawAbort).toBe(true);
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+      await http.close();
+    }
+  });
+
+  it("aborts a tool call when the HTTP request aborts", async () => {
+    let started = false;
+    let sawAbort = false;
+    const http = createMcpHttpServer(createMcpServer({
+      timeoutMs: 30_000,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: (_input, context) => new Promise(() => {
+            started = true;
+            context?.abortSignal?.addEventListener("abort", () => {
+              sawAbort = true;
+            });
+          })
+        })
+      }
+    }));
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const initialized = await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "abort", version: "1" } }
+      })
+    }));
+    const session = initialized.headers.get("mcp-session-id") ?? "";
+    await initialized.text();
+    await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": session },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })
+    }));
+    const controller = new AbortController();
+    const pending = http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": session },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "hang", arguments: {} } }),
+      signal: controller.signal
+    }));
+    const startedAt = Date.now();
+    while (!started && Date.now() - startedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(started).toBe(true);
+    controller.abort();
+    const deadline = Date.now() + 500;
+    while (!sawAbort && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(sawAbort).toBe(true);
+    await pending.catch(() => undefined);
+    await http.close();
+  });
+
+  it("expires idle HTTP sessions and keeps a busy one", async () => {
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const initialize = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "ttl", version: "1" } }
+    });
+    const idle = createMcpHttpServer(createMcpServer(), { sessionTtlMs: 40, sessionId: () => "idle" });
+    const opened = await idle.fetch(new Request("https://mcp.test/mcp", { method: "POST", headers, body: initialize }));
+    expect(opened.headers.get("mcp-session-id")).toBe("idle");
+    await opened.text();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const expired = await idle.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": "idle" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" })
+    }));
+    expect(expired.status).toBe(404);
+    await idle.close();
+
+    let started = false;
+    const busy = createMcpHttpServer(createMcpServer({
+      timeoutMs: 30_000,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: () => new Promise(() => {
+            started = true;
+          })
+        })
+      }
+    }), { sessionTtlMs: 40, sessionId: () => "busy" });
+    const live = await busy.fetch(new Request("https://mcp.test/mcp", { method: "POST", headers, body: initialize }));
+    await live.text();
+    await busy.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": "busy" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })
+    }));
+    const call = busy.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": "busy" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "hang", arguments: {} } })
+    }));
+    const startedAt = Date.now();
+    while (!started && Date.now() - startedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const still = await busy.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": "busy" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "ping" })
+    }));
+    expect(still.status).toBe(200);
+    await busy.close();
+    await call.catch(() => undefined);
+  });
+
+  it("rejects calls past the session concurrency cap", async () => {
+    let started = 0;
+    const http = createMcpHttpServer(createMcpServer({
+      timeoutMs: 30_000,
+      maxConcurrentCalls: 1,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: () => new Promise(() => {
+            started += 1;
+          })
+        })
+      }
+    }), { sessionId: () => "cap" });
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const post = (body: string) => http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": "cap" },
+      body
+    }));
+    const opened = await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "cap", version: "1" } }
+      })
+    }));
+    await opened.text();
+    await post(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
+    const first = post(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "hang", arguments: {} } }));
+    const startedAt = Date.now();
+    while (started < 1 && Date.now() - startedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const second = await post(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "hang", arguments: {} } }));
+    expect(await second.json()).toMatchObject({
+      id: 3,
+      error: { code: -32000, message: "MCP session call limit exceeded." }
+    });
+    expect(started).toBe(1);
+    await http.close();
+    await first.catch(() => undefined);
+  });
+
+  it("aborts in-flight calls when the session is deleted", async () => {
+    let sawAbort = false;
+    let started = false;
+    const http = createMcpHttpServer(createMcpServer({
+      timeoutMs: 30_000,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: (_input, context) => new Promise(() => {
+            started = true;
+            context?.abortSignal?.addEventListener("abort", () => {
+              sawAbort = true;
+            });
+          })
+        })
+      }
+    }), { sessionId: () => "gone" });
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const opened = await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "delete", version: "1" } }
+      })
+    }));
+    await opened.text();
+    await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": "gone" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })
+    }));
+    const call = http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": "gone" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "hang", arguments: {} } })
+    }));
+    const startedAt = Date.now();
+    while (!started && Date.now() - startedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const deleted = await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "DELETE",
+      headers: { ...headers, "Mcp-Session-Id": "gone" }
+    }));
+    expect(deleted.status).toBe(200);
+    const deadline = Date.now() + 500;
+    while (!sawAbort && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(sawAbort).toBe(true);
+    const body = await call;
+    expect(await body.json()).toMatchObject({
+      id: 2,
+      result: { isError: true, structuredContent: { code: "CANCELLED" } }
+    });
+    await http.close();
+  });
+
+  it("passes an abort signal to authenticate", async () => {
+    let entered = false;
+    let sawAbort = false;
+    const http = createMcpHttpServer(createMcpServer({ timeoutMs: 30_000 }), {
+      authenticate: (_request, signal) => new Promise(() => {
+        entered = true;
+        signal.addEventListener("abort", () => {
+          sawAbort = true;
+        });
+      })
+    });
+    const pending = http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: "{}"
+    }));
+    const startedAt = Date.now();
+    while (!entered && Date.now() - startedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(entered).toBe(true);
+    await http.close();
+    const response = await Promise.race([
+      pending,
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("authenticate did not observe close")), 500))
+    ]);
+    expect(sawAbort).toBe(true);
+    expect(response.status).toBe(503);
+    const secretServer = createMcpHttpServer(createMcpServer(), {
+      authenticate: () => {
+        throw new Error("secret token");
+      }
+    });
+    const secret = await secretServer.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: "{}"
+    }));
+    expect(secret.status).toBe(401);
+    expect(await secret.text()).not.toContain("secret");
+    await secretServer.close();
+  });
+
+  it("stops reading a request body at the byte cap", async () => {
+    let pulls = 0;
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(encoder.encode("x".repeat(80)));
+      }
+    });
+    const http = createMcpHttpServer(createMcpServer(), { maxRequestBytes: 100, timeoutMs: 1_000 });
+    const response = await Promise.race([
+      http.fetch(new Request("https://mcp.test/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body,
+        duplex: "half"
+      })),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("body read was not capped")), 500))
+    ]);
+    expect(response.status).toBe(413);
+    expect(pulls).toBeLessThan(5);
+    await http.close();
+  });
+
+  it("rejects malformed JSON-RPC, batches, and unknown methods", async () => {
+    const http = createMcpHttpServer(createMcpServer(), { sessionId: () => "rpc" });
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const post = (body: string, session?: string) => http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: session ? { ...headers, "Mcp-Session-Id": session } : headers,
+      body
+    }));
+    const batch = await post(JSON.stringify([
+      { jsonrpc: "2.0", id: 1, method: "ping" },
+      { jsonrpc: "2.0", id: 2, method: "ping" }
+    ]));
+    expect(batch.status).toBe(400);
+    expect(await batch.json()).toMatchObject({ error: { code: -32600 } });
+    const opened = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "rpc", version: "1" } }
+    }));
+    await opened.text();
+    const notice = await post(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }), "rpc");
+    expect(notice.status).toBe(202);
+    expect(await notice.text()).toBe("");
+    const invalid = await post(JSON.stringify({ jsonrpc: "2.0", id: 3 }), "rpc");
+    expect(await invalid.json()).toMatchObject({ id: 3, error: { code: -32600 } });
+    const missing = await post(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "resources/list" }), "rpc");
+    expect(await missing.json()).toMatchObject({ id: 4, error: { code: -32601 } });
+    const badParams = await post(JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/call", params: {} }), "rpc");
+    expect(await badParams.json()).toMatchObject({ id: 5, error: { code: -32602 } });
+    await http.close();
+  });
+
+  it("closes stdio on invalid UTF-8", async () => {
+    const input = new TransformStream<Uint8Array, Uint8Array>();
+    const output = new TransformStream<Uint8Array, Uint8Array>();
+    const session = createMcpStdioServer({
+      server: createMcpServer(),
+      input: input.readable,
+      output: output.writable
+    });
+    const reader = output.readable.getReader();
+    const writer = input.writable.getWriter();
+    await writer.write(new Uint8Array([0xff]));
+    let done = false;
+    const deadline = Date.now() + 500;
+    while (!done && Date.now() < deadline) {
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 20))
+      ]);
+      if (!next) continue;
+      done = next.done;
+    }
+    expect(done).toBe(true);
+    await session.close();
+  });
+
+  it("roundtrips a tool through the official MCP stdio client", async () => {
+    const stderr: string[] = [];
+    const transport = new StdioClientTransport({
+      command: process.versions.bun ? process.execPath : "bun",
+      args: [path.resolve(import.meta.dirname, "fixtures/mcp-server-stdio-entry.ts")],
+      stderr: "pipe"
+    });
+    transport.stderr?.on("data", (chunk: Buffer | string) => {
+      stderr.push(String(chunk));
+    });
+    const client = new Client({ name: "official-stdio", version: "1.32.1" });
+    try {
+      await client.connect(transport);
+      const tools = await client.listTools();
+      expect(tools.tools.map((entry) => entry.name)).toEqual(["echo"]);
+      const result = await client.callTool({ name: "echo", arguments: { text: "stdio" } });
+      expect(result.isError).toBeUndefined();
+      expect(result.content).toEqual([expect.objectContaining({ type: "text", text: JSON.stringify({ text: "stdio" }) })]);
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n${stderr.join("")}`, { cause: error });
+    } finally {
+      await client.close();
+    }
   });
 });
