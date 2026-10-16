@@ -143,28 +143,34 @@ not OAuth. The host checks its own bearer token, session, or network identity.
 When `allowedHosts` is set, the `Host` header must match exactly. If the
 runtime does not expose `Host`, the host of `request.url` is used. When
 `allowedOrigins` is set, `Origin` must match exactly and a missing origin is
-rejected. Both checks return 403. Defaults are off: a public deployment must
-set them.
+rejected. When `allowedOrigins` is omitted, a request that still carries
+`Origin` is rejected, and clients that omit `Origin` are accepted.
+`allowedHosts` stays opt-in. Mismatches return 403. A reachable deployment
+still needs `authenticate` and should set `allowedHosts`.
 
 `POST` requires `Content-Type: application/json` and an `Accept` value that
 includes `application/json` or `text/event-stream`. `MCP-Protocol-Version`,
 when present, must be `2025-11-25`. `initialize` creates a session and returns
 `Mcp-Session-Id`. Later requests without that session, and `DELETE` of an
 unknown session, return 404. `DELETE` of a live session returns 200 and drops
-it. `GET` returns 405 with `Allow: POST, DELETE`. There is no server-initiated
-SSE stream. JSON-RPC batches are rejected. `notifications/initialized` is
-required before `tools/list` and `tools/call`. `ping` is answered earlier.
-Unknown methods return JSON-RPC `-32601`.
+it. At `maxSessions` (default 128), `initialize` drops the oldest session that
+has no in-flight call. If every retained session is busy, `initialize` returns
+503 and does not store the new session. `GET` returns 405 with
+`Allow: POST, DELETE`. There is no server-initiated SSE stream. JSON-RPC
+batches are rejected. `notifications/initialized` is required before
+`tools/list` and `tools/call`. `ping` is answered earlier. Unknown methods
+return JSON-RPC `-32601`.
 
 ## Limits
 
 | Option | Default | Applies to |
 | --- | --- | --- |
-| `timeoutMs` | 30 seconds | One tool call, including `isEnabled` and guardrails, or one agent run. HTTP may set a shorter request timeout. |
+| `timeoutMs` | 30 seconds | One tool call, including `isEnabled` and guardrails, or one agent run. HTTP may set a shorter request timeout. Must be a positive safe integer no greater than 2147483647. |
 | `maxResultBytes` | 1 MiB | Serialized tool or agent result. The body is withheld. |
 | `maxRequestBytes` | 1 MiB | HTTP `Content-Length` and the bytes actually read. |
 | `maxResponseBytes` | 4 MiB | One HTTP JSON body or the SSE frames of one POST. |
 | `maxMessageBytes` | 4 MiB | One stdio line, inbound or outbound. |
+| `maxSessions` | 128 | HTTP sessions retained after a successful `initialize`. |
 
 A timeout or cancellation after `execute` has started returns `TIMEOUT` or
 `CANCELLED` and tells the client to reconcile. The side effect may already
@@ -194,7 +200,8 @@ and closes stdout.
 streams. `serveMcpStdio` adapts `process.stdin` and `process.stdout` on Node
 and Bun. Logging belongs on stderr. Messages must not contain embedded
 newlines. Control messages are handled in order. `tools/call` is not awaited
-inside the reader, so a later `notifications/cancelled` can abort it.
+inside the reader, so a later `notifications/cancelled` can abort it. Stdin
+EOF ends the session: stdout is closed and in-flight calls are aborted.
 
 ## Protocol subset
 
@@ -211,5 +218,8 @@ HTTP+SSE, or the 2026 transport revision.
 - No MCP elicitation and no approval resume on this connection.
 - Progress on HTTP requires a progress token and `Accept: text/event-stream`.
 - `GET` does not open a long-lived server stream.
-- The host owns authentication, `allowedHosts`, `allowedOrigins`, and network exposure.
+- `allowedHosts` is opt-in. A present `Origin` is rejected unless `allowedOrigins` lists it. Clients that omit `Origin` are accepted, so a network listener still needs `authenticate`.
+- Sessions have no idle timeout. The cap drops the oldest idle session, and a session with an in-flight call is kept. There is no cap on concurrent calls inside one session.
+- `authenticate` is not given an abort signal. A hook that ignores the deadline can keep running after the 408 or 503 response.
+- Work that ignores `AbortSignal` can continue after the MCP result is already `TIMEOUT`, `CANCELLED`, or the transport has closed.
 - A timed-out or oversized result can mean the tool already ran. Reconcile before retrying.

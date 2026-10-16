@@ -838,4 +838,241 @@ describe("experimental MCP server", () => {
     expect(done).toBe(true);
     await session.close();
   });
+
+  it("rejects a browser Origin unless it is allowlisted", async () => {
+    let authenticated = false;
+    const open = createMcpHttpServer(createMcpServer(), {
+      authenticate: () => {
+        authenticated = true;
+      }
+    });
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const browser = await open.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, Origin: "https://evil.example" },
+      body: "{}"
+    }));
+    expect(browser.status).toBe(403);
+    expect(authenticated).toBe(false);
+    const local = await open.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers,
+      body: "{}"
+    }));
+    expect(local.status).not.toBe(403);
+    await open.close();
+
+    const listed = createMcpHttpServer(createMcpServer(), {
+      allowedOrigins: ["https://app.example"]
+    });
+    const missing = await listed.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers,
+      body: "{}"
+    }));
+    const foreign = await listed.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, Origin: "https://evil.example" },
+      body: "{}"
+    }));
+    const allowed = await listed.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, Origin: "https://app.example" },
+      body: "{}"
+    }));
+    expect(missing.status).toBe(403);
+    expect(foreign.status).toBe(403);
+    expect(allowed.status).not.toBe(403);
+    await listed.close();
+  });
+
+  it("drops the oldest idle HTTP session and refuses initialize when every session is busy", async () => {
+    let started = false;
+    const hanging = createMcpServer({
+      timeoutMs: 30_000,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: () => new Promise(() => {
+            started = true;
+          })
+        })
+      }
+    });
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const initialize = (id: number) => JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      method: "initialize",
+      params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "sessions", version: "1" } }
+    });
+    const post = (http: ReturnType<typeof createMcpHttpServer>, body: string, session?: string) =>
+      http.fetch(new Request("https://mcp.test/mcp", {
+        method: "POST",
+        headers: session ? { ...headers, "Mcp-Session-Id": session } : headers,
+        body
+      }));
+
+    let nextId = 0;
+    const capped = createMcpHttpServer(createMcpServer(), {
+      maxSessions: 1,
+      sessionId: () => `s${++nextId}`
+    });
+    const first = await post(capped, initialize(1));
+    expect(first.headers.get("mcp-session-id")).toBe("s1");
+    await first.text();
+    const second = await post(capped, initialize(2));
+    expect(second.headers.get("mcp-session-id")).toBe("s2");
+    await second.text();
+    const stale = await post(capped, JSON.stringify({ jsonrpc: "2.0", id: 3, method: "ping" }), "s1");
+    const live = await post(capped, JSON.stringify({ jsonrpc: "2.0", id: 4, method: "ping" }), "s2");
+    expect(stale.status).toBe(404);
+    expect(live.status).toBe(200);
+    await capped.close();
+
+    const busy = createMcpHttpServer(hanging, { maxSessions: 1, sessionId: () => "only" });
+    const opened = await post(busy, initialize(1));
+    expect(opened.headers.get("mcp-session-id")).toBe("only");
+    await opened.text();
+    const accepted = await post(busy, JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }), "only");
+    expect(accepted.status).toBe(202);
+    const call = post(busy, JSON.stringify({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: { name: "hang", arguments: {} }
+    }), "only");
+    const startedAt = Date.now();
+    while (!started && Date.now() - startedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(started).toBe(true);
+    const blocked = await post(busy, initialize(6));
+    expect(blocked.status).toBe(503);
+    const stillThere = await post(busy, JSON.stringify({ jsonrpc: "2.0", id: 7, method: "ping" }), "only");
+    expect(stillThere.status).toBe(200);
+    await busy.close();
+    await call.catch(() => undefined);
+  });
+
+  it("rejects timeout values Node would schedule as one millisecond", () => {
+    expect(() => createMcpServer({ timeoutMs: 3_000_000_000 })).toThrow(/MCP timeout exceeds the timer range/);
+    expect(() => createMcpHttpServer(createMcpServer(), { timeoutMs: 3_000_000_000 })).toThrow(/MCP timeout exceeds the timer range/);
+    const server = createMcpServer({ timeoutMs: 2_147_483_647, maxResultBytes: 3_000_000_000 });
+    const http = createMcpHttpServer(server, {
+      maxRequestBytes: 3_000_000_000,
+      maxResponseBytes: 3_000_000_000,
+      maxSessions: 3_000_000_000
+    });
+    server.close();
+    return http.close();
+  });
+
+  it("returns 503 when the server closes during authentication", async () => {
+    let entered = false;
+    const http = createMcpHttpServer(createMcpServer({ timeoutMs: 30_000 }), {
+      authenticate: () => new Promise(() => {
+        entered = true;
+      })
+    });
+    const pending = http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: "{}"
+    }));
+    const startedAt = Date.now();
+    while (!entered && Date.now() - startedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(entered).toBe(true);
+    await http.close();
+    const response = await Promise.race([
+      pending,
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("close did not finish authentication")), 500))
+    ]);
+    expect(response.status).toBe(503);
+  });
+
+  it("closes stdio and aborts the in-flight call when stdin reaches EOF", async () => {
+    let started = false;
+    let sawAbort = false;
+    const server = createMcpServer({
+      timeoutMs: 30_000,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: (_input, context) => new Promise(() => {
+            started = true;
+            context?.abortSignal?.addEventListener("abort", () => {
+              sawAbort = true;
+            });
+          })
+        })
+      }
+    });
+    const input = new TransformStream<Uint8Array, Uint8Array>();
+    const output = new TransformStream<Uint8Array, Uint8Array>();
+    const session = createMcpStdioServer({ server, input: input.readable, output: output.writable });
+    const writer = input.writable.getWriter();
+    const reader = output.readable.getReader();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    const send = async (message: unknown) => {
+      await writer.write(encoder.encode(`${JSON.stringify(message)}\n`));
+    };
+    const readLine = async () => {
+      const deadline = Date.now() + 1_000;
+      while (Date.now() < deadline) {
+        const newline = buffered.indexOf("\n");
+        if (newline !== -1) {
+          const line = buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+          return line;
+        }
+        const next = await Promise.race([
+          reader.read(),
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 20))
+        ]);
+        if (next && !next.done) buffered += decoder.decode(next.value);
+      }
+      throw new Error("timed out waiting for stdio");
+    };
+    await send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "eof", version: "1" } }
+    });
+    expect(await readLine()).toContain("2025-11-25");
+    await send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    await send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "hang", arguments: {} } });
+    const startedAt = Date.now();
+    while (!started && Date.now() - startedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(started).toBe(true);
+    await writer.close();
+    let done = false;
+    const deadline = Date.now() + 500;
+    while (!done && Date.now() < deadline) {
+      const newline = buffered.indexOf("\n");
+      if (newline !== -1) {
+        buffered = buffered.slice(buffered.indexOf("\n") + 1);
+        continue;
+      }
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 20))
+      ]);
+      if (!next) continue;
+      if (!next.done) buffered += decoder.decode(next.value);
+      done = next.done;
+    }
+    expect(sawAbort).toBe(true);
+    expect(done).toBe(true);
+    await session.close();
+  });
 });

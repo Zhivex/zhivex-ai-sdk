@@ -113,8 +113,14 @@ export interface McpHttpServerOptions {
   maxResponseBytes?: number;
   /** Exact `Host` values. When set, other hosts are rejected with 403. */
   allowedHosts?: readonly string[];
-  /** Exact `Origin` values. When set, a missing or different origin is rejected with 403. */
+  /**
+   * Exact `Origin` values. When set, a missing or different origin is rejected
+   * with 403. When omitted, a request that still carries `Origin` is rejected.
+   * Non-browser clients that omit `Origin` are accepted.
+   */
   allowedOrigins?: readonly string[];
+  /** Retained `initialize` sessions. The oldest idle session is dropped at the cap. */
+  maxSessions?: number;
   sessionId?: () => string;
 }
 
@@ -136,7 +142,10 @@ export interface McpStdioServerSession {
 }
 
 const TOOL_NAME = /^[A-Za-z0-9_-]{1,128}$/;
+/** Node schedules a longer delay as 1 ms. Matches the signed 32-bit timer range. */
+const MAX_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_SESSIONS = 128;
 const DEFAULT_RESULT_BYTES = 1024 * 1024;
 const DEFAULT_REQUEST_BYTES = 1024 * 1024;
 const DEFAULT_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -227,6 +236,14 @@ const positive = (value: number | undefined, fallback: number): number => {
   const result = value ?? fallback;
   if (!Number.isSafeInteger(result) || result <= 0) {
     throw new McpServerError("PROTOCOL_ERROR", "MCP limits must be positive safe integers.");
+  }
+  return result;
+};
+
+const timeoutMsOf = (value: number | undefined, fallback: number): number => {
+  const result = positive(value, fallback);
+  if (result > MAX_TIMEOUT_MS) {
+    throw new McpServerError("PROTOCOL_ERROR", "MCP timeout exceeds the timer range.");
   }
   return result;
 };
@@ -738,7 +755,7 @@ export function createMcpServer(options: McpServerOptions = {}): McpServer {
     version,
     instructions: options.instructions,
     tools: registerTools(options),
-    timeoutMs: positive(options.timeoutMs, DEFAULT_TIMEOUT_MS),
+    timeoutMs: timeoutMsOf(options.timeoutMs, DEFAULT_TIMEOUT_MS),
     maxResultBytes: positive(options.maxResultBytes, DEFAULT_RESULT_BYTES),
     closed: false,
     lifetime: new AbortController()
@@ -771,9 +788,11 @@ const originAllowed = (request: Request, options: McpHttpServerOptions): boolean
     const host = header(request, "host") ?? new URL(request.url).host;
     if (!options.allowedHosts.includes(host)) return false;
   }
+  const origin = header(request, "origin");
   if (options.allowedOrigins) {
-    const origin = header(request, "origin");
     if (!origin || !options.allowedOrigins.includes(origin)) return false;
+  } else if (origin !== null) {
+    return false;
   }
   return true;
 };
@@ -826,7 +845,8 @@ const authStatus = (error: unknown): Response => {
  */
 export function createMcpHttpServer(server: McpServer, options: McpHttpServerOptions = {}): McpHttpServer {
   const state = requireState(server);
-  const timeoutMs = positive(options.timeoutMs, state.timeoutMs);
+  const timeoutMs = timeoutMsOf(options.timeoutMs, state.timeoutMs);
+  const maxSessions = positive(options.maxSessions, DEFAULT_MAX_SESSIONS);
   const maxRequestBytes = positive(options.maxRequestBytes, DEFAULT_REQUEST_BYTES);
   const maxResponseBytes = positive(options.maxResponseBytes, DEFAULT_RESPONSE_BYTES);
   const sessionsById = new Map<string, Session>();
@@ -839,9 +859,10 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
     const bound = async <T>(run: () => Promise<T>): Promise<T> => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new McpServerError("TIMEOUT", "MCP operation timed out.")), timeoutMs);
-      const onAbort = () => controller.abort(request.signal.reason);
-      if (request.signal.aborted) onAbort();
-      else request.signal.addEventListener("abort", onAbort, { once: true });
+      const linked = createMergedAbortSignal(request.signal, lifetime.signal);
+      const onAbort = () => controller.abort(linked.signal?.reason);
+      if (linked.signal?.aborted) onAbort();
+      else linked.signal?.addEventListener("abort", onAbort, { once: true });
       const pending = run();
       pending.catch(() => undefined);
       try {
@@ -861,13 +882,15 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
         ]);
       } finally {
         clearTimeout(timer);
-        request.signal.removeEventListener("abort", onAbort);
+        linked.cleanup();
+        linked.signal?.removeEventListener("abort", onAbort);
       }
     };
     if (options.authenticate) {
       try {
         await bound(() => Promise.resolve(options.authenticate!(request)));
       } catch (error) {
+        if (lifetime.signal.aborted || state.closed) return empty(503);
         if (error instanceof McpServerError && error.code === "TIMEOUT") return empty(408);
         if (request.signal.aborted) return empty(408);
         return authStatus(error);
@@ -904,6 +927,7 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
       payload = JSON.parse(await bound(() => readLimited(request, maxRequestBytes)));
     } catch (error) {
       await request.body?.cancel().catch(() => undefined);
+      if (lifetime.signal.aborted || state.closed) return empty(503);
       if (error instanceof McpServerError && error.code === "TIMEOUT") return empty(408);
       if (request.signal.aborted) return empty(408);
       if (error instanceof McpServerError && error.code === "LIMIT_EXCEEDED") return empty(413);
@@ -933,6 +957,11 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
       && "result" in outcome.message
       && byteLength(JSON.stringify(outcome.message)) <= maxResponseBytes
     ) {
+      while (sessionsById.size >= maxSessions) {
+        const idle = [...sessionsById.entries()].find(([, entry]) => entry.inflight.size === 0);
+        if (!idle) return empty(503);
+        sessionsById.delete(idle[0]);
+      }
       const id = (options.sessionId ?? (() => crypto.randomUUID()))();
       sessionsById.set(id, session);
       return jsonResponse(200, outcome.message, { "Mcp-Session-Id": id });
@@ -1046,7 +1075,10 @@ export function createMcpStdioServer(options: McpStdioServerOptions): McpStdioSe
   const pump = (async () => {
     while (!lifetime.signal.aborted) {
       const chunk = await reader.read();
-      if (chunk.done) break;
+      if (chunk.done) {
+        await failSession("MCP input closed.");
+        break;
+      }
       buffered += decoder.decode(chunk.value, { stream: true });
       if (byteLength(buffered) > maxMessageBytes && !buffered.includes("\n")) {
         throw new McpServerError("LIMIT_EXCEEDED", "MCP message exceeded byte limit.");
