@@ -22,4 +22,10 @@ export {
   type SandboxSnapshot,
   type SandboxSnapshotStore
 } from "./stores.js";
-export { isPrivateAddress, startAllowlistProxy, type AllowlistProxy } from "./network.js";
+export {
+  allowlistProxyQuotaDefaults,
+  isPrivateAddress,
+  startAllowlistProxy,
+  type AllowlistProxy,
+  type AllowlistProxyQuotas
+} from "./network.js";

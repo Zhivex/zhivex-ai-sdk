@@ -1,5 +1,20 @@
 # @zhivex-ai/core
 
+## Unreleased
+
+### Breaking Changes
+
+- UI message streams from `toUIMessageStream`, `toUIMessageStreamResponse`, `toUIAgentStreamResponse`, and `toUIRunnerStreamResponse` omit `agent-run-finish` unless `includeAgentRunFinish` is `true`. `agent-step-finish` chunks are now a status summary (`index`, `status`, and optional timestamps, token `usage`, and `error.message`). They no longer include request messages, provider options, response text, or tool results. Set `includeAgentRunFinish: true` only for a trusted server consumer that is allowed to receive the full `AgentRunState`. `streamAgent().eventStream` is unchanged.
+
+### Patch Changes
+
+- `generateText` and `streamText` reject duplicate tool-call IDs with `ValidationError` before approval policy and tool execution. Approval decisions are stored per call, so one call cannot overwrite another call's denial.
+- Workflow state `userId` must match the authenticated caller. A caller-supplied `sessionId` must match the state, and a state `workflowId` must match the workflow definition. Caller-supplied execution claims are ignored. A persisted step takes a 15-minute execution claim and renews it every 5 minutes while that owner is still running. Renewal is an owner-checked compare-and-swap and advances the workflow record revision. If renewal is lost, the owner fails with `ConflictError` and does not write its terminal state. A concurrent resume still fails with `ConflictError` before the step runs. The claim and the terminal state each advance the workflow record revision.
+- `toUIMessageStreamResponse`, `toUIAgentStreamResponse`, and `toUIRunnerStreamResponse` accept `includeAgentRunFinish` and forward it. The default remains `false`.
+- PostgreSQL idempotency claims insert the run, the idempotency key, and any parent link in one statement. A key conflict rolls the new run back. SQLite and file claims do the same when the key write fails, and a key whose run is gone can be claimed again.
+- Runner approval resumes compare-and-swap the loaded session revision. The losing resume fails with `ConflictError` before the approved tool runs.
+- Memory, SQLite, and PostgreSQL idempotency claims are insert-only. Claiming a new idempotency key for an existing run id throws `ConflictError` and leaves the stored run unchanged.
+
 ## 1.34.0
 
 ### Minor Changes

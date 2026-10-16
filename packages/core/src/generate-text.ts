@@ -285,8 +285,18 @@ type ValidatedToolCall = {
 
 type ToolPreflightResult = {
   validatedCalls: ValidatedToolCall[];
-  decisions: Map<string, ToolApprovalDecision>;
+  decisions: Map<ValidatedToolCall, ToolApprovalDecision>;
   approvalRequests: NonNullable<GenerateTextOutput["approvalRequests"]>;
+};
+
+const assertUniqueToolCallIds = (toolCalls: ToolCall[]) => {
+  const seen = new Set<string>();
+  for (const call of toolCalls) {
+    if (seen.has(call.id)) {
+      throw new ValidationError(`Duplicate tool-call ID "${call.id}" is not allowed.`);
+    }
+    seen.add(call.id);
+  }
 };
 
 const preflightModelResponse = async (
@@ -462,8 +472,9 @@ const preflightTools = async (
     tools: NonNullable<ReturnType<typeof toToolSet>>;
   }
 ): Promise<ToolPreflightResult> => {
+  assertUniqueToolCallIds(toolCalls);
   const validatedCalls = await validateToolCalls(toolCalls, options, context);
-  const decisions = new Map<string, ToolApprovalDecision>();
+  const decisions = new Map<ValidatedToolCall, ToolApprovalDecision>();
   const approvalRequests: NonNullable<GenerateTextOutput["approvalRequests"]> = [];
 
   for (const item of validatedCalls) {
@@ -554,6 +565,7 @@ const preflightTools = async (
       decision
     });
 
+    decisions.set(item, decision);
     if (decision.approvalRequired) {
       const signature = options.toolApprovalSigner
         ? await options.toolApprovalSigner.sign(binding.inputDigest)
@@ -581,8 +593,6 @@ const preflightTools = async (
           ...(signature ? { signature } : {})
         }
       });
-    } else {
-      decisions.set(item.call.id, decision);
     }
   }
 
@@ -651,7 +661,10 @@ const executeTools = async (
       return;
     }
     if (!tool) throw new ValidationError("Missing validated tool.");
-    const approval = decisions.get(call.id) ?? { approved: true };
+    const approval = decisions.get(item);
+    if (!approval) {
+      throw new ValidationError(`Tool "${call.name}" is missing an approval decision for this call.`);
+    }
     if (!approval.approved) {
       if (isComputerEffectTool(tool)) throw new ValidationError(approval.reason ?? "Computer action was denied by the approval policy.");
       results[index] = {

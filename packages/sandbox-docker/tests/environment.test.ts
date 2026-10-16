@@ -1,13 +1,16 @@
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { Agent, ConflictError, createMockLanguageModel, createTextMessage } from "@zhivex-ai/core";
 import { describe, expect, it } from "vitest";
 
+import { SandboxError } from "../src/errors.js";
+import { sandboxSourceBytesRead } from "../src/environment.js";
 import { createDockerSandboxEnvironment, createDockerSandboxTools } from "../src/index.js";
 import { createMemoryDockerClient } from "../src/memory-docker-client.js";
 import { createFileSandboxLeaseStore, createMemorySandboxLeaseStore, createMemorySandboxSnapshotStore } from "../src/stores.js";
+import { packTar, unpackTar } from "../src/tar.js";
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
@@ -165,6 +168,9 @@ describe("docker sandbox environment", () => {
     expect(spec?.networkMode).not.toBe("none");
     expect(spec?.networkMode).not.toBe("host");
     expect(spec?.env.some(entry => entry.startsWith("HTTPS_PROXY=http://10.88.0.1:"))).toBe(true);
+    expect(sandbox.manifest.limits?.maxNetworkRequests).toBeGreaterThan(0);
+    expect(sandbox.manifest.limits?.maxNetworkBytes).toBeGreaterThan(0);
+    expect(sandbox.manifest.metadata).toMatchObject({ nanoCpus: expect.any(Number), pidsLimit: expect.any(Number) });
     await session.release({ status: "completed" });
     expect(docker.removedNetworkIds().length).toBeGreaterThan(0);
   });
@@ -305,5 +311,345 @@ describe("docker sandbox environment", () => {
     await docker.killContainer(session.containerId);
     await expect(tools.sandbox_read_file.execute({ path: "README.md" }, {})).rejects.toThrow(/acquired Docker/);
     await session.release({ status: "completed" });
+  });
+
+  it("refuses workspace reads that follow intermediate symlinks", async () => {
+    const { docker, sandbox } = environment();
+    const session = await sandbox.acquire({ runId: "run-symlink" });
+    await docker.putArchive(session.containerId, "/tmp", packTar([
+      { path: "secret", type: "file", content: new TextEncoder().encode("secret") }
+    ]));
+    await docker.putArchive(session.containerId, "/workspace", packTar([
+      { path: "link", type: "symlink", linkTarget: "/tmp" },
+      { path: "inside", type: "symlink", linkTarget: "README.md" }
+    ]));
+    const leaked = unpackTar((await docker.getArchive(session.containerId, "/workspace/link/secret")).tar)
+      .find(entry => entry.type === "file");
+    expect(text(leaked?.content ?? new Uint8Array())).toBe("secret");
+    await expect(session.readFile("link/secret")).rejects.toThrow(/symlink/i);
+    await expect(session.list("link")).rejects.toThrow(/symlink/i);
+    await expect(session.readFile("inside")).rejects.toThrow(/symlink/i);
+    await expect(session.writeFile("link/new.txt", "nope")).rejects.toThrow(/symlink/i);
+    expect(text(await session.readFile("README.md"))).toBe("hello\n");
+    await session.writeFile("src/note.txt", "note");
+    expect(text(await session.readFile("src/note.txt"))).toBe("note");
+    expect(await session.list("src")).toEqual(["note.txt"]);
+    await session.release({ status: "completed" });
+  });
+
+  it("kills the command process group after success, timeout, truncation, and cancellation", async () => {
+    const { docker, sandbox } = environment({
+      shell: { allow: ["echo", "sleep"] },
+      limits: { maxProcessOutputBytes: 4 }
+    });
+    const session = await sandbox.acquire({ runId: "run-group" });
+    expect(docker.commands().some(command => command.join(" ").includes("kill -KILL"))).toBe(false);
+    expect((await session.exec(["/bin/echo", "hi"])).exitCode).toBe(0);
+    expect(docker.descendantCount(session.containerId)).toBe(0);
+    const wrapper = docker.commands().find(command => command[0] === "/bin/sh" && command[1] === "-c");
+    expect(wrapper?.[2]).toContain("shift");
+    expect(wrapper?.[2]).not.toContain("${@:");
+    expect(docker.commands().some(command => command.join(" ").includes("kill -KILL"))).toBe(true);
+    expect((await session.exec(["/bin/sleep", "30"], { timeoutMs: 1000 })).timedOut).toBe(true);
+    expect(docker.descendantCount(session.containerId)).toBe(0);
+    expect((await session.exec(["/bin/echo", "abcdef"])).truncated).toBe(true);
+    expect(docker.descendantCount(session.containerId)).toBe(0);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(session.exec(["/bin/echo", "x"], { signal: controller.signal })).rejects.toThrow(/cancelled/);
+    expect(docker.descendantCount(session.containerId)).toBe(0);
+    await session.release({ status: "waiting_approval" });
+    expect(docker.descendantCount(session.containerId)).toBe(0);
+  });
+
+  it("sweeps only containers with this owner and fingerprint", async () => {
+    const docker = createMemoryDockerClient();
+    const shared = {
+      docker,
+      assurance: "best-effort" as const,
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "hello\n" }] }
+    };
+    const left = createDockerSandboxEnvironment(shared);
+    const right = createDockerSandboxEnvironment(shared);
+    const sessionLeft = await left.acquire({ runId: "run-left" });
+    const sessionRight = await right.acquire({ runId: "run-right" });
+    const labels = docker.specs().find(spec => spec.labels["zhivex.run-id"] === "run-left")?.labels;
+    expect(labels?.["zhivex.owner"]).toBeTruthy();
+    expect(labels?.["zhivex.owner"]).not.toBe(
+      docker.specs().find(spec => spec.labels["zhivex.run-id"] === "run-right")?.labels["zhivex.owner"]
+    );
+    const template = docker.specs()[0];
+    if (!template || !labels) throw new Error("missing container spec");
+    const orphan = await docker.createContainer({ ...template, labels: { ...labels, "zhivex.run-id": "orphan" } });
+    const foreign = await docker.createContainer({
+      ...template,
+      labels: { ...labels, "zhivex.fingerprint": "sha256:other", "zhivex.run-id": "foreign" }
+    });
+    await left.sweep();
+    const ids = docker.containerIds();
+    expect(ids).toContain(sessionLeft.containerId);
+    expect(ids).toContain(sessionRight.containerId);
+    expect(ids).not.toContain(orphan.Id);
+    expect(ids).toContain(foreign.Id);
+    await right.sweep();
+    expect(docker.containerIds()).toContain(sessionLeft.containerId);
+    expect(docker.containerIds()).toContain(foreign.Id);
+    await sessionLeft.release({ status: "completed" });
+    await sessionRight.release({ status: "completed" });
+  });
+
+  it("drops snapshots and docker-commit images when a lease expires or is released", async () => {
+    let now = 1_000;
+    const docker = createMemoryDockerClient();
+    const snapshots = createMemorySandboxSnapshotStore();
+    const scopeKey = JSON.stringify(["", "", ""]);
+    const sandbox = createDockerSandboxEnvironment({
+      docker,
+      snapshots,
+      assurance: "best-effort",
+      snapshot: "docker-commit",
+      clock: () => now,
+      leaseTtlMs: 50,
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "v" }] }
+    });
+    const session = await sandbox.acquire({ runId: "run-expire-snap" });
+    await session.snapshot();
+    await session.snapshot();
+    expect(docker.imageCount()).toBe(1);
+    await session.release({ status: "waiting_approval" });
+    expect(docker.imageCount()).toBe(1);
+    expect(await snapshots.load("run-expire-snap", scopeKey)).toBeTruthy();
+    now = 2_000;
+    await expect(sandbox.acquire({ runId: "run-expire-snap" })).rejects.toThrow(/expired/);
+    expect(docker.imageCount()).toBe(0);
+    expect(await snapshots.load("run-expire-snap", scopeKey)).toBeUndefined();
+
+    const terminal = await sandbox.acquire({ runId: "run-terminal-image" });
+    await terminal.snapshot();
+    await terminal.snapshot();
+    expect(docker.imageCount()).toBe(1);
+    await terminal.release({ status: "completed" });
+    expect(docker.imageCount()).toBe(0);
+    expect(await snapshots.load("run-terminal-image", scopeKey)).toBeUndefined();
+  });
+
+  it("keeps a replaced docker-commit image until deletion succeeds", async () => {
+    let now = 1_000;
+    const docker = createMemoryDockerClient();
+    const snapshots = createMemorySandboxSnapshotStore();
+    const blocked = new Set<string>();
+    const removeImage = docker.removeImage.bind(docker);
+    docker.removeImage = async id => {
+      if (blocked.has(id)) throw new Error("image delete failed");
+      await removeImage(id);
+    };
+    const scopeKey = JSON.stringify(["", "", ""]);
+    const sandbox = createDockerSandboxEnvironment({
+      docker,
+      snapshots,
+      assurance: "best-effort",
+      snapshot: "docker-commit",
+      clock: () => now,
+      leaseTtlMs: 50_000,
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "v" }] }
+    });
+    const session = await sandbox.acquire({ runId: "run-replace-image" });
+    await session.snapshot();
+    const firstId = (await snapshots.load("run-replace-image", scopeKey))?.imageId;
+    expect(firstId).toBeTruthy();
+    blocked.add(firstId ?? "");
+    await expect(session.snapshot()).rejects.toThrow(/image delete failed/);
+    const replaced = await snapshots.load("run-replace-image", scopeKey);
+    expect(replaced?.imageId).not.toBe(firstId);
+    expect(replaced?.pendingImageIds).toEqual([firstId]);
+    expect(docker.imageCount()).toBe(2);
+    await expect(sandbox.sweep(now)).rejects.toThrow(/image delete failed/);
+    expect(docker.imageCount()).toBe(2);
+    blocked.delete(firstId ?? "");
+    await sandbox.sweep(now);
+    const settled = await snapshots.load("run-replace-image", scopeKey);
+    expect(settled?.pendingImageIds).toBeUndefined();
+    expect(settled?.imageId).toBe(replaced?.imageId);
+    expect(docker.imageCount()).toBe(1);
+    await session.release({ status: "waiting_approval" });
+  });
+
+  it("deletes a snapshot image before dropping the record and retries a failed deletion", async () => {
+    let now = 1_000;
+    const docker = createMemoryDockerClient();
+    const snapshots = createMemorySandboxSnapshotStore();
+    let fail = true;
+    const removeImage = docker.removeImage.bind(docker);
+    docker.removeImage = async id => {
+      if (fail) throw new Error("image delete failed");
+      await removeImage(id);
+    };
+    const scopeKey = JSON.stringify(["", "", ""]);
+    const sandbox = createDockerSandboxEnvironment({
+      docker,
+      snapshots,
+      assurance: "best-effort",
+      snapshot: "docker-commit",
+      clock: () => now,
+      leaseTtlMs: 50,
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "v" }] }
+    });
+    const session = await sandbox.acquire({ runId: "run-discard-image" });
+    await session.snapshot();
+    const imageId = (await snapshots.load("run-discard-image", scopeKey))?.imageId;
+    await expect(session.release({ status: "completed" })).rejects.toThrow(/image delete failed/);
+    expect((await snapshots.load("run-discard-image", scopeKey))?.imageId).toBe(imageId);
+    expect(docker.imageCount()).toBe(1);
+    now = 5_000;
+    await expect(sandbox.sweep(now)).rejects.toThrow(/image delete failed/);
+    expect(docker.imageCount()).toBe(1);
+    fail = false;
+    await sandbox.sweep(now);
+    expect(docker.imageCount()).toBe(0);
+    expect(await snapshots.load("run-discard-image", scopeKey)).toBeUndefined();
+
+    const gone = createDockerSandboxEnvironment({
+      docker,
+      snapshots,
+      assurance: "best-effort",
+      snapshot: "docker-commit",
+      clock: () => now,
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "v" }] }
+    });
+    docker.removeImage = async () => {
+      throw new SandboxError("NOT_FOUND", "missing image");
+    };
+    const terminal = await gone.acquire({ runId: "run-missing-image" });
+    await terminal.snapshot();
+    await terminal.release({ status: "completed" });
+    expect(await snapshots.load("run-missing-image", scopeKey)).toBeUndefined();
+  });
+
+  it("remembers a committed image when the replacement snapshot cannot be saved", async () => {
+    const docker = createMemoryDockerClient();
+    const inner = createMemorySandboxSnapshotStore();
+    let rejectNext = false;
+    const snapshots = {
+      load: (runId: string, scopeKey: string) => inner.load(runId, scopeKey),
+      async save(snapshot: Parameters<typeof inner.save>[0]) {
+        if (rejectNext) {
+          rejectNext = false;
+          throw new Error("store save failed");
+        }
+        await inner.save(snapshot);
+      },
+      remove: (runId: string, scopeKey: string) => inner.remove(runId, scopeKey)
+    };
+    const scopeKey = JSON.stringify(["", "", ""]);
+    const sandbox = createDockerSandboxEnvironment({
+      docker,
+      snapshots,
+      assurance: "best-effort",
+      snapshot: "docker-commit",
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "v" }] }
+    });
+    const session = await sandbox.acquire({ runId: "run-save-image" });
+    await session.snapshot();
+    const firstId = (await inner.load("run-save-image", scopeKey))?.imageId;
+    rejectNext = true;
+    await expect(session.snapshot()).rejects.toThrow(/store save failed/);
+    const retained = await inner.load("run-save-image", scopeKey);
+    expect(retained?.imageId).toBe(firstId);
+    expect(retained?.pendingImageIds).toHaveLength(1);
+    expect(docker.imageCount()).toBe(2);
+    await session.snapshot();
+    const settled = await inner.load("run-save-image", scopeKey);
+    expect(settled?.pendingImageIds).toBeUndefined();
+    expect(settled?.imageId).not.toBe(firstId);
+    expect(docker.imageCount()).toBe(1);
+    await session.release({ status: "completed" });
+    expect(docker.imageCount()).toBe(0);
+  });
+
+  it("reports snapshot cleanup failures and removes the snapshot on retry", async () => {
+    let now = 1_000;
+    let failures = 1;
+    const inner = createMemorySandboxSnapshotStore();
+    const snapshots = {
+      load: (runId: string, scopeKey: string) => inner.load(runId, scopeKey),
+      save: (snapshot: Parameters<typeof inner.save>[0]) => inner.save(snapshot),
+      async remove(runId: string, scopeKey: string) {
+        if (failures > 0) {
+          failures -= 1;
+          throw new Error("snapshot cleanup failed");
+        }
+        await inner.remove(runId, scopeKey);
+      }
+    };
+    const sandbox = createDockerSandboxEnvironment({
+      docker: createMemoryDockerClient(),
+      snapshots,
+      assurance: "best-effort",
+      clock: () => now,
+      leaseTtlMs: 20,
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "v" }] }
+    });
+    const session = await sandbox.acquire({ runId: "run-retry" });
+    await session.release({ status: "waiting_approval" });
+    now = 5_000;
+    const scopeKey = JSON.stringify(["", "", ""]);
+    await expect(sandbox.sweep(now)).rejects.toThrow(/snapshot cleanup failed/);
+    expect(await snapshots.load("run-retry", scopeKey)).toBeTruthy();
+    await sandbox.sweep(now);
+    expect(await snapshots.load("run-retry", scopeKey)).toBeUndefined();
+  });
+
+  it("treats cpu and pid limit changes as a binding conflict", async () => {
+    const docker = createMemoryDockerClient();
+    const leases = createMemorySandboxLeaseStore();
+    const base = {
+      docker,
+      leases,
+      assurance: "best-effort" as const,
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "v" }] }
+    };
+    const sandbox = createDockerSandboxEnvironment({ ...base, limits: { cpus: 0.5, pidsLimit: 64 } });
+    expect(sandbox.manifest.metadata).toMatchObject({ nanoCpus: 500_000_000, pidsLimit: 64 });
+    const session = await sandbox.acquire({ runId: "run-fp" });
+    await session.release({ status: "waiting_approval" });
+    await expect(createDockerSandboxEnvironment({ ...base, limits: { cpus: 1, pidsLimit: 64 } }).acquire({ runId: "run-fp" }))
+      .rejects.toBeInstanceOf(ConflictError);
+    await expect(createDockerSandboxEnvironment({ ...base, limits: { cpus: 0.5, pidsLimit: 32 } }).acquire({ runId: "run-fp" }))
+      .rejects.toBeInstanceOf(ConflictError);
+    docker.retune(session.containerId, { pidsLimit: 2 });
+    await expect(sandbox.acquire({ runId: "run-fp" })).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("stops source ingestion before reading past the file or workspace budget", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "zhivex-sandbox-budget-"));
+    try {
+      const big = await open(path.join(directory, "big.bin"), "w");
+      await big.truncate(1024 * 1024 * 1024);
+      await big.close();
+      const oversized = createDockerSandboxEnvironment({
+        docker: createMemoryDockerClient(),
+        assurance: "best-effort",
+        limits: { maxFileBytes: 1024, maxWorkspaceBytes: 4096 },
+        workspace: { id: "workspace-1", source: { root: directory, include: ["big.bin"] } }
+      });
+      await expect(oversized.acquire({ runId: "run-big" })).rejects.toThrow(/maxFileBytes/);
+      expect(sandboxSourceBytesRead()).toBe(0);
+
+      await writeFile(path.join(directory, "a.txt"), "a".repeat(1000));
+      await writeFile(path.join(directory, "b.txt"), "b".repeat(1000));
+      const rest = await open(path.join(directory, "c.txt"), "w");
+      await rest.truncate(3000);
+      await rest.close();
+      const aggregate = createDockerSandboxEnvironment({
+        docker: createMemoryDockerClient(),
+        assurance: "best-effort",
+        limits: { maxFileBytes: 4000, maxWorkspaceBytes: 2500 },
+        workspace: { id: "workspace-1", source: { root: directory, include: ["a.txt", "b.txt", "c.txt"] } }
+      });
+      await expect(aggregate.acquire({ runId: "run-sum" })).rejects.toThrow(/c\.txt exceeds maxWorkspaceBytes/);
+      expect(sandboxSourceBytesRead()).toBe(2000);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

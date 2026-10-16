@@ -2322,7 +2322,18 @@ describe("core helpers", () => {
       })(),
       "assistant-legacy"
     ));
-    expect(legacyChunks).toEqual([
+    expect(legacyChunks).toEqual([]);
+    const explicitChunks = await Array.fromAsync(toUIMessageStream(
+      (async function* () {
+        yield {
+          type: "agent-run-finish" as const,
+          status: "completed" as const,
+          state: sensitiveState
+        };
+      })(),
+      { messageId: "assistant-legacy", includeAgentRunFinish: true }
+    ));
+    expect(explicitChunks).toEqual([
       {
         type: "agent-run-finish",
         status: "completed",

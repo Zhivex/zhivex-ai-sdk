@@ -1525,6 +1525,46 @@ describe("openai adapter", () => {
     expect(applyOperation).not.toHaveBeenCalled();
   });
 
+  it("rejects OpenAI apply_patch paths that escape rootDir through symlinks", async () => {
+    const { mkdir, mkdtemp, symlink, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const nodePath = await import("node:path");
+    const parent = await mkdtemp(nodePath.join(tmpdir(), "openai-contain-"));
+    const root = nodePath.join(parent, "root");
+    const outside = nodePath.join(parent, "outside");
+    const rootLink = nodePath.join(parent, "root-link");
+    try {
+      await mkdir(root);
+      await mkdir(nodePath.join(root, "sub"));
+      await mkdir(outside);
+      await writeFile(nodePath.join(outside, "secret.txt"), "secret");
+      await symlink(outside, nodePath.join(root, "link"));
+      await symlink(nodePath.join(root, "sub"), nodePath.join(root, "inner"));
+      await symlink(nodePath.join(outside, "secret.txt"), nodePath.join(root, "alias"));
+      await symlink(outside, rootLink);
+      const applyOperation = vi.fn((operation: { path: string }) => ({ status: "completed" as const, path: operation.path }));
+      const patch = openAIApplyPatchTool({ rootDir: root, applyOperation });
+      await expect(patch.execute?.({ operation: { type: "update_file", path: "link/secret.txt", diff: "x" } })).rejects.toThrow(/escapes rootDir/);
+      await expect(patch.execute?.({ operation: { type: "create_file", path: "link/new.txt", diff: "x" } })).rejects.toThrow(/escapes rootDir/);
+      await expect(patch.execute?.({ operation: { type: "delete_file", path: "alias" } })).rejects.toThrow(/escapes rootDir/);
+      await expect(openAIApplyPatchTool({ rootDir: rootLink, applyOperation }).execute?.({
+        operation: { type: "update_file", path: "secret.txt", diff: "x" }
+      })).rejects.toThrow(/escapes rootDir/);
+      await expect(openAIShellTool({ rootDir: root, cwd: "link" }).execute?.({ command: "echo hi" })).rejects.toThrow(/escapes rootDir/);
+      expect(applyOperation).not.toHaveBeenCalled();
+      await patch.execute?.({ operation: { type: "create_file", path: "inner/new.txt", diff: "x" } });
+      expect(applyOperation).toHaveBeenCalledWith(expect.objectContaining({
+        path: nodePath.join(root, "sub", "new.txt")
+      }));
+      await patch.execute?.({ operation: { type: "create_file", path: "..note.txt", diff: "x" } });
+      expect(applyOperation).toHaveBeenCalledWith(expect.objectContaining({
+        path: nodePath.join(root, "..note.txt")
+      }));
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
   it("uses the Responses API for hosted tools and continues local function loops", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({

@@ -192,7 +192,7 @@ describePostgres("workflow and artifact Postgres integration", () => {
         sessionId,
         workflowKey
       });
-      expect(persistedWaiting).toMatchObject({ status: "waiting_approval", revision: 1 });
+      expect(persistedWaiting).toMatchObject({ status: "waiting_approval", revision: 2 });
     } finally {
       await firstClient.close();
     }
@@ -250,7 +250,7 @@ describePostgres("workflow and artifact Postgres integration", () => {
       });
       const artifact = await artifacts.loadArtifact({ appName, userId, sessionId, id: "workflow-result" });
 
-      expect(persistedCompleted).toMatchObject({ status: "completed", revision: 2, runId: completedRunId });
+      expect(persistedCompleted).toMatchObject({ status: "completed", revision: 4, runId: completedRunId });
       expect(artifact).toMatchObject({
         workflowRunId: completedRunId,
         workflowStepId: "approval-step",
