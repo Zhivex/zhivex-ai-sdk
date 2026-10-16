@@ -331,11 +331,37 @@ export const createFileAgentRunStore = (options: AgentRunStoreScopeOptions & {
         const releaseRun = await acquireFileRunStoreLock(revisionLockPath(state.runId, scope));
         try {
           const existing = await findByIdempotencyKey(state.idempotencyKey, scope);
-          if (existing) return { claimed: false, state: existing };
+          if (existing) {
+            const stored = await load(existing.runId, scope);
+            if (stored) return { claimed: false, state: stored };
+            const targetScope = effectiveScope(scope);
+            for (const file of [
+              idempotencyPath(state.idempotencyKey, scope),
+              path.join(options.directory, fileNameForIdempotencyKey(legacyScopedKey(targetScope, state.idempotencyKey)))
+            ]) {
+              const marker = await readJson<AgentRunState>(file);
+              if (!marker || marker.runId !== existing.runId) continue;
+              await fs.unlink(file).catch((error: NodeJS.ErrnoException) => {
+                if (error.code !== "ENOENT") throw error;
+              });
+            }
+          }
           if (await load(normalized.runId, scope)) throw new ConflictError("Agent run identity already exists.");
-          await writePrivateFile(idempotencyPath(state.idempotencyKey, scope), JSON.stringify(normalized, null, 2), { flag: "wx" });
-          await writePrivateFile(await runPath(normalized.runId, scope), JSON.stringify(normalized, null, 2));
-          return { claimed: true, state: normalized };
+          const idempotencyFile = idempotencyPath(state.idempotencyKey, scope);
+          let wroteIdempotency = false;
+          try {
+            await writePrivateFile(idempotencyFile, JSON.stringify(normalized, null, 2), { flag: "wx" });
+            wroteIdempotency = true;
+            await writePrivateFile(await runPath(normalized.runId, scope), JSON.stringify(normalized, null, 2));
+            return { claimed: true, state: normalized };
+          } catch (error) {
+            if (wroteIdempotency) {
+              await fs.unlink(idempotencyFile).catch((unlinkError: NodeJS.ErrnoException) => {
+                if (unlinkError.code !== "ENOENT") throw unlinkError;
+              });
+            }
+            throw error;
+          }
         } finally { await releaseRun(); }
       } finally { await releaseIndex(); }
     },

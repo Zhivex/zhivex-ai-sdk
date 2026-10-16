@@ -208,7 +208,7 @@ for await (const text of stream.textStream) {
 const final = await stream.collect();
 ```
 
-Use `toUIAgentStreamResponse()` for server routes that need UI stream chunks with agent lifecycle events, approval requests, and tool progress. Step chunks are status summaries, and terminal `agent-run-finish` state is omitted unless `includeAgentRunFinish` is set.
+Use `toUIAgentStreamResponse()` for server routes that need UI stream chunks with agent lifecycle events, approval requests, and tool progress. Step chunks are status summaries, and terminal `agent-run-finish` state is omitted unless `includeAgentRunFinish` is set on `toUIMessageStream`, `toUIMessageStreamResponse`, or `toUIAgentStreamResponse`.
 
 ## Sessions
 

@@ -144,6 +144,13 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
     VALUES (?, ?, ?)
     ON CONFLICT(idempotency_key) DO NOTHING
   `);
+  const deleteOrphanIdempotencyStatement = prepareSqliteStatement(options.db, `
+    DELETE FROM ${idempotencyTableName}
+    WHERE idempotency_key = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM ${tableName} runs WHERE runs.run_id = ${idempotencyTableName}.run_id
+      )
+  `);
   const deleteIdempotencyStatement = prepareSqliteStatement(options.db, `DELETE FROM ${idempotencyTableName} WHERE run_id = ?`);
   const findParentStatement = prepareSqliteStatement<{ state_json?: string; stateJson?: string }>(
     options.db,
@@ -283,7 +290,12 @@ export const createSqliteAgentRunStore = (options: SqliteAgentRunStoreOptions): 
         ) {
           throw new ConflictError("Agent run identity already exists.");
         }
-        const idempotencyInsert = saveIdempotencyStatement.run([dbKey(state.idempotencyKey, scope), runKey, updatedAt]);
+        const idempotencyKey = dbKey(state.idempotencyKey, scope);
+        let idempotencyInsert = saveIdempotencyStatement.run([idempotencyKey, runKey, updatedAt]);
+        if (mutationCount(idempotencyInsert) === 0) {
+          deleteOrphanIdempotencyStatement.run([idempotencyKey]);
+          idempotencyInsert = saveIdempotencyStatement.run([idempotencyKey, runKey, updatedAt]);
+        }
         if (mutationCount(idempotencyInsert) === 0) {
           throw new ConflictError("Agent run identity already exists.");
         }

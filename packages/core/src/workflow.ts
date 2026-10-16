@@ -41,6 +41,9 @@ export type {
 const randomId = createSecureId;
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const WORKFLOW_EXECUTION_CLAIM_TTL_MS = 15 * 60 * 1000;
+const WORKFLOW_EXECUTION_CLAIM_HEARTBEAT_MS = Math.floor(WORKFLOW_EXECUTION_CLAIM_TTL_MS / 3);
+const WORKFLOW_CLAIM_RENEW_ATTEMPTS = 8;
+const WORKFLOW_EXECUTION_CLAIM_LOST = "Workflow execution claim was lost.";
 
 export interface WorkflowPromptContext {
   workflowId?: string;
@@ -558,6 +561,180 @@ const claimWorkflowExecution = async (
   state.executionClaim = { ownerId, expiresAt: now + WORKFLOW_EXECUTION_CLAIM_TTL_MS };
   state.updatedAt = now;
   return (await persistWorkflowState(definition, state, cursor)).cursor;
+};
+
+const claimLostError = () => new ConflictError(WORKFLOW_EXECUTION_CLAIM_LOST);
+
+const renewWorkflowExecutionClaim = async (
+  workflow: WorkflowDefinition,
+  state: WorkflowRunState,
+  ownerId: string,
+  cursor: WorkflowPersistenceCursor,
+  stopped: () => boolean
+): Promise<WorkflowPersistenceCursor> => {
+  const definition = validateWorkflow(workflow);
+  const persistence = definition.persistence;
+  if (!persistence || stopped()) return cursor;
+  const now = Date.now();
+  const expiresAt = now + WORKFLOW_EXECUTION_CLAIM_TTL_MS;
+  const lookup = {
+    appName: persistence.appName,
+    userId: state.userId,
+    sessionId: state.sessionId
+  };
+  const rememberClaim = () => {
+    if (state.executionClaim?.ownerId === ownerId) {
+      state.executionClaim = { ownerId, expiresAt };
+    }
+  };
+
+  if (persistence.workflowStateService) {
+    const workflowKey = workflowPersistenceKey(definition);
+    for (let attempt = 0; attempt < WORKFLOW_CLAIM_RENEW_ATTEMPTS; attempt += 1) {
+      if (stopped()) return cursor;
+      const record = await persistence.workflowStateService.loadWorkflowState({ ...lookup, workflowKey });
+      if (stopped()) return cursor;
+      if (!record || record.state.executionClaim?.ownerId !== ownerId) throw claimLostError();
+      const nextState = normalizeWorkflowRunState({
+        ...record.state,
+        executionClaim: { ownerId, expiresAt },
+        updatedAt: now
+      });
+      if (stopped()) return cursor;
+      try {
+        const saved = await persistence.workflowStateService.saveWorkflowState({
+          ...lookup,
+          workflowKey,
+          state: toPersistedWorkflowState(nextState),
+          expectedRevision: record.revision
+        });
+        rememberClaim();
+        return { ...cursor, workflowRevision: saved.revision };
+      } catch (error) {
+        if (stopped()) return cursor;
+        if (!(error instanceof ConflictError)) throw error;
+      }
+    }
+    throw claimLostError();
+  }
+
+  const metadataKey = workflowMetadataKey(definition);
+  const persistenceKey = workflowPersistenceKey(definition);
+  for (let attempt = 0; attempt < WORKFLOW_CLAIM_RENEW_ATTEMPTS; attempt += 1) {
+    if (stopped()) return cursor;
+    const session = await persistence.sessionService.loadSession(lookup);
+    if (stopped()) return cursor;
+    if (!session) throw claimLostError();
+    const workflowRuns = getWorkflowRunsMetadata(session.metadata, metadataKey);
+    const persisted = workflowRuns[persistenceKey];
+    if (!persisted || typeof persisted !== "object" || Array.isArray(persisted)) throw claimLostError();
+    const loaded = normalizeWorkflowRunState(persisted);
+    if (loaded.executionClaim?.ownerId !== ownerId) throw claimLostError();
+    const nextRuns = {
+      ...workflowRuns,
+      [persistenceKey]: {
+        ...toPersistedWorkflowState(loaded),
+        executionClaim: { ownerId, expiresAt },
+        updatedAt: now
+      } as unknown as JsonValue
+    };
+    const next: AgentSession = {
+      ...session,
+      updatedAt: now,
+      metadata: {
+        ...(session.metadata ?? {}),
+        [metadataKey]: nextRuns as unknown as JsonValue
+      }
+    };
+    if (stopped()) return cursor;
+    try {
+      await persistence.sessionService.saveSession(next, { expectedRevision: session.revision });
+      rememberClaim();
+      return { ...cursor, sessionRevision: session.revision + 1 };
+    } catch (error) {
+      if (stopped()) return cursor;
+      if (!(error instanceof ConflictError)) throw error;
+    }
+  }
+  throw claimLostError();
+};
+
+interface WorkflowClaimHeartbeat {
+  signal: AbortSignal;
+  lost: () => boolean;
+  stop: () => Promise<void>;
+}
+
+const startWorkflowClaimHeartbeat = (
+  workflow: WorkflowDefinition,
+  state: WorkflowRunState,
+  ownerId: string,
+  readCursor: () => WorkflowPersistenceCursor,
+  writeCursor: (cursor: WorkflowPersistenceCursor) => void
+): WorkflowClaimHeartbeat => {
+  const controller = new AbortController();
+  let stopped = false;
+  let lost = false;
+  let active: Promise<void> | undefined;
+  const renew = async () => {
+    try {
+      const next = await renewWorkflowExecutionClaim(
+        workflow,
+        state,
+        ownerId,
+        readCursor(),
+        () => stopped || lost
+      );
+      writeCursor(next);
+    } catch {
+      if (stopped || lost) return;
+      lost = true;
+      controller.abort(claimLostError());
+    }
+  };
+  const timer = setInterval(() => {
+    if (stopped || lost || active) return;
+    active = renew().finally(() => {
+      active = undefined;
+    });
+  }, WORKFLOW_EXECUTION_CLAIM_HEARTBEAT_MS);
+  timer.unref?.();
+  return {
+    signal: controller.signal,
+    lost: () => lost,
+    stop: async () => {
+      stopped = true;
+      clearInterval(timer);
+      if (active) await active;
+    }
+  };
+};
+
+const raceClaimLoss = async <T>(operation: Promise<T>, heartbeat?: WorkflowClaimHeartbeat): Promise<T> => {
+  if (!heartbeat) return operation;
+  if (heartbeat.lost()) throw claimLostError();
+  const signal = heartbeat.signal;
+  return new Promise<T>((resolve, reject) => {
+    const fail = () => reject(signal.reason instanceof ConflictError ? signal.reason : claimLostError());
+    if (signal.aborted) {
+      fail();
+      return;
+    }
+    const onAbort = () => fail();
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        if (heartbeat.lost()) fail();
+        else resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        if (heartbeat.lost()) fail();
+        else reject(error);
+      }
+    );
+  });
 };
 
 const finalizeWorkflowOutput = async (
@@ -1165,7 +1342,11 @@ export const runWorkflow = async (
   let terminalEventEmitted = false;
   let executionClaimed = false;
   let persistenceCursor: WorkflowPersistenceCursor = {};
+  let heartbeat: WorkflowClaimHeartbeat | undefined;
+  let stepInput: WorkflowRunInput = input;
+  let releaseClaimAbort = () => {};
   const claimOwnerId = randomId("wfx");
+  const stopHeartbeat = () => heartbeat?.stop() ?? Promise.resolve();
 
   await emitWorkflowTelemetry(observer, {
     ...telemetryContext,
@@ -1195,6 +1376,8 @@ export const runWorkflow = async (
     status: WorkflowTelemetryTerminalStatus,
     error?: Error
   ): Promise<WorkflowRunOutput> => {
+    await stopHeartbeat();
+    if (heartbeat?.lost()) throw claimLostError();
     const output = await finalizeWorkflowOutput(
       definition,
       state,
@@ -1221,6 +1404,20 @@ export const runWorkflow = async (
       if (!executionClaimed) {
         persistenceCursor = await claimWorkflowExecution(definition, state, claimOwnerId);
         executionClaimed = true;
+        if (definition.persistence) {
+          heartbeat = startWorkflowClaimHeartbeat(
+            definition,
+            state,
+            claimOwnerId,
+            () => persistenceCursor,
+            (cursor) => {
+              persistenceCursor = cursor;
+            }
+          );
+          const merged = createMergedAbortSignal(input.abortSignal, heartbeat.signal);
+          releaseClaimAbort = merged.cleanup;
+          stepInput = { ...input, abortSignal: merged.signal };
+        }
       }
       const step = definition.steps[index]!;
       const stepKind = workflowStepKind(step);
@@ -1269,15 +1466,19 @@ export const runWorkflow = async (
       let stepTerminalEventEmitted = false;
       try {
         const stepRun = await runWithWorkflowStepContext(observer, state.runId, index, () =>
-          isParallelStep(step)
-            ? runParallelStep(definition, state, step, input, existingResult, startedAt)
-            : isLoopStep(step)
-              ? runLoopStep(definition, state, step, input, existingResult, startedAt)
-              : runTaskStep(definition, state, step, input, {
-                  startedAt,
-                  isApprovalResume: index === waitingIndex && Boolean(input.approvals?.length)
-                })
+          raceClaimLoss(
+            isParallelStep(step)
+              ? runParallelStep(definition, state, step, stepInput, existingResult, startedAt)
+              : isLoopStep(step)
+                ? runLoopStep(definition, state, step, stepInput, existingResult, startedAt)
+                : runTaskStep(definition, state, step, stepInput, {
+                    startedAt,
+                    isApprovalResume: index === waitingIndex && Boolean(input.approvals?.length)
+                  }),
+            heartbeat
+          )
         );
+        if (heartbeat?.lost()) throw claimLostError();
         const { result } = stepRun;
         const output = stepRun.output;
         const session = stepRun.session;
@@ -1317,6 +1518,7 @@ export const runWorkflow = async (
         state.updatedAt = Date.now();
         return await finalizeInvocation(telemetryStatus, telemetryError);
       } catch (error) {
+        if (heartbeat?.lost()) throw claimLostError();
         if (stepTerminalEventEmitted) {
           throw error;
         }
@@ -1356,6 +1558,12 @@ export const runWorkflow = async (
     state.updatedAt = Date.now();
     return await finalizeInvocation("completed");
   } catch (error) {
+    await stopHeartbeat();
+    if (heartbeat?.lost()) {
+      const conflict = claimLostError();
+      await emitWorkflowFinish("failed", conflict);
+      throw conflict;
+    }
     const terminalStatus = isCancellationError(error) || input.abortSignal?.aborted ? "cancelled" : "failed";
     const terminalError = toWorkflowError(
       error ?? input.abortSignal?.reason,
@@ -1366,6 +1574,9 @@ export const runWorkflow = async (
     }
     await emitWorkflowFinish(terminalStatus, terminalError);
     throw error;
+  } finally {
+    await stopHeartbeat();
+    releaseClaimAbort();
   }
 };
 

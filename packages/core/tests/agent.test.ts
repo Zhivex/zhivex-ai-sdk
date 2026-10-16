@@ -251,6 +251,31 @@ class FakePostgresClient implements PostgresClientLike {
       return { rows: [] as TResult[] };
     }
 
+    if (sql.includes("inserted_run") && sql.includes("inserted_key")) {
+      const tables = [...sql.matchAll(/INSERT INTO\s+([A-Za-z_][A-Za-z0-9_]*)/gi)].map((match) => match[1]!);
+      const runTableName = tables[0]!;
+      const keyTableName = tables[1]!;
+      const parentTableName = tables[2];
+      const runId = String(params[0]);
+      const key = String(params[3]);
+      const runTable = this.runTables.get(runTableName);
+      const keyTable = this.idempotencyTables.get(keyTableName);
+      if (runTable?.has(runId)) return { rows: [] as TResult[] };
+      const existingRunId = keyTable?.get(key);
+      if (existingRunId) {
+        throw Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" });
+      }
+      const state = typeof params[1] === "string"
+        ? JSON.parse(params[1]) as AgentRunState
+        : structuredClone(params[1]) as AgentRunState;
+      runTable?.set(runId, state);
+      keyTable?.set(key, runId);
+      if (parentTableName && params[4] !== undefined) {
+        this.parentTables.get(parentTableName)?.set(runId, String(params[4]));
+      }
+      return { rows: [{ run_id: runId, claimed_run_id: runId }] as TResult[] };
+    }
+
     const insertMatch = sql.match(/INSERT INTO\s+([A-Za-z_][A-Za-z0-9_]*)/i);
     if (insertMatch) {
       const tableName = insertMatch[1]!;
@@ -340,6 +365,14 @@ class FakePostgresClient implements PostgresClientLike {
     const deleteMatch = sql.match(/DELETE FROM\s+([A-Za-z_][A-Za-z0-9_]*)/i);
     if (deleteMatch) {
       const tableName = deleteMatch[1]!;
+      if (this.idempotencyTables.has(tableName) && sql.includes("NOT EXISTS")) {
+        const key = String(params[0]);
+        const table = this.idempotencyTables.get(tableName);
+        const owner = table?.get(key);
+        const runExists = owner !== undefined && [...this.runTables.values()].some((runs) => runs.has(owner));
+        if (owner && !runExists) table?.delete(key);
+        return { rows: [] as TResult[] };
+      }
       if (this.idempotencyTables.has(tableName)) {
         const runId = String(params[0]);
         const table = this.idempotencyTables.get(tableName);

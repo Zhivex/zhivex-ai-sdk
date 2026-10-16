@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
+import { promises as nodeFs } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +26,10 @@ import {
   runWorkflow,
   streamText,
   generateText,
+  toUIAgentStreamResponse,
   toUIMessageStream,
+  toUIMessageStreamResponse,
+  toUIRunnerStreamResponse,
   tool,
   type AgentRunState,
   type AgentStep,
@@ -479,6 +483,159 @@ describe("workflow execution claim", () => {
     expect(executions).toBe(1);
     expect(result.state.executionClaim).toBeUndefined();
   });
+
+  const heartbeatMs = 5 * 60 * 1000;
+  const claimTtlMs = 15 * 60 * 1000;
+
+  const heldWorkflow = (
+    persistence: {
+      sessionService: SessionService;
+      workflowStateService?: WorkflowStateService;
+    }
+  ) => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let executions = 0;
+    const workflow = createWorkflow({
+      id: "claimed-review",
+      persistence: { appName: "workflow-test", ...persistence },
+      steps: [{
+        id: "task",
+        runner: createRunner({
+          appName: "workflow-test",
+          agent: createAgent({
+            model: createLanguageModel({
+              async generate() {
+                executions += 1;
+                await hold;
+                return { messages: [createTextMessage("assistant", "reviewed")], text: "reviewed", finishReason: "stop" };
+              }
+            }),
+            maxSteps: 2
+          }),
+          sessionService: persistence.sessionService
+        }),
+        prompt: "Review",
+        outputKey: "result"
+      }]
+    });
+    return { workflow, release: () => release(), executions: () => executions };
+  };
+
+  it("renews the execution claim while the step is running and stops when it finishes", async () => {
+    vi.useFakeTimers({
+      toFake: ["Date", "setInterval", "clearInterval"],
+      now: Date.parse("2026-01-01T00:00:00.000Z")
+    });
+    const sessionService = createInMemorySessionService();
+    const workflowStateService = createInMemoryWorkflowStateService();
+    const held = heldWorkflow({ sessionService, workflowStateService });
+    const input = { userId: "user_1", sessionId: "session_1" };
+    const first = runWorkflow(held.workflow, input);
+    try {
+      await viWaitUntil(() => held.executions() === 1);
+      const before = await loadWorkflowState(held.workflow, input);
+      const originalExpiry = before?.executionClaim?.expiresAt;
+      expect(originalExpiry).toBe(Date.now() + claimTtlMs);
+
+      await vi.advanceTimersByTimeAsync(heartbeatMs);
+      const renewed = await loadWorkflowState(held.workflow, input);
+      expect(renewed?.executionClaim?.ownerId).toBe(before?.executionClaim?.ownerId);
+      expect(renewed?.executionClaim?.expiresAt).toBe(Date.now() + claimTtlMs);
+      expect(renewed?.executionClaim?.expiresAt).toBeGreaterThan(originalExpiry ?? 0);
+
+      await vi.advanceTimersByTimeAsync(claimTtlMs);
+      await expect(runWorkflow(held.workflow, input)).rejects.toThrow(
+        new ConflictError("Workflow execution is already claimed.")
+      );
+      expect(held.executions()).toBe(1);
+
+      held.release();
+      await expect(first).resolves.toMatchObject({ status: "completed", outputs: { result: "reviewed" } });
+      expect((await loadWorkflowState(held.workflow, input))?.executionClaim).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(heartbeatMs);
+      const finished = await loadWorkflowState(held.workflow, input);
+      expect(finished?.executionClaim).toBeUndefined();
+      expect(finished?.outputs).toEqual({ result: "reviewed" });
+    } finally {
+      held.release();
+      await first.catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails the owner without writing terminal state when claim renewal is lost", async () => {
+    vi.useFakeTimers({
+      toFake: ["Date", "setInterval", "clearInterval"],
+      now: Date.parse("2026-01-01T00:00:00.000Z")
+    });
+    const sessionService = createInMemorySessionService();
+    const workflowStateService = createInMemoryWorkflowStateService();
+    const held = heldWorkflow({ sessionService, workflowStateService });
+    const input = { userId: "user_1", sessionId: "session_1" };
+    const lookup = { appName: "workflow-test", ...input, workflowKey: "claimed-review" };
+    const first = runWorkflow(held.workflow, input);
+    try {
+      await viWaitUntil(() => held.executions() === 1);
+      const record = await workflowStateService.loadWorkflowState(lookup);
+      await workflowStateService.saveWorkflowState({
+        ...lookup,
+        state: {
+          ...record!.state,
+          executionClaim: { ownerId: "attacker", expiresAt: Date.now() + claimTtlMs }
+        },
+        expectedRevision: record!.revision
+      });
+      const stolen = await workflowStateService.loadWorkflowState(lookup);
+      const failure = first.then(
+        () => {
+          throw new Error("owner completed after losing the claim");
+        },
+        (error: unknown) => error
+      );
+
+      await vi.advanceTimersByTimeAsync(heartbeatMs);
+      await expect(failure).resolves.toEqual(new ConflictError("Workflow execution claim was lost."));
+      expect(held.executions()).toBe(1);
+      const after = await workflowStateService.loadWorkflowState(lookup);
+      expect(after?.state.executionClaim).toEqual(stolen?.state.executionClaim);
+      expect(after?.revision).toBe(stolen?.revision);
+      expect(after?.state.outputs).toEqual({});
+    } finally {
+      held.release();
+      await first.catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it("renews a session-metadata claim with compare-and-swap", async () => {
+    vi.useFakeTimers({
+      toFake: ["Date", "setInterval", "clearInterval"],
+      now: Date.parse("2026-01-01T00:00:00.000Z")
+    });
+    const sessionService = createInMemorySessionService();
+    const held = heldWorkflow({ sessionService });
+    const input = { userId: "user_1", sessionId: "session_1" };
+    const first = runWorkflow(held.workflow, input);
+    try {
+      await viWaitUntil(() => held.executions() === 1);
+      await vi.advanceTimersByTimeAsync(heartbeatMs);
+      const session = await sessionService.loadSession({ appName: "workflow-test", ...input });
+      const runs = session?.metadata?.workflowRuns as Record<string, { executionClaim?: { expiresAt: number } }> | undefined;
+      expect(runs?.["claimed-review"]?.executionClaim?.expiresAt).toBe(Date.now() + claimTtlMs);
+      await expect(runWorkflow(held.workflow, input)).rejects.toThrow(
+        new ConflictError("Workflow execution is already claimed.")
+      );
+      held.release();
+      await expect(first).resolves.toMatchObject({ status: "completed" });
+    } finally {
+      held.release();
+      await first.catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("runner approval resume", () => {
@@ -602,7 +759,14 @@ describe("idempotent run identity", () => {
     const client: PostgresClientLike = {
       async query(sql, params = []) {
         const statement = sql.trim();
-        if (statement.startsWith("CREATE") || statement.startsWith("DELETE")) return { rows: [] };
+        if (statement.startsWith("CREATE")) return { rows: [] };
+        if (statement.startsWith("DELETE") && sql.includes("NOT EXISTS")) {
+          const key = String(params[0]);
+          const owner = keys.get(key);
+          if (owner && !runs.has(owner)) keys.delete(key);
+          return { rows: [] };
+        }
+        if (statement.startsWith("DELETE")) return { rows: [] };
         if (sql.includes("SELECT state_json FROM")) {
           const state = runs.get(String(params[0]));
           return { rows: state ? [{ state_json: state }] : [] };
@@ -615,6 +779,17 @@ describe("idempotent run identity", () => {
         if (sql.includes("SELECT run_id FROM")) {
           const runId = keys.get(String(params[0]));
           return { rows: runId ? [{ run_id: runId }] : [] };
+        }
+        if (sql.includes("inserted_run") && sql.includes("inserted_key")) {
+          const runId = String(params[0]);
+          const key = String(params[3]);
+          if (runs.has(runId)) return { rows: [{}] };
+          if (keys.has(key)) {
+            throw Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" });
+          }
+          runs.set(runId, params[1] as AgentRunState);
+          keys.set(key, runId);
+          return { rows: [{ run_id: runId, claimed_run_id: runId }] };
         }
         if (sql.includes("ON CONFLICT(run_id) DO NOTHING")) {
           const runId = String(params[0]);
@@ -637,6 +812,212 @@ describe("idempotent run identity", () => {
       }
     };
     await claimCollision(createPostgresAgentRunStore({ client }));
+  });
+
+  it("rolls a sqlite idempotency conflict back and repairs a key whose run is gone", async () => {
+    const db = sqlite();
+    const store = createSqliteAgentRunStore({ db: adapter(db) });
+    await store.claimIdempotencyKey!(runState("run-a", { idempotencyKey: "live" }));
+    const occupied = await store.claimIdempotencyKey!(runState("run-b", { idempotencyKey: "live" }));
+    expect(occupied).toMatchObject({ claimed: false, state: { runId: "run-a" } });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM zhivex_agent_runs").get()).toEqual({ n: 1 });
+
+    db.prepare("DELETE FROM zhivex_agent_runs").run();
+    const repaired = await store.claimIdempotencyKey!(runState("run-c", { idempotencyKey: "live" }));
+    expect(repaired).toMatchObject({ claimed: true, state: { runId: "run-c" } });
+    expect(await store.load!("run-a")).toBeUndefined();
+    expect((await store.load!("run-c"))?.idempotencyKey).toBe("live");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM zhivex_agent_runs").get()).toEqual({ n: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM zhivex_agent_runs_idempotency").get()).toEqual({ n: 1 });
+  });
+
+  it("does not leave a postgres run row when the idempotency insert conflicts", async () => {
+    const runs = new Map<string, AgentRunState>();
+    const winner = runState("run-a", { idempotencyKey: "shared" });
+    let keyTaken = true;
+    let finds = 0;
+    const client: PostgresClientLike = {
+      async query(sql, params = []) {
+        const statement = sql.trim();
+        if (statement.startsWith("CREATE")) return { rows: [] };
+        if (sql.includes("SELECT state_json FROM") && !sql.includes("JOIN")) {
+          const state = runs.get(String(params[0]));
+          return { rows: state ? [{ state_json: state }] : [] };
+        }
+        if (sql.includes("INNER JOIN")) {
+          finds += 1;
+          if (finds === 1 || !keyTaken) return { rows: [] };
+          return { rows: [{ state_json: winner }] };
+        }
+        if (sql.includes("inserted_run")) {
+          if (keyTaken) {
+            throw Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" });
+          }
+          runs.set(String(params[0]), params[1] as AgentRunState);
+          keyTaken = true;
+          return { rows: [{ run_id: params[0], claimed_run_id: params[0] }] };
+        }
+        throw new Error(`Unexpected SQL: ${statement}`);
+      }
+    };
+    const store = createPostgresAgentRunStore({ client });
+    const claimed = await store.claimIdempotencyKey!(runState("run-b", { idempotencyKey: "shared", outputText: "new" }));
+    expect(claimed).toMatchObject({ claimed: false, state: { runId: "run-a", outputText: "" } });
+    expect([...runs.values()].map((state) => state.runId)).not.toContain("run-b");
+  });
+
+  it("repairs a postgres idempotency key whose run row is missing", async () => {
+    const runs = new Map<string, AgentRunState>();
+    let orphanKey = true;
+    const client: PostgresClientLike = {
+      async query(sql, params = []) {
+        const statement = sql.trim();
+        if (statement.startsWith("CREATE")) return { rows: [] };
+        if (sql.includes("SELECT state_json FROM") && !sql.includes("JOIN")) {
+          const state = runs.get(String(params[0]));
+          return { rows: state ? [{ state_json: state }] : [] };
+        }
+        if (statement.startsWith("DELETE") && sql.includes("NOT EXISTS")) {
+          if (orphanKey) orphanKey = false;
+          return { rows: [] };
+        }
+        if (sql.includes("INNER JOIN")) return { rows: [] };
+        if (sql.includes("inserted_run")) {
+          if (orphanKey) {
+            throw Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" });
+          }
+          runs.set(String(params[0]), params[1] as AgentRunState);
+          return { rows: [{ run_id: params[0], claimed_run_id: params[0] }] };
+        }
+        throw new Error(`Unexpected SQL: ${statement}`);
+      }
+    };
+    const store = createPostgresAgentRunStore({ client });
+    const claimed = await store.claimIdempotencyKey!(runState("run-b", { idempotencyKey: "shared" }));
+    expect(claimed).toMatchObject({ claimed: true, state: { runId: "run-b" } });
+    expect([...runs.values()].map((state) => state.runId)).toEqual(["run-b"]);
+    expect(orphanKey).toBe(false);
+  });
+
+  it("writes a postgres parent link in the same claim statement", async () => {
+    const statements: string[] = [];
+    const client: PostgresClientLike = {
+      async query(sql, params = []) {
+        statements.push(sql);
+        const statement = sql.trim();
+        if (statement.startsWith("CREATE")) return { rows: [] };
+        if (sql.includes("SELECT state_json FROM") && !sql.includes("JOIN")) return { rows: [] };
+        if (sql.includes("INNER JOIN")) return { rows: [] };
+        if (sql.includes("inserted_parent")) {
+          return { rows: [{ run_id: params[0], claimed_run_id: params[0], parent_run_id: params[0] }] };
+        }
+        throw new Error(`Unexpected SQL: ${statement}`);
+      }
+    };
+    const store = createPostgresAgentRunStore({ client });
+    const claimed = await store.claimIdempotencyKey!(runState("child", { idempotencyKey: "key", parentRunId: "parent" }));
+    expect(claimed).toMatchObject({ claimed: true, state: { runId: "child", parentRunId: "parent" } });
+    const claimSql = statements.find((sql) => sql.includes("inserted_parent"));
+    expect(claimSql).toContain("inserted_run");
+    expect(claimSql).toContain("inserted_key");
+    expect(claimSql).toContain("FROM inserted_parent");
+  });
+
+  it("repairs a file idempotency marker whose run file is missing", async () => {
+    const dir = await directory();
+    const store = createFileAgentRunStore({ directory: dir });
+    await store.claimIdempotencyKey!(runState("run-a", { idempotencyKey: "shared" }));
+    const { readdir } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    for (const entry of await readdir(dir)) {
+      if (entry.endsWith(".json") && !entry.startsWith(".")) await rm(join(dir, entry));
+    }
+    const claimed = await store.claimIdempotencyKey!(runState("run-b", { idempotencyKey: "shared" }));
+    expect(claimed).toMatchObject({ claimed: true, state: { runId: "run-b" } });
+    expect(await store.load!("run-a")).toBeUndefined();
+    expect((await store.load!("run-b"))?.idempotencyKey).toBe("shared");
+    expect((await store.findByIdempotencyKey!("shared"))?.runId).toBe("run-b");
+  });
+
+  it("removes the file idempotency marker when the run write fails", async () => {
+    const dir = await directory();
+    const store = createFileAgentRunStore({ directory: dir });
+    const original = nodeFs.rename;
+    nodeFs.rename = (async () => {
+      throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+    }) as typeof nodeFs.rename;
+    try {
+      await expect(store.claimIdempotencyKey!(runState("run-a", { idempotencyKey: "shared" }))).rejects.toThrow("disk full");
+    } finally {
+      nodeFs.rename = original;
+    }
+    expect(await store.load!("run-a")).toBeUndefined();
+    expect(await store.findByIdempotencyKey!("shared")).toBeUndefined();
+  });
+});
+
+describe("UI response includeAgentRunFinish", () => {
+  const sensitiveState = { secretContext: "must-not-cross-ui-sse" } as unknown as AgentRunState;
+  const source = {
+    eventStream: (async function* () {
+      yield { type: "text-delta" as const, textDelta: "hello" };
+      yield { type: "agent-run-finish" as const, status: "completed" as const, state: sensitiveState };
+    })()
+  };
+
+  it("forwards includeAgentRunFinish through message and agent response helpers", async () => {
+    const hidden = await toUIMessageStreamResponse(source, { messageId: "assistant-1" }).text();
+    const hiddenAgent = await toUIAgentStreamResponse({
+      eventStream: (async function* () {
+        yield { type: "agent-run-finish" as const, status: "completed" as const, state: sensitiveState };
+      })()
+    }).text();
+    expect(hidden).not.toContain("agent-run-finish");
+    expect(hidden).not.toContain("must-not-cross-ui-sse");
+    expect(hiddenAgent).not.toContain("must-not-cross-ui-sse");
+
+    const visible = await toUIMessageStreamResponse({
+      eventStream: (async function* () {
+        yield { type: "agent-run-finish" as const, status: "completed" as const, state: sensitiveState };
+      })()
+    }, { messageId: "assistant-1", includeAgentRunFinish: true }).text();
+    const visibleAgent = await toUIAgentStreamResponse({
+      eventStream: (async function* () {
+        yield { type: "agent-run-finish" as const, status: "completed" as const, state: sensitiveState };
+      })()
+    }, { includeAgentRunFinish: true }).text();
+    expect(visible).toContain("event: agent-run-finish");
+    expect(visible).toContain("must-not-cross-ui-sse");
+    expect(visibleAgent).toContain("event: agent-run-finish");
+    expect(visibleAgent).toContain("must-not-cross-ui-sse");
+  });
+
+  it("lets a runner response opt into includeAgentRunFinish", async () => {
+    const runnerSource = {
+      session: Promise.resolve({ sessionId: "session-1" } as never),
+      eventStream: (async function* () {
+        yield { type: "agent-run-finish" as const, status: "completed" as const, state: sensitiveState };
+      })(),
+      textStream: (async function* () {
+        yield "hello";
+      })(),
+      async collect() {
+        return {
+          session: { sessionId: "session-1" } as never,
+          output: { status: "completed" } as never
+        };
+      }
+    };
+    const hidden = await toUIRunnerStreamResponse(runnerSource).text();
+    expect(hidden).not.toContain("agent-run-finish");
+    const visible = await toUIRunnerStreamResponse({
+      ...runnerSource,
+      eventStream: (async function* () {
+        yield { type: "agent-run-finish" as const, status: "completed" as const, state: sensitiveState };
+      })()
+    }, { includeAgentRunFinish: true }).text();
+    expect(visible).toContain("event: agent-run-finish");
+    expect(visible).toContain("must-not-cross-ui-sse");
   });
 });
 
