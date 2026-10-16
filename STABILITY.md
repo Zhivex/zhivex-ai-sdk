@@ -31,8 +31,8 @@ Focused published entrypoints are also supported: `@zhivex-ai/core/contracts`,
 `@zhivex-ai/core/evals`, `@zhivex-ai/core/realtime`, `@zhivex-ai/core/control-plane`,
 `@zhivex-ai/core/ops`, `@zhivex-ai/core/beta`, `@zhivex-ai/core/experimental`,
 `@zhivex-ai/core/provider-google`, `@zhivex-ai/core/mcp-http`,
-`@zhivex-ai/core/mcp-stdio`, `@zhivex-ai/sdk/mcp-http`,
-`@zhivex-ai/sdk/mcp-stdio`,
+`@zhivex-ai/core/mcp-stdio`, `@zhivex-ai/core/a2a`, `@zhivex-ai/sdk/mcp-http`,
+`@zhivex-ai/sdk/mcp-stdio`, `@zhivex-ai/sdk/a2a`,
 `@zhivex-ai/sdk/runtime`, `@zhivex-ai/sdk/workflows`, `@zhivex-ai/sdk/ui`,
 `@zhivex-ai/sdk/evals`, `@zhivex-ai/sdk/catalog`, `@zhivex-ai/sdk/beta`, and
 `@zhivex-ai/sdk/experimental`. The package roots remain backward compatible.
@@ -148,6 +148,13 @@ The local MCP stdio transport is also Experimental, with its own entrypoints
 `MCP_STDIO_API_STABILITY_MANIFEST` classifies every runtime export.
 `createMcpStdioClient` spawns a child process, so it stays off the root export
 and off `@zhivex-ai/sdk/experimental`. Browser bundles resolve a stub that throws.
+
+Agent2Agent (A2A) protocol 1.0 is Experimental, with its own entrypoints
+`@zhivex-ai/sdk/a2a` and `@zhivex-ai/core/a2a`. See [A2A](docs/A2A.md).
+`A2A_API_STABILITY_MANIFEST` classifies every runtime export.
+`createA2aAgentServer` binds an HTTP socket, so it stays off the root export
+and off `@zhivex-ai/sdk/experimental`. Browser bundles keep the client and throw
+from the server factory.
 
 ## Provider Scope
 

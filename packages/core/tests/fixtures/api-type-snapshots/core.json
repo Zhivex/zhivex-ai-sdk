@@ -1,4 +1,9 @@
 {
+  "a2a-browser.d.ts": "cb138f1d98cf1c26eb7be4fb093833d830e886e2b530d250adb1ab02c9957ab7",
+  "a2a-client.d.ts": "0a28db028342a147e59cdc6e3baaca966ae61f51177caec356e34839e697a73c",
+  "a2a-protocol.d.ts": "380ff7ea41d2b4353be9407abfbc1e518961360a7ef1798946b1d803febb4374",
+  "a2a-server.d.ts": "cb855aea5f1fcf24ca725068d978847cce24963389a72472d6a8a8c744b35104",
+  "a2a.d.ts": "c5af55654904b2aaf8c17c4c0aa1a502be737f5163b8d63b1650e502ada4a9cd",
   "advanced-tool-registry.d.ts": "c80d53abd9d62d00e9a0da63cd44aea117bdd7a93d8104671e1efde7331a1ed5",
   "agent-approval.d.ts": "afad2c57e7ac61ff6199df434cd4fbd7079d3581030582e573dcb1540d4d29fb",
   "agent-budget-coordinator.d.ts": "eb54a605ac7a143bc6aa1c95217808e3b2b4200aa64ddb1734019696861d266e",

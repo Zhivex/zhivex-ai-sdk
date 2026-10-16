@@ -6,6 +6,9 @@ import * as mcpStdio from "../src/mcp-stdio.js";
 import * as coreMcpStdio from "../../core/src/mcp-stdio.js";
 import * as mcpStdioBrowser from "../src/mcp-stdio-browser.js";
 import * as coreMcpStdioBrowser from "../../core/src/mcp-stdio-browser.js";
+import * as a2a from "../src/a2a.js";
+import * as coreA2a from "../../core/src/a2a.js";
+import * as coreA2aBrowser from "../../core/src/a2a-browser.js";
 import * as beta from "../src/beta.js";
 import * as experimental from "../src/experimental.js";
 import * as coreExperimental from "../../core/src/experimental-entry.js";
@@ -40,6 +43,17 @@ describe("Experimental MCP stdio entrypoints", () => {
     expect(mcpStdioBrowser.MCP_STDIO_API_STABILITY_MANIFEST).toEqual(coreMcpStdioBrowser.MCP_STDIO_API_STABILITY_MANIFEST);
     expect(mcpStdioBrowser.MCP_STDIO_API_STABILITY_MANIFEST).toEqual(mcpStdio.MCP_STDIO_API_STABILITY_MANIFEST);
     expect(() => mcpStdioBrowser.createMcpStdioClient()).toThrow(mcpStdioBrowser.McpStdioError);
+  });
+});
+
+describe("Experimental A2A entrypoints", () => {
+  it("classifies every opt-in export and preserves core/SDK parity", () => {
+    expect(Object.keys(a2a).sort()).toEqual(Object.keys(coreA2a).sort());
+    expect(Object.keys(a2a.A2A_API_STABILITY_MANIFEST).sort()).toEqual(Object.keys(a2a).sort());
+    expect(Object.isFrozen(a2a.A2A_API_STABILITY_MANIFEST)).toBe(true);
+    for (const level of Object.values(a2a.A2A_API_STABILITY_MANIFEST)) expect(level).toBe("experimental");
+    expect(coreA2aBrowser.A2A_API_STABILITY_MANIFEST).toEqual(a2a.A2A_API_STABILITY_MANIFEST);
+    expect(() => coreA2aBrowser.createA2aAgentServer()).toThrow(coreA2aBrowser.A2aProtocolError);
   });
 });
 
