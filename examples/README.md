@@ -8,6 +8,7 @@ This folder contains runnable TypeScript examples for the main public surfaces o
 - `agents/`: agent-only facade examples for `@zhivex-ai/agents`
 - `providers/`: one quick-start per provider package
 - `gateway/`: routing and fallback examples
+- `sandbox-docker/`: deterministic workspace-agent example for the experimental Docker execution environment
 - `next-runner/`: standalone Next.js App Router starter using `@zhivex-ai/react` with a bounded, persistent server-side Runner
 - `migration/`: offline end-to-end script for the Vercel AI SDK Core migration guide
 - `_shared.ts`: tiny helpers used by the examples
@@ -58,6 +59,8 @@ The `examples/sdk/runner-session.ts` example is deterministic and does not requi
 
 `examples/sdk/full-agent.ts` is deterministic and does not require provider credentials. It is the fastest smoke for the stable `Agent` class, local tool loops, serializable run state, and streaming from the aggregator package.
 
+`examples/sandbox-docker/workspace-agent.ts` is deterministic and does not require Docker or provider credentials. It pauses a workspace agent for write approval and resumes that run on the same in-memory container. The real container test is `bun run test:integration:sandbox-docker` where a Docker daemon is available.
+
 `examples/agents/full-agent.ts` and `examples/agents/approval-hitl.ts` are deterministic and do not require provider credentials. They show the smaller `@zhivex-ai/agents` facade, including a local-tool human-in-the-loop interrupt, approval queue, replay-bound resume, and approval history.
 
 `examples/next-runner` is the executable end of the canonical quickstart. Its pinned manifest works after copying the folder outside the monorepo; the streaming route uses `toUIRunnerStreamResponse()` so the browser receives normalized text, tools, approvals, generated media, lifecycle events, and the persisted final session id.
@@ -71,6 +74,10 @@ The `examples/sdk/runner-session.ts` example is deterministic and does not requi
 `examples/sdk/rag-agent.ts` is deterministic and does not require provider credentials. It shows chunking, embedding, local ranking, context injection, and an agent run over retrieved context.
 
 `examples/sdk/mcp-stdio-bcra.ts` wires the experimental stdio client into `createMcpToolRegistry()` and an `Agent`. It spawns `npx -y mcp-bcra` and allowlists exchange-rate, variable, and entity tools. Build the workspace first so `@zhivex-ai/sdk/mcp-stdio` resolves. The script needs network access to the published `mcp-bcra` package and the public BCRA APIs. It does not call debtor or cheque lookups.
+
+`examples/sdk/mcp-server.ts` is deterministic and does not require provider credentials. It exposes an echo tool, an approval-gated tool, and a mock agent through the experimental MCP server, then calls them from an in-process Streamable HTTP client and a stdio stream pair.
+
+`examples/sdk/a2a-roundtrip.ts` is deterministic and does not require provider credentials. It serves one agent over experimental A2A 1.0 JSON-RPC, calls it with `RemoteA2aAgent`, and delegates again through `createRemoteA2aAgentTool()`. Build the workspace first. The script imports workspace source, and the A2A entrypoint resolves through the built package export.
 
 For migration-oriented snippets from direct provider SDKs, Vercel AI SDK Core, and simple custom tool loops, see `docs/MIGRATION.md`. The offline script for that guide is:
 

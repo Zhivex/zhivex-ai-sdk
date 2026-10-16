@@ -175,6 +175,14 @@
         "remark-gfm",
       ],
     },
+    "packages/sandbox-docker": {
+      "name": "@zhivex-ai/sandbox-docker",
+      "version": "0.1.0",
+      "dependencies": {
+        "@zhivex-ai/core": "^1.34.0",
+        "zod": "^4.6.3",
+      },
+    },
     "packages/sdk": {
       "name": "@zhivex-ai/sdk",
       "version": "1.33.0",
@@ -550,6 +558,8 @@
     "@zhivex-ai/qwen": ["@zhivex-ai/qwen@workspace:packages/qwen"],
 
     "@zhivex-ai/react": ["@zhivex-ai/react@workspace:packages/react"],
+
+    "@zhivex-ai/sandbox-docker": ["@zhivex-ai/sandbox-docker@workspace:packages/sandbox-docker"],
 
     "@zhivex-ai/sdk": ["@zhivex-ai/sdk@workspace:packages/sdk"],
 

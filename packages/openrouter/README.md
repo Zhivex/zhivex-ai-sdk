@@ -77,4 +77,7 @@ OpenRouter web search is a host plugin capability, so `webSearch` and
 `hostedWebSearch` remain enabled for unknown model IDs. Function tools and model
 vision/native schema support are independent of that host capability. Registered
 host profiles currently preserve the existing behavior for `openai/gpt-4o-mini`,
-`meta/muse-spark-1.2` and `meta/muse-glimmer-30b`.
+`meta/muse-spark-1.2`, `meta/muse-glimmer-30b`, and `meta/muse-spark-open`.
+Muse Spark Open accepts reasoning efforts `low`, `medium`, `high`, and `xhigh`.
+Reasoning is mandatory, so `none`, `minimal`, and `max` are rejected. The OpenRouter
+models API does not list `parallel_tool_calls` for this id, so that request flag stays off.

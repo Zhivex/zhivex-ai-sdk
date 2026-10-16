@@ -41,7 +41,7 @@ describe("minimum core ranges", () => {
     const core = JSON.parse(await readFile(path.join(repoRoot, "packages/core/package.json"), "utf8")) as PackageManifest;
     const rows = await loadWorkspaceCoreMinimums(repoRoot);
     const version = workspaceCoreVersion(core);
-    for (const packageName of ["deepseek", "gateway", "kimi", "meta", "ollama", "openrouter", "zai"]) {
+    for (const packageName of ["deepseek", "gateway", "kimi", "meta", "ollama", "openrouter", "sandbox-docker", "zai"]) {
       const row = rows.find(entry => entry.package === packageName);
       expect(row, packageName).toBeDefined();
       expect(compareVersions(row!.core, version), `${packageName} declares ${row?.range}`).toBe(0);

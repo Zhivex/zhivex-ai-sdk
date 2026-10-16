@@ -39,6 +39,8 @@ Focused entrypoints are available for smaller and more explicit imports:
 - `@zhivex-ai/sdk/ui` for UI message and SSE contracts
 - `@zhivex-ai/sdk/mcp-http` for opt-in Stable MCP HTTP transport and OAuth with host-owned token storage
 - `@zhivex-ai/sdk/mcp-stdio` for the opt-in Experimental Node/Bun stdio transport. Browser bundles resolve a stub that throws instead of spawning a process
+- `@zhivex-ai/sdk/mcp-server` for the opt-in Experimental MCP server that exposes local tools and agents. `@zhivex-ai/sdk/mcp-server-stdio` binds it to process stdio; browser bundles resolve a stub that throws
+- `@zhivex-ai/sdk/a2a` for the opt-in Experimental Agent2Agent 1.0 server and client. Browser bundles keep the client and throw from the server factory
 - `@zhivex-ai/sdk/evals` for agent, workflow, and Beta comparative model evaluations
 - `@zhivex-ai/agents` for the dedicated agent-first facade
 

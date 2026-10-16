@@ -25,6 +25,7 @@
 - `packages/deepseek`: DeepSeek provider.
 - `packages/zai`: Z.ai GLM provider.
 - `packages/gateway`: gateway / routing layer.
+- `packages/sandbox-docker`: experimental reference Docker execution environment for workspace agents.
 - `.changeset/`: versioning and release configuration.
 - `README.md`: main source of usage examples and public-facing expectations.
 
@@ -49,6 +50,7 @@ Packages currently publishable to npm:
 - `@zhivex-ai/deepseek`
 - `@zhivex-ai/zai`
 - `@zhivex-ai/gateway`
+- `@zhivex-ai/sandbox-docker`
 
 ## Stack and Commands
 

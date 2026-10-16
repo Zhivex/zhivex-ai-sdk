@@ -1,0 +1,49 @@
+{
+  "name": "@zhivex-ai/sandbox-docker",
+  "version": "0.1.0",
+  "description": "Reference Docker execution environment for Zhivex workspace agents.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=18.18.0",
+    "bun": ">=1.3.7"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "docker",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zhivex/zhivex-ai-sdk.git",
+    "directory": "packages/sandbox-docker"
+  },
+  "homepage": "https://github.com/Zhivex/zhivex-ai-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/Zhivex/zhivex-ai-sdk/issues"
+  },
+  "keywords": [
+    "ai",
+    "sdk",
+    "sandbox",
+    "docker",
+    "agents",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@zhivex-ai/core": "^1.34.0",
+    "zod": "^4.6.3"
+  }
+}
