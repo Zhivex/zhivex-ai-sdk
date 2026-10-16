@@ -48,14 +48,33 @@ export interface SandboxSnapshotStore {
 
 const leaseKey = (runId: string, scopeKey: string) => `${scopeKey}\0${runId}`;
 
+const assertLeaseIdentity = (lease: SandboxLease, runId: string, scopeKey: string) => {
+  if (lease.runId !== runId || lease.scopeKey !== scopeKey) {
+    throw new SandboxError("STORE_INVALID", "Sandbox lease identity does not match the requested run.");
+  }
+};
+
+const assertSnapshotIdentity = (snapshot: { runId: string; scopeKey: string }, runId: string, scopeKey: string) => {
+  if (snapshot.runId !== runId || snapshot.scopeKey !== scopeKey) {
+    throw new SandboxError("SNAPSHOT_INVALID", "Sandbox snapshot identity does not match the requested run.");
+  }
+};
+
 export const createMemorySandboxLeaseStore = (): SandboxLeaseStore => {
   const records = new Map<string, SandboxLease>();
   return {
     async load(runId, scopeKey) {
+      assertStoreRunId(runId);
+      assertScopeKey(scopeKey);
       const record = records.get(leaseKey(runId, scopeKey));
-      return record ? structuredClone(record) : undefined;
+      if (!record) return undefined;
+      assertLeaseIdentity(record, runId, scopeKey);
+      return structuredClone(record);
     },
     async compareAndSwap(lease, expectedRevision) {
+      assertStoreRunId(lease.runId);
+      assertScopeKey(lease.scopeKey);
+      assertLeaseIdentity(lease, lease.runId, lease.scopeKey);
       const key = leaseKey(lease.runId, lease.scopeKey);
       const current = records.get(key);
       if (current?.revision !== expectedRevision) {
@@ -74,22 +93,64 @@ export const createMemorySandboxSnapshotStore = (): SandboxSnapshotStore => {
   const records = new Map<string, SandboxSnapshot>();
   return {
     async load(runId, scopeKey) {
+      assertStoreRunId(runId);
+      assertScopeKey(scopeKey);
       const record = records.get(leaseKey(runId, scopeKey));
-      return record ? { ...record, workspaceTar: new Uint8Array(record.workspaceTar) } : undefined;
+      if (!record) return undefined;
+      assertSnapshotIdentity(record, runId, scopeKey);
+      return { ...record, workspaceTar: new Uint8Array(record.workspaceTar) };
     },
     async save(snapshot) {
+      assertStoreRunId(snapshot.runId);
+      assertScopeKey(snapshot.scopeKey);
+      assertSnapshotIdentity(snapshot, snapshot.runId, snapshot.scopeKey);
       records.set(leaseKey(snapshot.runId, snapshot.scopeKey), {
         ...snapshot,
         workspaceTar: new Uint8Array(snapshot.workspaceTar)
       });
     },
     async remove(runId, scopeKey) {
+      assertStoreRunId(runId);
+      assertScopeKey(scopeKey);
       records.delete(leaseKey(runId, scopeKey));
     }
   };
 };
 
 const scopeDirectory = (scopeKey: string) => createHash("sha256").update(scopeKey).digest("hex");
+
+/** Reject dot segments before they reach path.join. encodeURIComponent leaves "." and ".." unchanged. */
+const assertStoreRunId = (runId: string) => {
+  if (typeof runId !== "string" || runId.length === 0 || runId.length > 512 || runId.includes("\0")) {
+    throw new SandboxError("STORE_ID", "Sandbox run id must be a non-empty string.");
+  }
+  if (runId === "." || runId === "..") {
+    throw new SandboxError("STORE_ID", "Sandbox run id cannot be '.' or '..'.");
+  }
+  const encoded = encodeURIComponent(runId);
+  if (encoded === "." || encoded === ".." || encoded.includes("/") || encoded.includes("\\")) {
+    throw new SandboxError("STORE_ID", "Sandbox run id cannot escape its scope directory.");
+  }
+  return encoded;
+};
+
+const assertScopeKey = (scopeKey: string) => {
+  if (typeof scopeKey !== "string" || scopeKey.length === 0 || scopeKey.length > 4096 || scopeKey.includes("\0")) {
+    throw new SandboxError("STORE_ID", "Sandbox scope key must be a non-empty string.");
+  }
+};
+
+/** Join a scope file and refuse a normalized path that leaves the scope directory. */
+const scopeFile = (directory: string, scopeKey: string, name: string) => {
+  assertScopeKey(scopeKey);
+  const scopeDir = path.resolve(directory, scopeDirectory(scopeKey));
+  const resolved = path.resolve(scopeDir, name);
+  const relative = path.relative(scopeDir, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new SandboxError("STORE_ID", "Sandbox store path escapes its scope directory.");
+  }
+  return resolved;
+};
 
 const assertPrivateFile = async (file: string) => {
   const info = await stat(file);
@@ -258,13 +319,15 @@ const readLeaseFile = async (file: string): Promise<SandboxLease | undefined> =>
 
 export const createFileSandboxLeaseStore = (directory: string): SandboxLeaseStore => {
   const fileFor = (runId: string, scopeKey: string) =>
-    path.join(directory, scopeDirectory(scopeKey), `${encodeURIComponent(runId)}.json`);
+    scopeFile(directory, scopeKey, `${assertStoreRunId(runId)}.json`);
   return {
     async load(runId, scopeKey) {
       try {
         const file = fileFor(runId, scopeKey);
         await assertPrivateFile(file);
-        return JSON.parse(await readFile(file, "utf8")) as SandboxLease;
+        const lease = JSON.parse(await readFile(file, "utf8")) as SandboxLease;
+        assertLeaseIdentity(lease, runId, scopeKey);
+        return lease;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
         throw error;
@@ -274,9 +337,13 @@ export const createFileSandboxLeaseStore = (directory: string): SandboxLeaseStor
       const file = fileFor(lease.runId, lease.scopeKey);
       return withFileLock(`${file}.lock`, async () => {
         const current = await readLeaseFile(file);
+        if (current && (current.runId !== lease.runId || current.scopeKey !== lease.scopeKey)) {
+          throw new SandboxError("STORE_INVALID", "Sandbox lease identity does not match the requested run.");
+        }
         if (current?.revision !== expectedRevision) {
           throw new ConflictError(`Sandbox lease for run "${lease.runId}" changed before it could be saved.`);
         }
+        assertLeaseIdentity(lease, lease.runId, lease.scopeKey);
         await writePrivate(file, JSON.stringify(lease));
         return lease;
       });
@@ -297,7 +364,11 @@ export const createFileSandboxLeaseStore = (directory: string): SandboxLeaseStor
           if (!file.endsWith(".json")) continue;
           const full = path.join(directory, scope, file);
           await assertPrivateFile(full);
-          leases.push(JSON.parse(await readFile(full, "utf8")) as SandboxLease);
+          const lease = JSON.parse(await readFile(full, "utf8")) as SandboxLease;
+          if (`${encodeURIComponent(lease.runId)}.json` !== file) {
+            throw new SandboxError("STORE_INVALID", "Sandbox lease file name does not match the stored run id.");
+          }
+          leases.push(lease);
         }
       }
       return leases;
@@ -306,9 +377,8 @@ export const createFileSandboxLeaseStore = (directory: string): SandboxLeaseStor
 };
 
 export const createFileSandboxSnapshotStore = (directory: string): SandboxSnapshotStore => {
-  const base = (runId: string, scopeKey: string) =>
-    path.join(directory, scopeDirectory(scopeKey), encodeURIComponent(runId));
-  const readSnapshot = async (stem: string): Promise<SandboxSnapshot | undefined> => {
+  const base = (runId: string, scopeKey: string) => scopeFile(directory, scopeKey, assertStoreRunId(runId));
+  const readSnapshot = async (stem: string, runId: string, scopeKey: string): Promise<SandboxSnapshot | undefined> => {
     try {
       await assertPrivateFile(`${stem}.json`);
       await assertPrivateFile(`${stem}.tar`);
@@ -325,14 +395,16 @@ export const createFileSandboxSnapshotStore = (directory: string): SandboxSnapsh
       }
     }
     const { tarSha256: _hash, ...snapshot } = meta;
+    assertSnapshotIdentity(snapshot, runId, scopeKey);
     return { ...snapshot, workspaceTar };
   };
   return {
     async load(runId, scopeKey) {
       const stem = base(runId, scopeKey);
-      return withFileLock(`${stem}.lock`, () => readSnapshot(stem));
+      return withFileLock(`${stem}.lock`, () => readSnapshot(stem, runId, scopeKey));
     },
     async save(snapshot) {
+      assertSnapshotIdentity(snapshot, snapshot.runId, snapshot.scopeKey);
       const stem = base(snapshot.runId, snapshot.scopeKey);
       await withFileLock(`${stem}.lock`, async () => {
         const { workspaceTar, ...meta } = snapshot;

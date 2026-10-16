@@ -56,6 +56,11 @@ export interface DockerContainerInspection {
     OOMKilled: boolean;
     ExitCode: number;
   };
+  HostConfig?: {
+    NanoCpus?: number;
+    PidsLimit?: number;
+    Memory?: number;
+  };
 }
 
 export interface DockerListedContainer {
@@ -74,7 +79,10 @@ export interface DockerClient {
   putArchive(id: string, containerPath: string, tar: Uint8Array): Promise<void>;
   getArchive(id: string, containerPath: string, maxOutputBytes?: number): Promise<{ tar: Uint8Array; stat: DockerPathStat }>;
   exec(id: string, options: DockerExecOptions): Promise<DockerExecResult>;
-  commitContainer(id: string, repo: string, tag: string): Promise<{ Id: string }>;
+  /** Canonicalize a container path. Callers compare it with the lexical path and refuse escapes. */
+  realpath(id: string, containerPath: string): Promise<string>;
+  commitContainer(id: string, repo: string, tag: string, labels?: Record<string, string>): Promise<{ Id: string }>;
+  removeImage(id: string): Promise<void>;
   createNetwork(name: string): Promise<{ Id: string; gateway?: string }>;
   removeNetwork(id: string): Promise<void>;
 }
@@ -158,18 +166,22 @@ export const createNodeDockerClient = (options: NodeDockerClientOptions = {}): D
   };
 
   const terminate = async (id: string, marker: string, user: string) => {
-    const top = await requestJson<{ Titles?: string[]; Processes?: string[][] }>("GET", `/containers/${id}/top?ps_args=${encodeURIComponent("e -o pid,args")}`);
+    const top = await requestJson<{ Titles?: string[]; Processes?: string[][] }>("GET", `/containers/${id}/top?ps_args=${encodeURIComponent("e -o pid,pgid,args")}`);
     const titles = top.Titles ?? [];
     const pidIndex = titles.findIndex(title => title.toUpperCase() === "PID");
+    const pgidIndex = titles.findIndex(title => title.toUpperCase() === "PGID");
     const argsIndex = Math.max(0, titles.findIndex(title => /cmd|command|args/i.test(title)));
-    const pids = (top.Processes ?? [])
-      .filter(row => (row[argsIndex] ?? "").includes(marker))
-      .map(row => row[pidIndex === -1 ? 0 : pidIndex])
-      .filter((pid): pid is string => Boolean(pid));
-    if (!pids.length) return;
+    const groups = new Set<string>();
+    for (const row of top.Processes ?? []) {
+      if (!(row[argsIndex] ?? "").includes(marker)) continue;
+      const pgid = pgidIndex === -1 ? row[pidIndex === -1 ? 0 : pidIndex] : row[pgidIndex];
+      if (!pgid || pgid === "0" || pgid === "1") continue;
+      groups.add(`-${pgid}`);
+    }
+    if (!groups.size) return;
     await ensureVersion();
     await createNodeDockerClient({ socketPath, apiVersion }).exec(id, {
-      cmd: ["/bin/kill", "-KILL", ...pids],
+      cmd: ["/bin/kill", "-KILL", "--", ...groups],
       user,
       workingDir: "/",
       timeoutMs: 2_000,
@@ -283,9 +295,6 @@ export const createNodeDockerClient = (options: NodeDockerClientOptions = {}): D
       try {
         const streamed = await streamExec(socketPath, prefix(), created.Id, options.maxOutputBytes, controller.signal);
         timedOut = controller.signal.aborted && !options.signal?.aborted;
-        if ((timedOut || streamed.truncated) && !options.skipTerminate && marker) {
-          await terminate(id, marker, options.user).catch(() => undefined);
-        }
         const inspected = await requestJson<{ ExitCode?: number }>("GET", `/exec/${created.Id}/json`).catch(() => ({ ExitCode: timedOut ? 137 : 1 }));
         if (options.signal?.aborted) {
           throw new SandboxError("CANCELLED", "Sandbox command was cancelled.");
@@ -300,10 +309,41 @@ export const createNodeDockerClient = (options: NodeDockerClientOptions = {}): D
       } finally {
         clearTimeout(timer);
         options.signal?.removeEventListener("abort", onAbort);
+        if (!options.skipTerminate && marker) {
+          await terminate(id, marker, options.user).catch(() => undefined);
+        }
       }
     },
-    async commitContainer(id, repo, tag) {
-      return requestJson("POST", `/commit?container=${encodeURIComponent(id)}&repo=${encodeURIComponent(repo)}&tag=${encodeURIComponent(tag)}`);
+    async realpath(id, containerPath) {
+      if (!containerPath.startsWith("/") || containerPath.includes("\0") || containerPath.length > 4096) {
+        throw new SandboxError("PATH_INVALID", "Sandbox realpath requires an absolute container path.");
+      }
+      const result = await this.exec(id, {
+        cmd: ["/bin/realpath", containerPath],
+        user: "",
+        workingDir: "/",
+        timeoutMs: 5_000,
+        maxOutputBytes: 8_192,
+        skipTerminate: true
+      });
+      if (result.exitCode !== 0 || result.timedOut || result.truncated) {
+        throw new SandboxError("NOT_FOUND", `Sandbox path ${containerPath} was not found.`);
+      }
+      const resolved = new TextDecoder().decode(result.stdout).replace(/\n$/, "");
+      if (!resolved.startsWith("/") || resolved.includes("\0")) {
+        throw new SandboxError("PATH_INVALID", "Sandbox realpath returned an unusable path.");
+      }
+      return resolved;
+    },
+    async commitContainer(id, repo, tag, labels) {
+      return requestJson(
+        "POST",
+        `/commit?container=${encodeURIComponent(id)}&repo=${encodeURIComponent(repo)}&tag=${encodeURIComponent(tag)}`,
+        labels ? { Labels: labels } : undefined
+      );
+    },
+    async removeImage(id) {
+      await requestJson("DELETE", `/images/${encodeURIComponent(id)}?force=true`);
     },
     async createNetwork(name) {
       const created = await requestJson<{ Id: string }>("POST", "/networks/create", {

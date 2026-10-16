@@ -10,7 +10,7 @@ import { commandBaseName, resolveWorkspacePath } from "../src/paths.js";
 import { packTar, stripTarRoot, unpackTar } from "../src/tar.js";
 import { decodeCappedText, encodeDockerStreamFrame, readMultiplexedStream } from "../src/stream.js";
 import { isPrivateAddress, startAllowlistProxy } from "../src/network.js";
-import { createFileSandboxLeaseStore, createFileSandboxSnapshotStore } from "../src/stores.js";
+import { createFileSandboxLeaseStore, createFileSandboxSnapshotStore, createMemorySandboxSnapshotStore } from "../src/stores.js";
 import { createServer } from "node:net";
 
 
@@ -164,6 +164,96 @@ describe("sandbox network allowlist", () => {
     await allowed.close();
     await new Promise<void>(resolve => target.close(() => resolve()));
   });
+
+  it("fails closed when connection, in-flight, request, or byte quotas are exhausted", async () => {
+    const target = createServer(socket => {
+      socket.on("data", () => undefined);
+    });
+    await new Promise<void>(resolve => target.listen(0, "127.0.0.1", () => resolve()));
+    const port = (target.address() as { port: number }).port;
+    let releaseGate: () => void = () => undefined;
+    const gate = new Promise<void>(resolve => {
+      releaseGate = resolve;
+    });
+    let activeLookups = 0;
+    let maxActiveLookups = 0;
+    const limited = await startAllowlistProxy({
+      quotas: { maxConnections: 4, maxInFlight: 1, maxRequests: 8, maxBytes: 32, idleMs: 1_000, tunnelMs: 1_000 },
+      policy: { allowedDomains: ["example.test"], allowedPorts: [port], allowPrivateNetworks: true },
+      resolveHost: async () => {
+        activeLookups += 1;
+        maxActiveLookups = Math.max(maxActiveLookups, activeLookups);
+        await gate;
+        activeLookups -= 1;
+        return ["127.0.0.1"];
+      }
+    });
+    try {
+      const first = connectStatus(limited.port, "example.test", port);
+      await delay(40);
+      const second = connectStatus(limited.port, "example.test", port);
+      await delay(40);
+      expect(maxActiveLookups).toBe(1);
+      releaseGate();
+      expect(await second).toBe(403);
+      expect(await first).toBe(200);
+    } finally {
+      releaseGate();
+      await limited.close();
+    }
+
+    const once = await startAllowlistProxy({
+      quotas: { maxConnections: 4, maxInFlight: 2, maxRequests: 1, maxBytes: 1_000, idleMs: 1_000, tunnelMs: 1_000 },
+      policy: { allowedDomains: ["example.test"], allowedPorts: [port], allowPrivateNetworks: true },
+      resolveHost: async () => ["127.0.0.1"]
+    });
+    expect(await connectStatus(once.port, "example.test", port)).toBe(200);
+    expect(await connectStatus(once.port, "example.test", port)).toBe(403);
+    await once.close();
+
+    let hold: () => void = () => undefined;
+    const held = new Promise<string[]>(resolve => {
+      hold = () => resolve(["127.0.0.1"]);
+    });
+    const single = await startAllowlistProxy({
+      quotas: { maxConnections: 1, maxInFlight: 2, maxRequests: 8, maxBytes: 1_000, idleMs: 5_000, tunnelMs: 5_000 },
+      policy: { allowedDomains: ["example.test"], allowedPorts: [port], allowPrivateNetworks: true },
+      resolveHost: () => held
+    });
+    const pending = connectStatus(single.port, "example.test", port);
+    await delay(40);
+    expect(await connectStatus(single.port, "example.test", port)).toBe(403);
+    hold();
+    await pending;
+    await single.close();
+
+    const tiny = await startAllowlistProxy({
+      quotas: { maxConnections: 4, maxInFlight: 2, maxRequests: 8, maxBytes: 16, idleMs: 80, tunnelMs: 5_000 },
+      policy: { allowedDomains: ["example.test"], allowedPorts: [port], allowPrivateNetworks: true },
+      resolveHost: async () => ["127.0.0.1"]
+    });
+    const flooded = await Promise.race([
+      writeUntilClose(tiny.port, port),
+      delay(500).then(() => -1)
+    ]);
+    expect(flooded).toBe(200);
+    expect(await connectStatus(tiny.port, "example.test", port)).toBe(403);
+    await tiny.close();
+
+    const idleProxy = await startAllowlistProxy({
+      quotas: { maxConnections: 2, maxInFlight: 2, maxRequests: 4, maxBytes: 1_000, idleMs: 80, tunnelMs: 5_000 },
+      policy: { allowedDomains: ["example.test"], allowedPorts: [port], allowPrivateNetworks: true },
+      resolveHost: async () => ["127.0.0.1"]
+    });
+    const idle = await Promise.race([
+      holdUntilClose(idleProxy.port, port),
+      delay(500).then(() => "still-open")
+    ]);
+    expect(idle).toBe("closed");
+    await idleProxy.close();
+    expect(await connectStatus(idleProxy.port, "example.test", port)).toBe(0);
+    await new Promise<void>(resolve => target.close(() => resolve()));
+  });
 });
 
 describe("sandbox file stores", () => {
@@ -283,24 +373,97 @@ describe("sandbox file stores", () => {
       const liveLock = path.join(directory, scopeDir, `${encodeURIComponent("run/live")}.json.lock`);
       await writeFile(liveLock, JSON.stringify({ ownerId: "live", pid: process.pid, createdAt: Date.now() }), { mode: 0o600 });
       await expect(leases.compareAndSwap({ ...draft, runId: "run/live" }, undefined)).rejects.toThrow(/file lock/);
+      await expect(leases.compareAndSwap({ ...draft, runId: ".." }, undefined)).rejects.toThrow(/cannot be '\.' or '\.\.'/);
+      await expect(leases.compareAndSwap({ ...draft, runId: "." }, undefined)).rejects.toThrow(/cannot be '\.' or '\.\.'/);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
   }, 20_000);
+
+  it("rejects '.' and '..' snapshot run ids and mismatched snapshot metadata", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "zhivex-sandbox-escape-"));
+    try {
+      const snapshots = createFileSandboxSnapshotStore(path.join(directory, "snapshots"));
+      const scopeA = JSON.stringify(["tenant-a", "", ""]);
+      const scopeB = JSON.stringify(["tenant-b", "", ""]);
+      const snapshot = {
+        schemaVersion: 1 as const,
+        id: "snap",
+        runId: "kept",
+        scopeKey: scopeA,
+        mode: "workspace-tar" as const,
+        workspaceTar: new TextEncoder().encode("tar"),
+        createdAt: 1
+      };
+      await snapshots.save(snapshot);
+      await expect(snapshots.save({ ...snapshot, runId: "..", scopeKey: scopeB })).rejects.toThrow(/cannot be '\.' or '\.\.'/);
+      await expect(snapshots.save({ ...snapshot, runId: ".", scopeKey: scopeB })).rejects.toThrow(/cannot be '\.' or '\.\.'/);
+      const memory = createMemorySandboxSnapshotStore();
+      await expect(memory.save({ ...snapshot, runId: ".." })).rejects.toThrow(/cannot be '\.' or '\.\.'/);
+      expect(new TextDecoder().decode((await snapshots.load("kept", scopeA))?.workspaceTar ?? new Uint8Array())).toBe("tar");
+      const file = await findFile(path.join(directory, "snapshots"), ".json");
+      const raw = JSON.parse(await (await import("node:fs/promises")).readFile(file, "utf8")) as { runId: string };
+      raw.runId = "other";
+      await writeFile(file, JSON.stringify(raw));
+      await expect(snapshots.load("kept", scopeA)).rejects.toThrow(/identity/);
+      expect(await snapshots.load("kept", scopeB)).toBeUndefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+const writeUntilClose = (port: number, targetPort: number) => new Promise<number>(resolve => {
+  const socket = connect(port, "127.0.0.1");
+  let response = "";
+  let settled = false;
+  const finish = (status: number) => {
+    if (settled) return;
+    settled = true;
+    socket.destroy();
+    resolve(status);
+  };
+  socket.on("data", chunk => {
+    response += chunk.toString("utf8");
+    const status = /^HTTP\/1\.1 (\d+)/.exec(response);
+    if (status?.[1] === "200") socket.write("y".repeat(200));
+    else if (status?.[1]) finish(Number(status[1]));
+  });
+  socket.on("close", () => finish(/^HTTP\/1\.1 (\d+)/.exec(response)?.[1] === "200" ? 200 : 0));
+  socket.on("error", () => finish(0));
+  socket.write(`CONNECT example.test:${targetPort} HTTP/1.1\r\nHost: example.test:${targetPort}\r\n\r\n`);
+});
+
+const holdUntilClose = (port: number, targetPort: number) => new Promise<string>(resolve => {
+  const socket = connect(port, "127.0.0.1");
+  let response = "";
+  socket.on("data", chunk => {
+    response += chunk.toString("utf8");
+  });
+  socket.on("close", () => resolve(response.includes("200") ? "closed" : "denied"));
+  socket.on("error", () => resolve(response.includes("200") ? "closed" : "denied"));
+  socket.write(`CONNECT example.test:${targetPort} HTTP/1.1\r\nHost: example.test:${targetPort}\r\n\r\n`);
 });
 
 const connectStatus = (port: number, host: string, targetPort: number) => new Promise<number>(resolve => {
   const socket = connect(port, "127.0.0.1");
   let response = "";
+  let settled = false;
+  const finish = (status: number) => {
+    if (settled) return;
+    settled = true;
+    socket.destroy();
+    resolve(status);
+  };
   socket.on("data", chunk => {
     response += chunk.toString("utf8");
     const status = /^HTTP\/1\.1 (\d+)/.exec(response);
-    if (status?.[1]) {
-      socket.end();
-      resolve(Number(status[1]));
-    }
+    if (status?.[1]) finish(Number(status[1]));
   });
-  socket.on("error", () => resolve(0));
+  socket.on("close", () => finish(/^HTTP\/1\.1 (\d+)/.exec(response)?.[1] ? Number(/^HTTP\/1\.1 (\d+)/.exec(response)?.[1]) : 0));
+  socket.on("error", () => finish(/^HTTP\/1\.1 (\d+)/.exec(response)?.[1] ? Number(/^HTTP\/1\.1 (\d+)/.exec(response)?.[1]) : 0));
   socket.write(`CONNECT ${host}:${targetPort} HTTP/1.1\r\nHost: ${host}:${targetPort}\r\n\r\n`);
 });
 
