@@ -48,11 +48,13 @@ export interface MemoryDockerClient extends DockerClient {
   containerIds(): string[];
   createdContainerIds(): string[];
   removedNetworkIds(): string[];
+  imageCount(): number;
 }
 
 export const createMemoryDockerClient = (): MemoryDockerClient => {
   const containers = new Map<string, MemoryContainer>();
   const images = new Map<string, MemoryImage>();
+  const maxImages = 32;
   const networks = new Map<string, { id: string; gateway: string }>();
   const removedNetworks: string[] = [];
   const createdIds: string[] = [];
@@ -153,6 +155,7 @@ export const createMemoryDockerClient = (): MemoryDockerClient => {
     containerIds: () => [...containers.keys()],
     createdContainerIds: () => [...createdIds],
     removedNetworkIds: () => [...removedNetworks],
+    imageCount: () => images.size,
     async createContainer(spec) {
       const id = `mem_${randomUUID()}`;
       const image = images.get(spec.image);
@@ -210,6 +213,11 @@ export const createMemoryDockerClient = (): MemoryDockerClient => {
       const container = requireContainer(id);
       const imageId = `sha256:${tag}`;
       images.set(imageId, { files: cloneFiles(container.files) });
+      while (images.size > maxImages) {
+        const oldest = images.keys().next().value;
+        if (oldest === undefined) break;
+        images.delete(oldest);
+      }
       return { Id: imageId };
     },
     async createNetwork(name) {

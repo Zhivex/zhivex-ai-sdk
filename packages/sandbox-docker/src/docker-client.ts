@@ -72,7 +72,7 @@ export interface DockerClient {
   killContainer(id: string, signal?: string): Promise<void>;
   listContainers(label: string): Promise<DockerListedContainer[]>;
   putArchive(id: string, containerPath: string, tar: Uint8Array): Promise<void>;
-  getArchive(id: string, containerPath: string): Promise<{ tar: Uint8Array; stat: DockerPathStat }>;
+  getArchive(id: string, containerPath: string, maxOutputBytes?: number): Promise<{ tar: Uint8Array; stat: DockerPathStat }>;
   exec(id: string, options: DockerExecOptions): Promise<DockerExecResult>;
   commitContainer(id: string, repo: string, tag: string): Promise<{ Id: string }>;
   createNetwork(name: string): Promise<{ Id: string; gateway?: string }>;
@@ -80,6 +80,13 @@ export interface DockerClient {
 }
 
 const empty = new Uint8Array();
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const TAR_EXTRACT_DEADLINE_MS = 30_000;
+
+const clampTimeout = (timeoutMs: number) => {
+  if (!Number.isFinite(timeoutMs)) return 1;
+  return Math.min(MAX_TIMER_DELAY_MS, Math.max(1, Math.floor(timeoutMs)));
+};
 
 export interface NodeDockerClientOptions {
   socketPath?: string;
@@ -223,7 +230,7 @@ export const createNodeDockerClient = (options: NodeDockerClientOptions = {}): D
       if (!/read-only/i.test(message)) throw new SandboxError("DOCKER_API", message);
       await extractTar(socketPath, prefix(), id, containerPath, tar);
     },
-    async getArchive(id, containerPath) {
+    async getArchive(id, containerPath, maxOutputBytes = 256 * 1024 * 1024) {
       const slash = containerPath.lastIndexOf("/");
       const parent = slash <= 0 ? "/" : containerPath.slice(0, slash);
       const name = containerPath.slice(slash + 1);
@@ -235,7 +242,7 @@ export const createNodeDockerClient = (options: NodeDockerClientOptions = {}): D
         user: "",
         workingDir: "/",
         timeoutMs: 30_000,
-        maxOutputBytes: 256 * 1024 * 1024,
+        maxOutputBytes,
         skipTerminate: true
       });
       if (archived.timedOut || archived.truncated) {
@@ -269,7 +276,7 @@ export const createNodeDockerClient = (options: NodeDockerClientOptions = {}): D
         Cmd: options.cmd
       });
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+      const timer = setTimeout(() => controller.abort(), clampTimeout(options.timeoutMs));
       const onAbort = () => controller.abort();
       options.signal?.addEventListener("abort", onAbort, { once: true });
       let timedOut = false;
@@ -316,6 +323,19 @@ export const createNodeDockerClient = (options: NodeDockerClientOptions = {}): D
 
 const extractTar = (socketPath: string, apiPrefix: string, id: string, containerPath: string, tar: Uint8Array) =>
   new Promise<void>((resolve, reject) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TAR_EXTRACT_DEADLINE_MS);
+    let settled = false;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error instanceof Error ? error : new Error(String(error)));
+      else resolve();
+    };
+    controller.signal.addEventListener("abort", () => {
+      finish(new SandboxError("LIMIT", "Sandbox tar extract exceeded its deadline."));
+    }, { once: true });
     const createBody = Buffer.from(JSON.stringify({
       AttachStdin: true,
       AttachStdout: true,
@@ -327,30 +347,41 @@ const extractTar = (socketPath: string, apiPrefix: string, id: string, container
       socketPath,
       method: "POST",
       path: `${apiPrefix}/containers/${id}/exec`,
-      headers: { "Content-Type": "application/json", "Content-Length": String(createBody.length) }
+      headers: { "Content-Type": "application/json", "Content-Length": String(createBody.length) },
+      signal: controller.signal
     }, response => {
       const chunks: Buffer[] = [];
       response.on("data", chunk => chunks.push(Buffer.from(chunk)));
       response.on("end", () => {
         const body = Buffer.concat(chunks);
         if ((response.statusCode ?? 500) >= 300) {
-          reject(new SandboxError("DOCKER_API", dockerMessage(body) || "Docker tar exec create failed."));
+          finish(new SandboxError("DOCKER_API", dockerMessage(body) || "Docker tar exec create failed."));
           return;
         }
         const created = JSON.parse(body.toString("utf8")) as { Id?: string };
         if (!created.Id) {
-          reject(new SandboxError("DOCKER_API", "Docker tar exec did not return an id."));
+          finish(new SandboxError("DOCKER_API", "Docker tar exec did not return an id."));
           return;
         }
-        startTarExtract(socketPath, apiPrefix, created.Id, tar).then(resolve, reject);
+        startTarExtract(socketPath, apiPrefix, created.Id, tar, controller.signal).then(() => finish(), finish);
       });
     });
-    create.on("error", reject);
+    create.on("error", error => {
+      if (controller.signal.aborted) finish(new SandboxError("LIMIT", "Sandbox tar extract exceeded its deadline."));
+      else finish(error);
+    });
     create.end(createBody);
   });
 
-const startTarExtract = (socketPath: string, apiPrefix: string, execId: string, tar: Uint8Array) =>
+const startTarExtract = (socketPath: string, apiPrefix: string, execId: string, tar: Uint8Array, signal: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error instanceof Error ? error : new Error(String(error)));
+      else resolve();
+    };
     const payload = Buffer.from(JSON.stringify({ Detach: false, Tty: false }));
     const req = http.request({
       socketPath,
@@ -361,20 +392,28 @@ const startTarExtract = (socketPath: string, apiPrefix: string, execId: string, 
         Connection: "Upgrade",
         Upgrade: "tcp",
         "Content-Length": String(payload.length)
-      }
+      },
+      signal
     });
-    const fail = (error: unknown) => reject(error instanceof Error ? error : new Error(String(error)));
+    let upgraded: import("node:net").Socket | undefined;
+    const fail = (error: unknown) => {
+      upgraded?.destroy();
+      req.destroy();
+      finish(error);
+    };
+    signal.addEventListener("abort", () => fail(new SandboxError("LIMIT", "Sandbox tar extract exceeded its deadline.")), { once: true });
     req.on("upgrade", (_response, socket) => {
+      upgraded = socket;
       const output: Buffer[] = [];
       socket.on("data", chunk => output.push(Buffer.from(chunk)));
       socket.on("error", fail);
       socket.on("end", () => {
-        inspectExec(socketPath, apiPrefix, execId).then(exitCode => {
+        inspectExec(socketPath, apiPrefix, execId, signal).then(exitCode => {
           if (exitCode !== 0) {
             fail(new SandboxError("DOCKER_API", `Sandbox tar extract exited ${exitCode}: ${Buffer.concat(output).toString("utf8").slice(0, 300)}`));
             return;
           }
-          resolve();
+          finish();
         }).catch(fail);
       });
       socket.end(tar);
@@ -384,16 +423,20 @@ const startTarExtract = (socketPath: string, apiPrefix: string, execId: string, 
       response.on("data", chunk => chunks.push(Buffer.from(chunk)));
       response.on("end", () => fail(new SandboxError("DOCKER_API", dockerMessage(Buffer.concat(chunks)) || "Docker tar extract did not upgrade the connection.")));
     });
-    req.on("error", fail);
+    req.on("error", error => {
+      if (signal.aborted) fail(new SandboxError("LIMIT", "Sandbox tar extract exceeded its deadline."));
+      else fail(error);
+    });
     req.end(payload);
   });
 
-const inspectExec = (socketPath: string, apiPrefix: string, execId: string) =>
+const inspectExec = (socketPath: string, apiPrefix: string, execId: string, signal: AbortSignal) =>
   new Promise<number>((resolve, reject) => {
     const req = http.request({
       socketPath,
       method: "GET",
-      path: `${apiPrefix}/exec/${execId}/json`
+      path: `${apiPrefix}/exec/${execId}/json`,
+      signal
     }, response => {
       const chunks: Buffer[] = [];
       response.on("data", chunk => chunks.push(Buffer.from(chunk)));

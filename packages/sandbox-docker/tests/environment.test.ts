@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { createDockerSandboxEnvironment, createDockerSandboxTools } from "../src/index.js";
 import { createMemoryDockerClient } from "../src/memory-docker-client.js";
-import { createMemorySandboxLeaseStore } from "../src/stores.js";
+import { createFileSandboxLeaseStore, createMemorySandboxLeaseStore, createMemorySandboxSnapshotStore } from "../src/stores.js";
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
@@ -82,6 +82,9 @@ describe("docker sandbox environment", () => {
     const first = await sandbox.acquire({ runId: "run-resume", scope: { tenantId: "acme" } });
     await first.writeFile("README.md", "v2");
     const containerId = first.containerId;
+    const shot = await first.snapshot();
+    expect(shot.mode).toBe("docker-commit");
+    expect(shot.id).toMatch(/^snap_/);
     await first.release({ status: "waiting_approval" });
     const second = await sandbox.acquire({ runId: "run-resume", scope: { tenantId: "acme" } });
     expect(second.containerId).toBe(containerId);
@@ -164,6 +167,76 @@ describe("docker sandbox environment", () => {
     expect(spec?.env.some(entry => entry.startsWith("HTTPS_PROXY=http://10.88.0.1:"))).toBe(true);
     await session.release({ status: "completed" });
     expect(docker.removedNetworkIds().length).toBeGreaterThan(0);
+  });
+
+  it("drops the previous allowlist network when a resumed process rebuilds the container", async () => {
+    const docker = createMemoryDockerClient();
+    const leases = createMemorySandboxLeaseStore();
+    const snapshots = createMemorySandboxSnapshotStore();
+    const options = {
+      docker,
+      leases,
+      snapshots,
+      assurance: "best-effort" as const,
+      network: { mode: "allowlist" as const, allowedDomains: ["example.com"], allowedPorts: [443] },
+      workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "hello\n" }] }
+    };
+    const first = createDockerSandboxEnvironment(options);
+    const session = await first.acquire({ runId: "run-rebuild" });
+    const previousNetwork = docker.specs().at(-1)?.networkMode;
+    await session.release({ status: "waiting_approval" });
+    const second = createDockerSandboxEnvironment(options);
+    const resumed = await second.acquire({ runId: "run-rebuild" });
+    expect(previousNetwork).toBeTruthy();
+    expect(docker.removedNetworkIds()).toContain(previousNetwork);
+    expect(docker.specs().at(-1)?.networkMode).not.toBe(previousNetwork);
+    await resumed.release({ status: "completed" });
+  });
+
+  it("coalesces parallel lease renewals and keeps one container when acquires race", async () => {
+    const { sandbox } = environment();
+    const session = await sandbox.acquire({ runId: "run-parallel" });
+    await expect(Promise.all([
+      session.readFile("README.md"),
+      session.list("."),
+      session.readFile("README.md")
+    ])).resolves.toHaveLength(3);
+    await session.release({ status: "completed" });
+
+    const directory = await mkdtemp(path.join(tmpdir(), "zhivex-sandbox-acquire-"));
+    try {
+      const docker = createMemoryDockerClient();
+      const racing = createDockerSandboxEnvironment({
+        docker,
+        leases: createFileSandboxLeaseStore(path.join(directory, "leases")),
+        assurance: "best-effort",
+        workspace: { id: "workspace-1", files: [{ path: "README.md", contents: "hello\n" }] }
+      });
+      const results = await Promise.allSettled([
+        racing.acquire({ runId: "race" }),
+        racing.acquire({ runId: "race" })
+      ]);
+      expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+      expect(docker.containerIds()).toHaveLength(1);
+      const winner = results.find(result => result.status === "fulfilled");
+      if (winner?.status === "fulfilled") await winner.value.release({ status: "completed" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds tool callbacks and remembered images", async () => {
+    const { sandbox, docker } = environment({ limits: { maxProcessRuntimeMs: 30 } });
+    const session = await sandbox.acquire({ runId: "run-deadline" });
+    await expect(session.execute({} as never, () => new Promise(() => undefined))).rejects.toThrow(/deadline/);
+    for (let index = 0; index < 40; index += 1) {
+      await docker.commitContainer(session.containerId, "zhivex-sandbox", `image-${index}`);
+    }
+    expect(docker.imageCount()).toBeLessThanOrEqual(32);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(sandbox.acquire({ runId: "run-abort", abortSignal: controller.signal })).rejects.toThrow(/cancelled/);
+    await session.release({ status: "completed" });
   });
 
   it("resumes a durable agent run on the same container", async () => {

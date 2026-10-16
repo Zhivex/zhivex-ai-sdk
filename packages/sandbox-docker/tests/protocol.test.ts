@@ -1,4 +1,5 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { connect } from "node:net";
@@ -44,6 +45,23 @@ describe("sandbox tar and docker stream framing", () => {
     expect(entries[1]?.linkTarget).toBe("hello.txt");
   });
 
+  it("stores paths of 100 bytes or more with a ustar prefix or a pax header", () => {
+    const prefixed = `${"a".repeat(40)}/${"b".repeat(80)}`;
+    const extended = `${"c".repeat(180)}/${"d".repeat(90)}`;
+    const limit = "e".repeat(4096);
+    const packed = packTar([
+      { path: "n".repeat(100), type: "file", content: new TextEncoder().encode("short") },
+      { path: prefixed, type: "file", content: new TextEncoder().encode("prefix") },
+      { path: extended, type: "file", content: new TextEncoder().encode("pax") },
+      { path: limit, type: "file", content: new TextEncoder().encode("max") }
+    ]);
+    const entries = unpackTar(packed);
+    expect(entries.map(entry => entry.path)).toEqual(["n".repeat(100), prefixed, extended, limit]);
+    expect(entries.map(entry => new TextDecoder().decode(entry.content))).toEqual(["short", "prefix", "pax", "max"]);
+    expect(packed.includes(0)).toBe(true);
+    expect(() => packTar([{ path: "f".repeat(4097), type: "file" }])).toThrow(/4096/);
+  });
+
   it("caps stdout and stderr independently across split frames", async () => {
     const frames = [
       encodeDockerStreamFrame(1, new TextEncoder().encode("abcdef")),
@@ -67,13 +85,51 @@ describe("sandbox tar and docker stream framing", () => {
 });
 
 describe("sandbox network allowlist", () => {
-  it("classifies private and metadata addresses", () => {
-    for (const address of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1"]) {
-      expect(isPrivateAddress(address), address).toBe(true);
+  it("classifies private and special addresses numerically", () => {
+    const cases: Array<[string, boolean]> = [
+      ["127.0.0.1", true],
+      ["10.1.2.3", true],
+      ["172.16.0.1", true],
+      ["192.168.1.1", true],
+      ["169.254.169.254", true],
+      ["198.51.100.10", true],
+      ["203.0.113.10", true],
+      ["0.0.0.0", true],
+      ["::", true],
+      ["::1", true],
+      ["[::1]", true],
+      ["fe80::1", true],
+      ["fe80::1%eth0", true],
+      ["fe90::1", true],
+      ["febf::1", true],
+      ["fec0::1", true],
+      ["fc00::1", true],
+      ["fd00::1", true],
+      ["ff02::1", true],
+      ["::ffff:127.0.0.1", true],
+      ["::ffff:7f00:1", true],
+      ["::ffff:a9fe:a9fe", true],
+      ["::7f00:1", true],
+      ["64:ff9b::7f00:1", true],
+      ["64:ff9b::a00:1", true],
+      ["64:ff9b:1::7f00:1", true],
+      ["2002:7f00:1::", true],
+      ["2001:db8::1", true],
+      ["2001:0db8:0::1", true],
+      ["100::1", true],
+      ["2001:2::1", true],
+      ["not-an-ip", true],
+      ["1.1.1.1", false],
+      ["172.32.0.1", false],
+      ["8.8.8.8", false],
+      ["::ffff:8.8.8.8", false],
+      ["::ffff:0808:0808", false],
+      ["64:ff9b::808:808", false],
+      ["2001:4860:4860::8888", false]
+    ];
+    for (const [address, expected] of cases) {
+      expect(isPrivateAddress(address), address).toBe(expected);
     }
-    expect(isPrivateAddress("172.32.0.1")).toBe(false);
-    expect(isPrivateAddress("1.1.1.1")).toBe(false);
-    expect(isPrivateAddress("not-an-ip")).toBe(true);
   });
 
   it("refuses private targets and allows an explicit private test host", async () => {
@@ -82,6 +138,16 @@ describe("sandbox network allowlist", () => {
       resolveHost: async () => ["127.0.0.1"]
     });
     expect(await connectStatus(denied.port, "example.test", 9)).toBe(403);
+    let lookups = 0;
+    const rebound = await startAllowlistProxy({
+      policy: { allowedDomains: ["example.test"], allowedPorts: [9] },
+      resolveHost: async () => {
+        lookups += 1;
+        return lookups === 1 ? ["1.1.1.1"] : ["127.0.0.1"];
+      }
+    });
+    expect(await connectStatus(rebound.port, "example.test", 9)).toBe(403);
+    await rebound.close();
     const plain = await fetch(`http://127.0.0.1:${denied.port}/`);
     expect(plain.status).toBe(405);
     await denied.close();
@@ -151,6 +217,76 @@ describe("sandbox file stores", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("lets one of two concurrent creates win the file lease", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "zhivex-sandbox-race-"));
+    try {
+      const leases = createFileSandboxLeaseStore(directory);
+      const scopeKey = JSON.stringify(["tenant", "", ""]);
+      const draft = (containerId: string) => ({
+        schemaVersion: 1 as const,
+        runId: "run/1",
+        scopeKey,
+        environmentId: "docker-sandbox",
+        fingerprint: "sha256:abc",
+        containerId,
+        revision: 0,
+        status: "active" as const,
+        createdAt: 1,
+        expiresAt: 2
+      });
+      const results = await Promise.allSettled([
+        leases.compareAndSwap(draft("container-a"), undefined),
+        leases.compareAndSwap(draft("container-b"), undefined)
+      ]);
+      const saved = results.filter(result => result.status === "fulfilled");
+      expect(saved).toHaveLength(1);
+      const stored = await leases.load("run/1", scopeKey);
+      expect(stored?.containerId).toBe(saved[0] && saved[0].status === "fulfilled" ? saved[0].value.containerId : "");
+      expect(stored?.revision).toBe(0);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces a dead or stale lock and refuses a live owner's lock", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "zhivex-sandbox-lock-"));
+    try {
+      const scopeKey = JSON.stringify(["tenant", "", ""]);
+      const scopeDir = createHash("sha256").update(scopeKey).digest("hex");
+      const lockPath = path.join(directory, scopeDir, `${encodeURIComponent("run/1")}.json.lock`);
+      await mkdir(path.dirname(lockPath), { recursive: true });
+      const leases = createFileSandboxLeaseStore(directory);
+      const draft = {
+        schemaVersion: 1 as const,
+        runId: "run/1",
+        scopeKey,
+        environmentId: "docker-sandbox",
+        fingerprint: "sha256:abc",
+        containerId: "container",
+        revision: 0,
+        status: "active" as const,
+        createdAt: 1,
+        expiresAt: 2
+      };
+      await writeFile(lockPath, JSON.stringify({ ownerId: "dead", pid: 2_147_483_646, createdAt: 1 }), { mode: 0o600 });
+      await expect(leases.compareAndSwap(draft, undefined)).resolves.toMatchObject({ containerId: "container" });
+      const other = createFileSandboxLeaseStore(path.join(directory, "other"));
+      const otherScope = JSON.stringify(["other", "", ""]);
+      const otherDir = createHash("sha256").update(otherScope).digest("hex");
+      const otherLock = path.join(directory, "other", otherDir, `${encodeURIComponent("run/2")}.json.lock`);
+      await mkdir(path.dirname(otherLock), { recursive: true });
+      await writeFile(otherLock, "not-json", { mode: 0o600 });
+      const old = new Date(Date.now() - 60_000);
+      await utimes(otherLock, old, old);
+      await expect(other.compareAndSwap({ ...draft, runId: "run/2", scopeKey: otherScope }, undefined)).resolves.toMatchObject({ runId: "run/2" });
+      const liveLock = path.join(directory, scopeDir, `${encodeURIComponent("run/live")}.json.lock`);
+      await writeFile(liveLock, JSON.stringify({ ownerId: "live", pid: process.pid, createdAt: Date.now() }), { mode: 0o600 });
+      await expect(leases.compareAndSwap({ ...draft, runId: "run/live" }, undefined)).rejects.toThrow(/file lock/);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 const connectStatus = (port: number, host: string, targetPort: number) => new Promise<number>(resolve => {

@@ -74,7 +74,7 @@ Docker's archive API does not read or write the workspace tmpfs on a read-only r
 
 ## Network allowlist
 
-`network: { mode: "allowlist", allowedDomains, allowedPorts }` is opt-in. The container joins an internal Docker network and receives `HTTP_PROXY` / `HTTPS_PROXY` aimed at an in-process CONNECT proxy. The proxy allows only the declared public DNS names and ports. Private, loopback, link-local, and metadata addresses are rejected unless `allowPrivateNetworks` is set.
+`network: { mode: "allowlist", allowedDomains, allowedPorts }` is opt-in. The container joins an internal Docker network and receives `HTTP_PROXY` / `HTTPS_PROXY` aimed at an in-process CONNECT proxy. The proxy allows only the declared public DNS names and ports. It resolves each CONNECT target twice and connects to the checked address. Private, loopback, link-local, metadata, documentation, and non-global addresses are rejected unless `allowPrivateNetworks` is set, including IPv4-mapped, IPv4-compatible, NAT64, and 6to4 forms.
 
 Clients that open sockets directly have no external route. Proxy-aware clients are filtered. The proxy process shares the host network namespace, so a container that can reach the gateway address can also attempt other ports on that gateway. Treat the allowlist as a fail-closed filter for proxy traffic, not as a microVM boundary. The default remains `network: { mode: "deny" }`.
 

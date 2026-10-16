@@ -407,9 +407,15 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
     scopeKey: string,
     previous: SandboxLease | undefined,
     workspaceTar?: Uint8Array,
-    imageId?: string
+    imageId?: string,
+    signal?: AbortSignal
   ) => {
+    const throwIfCancelled = () => {
+      if (signal?.aborted) throw new SandboxError("CANCELLED", "Sandbox acquire was cancelled.");
+    };
+    throwIfCancelled();
     const opened = await openNetwork(runId, scopeKey);
+    throwIfCancelled();
     const spec = specFor(
       runId,
       opened ? opened.networkId : "none",
@@ -426,6 +432,7 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         const entries = withParents(await seedEntries(), user.uid, user.gid);
         if (entries.length) await docker.putArchive(created.Id, workspaceRoot, packTar(entries));
       }
+      throwIfCancelled();
       const now = clock();
       const lease: SandboxLease = {
         schemaVersion: 1,
@@ -445,17 +452,22 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       return lease;
     } catch (error) {
       if (createdId) await docker.removeContainer(createdId).catch(() => undefined);
-      if (!previous && opened) {
-        proxies.delete(proxyKey(runId, scopeKey));
-        await opened.proxy.close().catch(() => undefined);
-        await docker.removeNetwork(opened.networkId).catch(() => undefined);
+      if (opened && opened.networkId !== previous?.networkId) {
+        const current = await leases.load(runId, scopeKey).catch(() => undefined);
+        if (current?.networkId !== opened.networkId) {
+          if (proxies.get(proxyKey(runId, scopeKey))?.networkId === opened.networkId) {
+            proxies.delete(proxyKey(runId, scopeKey));
+            await opened.proxy.close().catch(() => undefined);
+          }
+          await docker.removeNetwork(opened.networkId).catch(() => undefined);
+        }
       }
       throw error;
     }
   };
 
   const takeSnapshot = async (lease: SandboxLease): Promise<SandboxSnapshot> => {
-    const archived = await docker.getArchive(lease.containerId, workspaceRoot);
+    const archived = await docker.getArchive(lease.containerId, workspaceRoot, limits.maxWorkspaceBytes * 2 + 65_536);
     if (archived.stat.linkTarget) {
       throw new SandboxError("SYMLINK_DENIED", "Refusing to snapshot a symlinked workspace root.");
     }
@@ -495,12 +507,31 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         throw new SandboxError("SANDBOX_CLOSED", "Sandbox session is closed.");
       }
     };
-    const touch = async () => {
+    let revisionChain: Promise<void> = Promise.resolve();
+    let pendingTouch: Promise<void> | undefined;
+    const enqueueLease = (operation: () => Promise<void>) => {
+      const run = revisionChain.then(operation);
+      revisionChain = run.then(() => undefined, () => undefined);
+      return run;
+    };
+    const touch = () => {
       assertOpen();
       if (lease.expiresAt <= clock()) throw new SandboxError("LEASE_EXPIRED", `Sandbox lease for run "${lease.runId}" has expired.`);
-      const next = { ...lease, expiresAt: clock() + ttl, revision: lease.revision + 1 };
-      await leases.compareAndSwap(next, lease.revision);
-      lease = next;
+      if (!pendingTouch) {
+        const run = enqueueLease(async () => {
+          if (lease.status !== "active") return;
+          if (lease.expiresAt <= clock()) throw new SandboxError("LEASE_EXPIRED", `Sandbox lease for run "${lease.runId}" has expired.`);
+          const next = { ...lease, expiresAt: clock() + ttl, revision: lease.revision + 1 };
+          lease = await leases.compareAndSwap(next, lease.revision);
+        });
+        pendingTouch = run;
+        void run.then(() => {
+          if (pendingTouch === run) pendingTouch = undefined;
+        }, () => {
+          if (pendingTouch === run) pendingTouch = undefined;
+        });
+      }
+      return pendingTouch;
     };
     const enter = async () => {
       if (activeExecs >= limits.maxConcurrentProcesses) {
@@ -553,13 +584,17 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       },
       async execute(_request, operation) {
         assertOpen();
-        return operation();
+        return raceDeadline(
+          Promise.resolve().then(() => operation()),
+          limits.maxProcessRuntimeMs,
+          "Sandbox tool callback exceeded its deadline."
+        );
       },
       async readFile(filePath: string) {
         assertOpen();
         await touch();
         const absolute = resolveWorkspacePath(workspaceRoot, filePath);
-        const archived = await docker.getArchive(lease.containerId, absolute);
+        const archived = await docker.getArchive(lease.containerId, absolute, limits.maxFileBytes + 8_192);
         if (archived.stat.linkTarget) {
           throw new SandboxError("SYMLINK_DENIED", "Sandbox file reads do not follow symlinks.");
         }
@@ -624,8 +659,10 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       async snapshot() {
         assertOpen();
         const snapshot = await takeSnapshot(lease);
-        lease = { ...lease, snapshotId: snapshot.id, revision: lease.revision + 1, expiresAt: clock() + ttl };
-        await leases.compareAndSwap(lease, lease.revision - 1);
+        await enqueueLease(async () => {
+          const next = { ...lease, snapshotId: snapshot.id, revision: lease.revision + 1, expiresAt: clock() + ttl };
+          lease = await leases.compareAndSwap(next, lease.revision);
+        });
         return { id: snapshot.id, mode: snapshot.mode, imageId: snapshot.imageId };
       },
       async release(result) {
@@ -633,22 +670,27 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         closed = true;
         if (!terminalStatus.has(result.status)) {
           const snapshot = await takeSnapshot(lease);
-          const next = { ...lease, snapshotId: snapshot.id, revision: lease.revision + 1, expiresAt: clock() + ttl };
-          await leases.compareAndSwap(next, lease.revision);
-          lease = next;
+          await enqueueLease(async () => {
+            const next = { ...lease, snapshotId: snapshot.id, revision: lease.revision + 1, expiresAt: clock() + ttl };
+            lease = await leases.compareAndSwap(next, lease.revision);
+          });
           return;
         }
-        await docker.removeContainer(lease.containerId).catch((error: unknown) => {
-          if (!(error instanceof SandboxError) || error.code !== "NOT_FOUND") throw error;
+        await enqueueLease(async () => {
+          const next = { ...lease, status: "released" as const, revision: lease.revision + 1, expiresAt: clock() };
+          lease = await leases.compareAndSwap(next, lease.revision);
         });
-        await snapshots.remove(lease.runId, lease.scopeKey);
-        if (lease.networkId) await docker.removeNetwork(lease.networkId).catch(() => undefined);
-        const proxy = proxies.get(proxyKey(lease.runId, lease.scopeKey));
-        proxies.delete(proxyKey(lease.runId, lease.scopeKey));
-        await proxy?.proxy.close();
-        const next = { ...lease, status: "released" as const, revision: lease.revision + 1, expiresAt: clock() };
-        await leases.compareAndSwap(next, lease.revision);
-        lease = next;
+        try {
+          await docker.removeContainer(lease.containerId).catch((error: unknown) => {
+            if (!(error instanceof SandboxError) || error.code !== "NOT_FOUND") throw error;
+          });
+          await snapshots.remove(lease.runId, lease.scopeKey);
+        } finally {
+          if (lease.networkId) await docker.removeNetwork(lease.networkId).catch(() => undefined);
+          const proxy = proxies.get(proxyKey(lease.runId, lease.scopeKey));
+          proxies.delete(proxyKey(lease.runId, lease.scopeKey));
+          await proxy?.proxy.close().catch(() => undefined);
+        }
       }
     };
     return session;
@@ -673,13 +715,17 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       if (existing && (existing.status === "expired" || existing.expiresAt <= clock())) {
         if (existing.status === "active") {
           await docker.removeContainer(existing.containerId).catch(() => undefined);
+          if (existing.networkId) await docker.removeNetwork(existing.networkId).catch(() => undefined);
+          const proxy = proxies.get(proxyKey(request.runId, scopeKey));
+          proxies.delete(proxyKey(request.runId, scopeKey));
+          await proxy?.proxy.close().catch(() => undefined);
           const expired = { ...existing, status: "expired" as const, revision: existing.revision + 1 };
           await leases.compareAndSwap(expired, existing.revision).catch(() => undefined);
         }
         throw new SandboxError("LEASE_EXPIRED", `Sandbox lease for run "${request.runId}" has expired.`);
       }
       if (!existing) {
-        const lease = await bootContainer(request.runId, scopeKey, undefined);
+        const lease = await bootContainer(request.runId, scopeKey, undefined, undefined, undefined, request.abortSignal);
         return openSession(lease);
       }
       let running = false;
@@ -697,7 +743,7 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
       let workspaceTar: Uint8Array | undefined;
       let imageId: string | undefined;
       if (running) {
-        workspaceTar = (await docker.getArchive(existing.containerId, workspaceRoot)).tar;
+        workspaceTar = (await docker.getArchive(existing.containerId, workspaceRoot, limits.maxWorkspaceBytes * 2 + 65_536)).tar;
         await docker.removeContainer(existing.containerId).catch(() => undefined);
       }
       const stored = await snapshots.load(request.runId, scopeKey);
@@ -707,7 +753,10 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         throw new SandboxError("SANDBOX_LOST", `Sandbox container for run "${request.runId}" is gone and no snapshot is available.`);
       }
       await docker.removeContainer(existing.containerId).catch(() => undefined);
-      const lease = await bootContainer(request.runId, scopeKey, existing, workspaceTar, imageId);
+      if (!proxyAlive && existing.networkId) {
+        await docker.removeNetwork(existing.networkId).catch(() => undefined);
+      }
+      const lease = await bootContainer(request.runId, scopeKey, existing, workspaceTar, imageId, request.abortSignal);
       return openSession(lease);
     },
     async sweep(now = clock()) {
@@ -748,6 +797,34 @@ const withParents = (entries: readonly TarEntry[], uid: number, gid: number): Ta
   }
   return [...parents, ...entries];
 };
+
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+const clampTimeout = (timeoutMs: number) => {
+  if (!Number.isFinite(timeoutMs)) return 1;
+  return Math.min(MAX_TIMER_DELAY_MS, Math.max(1, Math.floor(timeoutMs)));
+};
+
+const raceDeadline = <T>(operation: Promise<T>, timeoutMs: number, message: string) =>
+  new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new SandboxError("LIMIT", message));
+    }, clampTimeout(timeoutMs));
+    operation.then(value => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    }, error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    });
+  });
 
 const boundedBytes = async (bytes: Uint8Array, max: number, label: string) => {
   if (bytes.byteLength > max) throw new SandboxError("LIMIT", `Sandbox file ${label} exceeds maxFileBytes.`);

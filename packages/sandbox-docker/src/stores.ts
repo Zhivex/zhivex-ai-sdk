@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { link, lstat, mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { ConflictError } from "@zhivex-ai/core";
@@ -105,6 +106,156 @@ const writePrivate = async (file: string, bytes: Uint8Array | string) => {
   await assertPrivateFile(file);
 };
 
+const LOCK_WAIT_MS = 5_000;
+const MALFORMED_LOCK_MS = 30_000;
+const chains = new Map<string, Promise<void>>();
+
+interface FileLockRecord {
+  ownerId: string;
+  pid: number;
+  createdAt: number;
+}
+
+const withInProcessLock = async <T>(key: string, operation: () => Promise<T>): Promise<T> => {
+  const previous = chains.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const tail = previous.then(() => gate);
+  chains.set(key, tail);
+  try {
+    await previous;
+    return await operation();
+  } finally {
+    release();
+    if (chains.get(key) === tail) chains.delete(key);
+  }
+};
+
+const processAlive = (pid: number) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+};
+
+const readLock = async (lockPath: string): Promise<{ record?: FileLockRecord; modifiedAt: number } | undefined> => {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(lockPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const info = await handle.stat();
+    const body = await handle.readFile({ encoding: "utf8" });
+    let record: FileLockRecord | undefined;
+    try {
+      const parsed = JSON.parse(body) as Partial<FileLockRecord>;
+      if (
+        typeof parsed.ownerId === "string" &&
+        parsed.ownerId.length > 0 &&
+        typeof parsed.pid === "number" &&
+        Number.isInteger(parsed.pid) &&
+        typeof parsed.createdAt === "number"
+      ) {
+        record = { ownerId: parsed.ownerId, pid: parsed.pid, createdAt: parsed.createdAt };
+      }
+    } catch {
+      record = undefined;
+    }
+    return { record, modifiedAt: info.mtimeMs };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  } finally {
+    await handle?.close();
+  }
+};
+
+const stealLock = async (lockPath: string, current: { record?: FileLockRecord }) => {
+  const recovery = `${lockPath}.${randomUUID()}.recovery`;
+  try {
+    await link(lockPath, recovery);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return true;
+    if (code === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    const [lockInfo, recoveryInfo] = await Promise.all([lstat(lockPath), lstat(recovery)]);
+    if (lockInfo.dev !== recoveryInfo.dev || lockInfo.ino !== recoveryInfo.ino) return false;
+    const verified = await readLock(lockPath);
+    if (current.record?.ownerId !== verified?.record?.ownerId) return false;
+    if (!current.record && verified?.record) return false;
+    await unlink(lockPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  } finally {
+    await unlink(recovery).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+};
+
+const acquireFileLock = async (lockPath: string): Promise<() => Promise<void>> => {
+  const ownerId = randomUUID();
+  const startedAt = Date.now();
+  const body = JSON.stringify({ ownerId, pid: process.pid, createdAt: startedAt });
+  await mkdir(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+  while (Date.now() - startedAt <= LOCK_WAIT_MS) {
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      handle = await open(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      await handle.writeFile(body);
+      await handle.close();
+      handle = undefined;
+      return async () => {
+        const current = await readLock(lockPath);
+        if (current?.record?.ownerId !== ownerId) return;
+        await unlink(lockPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    } finally {
+      await handle?.close();
+    }
+    const current = await readLock(lockPath);
+    if (!current) continue;
+    const deadOwner = current.record ? !processAlive(current.record.pid) : false;
+    const malformedStale = !current.record && Date.now() - current.modifiedAt >= MALFORMED_LOCK_MS;
+    if ((deadOwner || malformedStale) && await stealLock(lockPath, current)) continue;
+    if (Date.now() - startedAt >= LOCK_WAIT_MS) break;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  throw new ConflictError("Timed out acquiring the sandbox file lock.");
+};
+
+const withFileLock = <T>(lockPath: string, operation: () => Promise<T>) =>
+  withInProcessLock(lockPath, async () => {
+    const release = await acquireFileLock(lockPath);
+    try {
+      return await operation();
+    } finally {
+      await release();
+    }
+  });
+
+const readLeaseFile = async (file: string): Promise<SandboxLease | undefined> => {
+  try {
+    await assertPrivateFile(file);
+    return JSON.parse(await readFile(file, "utf8")) as SandboxLease;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+};
+
 export const createFileSandboxLeaseStore = (directory: string): SandboxLeaseStore => {
   const fileFor = (runId: string, scopeKey: string) =>
     path.join(directory, scopeDirectory(scopeKey), `${encodeURIComponent(runId)}.json`);
@@ -120,12 +271,15 @@ export const createFileSandboxLeaseStore = (directory: string): SandboxLeaseStor
       }
     },
     async compareAndSwap(lease, expectedRevision) {
-      const current = await this.load(lease.runId, lease.scopeKey);
-      if (current?.revision !== expectedRevision) {
-        throw new ConflictError(`Sandbox lease for run "${lease.runId}" changed before it could be saved.`);
-      }
-      await writePrivate(fileFor(lease.runId, lease.scopeKey), JSON.stringify(lease));
-      return lease;
+      const file = fileFor(lease.runId, lease.scopeKey);
+      return withFileLock(`${file}.lock`, async () => {
+        const current = await readLeaseFile(file);
+        if (current?.revision !== expectedRevision) {
+          throw new ConflictError(`Sandbox lease for run "${lease.runId}" changed before it could be saved.`);
+        }
+        await writePrivate(file, JSON.stringify(lease));
+        return lease;
+      });
     },
     async list() {
       const { readdir } = await import("node:fs/promises");
@@ -154,29 +308,45 @@ export const createFileSandboxLeaseStore = (directory: string): SandboxLeaseStor
 export const createFileSandboxSnapshotStore = (directory: string): SandboxSnapshotStore => {
   const base = (runId: string, scopeKey: string) =>
     path.join(directory, scopeDirectory(scopeKey), encodeURIComponent(runId));
+  const readSnapshot = async (stem: string): Promise<SandboxSnapshot | undefined> => {
+    try {
+      await assertPrivateFile(`${stem}.json`);
+      await assertPrivateFile(`${stem}.tar`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    const meta = JSON.parse(await readFile(`${stem}.json`, "utf8")) as Omit<SandboxSnapshot, "workspaceTar"> & { tarSha256?: string };
+    const workspaceTar = new Uint8Array(await readFile(`${stem}.tar`));
+    if (meta.tarSha256) {
+      const actual = createHash("sha256").update(workspaceTar).digest("hex");
+      if (actual !== meta.tarSha256) {
+        throw new SandboxError("SNAPSHOT_INVALID", "Sandbox snapshot bytes do not match the stored hash.");
+      }
+    }
+    const { tarSha256: _hash, ...snapshot } = meta;
+    return { ...snapshot, workspaceTar };
+  };
   return {
     async load(runId, scopeKey) {
       const stem = base(runId, scopeKey);
-      try {
-        await assertPrivateFile(`${stem}.json`);
-        await assertPrivateFile(`${stem}.tar`);
-        const meta = JSON.parse(await readFile(`${stem}.json`, "utf8")) as Omit<SandboxSnapshot, "workspaceTar">;
-        return { ...meta, workspaceTar: new Uint8Array(await readFile(`${stem}.tar`)) };
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-        throw error;
-      }
+      return withFileLock(`${stem}.lock`, () => readSnapshot(stem));
     },
     async save(snapshot) {
       const stem = base(snapshot.runId, snapshot.scopeKey);
-      const { workspaceTar, ...meta } = snapshot;
-      await writePrivate(`${stem}.json`, JSON.stringify(meta));
-      await writePrivate(`${stem}.tar`, workspaceTar);
+      await withFileLock(`${stem}.lock`, async () => {
+        const { workspaceTar, ...meta } = snapshot;
+        const tarSha256 = createHash("sha256").update(workspaceTar).digest("hex");
+        await writePrivate(`${stem}.tar`, workspaceTar);
+        await writePrivate(`${stem}.json`, JSON.stringify({ ...meta, tarSha256 }));
+      });
     },
     async remove(runId, scopeKey) {
       const stem = base(runId, scopeKey);
-      await rm(`${stem}.json`, { force: true });
-      await rm(`${stem}.tar`, { force: true });
+      await withFileLock(`${stem}.lock`, async () => {
+        await rm(`${stem}.json`, { force: true });
+        await rm(`${stem}.tar`, { force: true });
+      });
     }
   };
 };

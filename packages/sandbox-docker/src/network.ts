@@ -1,42 +1,100 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { connect as connectNet, type Socket } from "node:net";
+import { connect as connectNet, isIP, type Socket } from "node:net";
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+
+import { isPrivateNetworkHostname } from "@zhivex-ai/core";
 
 import { SandboxError } from "./errors.js";
 
-const PRIVATE_V4 = [
-  ["0.0.0.0", 8],
-  ["10.0.0.0", 8],
-  ["100.64.0.0", 10],
-  ["127.0.0.0", 8],
-  ["169.254.0.0", 16],
-  ["172.16.0.0", 12],
-  ["192.0.0.0", 24],
-  ["192.168.0.0", 16],
-  ["198.18.0.0", 15],
-  ["224.0.0.0", 4],
-  ["240.0.0.0", 4]
-] as const;
+const CONNECT_TIMEOUT_MS = 10_000;
 
-const ipv4ToInt = (ip: string) => ip.split(".").reduce((value, part) => (value << 8) + Number(part), 0) >>> 0;
+const bareAddress = (address: string) =>
+  address.trim().toLowerCase().replace(/^\[/, "").replace(/\]$/, "").split("%")[0] ?? "";
 
-const inCidr = (ip: string, base: string, bits: number) => {
-  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
-  return (ipv4ToInt(ip) & mask) === (ipv4ToInt(base) & mask);
+const dottedIPv4 = (value: string): [number, number] | undefined => {
+  const parts = value.split(".");
+  if (parts.length !== 4 || parts.some(part => !/^\d{1,3}$/.test(part))) return undefined;
+  const numbers = parts.map(Number);
+  if (numbers.some(part => part > 255)) return undefined;
+  return [(numbers[0]! << 8) | numbers[1]!, (numbers[2]! << 8) | numbers[3]!];
 };
 
-/** True for loopback, link-local, private, multicast, and metadata addresses. */
+/** Parse an IPv6 literal to 16 bytes, including dotted and hex IPv4 tails. */
+const ipv6Bytes = (address: string): Uint8Array | undefined => {
+  let value = bareAddress(address);
+  if (!value.includes(":") || value.includes(":::")) return undefined;
+  const compression = value.indexOf("::");
+  if (compression !== value.lastIndexOf("::")) return undefined;
+  const expand = (side: string): number[] | undefined => {
+    if (side === "") return [];
+    const labels = side.split(":");
+    const groups: number[] = [];
+    for (let index = 0; index < labels.length; index += 1) {
+      const label = labels[index]!;
+      if (label.includes(".")) {
+        if (index !== labels.length - 1) return undefined;
+        const tail = dottedIPv4(label);
+        if (!tail) return undefined;
+        groups.push(tail[0], tail[1]);
+        continue;
+      }
+      if (!/^[0-9a-f]{1,4}$/.test(label)) return undefined;
+      groups.push(Number.parseInt(label, 16));
+    }
+    return groups;
+  };
+  let groups: number[];
+  if (compression === -1) {
+    const parsed = expand(value);
+    if (!parsed || parsed.length !== 8) return undefined;
+    groups = parsed;
+  } else {
+    const left = expand(value.slice(0, compression));
+    const right = expand(value.slice(compression + 2));
+    if (!left || !right || left.length + right.length > 7) return undefined;
+    groups = [...left, ...new Array<number>(8 - left.length - right.length).fill(0), ...right];
+  }
+  const bytes = new Uint8Array(16);
+  groups.forEach((group, index) => {
+    bytes[index * 2] = (group >> 8) & 0xff;
+    bytes[index * 2 + 1] = group & 0xff;
+  });
+  return bytes;
+};
+
+const isDocumentationIPv4 = (address: string) => {
+  const parts = address.split(".");
+  if (parts.length !== 4 || parts.some(part => !/^\d{1,3}$/.test(part))) return false;
+  const numbers = parts.map(Number);
+  if (numbers.some(part => part > 255)) return false;
+  const [a, b, c] = numbers;
+  return (a === 198 && b === 51 && c === 100) || (a === 203 && b === 0 && c === 113);
+};
+
+const prefix = (bytes: Uint8Array, expected: readonly number[]) =>
+  expected.every((value, index) => bytes[index] === value);
+
+/** Documentation, discard-only, and deprecated site-local ranges the shared classifier does not cover. */
+const isSpecialIPv6 = (bytes: Uint8Array) =>
+  prefix(bytes, [0x20, 0x01, 0x0d, 0xb8]) ||
+  prefix(bytes, [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]) ||
+  prefix(bytes, [0x20, 0x01, 0x00, 0x02, 0x00, 0x00]) ||
+  (bytes[0] === 0xfe && (bytes[1]! & 0xc0) === 0xc0);
+
+/**
+ * True for non-global addresses. Unparseable input is rejected.
+ * Classification of private, mapped, compatible, NAT64, 6to4, and Teredo
+ * addresses goes through the shared hostname helper, then local special ranges.
+ */
 export const isPrivateAddress = (address: string): boolean => {
-  const version = isIP(address);
-  if (version === 4) return PRIVATE_V4.some(([base, bits]) => inCidr(address, base, bits));
+  const bare = bareAddress(address);
+  if (!bare || isPrivateNetworkHostname(bare)) return true;
+  const version = isIP(bare);
+  if (version === 4) return isDocumentationIPv4(bare);
   if (version !== 6) return true;
-  const normalized = address.toLowerCase();
-  if (normalized === "::" || normalized === "::1") return true;
-  if (normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe80:")) return true;
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(normalized);
-  if (mapped?.[1]) return isPrivateAddress(mapped[1]);
-  return false;
+  const bytes = ipv6Bytes(bare);
+  if (!bytes) return true;
+  return isSpecialIPv6(bytes);
 };
 
 export interface AllowlistPolicy {
@@ -88,7 +146,7 @@ export const startAllowlistProxy = async (options: {
     if (!domains.has(host.toLowerCase()) || !ports.has(port)) {
       throw new SandboxError("NETWORK_DENIED", `Egress to ${host}:${port} is not on the sandbox allowlist.`);
     }
-    const addresses = await resolveHost(host);
+    const addresses = await resolveWithin(resolveHost(host));
     if (addresses.length === 0) {
       throw new SandboxError("NETWORK_DENIED", `Allowlist host ${host} did not resolve.`);
     }
@@ -98,30 +156,64 @@ export const startAllowlistProxy = async (options: {
     return addresses;
   };
 
+  const tracked = new Set<Socket>();
   const server: Server = createServer((_request: IncomingMessage, response: ServerResponse) => {
     response.writeHead(405);
     response.end("Sandbox allowlist proxy accepts CONNECT only.");
   });
+  server.on("connection", socket => {
+    tracked.add(socket);
+    socket.on("close", () => tracked.delete(socket));
+  });
 
   server.on("connect", (request, clientSocket, head) => {
     const socket = clientSocket as Socket;
+    socket.on("error", () => undefined);
     void (async () => {
-      const [host, rawPort] = (request.url ?? "").split(":");
-      const port = Number(rawPort);
+      const target = connectTarget(request.url ?? "");
+      let upstream: Socket | undefined;
       try {
-        if (!host) throw new SandboxError("NETWORK_DENIED", "CONNECT target is missing a host.");
-        const addresses = await authorize(host, port);
-        const upstream = connectNet(port, addresses[0]);
+        if (!target) throw new SandboxError("NETWORK_DENIED", "CONNECT target is missing a host.");
+        await authorize(target.host, target.port);
+        const fresh = await resolveWithin(resolveHost(target.host));
+        const chosen = fresh[0];
+        if (!chosen || (!options.policy.allowPrivateNetworks && fresh.some(isPrivateAddress))) {
+          throw new SandboxError("NETWORK_DENIED", `Allowlist host ${target.host} resolves to a private address.`);
+        }
+        upstream = connectNet(target.port, chosen);
+        upstream.on("error", () => undefined);
         await new Promise<void>((resolve, reject) => {
-          upstream.once("connect", () => resolve());
-          upstream.once("error", reject);
+          const timer = setTimeout(() => {
+            upstream?.destroy();
+            reject(new SandboxError("NETWORK_DENIED", "Allowlist connection timed out."));
+          }, CONNECT_TIMEOUT_MS);
+          upstream?.once("connect", () => {
+            clearTimeout(timer);
+            resolve();
+          });
+          upstream?.once("error", error => {
+            clearTimeout(timer);
+            reject(error);
+          });
         });
+        if (!options.policy.allowPrivateNetworks && isPrivateAddress(chosen)) {
+          throw new SandboxError("NETWORK_DENIED", `Allowlist host ${target.host} resolves to a private address.`);
+        }
         socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
         if (head.length) upstream.write(head);
         upstream.pipe(socket);
         socket.pipe(upstream);
+        const closeBoth = () => {
+          if (!socket.destroyed) socket.destroy();
+          if (upstream && !upstream.destroyed) upstream.destroy();
+        };
+        socket.on("close", () => upstream?.destroy());
+        upstream.on("close", () => socket.destroy());
+        socket.on("error", closeBoth);
+        upstream.on("error", closeBoth);
       } catch {
-        socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+        upstream?.destroy();
+        if (!socket.destroyed) socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       }
     })();
   });
@@ -136,6 +228,34 @@ export const startAllowlistProxy = async (options: {
   }
   return {
     port: address.port,
-    close: () => new Promise(resolve => server.close(() => resolve()))
+    close: () => new Promise(resolve => {
+      for (const socket of [...tracked]) socket.destroy();
+      server.close(() => resolve());
+    })
   };
+};
+
+const connectTarget = (value: string): { host: string; port: number } | undefined => {
+  const target = value.trim();
+  if (target.startsWith("[")) {
+    const end = target.indexOf("]");
+    if (end <= 1 || target[end + 1] !== ":") return undefined;
+    const port = Number(target.slice(end + 2));
+    return { host: target.slice(1, end), port };
+  }
+  const colon = target.lastIndexOf(":");
+  if (colon <= 0) return undefined;
+  return { host: target.slice(0, colon), port: Number(target.slice(colon + 1)) };
+};
+
+const resolveWithin = async (pending: Promise<string[]>) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await new Promise<string[]>((resolve, reject) => {
+      timer = setTimeout(() => reject(new SandboxError("NETWORK_DENIED", "Allowlist DNS lookup exceeded its deadline.")), CONNECT_TIMEOUT_MS);
+      pending.then(resolve, reject);
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 };
