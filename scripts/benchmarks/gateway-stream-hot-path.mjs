@@ -85,11 +85,10 @@ const sample = async (label, next) => {
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = mockedFetch;
+const afterNext = createAfterNext();
 try {
   const before = await sample("before", beforeNext);
-  const afterNext = createAfterNext();
   const after = await sample("after", afterNext);
-  afterNext.dispose();
   console.log(JSON.stringify({
     mode: "offline",
     runtime: process.version,
@@ -100,5 +99,6 @@ try {
     usPerChunkDelta: Number((before.usPerChunk - after.usPerChunk).toFixed(3))
   }, null, 2));
 } finally {
+  afterNext.dispose();
   globalThis.fetch = originalFetch;
 }

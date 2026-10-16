@@ -290,8 +290,158 @@ describe("gateway efficiency", () => {
       await expect(streamed.textStream[Symbol.asyncIterator]().next()).rejects.toBe(setupError);
       await settle();
       expect(rejections).toEqual([]);
+
+      const managed = createGateway({
+        maxRetries: 0,
+        timeoutMs: 5_000,
+        adapters: { openai: adapter(model()) }
+      });
+      const managedStream = managed.streamAgent({ primary: target, prompt: "hello" });
+      await expect(managedStream.collect()).rejects.toBe(setupError);
+      await expect((async () => {
+        for await (const _event of gateway.streamAgent({ primary: target, prompt: "hello" }).eventStream) {
+          throw new Error("setup failure should reject before an event");
+        }
+      })()).rejects.toBe(setupError);
+      await settle();
+      expect(rejections).toEqual([]);
     } finally {
       spy.mockRestore();
+      process.off("unhandledRejection", onRejection);
+    }
+  });
+
+  it("aborts a jittered backoff without a late retry or a leaked timer", async () => {
+    vi.useFakeTimers();
+    const rejections: unknown[] = [];
+    const onRejection = (error: unknown) => {
+      rejections.push(error);
+    };
+    process.on("unhandledRejection", onRejection);
+    try {
+      const calls = vi.fn(async () => {
+        throw new ProviderHTTPError("unavailable", 503);
+      });
+      const fixture = model();
+      fixture.generate = calls;
+      const controller = new AbortController();
+      const gateway = createGateway({
+        maxRetries: 2,
+        retryBackoffMs: 5_000,
+        retryRandom: () => 1,
+        adapters: { openai: adapter(fixture) }
+      });
+      const pending = gateway.generate({
+        primary: target,
+        messages: [{ role: "user", content: "hello" }],
+        abortSignal: controller.signal
+      });
+      const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toHaveBeenCalledTimes(1);
+      controller.abort();
+      await rejected;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(calls).toHaveBeenCalledTimes(1);
+      expect(rejections).toEqual([]);
+
+      const invalid = createGateway({
+        maxRetries: 1,
+        retryBackoffMs: 200,
+        retryRandom: () => Number.NaN,
+        adapters: { openai: adapter(fixture) }
+      });
+      const invalidPending = invalid.generate({
+        primary: target,
+        messages: [{ role: "user", content: "hello" }]
+      });
+      const invalidRejected = expect(invalidPending).rejects.toThrow(/retryRandom must return a finite number/);
+      await vi.advanceTimersByTimeAsync(0);
+      await invalidRejected;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not leak a rejection when a stream stops or the caller aborts", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (error: unknown) => {
+      rejections.push(error);
+    };
+    process.on("unhandledRejection", onRejection);
+    const tracked = new Map<number, { delay: number; state: "pending" | "fired" | "cleared" }>();
+    const originalSet = globalThis.setTimeout;
+    const originalClear = globalThis.clearTimeout;
+    globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+      const id = originalSet(() => {
+        const entry = tracked.get(id as unknown as number);
+        if (entry?.state === "pending") entry.state = "fired";
+        if (typeof handler === "function") handler(...args);
+      }, delay, ...args) as unknown as number;
+      tracked.set(id, { delay: delay ?? 0, state: "pending" });
+      return id;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((id?: number) => {
+      const entry = id === undefined ? undefined : tracked.get(id);
+      if (entry?.state === "pending") entry.state = "cleared";
+      return originalClear(id as never);
+    }) as typeof clearTimeout;
+    try {
+      const hanging = createMockLanguageModel({ capabilities: { streaming: true } });
+      hanging.stream = async () => (async function* () {
+        yield { type: "text-delta" as const, textDelta: "partial" };
+        yield { type: "text-delta" as const, textDelta: "more" };
+        await new Promise(() => undefined);
+      })();
+      const gateway = createGateway({
+        maxRetries: 0,
+        streamIdleTimeoutMs: 200,
+        adapters: { openai: adapter(hanging) }
+      });
+      const stream = gateway.streamText({
+        primary: target,
+        messages: [{ role: "user", content: "hello" }]
+      });
+      const iterator = stream.eventStream[Symbol.asyncIterator]();
+      const first = await iterator.next();
+      expect(first.value).toMatchObject({ type: "text-delta", textDelta: "partial" });
+      const second = await iterator.next();
+      expect(second.value).toMatchObject({ type: "text-delta", textDelta: "more" });
+      await iterator.return?.();
+      await new Promise((resolve) => originalSet(resolve, 1_000));
+      const idleTimers = [...tracked.values()].filter((entry) => entry.delay === 200);
+      expect(idleTimers.map((entry) => entry.state)).not.toContain("pending");
+      expect(rejections).toEqual([]);
+
+      const controller = new AbortController();
+      const abortGateway = createGateway({
+        maxRetries: 0,
+        streamIdleTimeoutMs: 200,
+        adapters: { openai: adapter(hanging) }
+      });
+      const abortStream = abortGateway.streamText({
+        primary: target,
+        messages: [{ role: "user", content: "hello" }],
+        abortSignal: controller.signal
+      });
+      const abortIterator = abortStream.eventStream[Symbol.asyncIterator]();
+      await abortIterator.next();
+      await abortIterator.next();
+      const waiting = abortIterator.next();
+      controller.abort();
+      await expect(waiting).resolves.toMatchObject({
+        done: false,
+        value: { type: "error", error: { name: "AbortError" } }
+      });
+      await new Promise((resolve) => originalSet(resolve, 1_000));
+      expect(rejections).toEqual([]);
+      expect([...tracked.values()].filter((entry) => entry.delay === 200 && entry.state === "pending")).toEqual([]);
+    } finally {
+      globalThis.setTimeout = originalSet;
+      globalThis.clearTimeout = originalClear;
       process.off("unhandledRejection", onRejection);
     }
   });
