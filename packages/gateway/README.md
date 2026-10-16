@@ -99,7 +99,7 @@ The gateway also supports `streamText()`, `generateObject()`, and `streamObject(
 - Failed attempt callbacks preserve validated `confirmedUsage`, `usageComplete` and `providerRequestCount` both before and after stream output. When `usageComplete` is false, `confirmedUsage` is a lower bound and is not substituted for complete `usage`; the receipt remains available even without cost accounting.
 - `ProviderHTTPError` is classified by its typed HTTP status. Status `408`, `429`, and `5xx` errors are retryable on the same target. Other `4xx` errors are not retried on that target, but an eligible fallback can still handle a provider- or model-specific rejection.
 - Stream attempts record `provider-success` only after the provider iterator completes; `latencyMs` covers the full attempt. Failures after the first event, including provider error events and cancellation, produce a failed attempt without retry/fallback. `onAgentRoute` still fires on selection after the first provider event, before the terminal attempt exists. Iterator cleanup is best-effort and never delays timeout/cancellation or replaces the original failure.
-- Retry waits honor finite non-negative `ProviderHTTPError.retryAfterMs`, taking the greater of that value and the configured linear backoff, capped at 60 seconds per wait. Caller cancellation interrupts the wait.
+- Retry waits use exponential backoff with full jitter. Attempt 0 has ceiling `retryBackoffMs` (default 200); later attempts double that ceiling, and each wait is `retryRandom() * min(60_000, ceiling)`. The result is then the greater of that jittered delay and a finite non-negative `ProviderHTTPError.retryAfterMs`, still capped at 60 seconds. `retryRandom` defaults to `Math.random` and is clamped to the unit interval. Caller cancellation interrupts the wait.
 - Attempt diagnostics redact credential-like URL parameters and bearer tokens before they are exposed through `attempts[].errorMessage` or observers.
 - When `maxCostPer1kTokens` is set, a target without configured or catalog pricing is rejected by default. Set `unknownCostPolicy: "allow"` on `createGateway()` only when routing to models with unknown cost is acceptable.
 - Requests containing image attachments only route to models that declare `capabilities.vision: true`. The gateway never removes images to make a target appear compatible; if one target cannot accept the original request, it is skipped in favor of a compatible fallback.
@@ -109,7 +109,7 @@ The gateway also supports `streamText()`, `generateObject()`, and `streamObject(
 
 Keep primary/fallback selection and these ceilings under application control when mapping an HTTP request into `GatewayRequest`. `maxCostPer1kTokens` limits model price, not the final invoice; use `maxTotalAttempts`, provider-side spend limits, authentication, and rate limiting for a complete cost boundary.
 
-For agent workloads, use `runAgent()` or `streamAgent()` to route by both regular model capabilities and agent-specific capabilities such as `supportTier`, `approvalRequests`, or `remoteMcp`.
+For agent workloads, use `runAgent()` or `streamAgent()` to route by both regular model capabilities and agent-specific capabilities such as `supportTier`, `approvalRequests`, or `remoteMcp`. The root gateway entry loads the Core agent runtime on the first agent call. `@zhivex-ai/gateway/agents` is that same runtime entry, so a bundler can keep it out of text and object chunks. `createGateway()`, `generate()`, and `streamText()` stay on the package root.
 
 ```ts
 const agentResult = await gateway.runAgent({

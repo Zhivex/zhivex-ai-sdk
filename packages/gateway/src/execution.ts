@@ -32,7 +32,7 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
       }
     } catch { settlementFailures++; }
   };
-  const begin = async (target: GatewayModelTarget, input: ModelGenerateInput, scope?: string) => {
+  const begin = async (target: GatewayModelTarget, input: ModelGenerateInput, scope?: string, messageJsonLength?: number) => {
     const signal = input.abortSignal;
     signal?.throwIfAborted();
     let admission: GatewayAdmissionLease | undefined, reservation: GatewayBudgetReservation | undefined;
@@ -60,7 +60,7 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
     signal?.addEventListener("abort", abort, { once: true });
     try {
       if (config.admission) admission = await config.admission.acquire({ target, signal,
-        tokens: input.maxTokens === undefined ? undefined : Math.ceil(JSON.stringify(input.messages).length / 4) + input.maxTokens });
+        tokens: input.maxTokens === undefined ? undefined : Math.ceil((messageJsonLength ?? JSON.stringify(input.messages).length) / 4) + input.maxTokens });
       if (signal?.aborted) {
         const late = admission; admission = undefined;
         if (late) safe(() => late.release());
@@ -79,19 +79,19 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
       return { start() { signal?.throwIfAborted(); started = true; }, finish };
     } catch (error) { await finish(); throw error; }
   };
-  const generate = async (model: LanguageModel, target: GatewayModelTarget, input: ModelGenerateInput, scope?: string): Promise<GenerateResult> => {
-    const lease = await begin(target, input, scope);
+  const generate = async (model: LanguageModel, target: GatewayModelTarget, input: ModelGenerateInput, scope?: string, messageJsonLength?: number): Promise<GenerateResult> => {
+    const lease = await begin(target, input, scope, messageJsonLength);
     try { lease.start(); const result = await model.generate(input); await lease.finish(result.usage); return result; }
     catch (error) { await lease.finish(error instanceof ProviderToolCallError ? error.usage : undefined); throw error; }
   };
   return {
     diagnostics: () => ({ settlementFailures, pendingSettlements: settlements.size, pendingCacheWrites: cacheWrites.size, droppedCacheWrites, inFlightCacheKeys: flights.size }),
     flush: async () => { await Promise.all([...settlements, ...cacheWrites]); },
-    async generate(model: LanguageModel, target: GatewayModelTarget, input: ModelGenerateInput, scope?: string, cacheScope?: string): Promise<GenerateResult> {
+    async generate(model: LanguageModel, target: GatewayModelTarget, input: ModelGenerateInput, scope?: string, cacheScope?: string, messageJsonLength?: number): Promise<GenerateResult> {
       await authorize(target);
       // Cache only pure text model steps; never replay tool calls, provider state or effects.
       const eligible = config.cache && cacheScope?.trim() && !input.tools?.length && !input.providerOptions && input.messages.every(m => m.parts.every(p => p.type === "text"));
-      if (!eligible) return generate(model, target, input, scope);
+      if (!eligible) return generate(model, target, input, scope, messageJsonLength);
       let key: string | undefined, hit = false;
       const middleware = createCachedGenerateMiddleware({
         scope: JSON.stringify([config.cache!.scope, cacheScope, scope ?? null, targetKey(target)]),
@@ -122,12 +122,12 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
       });
       const result = await middleware.wrapGenerate!({ model, input }, async () => {
         input.abortSignal?.throwIfAborted();
-        if (!key) return generate(model, target, input, scope);
+        if (!key) return generate(model, target, input, scope, messageJsonLength);
         let flight = flights.get(key);
         if (!flight) {
-          if (flights.size >= 1024) return generate(model, target, input, scope);
+          if (flights.size >= 1024) return generate(model, target, input, scope, messageJsonLength);
           const controller = new AbortController();
-          const promise = generate(model, target, { ...input, abortSignal: controller.signal }, scope);
+          const promise = generate(model, target, { ...input, abortSignal: controller.signal }, scope, messageJsonLength);
           flight = { controller, promise, users: 0 }; flights.set(key, flight);
           const id = key, current = flight;
           void promise.finally(() => { if (flights.get(id) === current) flights.delete(id); }).catch(() => undefined);
@@ -144,9 +144,9 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
       if (hit) cachedResults.add(result);
       return result;
     },
-    async stream(model: LanguageModel, target: GatewayModelTarget, input: ModelGenerateInput, scope?: string): Promise<AsyncIterable<StreamEvent>> {
+    async stream(model: LanguageModel, target: GatewayModelTarget, input: ModelGenerateInput, scope?: string, messageJsonLength?: number): Promise<AsyncIterable<StreamEvent>> {
       await authorize(target);
-      const lease = await begin(target, input, scope);
+      const lease = await begin(target, input, scope, messageJsonLength);
       try {
         lease.start();
         const source = await model.stream!(input);

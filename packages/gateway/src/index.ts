@@ -25,7 +25,6 @@ import {
   streamObject,
   streamText,
   type AgentRunOutput,
-  type AgentStreamResult,
   type GenerateObjectOptions,
   type GenerateObjectOutput,
   type GenerateResult,
@@ -39,7 +38,6 @@ import {
   type StreamTextResult,
   type TokenUsage
 } from "@zhivex-ai/core/generation";
-import { createAgent, runAgent, streamAgent } from "@zhivex-ai/core/agents";
 import { calculateModelCost } from "@zhivex-ai/core/catalog";
 import type { ZodTypeAny } from "zod";
 import { GatewayCircuitOpenError } from "./circuit-breaker.js";
@@ -159,6 +157,8 @@ type RouteContext = {
   cacheScope?: string;
   autoObject?: boolean;
   toolHistory: boolean;
+  /** Input text measured once for usage estimation. */
+  inputText?: string;
   attempts: GatewayAttempt[];
   candidates: RouteCandidate[];
   routeDecision: GatewayResponse["routeDecision"];
@@ -168,6 +168,31 @@ type RouteContext = {
   recordAttempt: (attempt: GatewayAttempt) => Promise<void>;
   lock: (candidate: RouteCandidate) => Promise<void>;
 };
+
+type GatewayAgentsModule = typeof import("./agents.js");
+let gatewayAgentsModule: Promise<GatewayAgentsModule> | undefined;
+const loadGatewayAgents = (): Promise<GatewayAgentsModule> => (gatewayAgentsModule ??= import("./agents.js"));
+
+const deferIterable = <T>(open: () => Promise<AsyncIterable<T>>): AsyncIterable<T> => ({
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    let opened: Promise<AsyncIterator<T>> | undefined;
+    const iterator = () => (opened ??= open().then((source) => source[Symbol.asyncIterator]()));
+    return {
+      async next() {
+        return (await iterator()).next();
+      },
+      async return(value) {
+        const current = await iterator();
+        return current.return ? current.return(value) : { done: true, value: undefined };
+      },
+      async throw(error) {
+        const current = await iterator();
+        if (current.throw) return current.throw(error);
+        throw error;
+      }
+    };
+  }
+});
 
 const DEFAULT_MAX_FALLBACKS = 8;
 const MAX_MAX_FALLBACKS = 32;
@@ -563,6 +588,83 @@ const createAttemptControl = (
   };
 };
 
+type AttemptSignal = {
+  signal: AbortSignal;
+  abort: (reason?: unknown) => void;
+  timeoutError: Error;
+};
+
+// One idle timer per stream. refresh() restarts that same timer; GatewayError is
+// allocated only when the armed wait actually expires.
+const createIdleEventReader = (
+  control: AttemptSignal,
+  iterator: AsyncIterator<StreamEvent>,
+  streamIdleTimeoutMs: number | false
+) => {
+  let armed = false;
+  let rejectPending: ((error: unknown) => void) | undefined;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const failPending = () => {
+    const reject = rejectPending;
+    if (!reject) return;
+    rejectPending = undefined;
+    armed = false;
+    const reason = control.signal.reason;
+    reject(reason instanceof Error ? reason : control.timeoutError);
+  };
+  if (!control.signal.aborted) control.signal.addEventListener("abort", failPending);
+
+  const onIdle = () => {
+    idleTimer = undefined;
+    if (!armed) return;
+    armed = false;
+    control.abort(new GatewayError(
+      `Provider stream was idle for more than ${streamIdleTimeoutMs}ms.`,
+      false
+    ));
+  };
+
+  const nextEvent = (): Promise<IteratorResult<StreamEvent>> => {
+    const pending = iterator.next();
+    if (control.signal.aborted) {
+      void Promise.resolve(pending).catch(() => undefined);
+      const reason = control.signal.reason;
+      return Promise.reject(reason instanceof Error ? reason : control.timeoutError);
+    }
+    armed = true;
+    if (streamIdleTimeoutMs !== false) {
+      if (idleTimer) idleTimer.refresh();
+      else idleTimer = setTimeout(onIdle, streamIdleTimeoutMs);
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (finish: () => void) => {
+        if (settled) return;
+        settled = true;
+        rejectPending = undefined;
+        armed = false;
+        finish();
+      };
+      rejectPending = (error: unknown) => settle(() => reject(error));
+      void Promise.resolve(pending).then(
+        (value) => settle(() => resolve(value)),
+        (error: unknown) => settle(() => reject(error))
+      );
+    });
+  };
+
+  return {
+    nextEvent,
+    dispose: () => {
+      armed = false;
+      rejectPending = undefined;
+      if (idleTimer) clearTimeout(idleTimer);
+      control.signal.removeEventListener("abort", failPending);
+    }
+  };
+};
+
 const providerHTTPStatus = (error: unknown): number | undefined => {
   if (error instanceof ProviderHTTPError) {
     return error.status;
@@ -692,14 +794,27 @@ const getMaxRetries = (config: GatewayConfig) => {
   });
 };
 
+const RETRY_BACKOFF_CAP_MS = 60_000;
+
+const retryUnitInterval = (config: GatewayConfig) => {
+  if (!config.retryRandom) return Math.random();
+  const sample = config.retryRandom();
+  if (!Number.isFinite(sample)) {
+    throw new GatewayError("Gateway retryRandom must return a finite number.", false);
+  }
+  return Math.min(1, Math.max(0, sample));
+};
+
 const retryBackoffMs = (config: GatewayConfig, retry: number, retryAfterMs?: number) => {
   const base = config.retryBackoffMs ?? 200;
   if (!Number.isFinite(base) || base < 0) {
     throw new GatewayError("Gateway retryBackoffMs must be a finite non-negative number.", false);
   }
+  const exponential = Math.min(RETRY_BACKOFF_CAP_MS, base * 2 ** retry);
+  const jittered = retryUnitInterval(config) * exponential;
   const serverDelay = typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) && retryAfterMs >= 0
     ? retryAfterMs : 0;
-  return Math.min(60_000, Math.max(base * (retry + 1), serverDelay));
+  return Math.min(RETRY_BACKOFF_CAP_MS, Math.max(jittered, serverDelay));
 };
 
 const createAttempt = (
@@ -800,7 +915,7 @@ const normalizeUsage = (
   };
 };
 
-const getInputText = (request: GatewayRequest) =>
+const getInputText = (request: { systemPrompt?: string; messages: GatewayRequest["messages"] }) =>
   `${request.systemPrompt ?? ""}\n${request.messages.map((message) => "parts" in message ? JSON.stringify(message.parts) : message.content).join("\n")}`.trim();
 
 const requestHasImages = (request: { messages?: GatewayRequest["messages"] }) =>
@@ -966,14 +1081,15 @@ const enrichTextResult = (
   attempts: GatewayAttempt[],
   routeDecision: GatewayResponse["routeDecision"],
   startedAt: number,
-  result: GenerateTextOutput
+  result: GenerateTextOutput,
+  inputText?: string
 ): GatewayResponse => ({
   ...result,
   providerUsed: target.provider,
   modelUsed: target.modelId,
   latencyMs: Date.now() - startedAt,
   attempts: [...attempts],
-  usage: normalizeUsage(result.usage, getInputText(request), result.text),
+  usage: normalizeUsage(result.usage, inputText ?? getInputText(request), result.text),
   routeDecision
 });
 
@@ -983,14 +1099,15 @@ const enrichObjectResult = <TSchema extends ZodTypeAny>(
   attempts: GatewayAttempt[],
   routeDecision: GatewayResponse["routeDecision"],
   startedAt: number,
-  result: GenerateObjectOutput<TSchema>
+  result: GenerateObjectOutput<TSchema>,
+  inputText?: string
 ): GatewayObjectResponse<TSchema> => ({
   ...result,
   providerUsed: target.provider,
   modelUsed: target.modelId,
   latencyMs: Date.now() - startedAt,
   attempts: [...attempts],
-  usage: normalizeUsage(result.usage, getInputText(request), result.text),
+  usage: normalizeUsage(result.usage, inputText ?? getInputText(request), result.text),
   routeDecision
 });
 
@@ -1122,6 +1239,7 @@ export const createGateway = (config: GatewayConfig) => {
     request: RouteRequest,
     options: {
       defaultIntent?: GatewayTaskIntent;
+      measureInputText?: boolean;
       extraRequiredCapabilities?: NonNullable<GatewayRequest["requiredCapabilities"]>;
       getSkipReason?: (model: LanguageModel, target: GatewayModelTarget) => RouteSkip | undefined;
       onWinner?: (
@@ -1134,6 +1252,13 @@ export const createGateway = (config: GatewayConfig) => {
     validateRouteRequest(config, request);
     const mode = request.routingMode ?? "balanced";
     const intent = request.taskIntent ?? options.defaultIntent ?? "chat";
+    const messagesJson = config.costAccounting ? JSON.stringify(request.messages ?? []) : undefined;
+    const costInputTokens = messagesJson === undefined ? undefined : estimateTokens(
+      [request.systemPrompt, request.system, request.instructions, request.prompt, messagesJson].filter(Boolean).join("\n")
+    );
+    const inputText = options.measureInputText && request.messages
+      ? getInputText({ systemPrompt: request.systemPrompt, messages: request.messages })
+      : undefined;
     const orderedTargets = config.adaptiveRouting
       ? [request.primary, ...(request.fallbacks ?? [])].filter((target, index, all) => all.findIndex(x => sameTarget(x, target)) === index)
       : orderTargets(mode, intent, request.primary, request.fallbacks ?? [], config);
@@ -1144,7 +1269,7 @@ export const createGateway = (config: GatewayConfig) => {
       routeDecision.estimatedCosts = orderedTargets.map(target => calculateModelCost({
         catalog: config.modelCatalog!, ...target,
         usage: {
-          inputTokens: estimateTokens([request.systemPrompt, request.system, request.instructions, request.prompt, JSON.stringify(request.messages ?? [])].filter(Boolean).join("\n")),
+          inputTokens: costInputTokens!,
           outputTokens: config.costAccounting!.expectedOutputTokens ?? request.maxTokens
         },
         cacheAssumption: "none", estimated: true
@@ -1310,6 +1435,7 @@ export const createGateway = (config: GatewayConfig) => {
     const context: RouteContext = {
       budgetScope: request.budgetScope,
       cacheScope: request.cacheScope,
+      inputText,
       toolHistory: requestHasToolHistory(request),
       attempts,
       candidates,
@@ -1380,6 +1506,9 @@ export const createGateway = (config: GatewayConfig) => {
       return disposition;
     };
 
+    const admissionMessageJsonLength = (messages: ModelGenerateInput["messages"], maxTokens: number | undefined) =>
+      config.admission && maxTokens !== undefined ? JSON.stringify(messages).length : undefined;
+
     const providerRequestLimit = (input: ModelGenerateInput) => Math.min(
       input.maxProviderRequests ?? Number.MAX_SAFE_INTEGER,
       (config.budget || config.admission) ? 1 : maxTotalAttempts - totalProviderAttempts + 1
@@ -1424,6 +1553,16 @@ export const createGateway = (config: GatewayConfig) => {
         ? [context.winner, ...context.candidates.filter((candidate) => candidate !== context.winner)]
         : context.candidates;
       const maxRetries = getMaxRetries(config);
+      let sharedMessageJsonLength: number | undefined;
+      let measuredSharedMessages = false;
+      const messageJsonLengthFor = (messages: ModelGenerateInput["messages"], maxTokens: number | undefined) => {
+        if (messages !== input.messages) return admissionMessageJsonLength(messages, maxTokens);
+        if (!measuredSharedMessages) {
+          sharedMessageJsonLength = admissionMessageJsonLength(input.messages, input.maxTokens);
+          measuredSharedMessages = true;
+        }
+        return sharedMessageJsonLength;
+      };
 
       for (const candidate of candidates) {
         const candidateInput = prepareInput(candidate.model, input);
@@ -1433,6 +1572,7 @@ export const createGateway = (config: GatewayConfig) => {
           await recordInputSkip(candidate, inputSkipReason);
           continue;
         }
+        const messageJsonLength = messageJsonLengthFor(candidateInput.messages, candidateInput.maxTokens);
 
         for (let retry = 0; retry <= maxRetries; retry += 1) {
           const timeoutMs = getAttemptTimeoutMs(config, candidate.target.provider);
@@ -1455,7 +1595,7 @@ export const createGateway = (config: GatewayConfig) => {
                 ...prepareHistoryInput(candidate.model, candidateInput, context.toolHistory),
                 abortSignal: control.signal,
                 maxProviderRequests: providerRequestLimit(candidateInput)
-              }, context.budgetScope, context.cacheScope)
+              }, context.budgetScope, context.cacheScope, messageJsonLength)
             );
             recordInternalRequests(result.providerRequestCount);
             control.stopTimeout();
@@ -1534,6 +1674,16 @@ export const createGateway = (config: GatewayConfig) => {
         ? [context.winner, ...context.candidates.filter((candidate) => candidate !== context.winner)]
         : context.candidates;
       const maxRetries = getMaxRetries(config);
+      let sharedMessageJsonLength: number | undefined;
+      let measuredSharedMessages = false;
+      const messageJsonLengthFor = (messages: ModelGenerateInput["messages"], maxTokens: number | undefined) => {
+        if (messages !== input.messages) return admissionMessageJsonLength(messages, maxTokens);
+        if (!measuredSharedMessages) {
+          sharedMessageJsonLength = admissionMessageJsonLength(input.messages, input.maxTokens);
+          measuredSharedMessages = true;
+        }
+        return sharedMessageJsonLength;
+      };
 
       for (const candidate of candidates) {
         const candidateInput = prepareInput(candidate.model, input);
@@ -1547,6 +1697,7 @@ export const createGateway = (config: GatewayConfig) => {
           await recordInputSkip(candidate, "Skipped because model does not support streaming.");
           continue;
         }
+        const messageJsonLength = messageJsonLengthFor(candidateInput.messages, candidateInput.maxTokens);
 
         for (let retry = 0; retry <= maxRetries; retry += 1) {
           const timeoutMs = getAttemptTimeoutMs(config, candidate.target.provider);
@@ -1570,7 +1721,7 @@ export const createGateway = (config: GatewayConfig) => {
                 ...prepareHistoryInput(candidate.model, candidateInput, context.toolHistory),
                 abortSignal: control.signal,
                 maxProviderRequests: providerRequestLimit(candidateInput)
-              }, context.budgetScope)
+              }, context.budgetScope, messageJsonLength)
             );
             iterator = providerStream[Symbol.asyncIterator]();
             const firstEvent = await control.waitFor(iterator.next());
@@ -1589,24 +1740,7 @@ export const createGateway = (config: GatewayConfig) => {
               config,
               candidate.target.provider
             );
-            const nextEvent = async () => {
-              if (streamIdleTimeoutMs === false) {
-                return control.waitFor(iterator!.next());
-              }
-              const idleError = new GatewayError(
-                `Provider stream was idle for more than ${streamIdleTimeoutMs}ms.`,
-                false
-              );
-              const timer = setTimeout(
-                () => control.abort(idleError),
-                streamIdleTimeoutMs
-              );
-              try {
-                return await control.waitFor(iterator!.next());
-              } finally {
-                clearTimeout(timer);
-              }
-            };
+            const reader = createIdleEventReader(control, iterator, streamIdleTimeoutMs);
 
             return (async function* () {
               let completed = false;
@@ -1616,7 +1750,7 @@ export const createGateway = (config: GatewayConfig) => {
               try {
                 yield firstEvent.value;
                 for (;;) {
-                  const next = await nextEvent();
+                  const next = await reader.nextEvent();
                   if (next.done) {
                     completed = true;
                     metrics.end("success", usage?.outputTokens);
@@ -1665,6 +1799,7 @@ export const createGateway = (config: GatewayConfig) => {
                   permit?.end("neutral");
                   control.abort(new DOMException("Gateway stream consumer closed.", "AbortError"));
                 }
+                reader.dispose();
                 control.dispose();
                 // Cleanup is best-effort: an iterator may ignore abort while next() is pending.
                 // Never let return() mask the original failure or hold collect() open.
@@ -1758,6 +1893,7 @@ export const createGateway = (config: GatewayConfig) => {
     request: RouteRequest,
     options: {
       defaultIntent?: GatewayTaskIntent;
+      measureInputText?: boolean;
       extraRequiredCapabilities?: NonNullable<GatewayRequest["requiredCapabilities"]>;
       getSkipReason?: (model: LanguageModel, target: GatewayModelTarget) => RouteSkip | undefined;
       onWinner?: (
@@ -1774,9 +1910,30 @@ export const createGateway = (config: GatewayConfig) => {
     };
   };
 
+  const gatewayAgentDefinition = (request: GatewayAgentRequest, route: { model: LanguageModel; context: RouteContext }) => ({
+    ...request.agent,
+    id: request.agentId,
+    model: route.model,
+    instructions: request.instructions,
+    tools: request.tools,
+    maxSteps: request.maxSteps,
+    temperature: request.temperature,
+    maxTokens: request.maxTokens,
+    reasoning: request.reasoning,
+    toolExecution: request.toolExecution,
+    toolApprovalPolicy: request.toolApprovalPolicy,
+    providerOptions: request.providerOptions,
+    policy: request.policy,
+    metadata: request.metadata,
+    store: agentHistoryStore(request.store, route.context, request.agent ? request.metadata?.gatewayAgentRouteBinding as string : undefined),
+    memory: request.memory,
+    onTelemetryEvent: request.onTelemetryEvent,
+    hookFailurePolicy: request.hookFailurePolicy
+  });
+
   const gateway = {
     async generate(request: GatewayRequest): Promise<GatewayResponse> {
-      const route = createStandardRoute(request);
+      const route = createStandardRoute(request, { measureInputText: true });
       const result = await generateText(createTextOptions(route.model, request));
       return enrichTextResult(
         request,
@@ -1784,12 +1941,14 @@ export const createGateway = (config: GatewayConfig) => {
         route.context.attempts,
         route.context.routeDecision,
         route.context.startedAt,
-        result
+        result,
+        route.context.inputText
       );
     },
 
     streamText(request: GatewayRequest): GatewayStreamTextResult {
       const route = createStandardRoute(request, {
+        measureInputText: true,
         extraRequiredCapabilities: { streaming: true }
       });
       const streamResult = streamText(createTextOptions(route.model, request));
@@ -1805,7 +1964,8 @@ export const createGateway = (config: GatewayConfig) => {
             route.context.attempts,
             route.context.routeDecision,
             route.context.startedAt,
-            result
+            result,
+            route.context.inputText
           );
         }
       };
@@ -1815,6 +1975,7 @@ export const createGateway = (config: GatewayConfig) => {
       request: GatewayGenerateObjectRequest<TSchema>
     ): Promise<GatewayObjectResponse<TSchema>> {
       const route = createStandardRoute(request, {
+        measureInputText: true,
         getSkipReason: (model) => {
           const message = objectCapabilitySkipReason(model, request);
           return message ? { reasonCode: "operation-skip", message } : undefined;
@@ -1837,7 +1998,8 @@ export const createGateway = (config: GatewayConfig) => {
         route.context.startedAt,
         { ...result, objectMode: route.context.autoObject
           ? (route.context.winner!.model.capabilities.structuredOutput ? "native" : "prompted")
-          : result.objectMode } as GenerateObjectOutput<TSchema>
+          : result.objectMode } as GenerateObjectOutput<TSchema>,
+        route.context.inputText
       );
     },
 
@@ -1845,6 +2007,7 @@ export const createGateway = (config: GatewayConfig) => {
       request: GatewayGenerateObjectRequest<TSchema>
     ): GatewayStreamObjectResult<TSchema> {
       const route = createStandardRoute(request, {
+        measureInputText: true,
         extraRequiredCapabilities: { streaming: true },
         getSkipReason: (model) => {
           const message = objectCapabilitySkipReason(model, request);
@@ -1874,7 +2037,8 @@ export const createGateway = (config: GatewayConfig) => {
             route.context.startedAt,
             { ...result, objectMode: route.context.autoObject
               ? (route.context.winner!.model.capabilities.structuredOutput ? "native" : "prompted")
-              : result.objectMode }
+              : result.objectMode },
+            route.context.inputText
           );
         }
       };
@@ -1903,27 +2067,9 @@ export const createGateway = (config: GatewayConfig) => {
         }
       });
       if (request.state?.metadata?.gatewayPortableHistory === true) route.context.toolHistory = true;
-      const agent = createAgent({
-        ...request.agent,
-        id: request.agentId,
-        model: route.model,
-        instructions: request.instructions,
-        tools: request.tools,
-        maxSteps: request.maxSteps,
-        temperature: request.temperature,
-        maxTokens: request.maxTokens,
-        reasoning: request.reasoning,
-        toolExecution: request.toolExecution,
-        toolApprovalPolicy: request.toolApprovalPolicy,
-        providerOptions: request.providerOptions,
-        policy: request.policy,
-        metadata: request.metadata,
-        store: agentHistoryStore(request.store, route.context, request.agent ? request.metadata?.gatewayAgentRouteBinding as string : undefined),
-        memory: request.memory,
-        onTelemetryEvent: request.onTelemetryEvent,
-        hookFailurePolicy: request.hookFailurePolicy
-      });
-      const result = await runAgent(agent, createAgentRunInput(request));
+      const { createAgent, runAgent: runCoreAgent } = await loadGatewayAgents();
+      const agent = createAgent(gatewayAgentDefinition(request, route));
+      const result = await runCoreAgent(agent, createAgentRunInput(request));
 
       return enrichAgentResult(
         targetForResult(route.context),
@@ -1958,33 +2104,17 @@ export const createGateway = (config: GatewayConfig) => {
         }
       });
       if (request.state?.metadata?.gatewayPortableHistory === true) route.context.toolHistory = true;
-      const agent = createAgent({
-        ...request.agent,
-        id: request.agentId,
-        model: route.model,
-        instructions: request.instructions,
-        tools: request.tools,
-        maxSteps: request.maxSteps,
-        temperature: request.temperature,
-        maxTokens: request.maxTokens,
-        reasoning: request.reasoning,
-        toolExecution: request.toolExecution,
-        toolApprovalPolicy: request.toolApprovalPolicy,
-        providerOptions: request.providerOptions,
-        policy: request.policy,
-        metadata: request.metadata,
-        store: agentHistoryStore(request.store, route.context, request.agent ? request.metadata?.gatewayAgentRouteBinding as string : undefined),
-        memory: request.memory,
-        onTelemetryEvent: request.onTelemetryEvent,
-        hookFailurePolicy: request.hookFailurePolicy
+      const pending = loadGatewayAgents().then(({ createAgent, streamAgent: streamCoreAgent }) => {
+        const agent = createAgent(gatewayAgentDefinition(request, route));
+        return streamCoreAgent(agent, createAgentRunInput(request));
       });
-      const streamResult: AgentStreamResult = streamAgent(agent, createAgentRunInput(request));
+      void pending.catch(() => undefined);
 
       return {
-        eventStream: streamResult.eventStream,
-        textStream: streamResult.textStream,
+        eventStream: deferIterable(() => pending.then((result) => result.eventStream)),
+        textStream: deferIterable(() => pending.then((result) => result.textStream)),
         collect: async () => {
-          const result = await streamResult.collect();
+          const result = await (await pending).collect();
           return enrichAgentResult(
             targetForResult(route.context),
             route.context.attempts,

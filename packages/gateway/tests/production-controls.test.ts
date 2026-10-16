@@ -60,7 +60,7 @@ it.each([false, true])("releases admission on deadline even if provider ignores 
 it("shares the deadline across fallback and respects the server ceiling", async () => {
   let calls = 0;
   const model = fixture(); model.generate = async () => { calls++; await pause(20); throw new Error("503"); };
-  const gateway = createGateway({ adapters: adapter(model), timeoutMs: 30, retryBackoffMs: 1000 });
+  const gateway = createGateway({ adapters: adapter(model), timeoutMs: 30, retryBackoffMs: 1000, retryRandom: () => 1 });
   await expect(gateway.generate({ ...request, timeoutMs: 10000 })).rejects.toBeInstanceOf(GatewayDeadlineError);
   expect(calls).toBe(1);
 });
