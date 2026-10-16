@@ -2,6 +2,7 @@ import { toJSONSchema, z, type ZodTypeAny } from "zod";
 
 import { streamAgent } from "./agent/execution.js";
 import { isCallableToolDefinition, isHostedToolDefinition } from "./messages.js";
+import { createMergedAbortSignal } from "./runtime.js";
 import type {
   AgentDefinition,
   AgentStreamEvent,
@@ -154,6 +155,12 @@ interface Session {
   phase: "new" | "accepted" | "ready";
   inflight: Map<string, AbortController>;
 }
+
+/** Numeric `1` and string `"1"` are different JSON-RPC ids and must not share a slot. */
+const inflightKey = (id: string | number): string =>
+  typeof id === "number" ? `n:${id}` : `s:${id}`;
+
+const closedReason = () => new DOMException("MCP server is closed.", "AbortError");
 
 interface RegisteredTool {
   name: string;
@@ -383,14 +390,43 @@ const executeTool = async (
     return toolError("VALIDATION_ERROR", `Tool "${definition.name}" rejected its arguments.`);
   }
   const context = executionContext(definition, input, call);
-  if (definition.isEnabled && !await definition.isEnabled(parsed.data, context)) {
-    return toolError("TOOL_DISABLED", `Tool "${definition.name}" is disabled.`);
-  }
-  for (const guardrail of definition.inputGuardrails ?? []) {
-    const trigger = await guardrail({ tool: definition, input: parsed.data, context });
-    if (trigger?.triggered) {
-      return toolError("GUARDRAIL", `Tool "${definition.name}" was rejected by an input guardrail.`);
+  const invoke = <T>(run: () => T | Promise<T>): Promise<T> => {
+    const pending = Promise.resolve().then(run);
+    pending.catch(() => undefined);
+    return withDeadline(call, () => pending);
+  };
+  const failed = (error: unknown, started: boolean): ToolPayload => {
+    if (error instanceof McpServerError && error.code === "TIMEOUT") {
+      return toolError(
+        "TIMEOUT",
+        started
+          ? `Tool "${definition.name}" timed out. Reconcile the effect before retrying.`
+          : `Tool "${definition.name}" timed out.`
+      );
     }
+    if (call.signal.aborted) {
+      return toolError(
+        "CANCELLED",
+        started
+          ? `Tool "${definition.name}" was cancelled. Reconcile the effect before retrying.`
+          : `Tool "${definition.name}" was cancelled.`
+      );
+    }
+    return toolError("TOOL_FAILED", `Tool "${definition.name}" failed.`);
+  };
+
+  try {
+    if (definition.isEnabled && !await invoke(() => definition.isEnabled!(parsed.data, context))) {
+      return toolError("TOOL_DISABLED", `Tool "${definition.name}" is disabled.`);
+    }
+    for (const guardrail of definition.inputGuardrails ?? []) {
+      const trigger = await invoke(() => guardrail({ tool: definition, input: parsed.data, context }));
+      if (trigger?.triggered) {
+        return toolError("GUARDRAIL", `Tool "${definition.name}" was rejected by an input guardrail.`);
+      }
+    }
+  } catch (error) {
+    return failed(error, false);
   }
   if (definition.requiresApproval === true) {
     return toolError(
@@ -401,24 +437,25 @@ const executeTool = async (
   }
 
   let output: unknown;
-  const pending = Promise.resolve(definition.execute(parsed.data, context));
-  pending.catch(() => undefined);
   try {
-    output = await withDeadline(call, () => pending);
+    output = await invoke(() => definition.execute(parsed.data, context));
   } catch (error) {
-    if (error instanceof McpServerError && error.code === "TIMEOUT") {
-      return toolError("TIMEOUT", `Tool "${definition.name}" timed out. Reconcile the effect before retrying.`);
-    }
-    if (call.signal.aborted) {
-      return toolError("CANCELLED", `Tool "${definition.name}" was cancelled. Reconcile the effect before retrying.`);
-    }
-    return toolError("TOOL_FAILED", `Tool "${definition.name}" failed.`);
+    return failed(error, true);
   }
-  for (const guardrail of definition.outputGuardrails ?? []) {
-    const trigger = await guardrail({ tool: definition, input: parsed.data, output: output as JsonValue, context });
-    if (trigger?.triggered) {
-      return toolError("GUARDRAIL", `Tool "${definition.name}" was rejected by an output guardrail.`);
+  try {
+    for (const guardrail of definition.outputGuardrails ?? []) {
+      const trigger = await invoke(() => guardrail({
+        tool: definition,
+        input: parsed.data,
+        output: output as JsonValue,
+        context
+      }));
+      if (trigger?.triggered) {
+        return toolError("GUARDRAIL", `Tool "${definition.name}" was rejected by an output guardrail.`);
+      }
     }
+  } catch (error) {
+    return failed(error, true);
   }
   return successPayload(output, call.maxResultBytes, `Tool "${definition.name}" result exceeded the byte limit.`);
 };
@@ -586,7 +623,7 @@ const handleMessage = async (
       const params = isRecord(message.params) ? message.params : undefined;
       const target = params ? requestId(params.requestId) : undefined;
       if (target !== undefined) {
-        session.inflight.get(String(target))?.abort(new DOMException("MCP request was cancelled.", "AbortError"));
+        session.inflight.get(inflightKey(target))?.abort(new DOMException("MCP request was cancelled.", "AbortError"));
       }
     } else if (method === "notifications/initialized" && session.phase === "accepted") {
       session.phase = "ready";
@@ -638,7 +675,7 @@ const handleMessage = async (
     const onAbort = () => controller.abort(signal.reason);
     if (signal.aborted) onAbort();
     else signal.addEventListener("abort", onAbort, { once: true });
-    session.inflight.set(String(id), controller);
+    session.inflight.set(inflightKey(id), controller);
     const token = progressTokenOf(params);
     let progress = 0;
     try {
@@ -661,7 +698,7 @@ const handleMessage = async (
       return { kind: "response", message: rpcResult(id, result) };
     } finally {
       clearTimeout(timer);
-      session.inflight.delete(String(id));
+      session.inflight.delete(inflightKey(id));
       signal.removeEventListener("abort", onAbort);
     }
   }
@@ -695,7 +732,7 @@ export function createMcpServer(options: McpServerOptions = {}): McpServer {
     close() {
       if (state.closed) return;
       state.closed = true;
-      state.lifetime.abort();
+      state.lifetime.abort(closedReason());
     }
   };
   sessions.set(server, state);
@@ -777,7 +814,7 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
   const maxResponseBytes = positive(options.maxResponseBytes, DEFAULT_RESPONSE_BYTES);
   const sessionsById = new Map<string, Session>();
   const lifetime = new AbortController();
-  state.lifetime.signal.addEventListener("abort", () => lifetime.abort(), { once: true });
+  state.lifetime.signal.addEventListener("abort", () => lifetime.abort(state.lifetime.signal.reason), { once: true });
 
   const fetch = async (request: Request): Promise<Response> => {
     if (lifetime.signal.aborted || state.closed) return empty(503);
@@ -820,8 +857,10 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
     if (!isInitialize && !existing) return empty(404);
     const session = existing ?? { phase: "new" as const, inflight: new Map<string, AbortController>() };
     const streamProgress = !isInitialize && accept.includes("text/event-stream") && progressTokenOf(incoming?.params) !== undefined;
+    const linked = createMergedAbortSignal(request.signal, lifetime.signal);
     const dispatch = (emit: (message: unknown) => Promise<void>) =>
-      handleMessage(state, session, payload, emit, request.signal, timeoutMs);
+      handleMessage(state, session, payload, emit, linked.signal ?? request.signal, timeoutMs)
+        .finally(() => linked.cleanup());
 
     if (streamProgress) return sseResponse(maxResponseBytes, dispatch);
 
@@ -842,7 +881,7 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
   return {
     fetch,
     async close() {
-      lifetime.abort();
+      lifetime.abort(closedReason());
       sessionsById.clear();
       server.close();
     }
@@ -896,19 +935,33 @@ export function createMcpStdioServer(options: McpStdioServerOptions): McpStdioSe
   const maxMessageBytes = positive(options.maxMessageBytes, DEFAULT_RESPONSE_BYTES);
   const session: Session = { phase: "new", inflight: new Map() };
   const lifetime = new AbortController();
-  state.lifetime.signal.addEventListener("abort", () => lifetime.abort(), { once: true });
+  state.lifetime.signal.addEventListener("abort", () => lifetime.abort(state.lifetime.signal.reason), { once: true });
   const encoder = new TextEncoder();
   const writer = options.output.getWriter();
   let writeChain: Promise<void> = Promise.resolve();
+  const encodeLine = (message: unknown): Uint8Array => encoder.encode(`${JSON.stringify(message)}\n`);
+  const failSession = async (reason: string) => {
+    if (!lifetime.signal.aborted) lifetime.abort(new DOMException(reason, "AbortError"));
+    await writer.close().catch(() => undefined);
+  };
   const writeMessage = (message: unknown): Promise<void> => {
     writeChain = writeChain.then(async () => {
-      const payload = JSON.stringify(message);
-      const bytes = encoder.encode(`${payload}\n`);
-      if (bytes.byteLength > maxMessageBytes) {
-        throw new McpServerError("LIMIT_EXCEEDED", "MCP message exceeded byte limit.");
+      if (lifetime.signal.aborted) return;
+      const bytes = encodeLine(message);
+      if (bytes.byteLength <= maxMessageBytes) {
+        await writer.write(bytes);
+        return;
       }
-      await writer.write(bytes);
-    }).catch(() => undefined);
+      const id = isRecord(message) ? requestId(message.id) ?? null : null;
+      const fallback = encodeLine(rpcError(id, -32603, "MCP message exceeded byte limit."));
+      if (fallback.byteLength <= maxMessageBytes) {
+        await writer.write(fallback);
+        return;
+      }
+      await failSession("MCP message exceeded byte limit.");
+    }).catch(async () => {
+      await failSession("MCP server failed.");
+    });
     return writeChain;
   };
 
@@ -944,7 +997,7 @@ export function createMcpStdioServer(options: McpStdioServerOptions): McpStdioSe
           const params = isRecord(parsed.params) ? parsed.params : undefined;
           const target = params ? requestId(params.requestId) : undefined;
           if (target !== undefined) {
-            session.inflight.get(String(target))?.abort(new DOMException("MCP request was cancelled.", "AbortError"));
+            session.inflight.get(inflightKey(target))?.abort(new DOMException("MCP request was cancelled.", "AbortError"));
           }
           continue;
         }

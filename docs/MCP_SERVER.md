@@ -129,7 +129,7 @@ outside MCP.
 
 `createMcpHttpServer` returns `{ fetch, close }`. Mount `fetch` on any host
 that can pass a standard `Request` (Node, Bun, or a platform adapter). One
-transport owns one server: `close()` aborts that server.
+transport owns one server: `close()` aborts that server and any in-flight call.
 
 Authentication runs before the body is read. Throw `McpServerError` with
 `AUTH_REQUIRED` for 401 and `WWW-Authenticate: Bearer`, or `AUTH_REJECTED` for
@@ -156,7 +156,7 @@ Unknown methods return JSON-RPC `-32601`.
 
 | Option | Default | Applies to |
 | --- | --- | --- |
-| `timeoutMs` | 30 seconds | One tool execution or agent run. HTTP may set a shorter request timeout. |
+| `timeoutMs` | 30 seconds | One tool call, including `isEnabled` and guardrails, or one agent run. HTTP may set a shorter request timeout. |
 | `maxResultBytes` | 1 MiB | Serialized tool or agent result. The body is withheld. |
 | `maxRequestBytes` | 1 MiB | HTTP `Content-Length` and the bytes actually read. |
 | `maxResponseBytes` | 4 MiB | One HTTP JSON body or the SSE frames of one POST. |
@@ -168,8 +168,13 @@ have happened. `LIMIT_EXCEEDED` on a result also means the tool or agent
 already ran; the payload is not included. Oversized HTTP requests return 413
 and are not dispatched.
 
-`notifications/cancelled` aborts the matching in-flight call. The server does
-not invent an idempotency key.
+`notifications/cancelled` aborts the matching in-flight call. Numeric and
+string JSON-RPC ids stay distinct, so `1` does not cancel `"1"`. The server
+does not invent an idempotency key.
+
+An outbound stdio message larger than `maxMessageBytes` is replaced by a
+JSON-RPC error when that error fits. When even the error does not fit, the
+session ends instead of leaving the client waiting.
 
 ## Stdio
 

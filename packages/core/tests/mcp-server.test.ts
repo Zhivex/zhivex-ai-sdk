@@ -447,4 +447,239 @@ describe("experimental MCP server", () => {
     client.close();
     await http.close();
   });
+
+  it("returns TOOL_FAILED when execute throws synchronously", async () => {
+    const server = createMcpServer({
+      tools: {
+        boom: tool({
+          name: "boom",
+          schema: z.object({}),
+          execute: () => {
+            throw new Error("secret boom");
+          }
+        })
+      }
+    });
+    const result = await useHttp(server, (client) => client.callTool({ name: "boom", arguments: {} }));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ code: "TOOL_FAILED" });
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("bounds isEnabled and output guardrails with the call deadline", async () => {
+    const server = createMcpServer({
+      timeoutMs: 30,
+      tools: {
+        gate: tool({
+          name: "gate",
+          schema: z.object({}),
+          isEnabled: () => new Promise<boolean>(() => undefined),
+          execute: () => ({ ok: true })
+        }),
+        checked: tool({
+          name: "checked",
+          schema: z.object({}),
+          execute: () => ({ ok: true }),
+          outputGuardrails: [() => new Promise<void>(() => undefined)]
+        }),
+        screened: tool({
+          name: "screened",
+          schema: z.object({}),
+          inputGuardrails: [() => new Promise<void>(() => undefined)],
+          execute: () => ({ ok: true })
+        })
+      }
+    });
+    const result = await useHttp(server, async (client) => ({
+      gate: await client.callTool({ name: "gate", arguments: {} }),
+      screened: await client.callTool({ name: "screened", arguments: {} }),
+      checked: await client.callTool({ name: "checked", arguments: {} })
+    }));
+    expect(result.gate.structuredContent).toMatchObject({ code: "TIMEOUT" });
+    expect(result.screened.structuredContent).toMatchObject({ code: "TIMEOUT" });
+    expect(result.checked.structuredContent).toMatchObject({ code: "TIMEOUT" });
+    expect(JSON.stringify(result.checked)).not.toContain("\"ok\":true");
+  });
+
+  it("aborts an in-flight HTTP tool call when the server closes", async () => {
+    let sawAbort = false;
+    let started = false;
+    const server = createMcpServer({
+      timeoutMs: 30_000,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: (_input, context) => new Promise(() => {
+            started = true;
+            context?.abortSignal?.addEventListener("abort", () => {
+              sawAbort = true;
+            });
+          })
+        })
+      }
+    });
+    const http = createMcpHttpServer(server);
+    const client = createMcpHttpClient({
+      url: "https://mcp.test/mcp",
+      fetch: fetchHandler((request) => http.fetch(request))
+    });
+    const pending = client.callTool({ name: "hang", arguments: {} });
+    const startedAt = Date.now();
+    while (!started && Date.now() - startedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(started).toBe(true);
+    await http.close();
+    const result = await Promise.race([
+      pending,
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("close did not finish the call")), 500))
+    ]);
+    expect(sawAbort).toBe(true);
+    expect(result.structuredContent).toMatchObject({ code: "CANCELLED" });
+    client.close();
+  });
+
+  it("cancels numeric and string JSON-RPC ids independently", async () => {
+    const aborted: string[] = [];
+    let started = 0;
+    const hang = (name: string) => tool({
+      name,
+      schema: z.object({}),
+      execute: (_input, context) => new Promise(() => {
+        started += 1;
+        context?.abortSignal?.addEventListener("abort", () => {
+          aborted.push(name);
+        });
+      })
+    });
+    const server = createMcpServer({
+      timeoutMs: 5_000,
+      tools: { left: hang("left"), right: hang("right") }
+    });
+    let inbound!: ReadableStreamDefaultController<Uint8Array>;
+    const input = new ReadableStream<Uint8Array>({ start(controller) { inbound = controller; } });
+    const chunks: Uint8Array[] = [];
+    const output = new WritableStream<Uint8Array>({
+      write(chunk) {
+        chunks.push(chunk);
+      }
+    });
+    const session = createMcpStdioServer({ server, input, output });
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const send = (message: unknown) => {
+      inbound.enqueue(encoder.encode(`${JSON.stringify(message)}\n`));
+    };
+    const readLine = async () => {
+      const deadline = Date.now() + 1_000;
+      while (Date.now() < deadline) {
+        const buffered = decoder.decode(Buffer.concat(chunks));
+        const newline = buffered.indexOf("\n");
+        if (newline !== -1) {
+          chunks.length = 0;
+          const rest = encoder.encode(buffered.slice(newline + 1));
+          if (rest.byteLength > 0) chunks.push(rest);
+          return JSON.parse(buffered.slice(0, newline)) as { id?: number | string; error?: { code?: number } };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      throw new Error("timed out waiting for stdio");
+    };
+    try {
+      send({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "id-test", version: "1" } }
+      });
+      await readLine();
+      send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "left", arguments: {} } });
+      send({ jsonrpc: "2.0", id: "1", method: "tools/call", params: { name: "right", arguments: {} } });
+      const startedAt = Date.now();
+      while (started < 2 && Date.now() - startedAt < 1_000) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(started).toBe(2);
+      send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } });
+      const leftAt = Date.now();
+      while (!aborted.includes("left") && Date.now() - leftAt < 1_000) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(aborted).toEqual(["left"]);
+      send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: "1" } });
+      const rightAt = Date.now();
+      while (!aborted.includes("right") && Date.now() - rightAt < 1_000) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(aborted).toEqual(["left", "right"]);
+    } finally {
+      inbound.close();
+      await session.close();
+    }
+  });
+
+  it("replaces an oversized stdio response with a bounded JSON-RPC error", async () => {
+    const server = createMcpServer({
+      tools: {
+        wide: tool({
+          name: "wide",
+          description: "x".repeat(2_000),
+          schema: z.object({}),
+          execute: () => ({ ok: true })
+        })
+      }
+    });
+    let inbound!: ReadableStreamDefaultController<Uint8Array>;
+    const input = new ReadableStream<Uint8Array>({ start(controller) { inbound = controller; } });
+    const chunks: Uint8Array[] = [];
+    const output = new WritableStream<Uint8Array>({
+      write(chunk) {
+        chunks.push(chunk);
+      }
+    });
+    const session = createMcpStdioServer({ server, input, output, maxMessageBytes: 512 });
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const send = (message: unknown) => {
+      inbound.enqueue(encoder.encode(`${JSON.stringify(message)}\n`));
+    };
+    const readLine = async () => {
+      const deadline = Date.now() + 1_000;
+      while (Date.now() < deadline) {
+        const buffered = decoder.decode(Buffer.concat(chunks));
+        const newline = buffered.indexOf("\n");
+        if (newline !== -1) {
+          chunks.length = 0;
+          const rest = encoder.encode(buffered.slice(newline + 1));
+          if (rest.byteLength > 0) chunks.push(rest);
+          return buffered.slice(0, newline);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      throw new Error("timed out waiting for stdio");
+    };
+    try {
+      send({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "limit-test", version: "1" } }
+      });
+      const initialized = await readLine();
+      expect(initialized).toContain("2025-11-25");
+      send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+      const listed = await readLine();
+      expect(listed).not.toContain("x".repeat(20));
+      expect(JSON.parse(listed)).toMatchObject({
+        id: 2,
+        error: { code: -32603, message: "MCP message exceeded byte limit." }
+      });
+    } finally {
+      inbound.close();
+      await session.close();
+    }
+  });
 });
