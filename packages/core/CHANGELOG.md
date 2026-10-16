@@ -9,7 +9,7 @@
 ### Patch Changes
 
 - `generateText` and `streamText` reject duplicate tool-call IDs with `ValidationError` before approval policy and tool execution. Approval decisions are stored per call, so one call cannot overwrite another call's denial.
-- Workflow state `userId` must match the authenticated caller. A caller-supplied `sessionId` must match the state, and a state `workflowId` must match the workflow definition. Caller-supplied execution claims are ignored. A persisted step takes a 15-minute execution claim; a concurrent resume fails with `ConflictError` before the step runs.
+- Workflow state `userId` must match the authenticated caller. A caller-supplied `sessionId` must match the state, and a state `workflowId` must match the workflow definition. Caller-supplied execution claims are ignored. A persisted step takes a 15-minute execution claim; a concurrent resume fails with `ConflictError` before the step runs. Each persisted invocation writes that claim and then the terminal state, so the workflow record revision advances twice per invocation.
 - Runner approval resumes compare-and-swap the loaded session revision. The losing resume fails with `ConflictError` before the approved tool runs.
 - Memory, SQLite, and PostgreSQL idempotency claims are insert-only. Claiming a new idempotency key for an existing run id throws `ConflictError` and leaves the stored run unchanged.
 
