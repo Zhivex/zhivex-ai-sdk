@@ -963,7 +963,7 @@ Agent stream events currently include:
 - `agent-approval-resolved`
 - `agent-run-finish`
 
-Those events are exposed both through `streamAgent().eventStream` and through UI/SSE helpers such as `toUIAgentStreamResponse()` and `toUIMessageStream()`.
+Those events are exposed through `streamAgent().eventStream`. UI/SSE helpers such as `toUIMessageStream()`, `toUIMessageStreamResponse()`, `toUIAgentStreamResponse()`, and `toUIRunnerStreamResponse()` project `agent-step-finish` to a status summary and omit `agent-run-finish` unless `includeAgentRunFinish` is set.
 
 When you need to reason about provider-specific agent features at runtime, inspect `model.capabilities.agentCapabilities` or use helpers such as `getAgentCapabilities()`, `getAgentSupportTier()`, `inspectProviderAgentSupport()`, `createProviderSupportMatrix()`, `renderProviderSupportMatrix()`, `createProviderSupportDriftReport()`, and `getHostedToolClass()`. Hosted tools now carry a normalized `toolClass` like `web-search`, `file-search`, `remote-mcp`, `computer-use`, `code-execution`, `shell`, `apply-patch`, `tool-search`, `web-extraction`, or `skill`.
 

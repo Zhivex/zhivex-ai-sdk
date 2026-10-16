@@ -18,7 +18,7 @@ import type {
 import type {
   AgentCompactionRecord,
   AgentRunState,
-  AgentStep
+  AgentStepStatus
 } from "./agent-state.js";
 
 export interface UIMessage {
@@ -111,9 +111,21 @@ export interface UIAgentStepStartChunk {
   stepIndex: number;
 }
 
+/** Browser-safe step projection. It omits messages, provider options, and tool results. */
+export interface UIAgentStepSummary {
+  index: number;
+  status: AgentStepStatus;
+  startedAt?: number;
+  finishedAt?: number;
+  usage?: TokenUsage;
+  error?: {
+    message: string;
+  };
+}
+
 export interface UIAgentStepFinishChunk {
   type: "agent-step-finish";
-  step: AgentStep;
+  step: UIAgentStepSummary;
 }
 
 export interface UIAgentApprovalRequestChunk {

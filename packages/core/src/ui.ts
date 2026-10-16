@@ -1,10 +1,12 @@
 import type {
+  AgentStep,
   AgentStreamEvent,
   GeneratedMedia,
   GenerateTextOutput,
   JsonValue,
   ModelMessage,
   StreamTextResult,
+  UIAgentStepSummary,
   UIMessage,
   UIMessageChunk,
   UIMessageGeneratedMedia
@@ -49,6 +51,15 @@ const toBase64 = (data: Uint8Array): string => {
   return btoa(binary);
 };
 
+const toUIAgentStep = (step: AgentStep): UIAgentStepSummary => ({
+  index: step.index,
+  status: step.status,
+  ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
+  ...(step.finishedAt !== undefined ? { finishedAt: step.finishedAt } : {}),
+  ...(step.response?.usage ? { usage: step.response.usage } : {}),
+  ...(step.error?.message ? { error: { message: step.error.message } } : {})
+});
+
 const toUIMessageGeneratedMedia = (media: GeneratedMedia): UIMessageGeneratedMedia => ({
   data: media.data ? toBase64(media.data) : undefined,
   encoding: media.data ? "base64" : undefined,
@@ -88,7 +99,7 @@ export const toUIMessageStream = (
     ? { messageId: messageIdOrOptions }
     : messageIdOrOptions;
   const messageId = options.messageId ?? randomId();
-  const includeAgentRunFinish = options.includeAgentRunFinish ?? true;
+  const includeAgentRunFinish = options.includeAgentRunFinish ?? false;
   const eventStream = "eventStream" in source ? source.eventStream : source;
 
   return (async function* () {
@@ -193,7 +204,7 @@ export const toUIMessageStream = (
       if (event.type === "agent-step-finish") {
         yield {
           type: "agent-step-finish",
-          step: event.step
+          step: toUIAgentStep(event.step)
         } satisfies UIMessageChunk;
       }
 

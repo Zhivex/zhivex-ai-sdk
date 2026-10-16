@@ -36,6 +36,9 @@ import {
   defaultMemoryMessages
 } from "./shared.js";
 
+const isPostgresUniqueViolation = (error: unknown): boolean =>
+  Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "23505");
+
 const isConcurrentPostgresTableCreationConflict = (error: unknown): boolean => {
   if (!error || typeof error !== "object") return false;
   const record = error as { code?: unknown; constraint?: unknown; constraint_name?: unknown };
@@ -226,56 +229,90 @@ export const createPostgresAgentRunStore = (options: PostgresAgentRunStoreOption
     async claimIdempotencyKey(state) {
       await ensureAllTables();
       const scope = resolveScope(options.scope, state.scope);
-      const existingOwner = await findByIdempotencyKey(state.idempotencyKey, scope);
-      if (existingOwner) return { claimed: false, state: existingOwner };
-      const normalized = normalizeAgentRunState({ ...state, ...(scope ? { scope } : {}) });
-      const updatedAt = Date.now();
-
-      await options.client.query(
-        `INSERT INTO ${tableName} (run_id, state_json, updated_at_ms)
-         VALUES ($1, $2::jsonb, $3)
-         ON CONFLICT(run_id) DO NOTHING`,
-        [await physicalKey(normalized.runId, scope), normalized, updatedAt]
-      );
-      const claim = await options.client.query<{ run_id?: string; runId?: string }>(
-        `INSERT INTO ${idempotencyTableName} (idempotency_key, run_id, updated_at_ms)
-         VALUES ($1, $2, $3)
-         ON CONFLICT(idempotency_key) DO NOTHING
-         RETURNING run_id`,
-        [dbKey(state.idempotencyKey, scope), await physicalKey(normalized.runId, scope), updatedAt]
-      );
-      const claimedRunId = getRecordField(claim.rows[0], ["run_id", "runId"]);
-      if (claimedRunId === await physicalKey(normalized.runId, scope)) {
-        if (normalized.parentRunId) {
-          await options.client.query(
-            `INSERT INTO ${parentTableName} (run_id, parent_run_id, updated_at_ms)
-             VALUES ($1, $2, $3)
-             ON CONFLICT(run_id) DO UPDATE SET
-               parent_run_id = EXCLUDED.parent_run_id,
-               updated_at_ms = EXCLUDED.updated_at_ms`,
-            [await physicalKey(normalized.runId, scope), dbKey(normalized.parentRunId, scope), updatedAt]
+      const claimOnce = async (allowOrphanRepair: boolean): Promise<{ claimed: boolean; state: AgentRunState }> => {
+        const existingOwner = await findByIdempotencyKey(state.idempotencyKey, scope);
+        if (existingOwner) return { claimed: false, state: existingOwner };
+        const normalized = normalizeAgentRunState({ ...state, ...(scope ? { scope } : {}) });
+        const updatedAt = Date.now();
+        const runKey = await physicalKey(normalized.runId, scope);
+        const idempotencyKey = dbKey(state.idempotencyKey, scope);
+        const parentKey = normalized.parentRunId ? dbKey(normalized.parentRunId, scope) : undefined;
+        try {
+          const inserted = await options.client.query<{
+            run_id?: string;
+            runId?: string;
+            claimed_run_id?: string;
+            claimedRunId?: string;
+          }>(
+            parentKey
+              ? `WITH inserted_run AS (
+                   INSERT INTO ${tableName} (run_id, state_json, updated_at_ms)
+                   VALUES ($1, $2::jsonb, $3)
+                   ON CONFLICT(run_id) DO NOTHING
+                   RETURNING run_id
+                 ), inserted_key AS (
+                   INSERT INTO ${idempotencyTableName} (idempotency_key, run_id, updated_at_ms)
+                   SELECT $4, run_id, $3 FROM inserted_run
+                   RETURNING run_id
+                 ), inserted_parent AS (
+                   INSERT INTO ${parentTableName} (run_id, parent_run_id, updated_at_ms)
+                   SELECT run_id, $5, $3 FROM inserted_key
+                   ON CONFLICT(run_id) DO UPDATE SET
+                     parent_run_id = EXCLUDED.parent_run_id,
+                     updated_at_ms = EXCLUDED.updated_at_ms
+                   RETURNING run_id
+                 )
+                 SELECT
+                   (SELECT run_id FROM inserted_run) AS run_id,
+                   (SELECT run_id FROM inserted_key) AS claimed_run_id,
+                   (SELECT run_id FROM inserted_parent) AS parent_run_id`
+              : `WITH inserted_run AS (
+                   INSERT INTO ${tableName} (run_id, state_json, updated_at_ms)
+                   VALUES ($1, $2::jsonb, $3)
+                   ON CONFLICT(run_id) DO NOTHING
+                   RETURNING run_id
+                 ), inserted_key AS (
+                   INSERT INTO ${idempotencyTableName} (idempotency_key, run_id, updated_at_ms)
+                   SELECT $4, run_id, $3 FROM inserted_run
+                   RETURNING run_id
+                 )
+                 SELECT
+                   (SELECT run_id FROM inserted_run) AS run_id,
+                   (SELECT run_id FROM inserted_key) AS claimed_run_id`,
+            parentKey
+              ? [runKey, normalized, updatedAt, idempotencyKey, parentKey]
+              : [runKey, normalized, updatedAt, idempotencyKey]
           );
+          const insertedRunId = getRecordField(inserted.rows[0], ["run_id", "runId"]);
+          const claimedRunId = getRecordField(inserted.rows[0], ["claimed_run_id", "claimedRunId"]);
+          if (!insertedRunId) {
+            throw new ConflictError("Agent run identity already exists.");
+          }
+          if (claimedRunId !== runKey) {
+            throw new ConflictError("AgentRunState idempotency claim could not be loaded with the expected identity.");
+          }
+          return { claimed: true, state: normalized };
+        } catch (error) {
+          if (!isPostgresUniqueViolation(error)) throw error;
+          const existing = await findByIdempotencyKey(state.idempotencyKey, scope);
+          if (existing && existing.idempotencyKey === state.idempotencyKey && matchesScope(existing.scope, scope)) {
+            return { claimed: false, state: existing };
+          }
+          if (!allowOrphanRepair) {
+            throw new ConflictError("AgentRunState idempotency claim could not be loaded with the expected identity.");
+          }
+          await options.client.query(
+            `DELETE FROM ${idempotencyTableName} keys
+             WHERE keys.idempotency_key = $1
+               AND NOT EXISTS (
+                 SELECT 1 FROM ${tableName} runs WHERE runs.run_id = keys.run_id
+               )`,
+            [idempotencyKey]
+          );
+          return claimOnce(false);
         }
-        return { claimed: true, state: normalized };
-      }
-
-      const existing = await options.client.query<{ state_json?: AgentRunState; stateJson?: AgentRunState }>(
-        `SELECT runs.state_json
-         FROM ${tableName} runs
-         INNER JOIN ${idempotencyTableName} keys ON keys.run_id = runs.run_id
-         WHERE keys.idempotency_key = $1`,
-        [dbKey(state.idempotencyKey, scope)]
-      );
-      const existingState = existing.rows[0]
-        ? getRecordField(existing.rows[0], ["state_json", "stateJson"]) as AgentRunState | undefined
-        : undefined;
-      if (!existingState || existingState.idempotencyKey !== state.idempotencyKey || !matchesScope(existingState.scope, scope)) {
-        throw new ConflictError("AgentRunState idempotency claim could not be loaded with the expected identity.");
-      }
-      if (existingState.runId !== normalized.runId) {
-        await options.client.query(`DELETE FROM ${tableName} WHERE run_id = $1`, [await physicalKey(normalized.runId, scope)]);
-      }
-      return { claimed: false, state: normalizeAgentRunState(existingState) };
+      };
+      return claimOnce(true);
     },
     async save(state, saveOptions) {
       await ensureAllTables();

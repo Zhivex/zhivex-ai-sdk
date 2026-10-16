@@ -1,7 +1,11 @@
 import { ParseError, ProviderHTTPError } from "./errors.js";
 import type { RunnerStreamResult } from "./runner.js";
 import type { AgentStreamResult, StreamTextResult, UIMessageChunk } from "./types.js";
-import { toUIMessageStream } from "./ui.js";
+import { toUIMessageStream, type UIMessageStreamOptions } from "./ui.js";
+
+export interface UIMessageStreamResponseInit extends ResponseInit, UIMessageStreamOptions {
+  onCancel?: (reason: unknown) => void | Promise<void>;
+}
 
 const encoder = new TextEncoder();
 
@@ -245,11 +249,13 @@ export const toTextStreamResponse = (result: StreamTextResult, init: ResponseIni
 
 export const toUIMessageStreamResponse = (
   source: StreamTextResult | AgentStreamResult | AsyncIterable<UIMessageChunk>,
-  init: ResponseInit & { messageId?: string; onCancel?: (reason: unknown) => void | Promise<void> } = {}
+  init: UIMessageStreamResponseInit = {}
 ): Response => {
-  const { messageId, onCancel, headers, ...rest } = init;
+  const { messageId, includeAgentRunFinish, onCancel, headers, ...rest } = init;
   const uiStream =
-    "eventStream" in source ? toUIMessageStream(source, messageId) : source;
+    "eventStream" in source
+      ? toUIMessageStream(source, { messageId, includeAgentRunFinish })
+      : source;
 
   return toSSEResponse(uiStream, {
     ...rest,
@@ -266,21 +272,21 @@ export const toUIMessageStreamResponse = (
 
 export const toUIAgentStreamResponse = (
   source: AgentStreamResult | AsyncIterable<UIMessageChunk>,
-  init: ResponseInit & { messageId?: string; onCancel?: (reason: unknown) => void | Promise<void> } = {}
+  init: UIMessageStreamResponseInit = {}
 ): Response => toUIMessageStreamResponse(source, init);
 
 export const toUIRunnerStreamResponse = (
   source: RunnerStreamResult,
-  init: ResponseInit & { messageId?: string; onCancel?: (reason: unknown) => void | Promise<void> } = {}
+  init: UIMessageStreamResponseInit = {}
 ): Response => {
-  const { messageId, ...responseInit } = init;
+  const { messageId, includeAgentRunFinish, ...responseInit } = init;
   const uiStream = (async function* (): AsyncGenerator<UIMessageChunk> {
     let hasStreamError = false;
     let streamError: unknown;
     try {
       for await (const chunk of toUIMessageStream(source.eventStream, {
         messageId,
-        includeAgentRunFinish: false
+        includeAgentRunFinish: includeAgentRunFinish ?? false
       })) {
         yield chunk;
       }

@@ -1,5 +1,11 @@
 # @zhivex-ai/react
 
+## Unreleased
+
+### Breaking Changes
+
+- Chat activity `step-finish` entries now use `UIAgentStepSummary` (`index`, `status`, and optional timestamps, token usage, and `error.message`). Request messages, provider options, response text, and tool results are no longer present on that activity entry.
+
 ## 0.8.1
 
 ### Patch Changes
