@@ -112,8 +112,9 @@ export interface McpHttpServerOptions {
    */
   authenticate?: McpServerHttpAuth;
   /**
-   * Request deadline. When shorter than the server `timeoutMs`, it wins.
-   * A longer value is clamped down to the server limit.
+   * One deadline for authentication, the body read, and the call. When shorter
+   * than the server `timeoutMs`, it wins. A longer value is clamped down to
+   * the server limit.
    */
   timeoutMs?: number;
   /** POST body cap. Reading stops as soon as the cap is crossed. */
@@ -176,6 +177,10 @@ interface JsonRpc {
 interface Session {
   phase: "new" | "accepted" | "ready";
   inflight: Map<string, AbortController>;
+  /** Tool results accepted but not yet written. Stdio holds the concurrency slot here. */
+  settling: Set<string>;
+  /** When true, a finished call keeps its slot until the response write settles. */
+  holdUntilWrite: boolean;
   lastUsed: number;
 }
 
@@ -527,23 +532,27 @@ const executeAgent = async (
   const value = cloned;
   let mapped: { prompt: string; system?: string; maxSteps?: number | "unlimited" };
   try {
-    const raw = entry.toRunInput
+    const raw = await withDeadline(call, () => Promise.resolve().then(() => entry.toRunInput
       ? entry.toRunInput(value)
-      : { prompt: typeof value.prompt === "string" ? value.prompt : "" };
+      : { prompt: typeof value.prompt === "string" ? value.prompt : "" }));
     if (!raw || typeof raw.prompt !== "string") {
       return toolError("VALIDATION_ERROR", `Agent "${name}" rejected its arguments.`);
     }
     mapped = raw;
-  } catch {
+  } catch (error) {
+    if (error instanceof McpServerError && error.code === "TIMEOUT") {
+      return toolError("TIMEOUT", `Agent "${name}" timed out. Reconcile the run before retrying.`);
+    }
+    if (call.signal.aborted) return toolError("CANCELLED", `Agent "${name}" was cancelled.`);
     return toolError("AGENT_FAILED", `Agent "${name}" failed.`);
   }
   if (mapped.prompt.length === 0) {
     return toolError("VALIDATION_ERROR", `Agent "${name}" requires a prompt.`);
   }
 
-  const definition = agentDefinitionOf(entry.agent);
   let streamed: ReturnType<typeof streamAgent>;
   try {
+    const definition = agentDefinitionOf(entry.agent);
     streamed = streamAgent(definition, {
       prompt: mapped.prompt,
       ...(mapped.system !== undefined ? { system: mapped.system } : {}),
@@ -732,7 +741,11 @@ const handleMessage = async (
     if (!params || !name || !tool || (params.arguments !== undefined && !isRecord(params.arguments))) {
       return { kind: "response", message: rpcError(id, -32602, "Invalid MCP tools/call params.") };
     }
-    if (session.inflight.size >= state.maxConcurrentCalls) {
+    const key = inflightKey(id);
+    if (session.inflight.has(key) || session.settling.has(key)) {
+      return { kind: "response", message: rpcError(id, -32600, "MCP request id is already in use.") };
+    }
+    if (session.inflight.size + session.settling.size >= state.maxConcurrentCalls) {
       return { kind: "response", message: rpcError(id, -32000, "MCP session call limit exceeded.") };
     }
     const controller = new AbortController();
@@ -740,7 +753,7 @@ const handleMessage = async (
     const onAbort = () => controller.abort(signal.reason);
     if (signal.aborted) onAbort();
     else signal.addEventListener("abort", onAbort, { once: true });
-    session.inflight.set(inflightKey(id), controller);
+    session.inflight.set(key, controller);
     const token = progressTokenOf(params);
     let progress = 0;
     try {
@@ -763,7 +776,8 @@ const handleMessage = async (
       return { kind: "response", message: rpcResult(id, result) };
     } finally {
       clearTimeout(timer);
-      session.inflight.delete(inflightKey(id));
+      session.inflight.delete(key);
+      if (session.holdUntilWrite) session.settling.add(key);
       session.lastUsed = Date.now();
       signal.removeEventListener("abort", onAbort);
     }
@@ -918,41 +932,41 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
   const fetch = async (request: Request): Promise<Response> => {
     if (lifetime.signal.aborted || state.closed) return empty(503);
     if (!originAllowed(request, options)) return empty(403);
-    const bound = async <T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(new McpServerError("TIMEOUT", "MCP operation timed out.")), timeoutMs);
-      const linked = createMergedAbortSignal(request.signal, lifetime.signal);
-      const onAbort = () => controller.abort(linked.signal?.reason);
-      if (linked.signal?.aborted) onAbort();
-      else linked.signal?.addEventListener("abort", onAbort, { once: true });
-      const pending = run(controller.signal);
+    const startedAt = Date.now();
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new McpServerError("TIMEOUT", "MCP operation timed out.")), timeoutMs);
+    const linked = createMergedAbortSignal(request.signal, lifetime.signal, deadline.signal);
+    const signal = linked.signal ?? deadline.signal;
+    let handoff = false;
+    const disarm = () => {
+      clearTimeout(timer);
+      linked.cleanup();
+    };
+    const remain = () => Math.max(1, timeoutMs - (Date.now() - startedAt));
+    const deadlineError = () => signal.reason instanceof Error
+      ? signal.reason
+      : new McpServerError("TIMEOUT", "MCP operation timed out.");
+    const awaitBound = async <T>(run: (boundSignal: AbortSignal) => Promise<T>): Promise<T> => {
+      const pending = Promise.resolve().then(() => run(signal));
       pending.catch(() => undefined);
+      if (signal.aborted) throw deadlineError();
       let fail: (() => void) | undefined;
       try {
-        if (controller.signal.aborted) {
-          throw controller.signal.reason instanceof Error
-            ? controller.signal.reason
-            : new McpServerError("TIMEOUT", "MCP operation timed out.");
-        }
         return await Promise.race([
           pending,
           new Promise<never>((_resolve, reject) => {
-            fail = () => reject(controller.signal.reason instanceof Error
-              ? controller.signal.reason
-              : new McpServerError("TIMEOUT", "MCP operation timed out."));
-            controller.signal.addEventListener("abort", fail, { once: true });
+            fail = () => reject(deadlineError());
+            signal.addEventListener("abort", fail, { once: true });
           })
         ]);
       } finally {
-        clearTimeout(timer);
-        if (fail) controller.signal.removeEventListener("abort", fail);
-        linked.cleanup();
-        linked.signal?.removeEventListener("abort", onAbort);
+        if (fail) signal.removeEventListener("abort", fail);
       }
     };
+    try {
     if (options.authenticate) {
       try {
-        await bound((signal) => Promise.resolve(options.authenticate!(request, signal)));
+        await awaitBound((boundSignal) => Promise.resolve(options.authenticate!(request, boundSignal)));
       } catch (error) {
         if (lifetime.signal.aborted || state.closed) return empty(503);
         if (error instanceof McpServerError && error.code === "TIMEOUT") return empty(408);
@@ -994,7 +1008,7 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
 
     let payload: unknown;
     try {
-      payload = JSON.parse(await bound((signal) => readLimited(request, maxRequestBytes, signal)));
+      payload = JSON.parse(await awaitBound((boundSignal) => readLimited(request, maxRequestBytes, boundSignal)));
     } catch (error) {
       await request.body?.cancel().catch(() => undefined);
       if (lifetime.signal.aborted || state.closed) return empty(503);
@@ -1011,18 +1025,23 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
     const incoming = isRecord(payload) ? payload : undefined;
     const isInitialize = incoming?.method === "initialize" && requestId(incoming.id) !== undefined;
     if (!isInitialize && !existing) return empty(404);
-    const session = existing ?? { phase: "new" as const, inflight: new Map<string, AbortController>(), lastUsed: Date.now() };
+    const session = existing ?? {
+      phase: "new" as const,
+      inflight: new Map<string, AbortController>(),
+      settling: new Set<string>(),
+      holdUntilWrite: false,
+      lastUsed: Date.now()
+    };
     const streamProgress = !isInitialize && accept.includes("text/event-stream") && progressTokenOf(incoming?.params) !== undefined;
 
     if (streamProgress) {
-      return sseResponse(maxResponseBytes, [request.signal, lifetime.signal], (emit, signal) =>
-        handleMessage(state, session, payload, emit, signal, timeoutMs)
+      handoff = true;
+      return sseResponse(maxResponseBytes, [signal], (emit, callSignal) =>
+        handleMessage(state, session, payload, emit, callSignal, remain()).finally(disarm)
       );
     }
 
-    const linked = createMergedAbortSignal(request.signal, lifetime.signal);
-    const outcome = await handleMessage(state, session, payload, async () => undefined, linked.signal ?? request.signal, timeoutMs)
-      .finally(() => linked.cleanup());
+    const outcome = await handleMessage(state, session, payload, async () => undefined, signal, remain());
     if (outcome.kind === "accepted") return empty(202);
     if (
       isInitialize
@@ -1037,11 +1056,23 @@ export function createMcpHttpServer(server: McpServer, options: McpHttpServerOpt
         if (!idle) return empty(503);
         sessionsById.delete(idle[0]);
       }
-      const id = (options.sessionId ?? (() => crypto.randomUUID()))();
+      let id: string;
+      try {
+        const generated = (options.sessionId ?? (() => crypto.randomUUID()))();
+        if (typeof generated !== "string" || generated.length === 0 || generated.length > 128) {
+          return boundedJson(200, rpcError(requestId(incoming?.id) ?? null, -32603, "MCP server failed."));
+        }
+        id = generated;
+      } catch {
+        return boundedJson(200, rpcError(requestId(incoming?.id) ?? null, -32603, "MCP server failed."));
+      }
       sessionsById.set(id, session);
       return jsonResponse(200, outcome.message, { "Mcp-Session-Id": id });
     }
     return boundedJson(200, outcome.message);
+    } finally {
+      if (!handoff) disarm();
+    }
   };
 
   return {
@@ -1140,7 +1171,7 @@ const sseResponse = (
 export function createMcpStdioServer(options: McpStdioServerOptions): McpStdioServerSession {
   const state = requireState(options.server);
   const maxMessageBytes = positive(options.maxMessageBytes, DEFAULT_RESPONSE_BYTES);
-  const session: Session = { phase: "new", inflight: new Map(), lastUsed: Date.now() };
+  const session: Session = { phase: "new", inflight: new Map(), settling: new Set(), holdUntilWrite: true, lastUsed: Date.now() };
   const lifetime = new AbortController();
   state.lifetime.signal.addEventListener("abort", () => lifetime.abort(state.lifetime.signal.reason), { once: true });
   const encoder = new TextEncoder();
@@ -1212,10 +1243,19 @@ export function createMcpStdioServer(options: McpStdioServerOptions): McpStdioSe
           continue;
         }
         const toolCall = isRecord(parsed) && parsed.method === "tools/call" && requestId(parsed.id) !== undefined;
+        const requestKey = requestId(isRecord(parsed) ? parsed.id : undefined);
+        const releaseSlot = () => {
+          if (requestKey !== undefined) session.settling.delete(inflightKey(requestKey));
+        };
         const task = handleMessage(state, session, parsed, writeMessage, lifetime.signal).then(async (outcome) => {
-          if (outcome.kind === "response") await writeMessage(outcome.message);
+          try {
+            if (outcome.kind === "response") await writeMessage(outcome.message);
+          } finally {
+            releaseSlot();
+          }
         }).catch(async () => {
-          await writeMessage(rpcError(requestId(isRecord(parsed) ? parsed.id : undefined) ?? null, -32603, "MCP server failed."));
+          releaseSlot();
+          await writeMessage(rpcError(requestKey ?? null, -32603, "MCP server failed."));
         });
         if (!toolCall) await task;
       }

@@ -184,9 +184,13 @@ have happened. `LIMIT_EXCEEDED` on a result also means the tool or agent
 already ran; the payload is not included. Oversized HTTP requests return 413
 and are not dispatched. The server stops reading once `maxRequestBytes` is
 crossed and discards the partial body. A request that fits is assembled before
-`JSON.parse`. Authentication and reading the body use the same deadline and
-the same abort signal; if either does not finish, the response is an empty
-`408`. `close()` during either returns an empty `503`.
+`JSON.parse`. Authentication, reading the body, and the tool or agent call share that
+one deadline and the same abort signal. Time spent in an earlier phase is not
+added again. If authentication or the body read does not finish, the response
+is an empty `408`. `close()` during either returns an empty `503`. A second
+`tools/call` with an id that is already in flight is rejected and does not
+run. On stdio, a finished call keeps its concurrency slot until the response
+line is written.
 
 Every HTTP JSON body is checked against `maxResponseBytes`. When the result
 does not fit, the server returns a JSON-RPC error if that error fits, and an

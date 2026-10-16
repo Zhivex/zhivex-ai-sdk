@@ -1079,7 +1079,7 @@ describe("experimental MCP server", () => {
 
   it("clamps the HTTP timeout to the server call limit", async () => {
     const server = createMcpServer({
-      timeoutMs: 40,
+      timeoutMs: 1_000,
       tools: {
         hang: tool({
           name: "hang",
@@ -1089,8 +1089,8 @@ describe("experimental MCP server", () => {
       }
     });
     const result = await Promise.race([
-      useHttp(server, (client) => client.callTool({ name: "hang", arguments: {} }), { timeoutMs: 30_000 }),
-      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("HTTP timeout extended the server limit")), 500))
+      useHttp(server, (client) => client.callTool({ name: "hang", arguments: {} }), { timeoutMs: 60_000 }),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("HTTP timeout extended the server limit")), 1_500))
     ]);
     expect(result.structuredContent).toMatchObject({ code: "TIMEOUT" });
   });
@@ -1575,5 +1575,250 @@ describe("experimental MCP server", () => {
     } finally {
       await client.close();
     }
+  });
+
+  it("shares one deadline across authentication and the tool call", async () => {
+    let attempts = 0;
+    const http = createMcpHttpServer(createMcpServer({
+      timeoutMs: 250,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: () => new Promise(() => undefined)
+        })
+      }
+    }), {
+      timeoutMs: 250,
+      sessionId: () => "budget",
+      authenticate: () => {
+        attempts += 1;
+        if (attempts < 3) return;
+        return new Promise((resolve) => setTimeout(resolve, 180));
+      }
+    });
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const post = (body: string, session?: string) => http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: session ? { ...headers, "Mcp-Session-Id": session } : headers,
+      body
+    }));
+    const opened = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "budget", version: "1" } }
+    }));
+    await opened.text();
+    await post(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }), "budget");
+    const started = Date.now();
+    const response = await Promise.race([
+      post(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "hang", arguments: {} } }), "budget"),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("request deadline was restarted")), 350))
+    ]);
+    expect(Date.now() - started).toBeLessThan(350);
+    expect(await response.json()).toMatchObject({
+      id: 2,
+      result: { isError: true, structuredContent: { code: "TIMEOUT" } }
+    });
+    await http.close();
+  });
+
+  it("cleans up when authenticate throws synchronously", async () => {
+    const http = createMcpHttpServer(createMcpServer({ timeoutMs: 30_000 }), {
+      authenticate: () => {
+        throw new Error("secret token");
+      }
+    });
+    const send = () => http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: "{}"
+    }));
+    const first = await Promise.race([
+      send(),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("sync auth failure was not contained")), 200))
+    ]);
+    expect(first.status).toBe(401);
+    expect(await first.text()).not.toContain("secret");
+    const second = await send();
+    expect(second.status).toBe(401);
+    await http.close();
+  });
+
+  it("rejects a duplicate in-flight request id before starting another tool", async () => {
+    let started = 0;
+    let sawAbort = false;
+    const http = createMcpHttpServer(createMcpServer({
+      timeoutMs: 30_000,
+      maxConcurrentCalls: 4,
+      tools: {
+        hang: tool({
+          name: "hang",
+          schema: z.object({}),
+          execute: (_input, context) => new Promise(() => {
+            started += 1;
+            context?.abortSignal?.addEventListener("abort", () => {
+              sawAbort = true;
+            });
+          })
+        })
+      }
+    }), { sessionId: () => "dup" });
+    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const post = (body: string) => http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { ...headers, "Mcp-Session-Id": "dup" },
+      body
+    }));
+    const opened = await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "dup", version: "1" } }
+      })
+    }));
+    await opened.text();
+    await post(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
+    const first = post(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "hang", arguments: {} } }));
+    const startedAt = Date.now();
+    while (started < 1 && Date.now() - startedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const duplicate = await post(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "hang", arguments: {} } }));
+    expect(await duplicate.json()).toMatchObject({
+      id: 7,
+      error: { code: -32600, message: "MCP request id is already in use." }
+    });
+    expect(started).toBe(1);
+    await post(JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 7 } }));
+    const deadline = Date.now() + 500;
+    while (!sawAbort && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(sawAbort).toBe(true);
+    await http.close();
+    await first.catch(() => undefined);
+  });
+
+  it("keeps a stdio concurrency slot until the response write settles", async () => {
+    let runs = 0;
+    let blocked = false;
+    let writes = 0;
+    let releaseWrite = () => undefined;
+    const server = createMcpServer({
+      maxConcurrentCalls: 1,
+      tools: {
+        echo: tool({
+          name: "echo",
+          schema: z.object({}),
+          execute: () => {
+            runs += 1;
+            return { ok: true };
+          }
+        })
+      }
+    });
+    let inbound!: ReadableStreamDefaultController<Uint8Array>;
+    const input = new ReadableStream<Uint8Array>({ start(controller) { inbound = controller; } });
+    const output = new WritableStream<Uint8Array>({
+      write() {
+        writes += 1;
+        if (writes === 1) return;
+        blocked = true;
+        return new Promise<void>((resolve) => {
+          releaseWrite = resolve;
+        });
+      }
+    });
+    const session = createMcpStdioServer({ server, input, output });
+    const encoder = new TextEncoder();
+    const send = (message: unknown) => {
+      inbound.enqueue(encoder.encode(`${JSON.stringify(message)}\n`));
+    };
+    send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "slot", version: "1" } }
+    });
+    const openedAt = Date.now();
+    while (writes < 1 && Date.now() - openedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "echo", arguments: {} } });
+    const blockedAt = Date.now();
+    while (!blocked && Date.now() - blockedAt < 1_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(blocked).toBe(true);
+    expect(runs).toBe(1);
+    send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "echo", arguments: {} } });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(runs).toBe(1);
+    releaseWrite();
+    inbound.close();
+    await session.close();
+  });
+
+  it("bounds toRunInput and hides a throwing agent definition", async () => {
+    const agent = new Agent({ name: "late", model: createMockLanguageModel() });
+    let definitions = 0;
+    const server = createMcpServer({
+      timeoutMs: 40,
+      agents: {
+        slow: {
+          agent: new Agent({ name: "slow", model: createMockLanguageModel() }),
+          toRunInput: () => new Promise(() => undefined) as unknown as { prompt: string }
+        },
+        late: {
+          name: "late",
+          agent: {
+            toDefinition() {
+              definitions += 1;
+              if (definitions > 1) throw new Error("secret definition");
+              return agent.toDefinition();
+            }
+          }
+        }
+      }
+    });
+    const result = await Promise.race([
+      useHttp(server, async (client) => ({
+        slow: await client.callTool({ name: "slow", arguments: { prompt: "go" } }),
+        late: await client.callTool({ name: "late", arguments: { prompt: "go" } })
+      })),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("agent callback was not bounded")), 500))
+    ]);
+    expect(result.slow.structuredContent).toMatchObject({ code: "TIMEOUT" });
+    expect(result.late.structuredContent).toMatchObject({ code: "AGENT_FAILED" });
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("hides a throwing session id factory", async () => {
+    const http = createMcpHttpServer(createMcpServer(), {
+      sessionId: () => {
+        throw new Error("secret session");
+      }
+    });
+    const response = await http.fetch(new Request("https://mcp.test/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "id", version: "1" } }
+      })
+    }));
+    const body = await response.text();
+    expect(body).not.toContain("secret");
+    expect(JSON.parse(body)).toMatchObject({ id: 1, error: { code: -32603, message: "MCP server failed." } });
+    expect(response.headers.get("mcp-session-id")).toBeNull();
+    await http.close();
   });
 });
