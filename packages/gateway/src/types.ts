@@ -302,7 +302,13 @@ export interface GatewayConfig {
   /** Maximum wait between provider stream events. Defaults to 60 seconds; set false to disable. */
   streamIdleTimeoutMs?: number | false;
   streamIdleTimeoutsMs?: Partial<Record<GatewayProviderId, number | false>>;
+  /** Base delay for exponential retry backoff with full jitter. Defaults to 200ms. */
   retryBackoffMs?: number;
+  /**
+   * Unit interval for retry jitter. Defaults to Math.random.
+   * Finite values are clamped to [0, 1].
+   */
+  retryRandom?: () => number;
   /** Maximum time spent awaiting a best-effort observer. Defaults to 1 second. */
   observerTimeoutMs?: number;
   onAttempt?: (attempt: GatewayAttempt & {
