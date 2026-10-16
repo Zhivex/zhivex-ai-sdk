@@ -74,8 +74,14 @@ export const packTar = (entries: readonly TarEntry[]): Uint8Array => {
   return out;
 };
 
+const fieldText = (header: Uint8Array, offset: number, length: number) => {
+  const field = header.subarray(offset, offset + length);
+  const nul = field.indexOf(0);
+  return decoder.decode(nul === -1 ? field : field.subarray(0, nul));
+};
+
 const readOctal = (header: Uint8Array, offset: number, length: number) => {
-  const text = decoder.decode(header.subarray(offset, offset + length)).replace(/\0.*$/, "").trim();
+  const text = fieldText(header, offset, length).trim();
   if (!text) return 0;
   const value = Number.parseInt(text, 8);
   if (!Number.isFinite(value)) {
@@ -84,8 +90,7 @@ const readOctal = (header: Uint8Array, offset: number, length: number) => {
   return value;
 };
 
-const readText = (header: Uint8Array, offset: number, length: number) =>
-  decoder.decode(header.subarray(offset, offset + length)).replace(/\0.*$/, "");
+const readText = (header: Uint8Array, offset: number, length: number) => fieldText(header, offset, length);
 
 const isZero = (header: Uint8Array) => header.every(byte => byte === 0);
 
