@@ -125,6 +125,7 @@ The same concepts exist for Python in the [Zhivex AI SDK for Python](https://git
 - `@zhivex-ai/bedrock`
 - `@zhivex-ai/ollama`
 - `@zhivex-ai/gateway`: in-process policy routing and fallback across registered adapters.
+- `@zhivex-ai/sandbox-docker`: experimental reference Docker execution environment for workspace agents.
 
 ## Repository Layout
 
@@ -149,6 +150,7 @@ packages/
   bedrock/        AWS Bedrock adapter
   ollama/         Ollama adapter
   gateway/        Routing and fallback package
+  sandbox-docker/ Reference Docker execution environment
 ```
 
 Development uses Bun workspaces, TypeScript project references, and Vitest. See [CONTRIBUTING.md](./CONTRIBUTING.md).
