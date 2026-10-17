@@ -310,12 +310,7 @@ const rejectOversizedQwenUpload = () => {
 
 /** Upper bound of Node's base64 decode, ignoring ASCII whitespace and padding. */
 const estimatedDecodedBase64Bytes = (value: string) => {
-  let payload = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 32 || code === 0x3d) continue;
-    payload += 1;
-  }
+  const payload = value.replace(/[\u0000-\u0020=]/g, "").length;
   return Math.floor((payload * 3) / 4);
 };
 

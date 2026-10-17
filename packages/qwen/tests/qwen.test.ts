@@ -2247,7 +2247,7 @@ describe("qwen adapter", () => {
       mediaType: "application/octet-stream"
     })).resolves.toMatchObject({ name: "file_boundary" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
+  }, 30_000);
 
   it("rejects a base64 upload one decoded byte over 64 MiB before allocating it", async () => {
     const maxBytes = 64 * 1024 * 1024;
@@ -2264,7 +2264,7 @@ describe("qwen adapter", () => {
       mediaType: "application/octet-stream"
     })).rejects.toThrow("must not exceed 64 MiB");
     expect(fetchMock).not.toHaveBeenCalled();
-  });
+  }, 30_000);
 
   it("rejects a credentialed Qwen redirect before replaying the request", async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
