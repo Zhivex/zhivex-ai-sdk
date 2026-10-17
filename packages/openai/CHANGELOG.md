@@ -1,5 +1,17 @@
 # @zhivex-ai/openai
 
+## 0.16.3
+
+### Patch Changes
+
+- cb38034: Close sandbox escapes and resource leaks. Workspace reads refuse symlink escapes, snapshot run ids cannot be `.` or `..`, command process groups are killed on return, and the allowlist proxy enforces connection and byte quotas. Sweep deletes only containers with a matching owner and fingerprint. Expired leases drop snapshots, docker-commit images stay referenced until deletion succeeds, and CPU and PID limits are part of the environment fingerprint. OpenAI and Azure apply-patch containment now uses realpath.
+- 387e15e: Gateway deployments authorize the registered region and endpoint. Credentialed provider fetches reject redirects and still load against published core 1.34.0. Gemini, DeepSeek, and Qwen file uploads reject bodies over 64 MiB before they are read. Qwen measures base64 uploads by decoded bytes. Meta streams cap tool-call state. The A2A server authenticates a JSON-RPC request before reading its body.
+- Updated dependencies [e41524d]
+- Updated dependencies [1a35b44]
+- Updated dependencies [4b20b24]
+- Updated dependencies [387e15e]
+  - @zhivex-ai/core@1.35.0
+
 ## 0.16.2
 
 ### Patch Changes

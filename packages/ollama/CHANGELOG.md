@@ -1,5 +1,16 @@
 # @zhivex-ai/ollama
 
+## 0.5.10
+
+### Patch Changes
+
+- f0a6002: Recognize Muse Spark Open as a thinking model. Map shared reasoning to `low`, `medium`, `high`, and `xhigh`, and reject `none` and `max`.
+- Updated dependencies [e41524d]
+- Updated dependencies [1a35b44]
+- Updated dependencies [4b20b24]
+- Updated dependencies [387e15e]
+  - @zhivex-ai/core@1.35.0
+
 ## 0.5.9
 
 ### Patch Changes

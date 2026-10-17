@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/deepseek",
-  "version": "0.5.9",
+  "version": "0.5.10",
   "description": "DeepSeek adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -41,7 +41,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^1.34.0",
+    "@zhivex-ai/core": "^1.35.0",
     "zod": "^4.6.3"
   }
 }

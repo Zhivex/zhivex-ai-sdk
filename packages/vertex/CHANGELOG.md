@@ -1,5 +1,19 @@
 # @zhivex-ai/vertex
 
+## 1.2.10
+
+### Patch Changes
+
+- 387e15e: Gateway deployments authorize the registered region and endpoint. Credentialed provider fetches reject redirects and still load against published core 1.34.0. Gemini, DeepSeek, and Qwen file uploads reject bodies over 64 MiB before they are read. Qwen measures base64 uploads by decoded bytes. Meta streams cap tool-call state. The A2A server authenticates a JSON-RPC request before reading its body.
+- Updated dependencies [e41524d]
+- Updated dependencies [1a35b44]
+- Updated dependencies [cb38034]
+- Updated dependencies [4b20b24]
+- Updated dependencies [387e15e]
+  - @zhivex-ai/core@1.35.0
+  - @zhivex-ai/openai@0.16.3
+  - @zhivex-ai/gemini@0.13.2
+
 ## 1.2.9
 
 ### Patch Changes

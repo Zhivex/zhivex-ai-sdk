@@ -1,5 +1,20 @@
 # @zhivex-ai/gateway
 
+## 1.8.0
+
+### Minor Changes
+
+- 3b781df: Reduce gateway streaming, message-estimate, agent-startup, and retry overhead without changing request or response shapes. Idle streams reuse one timer and create the timeout error only when it fires. Each request serializes its messages once and reuses that size. The agent runtime loads on the first agent call, with `@zhivex-ai/gateway/agents` as the split entry. Retries use capped exponential backoff with full jitter and still honor Retry-After.
+
+### Patch Changes
+
+- 387e15e: Gateway deployments authorize the registered region and endpoint. Credentialed provider fetches reject redirects and still load against published core 1.34.0. Gemini, DeepSeek, and Qwen file uploads reject bodies over 64 MiB before they are read. Qwen measures base64 uploads by decoded bytes. Meta streams cap tool-call state. The A2A server authenticates a JSON-RPC request before reading its body.
+- Updated dependencies [e41524d]
+- Updated dependencies [1a35b44]
+- Updated dependencies [4b20b24]
+- Updated dependencies [387e15e]
+  - @zhivex-ai/core@1.35.0
+
 ## 1.7.0
 
 ### Minor Changes
