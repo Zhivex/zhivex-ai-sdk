@@ -1,5 +1,6 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -22,6 +23,79 @@ const jobSection = (name: string, nextName: string) => {
   const start = workflow.indexOf(`  ${name}:`);
   const end = workflow.indexOf(`  ${nextName}:`, start + 1);
   return workflow.slice(start, end === -1 ? undefined : end);
+};
+
+const publishScriptSource = () => {
+  const publishJob = jobSection("publish", "collect_tags");
+  const scriptStart = publishJob.indexOf("node <<'END_PUBLISH'\n");
+  const scriptEnd = publishJob.indexOf("\n          END_PUBLISH", scriptStart);
+  return publishJob.slice(scriptStart + "node <<'END_PUBLISH'\n".length, scriptEnd).replace(/^ {10}/gm, "");
+};
+
+type RegistryFixture = Record<string, { integrity: string; shasum?: string }>;
+
+// Runs the inline publish step against fixture tarballs, a stub npm, and a stub registry.
+const runPublishStep = (registry: RegistryFixture) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "zhivex-publish-run-"));
+  const gitHead = "a".repeat(40);
+  const tarballs = path.join(directory, ".release", "tarballs");
+  mkdirSync(tarballs, { recursive: true });
+  const packages = ["@zhivex-ai/alpha@1.0.0", "@zhivex-ai/beta@2.0.0"].map((identity) => {
+    const [, name, version] = /^(@zhivex-ai\/[a-z]+)@(.+)$/.exec(identity) ?? [];
+    const tarball = `${name.slice("@zhivex-ai/".length)}-${version}.tgz`;
+    const bytes = Buffer.from(`tarball ${identity}`);
+    writeFileSync(path.join(tarballs, tarball), bytes);
+    return {
+      identity,
+      entry: { name, version, tarball, sha512: createHash("sha512").update(bytes).digest("hex") },
+      integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+      shasum: createHash("sha1").update(bytes).digest("hex")
+    };
+  });
+  writeFileSync(
+    path.join(directory, ".release", "release-artifacts.json"),
+    JSON.stringify({ schemaVersion: 1, gitHead, packages: packages.map((value) => value.entry) })
+  );
+  writeFileSync(
+    path.join(directory, ".release", "zhivex-release-batch.json"),
+    JSON.stringify(packages.map((value) => value.identity))
+  );
+  const resolved = Object.fromEntries(
+    Object.entries(registry).map(([identity, dist]) => {
+      const local = packages.find((value) => value.identity === identity);
+      return [identity, {
+        integrity: dist.integrity === "local" ? local?.integrity : dist.integrity,
+        shasum: dist.shasum === "local" ? local?.shasum : dist.shasum
+      }];
+    })
+  );
+  const bin = path.join(directory, "bin");
+  mkdirSync(bin);
+  const npmLog = path.join(directory, "npm.log");
+  writeFileSync(path.join(bin, "npm"), `#!/bin/sh\necho "$@" >> "${npmLog}"\n`);
+  chmodSync(path.join(bin, "npm"), 0o755);
+  const preload = path.join(directory, "preload.cjs");
+  writeFileSync(preload, [
+    `const registry = ${JSON.stringify(resolved)};`,
+    "globalThis.setTimeout = (callback) => { callback(); return 0; };",
+    "globalThis.fetch = async (url) => {",
+    "  const match = /registry\\.npmjs\\.org\\/(.+)\\/([^/]+)$/.exec(String(url));",
+    "  const identity = `${decodeURIComponent(match[1])}@${decodeURIComponent(match[2])}`;",
+    "  const dist = registry[identity];",
+    "  if (!dist) return { status: 404, json: async () => ({}) };",
+    "  return { status: 200, json: async () => ({ version: match[2], dist }) };",
+    "};"
+  ].join("\n"));
+  const scriptPath = path.join(directory, "publish.cjs");
+  writeFileSync(scriptPath, publishScriptSource());
+  const result = spawnSync("node", ["--require", preload, scriptPath], {
+    cwd: directory,
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, RELEASE_TAG: "latest", RELEASE_GIT_HEAD: gitHead }
+  });
+  const published = existsSync(npmLog) ? readFileSync(npmLog, "utf8").trim().split("\n").filter(Boolean) : [];
+  rmSync(directory, { recursive: true, force: true });
+  return { status: result.status, output: `${result.stdout}${result.stderr}`, published };
 };
 
 describe("release workflow", () => {
@@ -104,6 +178,31 @@ describe("release workflow", () => {
     expect(jobSection("push_tags", "verify_public")).toContain("needs: collect_tags");
     expect(workflow).toContain("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
     expect(workflow).toContain("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c");
+  });
+
+  it("skips versions npm already holds with identical bytes and publishes the rest", () => {
+    const result = runPublishStep({ "@zhivex-ai/alpha@1.0.0": { integrity: "local", shasum: "local" } });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Skipping @zhivex-ai/alpha@1.0.0");
+    expect(result.published).toHaveLength(1);
+    expect(result.published[0]).toContain("beta-2.0.0.tgz --tag latest --access public --provenance");
+    expect(result.output).toContain("Published 1 and skipped 1");
+  });
+
+  it("refuses an existing version whose registry bytes differ from the validated tarball", () => {
+    const result = runPublishStep({ "@zhivex-ai/alpha@1.0.0": { integrity: "sha512-different" } });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("already on npm with different bytes");
+    expect(result.published).toEqual([]);
+  });
+
+  it("publishes every tarball when none is on npm yet", () => {
+    const result = runPublishStep({});
+
+    expect(result.status).toBe(0);
+    expect(result.published).toHaveLength(2);
   });
 
   it("publishes each channel with npm publish --tag and does not move dist-tags", () => {

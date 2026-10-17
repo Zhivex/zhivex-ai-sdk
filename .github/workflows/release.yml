@@ -213,14 +213,81 @@ jobs:
           if (new Set(entries.map((entry) => entry.tarballPath)).size !== entries.length) {
             throw new Error("Release artifact manifest contains duplicate tarballs.");
           }
-          for (const entry of entries) {
-            execFileSync(
-              "npm",
-              ["publish", entry.tarballPath, "--tag", tag, "--access", "public", "--provenance"],
-              { stdio: "inherit" }
-            );
-          }
-          console.log(`Published ${entries.length} verified release tarball(s) with dist-tag ${tag}.`);
+          // A rerun must not publish over versions that an earlier attempt already accepted.
+          // An existing version is skipped only when npm holds exactly these tarball bytes.
+          const registry = "https://registry.npmjs.org";
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const localDigests = (tarballPath) => {
+            const bytes = readFileSync(tarballPath);
+            return {
+              integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+              shasum: createHash("sha1").update(bytes).digest("hex")
+            };
+          };
+          const readPublishedDist = async (identity, attempts) => {
+            const [, name, version] = packageIdentity.exec(identity);
+            const url = `${registry}/${name.replace("/", "%2f")}/${encodeURIComponent(version)}`;
+            for (let attempt = 1; attempt <= attempts; attempt += 1) {
+              const response = await fetch(url, { headers: { accept: "application/json" }, cache: "no-store" });
+              if (response.status === 200) {
+                const document = await response.json();
+                if (document?.version !== version || typeof document?.dist !== "object" || document.dist === null) {
+                  throw new Error(`Registry returned malformed metadata for ${identity}.`);
+                }
+                return document.dist;
+              }
+              if (response.status !== 404) {
+                throw new Error(`Registry read for ${identity} failed with HTTP ${response.status}.`);
+              }
+              if (attempt < attempts) {
+                await sleep(5000 * attempt);
+              }
+            }
+            return undefined;
+          };
+          const requireSameBytes = (identity, dist, local) => {
+            if (dist.integrity !== local.integrity || (dist.shasum !== undefined && dist.shasum !== local.shasum)) {
+              throw new Error(
+                `${identity} is already on npm with different bytes (registry ${dist.integrity}, local ${local.integrity}). Refusing to continue.`
+              );
+            }
+          };
+          const main = async () => {
+            let published = 0;
+            let skipped = 0;
+            for (const entry of entries) {
+              const local = localDigests(entry.tarballPath);
+              const existing = await readPublishedDist(entry.identity, 3);
+              if (existing) {
+                requireSameBytes(entry.identity, existing, local);
+                console.log(`Skipping ${entry.identity}: npm already has identical bytes (${local.integrity}).`);
+                skipped += 1;
+                continue;
+              }
+              try {
+                execFileSync(
+                  "npm",
+                  ["publish", entry.tarballPath, "--tag", tag, "--access", "public", "--provenance"],
+                  { stdio: "inherit" }
+                );
+                published += 1;
+              } catch (error) {
+                // npm may reject a version that became visible only after the read above.
+                const raced = await readPublishedDist(entry.identity, 1);
+                if (!raced) {
+                  throw error;
+                }
+                requireSameBytes(entry.identity, raced, local);
+                console.log(`Skipping ${entry.identity}: npm accepted identical bytes before this attempt.`);
+                skipped += 1;
+              }
+            }
+            console.log(`Published ${published} and skipped ${skipped} already-published verified release tarball(s) with dist-tag ${tag}.`);
+          };
+          main().catch((error) => {
+            console.error(error instanceof Error ? error.message : error);
+            process.exitCode = 1;
+          });
           END_PUBLISH
 
   collect_tags:
