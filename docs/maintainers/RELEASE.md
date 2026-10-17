@@ -107,7 +107,11 @@ published versions and dist-tags can become visible at slightly different times.
 If the publish log shows the tarballs were accepted but the postpublish gate or `verify_public`
 still expires, do not run `version-packages` again and do not try to republish immutable versions.
 Check every reported package and dist-tag with `npm view`, then rerun the release workflow after
-registry propagation. A rerun selects only versions that are still unpublished. npm can omit
+registry propagation. A new dispatch selects only versions that are still unpublished. Rerunning
+failed jobs of an earlier attempt reuses that attempt's validated tarballs, so the publish step
+reads `name@version` from the registry before each `npm publish`, retrying a 404 for propagation.
+It skips a version whose registry `dist.integrity` and `dist.shasum` match the local tarball, and
+fails without publishing further when the registry holds different bytes for that version. npm can omit
 `gitHead` when publishing prebuilt tarballs, so the verifier reads the official registry attestation
 and binds its signed SLSA subject digest to npm integrity, the protected `release.yml` workflow, and
 the exact source commit. Contradictory `gitHead` and provenance evidence is rejected. A failed
