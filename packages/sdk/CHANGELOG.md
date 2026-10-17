@@ -1,5 +1,22 @@
 # @zhivex-ai/sdk
 
+## 1.34.0
+
+### Minor Changes
+
+- e41524d: Add experimental Agent2Agent (A2A) 1.0 support at `@zhivex-ai/core/a2a` and `@zhivex-ai/sdk/a2a`. `createA2aAgentServer` exposes a Zhivex agent over JSON-RPC, including streaming, task lookup, cancel, and approval resume stored in the Runner session service. `RemoteA2aAgent` and `createRemoteA2aAgentTool` call a remote agent from a parent agent's tools. Browser bundles keep the client and throw from the server factory. `A2A_API_STABILITY_MANIFEST` classifies every runtime export as experimental.
+- 1a35b44: Add an experimental MCP server at `@zhivex-ai/core/mcp-server` and `@zhivex-ai/sdk/mcp-server`. It exposes local tools and agents to MCP clients over Streamable HTTP and newline-delimited stdio, pinned to protocol `2025-11-25`. Tools and agent registrations that require approval are not executed; an in-run approval pause is returned as `APPROVAL_REQUIRED` and is not resumed. Synchronous tool failures, `isEnabled`, guardrails, authentication, and reading the HTTP body stay inside the call deadline. Agent progress is not awaited after that deadline, and a throwing `toRunInput` returns `AGENT_FAILED`. Closing the server aborts in-flight HTTP calls. Numeric and string JSON-RPC ids are tracked separately. Oversized HTTP and stdio responses stay within the configured byte cap, and a fatal stdio read or stdin EOF closes the session. A browser `Origin` is rejected unless `allowedOrigins` lists it. HTTP sessions are capped and expire when idle. `timeoutMs` above the 32-bit timer range is rejected, and an HTTP timeout cannot outlive the server call limit. Closing the server during authentication returns 503. `authenticate` receives an `AbortSignal`. `DELETE` aborts in-flight calls. Each session has a concurrency cap, duplicate in-flight ids are rejected, and stdio holds that slot until the response is written. Authentication, the body read, and the call share one HTTP deadline. Schema refinements that throw, and a throwing `toDefinition`, stay inside a tool error. Tool execution context ids keep the JSON-RPC id type. A custom session id that is not visible ASCII, or that matches a live session, fails `initialize` without storing or replacing a session. An unterminated stdio tail past the message cap closes the session after earlier lines in the same chunk are consumed. Cancelling an SSE response does not surface an unhandled rejection. The Node stdio binder is `@zhivex-ai/sdk/mcp-server-stdio`; browser bundles resolve a stub that throws. `MCP_SERVER_API_STABILITY_MANIFEST` classifies every runtime export as experimental.
+
+### Patch Changes
+
+- f0a6002: Add OpenRouter `meta/muse-spark-open` and the Ollama cloud slug `muse-spark-open` to the release-managed catalog at $1.25 input, $0.15 cached input, and $4.25 output per million tokens. Stop recommending the OpenRouter `openai/gpt-4o-mini` route. Direct Meta Model API ids are unchanged.
+- 387e15e: Gateway deployments authorize the registered region and endpoint. Credentialed provider fetches reject redirects and still load against published core 1.34.0. Gemini, DeepSeek, and Qwen file uploads reject bodies over 64 MiB before they are read. Qwen measures base64 uploads by decoded bytes. Meta streams cap tool-call state. The A2A server authenticates a JSON-RPC request before reading its body.
+- Updated dependencies [e41524d]
+- Updated dependencies [1a35b44]
+- Updated dependencies [4b20b24]
+- Updated dependencies [387e15e]
+  - @zhivex-ai/core@1.35.0
+
 ## 1.33.0
 
 ### Minor Changes

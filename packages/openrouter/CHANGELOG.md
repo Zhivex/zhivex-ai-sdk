@@ -1,5 +1,17 @@
 # @zhivex-ai/openrouter
 
+## 0.6.4
+
+### Patch Changes
+
+- f0a6002: Recognize `meta/muse-spark-open` for tools, vision, structured output, and reasoning efforts `low`, `medium`, `high`, and `xhigh`. Reject `none`, `minimal`, and `max`, and do not advertise `parallel_tool_calls`.
+- 387e15e: Gateway deployments authorize the registered region and endpoint. Credentialed provider fetches reject redirects and still load against published core 1.34.0. Gemini, DeepSeek, and Qwen file uploads reject bodies over 64 MiB before they are read. Qwen measures base64 uploads by decoded bytes. Meta streams cap tool-call state. The A2A server authenticates a JSON-RPC request before reading its body.
+- Updated dependencies [e41524d]
+- Updated dependencies [1a35b44]
+- Updated dependencies [4b20b24]
+- Updated dependencies [387e15e]
+  - @zhivex-ai/core@1.35.0
+
 ## 0.6.3
 
 ### Patch Changes

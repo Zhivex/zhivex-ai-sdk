@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/sandbox-docker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Reference Docker execution environment for Zhivex workspace agents.",
   "license": "MIT",
   "type": "module",
@@ -43,7 +43,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^1.34.0",
+    "@zhivex-ai/core": "^1.35.0",
     "zod": "^4.6.3"
   }
 }
