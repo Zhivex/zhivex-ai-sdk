@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { toJSONSchema } from "zod";
 
 import {
@@ -667,6 +668,30 @@ const mapResponsesUsage = (usage: any): TokenUsage => ({
   totalTokens: usage?.total_tokens
 });
 
+const MAX_META_TOOL_CALLS = 128;
+const MAX_META_TOOL_CHARS = 1024 * 1024;
+const MAX_META_TOOL_AGGREGATE_CHARS = 8 * 1024 * 1024;
+
+const assertMetaToolBudget = (
+  buffers: Iterable<{ name: string; args: string }>,
+  size: number,
+  key: string
+) => {
+  if (key.length > 1024 || size > MAX_META_TOOL_CALLS) {
+    throw new ConfigurationError("Meta stream exceeded 128 tool calls.");
+  }
+  let total = 0;
+  for (const call of buffers) {
+    if (call.name.length > 1024 || call.args.length > MAX_META_TOOL_CHARS) {
+      throw new ConfigurationError("Meta stream tool call exceeded 1 MiB.");
+    }
+    total += call.name.length + call.args.length;
+    if (total > MAX_META_TOOL_AGGREGATE_CHARS) {
+      throw new ConfigurationError("Meta stream tool calls exceeded 8 MiB.");
+    }
+  }
+};
+
 const normalizeResponsesFinishReason = (status: string | undefined, hasToolCalls: boolean) => {
   if (hasToolCalls) {
     return "tool-calls" as const;
@@ -684,12 +709,29 @@ const streamResponses = async function* (response: Response): AsyncGenerator<Str
   const toolBuffers = new Map<string, { callId: string; name: string; args: string; emitted: boolean }>();
   let sawToolCalls = false;
 
+  const remember = (key: string, update: (current: { callId: string; name: string; args: string; emitted: boolean }) => void) => {
+    if (key.length > 1024 || (!toolBuffers.has(key) && toolBuffers.size >= MAX_META_TOOL_CALLS)) {
+      throw new ConfigurationError("Meta stream exceeded 128 tool calls.");
+    }
+    const existing = toolBuffers.get(key) ?? { callId: key, name: "", args: "", emitted: false };
+    update(existing);
+    toolBuffers.set(key, existing);
+    assertMetaToolBudget(toolBuffers.values(), toolBuffers.size, key);
+    return existing;
+  };
+
   const emitToolCall = (key: string) => {
     const toolCall = toolBuffers.get(key);
     if (!toolCall || toolCall.emitted || !toolCall.name) {
       return undefined;
     }
 
+    let input: ReturnType<typeof JSON.parse>;
+    try {
+      input = JSON.parse(toolCall.args || "{}");
+    } finally {
+      toolCall.args = "";
+    }
     toolCall.emitted = true;
     sawToolCalls = true;
     return {
@@ -697,11 +739,12 @@ const streamResponses = async function* (response: Response): AsyncGenerator<Str
       toolCall: {
         id: toolCall.callId,
         name: toolCall.name,
-        input: JSON.parse(toolCall.args || "{}")
+        input
       }
     } satisfies StreamEvent;
   };
 
+  try {
   for await (const event of streamSSE(response)) {
     if (event.data === "[DONE]") {
       return;
@@ -719,18 +762,11 @@ const streamResponses = async function* (response: Response): AsyncGenerator<Str
       const item = json.item;
       if (item?.type === "function_call") {
         const key = item.id ?? json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
-        const existing = toolBuffers.get(key) ?? {
-          callId: item.call_id ?? key,
-          name: item.name ?? "",
-          args: "",
-          emitted: false
-        };
-        existing.callId = item.call_id ?? existing.callId;
-        existing.name ||= item.name ?? "";
-        if (typeof item.arguments === "string") {
-          existing.args = item.arguments;
-        }
-        toolBuffers.set(key, existing);
+        remember(key, (current) => {
+          current.callId = item.call_id ?? current.callId;
+          current.name ||= item.name ?? "";
+          if (typeof item.arguments === "string") current.args = item.arguments;
+        });
 
         if (type === "response.output_item.done") {
           const emitted = emitToolCall(key);
@@ -753,29 +789,17 @@ const streamResponses = async function* (response: Response): AsyncGenerator<Str
 
     if (type === "response.function_call_arguments.delta") {
       const key = json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
-      const existing = toolBuffers.get(key) ?? {
-        callId: key,
-        name: "",
-        args: "",
-        emitted: false
-      };
-      existing.args += typeof json.delta === "string" ? json.delta : "";
-      toolBuffers.set(key, existing);
+      remember(key, (current) => {
+        current.args += typeof json.delta === "string" ? json.delta : "";
+      });
       continue;
     }
 
     if (type === "response.function_call_arguments.done") {
       const key = json.item_id ?? `${json.output_index ?? toolBuffers.size}`;
-      const existing = toolBuffers.get(key) ?? {
-        callId: key,
-        name: "",
-        args: "",
-        emitted: false
-      };
-      if (typeof json.arguments === "string") {
-        existing.args = json.arguments;
-      }
-      toolBuffers.set(key, existing);
+      remember(key, (current) => {
+        if (typeof json.arguments === "string") current.args = json.arguments;
+      });
       const emitted = emitToolCall(key);
       if (emitted) {
         yield emitted;
@@ -799,6 +823,9 @@ const streamResponses = async function* (response: Response): AsyncGenerator<Str
         usage: responseData.usage ? mapResponsesUsage(responseData.usage) : undefined
       } satisfies StreamEvent;
     }
+  }
+  } finally {
+    await response.body?.cancel().catch(() => undefined);
   }
 };
 
@@ -1000,10 +1027,14 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
         const delta = choice?.delta;
         if (delta?.content) events.push({ type: "text-delta", textDelta: delta.content });
         for (const toolCall of delta?.tool_calls ?? []) {
-          const index =
-            typeof toolCall.index === "number" && Number.isSafeInteger(toolCall.index) && toolCall.index >= 0
+          const index = toolCall.index === undefined
+            ? 0
+            : typeof toolCall.index === "number" && Number.isSafeInteger(toolCall.index) && toolCall.index >= 0 && toolCall.index < MAX_META_TOOL_CALLS
               ? toolCall.index
-              : 0;
+              : undefined;
+          if (index === undefined || (!toolBuffers.has(index) && toolBuffers.size >= MAX_META_TOOL_CALLS)) {
+            throw new ConfigurationError("Meta stream exceeded 128 tool calls.");
+          }
           const existing = toolBuffers.get(index) ?? {
             id: toolCall.id ?? `${index}`,
             name: toolCall.function?.name ?? "",
@@ -1013,6 +1044,7 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
           existing.name ||= toolCall.function?.name ?? "";
           existing.args += toolCall.function?.arguments ?? "";
           toolBuffers.set(index, existing);
+          assertMetaToolBudget(toolBuffers.values(), toolBuffers.size, String(index));
         }
         if (choice?.finish_reason === "tool_calls") {
           for (const [, toolCall] of [...toolBuffers.entries()].sort(([left], [right]) => left - right)) {
@@ -1238,14 +1270,15 @@ export const createMeta = (
     protocols: ["https"],
     allowUnsafe: options.allowUnsafeEndpoints
   }).toString().replace(/\/+$/, "");
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = withManualRedirect(rawFetch);
 
   return createProviderAdapter({
     name: "meta",
     languageModel: (modelId) => new MetaLanguageModel(modelId, apiKey, baseURL, fetcher),
     groundedLanguageModel: (modelId) => new MetaGroundedLanguageModel(modelId, apiKey, baseURL, fetcher),
     files: new MetaFilesClient(apiKey, baseURL, fetcher),
-    rawFetch: fetcher
+    rawFetch
   });
 };
 

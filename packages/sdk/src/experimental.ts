@@ -19,6 +19,7 @@ export {
   ComputerUseExecutionError,
   createEgressPolicy,
   EgressDeniedError,
+  enforceEgressPolicy,
   testToolDefinition,
   testToolRegistry
 } from "@zhivex-ai/core/experimental";

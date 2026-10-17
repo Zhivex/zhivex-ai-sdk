@@ -261,6 +261,35 @@ describe("A2A JSON-RPC server", () => {
     expect(denied.status).toBe(401);
     expect(denied.body.error?.code).toBe(A2A_JSON_RPC_ERROR.authRequired);
 
+    const unread = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const url = new URL(server.rpcUrl);
+      const req = httpRequest({
+        hostname: url.hostname,
+        port: url.port,
+        path: `${url.pathname}${url.search}`,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(8 * 1024 * 1024),
+          "a2a-version": "1.0"
+        }
+      }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
+      });
+      req.flushHeaders();
+      req.on("error", (error) => {
+        if ((error as NodeJS.ErrnoException).code !== "ECONNRESET") reject(error);
+      });
+      req.setTimeout(1000, () => {
+        req.destroy();
+        reject(new Error("A2A server waited to read the unauthenticated body."));
+      });
+    });
+    expect(unread.status).toBe(401);
+    expect(JSON.parse(unread.body).error.code).toBe(A2A_JSON_RPC_ERROR.authRequired);
+
     const allowed = await rpc(server.rpcUrl, "GetTask", { id: "task_missing" }, { authorization: "Bearer secret" });
     expect(allowed.status).toBe(404);
     expect(allowed.body.error?.code).toBe(A2A_JSON_RPC_ERROR.taskNotFound);

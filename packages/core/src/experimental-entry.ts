@@ -22,7 +22,7 @@ export {
 } from "./google.js";
 export type { ExperimentalRawProviderOptions } from "./raw-provider-options.js";
 export { runComputerUse, ComputerUseExecutionError } from "./computer-use.js";
-export { createEgressPolicy, EgressDeniedError } from "./egress-policy.js";
+export { createEgressPolicy, EgressDeniedError, enforceEgressPolicy } from "./egress-policy.js";
 export type {
   EgressAllowRule,
   EgressAuditRecord,

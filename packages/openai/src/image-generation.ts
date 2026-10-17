@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { Buffer } from "node:buffer";
 
 import {
@@ -368,7 +369,7 @@ export class OpenAIImageGenerationModel implements ImageGenerationModel<OpenAIIm
       protocols: ["https"],
       allowUnsafe: config.allowUnsafeEndpoints
     }).toString().replace(/\/$/, "");
-    this.fetcher = config.fetch ?? globalThis.fetch;
+    this.fetcher = withManualRedirect(config.fetch ?? globalThis.fetch);
     this.responseMaxBytes = normalizePositiveLimit(
       config.responseMaxBytes ?? DEFAULT_RESPONSE_MAX_BYTES,
       "responseMaxBytes"

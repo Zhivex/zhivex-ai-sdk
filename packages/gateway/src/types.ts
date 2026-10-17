@@ -92,9 +92,26 @@ export interface GatewayModelTarget {
   modelId: string;
   /** Identifies a separately configured endpoint/region/credential. */
   deploymentId?: string;
-  /** Declared region checked by an egress policy. Distinct deployments stay on deploymentId. */
+  /**
+   * Declared region checked by an egress policy. When `deploymentId` is set, this
+   * label must match the deployment registration or be omitted.
+   */
   region?: string;
-  /** Declared hostname or absolute http(s) URL checked by an egress policy. */
+  /**
+   * Declared hostname or absolute http(s) URL checked by an egress policy.
+   * When `deploymentId` is set, this label must match the deployment registration or be omitted.
+   */
+  endpoint?: string;
+}
+
+export interface GatewayDeployment {
+  provider: GatewayProviderId;
+  adapter: ProviderAdapter;
+  /** Explicitly permit catalog-retired IDs served by this private deployment. */
+  allowRetiredModels?: boolean;
+  /** Server-owned region authorized by the egress policy. */
+  region?: string;
+  /** Server-owned hostname or absolute http(s) URL authorized by the egress policy. */
   endpoint?: string;
 }
 
@@ -254,7 +271,7 @@ export interface GatewayConfig {
   /** Experimental, explicit destinations for decide(); independent of chat routing. */
   decisions?: Readonly<Record<string, import("./decisions.js").GatewayDecisionTarget>>;
   /** Explicit deployment registrations; unknown IDs never fall back to the default adapter. */
-  deployments?: Record<string, { provider: GatewayProviderId; adapter: ProviderAdapter; /** Explicitly permit catalog-retired IDs served by this private deployment. */ allowRetiredModels?: boolean }>;
+  deployments?: Record<string, GatewayDeployment>;
   timeoutMs?: number;
   affinity?: { ttlMs?: number; maxEntries?: number; maxScoreLoss?: number };
   admission?: import("./admission.js").GatewayAdmissionController;

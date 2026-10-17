@@ -43,7 +43,9 @@ envelope whose `result` is a `task`, `artifactUpdate`, or `statusUpdate`.
 `returnImmediately: true` is rejected.
 
 Pass `authenticate` to require a caller-defined check on every JSON-RPC
-request. The Agent Card stays public. When the hook is omitted, pass a
+request. The server runs that check after the route matches and before it
+reads `Content-Type` or the body, then closes the socket when authentication
+fails. The Agent Card stays public. When the hook is omitted, pass a
 single-tenant `userId`. The default bind address is `127.0.0.1`. An IPv6
 bind address is bracketed in the advertised URL, for example
 `http://[::1]:port/rpc`. `0.0.0.0` and `::` are still advertised as

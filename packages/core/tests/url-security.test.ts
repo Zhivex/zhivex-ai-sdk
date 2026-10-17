@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { assertTrustedEndpoint, isLoopbackHostname, isPrivateNetworkHostname } from "../src/index.js";
+import { assertTrustedEndpoint, isLoopbackHostname, isPrivateNetworkHostname, ProviderHTTPError, withManualRedirect } from "../src/index.js";
 
 describe("trusted endpoint validation", () => {
   it("rejects credentials and disallowed protocols", () => {
@@ -139,5 +139,29 @@ describe("trusted endpoint validation", () => {
       protocols: ["http"],
       allowLoopback: true
     })).toThrow("private");
+  });
+});
+
+describe("credentialed redirect policy", () => {
+  it("rejects a redirect once and leaves an explicit redirect policy unchanged", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.redirect === "manual") {
+        return new Response(null, { status: 307, headers: { location: "http://127.0.0.1/private" } });
+      }
+      return new Response("ok", { status: 200 });
+    });
+    const guarded = withManualRedirect(fetcher as typeof fetch);
+
+    await expect(guarded("https://api.example.com/v1")).rejects.toBeInstanceOf(ProviderHTTPError);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+
+    fetcher.mockClear();
+    await expect(guarded("https://api.example.com/v1", { redirect: "error" })).resolves.toBeInstanceOf(Response);
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ redirect: "error" });
+
+    fetcher.mockClear();
+    const opaque = withManualRedirect((async () => ({ type: "opaqueredirect", status: 0, body: { cancel: async () => undefined } })) as typeof fetch);
+    await expect(opaque("https://api.example.com/v1")).rejects.toMatchObject({ status: 302 });
   });
 });

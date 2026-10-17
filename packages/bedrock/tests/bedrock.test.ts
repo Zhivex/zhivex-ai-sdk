@@ -176,6 +176,23 @@ describe("bedrock adapter", () => {
     }
   });
 
+  it("rejects a credentialed Bedrock redirect before replaying the request", async () => {
+    const redirectFetch = vi.fn(async () => new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
+    const provider = createBedrock({
+      runtime: "openai",
+      apiKey: "test",
+      baseURL: "https://bedrock-mantle.us-east-1.amazonaws.com/openai/v1",
+      fetch: redirectFetch as typeof fetch
+    });
+
+    await expect(generateText({
+      model: provider("openai.gpt-oss-120b-1:0"),
+      prompt: "hello"
+    })).rejects.toThrow("Credentialed provider request was redirected.");
+    expect(redirectFetch).toHaveBeenCalledTimes(1);
+    expect(redirectFetch.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+  });
+
   runAgentProviderContractSuite({
     providerName: "bedrock",
     modelId: "openai.gpt-oss-120b-1:0",

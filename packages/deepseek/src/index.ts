@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { toJSONSchema } from "zod";
 
 import {
@@ -1000,7 +1001,8 @@ export const createDeepSeek = (
     }
   ).toString().replace(/\/+$/, "");
   const stableClientBaseURL = baseURL.replace(/\/beta$/, "");
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = withManualRedirect(rawFetch);
   const clients = createDeepSeekClients({
     apiKey,
     baseURL: stableClientBaseURL,
@@ -1013,6 +1015,6 @@ export const createDeepSeek = (
     name: "deepseek",
     languageModel: (modelId) => new DeepSeekLanguageModel(modelId, apiKey, baseURL, betaBaseURL, fetcher),
     ...clients,
-    rawFetch: fetcher
+    rawFetch
   });
 };

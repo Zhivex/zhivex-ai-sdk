@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { createPortableQwenDecisionModel } from "./portable-decision.js";
 import { qwenSearchUsage } from "./search-usage.js";
 import { createAnnotationCollector } from "./annotations.js";
@@ -301,8 +302,39 @@ const mediaValue = (input: MediaInput) => {
   return toDataURL(input.data, input.mediaType);
 };
 
+const QWEN_UPLOAD_MAX_BYTES = 64 * 1024 * 1024;
+
+const rejectOversizedQwenUpload = () => {
+  throw new ValidationError("Qwen file uploads must not exceed 64 MiB.");
+};
+
+/** Upper bound of Node's base64 decode, ignoring ASCII whitespace and padding. */
+const estimatedDecodedBase64Bytes = (value: string) => {
+  const payload = value.replace(/[\u0000-\u0020=]/g, "").length;
+  return Math.floor((payload * 3) / 4);
+};
+
+const uploadFileBytes = async (data: string | Uint8Array | ArrayBuffer | Blob): Promise<Uint8Array> => {
+  if (typeof data === "string") {
+    if (estimatedDecodedBase64Bytes(data) > QWEN_UPLOAD_MAX_BYTES) rejectOversizedQwenUpload();
+    const bytes = Uint8Array.from(Buffer.from(data, "base64"));
+    if (bytes.byteLength > QWEN_UPLOAD_MAX_BYTES) rejectOversizedQwenUpload();
+    return bytes;
+  }
+  if (data instanceof Uint8Array) {
+    if (data.byteLength > QWEN_UPLOAD_MAX_BYTES) rejectOversizedQwenUpload();
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    if (data.byteLength > QWEN_UPLOAD_MAX_BYTES) rejectOversizedQwenUpload();
+    return new Uint8Array(data);
+  }
+  if (data.size > QWEN_UPLOAD_MAX_BYTES) rejectOversizedQwenUpload();
+  return new Uint8Array(await data.arrayBuffer());
+};
+
 const createFile = async (data: string | Uint8Array | ArrayBuffer | Blob, mediaType: string, filename: string) => {
-  const bytes = await toUint8Array(data);
+  const bytes = await uploadFileBytes(data);
   return new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], filename, { type: mediaType });
 };
 
@@ -3316,7 +3348,8 @@ export const createQwen = (
       : `${realtimeEndpoint.origin}/api-ws/v1/inference`), {
     label: "Qwen inferenceURL", protocols: ["wss"], allowedHosts: [new URL(baseURL).hostname], allowUnsafe: options.allowUnsafeEndpoints
   }).toString();
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = withManualRedirect(rawFetch);
   const responseLimits = resolveAudioResponseLimits(options.responseLimits);
   const speechAudioMaxRedirects = options.speechAudioMaxRedirects ?? 3;
   if (!Number.isInteger(speechAudioMaxRedirects) || speechAudioMaxRedirects < 0 || speechAudioMaxRedirects > 10) {
@@ -3367,7 +3400,7 @@ export const createQwen = (
     imageTranslationModel: (modelId = "qwen-mt-image-2.0") => createQwenImageTranslationModel(modelId, apiKey, taskBaseURL, fetcher),
     worlds: (modelId: QwenWorldModelId) => createQwenWorldsClient(modelId, apiKey, taskBaseURL, fetcher),
     temporaryKeys: createQwenTemporaryKeysClient(apiKey, taskBaseURL, fetcher),
-    rawFetch: fetcher
+    rawFetch
   }) as QwenProvider;
 };
 

@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { toJSONSchema } from "zod";
 
 import {
@@ -868,12 +869,13 @@ export const createZAI = (
     protocols: ["https"],
     allowUnsafe: options.allowUnsafeEndpoints
   }).toString().replace(/\/+$/, "");
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = withManualRedirect(rawFetch);
   return createProviderAdapter({
     name: "zai",
     endpoint,
     languageModel: (modelId) => new ZAILanguageModel(modelId, apiKey, baseURL, fetcher),
-    rawFetch: fetcher
+    rawFetch
   });
 };
 

@@ -67,7 +67,8 @@ export type {
 export {
   assertTrustedEndpoint,
   isLoopbackHostname,
-  isPrivateNetworkHostname
+  isPrivateNetworkHostname,
+  withManualRedirect
 } from "./url-security.js";
 export type { TrustedEndpointOptions } from "./url-security.js";
 export {
@@ -604,7 +605,7 @@ export {
 } from "./production-agent-kit.js";
 export { createLatamSensitiveDataPolicy } from "./latam-redaction.js";
 export type { LatamCountry, LatamSensitiveDataPolicyOptions } from "./latam-redaction.js";
-export { createEgressPolicy, EgressDeniedError } from "./egress-policy.js";
+export { createEgressPolicy, EgressDeniedError, enforceEgressPolicy } from "./egress-policy.js";
 export type {
   EgressAllowRule,
   EgressAuditRecord,

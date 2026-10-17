@@ -127,7 +127,9 @@ const agent = createAgent({
 
 Each `assert` writes one `egress_call_audit` record, allowed or denied. The record stores the provider, model, declared region, canonical endpoint, and reason. It does not store the prompt. If `onAudit` throws for a denial, the call still fails with `EgressDeniedError`. If it throws for an allow, the provider is not called.
 
-The caller declares `egress.region` and `egress.endpoint`. Provider adapters do not expose a private base URL, so the check uses that declaration. A declaration that conflicts with `providerOptions` or with a region or endpoint field on the model is denied. This check is not a replacement for `assertTrustedEndpoint`.
+The caller declares `egress.region` and `egress.endpoint` for a direct provider call. Provider adapters do not expose a private base URL, so that check uses the declaration. A declaration that conflicts with `providerOptions` or with a region or endpoint field on the model is denied.
+
+A gateway target with `deploymentId` is different. The deployment registration supplies the region and endpoint, and the audit records that server destination. A caller label, including `providerOptions.region`, `location`, `endpoint`, `baseURL`, or `baseUrl`, must match the registration or be omitted. An unknown or mismatched deployment is skipped and is not authorized from the caller label. This check is not a replacement for `assertTrustedEndpoint`.
 
 ```ts
 import { createEgressPolicy, generateText } from "@zhivex-ai/sdk";

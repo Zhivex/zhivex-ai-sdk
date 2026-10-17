@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { z, toJSONSchema } from "zod";
 
 import {
@@ -788,12 +789,13 @@ export const createKimi = (
     protocols: ["https"],
     allowUnsafe: options.allowUnsafeEndpoints
   }).toString().replace(/\/+$/, "");
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = withManualRedirect(rawFetch);
 
   return createProviderAdapter({
     name: "kimi",
     languageModel: (modelId) => new KimiLanguageModel(modelId, apiKey, baseURL, fetcher),
-    rawFetch: fetcher
+    rawFetch
   });
 };
 

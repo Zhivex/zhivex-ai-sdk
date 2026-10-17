@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { toBase64 } from "./encoding.js";
 import { normalizeInteractionUsage, normalizeGenerateContentUsage } from "./usage.js";
 import { systemInstruction, mapMessages, toGeminiSchema, mapTools } from "./messages.js";
@@ -22,6 +23,7 @@ import {
   CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
+  ValidationError,
   UnsupportedFeatureError,
   assertTrustedEndpoint,
   createMcpToolSet,
@@ -355,21 +357,33 @@ const collectVideos = (json: any, endpoint: string): GeneratedMedia[] => {
     .filter((video) => Boolean(video.data || video.uri));
 };
 
-const dataToBytes = async (data: FileUploadInput["data"]): Promise<Uint8Array> => {
-  if (typeof data === "string") {
-    return new TextEncoder().encode(data);
-  }
-  if (data instanceof Uint8Array) {
-    return data;
-  }
-  if (data instanceof ArrayBuffer) {
-    return new Uint8Array(data);
-  }
-  return new Uint8Array(await data.arrayBuffer());
+const GEMINI_UPLOAD_MAX_BYTES = 64 * 1024 * 1024;
+
+const rejectOversizedUpload = () => {
+  throw new ValidationError("Gemini file uploads must not exceed 64 MiB.");
 };
 
-const bytesToArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
-  bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+const blobFromBytes = (bytes: Uint8Array): Blob =>
+  new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer]);
+
+const uploadBody = async (data: FileUploadInput["data"]): Promise<{ body: Blob; byteLength: number }> => {
+  if (typeof data === "string") {
+    if (data.length > GEMINI_UPLOAD_MAX_BYTES) rejectOversizedUpload();
+    const bytes = new TextEncoder().encode(data);
+    if (bytes.byteLength > GEMINI_UPLOAD_MAX_BYTES) rejectOversizedUpload();
+    return { body: blobFromBytes(bytes), byteLength: bytes.byteLength };
+  }
+  if (data instanceof Uint8Array) {
+    if (data.byteLength > GEMINI_UPLOAD_MAX_BYTES) rejectOversizedUpload();
+    return { body: blobFromBytes(data), byteLength: data.byteLength };
+  }
+  if (data instanceof ArrayBuffer) {
+    if (data.byteLength > GEMINI_UPLOAD_MAX_BYTES) rejectOversizedUpload();
+    return { body: new Blob([data]), byteLength: data.byteLength };
+  }
+  if (data.size > GEMINI_UPLOAD_MAX_BYTES) rejectOversizedUpload();
+  return { body: data, byteLength: data.size };
+};
 
 const normalizeUploadedFile = (json: any): UploadedFile => {
   const file = json.file ?? json;
@@ -1211,10 +1225,10 @@ class GeminiFilesClient implements FilesClient {
   }
 
   async upload(input: FileUploadInput): Promise<UploadedFile> {
-    const bytes = await dataToBytes(input.data);
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
+      const uploaded = await uploadBody(input.data);
       const startResponse = await withRetry(
         () =>
           this.fetcher(this.uploadUrl("files"), {
@@ -1224,7 +1238,7 @@ class GeminiFilesClient implements FilesClient {
               "content-type": "application/json",
               "x-goog-upload-protocol": "resumable",
               "x-goog-upload-command": "start",
-              "x-goog-upload-header-content-length": String(bytes.byteLength),
+              "x-goog-upload-header-content-length": String(uploaded.byteLength),
               "x-goog-upload-header-content-type": input.mediaType
             },
             signal,
@@ -1264,7 +1278,7 @@ class GeminiFilesClient implements FilesClient {
               "x-goog-upload-offset": "0"
             },
             signal,
-            body: new Blob([bytesToArrayBuffer(bytes)], { type: input.mediaType })
+            body: uploaded.body
           }),
         input
       );
@@ -1353,9 +1367,9 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
   }
 
   async upload(input: FileSearchStoreUploadInput): Promise<PredictionOperation> {
-    const bytes = await dataToBytes(input.data);
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
+      const uploaded = await uploadBody(input.data);
       const startResponse = await withRetry(
         () =>
           this.fetcher(
@@ -1369,7 +1383,7 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
               "content-type": "application/json",
               "x-goog-upload-protocol": "resumable",
               "x-goog-upload-command": "start",
-              "x-goog-upload-header-content-length": String(bytes.byteLength),
+              "x-goog-upload-header-content-length": String(uploaded.byteLength),
               "x-goog-upload-header-content-type": input.mediaType
             },
             signal,
@@ -1409,7 +1423,7 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
               "x-goog-upload-offset": "0"
             },
             signal,
-            body: new Blob([bytesToArrayBuffer(bytes)], { type: input.mediaType })
+            body: uploaded.body
           }),
         input
       );
@@ -3069,7 +3083,8 @@ export const createGemini = (
         allowUnsafe: options.allowUnsafeEndpoints
       }).toString()
     : undefined;
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetch = options.fetch ?? globalThis.fetch;
+  const fetcher = withManualRedirect(rawFetch);
 
   return createProviderAdapter({
     name: "gemini",
@@ -3105,7 +3120,7 @@ export const createGemini = (
     batches: new GeminiBatchesClient(apiKey, baseURL, fetcher),
     interactions: new GeminiInteractionsClient(apiKey, baseURL, fetcher),
     predictionModel: (modelId) => new GeminiPredictionModel(modelId, apiKey, baseURL, fetcher),
-    rawFetch: fetcher
+    rawFetch
   });
 };
 

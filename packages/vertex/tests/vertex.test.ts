@@ -297,6 +297,20 @@ describe("vertex adapter", () => {
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("authorization")).toBeNull();
   });
 
+  it("rejects a credentialed Vertex redirect before replaying the request", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
+    const provider = createVertex({
+      apiKey: "vertex-api-key",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(generateText({ model: provider("gemini-3.5-flash"), prompt: "hello" })).rejects.toThrow(
+      "Credentialed provider request was redirected."
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+  });
+
   it("authenticates Vertex requests with an API key", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({

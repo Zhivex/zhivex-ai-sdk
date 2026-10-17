@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { audioPart, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { audioPart, ConfigurationError, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createMeta, metaFilePart, metaToolSearchTool, metaWebSearchTool } from "../src/index.js";
@@ -133,6 +133,18 @@ describe("meta adapter", () => {
     const provider = createMeta({ apiKey: "test", fetch: fetchMock as typeof fetch });
 
     expect(provider("muse-spark-1.2")).toMatchObject(provider.languageModel("muse-spark-1.2"));
+  });
+
+  it("rejects a credentialed Meta redirect before replaying the request", async () => {
+    const redirectFetch = vi.fn(async () => new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
+    const provider = createMeta({ apiKey: "test", fetch: redirectFetch as typeof fetch });
+
+    await expect(generateText({
+      model: provider("muse-spark-1.2"),
+      prompt: "hello"
+    })).rejects.toThrow("Credentialed provider request was redirected.");
+    expect(redirectFetch).toHaveBeenCalledTimes(1);
+    expect(redirectFetch.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
   });
 
   it("maps MP3 and WAV AudioPart input to Chat Completions", async () => {
@@ -800,5 +812,49 @@ describe("meta adapter", () => {
     ).rejects.toThrow('Provider "meta" does not support "reasoning.budgetTokens".');
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("caps streamed tool-call state and cancels the response body", async () => {
+    let cancelled = false;
+    const chunk = "x".repeat(600_000);
+    const body = new ReadableStream({
+      start(controller) {
+        const encode = (args: string) => new TextEncoder().encode(
+          `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_sum","function":{"name":"sum","arguments":${JSON.stringify(args)}}}]}}]}\n\n`
+        );
+        controller.enqueue(encode(chunk));
+        controller.enqueue(encode(chunk));
+      },
+      cancel() {
+        cancelled = true;
+      }
+    });
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const provider = createMeta({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(streamText({
+      model: provider("muse-spark-1.2"),
+      prompt: "hello"
+    }).collect()).rejects.toBeInstanceOf(ConfigurationError);
+    expect(cancelled).toBe(true);
+
+    fetchMock.mockResolvedValueOnce(new Response(
+      `data: {"choices":[{"delta":{"tool_calls":[{"index":128,"id":"call_late","function":{"name":"sum","arguments":"{}"}}]}}]}\n\n`,
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    ));
+    await expect(streamText({
+      model: provider("muse-spark-1.2"),
+      prompt: "hello"
+    }).collect()).rejects.toThrow("exceeded 128 tool calls");
+
+    const calls = Array.from({ length: 129 }, (_, index) =>
+      `data: {"type":"response.output_item.added","item":{"type":"function_call","id":"item_${index}","call_id":"call_${index}","name":"sum","arguments":"{}"}}\n\n`
+    ).join("");
+    fetchMock.mockResolvedValueOnce(new Response(calls, { status: 200, headers: { "content-type": "text/event-stream" } }));
+    await expect(streamText({
+      model: provider("muse-spark-1.2"),
+      prompt: "hello",
+      providerOptions: { apiMode: "responses" }
+    }).collect()).rejects.toThrow("exceeded 128 tool calls");
   });
 });

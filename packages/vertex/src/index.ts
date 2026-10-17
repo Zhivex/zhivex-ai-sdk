@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { streamVertexGenerateContent, validateVertexGenerateContent } from "./generate-content-stream.js";
 import { normalizeVertexTranscriptionConfig, transcriptionRequest, transcriptionResponse, type VertexTranscriptionResult, type VertexTranscriptionModel as VertexTranscriptionModelContract } from "./transcription.js";
 export type { VertexAudioTranscriptionConfig, VertexAudioTranscription, VertexTranscriptionOptions, VertexTranscriptionResult, VertexTranscriptionModel } from "./transcription.js";
@@ -2765,7 +2766,7 @@ export const createVertex = (
       ? baseURL
       : `https://${veoLocation}-aiplatform.googleapis.com/${apiVersion}/projects/${projectId}/locations/${veoLocation}`);
   const rawFetch = options.fetch ?? globalThis.fetch;
-  const fetcher = createVertexAuthenticatedFetch(rawFetch, auth);
+  const fetcher = createVertexAuthenticatedFetch(withManualRedirect(rawFetch), auth);
   const interactions = createVertexInteractionsClient(baseURL, fetcher, () => {
     if (auth.type !== "bearer" || !/\/projects\/[^/]+\/locations\/[^/]+$/.test(baseURL)) throw new ConfigurationError("Vertex Interactions requires Google Cloud bearer credentials and a project-scoped endpoint.");
   });

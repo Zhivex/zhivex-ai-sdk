@@ -55,7 +55,8 @@ export {
 } from "./tool-registry.js";
 export {
   assertTrustedEndpoint,
-  isLoopbackHostname
+  isLoopbackHostname,
+  withManualRedirect
 } from "./url-security.js";
 export type * from "./types.js";
 export type { AudioResponseLimits } from "./response.js";

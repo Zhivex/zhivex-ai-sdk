@@ -500,6 +500,18 @@ export const createA2aAgentServer = async <TModel extends LanguageModel>(
       writeError(response, null, new A2aProtocolError("METHOD_NOT_FOUND", "Method not found."));
       return;
     }
+    let userId: string;
+    try {
+      userId = await authenticate(request);
+    } catch (error) {
+      if (request.socket?.destroyed || response.destroyed || closed) return;
+      const protocol = error instanceof A2aProtocolError && error.code === "AUTH_REQUIRED"
+        ? error
+        : new A2aProtocolError("AUTH_REQUIRED", "Authentication required.");
+      writeError(response, null, protocol);
+      request.destroy();
+      return;
+    }
     const contentType = headerValue(request, "content-type") ?? "";
     if (!contentType.toLowerCase().includes("application/json")) {
       request.resume();
@@ -523,17 +535,6 @@ export const createA2aAgentServer = async <TModel extends LanguageModel>(
     } catch (error) {
       const protocol = error instanceof A2aProtocolError ? error : new A2aProtocolError("INVALID_REQUEST", "Request payload validation error.");
       writeError(response, isRecord(payload) ? jsonRpcId(payload.id) : null, protocol);
-      return;
-    }
-    let userId: string;
-    try {
-      userId = await authenticate(request);
-    } catch (error) {
-      if (request.socket?.destroyed || response.destroyed || closed) return;
-      const protocol = error instanceof A2aProtocolError && error.code === "AUTH_REQUIRED"
-        ? error
-        : new A2aProtocolError("AUTH_REQUIRED", "Authentication required.");
-      writeError(response, rpc.id, protocol);
       return;
     }
     let method: string;

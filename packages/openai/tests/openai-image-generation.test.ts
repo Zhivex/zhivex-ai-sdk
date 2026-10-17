@@ -319,4 +319,18 @@ describe("OpenAI image generation", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects a credentialed image request that is redirected", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 308, headers: { location: "http://127.0.0.1/collect" } }));
+    const model = createOpenAIImageGenerationModel({
+      modelId: "gpt-image-2",
+      apiKey: "secret-test-key",
+      baseURL: "https://example.test/v1",
+      fetch: fetchMock as typeof fetch
+    });
+
+    await expect(model.generateImage({ prompt: "draw" })).rejects.toMatchObject({ status: 308 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+  });
 });

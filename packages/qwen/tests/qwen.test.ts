@@ -2219,6 +2219,64 @@ describe("qwen adapter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects an oversized Qwen upload before reading the blob", async () => {
+    const arrayBuffer = vi.fn();
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(provider.files!.upload({
+      data: { size: 64 * 1024 * 1024 + 1, arrayBuffer } as unknown as Blob,
+      mediaType: "text/plain"
+    })).rejects.toThrow("must not exceed 64 MiB");
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a 64 MiB base64 upload when whitespace makes the encoded string longer", async () => {
+    const maxBytes = 64 * 1024 * 1024;
+    const groups = Math.ceil(maxBytes / 3);
+    const padding = (3 - (maxBytes % 3)) % 3;
+    const encoded = `${"A".repeat(groups * 4 - padding)}${"=".repeat(padding)}`;
+    const data = `${encoded.slice(0, 4)}\n${encoded.slice(4)}`;
+    expect(data.length).toBeGreaterThan(maxBytes);
+    expect(Buffer.byteLength(encoded, "base64")).toBe(maxBytes);
+    fetchMock.mockResolvedValueOnce(Response.json({ id: "file_boundary" }));
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(provider.files!.upload({
+      data,
+      mediaType: "application/octet-stream"
+    })).resolves.toMatchObject({ name: "file_boundary" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  }, 30_000);
+
+  it("rejects a base64 upload one decoded byte over 64 MiB before allocating it", async () => {
+    const maxBytes = 64 * 1024 * 1024;
+    const over = maxBytes + 1;
+    const groups = Math.ceil(over / 3);
+    const padding = (3 - (over % 3)) % 3;
+    const encoded = `${"A".repeat(groups * 4 - padding)}${"=".repeat(padding)}`;
+    const data = `${encoded.slice(0, 4)}\n${encoded.slice(4)}`;
+    expect(Buffer.byteLength(encoded, "base64")).toBe(over);
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(provider.files!.upload({
+      data,
+      mediaType: "application/octet-stream"
+    })).rejects.toThrow("must not exceed 64 MiB");
+    expect(fetchMock).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("rejects a credentialed Qwen redirect before replaying the request", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    await expect(generateText({ model: provider("qwen-plus"), prompt: "hello" })).rejects.toThrow(
+      "Credentialed provider request was redirected."
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+  });
+
   it("exposes Qwen speech and media models", async () => {
     fetchMock
       .mockResolvedValueOnce(

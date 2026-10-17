@@ -266,11 +266,38 @@ export interface ResolvedEgressTarget {
   conflict?: string;
 }
 
+export interface EgressResolutionOptions {
+  /**
+   * The model region and endpoint are the only destination. A caller label that
+   * differs, including a label for a destination the model does not declare, is denied.
+   */
+  authoritativeDestination?: boolean;
+}
+
+const canonicalEndpoint = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  const normalized = tryNormalizeEndpoint(value);
+  return normalized.ok ? (normalized.endpoint.canonical ?? value) : value;
+};
+
+const sameRegion = (left: string | undefined, right: string | undefined) =>
+  (left ?? "").toLowerCase() === (right ?? "").toLowerCase();
+
 /** Resolves the declared target. A conflict fails closed before any provider call. */
 export const resolveEgressTarget = (
-  model: { provider: string; modelId: string },
+  model: {
+    provider: string;
+    modelId: string;
+    region?: string;
+    endpoint?: string;
+    baseURL?: string;
+    baseUrl?: string;
+    egressRegion?: string;
+    egressEndpoint?: string;
+  },
   declaration: EgressDeclaration | undefined,
-  providerOptions: unknown
+  providerOptions: unknown,
+  options?: EgressResolutionOptions
 ): ResolvedEgressTarget => {
   const declaredRegion = readString(declaration?.region);
   const optionRegion = readProviderString(providerOptions, ["region", "location"]);
@@ -278,6 +305,24 @@ export const resolveEgressTarget = (
   const declaredEndpoint = readString(declaration?.endpoint);
   const optionEndpoint = readProviderString(providerOptions, ["endpoint", "baseURL", "baseUrl"]);
   const modelEndpoint = readModelString(model, ["endpoint", "baseURL", "baseUrl", "egressEndpoint"]);
+
+  if (options?.authoritativeDestination) {
+    const regionConflict = [declaredRegion, optionRegion].some((value) => value !== undefined && !sameRegion(value, modelRegion));
+    const endpointConflict = [declaredEndpoint, optionEndpoint].some((value) => value !== undefined && canonicalEndpoint(value) !== canonicalEndpoint(modelEndpoint));
+    const target = {
+      provider: model.provider,
+      model: model.modelId,
+      region: modelRegion,
+      endpoint: modelEndpoint
+    };
+    if (regionConflict) {
+      return { target, conflict: "declared region does not match the configured destination" };
+    }
+    if (endpointConflict) {
+      return { target, conflict: "declared endpoint does not match the configured destination" };
+    }
+    return { target };
+  }
 
   const regionSources = [declaredRegion, optionRegion, modelRegion].filter((value): value is string => Boolean(value));
   const endpointSources = [declaredEndpoint, optionEndpoint, modelEndpoint].filter((value): value is string => Boolean(value));
@@ -322,11 +367,21 @@ export const resolveEgressTarget = (
 
 export const enforceEgressPolicy = async (
   policy: EgressPolicy,
-  model: { provider: string; modelId: string },
+  model: {
+    provider: string;
+    modelId: string;
+    region?: string;
+    endpoint?: string;
+    baseURL?: string;
+    baseUrl?: string;
+    egressRegion?: string;
+    egressEndpoint?: string;
+  },
   declaration: EgressDeclaration | undefined,
-  providerOptions: unknown
+  providerOptions: unknown,
+  options?: EgressResolutionOptions
 ): Promise<EgressAuditRecord> => {
-  const resolved = resolveEgressTarget(model, declaration, providerOptions);
+  const resolved = resolveEgressTarget(model, declaration, providerOptions, options);
   if (resolved.conflict) {
     const normalized = resolved.target.endpoint ? tryNormalizeEndpoint(resolved.target.endpoint) : undefined;
     const record: EgressAuditRecord = {

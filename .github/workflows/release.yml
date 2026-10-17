@@ -126,28 +126,13 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    outputs:
-      release_tags_json: ${{ steps.release_tags.outputs.tags_json }}
-      has_release_tags: ${{ steps.release_tags.outputs.has_tags }}
-
     steps:
-      - name: Checkout immutable release source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
       - name: Setup Node for npm trusted publishing
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.4.2
 
       - name: Verify npm supports trusted publishing
         run: >-
@@ -165,17 +150,102 @@ jobs:
           set -euo pipefail
           shasum -a 512 -c .release/SHA512SUMS
 
-      - name: Publish stable packages with OIDC
-        if: inputs.channel == 'latest'
+      - name: Publish checksum-verified tarballs with provenance
+        env:
+          RELEASE_TAG: ${{ inputs.channel }}
+          RELEASE_GIT_HEAD: ${{ github.sha }}
         run: |
-          bun run scripts/release-artifacts.ts publish --tag=latest --git-head="$GITHUB_SHA"
-          bun run scripts/check-release-readiness.ts --postpublish --release-batch-file=.release/zhivex-release-batch.json
+          node <<'END_PUBLISH'
+          const { execFileSync } = require("node:child_process");
+          const { createHash } = require("node:crypto");
+          const { lstatSync, readFileSync } = require("node:fs");
+          const path = require("node:path");
 
-      - name: Publish prerelease packages with OIDC
-        if: inputs.channel == 'next'
-        run: |
-          bun run scripts/release-artifacts.ts publish --tag=next --git-head="$GITHUB_SHA"
-          bun run scripts/check-release-readiness.ts --postpublish --tag=next --release-batch-file=.release/zhivex-release-batch.json
+          const packageIdentity = /^(@zhivex-ai\/[a-z0-9][a-z0-9-]*)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
+          const tarballPattern = /^[a-z0-9][a-z0-9._-]*\.tgz$/;
+          const tag = process.env.RELEASE_TAG;
+          const gitHead = process.env.RELEASE_GIT_HEAD;
+          if (tag !== "latest" && tag !== "next") {
+            throw new Error("Unsupported release tag.");
+          }
+          if (!/^[a-f0-9]{40}$/.test(gitHead ?? "")) {
+            throw new Error("Invalid release git head.");
+          }
+
+          const releaseDirectory = path.resolve(".release");
+          const artifactDirectory = path.resolve(releaseDirectory, "tarballs");
+          const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
+          const manifest = readJson(path.join(releaseDirectory, "release-artifacts.json"));
+          const batch = readJson(path.join(releaseDirectory, "zhivex-release-batch.json"));
+          if (manifest.schemaVersion !== 1 || manifest.gitHead !== gitHead || !Array.isArray(manifest.packages)) {
+            throw new Error("Release artifact manifest is not bound to the expected commit.");
+          }
+          if (!Array.isArray(batch) || batch.some((entry) => typeof entry !== "string" || !packageIdentity.test(entry))) {
+            throw new Error("Release batch must contain only validated package identities.");
+          }
+          if (new Set(batch).size !== batch.length) {
+            throw new Error("Release batch contains duplicate package identities.");
+          }
+          const expectedBatch = [...batch].sort();
+          const sha512File = (filePath) => createHash("sha512").update(readFileSync(filePath)).digest("hex");
+          const entries = manifest.packages.map((entry) => {
+            const identity = `${entry.name}@${entry.version}`;
+            if (!packageIdentity.test(identity) || !tarballPattern.test(entry.tarball) || !/^[a-f0-9]{128}$/.test(entry.sha512)) {
+              throw new Error(`Invalid release artifact entry: ${identity}`);
+            }
+            const tarballPath = path.resolve(artifactDirectory, entry.tarball);
+            if (path.dirname(tarballPath) !== artifactDirectory) {
+              throw new Error(`Release tarball escapes its artifact directory: ${entry.tarball}`);
+            }
+            const stat = lstatSync(tarballPath);
+            if (!stat.isFile() || stat.isSymbolicLink()) {
+              throw new Error(`Release tarball must be a regular file: ${entry.tarball}`);
+            }
+            if (sha512File(tarballPath) !== entry.sha512) {
+              throw new Error(`Release tarball checksum mismatch: ${entry.tarball}`);
+            }
+            return { identity, tarballPath };
+          });
+          const actualBatch = entries.map((entry) => entry.identity).sort();
+          if (JSON.stringify(actualBatch) !== JSON.stringify(expectedBatch)) {
+            throw new Error("Release artifact manifest does not match the selected release batch.");
+          }
+          if (new Set(entries.map((entry) => entry.tarballPath)).size !== entries.length) {
+            throw new Error("Release artifact manifest contains duplicate tarballs.");
+          }
+          for (const entry of entries) {
+            execFileSync(
+              "npm",
+              ["publish", entry.tarballPath, "--tag", tag, "--access", "public", "--provenance"],
+              { stdio: "inherit" }
+            );
+          }
+          console.log(`Published ${entries.length} verified release tarball(s) with dist-tag ${tag}.`);
+          END_PUBLISH
+
+  collect_tags:
+    name: Collect published package tags
+    needs: verify_public
+    if: needs.verify_public.result == 'success' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      release_tags_json: ${{ steps.release_tags.outputs.tags_json }}
+      has_release_tags: ${{ steps.release_tags.outputs.has_tags }}
+
+    steps:
+      - name: Checkout immutable release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
 
       - name: Collect packages published from this release commit
         id: release_tags
@@ -192,8 +262,8 @@ jobs:
 
   push_tags:
     name: Push verified release tags
-    needs: publish
-    if: needs.publish.result == 'success' && needs.publish.outputs.has_release_tags == 'true'
+    needs: collect_tags
+    if: needs.collect_tags.result == 'success' && needs.collect_tags.outputs.has_release_tags == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -211,7 +281,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAGS_JSON: ${{ needs.publish.outputs.release_tags_json }}
+          RELEASE_TAGS_JSON: ${{ needs.collect_tags.outputs.release_tags_json }}
         run: |
           set -euo pipefail
 
@@ -276,7 +346,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAGS_JSON: ${{ needs.publish.outputs.release_tags_json }}
+          RELEASE_TAGS_JSON: ${{ needs.collect_tags.outputs.release_tags_json }}
         run: |
           set -euo pipefail
 

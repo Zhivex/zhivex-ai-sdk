@@ -1,3 +1,4 @@
+import { enforceEgressPolicy } from "@zhivex-ai/core/experimental";
 import { calculateModelCost } from "@zhivex-ai/core/catalog";
 import { createCachedGenerateMiddleware, ProviderToolCallError, type GenerateResult, type LanguageModel, type ModelGenerateInput, type StreamEvent, type TokenUsage } from "@zhivex-ai/core/generation";
 import { type GatewayConfig, type GatewayModelTarget } from "./types.js";
@@ -9,8 +10,28 @@ export const cachedResults = new WeakSet<GenerateResult>();
 const reportedTokens = (usage?: TokenUsage) => usage?.totalTokens !== undefined && Number.isSafeInteger(usage.totalTokens) && usage.totalTokens >= 0 ? usage.totalTokens : undefined;
 /** Provider dispatch, resource lifetimes and exact caching are shared by every routed operation. */
 export const createGatewayExecutor = (config: GatewayConfig) => {
-  const authorize = async (target: GatewayModelTarget) => {
+  const authorize = async (target: GatewayModelTarget, providerOptions: unknown) => {
     if (!config.egressPolicy) return;
+    const deployment = target.deploymentId === undefined ? undefined : config.deployments?.[target.deploymentId];
+    if (target.deploymentId !== undefined) {
+      const registered = deployment?.provider === target.provider ? deployment : undefined;
+      await enforceEgressPolicy(
+        config.egressPolicy,
+        {
+          provider: target.provider,
+          modelId: target.modelId,
+          region: registered?.region,
+          endpoint: registered?.endpoint
+        },
+        {
+          region: target.region ?? (registered ? undefined : "unregistered"),
+          endpoint: target.endpoint ?? (registered ? undefined : "https://unregistered.invalid")
+        },
+        providerOptions,
+        { authoritativeDestination: true }
+      );
+      return;
+    }
     await config.egressPolicy.assert({
       provider: target.provider,
       model: target.modelId,
@@ -88,7 +109,7 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
     diagnostics: () => ({ settlementFailures, pendingSettlements: settlements.size, pendingCacheWrites: cacheWrites.size, droppedCacheWrites, inFlightCacheKeys: flights.size }),
     flush: async () => { await Promise.all([...settlements, ...cacheWrites]); },
     async generate(model: LanguageModel, target: GatewayModelTarget, input: ModelGenerateInput, scope?: string, cacheScope?: string, messageJsonLength?: number): Promise<GenerateResult> {
-      await authorize(target);
+      await authorize(target, input.providerOptions);
       // Cache only pure text model steps; never replay tool calls, provider state or effects.
       const eligible = config.cache && cacheScope?.trim() && !input.tools?.length && !input.providerOptions && input.messages.every(m => m.parts.every(p => p.type === "text"));
       if (!eligible) return generate(model, target, input, scope, messageJsonLength);
@@ -145,7 +166,7 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
       return result;
     },
     async stream(model: LanguageModel, target: GatewayModelTarget, input: ModelGenerateInput, scope?: string, messageJsonLength?: number): Promise<AsyncIterable<StreamEvent>> {
-      await authorize(target);
+      await authorize(target, input.providerOptions);
       const lease = await begin(target, input, scope, messageJsonLength);
       try {
         lease.start();
