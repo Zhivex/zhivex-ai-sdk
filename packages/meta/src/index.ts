@@ -1,3 +1,4 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import { toJSONSchema } from "zod";
 
 import {
@@ -6,7 +7,6 @@ import {
   ProviderHTTPError,
   UnsupportedFeatureError,
   assertTrustedEndpoint,
-  withManualRedirect,
   createProviderAdapter,
   hostedTool,
   isCallableToolDefinition,

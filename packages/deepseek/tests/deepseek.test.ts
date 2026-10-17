@@ -113,6 +113,18 @@ describe("deepseek adapter", () => {
     }
   });
 
+  it("rejects a credentialed DeepSeek redirect before replaying the request", async () => {
+    const redirectFetch = vi.fn(async () => new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
+    const provider = createDeepSeek({ apiKey: "test", fetch: redirectFetch as typeof fetch });
+
+    await expect(generateText({
+      model: provider("deepseek-v4-flash"),
+      prompt: "hello"
+    })).rejects.toThrow("Credentialed provider request was redirected.");
+    expect(redirectFetch).toHaveBeenCalledTimes(1);
+    expect(redirectFetch.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+  });
+
   it.each(["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"])("maps DeepSeek V4 Flash Vision image and file inputs in order", async (modelId) => {
     fetchMock.mockResolvedValueOnce(
       Response.json({

@@ -1,9 +1,9 @@
+import { withManualRedirect } from "./manual-redirect.js";
 import {
   ConfigurationError,
   ProviderHTTPError,
   ValidationError,
   assertTrustedEndpoint,
-  withManualRedirect,
   normalizeFinishReason,
   openAICompatibleJsonHeaders,
   readErrorBodyWithLimit,

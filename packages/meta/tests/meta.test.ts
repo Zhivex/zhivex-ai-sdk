@@ -135,6 +135,18 @@ describe("meta adapter", () => {
     expect(provider("muse-spark-1.2")).toMatchObject(provider.languageModel("muse-spark-1.2"));
   });
 
+  it("rejects a credentialed Meta redirect before replaying the request", async () => {
+    const redirectFetch = vi.fn(async () => new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
+    const provider = createMeta({ apiKey: "test", fetch: redirectFetch as typeof fetch });
+
+    await expect(generateText({
+      model: provider("muse-spark-1.2"),
+      prompt: "hello"
+    })).rejects.toThrow("Credentialed provider request was redirected.");
+    expect(redirectFetch).toHaveBeenCalledTimes(1);
+    expect(redirectFetch.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+  });
+
   it("maps MP3 and WAV AudioPart input to Chat Completions", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({

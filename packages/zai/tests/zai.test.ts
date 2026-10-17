@@ -154,6 +154,18 @@ describe("zai adapter", () => {
     expect(provider("custom-glm").capabilities.reasoningEfforts).toBeUndefined();
   });
 
+  it("rejects a credentialed Z.ai redirect before replaying the request", async () => {
+    const redirectFetch = vi.fn(async () => new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
+    const provider = createZAI({ apiKey: "test", fetch: redirectFetch as typeof fetch });
+
+    await expect(generateText({
+      model: provider("glm-5.3"),
+      prompt: "hello"
+    })).rejects.toThrow("Credentialed provider request was redirected.");
+    expect(redirectFetch).toHaveBeenCalledTimes(1);
+    expect(redirectFetch.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+  });
+
   it("requires credentials and selects the general or Coding Plan endpoint explicitly", async () => {
     expect(() => createZAI({ apiKey: "" })).toThrow(ConfigurationError);
 

@@ -79,7 +79,7 @@ Push the committed release source to `main`, then dispatch `.github/workflows/re
 
 Tag discovery comes from npm metadata rather than only from tags created inside the current runner. This lets a safe rerun recover every tag from a partially successful publish while excluding unchanged packages from older commits.
 
-There is no local publish command. `scripts/release-artifacts.ts publish` refuses to run, including inside the OIDC job. That job publishes the already validated tarballs directly with `npm publish --tag latest` or `npm publish --tag next` plus `--provenance`. Tag collection runs in a later job that checks out source and has no OIDC token. Do not add `NPM_TOKEN` to the workflow. If authentication fails, fix the npm trusted-publisher configuration and rerun the workflow; do not publish individual dependent packages around the failed batch.
+There is no local publish command. `scripts/release-artifacts.ts publish` refuses to run, including inside the OIDC job. That job publishes the already validated tarballs directly with `npm publish --tag latest` or `npm publish --tag next` plus `--provenance`. Tag collection runs only after `verify_public` succeeds. That job checks out source and has no OIDC token. `push_tags` depends on collection, so package tags and the GitHub release are pushed only after public verification passes. Do not add `NPM_TOKEN` to the workflow. If authentication fails, fix the npm trusted-publisher configuration and rerun the workflow; do not publish individual dependent packages around the failed batch.
 
 Before the first OIDC release, configure every `@zhivex-ai/*` package on npm with this trusted publisher:
 
@@ -111,9 +111,9 @@ registry propagation. A rerun selects only versions that are still unpublished. 
 `gitHead` when publishing prebuilt tarballs, so the verifier reads the official registry attestation
 and binds its signed SLSA subject digest to npm integrity, the protected `release.yml` workflow, and
 the exact source commit. Contradictory `gitHead` and provenance evidence is rejected. A failed
-`publish` job also skips the tag-push job and `verify_public`, so recover package tags only after
-all versions, dist-tags, integrity, and provenance are confirmed, and point them to that exact
-release source SHA.
+`publish` job skips `verify_public`, and a failed `verify_public` job skips tag collection. Either
+failure skips the tag-push job, so recover package tags only after all versions, dist-tags,
+integrity, and provenance are confirmed, and point them to that exact release source SHA.
 
 `verify_public` installs the release batch from `https://registry.npmjs.org` in a temporary project
 with `npm install --ignore-scripts`. It retries because a version can appear in registry metadata

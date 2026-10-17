@@ -225,8 +225,8 @@ jobs:
 
   collect_tags:
     name: Collect published package tags
-    needs: publish
-    if: needs.publish.result == 'success' && github.ref == 'refs/heads/main'
+    needs: verify_public
+    if: needs.verify_public.result == 'success' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

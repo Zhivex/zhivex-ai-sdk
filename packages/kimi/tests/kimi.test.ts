@@ -122,6 +122,18 @@ describe("kimi adapter", () => {
     expect(provider("kimi-k2-0905-preview")).toMatchObject(provider.languageModel("kimi-k2-0905-preview"));
   });
 
+  it("rejects a credentialed Kimi redirect before replaying the request", async () => {
+    const redirectFetch = vi.fn(async () => new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
+    const provider = createKimi({ apiKey: "test", fetch: redirectFetch as typeof fetch });
+
+    await expect(generateText({
+      model: provider("kimi-k2-0905-preview"),
+      prompt: "hello"
+    })).rejects.toThrow("Credentialed provider request was redirected.");
+    expect(redirectFetch).toHaveBeenCalledTimes(1);
+    expect(redirectFetch.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+  });
+
   it("streams incremental text", async () => {
     const body = new ReadableStream({
       start(controller) {

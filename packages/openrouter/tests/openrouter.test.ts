@@ -116,6 +116,18 @@ describe("openrouter adapter", () => {
     expect(result.usage?.totalTokens).toBe(7);
   });
 
+  it("rejects a credentialed OpenRouter redirect before replaying the request", async () => {
+    const redirectFetch = vi.fn(async () => new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
+    const provider = createOpenRouter({ apiKey: "test", fetch: redirectFetch as typeof fetch });
+
+    await expect(generateText({
+      model: provider("openai/gpt-4o-mini"),
+      prompt: "hello"
+    })).rejects.toThrow("Credentialed provider request was redirected.");
+    expect(redirectFetch).toHaveBeenCalledTimes(1);
+    expect(redirectFetch.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+  });
+
   it("streams incremental text", async () => {
     const body = new ReadableStream({
       start(controller) {

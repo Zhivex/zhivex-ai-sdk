@@ -97,8 +97,11 @@ describe("release workflow", () => {
     execFileSync("node", ["--check", scriptPath], { stdio: "pipe" });
     rmSync(directory, { recursive: true, force: true });
     expect(workflow).toContain("shasum -a 512 -c .release/SHA512SUMS");
+    expect(jobSection("collect_tags", "push_tags")).toContain("needs: verify_public");
+    expect(jobSection("collect_tags", "push_tags")).toContain("needs.verify_public.result == 'success'");
     expect(jobSection("collect_tags", "push_tags")).toContain('bun scripts/collect-release-tags.ts --git-head="$GITHUB_SHA"');
     expect(jobSection("collect_tags", "push_tags")).not.toContain("id-token:");
+    expect(jobSection("push_tags", "verify_public")).toContain("needs: collect_tags");
     expect(workflow).toContain("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
     expect(workflow).toContain("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c");
   });
