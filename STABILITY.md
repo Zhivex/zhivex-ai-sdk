@@ -24,6 +24,7 @@ Supported public imports should come from published package entrypoints such as:
 - `@zhivex-ai/zai`
 - `@zhivex-ai/gateway`
 - `@zhivex-ai/sandbox-docker`
+- `@zhivex-ai/trace-viewer`
 
 Focused published entrypoints are also supported: `@zhivex-ai/core/contracts`,
 `@zhivex-ai/core/runtime`, `@zhivex-ai/core/workflows`, `@zhivex-ai/core/ui`,
@@ -145,6 +146,7 @@ These areas are available for evaluation, but they should not be treated as long
 - `createEgressPolicy` and `EgressDeniedError` (public beta, stability `experimental`). A fail-closed provider, model, region, and endpoint allowlist checked before the provider call.
 - Agent/provider features currently described as support-tier dependent
 - `@zhivex-ai/sandbox-docker`: reference Docker `executionEnvironment` (`createDockerSandboxEnvironment`, `createDockerSandboxTools`). It is not part of `@zhivex-ai/sdk`, and it is not a hosted sandbox.
+- `@zhivex-ai/trace-viewer`: local read-only ledger and OpenTelemetry span viewer. It is not part of `@zhivex-ai/sdk`, it does not change ledger or span formats, and it is not a hosted service.
 
 Experimental areas may change faster than the rest of the SDK. Production adopters should isolate them behind an application-owned service layer.
 The same runtime cohort is available from `@zhivex-ai/sdk/experimental`.

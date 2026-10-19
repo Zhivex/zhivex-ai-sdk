@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "type": "agent_golden_trace",
+  "name": "happy-path",
+  "ledger": {
+    "schemaVersion": 1,
+    "type": "agent_run_ledger",
+    "runId": "run_golden",
+    "provider": "openai",
+    "modelId": "gpt-6-astra",
+    "status": "completed",
+    "snapshot": {
+      "runId": "run_golden",
+      "status": "completed",
+      "provider": "openai",
+      "modelId": "gpt-6-astra",
+      "steps": 0,
+      "toolCalls": [],
+      "childRuns": [],
+      "compactions": [],
+      "pendingApprovals": [],
+      "outputText": ""
+    },
+    "audit": {
+      "schemaVersion": 1,
+      "type": "agent_run_audit",
+      "runId": "run_golden",
+      "provider": "openai",
+      "modelId": "gpt-6-astra",
+      "status": "completed",
+      "startedAt": 1750000000000,
+      "updatedAt": 1750000001000,
+      "steps": 0,
+      "toolCalls": 0,
+      "toolErrors": 0,
+      "approvals": 0,
+      "childRuns": 0,
+      "outputPreview": ""
+    },
+    "toolAudit": [],
+    "trace": {
+      "runId": "run_golden",
+      "provider": "openai",
+      "modelId": "gpt-6-astra",
+      "status": "completed",
+      "startedAt": 1750000000000,
+      "updatedAt": 1750000001000,
+      "steps": [],
+      "childRuns": [],
+      "events": [],
+      "approvals": [],
+      "outputPreview": ""
+    },
+    "summary": {
+      "runId": "run_golden",
+      "provider": "openai",
+      "modelId": "gpt-6-astra",
+      "status": "completed",
+      "latency": { "startedAt": 1750000000000, "finishedAt": 1750000001000, "durationMs": 1000 },
+      "steps": 0,
+      "childRuns": 0,
+      "toolCalls": 0,
+      "toolErrors": 0,
+      "approvals": 0
+    }
+  },
+  "expectations": {
+    "status": "completed",
+    "toolCalls": [],
+    "approvals": 0
+  }
+}

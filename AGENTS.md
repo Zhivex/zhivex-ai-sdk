@@ -26,6 +26,7 @@
 - `packages/zai`: Z.ai GLM provider.
 - `packages/gateway`: gateway / routing layer.
 - `packages/sandbox-docker`: experimental reference Docker execution environment for workspace agents.
+- `packages/trace-viewer`: local read-only viewer for governance ledgers and OpenTelemetry span files.
 - `.changeset/`: versioning and release configuration.
 - `README.md`: main source of usage examples and public-facing expectations.
 
@@ -51,6 +52,7 @@ Packages currently publishable to npm:
 - `@zhivex-ai/zai`
 - `@zhivex-ai/gateway`
 - `@zhivex-ai/sandbox-docker`
+- `@zhivex-ai/trace-viewer`
 
 ## Stack and Commands
 

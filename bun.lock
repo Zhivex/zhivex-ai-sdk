@@ -193,6 +193,13 @@
         "@zhivex-ai/core": "~1.35.0",
       },
     },
+    "packages/trace-viewer": {
+      "name": "@zhivex-ai/trace-viewer",
+      "version": "0.1.0",
+      "bin": {
+        "zhivex-trace-viewer": "./dist/cli.js",
+      },
+    },
     "packages/vertex": {
       "name": "@zhivex-ai/vertex",
       "version": "1.2.10",
@@ -562,6 +569,8 @@
     "@zhivex-ai/sandbox-docker": ["@zhivex-ai/sandbox-docker@workspace:packages/sandbox-docker"],
 
     "@zhivex-ai/sdk": ["@zhivex-ai/sdk@workspace:packages/sdk"],
+
+    "@zhivex-ai/trace-viewer": ["@zhivex-ai/trace-viewer@workspace:packages/trace-viewer"],
 
     "@zhivex-ai/vertex": ["@zhivex-ai/vertex@workspace:packages/vertex"],
 

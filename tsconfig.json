@@ -19,6 +19,7 @@
     { "path": "./packages/openrouter" },
     { "path": "./packages/gateway" },
     { "path": "./packages/sandbox-docker" },
+    { "path": "./packages/trace-viewer" },
     { "path": "./packages/react" },
     { "path": "./packages/sdk" }
   ]

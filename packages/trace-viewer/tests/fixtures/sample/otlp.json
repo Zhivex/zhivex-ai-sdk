@@ -1,0 +1,40 @@
+{
+  "resourceSpans": [
+    {
+      "scopeSpans": [
+        {
+          "scope": { "name": "zhivex-ai" },
+          "spans": [
+            {
+              "traceId": "abcabcabcabcabcabcabcabcabcabcab",
+              "spanId": "defdefdefdefdef0",
+              "name": "invoke_agent Billing",
+              "startTimeUnixNano": "1760000020000000000",
+              "endTimeUnixNano": "1760000021000000000",
+              "attributes": [
+                { "key": "zhivex.run_id", "value": { "stringValue": "run_otlp" } },
+                { "key": "zhivex.status", "value": { "stringValue": "completed" } },
+                { "key": "zhivex.provider", "value": { "stringValue": "gemini" } },
+                { "key": "gen_ai.usage.input_tokens", "value": { "intValue": "9" } },
+                { "key": "gen_ai.usage.output_tokens", "value": { "intValue": 4 } }
+              ],
+              "events": [
+                {
+                  "name": "approval-resolved",
+                  "timeUnixNano": "1760000020500000000",
+                  "attributes": [
+                    { "key": "zhivex.approval_id", "value": { "stringValue": "apr_otlp" } },
+                    { "key": "zhivex.approval_name", "value": { "stringValue": "charge" } },
+                    { "key": "zhivex.approved", "value": { "boolValue": false } },
+                    { "key": "zhivex.approver", "value": { "stringValue": "mina" } }
+                  ]
+                }
+              ],
+              "status": { "code": 0 }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

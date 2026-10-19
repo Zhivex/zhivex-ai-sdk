@@ -154,6 +154,7 @@ The same concepts exist for Python in the [Zhivex AI SDK for Python](https://git
 - `@zhivex-ai/ollama`
 - `@zhivex-ai/gateway`: in-process policy routing and fallback across registered adapters.
 - `@zhivex-ai/sandbox-docker`: experimental reference Docker execution environment for workspace agents.
+- `@zhivex-ai/trace-viewer`: local read-only viewer for governance ledgers and OpenTelemetry span files.
 
 ## Repository Layout
 
@@ -179,6 +180,7 @@ packages/
   ollama/         Ollama adapter
   gateway/        Routing and fallback package
   sandbox-docker/ Reference Docker execution environment
+  trace-viewer/   Local ledger and OpenTelemetry span viewer
 ```
 
 Development uses Bun workspaces, TypeScript project references, and Vitest. See [CONTRIBUTING.md](./CONTRIBUTING.md).
