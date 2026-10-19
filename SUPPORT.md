@@ -40,6 +40,7 @@ The following packages are intended for npm consumers:
 - `@zhivex-ai/zai`
 - `@zhivex-ai/gateway`
 - `@zhivex-ai/sandbox-docker`
+- `@zhivex-ai/trace-viewer`
 
 ## Installation And Consumer Compatibility
 

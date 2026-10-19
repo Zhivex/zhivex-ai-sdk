@@ -268,6 +268,10 @@ message parts retain them. Custom SSE serializers must apply the same filter.
 5. Run fixtures in CI before publishing agent changes.
 6. Use provider support drift reports when provider capabilities are part of routing decisions.
 
+## Local trace viewer
+
+`@zhivex-ai/trace-viewer` is an optional local package. It reads saved `agent_run_ledger` JSON (including golden traces that wrap a ledger) and OpenTelemetry spans from JSON or JSONL, then serves a read-only page on `127.0.0.1`. Span files are opt-in: use `createJsonFileSpanExporter()` from that package in your own processor. The exporter does not change default SDK telemetry. The viewer does not phone home. See [the package README](../packages/trace-viewer/README.md).
+
 ## Competitive Boundary
 
-Zhivex provides portable artifacts and CLI inspection. It does not currently ship a hosted observability UI like LangSmith or Mastra Studio. The intended integration point is your app's logging, warehouse, dashboard, or existing observability platform.
+Zhivex provides portable artifacts, CLI inspection, and this optional local viewer. It does not ship a hosted observability UI. Production pipelines can still export to an application-owned log, warehouse, or dashboard.

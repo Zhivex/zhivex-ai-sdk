@@ -1,0 +1,51 @@
+{
+  "name": "@zhivex-ai/trace-viewer",
+  "version": "0.1.0",
+  "description": "Local read-only viewer for Zhivex governance ledgers and OpenTelemetry spans.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "zhivex-trace-viewer": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=18.18.0",
+    "bun": ">=1.3.7"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "screenshot.png",
+    "screenshot-list.png"
+  ],
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zhivex/zhivex-ai-sdk.git",
+    "directory": "packages/trace-viewer"
+  },
+  "homepage": "https://github.com/Zhivex/zhivex-ai-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/Zhivex/zhivex-ai-sdk/issues"
+  },
+  "keywords": [
+    "ai",
+    "sdk",
+    "trace",
+    "audit",
+    "opentelemetry",
+    "viewer",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "private": false
+}

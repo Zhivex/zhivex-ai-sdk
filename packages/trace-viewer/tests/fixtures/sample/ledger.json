@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 1,
+  "type": "agent_run_ledger",
+  "runId": "run_fixture_1",
+  "agentId": "support-agent",
+  "provider": "openai",
+  "modelId": "gpt-6-astra",
+  "status": "completed",
+  "snapshot": {
+    "runId": "run_fixture_1",
+    "agentId": "support-agent",
+    "status": "completed",
+    "provider": "openai",
+    "modelId": "gpt-6-astra",
+    "steps": 2,
+    "toolCalls": [
+      {
+        "id": "call_lookup",
+        "name": "lookup<script>",
+        "input": {
+          "orderId": "1001"
+        }
+      }
+    ],
+    "childRuns": [],
+    "compactions": [],
+    "pendingApprovals": [
+      {
+        "kind": "local-tool",
+        "provider": "openai",
+        "id": "apr_pending",
+        "name": "refund",
+        "arguments": "api_key=fixturekeyvalue"
+      }
+    ],
+    "usage": {
+      "inputTokens": 120,
+      "outputTokens": 40,
+      "totalTokens": 160
+    },
+    "outputText": "Shipped."
+  },
+  "audit": {
+    "schemaVersion": 1,
+    "type": "agent_run_audit",
+    "runId": "run_fixture_1",
+    "agentId": "support-agent",
+    "provider": "openai",
+    "modelId": "gpt-6-astra",
+    "status": "completed",
+    "startedAt": 1760000000000,
+    "updatedAt": 1760000004000,
+    "steps": 2,
+    "toolCalls": 1,
+    "toolErrors": 0,
+    "approvals": 2,
+    "childRuns": 0,
+    "usage": {
+      "inputTokens": 120,
+      "outputTokens": 40,
+      "totalTokens": 160
+    },
+    "outputPreview": "Shipped."
+  },
+  "toolAudit": [
+    {
+      "schemaVersion": 1,
+      "type": "agent_tool_audit",
+      "runId": "run_fixture_1",
+      "provider": "openai",
+      "modelId": "gpt-6-astra",
+      "step": 0,
+      "toolName": "lookup<script>",
+      "toolCallId": "call_lookup",
+      "status": "completed",
+      "input": {
+        "orderId": "1001",
+        "note": "token=fixturetokenvalue",
+        "apiKey": "fixture-api-key-value",
+        "authorization": "Bearer fixture-token-value",
+        "blob": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATAIL_MARKER"
+      },
+      "output": {
+        "status": "shipped",
+        "email": "ada@example.com"
+      }
+    }
+  ],
+  "trace": {
+    "runId": "run_fixture_1",
+    "agentId": "support-agent",
+    "provider": "openai",
+    "modelId": "gpt-6-astra",
+    "status": "completed",
+    "startedAt": 1760000000000,
+    "updatedAt": 1760000004000,
+    "durationMs": 4000,
+    "steps": [
+      {
+        "index": 0,
+        "status": "completed",
+        "startedAt": 1760000000000,
+        "finishedAt": 1760000002000,
+        "durationMs": 2000,
+        "toolCalls": [
+          {
+            "id": "call_lookup",
+            "name": "lookup<script>",
+            "input": {
+              "orderId": "1001"
+            }
+          }
+        ],
+        "toolResults": [
+          {
+            "toolCallId": "call_lookup",
+            "toolName": "lookup<script>",
+            "output": {
+              "status": "shipped"
+            },
+            "isError": false
+          }
+        ],
+        "usage": {
+          "inputTokens": 80,
+          "outputTokens": 20,
+          "totalTokens": 100
+        }
+      },
+      {
+        "index": 1,
+        "status": "completed",
+        "startedAt": 1760000002000,
+        "finishedAt": 1760000004000,
+        "durationMs": 2000,
+        "toolCalls": [],
+        "toolResults": [],
+        "usage": {
+          "inputTokens": 40,
+          "outputTokens": 20,
+          "totalTokens": 60
+        }
+      }
+    ],
+    "childRuns": [],
+    "events": [
+      {
+        "type": "tool-approval",
+        "runId": "run_fixture_1",
+        "timestamp": 1760000001500,
+        "name": "deploy",
+        "data": {
+          "toolCall": {
+            "id": "call_deploy",
+            "name": "deploy",
+            "input": {
+              "target": "staging"
+            }
+          },
+          "approved": false,
+          "reason": "Needs review",
+          "metadata": {
+            "approver": "casey",
+            "policy": "review-sensitive"
+          }
+        }
+      }
+    ],
+    "approvals": [
+      {
+        "provider": "openai",
+        "id": "apr_pending",
+        "name": "refund"
+      }
+    ],
+    "usage": {
+      "inputTokens": 120,
+      "outputTokens": 40,
+      "totalTokens": 160
+    },
+    "outputPreview": "Shipped."
+  },
+  "summary": {
+    "runId": "run_fixture_1",
+    "agentId": "support-agent",
+    "provider": "openai",
+    "modelId": "gpt-6-astra",
+    "status": "completed",
+    "latency": {
+      "startedAt": 1760000000000,
+      "finishedAt": 1760000004000,
+      "durationMs": 4000
+    },
+    "steps": 2,
+    "childRuns": 0,
+    "toolCalls": 1,
+    "toolErrors": 0,
+    "approvals": 2,
+    "usage": {
+      "inputTokens": 120,
+      "outputTokens": 40,
+      "totalTokens": 160
+    },
+    "cost": {
+      "inputCost": 0.0012,
+      "outputCost": 0.0008,
+      "totalCost": 0.002,
+      "currency": "USD"
+    }
+  },
+  "cost": {
+    "inputCost": 0.0012,
+    "outputCost": 0.0008,
+    "totalCost": 0.002,
+    "currency": "USD",
+    "usage": {
+      "inputTokens": 120,
+      "outputTokens": 40,
+      "totalTokens": 160
+    }
+  }
+}
