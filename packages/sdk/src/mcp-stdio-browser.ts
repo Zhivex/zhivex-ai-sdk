@@ -11,9 +11,15 @@ export const MCP_STDIO_API_STABILITY_MANIFEST = Object.freeze({
 
 export class McpStdioError extends Error {
   readonly name = "McpStdioError";
+  readonly stderr?: string;
 
-  constructor(readonly code: "INDETERMINATE" | "LIMIT_EXCEEDED" | "PROCESS_EXITED" | "PROTOCOL_ERROR" | "UNSUPPORTED_CAPABILITY", message: string) {
+  constructor(
+    readonly code: "INDETERMINATE" | "LIMIT_EXCEEDED" | "PROCESS_EXITED" | "PROTOCOL_ERROR" | "UNSUPPORTED_CAPABILITY",
+    message: string,
+    details?: { stderr?: string }
+  ) {
     super(message);
+    if (details?.stderr) this.stderr = details.stderr;
   }
 }
 

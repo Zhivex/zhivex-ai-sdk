@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { withMcpAbort } from "./mcp-http-common.js";
 import type { McpCallToolOptions, McpClient, McpServerCapabilities } from "./mcp.js";
+import { createRedactionPolicy } from "./safety-policy.js";
 
 /**
  * Experimental Node.js/Bun MCP stdio transport.
@@ -31,12 +32,28 @@ export type McpStdioErrorCode =
   | "PROTOCOL_ERROR"
   | "UNSUPPORTED_CAPABILITY";
 
-/** Stable machine-readable failures for this entrypoint. Messages never include stderr or payloads. */
+/** Optional detail for a stdio failure. Callers that only read `code` and `message` stay valid. */
+export interface McpStdioErrorDetails {
+  /**
+   * Redacted stderr tail. Set when a child process exits after writing stderr.
+   * `stderr()` on the client remains the raw retained tail.
+   */
+  stderr?: string;
+}
+
+/**
+ * Stable machine-readable failures for this entrypoint.
+ * JSON-RPC payloads stay out of messages. A process exit may append a redacted stderr tail
+ * after the stable message prefix.
+ */
 export class McpStdioError extends Error {
   readonly name = "McpStdioError";
+  /** Redacted stderr tail when a process exit captured one. */
+  readonly stderr?: string;
 
-  constructor(readonly code: McpStdioErrorCode, message: string) {
+  constructor(readonly code: McpStdioErrorCode, message: string, details?: McpStdioErrorDetails) {
     super(message);
+    if (details?.stderr) this.stderr = details.stderr;
   }
 }
 
@@ -114,6 +131,40 @@ const requireText = (value: string, label: string): string => {
 
 const indeterminate = () =>
   new McpStdioError("INDETERMINATE", "MCP tool execution may have occurred; reconcile before retrying.");
+
+/** Stable prefix. Extra stderr detail is appended after this sentence. */
+const PROCESS_EXITED_PREFIX = "MCP stdio process exited.";
+const ERROR_STDERR_MAX_BYTES = 4 * 1024;
+const ERROR_STDERR_MAX_LINES = 40;
+const sensitiveEnvName = /(?:api[-_]?key|authorization|password|secret|token|credential|cookie)/i;
+
+const redactStderrText = (text: string, env: NodeJS.ProcessEnv): string => {
+  const secrets = Object.entries(env)
+    .filter((entry): entry is [string, string] =>
+      typeof entry[1] === "string" && entry[1].length >= 8 && sensitiveEnvName.test(entry[0]))
+    .map((entry) => entry[1])
+    .sort((left, right) => right.length - left.length);
+  let redacted = text;
+  const seen = new Set<string>();
+  for (const secret of secrets) {
+    if (seen.has(secret)) continue;
+    seen.add(secret);
+    if (redacted.includes(secret)) redacted = redacted.split(secret).join("[REDACTED]");
+  }
+  return createRedactionPolicy().redactText(redacted);
+};
+
+const stderrDetail = (raw: string, env: NodeJS.ProcessEnv): string => {
+  const lines = raw.split(/\r?\n/);
+  const lineLimited = lines.length > ERROR_STDERR_MAX_LINES;
+  const byLine = lineLimited ? lines.slice(-ERROR_STDERR_MAX_LINES).join("\n") : raw;
+  const bytes = Buffer.from(byLine, "utf8");
+  const byteLimited = bytes.byteLength > ERROR_STDERR_MAX_BYTES;
+  const tail = byteLimited ? bytes.subarray(bytes.byteLength - ERROR_STDERR_MAX_BYTES).toString("utf8") : byLine;
+  const redacted = redactStderrText(tail, env).trim();
+  if (!redacted) return "";
+  return lineLimited || byteLimited ? `[stderr truncated]\n${redacted}` : redacted;
+};
 
 type Pending = {
   method: string;
@@ -313,11 +364,25 @@ export function createMcpStdioClient(options: McpStdioClientOptions): McpStdioCl
     proc.stdout?.on("data", onStdout);
     proc.stderr?.on("data", onStderr);
     proc.stdin?.on("error", () => undefined);
-    proc.stdout?.on("error", () => failTransport(new McpStdioError("PROCESS_EXITED", "MCP stdio process exited.")));
+    proc.stdout?.on("error", () => failTransport(new McpStdioError("PROCESS_EXITED", PROCESS_EXITED_PREFIX)));
     proc.stderr?.on("error", () => undefined);
     proc.on("error", () => failTransport(new McpStdioError("PROCESS_EXITED", "MCP stdio process failed to start.")));
     proc.on("exit", () => {
-      if (!closing) failTransport(new McpStdioError("PROCESS_EXITED", "MCP stdio process exited."));
+      if (closing) return;
+      const report = (): void => {
+        if (closing || transportError) return;
+        const detail = stderrDetail(Buffer.concat(stderrChunks).toString("utf8"), childEnv ?? process.env);
+        failTransport(new McpStdioError(
+          "PROCESS_EXITED",
+          detail ? `${PROCESS_EXITED_PREFIX}\n${detail}` : PROCESS_EXITED_PREFIX,
+          detail ? { stderr: detail } : undefined
+        ));
+      };
+      if (!proc.stderr || proc.stderr.readableEnded) {
+        report();
+        return;
+      }
+      proc.once("close", report);
     });
     return proc;
   };

@@ -174,14 +174,21 @@ describe("MCP stdio client", () => {
     await expect(absent.listTools()).rejects.not.toThrow(expect.objectContaining({ message: expect.stringContaining(missing) }));
 
     const crashedList = openClient("crash-on-list");
-    await expect(crashedList.listTools()).rejects.toMatchObject({ code: "PROCESS_EXITED" });
-    expect(String(await crashedList.listTools().catch((error: unknown) => (error as Error).message))).not.toContain("stderr-secret");
+    await expect(crashedList.listTools()).rejects.toMatchObject({
+      code: "PROCESS_EXITED",
+      message: expect.stringMatching(/^MCP stdio process exited\./)
+    });
+    const crashedMessage = String(await crashedList.listTools().catch((error: unknown) => (error as Error).message));
+    expect(crashedMessage.startsWith("MCP stdio process exited.")).toBe(true);
+    expect(crashedMessage).toContain("stderr-secret");
 
     const crashedCall = openClient("crash-on-call");
-    await expect(crashedCall.callTool({ name: "get-bcra-fx-quotes" })).rejects.toMatchObject({ code: "INDETERMINATE" });
-    await expect(crashedCall.callTool({ name: "get-bcra-fx-quotes" })).rejects.not.toThrow(
-      expect.objectContaining({ message: expect.stringContaining("crash-secret") })
-    );
+    const inFlight = await crashedCall.callTool({ name: "get-bcra-fx-quotes" }).catch((error: unknown) => error) as Error;
+    expect(inFlight).toMatchObject({ code: "INDETERMINATE" });
+    expect(inFlight.message).not.toContain("crash-secret");
+    const followed = await crashedCall.callTool({ name: "get-bcra-fx-quotes" }).catch((error: unknown) => error) as Error;
+    expect(followed).toMatchObject({ code: "PROCESS_EXITED" });
+    expect(followed.message.startsWith("MCP stdio process exited.")).toBe(true);
 
     const badShape = openClient("bad-tool-result");
     await expect(badShape.callTool({ name: "get-bcra-fx-quotes" })).rejects.toMatchObject({ code: "INDETERMINATE" });
@@ -273,5 +280,88 @@ describe("MCP stdio client", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("MCP stdio process exit stderr", () => {
+  const spawnExit = (script: string, env?: NodeJS.ProcessEnv): McpStdioClient => {
+    const client = createMcpStdioClient({
+      command: process.execPath,
+      args: ["-e", script],
+      timeoutMs: 2_000,
+      shutdownGraceMs: 50,
+      env: env ?? { PATH: process.env.PATH ?? "" }
+    });
+    clients.push(client);
+    return client;
+  };
+
+  const rejected = async (client: McpStdioClient): Promise<McpStdioError & { stderr?: string }> =>
+    client.listTools().then(() => {
+      throw new Error("expected the child process to exit");
+    }, (error: unknown) => error as McpStdioError & { stderr?: string });
+
+  it("appends stderr to PROCESS_EXITED and keeps the message prefix", async () => {
+    const error = await rejected(spawnExit(
+      'process.stderr.write("npm error 404 Not Found - GET https://registry.npmjs.org/mcp-bcra\\n"); process.exit(1);'
+    ));
+    expect(error).toMatchObject({ code: "PROCESS_EXITED", name: "McpStdioError" });
+    expect(error.message.startsWith("MCP stdio process exited.")).toBe(true);
+    expect(error.message).toContain("npm error 404");
+    expect(error.message).toContain("mcp-bcra");
+    expect(error.stderr).toContain("npm error 404");
+  });
+
+  it("keeps the exact message when the process writes no stderr", async () => {
+    const error = await rejected(spawnExit("process.exit(1);"));
+    expect(error).toMatchObject({
+      code: "PROCESS_EXITED",
+      message: "MCP stdio process exited."
+    });
+    expect(error.stderr).toBeUndefined();
+  });
+
+  it("truncates an oversized stderr tail", async () => {
+    const error = await rejected(spawnExit(`
+      process.stderr.write("START_OF_STDERR\\n");
+      process.stderr.write("x".repeat(20000));
+      process.stderr.write("\\nEND_OF_STDERR\\n");
+      process.exit(1);
+    `));
+    expect(error.code).toBe("PROCESS_EXITED");
+    expect(error.message.startsWith("MCP stdio process exited.")).toBe(true);
+    expect(error.stderr).toContain("[stderr truncated]");
+    expect(error.stderr).toContain("END_OF_STDERR");
+    expect(error.stderr).not.toContain("START_OF_STDERR");
+    expect(error.message.length).toBeLessThan(5_000);
+
+    const lines = await rejected(spawnExit(`
+      for (let i = 0; i < 80; i += 1) process.stderr.write("line-" + i + "\\n");
+      process.exit(1);
+    `));
+    expect(lines.stderr).toContain("line-79");
+    expect(lines.stderr).not.toContain("line-0\n");
+    expect(lines.stderr).toContain("[stderr truncated]");
+  });
+
+  it("redacts api keys, bearer tokens, and secret environment values", async () => {
+    const canary = "sk-live-canary-abcdefghijklmnopqrstuvwxyz";
+    const error = await rejected(spawnExit(`
+      process.stderr.write("api_key=supersecretvalue\\n");
+      process.stderr.write("Authorization: Bearer bearer-token-value-123\\n");
+      process.stderr.write("leaked " + process.env.OPENAI_API_KEY + "\\n");
+      process.stderr.write("npm error 404 mcp-bcra\\n");
+      process.exit(1);
+    `, {
+      OPENAI_API_KEY: canary,
+      PATH: process.env.PATH ?? ""
+    }));
+    const rendered = `${error.message}\n${error.stderr ?? ""}`;
+    expect(error.message.startsWith("MCP stdio process exited.")).toBe(true);
+    expect(rendered).not.toContain("supersecretvalue");
+    expect(rendered).not.toContain("bearer-token-value-123");
+    expect(rendered).not.toContain(canary);
+    expect(rendered).toContain("[REDACTED]");
+    expect(rendered).toContain("404");
   });
 });
