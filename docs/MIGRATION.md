@@ -447,7 +447,7 @@ console.log(result.state);
 
 `agent.stream()` returns `textStream` plus `collect()`, and it also emits agent lifecycle events. That stream is not an AI SDK UI message stream. For `useChat`, use the compat transport (beta) below.
 
-`prepareStep`, `activeTools`, and `stopWhen` are optional on `agent.run()` as well as on `generateText`. They are not stored in the agent definition. `maxSteps: "unlimited"` removes the cumulative step ceiling until some other stop (a final answer, approval, cancellation, `stopWhen`, or another explicit budget). It is an opt-in, and older readers of saved runs do not understand that literal. When `stopWhen` is set and `maxSteps` is omitted, the loop runs until a predicate returns true.
+`prepareStep`, `activeTools`, and `stopWhen` are optional on `agent.run()` as well as on `generateText`. They are not stored in the agent definition. `maxSteps: "unlimited"` removes the cumulative step ceiling until some other stop (a final answer, approval, cancellation, `stopWhen`, or another explicit budget). It is an opt-in, and older readers of saved runs do not understand that literal. When `stopWhen` is set and `maxSteps` is omitted, the loop runs until a predicate returns true. A fresh agent run records that ceiling as `maxSteps: "unlimited"` so a later resume is not stuck on the default of one step. Pass `stopWhen` again on resume; it is not stored.
 
 ### Durable sessions
 

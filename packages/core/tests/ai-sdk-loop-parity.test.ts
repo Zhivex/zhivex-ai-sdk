@@ -355,6 +355,106 @@ describe("loop controls, output, and tools", () => {
     expect(Object.keys(requests[0]?.tools ?? {})).toEqual(["read"]);
   });
 
+  it("parses Output.object from the final step when earlier steps include text", async () => {
+    const result = await generateText({
+      model: mock([
+        {
+          finishReason: "tool-calls",
+          usage,
+          text: "Looking up the value.",
+          messages: [{
+            role: "assistant",
+            parts: [
+              { type: "text", text: "Looking up the value." },
+              { type: "tool-call", toolCall: readCall() }
+            ]
+          }]
+        },
+        textResult('{"ok":true}')
+      ]),
+      prompt: "go",
+      maxSteps: 2,
+      output: Output.object({ schema: z.object({ ok: z.boolean() }) }),
+      tools: { read: readTool() }
+    });
+    expect(result.text).toContain("Looking up the value.");
+    expect(result.text).toContain('{"ok":true}');
+    expect(result.output).toEqual({ ok: true });
+  });
+
+  it("uses the prepareStep model for tool and streaming checks", async () => {
+    const blocked = createMockLanguageModel({
+      modelId: "blocked",
+      capabilities: { tools: false, streaming: false },
+      responses: [textResult("unused")]
+    });
+    const capable = mock([toolResult(readCall()), textResult("done")]);
+    const result = await generateText({
+      model: blocked,
+      prompt: "go",
+      maxSteps: 2,
+      tools: { read: readTool() },
+      prepareStep: () => ({ model: capable })
+    });
+    expect(result.text).toBe("done");
+    expect(result.toolResults).toHaveLength(1);
+
+    const streamed = await streamText({
+      model: blocked,
+      prompt: "go",
+      tools: { read: readTool() },
+      prepareStep: () => ({ model: mock([textResult("streamed")]) })
+    }).collect();
+    expect(streamed.text).toBe("streamed");
+
+    await expect(generateText({
+      model: createMockLanguageModel({
+        capabilities: { tools: false },
+        responses: [textResult("no")]
+      }),
+      prompt: "go",
+      tools: { read: readTool() }
+    })).rejects.toThrow(/does not support tools/);
+  });
+
+  it("lets an agent stopWhen replace the default one-step ceiling", async () => {
+    let executions = 0;
+    const agent = new Agent({
+      model: mock([
+        toolResult(readCall("1")),
+        toolResult(readCall("2")),
+        textResult("done")
+      ]),
+      tools: {
+        read: tool({
+          name: "read",
+          schema: z.object({}),
+          execute: () => {
+            executions += 1;
+            return "ok";
+          }
+        })
+      }
+    });
+    const result = await agent.run({ prompt: "go", stopWhen: stepCountIs(4) });
+    expect(result.status).toBe("completed");
+    expect(result.outputText).toBe("done");
+    expect(result.state.steps).toHaveLength(3);
+    expect(result.state.maxSteps).toBe("unlimited");
+    expect(executions).toBe(2);
+
+    const capped = new Agent({
+      model: mock([toolResult(readCall("1")), textResult("later")]),
+      maxSteps: 1,
+      tools: {
+        read: tool({ name: "read", schema: z.object({}), execute: () => "ok" })
+      }
+    });
+    const stopped = await capped.run({ prompt: "go", stopWhen: stepCountIs(4) });
+    expect(stopped.state.steps).toHaveLength(1);
+    expect(stopped.state.maxSteps).toBe(1);
+  });
+
   it("returns Output.object and Output.text without adding output to old calls", async () => {
     const withTools = await generateText({
       model: mock([toolResult(readCall()), textResult('{"ok":true}')]),

@@ -155,15 +155,15 @@ const redactStderrText = (text: string, env: NodeJS.ProcessEnv): string => {
 };
 
 const stderrDetail = (raw: string, env: NodeJS.ProcessEnv): string => {
-  const lines = raw.split(/\r?\n/);
+  const redactedFull = redactStderrText(raw, env);
+  const lines = redactedFull.split(/\r?\n/);
   const lineLimited = lines.length > ERROR_STDERR_MAX_LINES;
-  const byLine = lineLimited ? lines.slice(-ERROR_STDERR_MAX_LINES).join("\n") : raw;
+  const byLine = lineLimited ? lines.slice(-ERROR_STDERR_MAX_LINES).join("\n") : redactedFull;
   const bytes = Buffer.from(byLine, "utf8");
   const byteLimited = bytes.byteLength > ERROR_STDERR_MAX_BYTES;
-  const tail = byteLimited ? bytes.subarray(bytes.byteLength - ERROR_STDERR_MAX_BYTES).toString("utf8") : byLine;
-  const redacted = redactStderrText(tail, env).trim();
-  if (!redacted) return "";
-  return lineLimited || byteLimited ? `[stderr truncated]\n${redacted}` : redacted;
+  const tail = (byteLimited ? bytes.subarray(bytes.byteLength - ERROR_STDERR_MAX_BYTES).toString("utf8") : byLine).trim();
+  if (!tail) return "";
+  return lineLimited || byteLimited ? `[stderr truncated]\n${tail}` : tail;
 };
 
 type Pending = {

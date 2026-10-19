@@ -17,4 +17,4 @@
 "@zhivex-ai/deepseek": minor
 ---
 
-Accept `provider/model` strings, an OpenAI-compatible provider factory, and optional AI SDK loop controls (`stopWhen`, `prepareStep`, `activeTools`, `Output`, JSON Schema tools, and shared `topP` / `seed` / `stopSequences`) without changing existing call defaults. MCP stdio process-exit errors keep their code and message prefix and append a redacted stderr tail.
+Accept `provider/model` strings, an OpenAI-compatible provider factory, and optional AI SDK loop controls (`stopWhen`, `prepareStep`, `activeTools`, `Output`, JSON Schema tools, and shared `topP` / `seed` / `stopSequences`) without changing existing call defaults. An agent `stopWhen` without `maxSteps` is not capped at one step. OpenAI family checks reject shared `topP` on models that reject sampling. `Output.object` reads the final step. MCP stdio process-exit errors keep their code and message prefix and append a stderr tail that is redacted before it is truncated.

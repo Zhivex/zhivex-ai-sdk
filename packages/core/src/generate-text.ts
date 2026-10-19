@@ -76,6 +76,13 @@ const bindGenerateOptions = (input: GenerateTextOptions<any, any>): AnyGenerateT
   return applyOutputSpec({ ...input, model, toolContext }) as AnyGenerateTextOptions;
 };
 
+const terminalStepText = (output: GenerateTextOutput): string | undefined => {
+  const response = output.steps?.at(-1)?.response;
+  if (!response) return undefined;
+  if (typeof response.text === "string") return response.text;
+  return response.messages ? getTextFromMessages(response.messages) : undefined;
+};
+
 const attachOutput = (
   options: AnyGenerateTextOptions,
   output: GenerateTextOutput
@@ -84,7 +91,7 @@ const attachOutput = (
   if (!spec) return output;
   if (spec.type === "text") return { ...output, output: output.text };
   if (output.approvalRequests?.length) return output;
-  return { ...output, output: readObjectOutput(spec, output.text) };
+  return { ...output, output: readObjectOutput(spec, terminalStepText(output) ?? output.text) };
 };
 
 const withPossibleToolEffects = (error: unknown, effectsPossible: boolean): unknown => {
@@ -1024,14 +1031,15 @@ export const generateText = async <
   const resolvedTools = tools ?? {};
   validateMessageParts(options.model, allMessages);
   validateReasoning(options);
-  validateToolChoice({
-    model: options.model,
-    tools,
-    toolChoice: options.toolChoice
-  });
-
-  if (tools && !options.model.capabilities.tools) {
-    throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
+  if (!options.prepareStep) {
+    validateToolChoice({
+      model: options.model,
+      tools,
+      toolChoice: options.toolChoice
+    });
+    if (tools && !options.model.capabilities.tools) {
+      throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
+    }
   }
 
   const toolResults: ToolExecutionResult[] = [];
@@ -1230,18 +1238,18 @@ export const streamText = <
   const resolvedTools = tools ?? {};
   validateMessageParts(options.model, baseMessages);
   validateReasoning(options);
-  validateToolChoice({
-    model: options.model,
-    tools,
-    toolChoice: options.toolChoice
-  });
-
-  if (!options.model.stream) {
-    throw new ValidationError(`Model "${options.model.provider}/${options.model.modelId}" does not support streaming.`);
-  }
-
-  if (tools && !options.model.capabilities.tools) {
-    throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
+  if (!options.prepareStep) {
+    validateToolChoice({
+      model: options.model,
+      tools,
+      toolChoice: options.toolChoice
+    });
+    if (!options.model.stream) {
+      throw new ValidationError(`Model "${options.model.provider}/${options.model.modelId}" does not support streaming.`);
+    }
+    if (tools && !options.model.capabilities.tools) {
+      throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
+    }
   }
 
   const broadcast = new BoundedReplayBroadcast<StreamEvent>(options.streamBuffer);

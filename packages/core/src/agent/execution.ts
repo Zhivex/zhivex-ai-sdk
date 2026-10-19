@@ -2,7 +2,6 @@ import { AgentCancellationError, assertAgentNotCancelled, cancellationAfterFailu
 import { hasDisabledMemory, withoutInvocationMemory } from "./memory.js";
 import { createAgentBudgetCoordinator, assertAgentTokenReservation } from "../agent-budget-coordinator.js";
 import { childStateObserver, loadFailureState, runCheckpoints, observeChildState, projectChildRun, reconcileChildRuns, upsertChildRun } from "./children.js";
-import { validateMaxSteps } from "../validate-max-steps.js";
 import {
   createRunViewSink,
   runViewSink,
@@ -107,6 +106,7 @@ import {
   persistState
 } from "./state.js";
 import {
+  resolveAgentStepCeiling,
   resolveContext,
   initializePendingMemory
 } from "./context.js";
@@ -851,7 +851,7 @@ export const runAgent = async <
     agent,
     telemetryRunId,
     invocationStartedAt,
-    validateMaxSteps(input.maxSteps !== undefined ? input.maxSteps : input.state?.maxSteps !== undefined ? input.state.maxSteps : agent.maxSteps)
+    resolveAgentStepCeiling(input, agent.maxSteps)
   );
 
   try {
@@ -1146,7 +1146,7 @@ export const streamAgent = <
       agent,
       telemetryRunId,
       invocationStartedAt,
-      validateMaxSteps(input.maxSteps !== undefined ? input.maxSteps : input.state?.maxSteps !== undefined ? input.state.maxSteps : agent.maxSteps)
+      resolveAgentStepCeiling(input, agent.maxSteps)
     );
     const context = await resolveContext(agent, invocationInput);
     if (context.state.memory === false) agent = withoutInvocationMemory(agent);

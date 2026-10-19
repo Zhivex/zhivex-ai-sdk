@@ -1712,6 +1712,13 @@ describe("openai adapter", () => {
       await expect(generateText({ model, prompt: "hello", reasoning: { effort } })).rejects.toThrow();
     }
     await expect(generateText({ model, prompt: "hello", temperature: 0.2 })).rejects.toThrow();
+    await expect(generateText({ model, prompt: "hello", topP: 0.5 })).rejects.toThrow("sampling");
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      providerOptions: { apiMode: "chat" },
+      seed: 7
+    })).rejects.toThrow("sampling");
     await expect(generateText({ model, prompt: "hello", providerOptions: { apiMode: "chat" },
       tools: { weather: tool({ name: "weather", schema: z.object({}), execute: () => "sunny" }) }
     })).rejects.toThrow("requires the Responses API");

@@ -364,4 +364,21 @@ describe("MCP stdio process exit stderr", () => {
     expect(rendered).toContain("[REDACTED]");
     expect(rendered).toContain("404");
   });
+
+  it("redacts a secret that would be split by the stderr tail limit", async () => {
+    const fragment = "CANARYBOUNDARYVALUE";
+    const error = await rejected(spawnExit(`
+      process.stderr.write("x".repeat(20000));
+      process.stderr.write(process.env.OPENAI_API_KEY);
+      process.exit(1);
+    `, {
+      OPENAI_API_KEY: `${"p".repeat(3000)}${fragment.repeat(200)}`,
+      PATH: process.env.PATH ?? ""
+    }));
+    const rendered = `${error.message}\n${error.stderr ?? ""}`;
+    expect(error.message.startsWith("MCP stdio process exited.")).toBe(true);
+    expect(rendered).not.toContain(fragment);
+    expect(rendered).toContain("[REDACTED]");
+    expect(rendered).toContain("[stderr truncated]");
+  });
 });
