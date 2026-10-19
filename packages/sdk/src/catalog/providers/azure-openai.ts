@@ -2,12 +2,13 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const azureOpenaiCatalogFragment = defineModelCatalogFragment({
   provider: "azure-openai",
-  revision: "2026-10-15",
-  verifiedAt: "2026-10-15",
+  revision: "2026-10-19",
+  verifiedAt: "2026-10-19",
   pricingEffectiveAt: "2026-08-16",
   sources: [
     "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure",
     "https://developers.openai.com/api/docs/deprecations",
+    "https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule",
     "catalog-release:2026-08-16"],
   entries: [
     {
@@ -107,8 +108,8 @@ export const azureOpenaiCatalogFragment = defineModelCatalogFragment({
       "costPer1kTokens": 0.0006,
       "lifecycle": {
         "deprecatedAt": "2026-10-14",
-        "retiredAt": "2027-01-14",
-        "source": "https://developers.openai.com/api/docs/deprecations"
+        "retiredAt": "2027-04-14",
+        "source": "https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule"
       }
     }
   ]
