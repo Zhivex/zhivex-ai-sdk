@@ -46,6 +46,15 @@ const readTraceFile = async (
     const flags = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
     const handle = await open(filePath, flags);
     try {
+      const info = await handle.stat();
+      if (!info.isFile()) {
+        warnings.push({ path: filePath, message: "Unreadable file." });
+        return;
+      }
+      if (info.size > MAX_FILE_BYTES) {
+        warnings.push({ path: filePath, message: "File exceeds 8 MiB and was skipped." });
+        return;
+      }
       bytes = await handle.readFile();
     } finally {
       await handle.close();

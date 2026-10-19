@@ -69,6 +69,30 @@ const spanContextOf = (span: ExportableSpan): Record<string, unknown> => {
   return asRecord(raw) ?? {};
 };
 
+const ensureExportDirectory = async (directory: string): Promise<void> => {
+  const resolved = path.resolve(directory);
+  if (resolved === path.parse(resolved).root) return;
+  let stats: Awaited<ReturnType<typeof fs.lstat>> | undefined;
+  try {
+    stats = await fs.lstat(resolved);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (stats?.isSymbolicLink()) throw new Error("Refusing to follow a symlink.");
+  if (stats?.isDirectory()) return;
+  if (stats) throw new Error("Span export parent is not a directory.");
+  await ensureExportDirectory(path.dirname(resolved));
+  try {
+    await fs.mkdir(resolved, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  const created = await fs.lstat(resolved);
+  if (created.isSymbolicLink() || !created.isDirectory()) {
+    throw new Error("Refusing to follow a symlink.");
+  }
+};
+
 const serializeSpan = (span: ExportableSpan): Record<string, unknown> => {
   const context = spanContextOf(span);
   const parent = asRecord(span.parentSpanContext);
@@ -107,6 +131,7 @@ export const createJsonFileSpanExporter = (options: JsonFileSpanExporterOptions)
 
   const writeLines = async (lines: string[]) => {
     if (lines.length === 0) return;
+    await ensureExportDirectory(path.dirname(destination));
     const flags = constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0);
     const handle = await fs.open(destination, flags, 0o600);
     try {

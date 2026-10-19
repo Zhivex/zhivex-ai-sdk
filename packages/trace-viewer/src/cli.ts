@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -87,9 +88,18 @@ const waitForSignal = () => new Promise<void>((resolve) => {
   process.on("SIGTERM", stop);
 });
 
+/** Version from this package's package.json, including when the installed binary is invoked directly. */
+export const readTraceViewerPackageVersion = (): string => {
+  const value = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: unknown };
+  if (typeof value.version !== "string" || value.version.length === 0) {
+    throw new Error("Invalid @zhivex-ai/trace-viewer package version.");
+  }
+  return value.version;
+};
+
 export const runTraceViewerCli = async (
   argv: string[],
-  packageVersion = "0.1.0",
+  packageVersion = readTraceViewerPackageVersion(),
   waitForStop: () => Promise<void> = waitForSignal
 ): Promise<number> => {
   let options: TraceViewerCliOptions;
@@ -134,8 +144,7 @@ export const runTraceViewerCli = async (
 const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (invokedDirectly) {
-  const version = process.env.npm_package_version ?? "0.1.0";
-  runTraceViewerCli(process.argv.slice(2), version).then((code) => {
+  runTraceViewerCli(process.argv.slice(2), readTraceViewerPackageVersion()).then((code) => {
     process.exitCode = code;
   });
 }

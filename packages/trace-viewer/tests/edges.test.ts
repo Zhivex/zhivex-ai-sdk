@@ -1,11 +1,12 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdtemp, mkdir, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { parseTraceViewerArgs, runTraceViewerCli } from "../src/cli.js";
+import { parseTraceViewerArgs, readTraceViewerPackageVersion, runTraceViewerCli } from "../src/cli.js";
 import { createJsonFileSpanExporter } from "../src/exporter.js";
 import { renderTraceList, renderTraceRun } from "../src/page.js";
 import { loadTraceView } from "../src/read.js";
@@ -196,6 +197,58 @@ describe("view edges", () => {
     });
     const timeline = view.runs.find((run) => run.runId === "run_timeline");
     expect(timeline?.cost).toBe("0.3 USD");
+    const free = buildTraceView({
+      ledgers: [{
+        type: "agent_run_ledger",
+        runId: "run_free",
+        cost: { totalCost: 0, inputCost: 0, outputCost: 0, currency: "USD" }
+      }]
+    });
+    expect(free.runs[0]?.cost).toBe("0 USD");
+    const stepFirst = buildTraceView({
+      spans: [
+        {
+          name: "agent_step",
+          spanId: "step-first",
+          parentSpanId: "run-span",
+          startTimeMs: 2_000,
+          endTimeMs: 3_000,
+          attributes: {
+            "zhivex.run_id": "run_order",
+            "zhivex.provider": "wrong-provider",
+            "zhivex.model_id": "wrong-model",
+            "zhivex.status": "running",
+            "zhivex.step_index": 0,
+            "zhivex.step_status": "completed"
+          },
+          events: []
+        },
+        {
+          name: "invoke_agent Agent",
+          spanId: "run-span",
+          startTimeMs: 1_000,
+          endTimeMs: 5_000,
+          attributes: {
+            "gen_ai.operation.name": "invoke_agent",
+            "zhivex.run_id": "run_order",
+            "zhivex.provider": "ollama",
+            "zhivex.model_id": "fixture-local",
+            "zhivex.agent_id": "support-agent",
+            "zhivex.status": "completed"
+          },
+          events: []
+        }
+      ]
+    });
+    expect(stepFirst.runs[0]).toMatchObject({
+      provider: "ollama",
+      modelId: "fixture-local",
+      agentId: "support-agent",
+      status: "completed",
+      startedAt: new Date(1_000).toISOString(),
+      updatedAt: new Date(5_000).toISOString()
+    });
+    expect(stepFirst.runs[0]?.steps[0]).toMatchObject({ index: 0, status: "completed" });
     expect(timeline?.steps[0]?.durationMs).toBe(30);
     expect(timeline?.steps[0]?.usage).toContain("cached");
     expect(timeline?.steps[0]?.usage).toContain("reasoning");
@@ -252,11 +305,23 @@ describe("exporter and server edges", () => {
       }], (result) => result.error ? reject(result.error) : resolve());
     });
     await exporter.forceFlush();
-    const missing = createJsonFileSpanExporter({ path: path.join(root, "missing", "spans.jsonl") });
-    const failed = await new Promise<number>((resolve) => {
-      missing.export([{ name: "invoke_agent Missing", attributes: {} }], (result) => resolve(result.code));
+    const nestedPath = path.join(root, "missing", "spans.jsonl");
+    const missing = createJsonFileSpanExporter({ path: nestedPath });
+    const created = await new Promise<number>((resolve) => {
+      missing.export([{ name: "invoke_agent Missing", attributes: { "zhivex.run_id": "run_nested" } }], (result) => resolve(result.code));
     });
-    expect(failed).toBe(1);
+    expect(created).toBe(0);
+    expect((await stat(nestedPath)).mode & 0o777).toBe(0o600);
+    expect((await stat(path.dirname(nestedPath))).mode & 0o777).toBe(0o700);
+    const outside = path.join(root, "outside");
+    await mkdir(outside);
+    const linkedDir = path.join(root, "linked-dir");
+    await symlink(outside, linkedDir);
+    const linkedDirExporter = createJsonFileSpanExporter({ path: path.join(linkedDir, "spans.jsonl") });
+    const linkedDirResult = await new Promise<number>((resolve) => {
+      linkedDirExporter.export([{ name: "invoke_agent Linked", attributes: {} }], (result) => resolve(result.code));
+    });
+    expect(linkedDirResult).toBe(1);
 
     await expect(startTraceViewer({ ledgerPath: sample, port: -1 })).rejects.toThrow(/Invalid port/);
     const viewer = await startTraceViewer({ ledgerPath: sample, port: 0 });
@@ -269,6 +334,18 @@ describe("exporter and server edges", () => {
       await viewer.close();
     }
 
+    const versionLogs: string[] = [];
+    const versionSpy = vi.spyOn(console, "log").mockImplementation((message?: unknown) => {
+      versionLogs.push(String(message));
+    });
+    try {
+      expect(await runTraceViewerCli(["--version"])).toBe(0);
+    } finally {
+      versionSpy.mockRestore();
+    }
+    const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+    expect(readTraceViewerPackageVersion()).toBe(manifest.version);
+    expect(versionLogs).toContain(manifest.version);
     expect(parseTraceViewerArgs(["--version"]).version).toBe(true);
     expect(parseTraceViewerArgs(["--host=localhost", "--ledger=runs"]).host).toBe("127.0.0.1");
     expect(await runTraceViewerCli(["--version"], "0.1.0")).toBe(0);

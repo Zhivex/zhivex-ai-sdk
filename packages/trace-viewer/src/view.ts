@@ -118,6 +118,7 @@ const formatCost = (value: unknown): string | undefined => {
     input !== undefined || output !== undefined ? (input ?? 0) + (output ?? 0) : undefined
   );
   if (total === undefined) return undefined;
+  // `\.?0+$` removes a trailing fraction of zeros and leaves the integer part, so `0` stays `0`.
   const rendered = total.toFixed(6).replace(/\.?0+$/, "");
   const currency = asString(record.currency);
   return currency ? `${rendered} ${currency}` : rendered;
@@ -434,6 +435,34 @@ const observeTraceEvent = (run: RunDraft, value: unknown) => {
 const runIdFromAttributes = (attributes: Record<string, unknown>): string | undefined =>
   asString(attribute(attributes, "zhivex.run_id")) ?? asString(attribute(attributes, "zhivex.runId"));
 
+const isInvokeAgentSpan = (span: RawSpan): boolean => {
+  const operation = asString(attribute(span.attributes, "gen_ai.operation.name"));
+  if (operation === "invoke_agent") return true;
+  const name = span.name ?? "";
+  return name === "invoke_agent" || name.startsWith("invoke_agent ") || name.endsWith(".run");
+};
+
+const isStepSpan = (span: RawSpan): boolean => {
+  const name = span.name ?? "";
+  return name === "agent_step" || name.endsWith(".step");
+};
+
+/**
+ * SimpleSpanProcessor writes a finished `agent_step` before its parent run span.
+ * Both carry `zhivex.run_id`, so the run identity is the invoke-agent span, not
+ * whichever span with that id appears first.
+ */
+const selectRunIdentity = (group: RawSpan[], runId: string): RawSpan | undefined => {
+  const anchored = group.filter((span) => runIdFromAttributes(span.attributes) === runId);
+  const invokeSpans = (anchored.length > 0 ? anchored : group).filter(isInvokeAgentSpan);
+  const pool = invokeSpans.length > 0 ? invokeSpans : anchored.filter((span) => !isStepSpan(span));
+  const choice = pool.length > 0 ? pool : anchored;
+  const root = choice.find((span) =>
+    span.parentSpanId === undefined || !group.some((other) => other.spanId === span.parentSpanId)
+  );
+  return root ?? choice[0] ?? group[0];
+};
+
 const resolveRunId = (span: RawSpan, byId: Map<string, RawSpan>): string | undefined => {
   const seen = new Set<string>();
   let current: RawSpan | undefined = span;
@@ -475,8 +504,7 @@ const applySpans = (runs: Map<string, RunDraft>, spans: RawSpan[], warnings: Tra
   for (const [runId, group] of grouped) {
     const run = runs.get(runId) ?? createRun(runId);
     runs.set(runId, run);
-    const agentSpan = group.find((span) => runIdFromAttributes(span.attributes) === runId);
-    const identity = agentSpan ?? group[0];
+    const identity = selectRunIdentity(group, runId);
     if (identity) {
       run.provider = fillString(run.provider, asString(attribute(identity.attributes, "zhivex.provider")));
       run.modelId = fillString(

@@ -44,7 +44,7 @@ const provider = new BasicTracerProvider({
 });
 ```
 
-`@opentelemetry/sdk-trace-base` is installed by the application, not by this package. The file is JSONL, mode `0600`, and refuses symlink destinations. Each line keeps the span name, ids, times, attributes, and events. Attribute names such as `zhivex.run_id`, `gen_ai.usage.input_tokens`, and `gen_ai.tool.name` are unchanged. OTLP JSON (`resourceSpans`) is also accepted when reading.
+`@opentelemetry/sdk-trace-base` is installed by the application, not by this package. The file is JSONL, mode `0600`. A missing parent directory is created with mode `0700`. Symlink parents and symlink destinations are refused. Each line keeps the span name, ids, times, attributes, and events. Attribute names such as `zhivex.run_id`, `gen_ai.usage.input_tokens`, and `gen_ai.tool.name` are unchanged. OTLP JSON (`resourceSpans`) is also accepted when reading.
 
 The SDK's OpenTelemetry helpers do not put prompts, tool arguments, or tool results on spans. Those values come from the ledger (`toolAudit`, trace steps, and the optional timeline). Runs are joined on `zhivex.run_id`, including child spans that only point at a parent.
 

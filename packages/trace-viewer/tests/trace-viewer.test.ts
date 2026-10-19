@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { mkdtemp, mkdir, stat, symlink, writeFile } from "node:fs/promises";
+import { open, mkdtemp, mkdir, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -156,7 +156,9 @@ describe("fixture ledgers and spans", () => {
     const input = path.join(directory, "input");
     await mkdir(input);
     await writeFile(path.join(input, "broken.json"), "{");
-    await writeFile(path.join(input, "huge.json"), `{${" ".repeat(8 * 1024 * 1024)}`);
+    const huge = await open(path.join(input, "huge.json"), "w");
+    await huge.truncate(8 * 1024 * 1024 + 1);
+    await huge.close();
     const linkTarget = path.join(directory, "secret.json");
     await writeFile(linkTarget, JSON.stringify({
       type: "agent_run_ledger",
