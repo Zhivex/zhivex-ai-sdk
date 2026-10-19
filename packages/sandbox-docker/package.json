@@ -44,6 +44,6 @@
   },
   "dependencies": {
     "@zhivex-ai/core": "^1.35.0",
-    "zod": "^4.6.3"
+    "zod": "^4.6.7"
   }
 }
