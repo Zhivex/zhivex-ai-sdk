@@ -44,7 +44,6 @@ import {
 } from "./capabilities.js";
 
 import {
-  toolInputJsonSchema,
   CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
@@ -113,6 +112,16 @@ import {
   type VideoGenerationModel,
   type VideoGenerationResult
 } from "@zhivex-ai/core/provider";
+
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
 
 export interface VertexAuthClient {
   getAccessToken: () => string | null | undefined | Promise<string | null | undefined>;
@@ -630,7 +639,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           .map((tool) => ({
             name: tool.name,
             description: tool.description,
-            parameters: toVertexSchema(toolInputJsonSchema(tool.schema))
+            parameters: toVertexSchema(toolInputSchema(tool.schema))
           }));
 
         if (functionDeclarations.length) {

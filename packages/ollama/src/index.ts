@@ -1,7 +1,6 @@
 import { toJSONSchema } from "zod";
 
 import {
-  toolInputJsonSchema,
   ConfigurationError,
   ParseError,
   assertTrustedEndpoint,
@@ -33,6 +32,16 @@ import {
   type ModelMessage,
   type StreamEvent
 } from "@zhivex-ai/core/provider";
+
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
 
 export interface OllamaProviderOptions {
   baseURL?: string;
@@ -368,7 +377,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           function: {
             name: tool.name,
             description: tool.description,
-            parameters: toolInputJsonSchema(tool.schema)
+            parameters: toolInputSchema(tool.schema)
           }
         }));
       })()

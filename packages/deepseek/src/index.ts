@@ -2,7 +2,6 @@ import { withManualRedirect } from "./manual-redirect.js";
 import { toJSONSchema } from "zod";
 
 import {
-  toolInputJsonSchema,
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
@@ -31,6 +30,16 @@ import {
 } from "@zhivex-ai/core/provider";
 
 import { createDeepSeekClients, type DeepSeekClients } from "./clients.js";
+
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
 
 export * from "./clients.js";
 
@@ -506,7 +515,7 @@ const mapTools = (tools: ModelGenerateInput["tools"], strict: boolean) =>
             );
           }
 
-          const parameters = toolInputJsonSchema(tool.schema);
+          const parameters = toolInputSchema(tool.schema);
           if (strict) {
             assertDeepSeekStrictSchema(parameters, tool.name);
           }

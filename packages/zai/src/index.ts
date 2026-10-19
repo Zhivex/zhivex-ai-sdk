@@ -2,7 +2,6 @@ import { withManualRedirect } from "./manual-redirect.js";
 import { toJSONSchema } from "zod";
 
 import {
-  toolInputJsonSchema,
   ConfigurationError,
   ParseError,
   ProviderHTTPError,
@@ -30,6 +29,16 @@ import {
   type ModelMessage,
   type StreamEvent
 } from "@zhivex-ai/core/provider";
+
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
 
 export const ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4";
 export const ZAI_CODING_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
@@ -301,7 +310,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) => {
       function: {
         name: tool.name,
         description: tool.description ?? tool.name,
-        parameters: toolInputJsonSchema(tool.schema)
+        parameters: toolInputSchema(tool.schema)
       }
     };
   });

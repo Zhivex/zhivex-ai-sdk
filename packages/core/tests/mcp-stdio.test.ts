@@ -345,7 +345,7 @@ describe("MCP stdio process exit stderr", () => {
   });
 
   it("redacts api keys, bearer tokens, and secret environment values", async () => {
-    const canary = "sk-live-canary-abcdefghijklmnopqrstuvwxyz";
+    const canary = ["sk", "live-canary-abcdefghijklmnopqrstuvwxyz"].join("-");
     const error = await rejected(spawnExit(`
       process.stderr.write("api_key=supersecretvalue\\n");
       process.stderr.write("Authorization: Bearer bearer-token-value-123\\n");

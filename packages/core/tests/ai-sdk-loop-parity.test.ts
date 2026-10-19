@@ -152,6 +152,29 @@ describe("model strings and OpenAI-compatible providers", () => {
     expect(beta.ModelResolutionError).toBe(ModelResolutionError);
   });
 
+  it("does not throw ModelResolutionError when a resolver adapter closes over a blank apiKey", () => {
+    const blankApiKey = "  ";
+    const catalog = createModelCatalog([{
+      provider: "openai",
+      modelId: "gpt-test",
+      inputCostPer1kTokens: 0.1,
+      outputCostPer1kTokens: 0.2
+    }], { snapshotVersion: "parity-blank-key" });
+    const adapters = {
+      openai: {
+        name: "openai",
+        languageModel: (modelId: string) => mock([textResult(`${blankApiKey.length}:${modelId}`)])
+      }
+    };
+    for (const create of [createModelResolver, beta.createModelResolver]) {
+      const resolver = create({ adapters, catalog });
+      const resolution = resolver.resolve("openai/gpt-test");
+      expect(resolution.metadata.resolved).toMatchObject({ provider: "openai", modelId: "gpt-test" });
+      expect(resolution.model.provider).toBe("mock");
+      expect(resolver.model("openai/gpt-test").provider).toBe("mock");
+    }
+  });
+
   it("accepts a string model in generateObject and streamObject", async () => {
     registerModelProvider({
       name: "demo",

@@ -29,9 +29,6 @@ import {
 } from "./capabilities.js";
 
 import {
-  toolInputJsonSchema,
-  openAIChatSamplingFields,
-  openAIResponsesSamplingFields,
   imageInputToDataUrl,
   ConfigurationError,
   ProviderHTTPError,
@@ -70,6 +67,39 @@ import {
   type ToolDefinition,
   type ToolExecutionResult
 } from "@zhivex-ai/core/provider";
+
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
+
+const openAIChatSampling = (input: ModelGenerateInput): Record<string, unknown> => ({
+  ...(input.topP !== undefined ? { top_p: input.topP } : {}),
+  ...(input.seed !== undefined ? { seed: input.seed } : {}),
+  ...(input.stopSequences !== undefined ? { stop: [...input.stopSequences] } : {})
+});
+
+const openAIResponsesSamplingWarnings = new Set<string>();
+
+const warnOpenAIResponsesSampling = (option: "seed" | "stopSequences", detail: string) => {
+  const key = `openai:${option}`;
+  if (openAIResponsesSamplingWarnings.has(key)) return;
+  openAIResponsesSamplingWarnings.add(key);
+  console.warn(`Provider "openai" does not support ${option}. ${detail} The option was ignored.`);
+};
+
+const openAIResponsesSampling = (input: ModelGenerateInput): Record<string, unknown> => {
+  if (input.seed !== undefined) warnOpenAIResponsesSampling("seed", "The Responses API does not accept seed.");
+  if (input.stopSequences !== undefined) {
+    warnOpenAIResponsesSampling("stopSequences", "The Responses API does not accept stop sequences.");
+  }
+  return input.topP !== undefined ? { top_p: input.topP } : {};
+};
 
 const MIB = 1024 * 1024;
 const DEFAULT_HOSTED_IMAGE_EVENT_BYTES = 32 * MIB;
@@ -869,7 +899,7 @@ const mapTools = (input: ModelGenerateInput["tools"]) =>
             function: {
               name: tool.name,
               description: tool.description,
-              parameters: toolInputJsonSchema(tool.schema)
+              parameters: toolInputSchema(tool.schema)
             }
           };
         }
@@ -903,7 +933,7 @@ const mapResponsesTools = (input: ModelGenerateInput["tools"]) =>
             type: "function",
             name: tool.name,
             description: tool.description,
-            parameters: toolInputJsonSchema(tool.schema),
+            parameters: toolInputSchema(tool.schema),
             ...openAIResponsesFunctionConfig(tool)
           };
         }
@@ -2331,7 +2361,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
                 ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
                 text: mapResponsesStructuredOutput(input) ?? responseBodyOptions.text,
                 temperature: input.temperature,
-                ...openAIResponsesSamplingFields(input),
+                ...openAIResponsesSampling(input),
                 max_output_tokens: ptc ? remainingOutputTokens : input.maxTokens,
                 ...mapResponsesReasoning(input, responseBodyOptions.reasoning)
               })
@@ -2454,7 +2484,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
               response_format: mapStructuredOutput(input) ?? options.bodyOptions.response_format,
               temperature: input.temperature,
-              ...openAIChatSamplingFields(input),
+              ...openAIChatSampling(input),
               ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
               ...mapChatReasoning(input),
               stream: false
@@ -2519,7 +2549,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
               text: mapResponsesStructuredOutput(input) ?? responseBodyOptions.text,
               temperature: input.temperature,
-              ...openAIResponsesSamplingFields(input),
+              ...openAIResponsesSampling(input),
               max_output_tokens: input.maxTokens,
               ...mapResponsesReasoning(input, responseBodyOptions.reasoning),
               stream: true
@@ -2561,7 +2591,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
             response_format: mapStructuredOutput(input) ?? options.bodyOptions.response_format,
             temperature: input.temperature,
-            ...openAIChatSamplingFields(input),
+            ...openAIChatSampling(input),
             ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
             ...mapChatReasoning(input),
             stream: true,
