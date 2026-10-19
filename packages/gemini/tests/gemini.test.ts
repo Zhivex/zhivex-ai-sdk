@@ -2330,7 +2330,7 @@ describe("gemini adapter", () => {
       expect.objectContaining({
         type: "realtime-audio-output",
         mediaType: "audio/pcm",
-        audio: Buffer.from([1, 2, 3])
+        audio: new Uint8Array([1, 2, 3])
       })
     );
     expect(events).toContainEqual(
