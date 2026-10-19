@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const vertexCatalogFragment = defineModelCatalogFragment({
   provider: "vertex",
-  revision: "2026-10-14",
-  verifiedAt: "2026-10-14",
+  revision: "2026-10-19",
+  verifiedAt: "2026-10-19",
   pricingEffectiveAt: "2026-08-30",
   sources: [
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/sonnet-5-5",
@@ -27,7 +27,9 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-8-flash",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-7-flash",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-3-7-flash",
-    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/release-notes"
+    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/release-notes",
+    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions",
+    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/deepseek/deepseek-v41-flash"
   ],
   entries: [
     { provider: "vertex", modelId: "gemini-3.5-transcribe-live-preview" },
@@ -38,6 +40,7 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     { provider: "vertex", modelId: "gemini-omni-flash-preview" },
     { provider: "vertex", modelId: "gemini-omni-1.1-flash-preview" },
     { provider: "vertex", modelId: "zai-org/glm-5.2-maas" },
+    { provider: "vertex", modelId: "deepseek-ai/deepseek-v4.1-flash-maas" },
     { provider: "vertex", modelId: "google/gemma-4-26b-a4b-it-maas" },
     { provider: "vertex", modelId: "openai/gpt-oss-120b-maas" },
     { provider: "vertex", modelId: "meta/llama-4-maverick-17b-128e-instruct-maas" },
@@ -111,13 +114,10 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
       "inputCostPer1kTokens": 0.0015,
       "cachedInputCostPer1kTokens": 0.00015,
       "outputCostPer1kTokens": 0.0075,
-      "recommendedFor": [
-        "chat",
-        "reasoning",
-        "speed",
-        "vision",
-        "tools"
-      ]
+      "lifecycle": {
+        "retiredAt": "2027-01-28",
+        "source": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions"
+      }
     },
     {
       "provider": "vertex",
@@ -125,13 +125,10 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
       "inputCostPer1kTokens": 0.0015,
       "cachedInputCostPer1kTokens": 0.00015,
       "outputCostPer1kTokens": 0.0075,
-      "recommendedFor": [
-        "chat",
-        "reasoning",
-        "speed",
-        "vision",
-        "tools"
-      ]
+      "lifecycle": {
+        "retiredAt": "2026-11-19",
+        "source": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions"
+      }
     },
     {
       "provider": "vertex",
@@ -226,19 +223,18 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "vertex",
       "modelId": "gemini-2.5-flash-image",
-      "recommendedFor": [
-        "vision",
-        "speed"
-      ]
+      "lifecycle": {
+        "retiredAt": "2027-03-15",
+        "source": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions"
+      }
     },
     {
       "provider": "vertex",
       "modelId": "gemini-live-2.5-flash-native-audio",
-      "recommendedFor": [
-        "speed",
-        "vision",
-        "tools"
-      ]
+      "lifecycle": {
+        "retiredAt": "2026-12-13",
+        "source": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions"
+      }
     },
     {
       "provider": "vertex",
