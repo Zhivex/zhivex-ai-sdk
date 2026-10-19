@@ -2,14 +2,15 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const geminiCatalogFragment = defineModelCatalogFragment({
   provider: "gemini",
-  revision: "2026-10-14",
-  verifiedAt: "2026-10-14",
+  revision: "2026-10-19",
+  verifiedAt: "2026-10-19",
   pricingEffectiveAt: "2026-08-30",
   sources: [
     "https://ai.google.dev/gemini-api/docs/models",
     "https://ai.google.dev/gemini-api/docs/changelog",
     "https://ai.google.dev/gemini-api/docs/latest-model",
-    "https://ai.google.dev/gemini-api/docs/pricing"
+    "https://ai.google.dev/gemini-api/docs/pricing",
+    "https://ai.google.dev/gemini-api/docs/deprecations"
   ],
   entries: [
     {
@@ -180,19 +181,18 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "gemini",
       "modelId": "gemini-2.5-flash-image",
-      "recommendedFor": [
-        "vision",
-        "speed"
-      ]
+      "lifecycle": {
+        "retiredAt": "2027-03-15",
+        "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+      }
     },
     {
       "provider": "gemini",
       "modelId": "gemini-3.1-flash-live-preview",
-      "recommendedFor": [
-        "speed",
-        "vision",
-        "tools"
-      ]
+      "lifecycle": {
+        "retiredAt": "2026-11-17",
+        "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+      }
     },
     {
       "provider": "gemini",
@@ -218,9 +218,10 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "gemini",
       "modelId": "gemini-3.1-flash-tts-preview",
-      "recommendedFor": [
-        "speed"
-      ]
+      "lifecycle": {
+        "retiredAt": "2026-11-17",
+        "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+      }
     },
     {
       "provider": "gemini",
@@ -232,33 +233,34 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "gemini",
       "modelId": "gemini-robotics-er-1.6-preview",
-      "recommendedFor": [
-        "vision",
-        "reasoning"
-      ]
+      "lifecycle": {
+        "retiredAt": "2026-08-31",
+        "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+      }
     },
     {
       "provider": "gemini",
       "modelId": "veo-3.1-generate-preview",
-      "recommendedFor": [
-        "vision"
-      ]
+      "lifecycle": {
+        "retiredAt": "2026-10-22",
+        "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+      }
     },
     {
       "provider": "gemini",
       "modelId": "veo-3.1-fast-generate-preview",
-      "recommendedFor": [
-        "vision",
-        "speed"
-      ]
+      "lifecycle": {
+        "retiredAt": "2026-10-22",
+        "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+      }
     },
     {
       "provider": "gemini",
       "modelId": "veo-3.1-lite-generate-preview",
-      "recommendedFor": [
-        "vision",
-        "speed"
-      ]
+      "lifecycle": {
+        "retiredAt": "2026-10-22",
+        "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+      }
     },
     {
       "provider": "gemini",
@@ -271,10 +273,11 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "gemini",
       "modelId": "gemini-omni-flash-preview",
-      "recommendedFor": [
-        "vision",
-        "speed"
-      ]
+      "lifecycle": {
+        "deprecatedAt": "2026-09-30",
+        "retiredAt": "2026-10-22",
+        "source": "https://ai.google.dev/gemini-api/docs/deprecations"
+      }
     },
     {
       "provider": "gemini",
