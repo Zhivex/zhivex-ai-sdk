@@ -444,6 +444,26 @@ export * from "./errors.js";
 export * from "./fetch.js";
 export * from "./model-resolver.js";
 export { generateObject, streamObject } from "./generate-object.js";
+export { jsonSchema, toolInputJsonSchema } from "./json-schema.js";
+export type { JsonSchemaType } from "./json-schema.js";
+export {
+  anthropicSamplingFields,
+  geminiSamplingFields,
+  openAIChatSamplingFields,
+  openAIResponsesSamplingFields,
+  warnIgnoredCallOption
+} from "./sampling.js";
+export { hasToolCall, stepCountIs } from "./loop-controls.js";
+export { clearRegisteredModelProviders, registerModelProvider, resolveLanguageModel } from "./model-registry.js";
+export {
+  OPENAI_COMPATIBLE_PRESETS,
+  createGroqCompatible,
+  createMistralCompatible,
+  openaiCompatible
+} from "./openai-compatible-provider.js";
+export type { OpenAICompatiblePresetOptions, OpenAICompatibleProviderOptions } from "./openai-compatible-provider.js";
+export { Output } from "./output.js";
+export type { GenerateOutputSpec, ObjectOutputSpec, TextOutputSpec } from "./output.js";
 export {
   cancelBatch,
   cancelInteraction,
@@ -651,6 +671,7 @@ export {
   serializeJsonValue,
   system,
   textPart,
+  dynamicTool,
   tool,
   toolCallPart,
   toolResultPart,

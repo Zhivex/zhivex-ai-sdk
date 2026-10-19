@@ -2,6 +2,7 @@ import { withManualRedirect } from "./manual-redirect.js";
 import { z, toJSONSchema } from "zod";
 
 import {
+  toolInputJsonSchema,
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
@@ -182,7 +183,7 @@ const kimiToolMetadata = (definition: { formulaUri: string; parameters?: JsonVal
 });
 
 const kimiFormulaToolSchema = (toolDefinition: { metadata?: Record<string, JsonValue>; schema: z.ZodTypeAny }) =>
-  toolDefinition.metadata?.["kimi.tool_schema"] ?? toJSONSchema(toolDefinition.schema);
+  toolDefinition.metadata?.["kimi.tool_schema"] ?? toolInputJsonSchema(toolDefinition.schema);
 
 const resolveFormulaConfig = (options: KimiFormulaToolOptions) => {
   const apiKey = options.apiKey ?? process.env.KIMI_API_KEY ?? process.env.MOONSHOT_API_KEY;

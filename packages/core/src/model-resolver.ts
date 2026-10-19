@@ -13,6 +13,7 @@ export type ModelResolutionErrorCode =
   | "unknown_alias"
   | "unknown_provider"
   | "unknown_model"
+  | "missing_credentials"
   | "invalid_resolved_model";
 
 /** Typed, preflight-only failure raised by the optional model resolver. */
@@ -439,8 +440,9 @@ const assertCatalog: (catalog: unknown) => asserts catalog is ModelCatalog = (ca
 };
 
 /**
- * Creates an instance-local, immutable Beta registry for optional provider/model identifiers.
- * Direct provider factories remain the canonical low-level path.
+ * Creates an instance-local, immutable registry for optional provider/model identifiers.
+ * Direct provider factories remain supported. The same function is still exported
+ * from the beta entry as a deprecated alias.
  */
 export const createModelResolver = <TLanguageModel extends LanguageModel = LanguageModel>(
   options: CreateModelResolverOptions<TLanguageModel>

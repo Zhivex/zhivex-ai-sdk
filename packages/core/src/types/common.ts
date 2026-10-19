@@ -92,6 +92,15 @@ export interface ModelCapabilities {
   computerUse?: boolean;
   reasoning: boolean;
   webSearch: boolean;
+  /**
+   * Shared sampling options. Omitted or false means generateText warns and does
+   * not treat the option as delivered. Adapters that send the field set true.
+   */
+  sampling?: {
+    topP?: boolean;
+    seed?: boolean;
+    stopSequences?: boolean;
+  };
   realtime?: {
     sessions: boolean;
     audioInput: boolean;

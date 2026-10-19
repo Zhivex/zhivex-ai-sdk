@@ -13,6 +13,7 @@ import {
 } from "./capabilities.js";
 
 import {
+  toolInputJsonSchema,
   imageInputToDataUrl,
   CallbackRealtimeSession,
   ConfigurationError,
@@ -636,7 +637,7 @@ const mapTools = (input: ModelGenerateInput["tools"]) =>
             function: {
               name: tool.name,
               description: tool.description,
-              parameters: toJSONSchema(tool.schema)
+              parameters: toolInputJsonSchema(tool.schema)
             }
           };
         }
@@ -670,7 +671,7 @@ const mapResponsesTools = (input: ModelGenerateInput["tools"]) =>
             type: "function",
             name: tool.name,
             description: tool.description,
-            parameters: toJSONSchema(tool.schema)
+            parameters: toolInputJsonSchema(tool.schema)
           };
         }
 

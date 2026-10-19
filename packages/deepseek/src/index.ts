@@ -2,6 +2,7 @@ import { withManualRedirect } from "./manual-redirect.js";
 import { toJSONSchema } from "zod";
 
 import {
+  toolInputJsonSchema,
   ConfigurationError,
   ProviderHTTPError,
   UnsupportedFeatureError,
@@ -505,7 +506,7 @@ const mapTools = (tools: ModelGenerateInput["tools"], strict: boolean) =>
             );
           }
 
-          const parameters = toJSONSchema(tool.schema);
+          const parameters = toolInputJsonSchema(tool.schema);
           if (strict) {
             assertDeepSeekStrictSchema(parameters, tool.name);
           }

@@ -2,6 +2,7 @@ import { withManualRedirect } from "./manual-redirect.js";
 import { toJSONSchema } from "zod";
 
 import {
+  toolInputJsonSchema,
   ConfigurationError,
   ParseError,
   ProviderHTTPError,
@@ -300,7 +301,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) => {
       function: {
         name: tool.name,
         description: tool.description ?? tool.name,
-        parameters: toJSONSchema(tool.schema)
+        parameters: toolInputJsonSchema(tool.schema)
       }
     };
   });

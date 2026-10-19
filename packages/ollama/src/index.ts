@@ -1,6 +1,7 @@
 import { toJSONSchema } from "zod";
 
 import {
+  toolInputJsonSchema,
   ConfigurationError,
   ParseError,
   assertTrustedEndpoint,
@@ -69,6 +70,7 @@ const capabilities: ModelCapabilities = {
   embeddings: true,
   reasoning: false,
   webSearch: false,
+  sampling: { topP: true, seed: true, stopSequences: true },
   agentCapabilities: {
     supportTier: "tier-c",
     toolChoiceNone: false,
@@ -366,7 +368,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           function: {
             name: tool.name,
             description: tool.description,
-            parameters: toJSONSchema(tool.schema)
+            parameters: toolInputJsonSchema(tool.schema)
           }
         }));
       })()
@@ -548,7 +550,10 @@ class OllamaLanguageModel implements LanguageModel<OllamaLanguageModelOptions> {
           ? input.providerOptions.options
           : {}),
         num_predict: input.maxTokens,
-        temperature: input.temperature
+        temperature: input.temperature,
+        ...(input.topP !== undefined ? { top_p: input.topP } : {}),
+        ...(input.seed !== undefined ? { seed: input.seed } : {}),
+        ...(input.stopSequences !== undefined ? { stop: [...input.stopSequences] } : {})
       },
       stream
     };

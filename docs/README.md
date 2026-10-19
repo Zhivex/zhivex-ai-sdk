@@ -10,7 +10,7 @@ Guides for adopting the SDK. The [provider compatibility matrix](./reference/PRO
 - [Catalog](./MODEL_CATALOG.md), [context limits](./CATALOG_COMPACTION.md), [durable compaction](./DURABLE_COMPACTION.md), and [evaluations](./MODEL_EVALUATIONS.md)
 - [Migration](./MIGRATION.md) from direct provider SDKs, Vercel AI SDK Core, or a simple tool loop
 - [RAG](./RAG.md), [CLI](./CLI.md), [MCP HTTP and OAuth](./MCP_HTTP.md), [experimental MCP stdio](./MCP_STDIO.md), [experimental MCP server](./MCP_SERVER.md), and [experimental A2A](./A2A.md)
-- [AI SDK UI compatibility](./AI_SDK_UI_COMPAT.md) (beta) and the optional [model resolver](./MODEL_RESOLVER.md) (beta)
+- [AI SDK UI compatibility](./AI_SDK_UI_COMPAT.md) (beta) and the optional [model resolver](./MODEL_RESOLVER.md)
 - [Gateway routing](./GATEWAY.md)
 - [Computer use](./COMPUTER_USE.md), [portable Decisions](./DECISIONS.md), and [GPT-Live](./OPENAI_LIVE.md)
 - [React package](../packages/react/README.md) and [runnable examples](../examples/README.md)

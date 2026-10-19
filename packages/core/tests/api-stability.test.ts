@@ -40,9 +40,17 @@ describe("api stability manifest", () => {
       symbol: "createAgentHarnessBinding",
       stability: "beta"
     });
-    expect(api.listApiStability("beta")).toContainEqual({
+    expect(api.listApiStability("stable")).toContainEqual({
       symbol: "createModelResolver",
-      stability: "beta"
+      stability: "stable"
+    });
+    expect(api.listApiStability("stable")).toContainEqual({
+      symbol: "ModelResolutionError",
+      stability: "stable"
+    });
+    expect(api.listApiStability("stable")).toContainEqual({
+      symbol: "openaiCompatible",
+      stability: "stable"
     });
     expect(api.listApiStability("stable")).toContainEqual({
       symbol: "chunkText",
@@ -115,8 +123,11 @@ describe("api stability manifest", () => {
     expect(api.getApiStability("migrateAgentApprovalQueueItem")?.stability).toBe("stable");
     expect(api.getApiStability("selectAgentModel")?.stability).toBe("stable");
     expect(api.getApiStability("runModelEvaluation")?.stability).toBe("beta");
-    expect(api.getApiStability("ModelResolutionError")?.stability).toBe("beta");
-    expect(api.getApiStability("createModelResolver")?.stability).toBe("beta");
+    expect(api.getApiStability("ModelResolutionError")?.stability).toBe("stable");
+    expect(api.getApiStability("createModelResolver")?.stability).toBe("stable");
+    expect(api.getApiStability("openaiCompatible")?.stability).toBe("stable");
+    expect(api.getApiStability("stepCountIs")?.stability).toBe("stable");
+    expect(api.getApiStability("Output")?.stability).toBe("stable");
 
     expect(api.getApiStability("createAdvancedToolRegistry")?.stability).toBe("experimental");
     expect(api.getApiStability("experimentalRawProviderOptions")?.stability).toBe("experimental");

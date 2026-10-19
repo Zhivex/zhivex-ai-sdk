@@ -58,7 +58,14 @@ export {
   fingerprintAgentHarness
 } from "./agent-harness.js";
 export { createMcpToolRegistry } from "./mcp.js";
-export { createModelResolver, ModelResolutionError } from "./model-resolver.js";
+import { createModelResolver as createStableModelResolver, ModelResolutionError as StableModelResolutionError } from "./model-resolver.js";
+
+/** @deprecated Import `createModelResolver` from `@zhivex-ai/core` or `@zhivex-ai/sdk`. This beta export is the stable function. */
+export const createModelResolver = createStableModelResolver;
+
+/** @deprecated Import `ModelResolutionError` from `@zhivex-ai/core` or `@zhivex-ai/sdk`. This beta export is the stable class. */
+export const ModelResolutionError = StableModelResolutionError;
+
 export { recommendAuxiliaryModel } from "./catalog-recommendation.js";
 export { createMergedAbortSignal, createProviderAdapter } from "./runtime.js";
 export {

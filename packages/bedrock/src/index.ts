@@ -12,6 +12,7 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 
 import {
+  toolInputJsonSchema,
   ConfigurationError,
   isCallableToolDefinition,
   ProviderHTTPError,
@@ -622,7 +623,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
             name: tool.name,
             description: tool.description,
             inputSchema: {
-              json: toJSONSchema(tool.schema)
+              json: toolInputJsonSchema(tool.schema)
             }
           }
         })) as unknown as NonNullable<ConverseCommandInput["toolConfig"]>["tools"];
@@ -757,7 +758,7 @@ const mapOpenAITools = (tools: ModelGenerateInput["tools"]) =>
             type: "function",
             name: definition.name,
             description: definition.description,
-            parameters: toJSONSchema(definition.schema)
+            parameters: toolInputJsonSchema(definition.schema)
           };
         }
 

@@ -1,5 +1,6 @@
 import { toJSONSchema } from "zod";
-import { UnsupportedFeatureError, isCallableToolDefinition, isHostedToolDefinition } from "@zhivex-ai/core/provider";
+import {
+  toolInputJsonSchema, UnsupportedFeatureError, isCallableToolDefinition, isHostedToolDefinition } from "@zhivex-ai/core/provider";
 import type { JsonValue, ModelGenerateInput, ModelMessage } from "@zhivex-ai/core/contracts";
 import { toBase64 } from "./encoding.js";
 
@@ -104,7 +105,7 @@ export const mapTools = (tools: ModelGenerateInput["tools"]) =>
           .map((tool) => ({
             name: tool.name,
             description: tool.description,
-            parameters: toGeminiSchema(toJSONSchema(tool.schema))
+            parameters: toGeminiSchema(toolInputJsonSchema(tool.schema))
           }));
 
         if (functionDeclarations.length) {

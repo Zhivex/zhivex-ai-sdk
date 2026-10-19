@@ -1,5 +1,6 @@
 import { toJSONSchema } from "zod";
 import { ConfigurationError, ProviderHTTPError, UnsupportedFeatureError } from "./errors.js";
+import { toolInputJsonSchema } from "./json-schema.js";
 import { imageInputToDataUrl } from "./image-input.js";
 import { normalizeFinishReason } from "./messages.js";
 import { readErrorBodyWithLimit, readJsonWithLimit } from "./response.js";
@@ -48,7 +49,7 @@ export const createChatCompletionsModel = (options: ChatCompletionsTransportOpti
     if (input.reasoning) throw new UnsupportedFeatureError("Chat Completions reasoning must be mapped by the host-specific adapter.");
     const tools = input.tools ? Object.values(input.tools).map((tool) => {
       if (!isCallableToolDefinition(tool)) throw new UnsupportedFeatureError(`Provider "${options.provider}" Chat Completions supports callable tools only.`);
-      return { type: "function", function: { name: tool.name, description: tool.description, parameters: toJSONSchema(tool.schema) } };
+      return { type: "function", function: { name: tool.name, description: tool.description, parameters: toolInputJsonSchema(tool.schema) } };
     }) : undefined;
     if (tools?.length && !options.capabilities.tools) throw new UnsupportedFeatureError(`Model "${options.modelId}" does not support tools.`);
     if (input.toolChoice && !options.capabilities.toolChoice) throw new UnsupportedFeatureError(`Model "${options.modelId}" does not support tool choice.`);
@@ -72,6 +73,9 @@ export const createChatCompletionsModel = (options: ChatCompletionsTransportOpti
       ...(responseFormat ? { response_format: responseFormat } : {}),
       ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
       ...(input.maxTokens !== undefined ? { max_tokens: input.maxTokens } : {}),
+      ...(input.topP !== undefined && options.capabilities.sampling?.topP ? { top_p: input.topP } : {}),
+      ...(input.seed !== undefined && options.capabilities.sampling?.seed ? { seed: input.seed } : {}),
+      ...(input.stopSequences !== undefined && options.capabilities.sampling?.stopSequences ? { stop: [...input.stopSequences] } : {}),
       stream, ...(stream ? { stream_options: { include_usage: true } } : {})
     } };
   };

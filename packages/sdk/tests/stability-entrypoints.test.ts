@@ -28,8 +28,14 @@ describe("SDK stability entrypoints", () => {
   });
 
   it("contains only Beta runtime symbols", () => {
+    const stableAliases = new Set(["createModelResolver", "ModelResolutionError"]);
     for (const symbol of Object.keys(beta)) {
-      expect(getApiStability(symbol)?.stability, symbol).toBe("beta");
+      const stability = getApiStability(symbol)?.stability;
+      if (stableAliases.has(symbol)) {
+        expect(stability, symbol).toBe("stable");
+        continue;
+      }
+      expect(stability, symbol).toBe("beta");
     }
   });
 

@@ -1,5 +1,6 @@
 import { toJSONSchema } from "zod";
 import {
+  toolInputJsonSchema,
   CallbackRealtimeSession,
   ConfigurationError,
   UnsupportedFeatureError,
@@ -68,7 +69,7 @@ const mapRealtimeTools = (input: ModelGenerateInput["tools"]) =>
             type: "function",
             name: tool.name,
             description: tool.description,
-            parameters: toJSONSchema(tool.schema)
+            parameters: toolInputJsonSchema(tool.schema)
           };
         }
 

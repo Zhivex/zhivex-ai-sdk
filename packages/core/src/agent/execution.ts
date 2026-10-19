@@ -785,6 +785,12 @@ const createGenerateOptions = <
     maxSteps,
     streamBuffer: input.streamBuffer ?? agent.streamBuffer,
     temperature: input.temperature ?? agent.temperature,
+    topP: input.topP,
+    seed: input.seed,
+    stopSequences: input.stopSequences,
+    stopWhen: input.stopWhen,
+    prepareStep: input.prepareStep,
+    activeTools: input.activeTools,
     maxTokens,
     reasoning: input.reasoning ?? agent.reasoning,
     structuredOutput:

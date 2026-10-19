@@ -44,6 +44,7 @@ import {
 } from "./capabilities.js";
 
 import {
+  toolInputJsonSchema,
   CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
@@ -629,7 +630,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           .map((tool) => ({
             name: tool.name,
             description: tool.description,
-            parameters: toVertexSchema(toJSONSchema(tool.schema))
+            parameters: toVertexSchema(toolInputJsonSchema(tool.schema))
           }));
 
         if (functionDeclarations.length) {

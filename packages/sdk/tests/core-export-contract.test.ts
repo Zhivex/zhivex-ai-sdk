@@ -58,7 +58,13 @@ const intentionallyCoreOnly = [
   "unsupportedBrowserToken",
   "validateMessageParts",
   "withRetry",
-  "withTimeoutSignal"
+  "withTimeoutSignal",
+  "anthropicSamplingFields",
+  "geminiSamplingFields",
+  "openAIChatSamplingFields",
+  "openAIResponsesSamplingFields",
+  "toolInputJsonSchema",
+  "warnIgnoredCallOption"
 ] as const;
 
 describe("SDK to core export contract", () => {

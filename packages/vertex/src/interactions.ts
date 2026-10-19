@@ -1,5 +1,6 @@
 import { toJSONSchema } from "zod";
 import {
+  toolInputJsonSchema,
   ConfigurationError, ProviderHTTPError, UnsupportedFeatureError,
   isCallableToolDefinition, toToolSet, readJsonWithLimit, readErrorBodyWithLimit,
   streamSSE, withRetry, withTimeoutSignal,
@@ -94,7 +95,7 @@ export const createVertexInteractionsClient = (
       throw new ConfigurationError("Vertex Interactions media models require location global.");
     }
     const tools = input.tools ? Object.values(toToolSet(input.tools) ?? {}).map((tool) => {
-      if (isCallableToolDefinition(tool)) return { type: "function", name: tool.name, description: tool.description, parameters: toJSONSchema(tool.schema) };
+      if (isCallableToolDefinition(tool)) return { type: "function", name: tool.name, description: tool.description, parameters: toolInputJsonSchema(tool.schema) };
       if (tool.provider && tool.provider !== "vertex") throw new UnsupportedFeatureError("Vertex Interactions cannot use another provider's hosted tools.");
       const aliases: Record<string, string> = { googleSearch: "google_search", googleMaps: "google_maps", urlContext: "url_context", codeExecution: "code_execution", computerUse: "computer_use", vertexSearch: "retrieval" };
       const type = aliases[tool.type] ?? tool.type;

@@ -37,6 +37,11 @@ import type {
   ToolExecutionOptions
 } from "./model-tools.js";
 import type {
+  PrepareStepInfo,
+  PrepareStepResult,
+  StopCondition
+} from "./generation.js";
+import type {
   StreamEvent
 } from "./stream.js";
 import type {
@@ -446,6 +451,13 @@ export type AgentRunInput<
     /** Explicit streaming replay and subscriber limits. */
     streamBuffer?: BoundedReplayBroadcastOptions;
     temperature?: number;
+    topP?: number;
+    seed?: number;
+    stopSequences?: readonly string[];
+    /** Extra stop conditions for this invocation. Omission keeps maxSteps. */
+    stopWhen?: StopCondition | readonly StopCondition[];
+    prepareStep?: (context: PrepareStepInfo) => PrepareStepResult | undefined | Promise<PrepareStepResult | undefined>;
+    activeTools?: readonly string[];
     maxTokens?: number;
     reasoning?: ReasoningConfig;
     providerOptions?: ProviderOptionsOf<TModel>;

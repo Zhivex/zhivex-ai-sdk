@@ -11,6 +11,8 @@ import {
 import type { AnthropicConfig } from "@anthropic-ai/sdk/core/credentials";
 
 import {
+  toolInputJsonSchema,
+  anthropicSamplingFields,
   imageInputToDataUrl,
   ConfigurationError,
   ProviderHTTPError,
@@ -143,6 +145,7 @@ const capabilities: ModelCapabilities = {
   embeddings: false,
   reasoning: true,
   webSearch: true,
+  sampling: { topP: true, seed: false, stopSequences: true },
   agentCapabilities: {
     supportTier: "tier-b",
     toolChoiceNone: true,
@@ -797,7 +800,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           return {
             name: tool.name,
             description: tool.description,
-            input_schema: toJSONSchema(tool.schema)
+            input_schema: toolInputJsonSchema(tool.schema)
           };
         }
 
@@ -1420,6 +1423,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
         tools: mapTools(input.tools),
         tool_choice: mapToolChoice(input.toolChoice),
         temperature: input.temperature,
+        ...anthropicSamplingFields(input),
         max_tokens: input.maxTokens ?? 1024,
         ...(outputConfig ? { output_config: outputConfig } : {}),
         ...(thinking ? { thinking } : {})
@@ -1465,6 +1469,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
       tools: mapTools(input.tools),
       tool_choice: mapToolChoice(input.toolChoice),
       temperature: input.temperature,
+      ...anthropicSamplingFields(input),
       max_tokens: input.maxTokens ?? 1024,
       stream: true,
       ...(outputConfig ? { output_config: outputConfig } : {}),

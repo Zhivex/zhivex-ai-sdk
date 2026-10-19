@@ -19,6 +19,7 @@ export const capabilities: ModelCapabilities = {
   embeddings: true,
   reasoning: true,
   webSearch: true,
+  sampling: { topP: true, seed: true, stopSequences: true },
   agentCapabilities: {
     supportTier: "tier-a",
     toolChoiceNone: true,
@@ -116,6 +117,7 @@ export const conservativeCapabilities: ModelCapabilities = {
   embeddings: false,
   reasoning: false,
   webSearch: false,
+  sampling: { topP: true, seed: true, stopSequences: true },
   agentCapabilities: {
     supportTier: "tier-c", toolChoiceNone: false, approvalRequests: false,
     hostedWebSearch: false, hostedFileSearch: false, remoteMcp: false,

@@ -1,4 +1,3 @@
-import { validateMaxSteps } from "./validate-max-steps.js";
 import { createHash } from "node:crypto";
 import { enforceEgressPolicy } from "./egress-policy.js";
 import {
@@ -37,12 +36,17 @@ import {
 } from "./messages.js";
 import { createMergedAbortSignal, withTimeoutSignal } from "./runtime.js";
 import { isComputerEffectTool, isUnknownToolExecution, unknownToolExecution } from "./tool-execution-outcome.js";
+import { resolveStepCeiling, selectActiveTools, stopConditionMet } from "./loop-controls.js";
+import { resolveLanguageModel } from "./model-registry.js";
+import { applyOutputSpec, readObjectOutput, type GenerateOutputSpec } from "./output.js";
+import { validateSamplingOptions, warnUnsupportedSampling } from "./sampling.js";
 import { toToolSet } from "./tool-registry.js";
 import { ToolExecutionSuspendedError } from "./tool-execution-suspension.js";
 import type {
   GenerateResult,
   GenerateTextOptions,
   GenerateTextOutput,
+  GenerateTextStep,
   JsonValue,
   LanguageModel,
   ModelGenerateInput,
@@ -58,7 +62,30 @@ import type {
   ToolExecutionResult
 } from "./types.js";
 
-type AnyGenerateTextOptions = GenerateTextOptions<any, any>;
+type AnyGenerateTextOptions = Omit<GenerateTextOptions<LanguageModel, any>, "model"> & {
+  model: LanguageModel;
+  output?: GenerateOutputSpec;
+};
+
+const bindGenerateOptions = (input: GenerateTextOptions<any, any>): AnyGenerateTextOptions => {
+  const model = resolveLanguageModel(input.model, input.modelResolver);
+  const toolContext = input.toolsContext !== undefined && input.toolContext?.context === undefined
+    ? { ...input.toolContext, context: input.toolsContext }
+    : input.toolContext;
+  validateSamplingOptions(input);
+  return applyOutputSpec({ ...input, model, toolContext }) as AnyGenerateTextOptions;
+};
+
+const attachOutput = (
+  options: AnyGenerateTextOptions,
+  output: GenerateTextOutput
+): GenerateTextOutput => {
+  const spec = options.output;
+  if (!spec) return output;
+  if (spec.type === "text") return { ...output, output: output.text };
+  if (output.approvalRequests?.length) return output;
+  return { ...output, output: readObjectOutput(spec, output.text) };
+};
 
 const withPossibleToolEffects = (error: unknown, effectsPossible: boolean): unknown => {
   if (!(error instanceof ProviderToolCallError) || !effectsPossible || error.effectsPossible) {
@@ -265,6 +292,9 @@ const toRequest = (options: AnyGenerateTextOptions, messages: ModelMessage[]): M
   toolChoice: options.toolChoice,
   toolExecution: options.toolExecution,
   temperature: options.temperature,
+  topP: options.topP,
+  seed: options.seed,
+  stopSequences: options.stopSequences,
   maxTokens: options.maxTokens,
   reasoning: options.reasoning,
   providerOptions: options.providerOptions,
@@ -274,6 +304,59 @@ const toRequest = (options: AnyGenerateTextOptions, messages: ModelMessage[]): M
   maxRetries: options.maxRetries,
   retryBackoffMs: options.retryBackoffMs
 });
+
+const planStep = async (
+  options: AnyGenerateTextOptions,
+  allMessages: ModelMessage[],
+  steps: GenerateTextStep[],
+  absoluteStep: number,
+  stepNumber: number,
+  activeRedaction: ActiveGenerationRedaction | undefined
+) => {
+  let model = options.model;
+  let tools = toToolSet(options.tools);
+  let toolChoice = options.toolChoice;
+  let activeTools = options.activeTools;
+  let requestMessages = allMessages;
+  if (options.prepareStep) {
+    const prepared = await options.prepareStep({
+      stepNumber,
+      step: absoluteStep,
+      steps,
+      model,
+      messages: structuredClone(allMessages),
+      tools
+    });
+    if (prepared) {
+      if (prepared.model !== undefined) model = resolveLanguageModel(prepared.model, options.modelResolver);
+      if (prepared.tools !== undefined) tools = toToolSet(prepared.tools);
+      if (prepared.toolChoice !== undefined) toolChoice = prepared.toolChoice;
+      if (prepared.activeTools !== undefined) activeTools = prepared.activeTools;
+      if (prepared.messages !== undefined) {
+        requestMessages = structuredClone(prepared.messages);
+        allMessages.splice(0, allMessages.length, ...structuredClone(prepared.messages));
+      }
+      if (prepared.system !== undefined) {
+        const systemMessage = createTextMessage("system", prepared.system);
+        requestMessages = requestMessages[0]?.role === "system"
+          ? [systemMessage, ...requestMessages.slice(1)]
+          : [systemMessage, ...requestMessages];
+        if (prepared.messages !== undefined) {
+          allMessages.splice(0, allMessages.length, ...structuredClone(requestMessages));
+        }
+      }
+    }
+  }
+  const visibleTools = selectActiveTools(tools, activeTools);
+  const stepOptions: AnyGenerateTextOptions = { ...options, model, tools: visibleTools, toolChoice };
+  if (visibleTools && !model.capabilities.tools) {
+    throw new UnsupportedFeatureError(`Model "${model.provider}/${model.modelId}" does not support tools.`);
+  }
+  validateToolChoice({ model, tools: visibleTools, toolChoice });
+  const request = toRequest(stepOptions, sealModelMessages(requestMessages, activeRedaction));
+  warnUnsupportedSampling(model, request);
+  return { stepOptions, request, model, tools: visibleTools ?? {} };
+};
 
 type ValidatedToolCall = {
   validationError?: ToolExecutionResult["error"];
@@ -408,7 +491,8 @@ const validateToolCalls = async (
       validated.push({
         call, parsedInput: undefined,
         executionContext: { ...options.toolContext, abortSignal: context.request.abortSignal,
-          toolCall: call, step: context.step, model: options.model, request: context.request },
+          toolCall: call, step: context.step, model: options.model, request: context.request,
+          messages: context.request.messages },
         validationError: { code: "TOOL_NOT_REGISTERED", message: "Tool is not registered. Use an available tool with its exact name." }
       });
       continue;
@@ -431,7 +515,8 @@ const validateToolCalls = async (
       toolCall: call,
       step: context.step,
       model: options.model,
-      request: context.request
+      request: context.request,
+      messages: context.request.messages
     } satisfies ToolExecutionContext;
     if (!parsed.success) {
       // Never forward schema messages, received values, union payloads or custom
@@ -704,7 +789,8 @@ const executeTools = async (
       const rawOutput = await withToolTimeout(
         async (abortSignal) => tool.execute(item.parsedInput, {
           ...item.executionContext,
-          abortSignal
+          abortSignal,
+          messages: context.request.messages
         }),
         timeoutMs,
         context.request.abortSignal,
@@ -923,17 +1009,18 @@ export const generateText = async <
   TModel extends LanguageModel,
   TContext = unknown
 >(
-  options: GenerateTextOptions<TModel, TContext>
+  input: GenerateTextOptions<TModel, TContext>
 ): Promise<GenerateTextOutput> => {
   // A fresh, non-serializable identity spans every step of this invocation. The
   // enumerable symbol survives runtime context spreads but never enters JSON state.
+  let options: AnyGenerateTextOptions = bindGenerateOptions(input);
   options = { ...options, toolContext: { ...options.toolContext,
     [Symbol.for("@zhivex-ai/core/tool-execution-scope")]: Object.freeze({}) } };
   const activeRedaction = resolveGenerationRedaction(options.redaction);
-  const maxSteps = validateMaxSteps(options.maxSteps);
+  const maxSteps = resolveStepCeiling(options);
   const allMessages = buildMessages(options);
   const steps: GenerateTextOutput["steps"] = [];
-  const tools = toToolSet(options.tools);
+  const tools = selectActiveTools(toToolSet(options.tools), options.activeTools);
   const resolvedTools = tools ?? {};
   validateMessageParts(options.model, allMessages);
   validateReasoning(options);
@@ -964,14 +1051,14 @@ export const generateText = async <
     });
     if (preflight.approvalRequests.length) {
       approvalRequests.push(...preflight.approvalRequests);
-      return presentOutput({
+      return attachOutput(options, presentOutput({
         text: "",
         finishReason: "tool-calls",
         steps,
         messages: allMessages,
         toolResults,
         approvalRequests
-      }, activeRedaction);
+      }, activeRedaction));
     }
     await options.onBeforeToolExecution?.({ request, step, toolCalls: pendingToolCalls });
     let recoveredToolResults: ToolExecutionResult[];
@@ -998,14 +1085,14 @@ export const generateText = async <
         });
       }
       approvalRequests.push(...error.approvals);
-      return presentOutput({
+      return attachOutput(options, presentOutput({
         text: "",
         finishReason: "tool-calls",
         steps,
         messages: allMessages,
         toolResults,
         approvalRequests
-      }, activeRedaction);
+      }, activeRedaction));
     }
     const visibleRecovered = sealToolResults(recoveredToolResults, activeRedaction);
     toolResults.push(...visibleRecovered);
@@ -1024,13 +1111,15 @@ export const generateText = async <
     if (preparedMessages) {
       allMessages.splice(0, allMessages.length, ...structuredClone(preparedMessages));
     }
-    const request = toRequest(options, sealModelMessages(allMessages, activeRedaction));
+    const planned = await planStep(options, allMessages, steps, absoluteStep, step, activeRedaction);
+    const request = planned.request;
+    const stepOptions = planned.stepOptions;
     await options.onBeforeModelStep?.({ request, step: absoluteStep });
-    await assertEgress(options);
+    await assertEgress(stepOptions);
     const startedAt = Date.now();
     let response: GenerateResult;
     try {
-      response = await options.model.generate(request);
+      response = await planned.model.generate(request);
     } catch (error) {
       throw withPossibleToolEffects(error, effectsPossible);
     }
@@ -1047,8 +1136,8 @@ export const generateText = async <
       generatedMessages.push(...storedMessages);
     }
 
-    const preflight = await preflightModelResponse(toolCalls, options, {
-      request, step: absoluteStep, tools: resolvedTools
+    const preflight = await preflightModelResponse(toolCalls, stepOptions, {
+      request, step: absoluteStep, tools: planned.tools
     }, response, steps.map(step => step.response.usage));
     if (preflight?.approvalRequests.length) {
       approvalRequests.push(...preflight.approvalRequests);
@@ -1068,7 +1157,7 @@ export const generateText = async <
     let currentToolResults: ToolExecutionResult[];
     try {
       effectsPossible = true;
-      currentToolResults = await executeTools(preflight!, options, {
+      currentToolResults = await executeTools(preflight!, stepOptions, {
         request,
         step: absoluteStep
       });
@@ -1104,13 +1193,14 @@ export const generateText = async <
       });
     }
     await options.onToolExecutionComplete?.({ request, step: absoluteStep, toolResults: visibleResults });
+    if (await stopConditionMet(options.stopWhen, steps)) break;
   }
 
   if (!finalResult) {
     throw new ParseError("Model did not return a result.");
   }
 
-  return presentOutput({
+  return attachOutput(options, presentOutput({
     text: getTextFromMessages(generatedMessages),
     finishReason: finalResult.finishReason,
     providerFinishReason: finalResult.providerFinishReason,
@@ -1119,23 +1209,24 @@ export const generateText = async <
     messages: allMessages,
     toolResults,
     approvalRequests
-  }, activeRedaction);
+  }, activeRedaction));
 };
 
 export const streamText = <
   TModel extends LanguageModel,
   TContext = unknown
 >(
-  options: GenerateTextOptions<TModel, TContext>
+  input: GenerateTextOptions<TModel, TContext>
 ): StreamTextResult => {
   // A fresh, non-serializable identity spans every step of this invocation. The
   // enumerable symbol survives runtime context spreads but never enters JSON state.
+  let options: AnyGenerateTextOptions = bindGenerateOptions(input);
   options = { ...options, toolContext: { ...options.toolContext,
     [Symbol.for("@zhivex-ai/core/tool-execution-scope")]: Object.freeze({}) } };
   const activeRedaction = resolveGenerationRedaction(options.redaction);
-  const maxSteps = validateMaxSteps(options.maxSteps);
+  const maxSteps = resolveStepCeiling(options);
   const baseMessages = buildMessages(options);
-  const tools = toToolSet(options.tools);
+  const tools = selectActiveTools(toToolSet(options.tools), options.activeTools);
   const resolvedTools = tools ?? {};
   validateMessageParts(options.model, baseMessages);
   validateReasoning(options);
@@ -1148,7 +1239,6 @@ export const streamText = <
   if (!options.model.stream) {
     throw new ValidationError(`Model "${options.model.provider}/${options.model.modelId}" does not support streaming.`);
   }
-  const streamModel = options.model.stream.bind(options.model);
 
   if (tools && !options.model.capabilities.tools) {
     throw new UnsupportedFeatureError(`Model "${options.model.provider}/${options.model.modelId}" does not support tools.`);
@@ -1200,14 +1290,14 @@ export const streamText = <
         }
         await publish({ type: "finish", finishReason: "tool-calls" }, true);
         broadcast.close();
-        return presentOutput({
+        return attachOutput(options, presentOutput({
           text: "",
           finishReason: "tool-calls",
           steps,
           messages: allMessages,
           toolResults,
           approvalRequests
-        }, activeRedaction);
+        }, activeRedaction));
       }
       await options.onBeforeToolExecution?.({ request, step, toolCalls: pendingToolCalls });
       let recoveredToolResults: ToolExecutionResult[];
@@ -1240,14 +1330,14 @@ export const streamText = <
         }
         await publish({ type: "finish", finishReason: "tool-calls" }, true);
         broadcast.close();
-        return presentOutput({
+        return attachOutput(options, presentOutput({
           text: "",
           finishReason: "tool-calls",
           steps,
           messages: allMessages,
           toolResults,
           approvalRequests
-        }, activeRedaction);
+        }, activeRedaction));
       }
       const visibleRecovered = sealToolResults(recoveredToolResults, activeRedaction);
       toolResults.push(...visibleRecovered);
@@ -1268,12 +1358,17 @@ export const streamText = <
       if (preparedMessages) {
         allMessages.splice(0, allMessages.length, ...structuredClone(preparedMessages));
       }
-      const request = toRequest(options, sealModelMessages(allMessages, activeRedaction));
+      const planned = await planStep(options, allMessages, steps, absoluteStep, step, activeRedaction);
+      const request = planned.request;
+      const stepOptions = planned.stepOptions;
+      if (!planned.model.stream) {
+        throw new ValidationError(`Model "${planned.model.provider}/${planned.model.modelId}" does not support streaming.`);
+      }
       await options.onBeforeModelStep?.({ request, step: absoluteStep });
-      await assertEgress(options);
+      await assertEgress(stepOptions);
       const startedAt = Date.now();
       options.abortSignal?.throwIfAborted();
-      const stream = await streamModel(request);
+      const stream = await planned.model.stream(request);
       const stepMessages: ModelMessage[] = [];
       let textBuffer = "";
       const textRedactor = activeRedaction?.output
@@ -1380,8 +1475,8 @@ export const streamText = <
       generatedMessages.push(...(finalResult.messages ?? sealedStepMessages));
 
       options.abortSignal?.throwIfAborted();
-      const preflight = await preflightModelResponse(toolCalls, options, {
-        request, step: absoluteStep, tools: resolvedTools
+      const preflight = await preflightModelResponse(toolCalls, stepOptions, {
+        request, step: absoluteStep, tools: planned.tools
       }, finalResult, steps.map(step => step.response.usage), publish);
       if (preflight?.approvalRequests.length) {
         approvalRequests.push(...preflight.approvalRequests);
@@ -1404,7 +1499,7 @@ export const streamText = <
       let currentToolResults: ToolExecutionResult[];
       try {
         effectsPossible = true;
-        currentToolResults = await executeTools(preflight!, options, {
+        currentToolResults = await executeTools(preflight!, stepOptions, {
           request,
           step: absoluteStep
         });
@@ -1445,6 +1540,7 @@ export const streamText = <
         });
       }
       await options.onToolExecutionComplete?.({ request, step: absoluteStep, toolResults: visibleResults });
+      if (await stopConditionMet(options.stopWhen, steps)) break;
     }
 
     if (!finalResult) {
@@ -1461,7 +1557,7 @@ export const streamText = <
     }, true);
     broadcast.close();
 
-    return presentOutput({
+    return attachOutput(options, presentOutput({
       text: getTextFromMessages(generatedMessages),
       finishReason: finalResult.finishReason,
       providerFinishReason: finalResult.providerFinishReason,
@@ -1470,7 +1566,7 @@ export const streamText = <
       messages: allMessages,
       toolResults,
       approvalRequests
-    }, activeRedaction);
+    }, activeRedaction));
   };
 
   finalResultPromise = runner().catch(async (error) => {

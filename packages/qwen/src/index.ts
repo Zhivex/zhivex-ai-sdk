@@ -42,6 +42,7 @@ import {
 } from "./capabilities.js";
 
 import {
+  toolInputJsonSchema,
   imageInputToDataUrl,
   CallbackRealtimeSession,
   ConfigurationError,
@@ -739,7 +740,7 @@ const mapChatTools = (tools: ModelGenerateInput["tools"]) =>
           function: {
             name: tool.name,
             description: tool.description,
-            parameters: toJSONSchema(tool.schema)
+            parameters: toolInputJsonSchema(tool.schema)
           }
         }));
       })()
@@ -753,7 +754,7 @@ const mapResponsesTools = (tools: ModelGenerateInput["tools"]) =>
             type: "function",
             name: tool.name,
             description: tool.description,
-            parameters: toJSONSchema(tool.schema)
+            parameters: toolInputJsonSchema(tool.schema)
           };
         }
 
@@ -3122,7 +3123,7 @@ const mapRealtimeTools = (config: RealtimeSessionConfig) => {
       function: {
         name: tool.name,
         description: tool.description,
-        parameters: toJSONSchema(tool.schema)
+        parameters: toolInputJsonSchema(tool.schema)
       }
     };
   });

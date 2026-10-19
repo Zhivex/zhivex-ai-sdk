@@ -3,6 +3,7 @@ import { resolveOpenRouterCapabilities } from "./model-profiles.js";
 import { toJSONSchema } from "zod";
 
 import {
+  toolInputJsonSchema,
   imageInputToDataUrl,
   ConfigurationError,
   ProviderHTTPError,
@@ -167,7 +168,7 @@ const mapTools = (input: ModelGenerateInput["tools"]) =>
               function: {
                 name: tool.name,
                 description: tool.description,
-                parameters: toJSONSchema(tool.schema)
+                parameters: toolInputJsonSchema(tool.schema)
               }
             };
           }

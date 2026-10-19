@@ -29,6 +29,9 @@ import {
 } from "./capabilities.js";
 
 import {
+  toolInputJsonSchema,
+  openAIChatSamplingFields,
+  openAIResponsesSamplingFields,
   imageInputToDataUrl,
   ConfigurationError,
   ProviderHTTPError,
@@ -866,7 +869,7 @@ const mapTools = (input: ModelGenerateInput["tools"]) =>
             function: {
               name: tool.name,
               description: tool.description,
-              parameters: toJSONSchema(tool.schema)
+              parameters: toolInputJsonSchema(tool.schema)
             }
           };
         }
@@ -900,7 +903,7 @@ const mapResponsesTools = (input: ModelGenerateInput["tools"]) =>
             type: "function",
             name: tool.name,
             description: tool.description,
-            parameters: toJSONSchema(tool.schema),
+            parameters: toolInputJsonSchema(tool.schema),
             ...openAIResponsesFunctionConfig(tool)
           };
         }
@@ -2328,6 +2331,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
                 ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
                 text: mapResponsesStructuredOutput(input) ?? responseBodyOptions.text,
                 temperature: input.temperature,
+                ...openAIResponsesSamplingFields(input),
                 max_output_tokens: ptc ? remainingOutputTokens : input.maxTokens,
                 ...mapResponsesReasoning(input, responseBodyOptions.reasoning)
               })
@@ -2450,6 +2454,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
               response_format: mapStructuredOutput(input) ?? options.bodyOptions.response_format,
               temperature: input.temperature,
+              ...openAIChatSamplingFields(input),
               ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
               ...mapChatReasoning(input),
               stream: false
@@ -2514,6 +2519,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               ...(input.toolChoice ? { tool_choice: mapResponsesToolChoice(input.toolChoice) } : {}),
               text: mapResponsesStructuredOutput(input) ?? responseBodyOptions.text,
               temperature: input.temperature,
+              ...openAIResponsesSamplingFields(input),
               max_output_tokens: input.maxTokens,
               ...mapResponsesReasoning(input, responseBodyOptions.reasoning),
               stream: true
@@ -2555,6 +2561,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
             response_format: mapStructuredOutput(input) ?? options.bodyOptions.response_format,
             temperature: input.temperature,
+            ...openAIChatSamplingFields(input),
             ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
             ...mapChatReasoning(input),
             stream: true,

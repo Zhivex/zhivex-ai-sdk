@@ -20,6 +20,7 @@ import {
 } from "./capabilities.js";
 
 import {
+  toolInputJsonSchema,
   CallbackRealtimeSession,
   ConfigurationError,
   ProviderHTTPError,
@@ -602,7 +603,7 @@ const mapInteractionTools = (tools: ToolSet) => {
         type: "function",
         name: tool.name,
         ...(tool.description ? { description: tool.description } : {}),
-        parameters: toGeminiSchema(toJSONSchema(tool.schema))
+        parameters: toGeminiSchema(toolInputJsonSchema(tool.schema))
       };
     }
     return mapInteractionHostedTool(tool);
