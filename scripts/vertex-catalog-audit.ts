@@ -6,7 +6,7 @@ import type { ModelCapabilities } from "../packages/core/src/types.js";
 const vertex = createVertex({ projectId: "catalog-audit", accessToken: "synthetic", location: "global", fetch: async () => { throw new Error("Catalog audit must not call the network"); } });
 const lines = ["# Vertex catalog and adapter matrix", "", `Inventory revision: ${vertexCatalogFragment.revision}. Entries: ${vertexCatalogFragment.entries.length}.`, "",
   "Generated with `bun scripts/vertex-catalog-audit.ts`. Capabilities come from the", "adapter factories, not from the catalog. This is an offline routing/contract", "audit, not proof of model access, live behavior or complete platform coverage.", "",
-  "Lifecycle labels are evaluated at the inventory revision date. A retired model", "can remain as historical inventory; factory construction does not verify access.", "",
+  "Lifecycle labels are evaluated at the inventory revision date. A retired model", "can remain as historical inventory; factory construction does not verify access.", "A future `retiredAt` with no elapsed deprecation date is labeled `retiring YYYY-MM-DD`.", "",
   "Flags retain the shared ModelCapabilities meanings. In particular, streaming", "describes the generic generation contract; Live uses its separate bidirectional", "session contract even where that flag is false. Native OCR has no such flags.", "",
   "| Model | Factory / native client | Lifecycle | Streaming | Tools | Structured output | Vision | Reasoning |", "| --- | --- | --- | --- | --- | --- | --- | --- |" ];
 for (const entry of vertexCatalogFragment.entries) {
@@ -21,10 +21,13 @@ for (const entry of vertexCatalogFragment.entries) {
   else if (id.includes("live")) { route = "realtimeModel"; capabilities = vertex.realtimeModel!(id).capabilities; }
   else if (id === "gemini-3.5-transcribe-preview") { route = "transcriptionModel"; capabilities = vertex.transcriptionModel(id).capabilities; }
   else if (id.includes("tts")) { route = "speechModel"; capabilities = vertex.speechModel!(id).capabilities; }
-  else if (id.includes("image")) { route = "imageGenerationModel"; capabilities = vertex.imageGenerationModel!(id).capabilities; }
+  else if (id.includes("image") || id.includes("nano-banana")) { route = "imageGenerationModel"; capabilities = vertex.imageGenerationModel!(id).capabilities; }
   else { route = id.includes("codestral") ? "languageModel / fim (native)" : "languageModel"; capabilities = vertex(id).capabilities; }
   if (id.startsWith("xai/grok-")) { vertex.responsesModel(id); route += " / responsesModel (global)"; }
-  const lifecycle = entry.lifecycle?.retiredAt && entry.lifecycle.retiredAt <= vertexCatalogFragment.revision ? "retired" : entry.lifecycle?.deprecatedAt && entry.lifecycle.deprecatedAt <= vertexCatalogFragment.revision ? "deprecated" : "no retirement recorded";
+  const revision = vertexCatalogFragment.revision;
+  const retiredAt = entry.lifecycle?.retiredAt;
+  const deprecatedAt = entry.lifecycle?.deprecatedAt;
+  const lifecycle = retiredAt && retiredAt <= revision ? "retired" : deprecatedAt && deprecatedAt <= revision ? "deprecated" : retiredAt ? `retiring ${retiredAt}` : "no retirement recorded";
   const flags = (["streaming", "tools", "structuredOutput", "vision", "reasoning"] as const).map(key => capabilities ? capabilities[key] === true ? "yes" : capabilities[key] === false ? "no" : "unspecified" : "native contract");
   lines.push(`| ${id} | ${route} | ${lifecycle} | ${flags.join(" | ")} |`);
 }

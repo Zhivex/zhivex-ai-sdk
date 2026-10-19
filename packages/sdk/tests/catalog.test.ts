@@ -13,7 +13,7 @@ import {
 
 describe("SDK model catalog ownership", () => {
   it("includes current Vertex open models without inventing retirement dates", () => {
-    for (const modelId of ["zai-org/glm-5.2-maas", "google/gemma-4-26b-a4b-it-maas", "openai/gpt-oss-120b-maas", "meta/llama-4-maverick-17b-128e-instruct-maas", "meta/llama-4-scout-17b-16e-instruct-maas"]) {
+    for (const modelId of ["zai-org/glm-5.2-maas", "deepseek-ai/deepseek-v4.1-flash-maas", "google/gemma-4-26b-a4b-it-maas", "openai/gpt-oss-120b-maas", "meta/llama-4-maverick-17b-128e-instruct-maas", "meta/llama-4-scout-17b-16e-instruct-maas"]) {
       const entry = defaultModelCatalog.find("vertex", modelId);
       expect(entry).toMatchObject({ provider: "vertex", modelId });
       expect(entry?.lifecycle?.retiredAt).toBeUndefined();
@@ -36,7 +36,7 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-10-16",
+      snapshotVersion: "2026-10-19",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
         version: "2026-10-16",
@@ -64,7 +64,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(274);
+    expect(entries).toHaveLength(275);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
@@ -106,7 +106,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(274);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(275);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-10-15",
       verifiedAt: "2026-10-15",
@@ -144,7 +144,17 @@ describe("SDK model catalog ownership", () => {
     expect(defaultModelCatalog.find("bedrock", "amazon.nova-2-lite-v1:0")?.modelId).toBe("amazon.nova-2-lite-v1:0");
     expect(defaultModelCatalog.find("azure-openai", "gpt-5.4-nano")?.modelId).toBe("gpt-5.4-nano");
     expect(defaultModelCatalog.find("azure-openai", "text-embedding-3-large")?.inputCostPer1kTokens).toBeUndefined();
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-14");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-19");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "gemini")).toMatchObject({
+      revision: "2026-10-19",
+      verifiedAt: "2026-10-19",
+      sources: expect.arrayContaining(["https://ai.google.dev/gemini-api/docs/deprecations"])
+    });
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "azure-openai")).toMatchObject({
+      revision: "2026-10-19",
+      verifiedAt: "2026-10-19",
+      sources: expect.arrayContaining(["https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule"])
+    });
   });
 
   it("records the October 2026 frontier inventory without inventing token prices", () => {
@@ -194,7 +204,15 @@ describe("SDK model catalog ownership", () => {
     expect(defaultModelCatalog.find("gemini", "gemini-3.1-flash-image")?.lifecycle).toMatchObject({
       deprecatedAt: "2026-10-06"
     });
-    expect(defaultModelCatalog.find("vertex", "gemini-3.7-flash")?.lifecycle).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "gemini-3.7-flash")?.lifecycle).toEqual({
+      retiredAt: "2027-01-28",
+      source: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions"
+    });
+    expect(defaultModelCatalog.find("vertex", "gemini-3.7-flash")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("gemini", "gemini-3.6-flash")?.lifecycle).toBeUndefined();
+    expect(defaultModelCatalog.find("gemini", "gemini-3.6-flash")?.recommendedFor).toEqual([
+      "chat", "reasoning", "speed", "vision", "tools"
+    ]);
     expect(defaultModelCatalog.find("vertex", "gemini-3.5-flash")?.recommendedFor).toEqual([
       "chat", "reasoning", "speed", "vision", "tools"
     ]);
@@ -307,9 +325,55 @@ describe("SDK model catalog ownership", () => {
     expect(defaultModelCatalog.find("azure-openai", "gpt-4o-mini")?.recommendedFor).toBeUndefined();
     expect(defaultModelCatalog.find("azure-openai", "gpt-4o-mini")?.lifecycle).toEqual({
       deprecatedAt: "2026-10-14",
-      retiredAt: "2027-01-14",
-      source: "https://developers.openai.com/api/docs/deprecations"
+      retiredAt: "2027-04-14",
+      source: "https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule"
     });
+    const geminiDeprecations = "https://ai.google.dev/gemini-api/docs/deprecations";
+    const vertexModelVersions = "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions";
+    for (const modelId of ["veo-3.1-generate-preview", "veo-3.1-fast-generate-preview", "veo-3.1-lite-generate-preview"]) {
+      const entry = defaultModelCatalog.find("gemini", modelId);
+      expect(entry?.lifecycle).toEqual({ retiredAt: "2026-10-22", source: geminiDeprecations });
+      expect(entry?.recommendedFor).toBeUndefined();
+    }
+    expect(defaultModelCatalog.find("gemini", "gemini-omni-flash-preview")?.lifecycle).toEqual({
+      deprecatedAt: "2026-09-30",
+      retiredAt: "2026-10-22",
+      source: geminiDeprecations
+    });
+    expect(defaultModelCatalog.find("gemini", "gemini-omni-flash-preview")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("gemini", "gemini-robotics-er-1.6-preview")?.lifecycle).toEqual({
+      retiredAt: "2026-08-31",
+      source: geminiDeprecations
+    });
+    expect(defaultModelCatalog.find("gemini", "gemini-robotics-er-1.6-preview")?.recommendedFor).toBeUndefined();
+    for (const modelId of ["gemini-3.1-flash-live-preview", "gemini-3.1-flash-tts-preview"]) {
+      const entry = defaultModelCatalog.find("gemini", modelId);
+      expect(entry?.lifecycle).toEqual({ retiredAt: "2026-11-17", source: geminiDeprecations });
+      expect(entry?.recommendedFor).toBeUndefined();
+    }
+    expect(defaultModelCatalog.find("gemini", "gemini-2.5-flash-image")?.lifecycle).toEqual({
+      retiredAt: "2027-03-15",
+      source: geminiDeprecations
+    });
+    expect(defaultModelCatalog.find("gemini", "gemini-2.5-flash-image")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "gemini-3.6-flash")?.lifecycle).toEqual({
+      retiredAt: "2026-11-19",
+      source: vertexModelVersions
+    });
+    expect(defaultModelCatalog.find("vertex", "gemini-3.6-flash")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "gemini-live-2.5-flash-native-audio")?.lifecycle).toEqual({
+      retiredAt: "2026-12-13",
+      source: vertexModelVersions
+    });
+    expect(defaultModelCatalog.find("vertex", "gemini-live-2.5-flash-native-audio")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "gemini-2.5-flash-image")?.lifecycle).toEqual({
+      retiredAt: "2027-03-15",
+      source: vertexModelVersions
+    });
+    expect(defaultModelCatalog.find("vertex", "gemini-2.5-flash-image")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "gemini-omni-flash-preview")?.lifecycle).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "gemini-3.1-flash-tts-preview")?.lifecycle).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "deepseek-ai/deepseek-v4.1-flash-maas")?.recommendedFor).toBeUndefined();
     for (const id of ["gpt-4o", "gpt-4.1", "gpt-4.1-mini"]) {
       expect(defaultModelCatalog.find("openai", id)).toBeUndefined();
       expect(defaultModelCatalog.find("azure-openai", id)).toBeUndefined();
