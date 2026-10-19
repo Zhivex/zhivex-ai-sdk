@@ -86,11 +86,15 @@ export const serializeJsonValue = (value: unknown): JsonValue => JSON.parse(JSON
 
 type ToolSchemaInput = ZodTypeAny | JsonSchemaType;
 
-const assertToolSchema = (schema: unknown): ToolSchemaInput => {
-  if (!schema || typeof schema !== "object" || typeof (schema as { safeParse?: unknown }).safeParse !== "function") {
+const resolveToolSchema = (schema: unknown, inputSchema: unknown): ToolSchemaInput => {
+  if (schema !== undefined && inputSchema !== undefined && schema !== inputSchema) {
+    throw new ValidationError("Pass schema or inputSchema, not two different values.");
+  }
+  const resolved = schema !== undefined ? schema : inputSchema;
+  if (resolved === undefined) {
     throw new ValidationError("tool requires schema or inputSchema.");
   }
-  return schema as ToolSchemaInput;
+  return resolved as ToolSchemaInput;
 };
 
 export function tool<
@@ -112,10 +116,7 @@ export function tool(definition: {
   inputSchema?: ToolSchemaInput;
   [key: string]: any;
 }): ToolDefinition<any, any, any> {
-  if (definition.schema !== undefined && definition.inputSchema !== undefined && definition.schema !== definition.inputSchema) {
-    throw new ValidationError("Pass schema or inputSchema, not two different values.");
-  }
-  const schema = assertToolSchema(definition.schema ?? definition.inputSchema);
+  const schema = resolveToolSchema(definition.schema, definition.inputSchema);
   return { ...definition, schema } as ToolDefinition<any, any, any>;
 }
 

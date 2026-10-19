@@ -477,6 +477,17 @@ describe("loop controls, output, and tools", () => {
     expect(legacy.output).toBeUndefined();
   });
 
+  it("still accepts a plain object schema from existing tool callers", () => {
+    const defined = tool({
+      name: "legacy",
+      schema: {},
+      execute: () => "ok"
+    });
+    expect(defined.schema).toEqual({});
+    expect(defined.execute({})).toBe("ok");
+    expect(() => tool({ name: "missing", execute: () => "no" })).toThrow(/schema or inputSchema/);
+  });
+
   it("accepts raw JSON Schema and dynamic tools", async () => {
     const schema = jsonSchema<{ id: string }>({
       type: "object",
