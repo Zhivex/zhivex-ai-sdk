@@ -154,7 +154,7 @@ Use `location: "global"` for the broadest current Gemini 3 availability. The glo
 
 Current model guidance:
 
-- Complex text, multimodal, coding, and multi-step agentic work: `gemini-3.7-flash`.
+- Complex text, multimodal, coding, and multi-step agentic work: the catalog recommends `gemini-3.8-flash`. [Model versions](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions) retire `gemini-3.7-flash` on 2027-01-28 and `gemini-3.6-flash` on 2026-11-19, so those IDs are no longer recommended. `gemini-live-2.5-flash-native-audio` retires on 2026-12-13 and `gemini-2.5-flash-image` retires on 2027-03-15. No Vertex-specific retirement date is recorded for `gemini-omni-flash-preview` or `gemini-3.1-flash-tts-preview`.
 - High-volume extraction, routing, document parsing, and low-latency subagent work: `gemini-3.5-flash-lite`. It defaults to minimal thinking; use medium or high for autonomous multi-step agents.
 - Image generation: `gemini-3.1-flash-lite-image`, `gemini-3.1-flash-image`, or `gemini-3-pro-image`. The Flash-Lite image model has shorter lifecycle guarantees than the 12-month GA image models.
 - Video: use the Google Cloud IDs `veo-3.1-generate-001`, `veo-3.1-fast-generate-001`, and `veo-3.1-lite-generate-001`. The Gemini Developer API uses different Veo `*-preview` IDs.
@@ -1184,9 +1184,12 @@ snapshot metadata, not a live availability check or proof of account access;
 the frozen legacy core catalog remains unchanged.
 
 The generated [catalog and adapter matrix](../../docs/maintainers/VERTEX_CATALOG_MATRIX.md)
-lists all 62 inventory entries with their selected factory, lifecycle and declared
+lists every inventory entry with its selected factory, lifecycle and declared
 capabilities. It is an offline contract audit; use the live evidence table above
-to assess validation of a specific route.
+to assess validation of a specific route. `deepseek-ai/deepseek-v4.1-flash-maas`
+is in the catalog. The adapter still uses the unknown-ID baseline for that ID,
+so the matrix does not advertise function calling, structured output, thinking,
+or image input.
 
 
 For local artifact validation, run `bun run build` followed by

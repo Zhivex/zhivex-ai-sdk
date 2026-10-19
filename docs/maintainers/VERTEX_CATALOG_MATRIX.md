@@ -1,6 +1,6 @@
 # Vertex catalog and adapter matrix
 
-Inventory revision: 2026-09-19. Entries: 65.
+Inventory revision: 2026-10-19. Entries: 70.
 
 Generated with `bun scripts/vertex-catalog-audit.ts`. Capabilities come from the
 adapter factories, not from the catalog. This is an offline routing/contract
@@ -8,6 +8,7 @@ audit, not proof of model access, live behavior or complete platform coverage.
 
 Lifecycle labels are evaluated at the inventory revision date. A retired model
 can remain as historical inventory; factory construction does not verify access.
+A future `retiredAt` with no elapsed deprecation date is labeled `retiring YYYY-MM-DD`.
 
 Flags retain the shared ModelCapabilities meanings. In particular, streaming
 describes the generic generation contract; Live uses its separate bidirectional
@@ -24,6 +25,7 @@ session contract even where that flag is false. Native OCR has no such flags.
 | gemini-omni-flash-preview | videoGenerationModel | no retirement recorded | no | no | no | no | no |
 | gemini-omni-1.1-flash-preview | videoGenerationModel | no retirement recorded | no | no | no | no | no |
 | zai-org/glm-5.2-maas | languageModel | no retirement recorded | yes | yes | yes | no | yes |
+| deepseek-ai/deepseek-v4.1-flash-maas | languageModel | no retirement recorded | yes | no | no | no | no |
 | google/gemma-4-26b-a4b-it-maas | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
 | openai/gpt-oss-120b-maas | languageModel | no retirement recorded | yes | yes | yes | no | yes |
 | meta/llama-4-maverick-17b-128e-instruct-maas | languageModel | no retirement recorded | yes | yes | yes | yes | no |
@@ -58,22 +60,26 @@ session contract even where that flag is false. Native OCR has no such flags.
 | lyria-3-pro-preview | musicGenerationModel | no retirement recorded | no | no | no | yes | no |
 | claude-sonnet-4-6 | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
 | claude-opus-4-6 | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
+| claude-haiku-5-5 | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
+| claude-sonnet-5-5 | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
 | claude-sonnet-5 | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
 | claude-opus-5 | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
 | claude-fable-5-1 | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
+| gemini-4-argon | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
 | gemini-3.8-flash | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
-| gemini-3.7-flash | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
-| gemini-3.6-flash | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
+| gemini-3.7-flash | languageModel | retiring 2027-01-28 | yes | yes | yes | yes | yes |
+| gemini-3.6-flash | languageModel | retiring 2026-11-19 | yes | yes | yes | yes | yes |
 | gemini-3.5-flash-lite | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
 | gemini-3.5-flash | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
 | gemini-3.5-live-translate-preview | realtimeModel | no retirement recorded | no | no | no | no | no |
 | gemini-3.1-pro-preview | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
 | gemini-3.1-flash-lite | languageModel | no retirement recorded | yes | yes | yes | yes | yes |
 | gemini-3.1-flash-lite-image | imageGenerationModel | no retirement recorded | no | no | no | yes | no |
+| gemini-nano-banana-2.1 | imageGenerationModel | no retirement recorded | no | no | no | yes | no |
 | gemini-3.1-flash-image | imageGenerationModel | no retirement recorded | no | no | no | yes | no |
 | gemini-3-pro-image | imageGenerationModel | no retirement recorded | no | no | no | yes | no |
-| gemini-2.5-flash-image | imageGenerationModel | no retirement recorded | no | no | no | yes | no |
-| gemini-live-2.5-flash-native-audio | realtimeModel | no retirement recorded | no | yes | no | yes | yes |
+| gemini-2.5-flash-image | imageGenerationModel | retiring 2027-03-15 | no | no | no | yes | no |
+| gemini-live-2.5-flash-native-audio | realtimeModel | retiring 2026-12-13 | no | yes | no | yes | yes |
 | gemini-3.1-flash-tts-preview | speechModel | no retirement recorded | yes | no | no | no | no |
 | gemini-embedding-2 | embeddingModel | no retirement recorded | no | no | no | yes | no |
 | veo-3.1-generate-001 | videoGenerationModel | no retirement recorded | no | no | no | no | no |
