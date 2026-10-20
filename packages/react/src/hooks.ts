@@ -1,5 +1,14 @@
 "use client";
 
+export { useApproval, isApprovalPause } from "./use-approval.js";
+export type {
+  ApprovalDecisionResult,
+  ApprovalPause,
+  UseApprovalOptions,
+  UseApprovalResult
+} from "./use-approval.js";
+export { useObject } from "./use-object.js";
+export type { UseObjectOptions, UseObjectResult } from "./use-object.js";
 export { useZhivexChat } from "./use-zhivex-chat.js";
 export type {
   ChatInputMessage,

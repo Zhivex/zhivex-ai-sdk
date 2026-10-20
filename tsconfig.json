@@ -20,6 +20,7 @@
     { "path": "./packages/gateway" },
     { "path": "./packages/sandbox-docker" },
     { "path": "./packages/trace-viewer" },
+    { "path": "./packages/ag-ui" },
     { "path": "./packages/react" },
     { "path": "./packages/sdk" }
   ]

@@ -9,6 +9,7 @@ This folder contains runnable TypeScript examples for the main public surfaces o
 - `providers/`: one quick-start per provider package
 - `gateway/`: routing and fallback examples
 - `sandbox-docker/`: deterministic workspace-agent example for the experimental Docker execution environment
+- `client-approvals/`: offline server and React UI for AG-UI streams, client approval, and `useObject`
 - `next-runner/`: standalone Next.js App Router starter using `@zhivex-ai/react` with a bounded, persistent server-side Runner
 - `migration/`: offline end-to-end script for the Vercel AI SDK Core migration guide
 - `_shared.ts`: tiny helpers used by the examples

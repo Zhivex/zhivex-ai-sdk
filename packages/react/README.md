@@ -317,14 +317,47 @@ Remote image and audio URLs are blocked by default so model or tool content cann
 
 Hostname filtering cannot prevent DNS rebinding by itself. For high-trust applications, combine `allowUrl` with a strict browser CSP and proxy remote media through a server-side fetch policy.
 
+## Streaming objects
+
+`useObject()` reads SSE events produced by `streamObject()`. `object-partial` and `object-complete` update the object directly. `text-delta` and `object-delta` events, including text from `Output.object`, are repaired into partial objects as they arrive.
+
+```tsx
+import { useObject } from "@zhivex-ai/react";
+
+const triage = useObject<{ priority?: string; team?: string; summary?: string }>({
+  api: "/api/object"
+});
+
+await triage.submit({ prompt: "Triage a disk alert." });
+triage.object;
+```
+
+The server route streams `streamObject(...).eventStream` as SSE. The hook does not call a provider.
+
+## Client approval decisions
+
+`useApproval()` is separate from `useZhivexChat().resolveApproval()`. The chat hook still posts `{ provider, approvalRequestId, approve, reason }`. `useApproval()` posts the run id and bearer token from a `zhivex.approval.pause` event so the server can verify that exact pending approval before it calls `resumeApproval`.
+
+```tsx
+import { useApproval } from "@zhivex-ai/react";
+
+const approvals = useApproval({ api: "/api/approvals" });
+approvals.receiveEvent(serverSentEvent);
+await approvals.approve(approvals.pending[0].approvalRequestId, "reviewed", approvals.pending[0].provider);
+```
+
+A complete mock-provider server and page lives in `examples/client-approvals`.
+
 ## Headless APIs
 
-- `@zhivex-ai/react/hooks`: `useZhivexChat()` and its client-only types.
+- `@zhivex-ai/react/hooks`: `useZhivexChat()`, `useObject()`, `useApproval()`, and their client-only types.
 - `@zhivex-ai/react/transport`: configurable `fetch`/SSE transport and bounded parsing without a React runtime import.
 - `@zhivex-ai/react/compat`: Beta AI SDK UI v7 message, request, response, and `useChat` transport adapters.
 - `@zhivex-ai/react/headless`: reducer, state factory, errors, and shared chat types without a React runtime import.
 - `@zhivex-ai/react/components`: accessible UI primitives without pulling the hook into the entrypoint.
 - `useZhivexChat()`: optimistic messages, multimodal input, abort, approval resume, controlled sessions, and stream reduction.
+- `useObject()`: partial objects from a `streamObject` SSE endpoint.
+- `useApproval()`: governance pauses and approve or reject decisions. The existing `resolveApproval()` request shape is unchanged.
 - `createFetchChatTransport()`: configurable `fetch`/SSE transport.
 - `prepareChatRequestBody()`: default latest-message Runner request.
 - `parseChatEventStream()`: bounded SSE parser.
