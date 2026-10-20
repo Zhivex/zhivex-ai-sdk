@@ -248,4 +248,22 @@ describe("createClientApprovalSession", () => {
     expect(resumed.state.approvalHistory?.[0]?.reason).toHaveLength(1_000);
     expect(runtime.effects()).toBe(1);
   });
+
+  it("resumes in the scope stored from the published run", async () => {
+    const scope = { tenantId: "acme", userId: "ada" };
+    const runtime = createDeploy([toolTurn, doneTurn]);
+    const session = createClientApprovalSession({
+      controlPlane: runtime.controlPlane,
+      now: () => 1_000
+    });
+    const waiting = await runtime.controlPlane.run({ prompt: "deploy", scope });
+    expect(waiting.state.scope).toEqual(scope);
+    const pause = session.publish(waiting.state, { expiresAt: 50_000 })[0]!;
+    expect(JSON.stringify(pause)).not.toContain("acme");
+    const resumed = await session.decide(decisionOf(pause), { now: 1_000 });
+    expect(resumed.state.status).toBe("completed");
+    expect(resumed.state.outputText).toBe("deployed");
+    expect(resumed.state.scope).toEqual(scope);
+    expect(runtime.effects()).toBe(1);
+  });
 });

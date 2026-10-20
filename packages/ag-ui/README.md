@@ -74,6 +74,8 @@ The server stores the trusted queue item from `createAgentApprovalQueue`. A clie
 
 After those checks, `decide` calls `controlPlane.resumeApproval`. That API checks the token, expiry, and fingerprint again, consumes the pending approval, and resumes through `resumeAgent`. The ledger is the control-plane record from that resume. Rejected decisions do not resume the run and do not write a second ledger format.
 
+`publish` keeps the run's store scope from the server-side state. `decide` passes that scope to `resumeApproval` unless the server caller supplies a different one. `handleClientApprovalDecision` does not read a scope from the client.
+
 `handleClientApprovalDecision` reads the JSON decision, ignores extra fields such as a client-supplied queue item, and returns `{ ok, runId, status, outputText }` or `{ ok: false, code }`.
 
 ## Left out

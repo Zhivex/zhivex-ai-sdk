@@ -54,6 +54,7 @@ export class ClientApprovalError extends Error {
 interface StoredApproval {
   queueItem: AgentApprovalQueueItem;
   toolCallId?: string;
+  scope?: AgentStoreScope;
   consumed: boolean;
   superseded: boolean;
 }
@@ -212,6 +213,7 @@ export const createClientApprovalSession = (options: {
         const stored: StoredApproval = {
           queueItem,
           toolCallId: pending?.toolCallId,
+          ...(state.scope ? { scope: { ...state.scope } } : {}),
           consumed: false,
           superseded: false
         };
@@ -269,9 +271,10 @@ export const createClientApprovalSession = (options: {
       }
       prune(clock);
       owner.consumed = true;
+      const scope = resumeOptions.scope ?? owner.scope;
       try {
         return await options.controlPlane.resumeApproval({
-          ...(resumeOptions.scope ? { scope: resumeOptions.scope } : {}),
+          ...(scope ? { scope } : {}),
           queueItem: owner.queueItem,
           approvalToken: owner.queueItem.approvalToken,
           approve: decision.approve,
