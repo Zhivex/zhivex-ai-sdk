@@ -1,0 +1,11 @@
+{
+  "extends": "../react-omni/tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@zhivex-ai/core": ["../../packages/core/src/index.ts"],
+      "@zhivex-ai/ag-ui": ["../../packages/ag-ui/src/index.ts"],
+      "@zhivex-ai/react": ["../../packages/react/src/index.ts"]
+    }
+  },
+  "include": ["routes.ts", "client.tsx"]
+}
