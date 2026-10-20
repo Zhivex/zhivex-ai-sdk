@@ -1,4 +1,5 @@
-import { ConfigurationError, UnsupportedFeatureError, assertTrustedEndpoint, type RealtimeModel, type RealtimeConnectOptions, type RealtimeConnectionFactory, type RealtimeSessionConfig } from "@zhivex-ai/core/provider";
+import { ConfigurationError, UnsupportedFeatureError, assertTrustedEndpoint, type RealtimeModel, type RealtimeConnectOptions, type RealtimeConnectionFactory } from "@zhivex-ai/core/provider";
+import { type OpenAIRealtimeSessionConfig, type OpenAIRealtimeSessionFor } from "./voice.js";
 import { isOpenAILiveModel, liveCapabilities, resolveLiveConfig, createLiveSession } from "./live-session.js";
 import { liveAudioCallbacks } from "./live-audio.js";
 export { isOpenAILiveModel } from "./live-session.js";
@@ -16,7 +17,11 @@ export class OpenAILiveModel implements RealtimeModel {
     private readonly allowUnsafeEndpoints = false
   ) {}
 
-  async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
+  connect<TConfig extends OpenAIRealtimeSessionConfig | undefined = undefined>(
+    config?: TConfig,
+    options?: RealtimeConnectOptions
+  ): Promise<OpenAIRealtimeSessionFor<TConfig>>;
+  async connect(config: OpenAIRealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
     const resolved = resolveLiveConfig(config);
     const url = new URL(this.baseURL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";

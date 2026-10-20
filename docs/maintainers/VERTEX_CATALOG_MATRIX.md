@@ -1,6 +1,6 @@
 # Vertex catalog and adapter matrix
 
-Inventory revision: 2026-10-19. Entries: 70.
+Inventory revision: 2026-10-20. Entries: 70.
 
 Generated with `bun scripts/vertex-catalog-audit.ts`. Capabilities come from the
 adapter factories, not from the catalog. This is an offline routing/contract
@@ -19,7 +19,7 @@ session contract even where that flag is false. Native OCR has no such flags.
 | gemini-3.5-transcribe-live-preview | realtimeModel | no retirement recorded | no | no | no | no | no |
 | gemini-3.5-transcribe-preview | transcriptionModel | no retirement recorded | no | no | no | no | no |
 | virtual-try-on-001 | virtualTryOn.generate (native) | no retirement recorded | native contract | native contract | native contract | native contract | native contract |
-| multimodalembedding@001 | embeddingModel | no retirement recorded | no | no | no | yes | no |
+| multimodalembedding@001 | embeddingModel | retiring 2027-04-01 | no | no | no | yes | no |
 | ai21/jamba-1.5-mini | languageModel | retired | yes | yes | no | no | no |
 | ai21/jamba-1.5-large | languageModel | retired | yes | yes | no | no | no |
 | gemini-omni-flash-preview | videoGenerationModel | no retirement recorded | no | no | no | no | no |

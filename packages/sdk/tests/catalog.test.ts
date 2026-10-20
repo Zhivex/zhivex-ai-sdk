@@ -36,7 +36,7 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-10-19",
+      snapshotVersion: "2026-10-20",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
         version: "2026-10-16",
@@ -66,7 +66,11 @@ describe("SDK model catalog ownership", () => {
     const entries = defaultModelCatalog.list();
     expect(entries).toHaveLength(275);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
-    expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")).toBeDefined();
+    expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
+      retiredAt: "2027-04-01",
+      source: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions"
+    });
+    expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.recommendedFor).toBeUndefined();
     expect(defaultModelCatalog.find("zai", "glm-5.3-flash")).toMatchObject({
       inputCostPer1kTokens: 0.00015,
       cachedInputCostPer1kTokens: 0.00003,
@@ -144,10 +148,10 @@ describe("SDK model catalog ownership", () => {
     expect(defaultModelCatalog.find("bedrock", "amazon.nova-2-lite-v1:0")?.modelId).toBe("amazon.nova-2-lite-v1:0");
     expect(defaultModelCatalog.find("azure-openai", "gpt-5.4-nano")?.modelId).toBe("gpt-5.4-nano");
     expect(defaultModelCatalog.find("azure-openai", "text-embedding-3-large")?.inputCostPer1kTokens).toBeUndefined();
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-19");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-20");
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "gemini")).toMatchObject({
-      revision: "2026-10-19",
-      verifiedAt: "2026-10-19",
+      revision: "2026-10-20",
+      verifiedAt: "2026-10-20",
       sources: expect.arrayContaining(["https://ai.google.dev/gemini-api/docs/deprecations"])
     });
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "azure-openai")).toMatchObject({
@@ -351,6 +355,12 @@ describe("SDK model catalog ownership", () => {
       expect(entry?.lifecycle).toEqual({ retiredAt: "2026-11-17", source: geminiDeprecations });
       expect(entry?.recommendedFor).toBeUndefined();
     }
+    expect(defaultModelCatalog.find("gemini", "gemini-3.1-flash-lite")?.lifecycle).toEqual({
+      retiredAt: "2027-05-07",
+      source: geminiDeprecations
+    });
+    expect(defaultModelCatalog.find("gemini", "gemini-3.1-flash-lite")?.recommendedFor).toBeUndefined();
+    expect(defaultModelCatalog.find("vertex", "gemini-3.1-flash-lite")?.lifecycle).toBeUndefined();
     expect(defaultModelCatalog.find("gemini", "gemini-2.5-flash-image")?.lifecycle).toEqual({
       retiredAt: "2027-03-15",
       source: geminiDeprecations

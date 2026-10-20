@@ -1829,7 +1829,8 @@ describe("vertex adapter", () => {
     });
     const result = await generateSpeech({
       model: provider.speechModel!("gemini-3.1-flash-tts-preview"),
-      input: "hello there"
+      input: "hello there",
+      voice: "Kore"
     });
 
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
@@ -1843,6 +1844,20 @@ describe("vertex adapter", () => {
     });
     expect(Array.from(result.audio)).toEqual([1, 2, 3]);
     expect(result.mediaType).toBe("audio/wav");
+  });
+
+  it("rejects custom voice objects", async () => {
+    const provider = createVertex({
+      accessToken: "test",
+      projectId: "demo-project",
+      location: "us-central1",
+      fetch: fetchMock as typeof fetch
+    });
+    await expect(provider.speechModel!("gemini-3.1-flash-tts-preview").generateSpeech({
+      input: "hello there",
+      voice: { id: "voice_123" } as never
+    })).rejects.toThrow(/string voice names only/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("streams Gemini 3.1 speech through Vertex", async () => {

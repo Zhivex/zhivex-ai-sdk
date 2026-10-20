@@ -1,10 +1,12 @@
 import {
   ConfigurationError, ProviderHTTPError, assertTrustedEndpoint, openWebSocketConnection, readJsonWithLimit, withTimeoutSignal,
-  type RealtimeConnectionFactory, type RealtimeConnectOptions, type RealtimeSessionConfig
+  type RealtimeConnectionFactory, type RealtimeConnectOptions
 } from "@zhivex-ai/core/provider";
 import { liveAudioCallbacks } from "./live-audio.js";
 import { createLiveSession, isOpenAILiveModel, resolveLiveWebRTCConfig } from "./live-session.js";
 import { liveAnswer, liveSdp, liveSessionId, type OpenAILiveWebRTCAnswer } from "./live-webrtc-protocol.js";
+import { openAIWireVoice, type OpenAIRealtimeSessionConfig } from "./voice.js";
+export type { OpenAIRealtimeSessionConfig } from "./voice.js";
 export type { OpenAILiveWebRTCAnswer } from "./live-webrtc-protocol.js";
 
 export interface OpenAILiveServerOptions {
@@ -16,7 +18,7 @@ export interface OpenAILiveServerOptions {
 export interface OpenAILiveWebRTCCreateOptions extends OpenAILiveServerOptions, Pick<RealtimeConnectOptions, "signal" | "timeoutMs"> {
   modelId?: string;
   offerSdp: string;
-  session?: RealtimeSessionConfig;
+  session?: OpenAIRealtimeSessionConfig;
   /** Bind the known ID to an application creation lease before delivering the answer. */
   onSessionCreated?: (input: { sessionId: string }) => void | Promise<void>;
 }
@@ -34,7 +36,7 @@ export async function experimentalCreateOpenAILiveWebRTCSession(options: OpenAIL
   const body = JSON.stringify({ session: {
     model: modelId, delegation: { type: "client" }, store: config.providerOptions?.store ?? false,
     ...(config.instructions !== undefined ? { instructions: config.instructions } : {}),
-    audio: { output: { voice: config.voice ?? "marin" } },
+    audio: { output: { voice: openAIWireVoice(config.voice, "marin") } },
     ...(config.providerOptions?.input !== undefined ? { input: config.providerOptions.input } : {}),
     // The browser may close/mute, but cannot append instructions or backend results.
     client: { data_channel: {
@@ -65,7 +67,7 @@ export interface OpenAILiveAttachOptions extends OpenAILiveServerOptions, Realti
   /** Authorize this ID against the authenticated user's server-side session record first. */
   sessionId: string;
   modelId?: string;
-  session?: RealtimeSessionConfig;
+  session?: OpenAIRealtimeSessionConfig;
   connectionFactory?: RealtimeConnectionFactory;
 }
 /** Experimental sideband for runRealtimeDelegations. Does not start another paid session. */

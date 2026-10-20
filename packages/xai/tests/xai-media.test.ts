@@ -216,6 +216,14 @@ describe("xAI image, video, and voice", () => {
     expect(timed.rawResponse).toEqual({ words: [{ word: "Hi", start: 0 }] });
   });
 
+  it("rejects custom voice objects", async () => {
+    await expect(provider().speechModel(XAI_TEXT_TO_SPEECH_MODEL).generateSpeech({
+      input: "Hello",
+      voice: { id: "voice_123" } as never
+    })).rejects.toThrow(/string voice names only/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("transcribes multipart audio and remote URLs", async () => {
     fetchMock.mockResolvedValueOnce(Response.json({ text: "hello there", language: "en", duration: 1.2 }));
     const transcript = await transcribeAudio({

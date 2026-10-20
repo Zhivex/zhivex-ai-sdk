@@ -2752,6 +2752,34 @@ describe("openai adapter", () => {
 
     expect(result.mediaType).toBe("audio/mpeg");
     expect(Array.from(result.audio)).toEqual([1, 2, 3]);
+    expect(String(fetchMock.mock.calls[0]?.[1]?.body)).toBe(JSON.stringify({
+      model: "gpt-4o-mini-tts",
+      input: "hello there",
+      voice: "alloy"
+    }));
+  });
+
+  it("sends string speech voices unchanged and custom voices as objects", async () => {
+    fetchMock.mockResolvedValue(new Response(new Uint8Array([1]), { headers: { "content-type": "audio/mpeg" } }));
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider.speechModel!("gpt-4o-mini-tts");
+    await model.generateSpeech({ input: "hello", voice: "marin" });
+    expect(String(fetchMock.mock.calls[0]?.[1]?.body)).toBe(JSON.stringify({
+      model: "gpt-4o-mini-tts",
+      input: "hello",
+      voice: "marin"
+    }));
+    const custom = { id: "voice_123" };
+    await model.generateSpeech({ input: "hello", voice: custom });
+    const body = String(fetchMock.mock.calls[1]?.[1]?.body);
+    expect(body).toBe(JSON.stringify({
+      model: "gpt-4o-mini-tts",
+      input: "hello",
+      voice: custom
+    }));
+    expect(JSON.parse(body).voice).toStrictEqual({ id: "voice_123" });
+    await expect(model.generateSpeech({ input: "hello", voice: { id: "" } })).rejects.toThrow(/string id/);
+    await expect(model.generateSpeech({ input: "hello", voice: { name: "marin" } as never })).rejects.toThrow(/string id/);
   });
 
   it("limits speech bodies and releases the reader when a timeout aborts streaming", async () => {
@@ -3070,6 +3098,28 @@ describe("openai adapter", () => {
       })
     });
     expect(sent).toContainEqual({ type: "response.create" });
+    expect(sent[0]?.session).toMatchObject({ audio: { output: { voice: "marin" } } });
+  });
+
+  it("sends a custom Realtime voice object unchanged", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const connectionFactory = vi.fn(async () => ({
+      async sendJson(payload: Record<string, unknown>) {
+        sent.push(payload);
+      },
+      ...createPendingRealtimeReceiver()
+    }));
+    const provider = createOpenAI({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      realtimeConnectionFactory: connectionFactory
+    });
+    const custom = { id: "voice_123" };
+    const session = await provider.realtimeModel!("gpt-realtime-2").connect({ voice: custom });
+    await session.close();
+    const update = sent[0]?.session as { audio?: { output?: { voice?: unknown } } };
+    expect(update.audio?.output?.voice).toBe(custom);
+    expect(JSON.stringify(sent[0])).toContain('"voice":{"id":"voice_123"}');
   });
 
   it.each(["gpt-realtime-2.1", "gpt-realtime-2.1-mini"])(

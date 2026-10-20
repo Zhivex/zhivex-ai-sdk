@@ -1918,6 +1918,15 @@ describe("gemini adapter", () => {
     expect(result.mediaType).toBe("audio/wav");
   });
 
+  it("rejects custom voice objects", async () => {
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(provider.speechModel!("gemini-3.1-flash-tts-preview").generateSpeech({
+      input: "hello there",
+      voice: { id: "voice_123" } as never
+    })).rejects.toThrow(/string voice names only/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("streams Gemini 3.1 speech through the shared contract", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(

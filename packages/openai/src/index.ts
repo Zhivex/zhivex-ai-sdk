@@ -5,13 +5,16 @@ export { openAIComputerTool, OpenAIComputerExecutionError } from "./computer.js"
 export type { OpenAIComputerExecutionContext, OpenAIComputerAction, OpenAIComputerSafetyCheck, OpenAIComputerCallInput, OpenAIComputerScreenshotOutput, OpenAIComputerToolConfig } from "./computer.js";
 import { jsonHeaders, parseJson, RESERVED_REQUEST_HEADERS } from "./http.js";
 import { OpenAIRealtimeModel, openAIRealtimeMcpMetadataKey, resolveOpenAIRealtimeHeaders } from "./realtime.js";
-export { openAIRealtimeMcpMetadataKey } from "./realtime.js";
+export { OpenAIRealtimeModel, openAIRealtimeMcpMetadataKey } from "./realtime.js";
 import { OpenAIEmbeddingModel, OpenAITranscriptionModel, OpenAISpeechModel, toUint8Array } from "./resource-models.js";
+export { OpenAISpeechModel } from "./resource-models.js";
+export type { OpenAICustomVoice, OpenAIRealtimeSession, OpenAIRealtimeSessionConfig, OpenAIRealtimeSessionFor, OpenAIVoice } from "./voice.js";
 import { OpenAIAgentsClient } from "./agents.js";
 export { OpenAIAgentsClient } from "./agents.js";
 export type { OpenAIAgentSessionInput, OpenAIAgentSession, OpenAIAgentEvent, OpenAIAgentsPage, OpenAIAgentsRequestOptions } from "./agents.js";
 import { toJSONSchema, z } from "zod";
 import { OpenAILiveModel, isOpenAILiveModel } from "./live.js";
+export { OpenAILiveModel } from "./live.js";
 
 import {
   createOpenAIImageGenerationModel,
@@ -2698,13 +2701,17 @@ class OpenAIGroundedLanguageModel implements GroundedLanguageModel {
   }
 }
 
-export const createOpenAI = (
-  options: OpenAIProviderOptions = {}
-): CallableProviderAdapter<LanguageModel<OpenAILanguageModelOptions>> & {
+export interface OpenAIProvider extends CallableProviderAdapter<LanguageModel<OpenAILanguageModelOptions>> {
   rawFetch: typeof globalThis.fetch;
   agents: OpenAIAgentsClient;
   experimentalDecisionModel(modelId?: string): import("@zhivex-ai/core").DecisionModel;
-} => {
+  speechModel(modelId: string): OpenAISpeechModel;
+  realtimeModel(modelId: string): OpenAIRealtimeModel | OpenAILiveModel;
+}
+
+export const createOpenAI = (
+  options: OpenAIProviderOptions = {}
+): OpenAIProvider => {
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new ConfigurationError("Missing OpenAI API key.");

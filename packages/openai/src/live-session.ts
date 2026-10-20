@@ -5,6 +5,7 @@ import {
   type AudioFrame, type RealtimeConnection, type RealtimeEventParser, type RealtimePayloadBuilder, type RealtimeContextUpdate, type RealtimeEvent,
   type RealtimeSessionConfig
 } from "@zhivex-ai/core/runtime";
+import { assertOpenAIVoice, openAIWireVoice, retainOpenAIRealtimeConfig, sharedRealtimeConfig, type OpenAIRealtimeSessionConfig } from "./voice.js";
 
 export const isOpenAILiveModel = (modelId: string) => /^gpt-live-1(?:-\d{4}-\d{2}-\d{2})?$/.test(modelId);
 
@@ -24,7 +25,8 @@ const allowedConfig = new Set([
 ]);
 const allowedOptions = new Set(["headers", "safety_identifier", "input", "store", "closeTimeoutMs"]);
 
-export function resolveLiveConfig(config: RealtimeSessionConfig) {
+export function resolveLiveConfig(config: OpenAIRealtimeSessionConfig) {
+  assertOpenAIVoice(config.voice);
   for (const [key, value] of Object.entries(config)) {
     if (value !== undefined && !allowedConfig.has(key)) throw new UnsupportedFeatureError(`GPT-Live client delegation does not support session option "${key}". Configure tools and reasoning in your backend agent.`);
   }
@@ -65,7 +67,7 @@ export function resolveLiveConfig(config: RealtimeSessionConfig) {
 }
 
 /** Internal protocol mapper shared by primary WebSocket, WebRTC and sideband. */
-export function createLiveSession(modelId: string, resolved: RealtimeSessionConfig, connection: RealtimeConnection, options: { expectedSessionId?: string; started?: boolean; attached?: boolean; webrtc?: boolean; timeoutMs?: number; parseOutputAudio?: RealtimeEventParser; buildAudioPayloads?: RealtimePayloadBuilder<AudioFrame> } = {}) {
+export function createLiveSession(modelId: string, resolved: OpenAIRealtimeSessionConfig, connection: RealtimeConnection, options: { expectedSessionId?: string; started?: boolean; attached?: boolean; webrtc?: boolean; timeoutMs?: number; parseOutputAudio?: RealtimeEventParser; buildAudioPayloads?: RealtimePayloadBuilder<AudioFrame> } = {}) {
     const delegations = new Set<string>();
     const metadata = (payload: Record<string, unknown>) => payload as Record<string, JsonValue>;
     const unsupported = (feature: string): never => { throw new UnsupportedFeatureError(`GPT-Live ${feature}; use the backend agent or appendContext() as appropriate.`); };
@@ -110,7 +112,7 @@ export function createLiveSession(modelId: string, resolved: RealtimeSessionConf
     };
     const session = new CallbackRealtimeSession({
       provider: "openai", modelId: modelId, capabilities: liveCapabilities,
-      config: resolved, connection, initializationTimeoutMs: options.timeoutMs ?? 15_000,
+      config: sharedRealtimeConfig(resolved), connection, initializationTimeoutMs: options.timeoutMs ?? 15_000,
       closeTimeoutMs: resolved.providerOptions?.closeTimeoutMs as number | undefined,
       callbacks: {
         parseEvent,
@@ -129,7 +131,7 @@ export function createLiveSession(modelId: string, resolved: RealtimeSessionConf
         },
         buildInitialPayloads: () => options.started ? [] : [{ type: "session.start", session: {
           model: modelId, ...(resolved.instructions !== undefined ? { instructions: resolved.instructions } : {}),
-          audio: { format: { type: resolved.inputAudioMediaType, rate: resolved.inputSampleRateHz }, output: { voice: resolved.voice ?? "marin" } },
+          audio: { format: { type: resolved.inputAudioMediaType, rate: resolved.inputSampleRateHz }, output: { voice: openAIWireVoice(resolved.voice, "marin") } },
           delegation: { type: "client" }, store: resolved.providerOptions?.store ?? false,
           ...(resolved.providerOptions?.input !== undefined ? { input: resolved.providerOptions.input } : {})
         } }],
@@ -142,10 +144,10 @@ export function createLiveSession(modelId: string, resolved: RealtimeSessionConf
         buildClosePayloads: () => [{ type: "session.close" }]
       }
     });
-    return session;
+    return retainOpenAIRealtimeConfig(session, resolved);
 }
 
-export function resolveLiveWebRTCConfig(config: RealtimeSessionConfig = {}) {
+export function resolveLiveWebRTCConfig(config: OpenAIRealtimeSessionConfig = {}) {
   for (const key of ["inputAudioMediaType", "outputAudioMediaType", "inputSampleRateHz", "outputSampleRateHz", "channels"]) {
     if (config[key as keyof RealtimeSessionConfig] !== undefined) throw new ConfigurationError("WebRTC audio format is negotiated by SDP.");
   }

@@ -857,7 +857,14 @@ const liveTranscriptionConfig = (config: RealtimeSessionConfig) => {
   return value;
 };
 
+const rejectObjectVoice = (voice: unknown) => {
+  if (voice !== undefined && typeof voice !== "string") {
+    throw new UnsupportedFeatureError('Provider "vertex" accepts string voice names only.');
+  }
+};
+
 const assertVertexRealtimeConfig = (config: RealtimeSessionConfig, modelId: string) => {
+  rejectObjectVoice(config.voice);
   assertVertexRealtimeTranslateConfig(config, modelId);
   if (isVertexLiveTranscribeModel(modelId)) {
     if (config.mode !== undefined && config.mode !== "transcription") throw new UnsupportedFeatureError("Live Transcribe requires transcription mode.");
@@ -1992,6 +1999,7 @@ class VertexSpeechModel implements SpeechModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<SpeechResult> {
+    rejectObjectVoice(input.voice);
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
@@ -2038,6 +2046,7 @@ class VertexSpeechModel implements SpeechModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<AsyncIterable<SpeechResult>> {
+    rejectObjectVoice(input.voice);
     const { signal, cleanup } = withTimeoutSignal(input);
     const response = await withRetry(
       () =>

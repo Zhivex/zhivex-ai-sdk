@@ -732,7 +732,15 @@ const mapRealtimeAudioFormat = (mediaType: string | undefined, sampleRateHz: num
       }
     : undefined;
 
-const mapRealtimeSessionConfig = (config: RealtimeSessionConfig, modelId?: string) => ({
+const rejectObjectVoice = (voice: unknown) => {
+  if (voice !== undefined && typeof voice !== "string") {
+    throw new UnsupportedFeatureError('Provider "azure-openai" accepts string voice names only.');
+  }
+};
+
+const mapRealtimeSessionConfig = (config: RealtimeSessionConfig, modelId?: string) => {
+  rejectObjectVoice(config.voice);
+  return {
   type: "realtime",
   model: modelId,
   instructions: config.instructions,
@@ -750,7 +758,8 @@ const mapRealtimeSessionConfig = (config: RealtimeSessionConfig, modelId?: strin
     }
   },
   ...mapRealtimeProviderOptions(config.providerOptions)
-});
+  };
+};
 
 const azureOpenAIRealtimeURL = (endpoint: string, modelId: string, apiVersion: string | undefined, override?: string) => {
   if (override) {
@@ -1801,6 +1810,7 @@ class AzureOpenAISpeechModel implements SpeechModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<SpeechResult> {
+    rejectObjectVoice(input.voice);
     const { signal, cleanup, abort } = withTimeoutSignal(input);
 
     try {
@@ -1919,6 +1929,7 @@ class AzureOpenAIRealtimeModel implements RealtimeModel {
   ) {}
 
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
+    rejectObjectVoice(config.voice);
     const providerOptions = (config.providerOptions ?? {}) as Record<string, unknown>;
     const url = assertTrustedEndpoint(
       azureOpenAIRealtimeURL(

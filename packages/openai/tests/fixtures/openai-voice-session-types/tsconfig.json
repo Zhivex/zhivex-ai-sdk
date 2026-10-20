@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@zhivex-ai/core/provider": ["../../../../core/src/provider-entry.ts"],
+      "@zhivex-ai/core/runtime": ["../../../../core/src/runtime-entry.ts"],
+      "@zhivex-ai/core/contracts": ["../../../../core/src/contracts.ts"],
+      "@zhivex-ai/core": ["../../../../core/src/index.ts"],
+      "@zhivex-ai/openai": ["../../../src/index.ts"]
+    }
+  },
+  "files": ["./openai-voice-session-types.ts"]
+}

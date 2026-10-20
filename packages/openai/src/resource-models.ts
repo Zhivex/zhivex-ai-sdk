@@ -17,6 +17,7 @@ import {
 } from "@zhivex-ai/core/provider";
 import { capabilities, speechCapabilities, transcriptionCapabilities } from "./capabilities.js";
 import { jsonHeaders, parseJson } from "./http.js";
+import { openAIWireVoice, type OpenAIVoice } from "./voice.js";
 
 export const toUint8Array = (data: AudioInput["data"]) => {
   if (data instanceof Uint8Array) {
@@ -169,7 +170,7 @@ export class OpenAISpeechModel implements SpeechModel {
 
   async generateSpeech(input: {
     input: string;
-    voice?: string;
+    voice?: OpenAIVoice;
     abortSignal?: AbortSignal;
     timeoutMs?: number;
     maxRetries?: number;
@@ -189,7 +190,7 @@ export class OpenAISpeechModel implements SpeechModel {
               ...input.providerOptions,
               model: this.modelId,
               input: input.input,
-              voice: input.voice ?? "alloy"
+              voice: openAIWireVoice(input.voice, "alloy")
             })
           }),
         input
