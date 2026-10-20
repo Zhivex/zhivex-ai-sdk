@@ -66,8 +66,11 @@ The server stores the trusted queue item from `createAgentApprovalQueue`. A clie
 - The bearer token matches exactly one stored queue item.
 - `runId`, `provider`, and `approvalRequestId` are that same item. A token from another run is `cross_run`.
 - The token has not been used. A second decision is `replayed`.
-- The token is not expired, superseded, or bound to a pending approval whose fingerprint changed. Those are `stale`.
+- The token is not expired, superseded, or bound to a pending approval whose fingerprint changed. Those are `stale`. An expired token is dropped after that rejection. A later presentation of a dropped token is `forged`.
 - An unknown token is `forged`.
+- `reason`, when present, is a string of at most 1000 characters. Anything else is `invalid`.
+
+`createClientApprovalSession` keeps its queue in the current process. Consumed and expired entries are pruned, and replaced tokens are kept only up to a fixed history cap. A decision has to reach the same process that published the pause. Multi-instance deployments must route each decision back to that process, or keep the tokens in their own store and perform these checks before calling `resumeApproval`. This package does not ship a shared approval store.
 
 After those checks, `decide` calls `controlPlane.resumeApproval`. That API checks the token, expiry, and fingerprint again, consumes the pending approval, and resumes through `resumeAgent`. The ledger is the control-plane record from that resume. Rejected decisions do not resume the run and do not write a second ledger format.
 

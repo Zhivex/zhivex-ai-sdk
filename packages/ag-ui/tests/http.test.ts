@@ -105,6 +105,13 @@ describe("handleClientApprovalDecision", () => {
     expect(cross.status).toBe(403);
     expect(await cross.json()).toMatchObject({ code: "cross_run" });
 
+    const longReason = await handleClientApprovalDecision(session, post(decision(pause, { reason: "x".repeat(1_001) })));
+    expect(longReason.status).toBe(400);
+    expect(await longReason.json()).toMatchObject({ code: "invalid" });
+    const badReason = await handleClientApprovalDecision(session, post(decision(pause, { reason: 4 })));
+    expect(badReason.status).toBe(400);
+    expect(await badReason.json()).toMatchObject({ code: "invalid" });
+
     const accepted = await handleClientApprovalDecision(session, post(decision(pause, { reason: "reviewed" })));
     expect(accepted.status).toBe(200);
     const replay = await handleClientApprovalDecision(session, post(decision(pause)));
@@ -115,6 +122,9 @@ describe("handleClientApprovalDecision", () => {
     const stale = await handleClientApprovalDecision(expired.session, post(decision(expired.pause)));
     expect(stale.status).toBe(410);
     expect(await stale.json()).toMatchObject({ code: "stale" });
+    const dropped = await handleClientApprovalDecision(expired.session, post(decision(expired.pause)));
+    expect(dropped.status).toBe(403);
+    expect(await dropped.json()).toMatchObject({ code: "forged" });
     expect(expired.effects()).toBe(0);
 
     const invalid = await handleClientApprovalDecision(session, post({ approve: "yes" }));

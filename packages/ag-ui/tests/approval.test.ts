@@ -162,7 +162,7 @@ describe("createClientApprovalSession", () => {
     const first = await runtime.controlPlane.run({ prompt: "deploy" });
     const second = await runtime.controlPlane.run({ prompt: "deploy" });
     const pauseA = session.publish(first.state, { expiresAt: 5_000 })[0]!;
-    const pauseB = session.publish(second.state, { expiresAt: 5_000 })[0]!;
+    const pauseB = session.publish(second.state, { expiresAt: 50_000 })[0]!;
 
     await expect(session.decide({
       ...decisionOf(pauseA),
@@ -175,11 +175,12 @@ describe("createClientApprovalSession", () => {
     }, { now: 1_000 })).rejects.toMatchObject({ code: "cross_run" });
 
     await expect(session.decide(decisionOf(pauseA), { now: 5_000 })).rejects.toMatchObject({ code: "stale" });
+    await expect(session.decide(decisionOf(pauseA), { now: 5_000 })).rejects.toMatchObject({ code: "forged" });
 
-    const replaced = session.publish(first.state, { expiresAt: 5_000 })[0]!;
-    await expect(session.decide(decisionOf(pauseA), { now: 1_000 })).rejects.toMatchObject({ code: "stale" });
+    const replaced = session.publish(second.state, { expiresAt: 50_000 })[0]!;
+    await expect(session.decide(decisionOf(pauseB), { now: 1_000 })).rejects.toMatchObject({ code: "stale" });
 
-    const loaded = await runtime.store.load(first.state.runId);
+    const loaded = await runtime.store.load(second.state.runId);
     loaded!.pendingApprovals[0]!.arguments = "{\"target\":\"mutated\"}";
     await runtime.store.save(loaded!);
     await expect(session.decide(decisionOf(replaced), { now: 1_000 })).rejects.toMatchObject({
@@ -206,5 +207,45 @@ describe("createClientApprovalSession", () => {
     expect((secondDecision as PromiseRejectedResult).reason).toMatchObject({ code: "replayed" });
     await expect(freshSession.decide(decisionOf(pause), { now: 1_000 })).rejects.toMatchObject({ code: "replayed" });
     expect(fresh.effects()).toBe(1);
+  });
+
+  it("rejects a pruned token after the history cap drops it", async () => {
+    const runtime = createDeploy([toolTurn, doneTurn]);
+    const session = createClientApprovalSession({
+      controlPlane: runtime.controlPlane,
+      now: () => 1_000
+    });
+    const waiting = await runtime.controlPlane.run({ prompt: "deploy" });
+    const pauses = [session.publish(waiting.state, { expiresAt: 50_000 })[0]!];
+    for (let index = 0; index < 80; index += 1) {
+      pauses.push(session.publish(waiting.state, { expiresAt: 50_000 })[0]!);
+    }
+    await expect(session.decide(decisionOf(pauses[0]!), { now: 1_000 })).rejects.toMatchObject({ code: "forged" });
+    await expect(session.decide(decisionOf(pauses.at(-2)!), { now: 1_000 })).rejects.toMatchObject({ code: "stale" });
+    expect(runtime.effects()).toBe(0);
+  });
+
+  it("rejects a reason that is not a string of at most 1000 characters", async () => {
+    const runtime = createDeploy([toolTurn, doneTurn]);
+    const session = createClientApprovalSession({
+      controlPlane: runtime.controlPlane,
+      now: () => 1_000
+    });
+    const waiting = await runtime.controlPlane.run({ prompt: "deploy" });
+    const pause = session.publish(waiting.state, { expiresAt: 5_000 })[0]!;
+    await expect(session.decide({
+      ...decisionOf(pause),
+      reason: 12 as unknown as string
+    })).rejects.toMatchObject({ code: "invalid" });
+    await expect(session.decide({
+      ...decisionOf(pause),
+      reason: "x".repeat(1_001)
+    })).rejects.toMatchObject({ code: "invalid" });
+    const resumed = await session.decide({
+      ...decisionOf(pause),
+      reason: "x".repeat(1_000)
+    });
+    expect(resumed.state.approvalHistory?.[0]?.reason).toHaveLength(1_000);
+    expect(runtime.effects()).toBe(1);
   });
 });

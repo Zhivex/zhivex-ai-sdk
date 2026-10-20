@@ -43,6 +43,51 @@ const pointerSegments = (path: string): string[] => {
   return path.slice(1).split("/").map(decodePointer);
 };
 
+const rejectForbiddenSegment = (segment: string): void => {
+  if (segment === "__proto__" || segment === "constructor" || segment === "prototype") {
+    throw new Error(`JSON pointer segment "${segment}" is not allowed.`);
+  }
+};
+
+const parseArrayIndex = (
+  segment: string,
+  operation: AgUiJsonPatchOperation["op"],
+  length: number
+): number => {
+  if (segment === "-") {
+    if (operation !== "add") {
+      throw new Error('JSON pointer "-" is only valid when adding to an array.');
+    }
+    return length;
+  }
+  if (!/^(0|[1-9][0-9]*)$/.test(segment)) {
+    throw new Error(`JSON pointer array index "${segment}" is invalid.`);
+  }
+  let index = 0;
+  for (let cursor = 0; cursor < segment.length; cursor += 1) {
+    index = index * 10 + (segment.charCodeAt(cursor) - 48);
+    if (!Number.isSafeInteger(index)) {
+      throw new Error(`JSON pointer array index "${segment}" is invalid.`);
+    }
+  }
+  const maxInclusive = operation === "add" ? length : length - 1;
+  if (index > maxInclusive) {
+    throw new Error(`JSON pointer array index "${segment}" is out of bounds.`);
+  }
+  return index;
+};
+
+const childAt = (parent: unknown, segment: string, path: string): unknown => {
+  rejectForbiddenSegment(segment);
+  if (Array.isArray(parent)) {
+    return parent[parseArrayIndex(segment, "replace", parent.length)];
+  }
+  if (!isPlainObject(parent) || !Object.prototype.hasOwnProperty.call(parent, segment)) {
+    throw new Error(`JSON patch path "${path}" does not exist.`);
+  }
+  return parent[segment];
+};
+
 /** Applies the add, remove, and replace operations this adapter emits. */
 export const applyJsonPatch = (document: unknown, operations: readonly AgUiJsonPatchOperation[]): unknown => {
   let current = JSON.parse(JSON.stringify(document)) as unknown;
@@ -62,20 +107,18 @@ export const applyJsonPatch = (document: unknown, operations: readonly AgUiJsonP
     const leaf = segments.at(-1)!;
     let parent: unknown = current;
     for (const segment of parentSegments) {
-      if (Array.isArray(parent)) {
-        parent = parent[Number(segment)];
-      } else if (isPlainObject(parent)) {
-        parent = parent[segment];
-      } else {
-        throw new Error(`JSON patch path "${operation.path}" does not exist.`);
-      }
+      parent = childAt(parent, segment, operation.path);
     }
     if (Array.isArray(parent)) {
-      const index = Number(leaf);
+      rejectForbiddenSegment(leaf);
+      const index = parseArrayIndex(leaf, operation.op, parent.length);
       if (operation.op === "remove") parent.splice(index, 1);
       else if (operation.op === "add") parent.splice(index, 0, operation.value);
       else parent[index] = operation.value;
     } else if (isPlainObject(parent)) {
+      if (leaf === "__proto__" || leaf === "constructor" || leaf === "prototype") {
+        throw new Error(`JSON pointer segment "${leaf}" is not allowed.`);
+      }
       if (operation.op === "remove") delete parent[leaf];
       else parent[leaf] = operation.value;
     } else {

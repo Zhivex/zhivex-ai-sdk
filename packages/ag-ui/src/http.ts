@@ -2,7 +2,7 @@ import { ClientApprovalError, type ClientApprovalDecision, type ClientApprovalSe
 
 const MAX_ID_CHARS = 512;
 const MAX_TOKEN_CHARS = 8_192;
-const MAX_REASON_CHARS = 4_000;
+const MAX_REASON_CHARS = 1_000;
 
 const json = (body: unknown, status: number): Response =>
   new Response(JSON.stringify(body), {

@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import {
   createAgentApprovalQueue,
   type AgentApprovalQueueItem,
@@ -72,10 +71,26 @@ export interface ClientApprovalSession {
   ): Promise<AgentControlPlaneRunRecord>;
 }
 
+const REASON_MAX_CHARS = 1_000;
+const HISTORY_LIMIT = 64;
+
+/** Compares the full strings without Node crypto. Length is not a shortcut. */
 const tokensMatch = (expected: string, actual: string): boolean => {
-  const expectedBytes = Buffer.from(expected);
-  const actualBytes = Buffer.from(actual);
-  return expectedBytes.length === actualBytes.length && timingSafeEqual(expectedBytes, actualBytes);
+  const length = Math.max(expected.length, actual.length);
+  let mismatch = expected.length ^ actual.length;
+  for (let index = 0; index < length; index += 1) {
+    const expectedCode = index < expected.length ? expected.charCodeAt(index) : 0;
+    const actualCode = index < actual.length ? actual.charCodeAt(index) : 0;
+    mismatch |= expectedCode ^ actualCode;
+  }
+  return mismatch === 0;
+};
+
+const assertReason = (reason: unknown): void => {
+  if (reason === undefined) return;
+  if (typeof reason !== "string" || reason.length > REASON_MAX_CHARS) {
+    throw new ClientApprovalError("invalid", 'Approval decision field "reason" is invalid.');
+  }
 };
 
 const approvalKey = (runId: string, provider: string, approvalRequestId: string) =>
@@ -127,6 +142,39 @@ export const createClientApprovalSession = (options: {
   const history: StoredApproval[] = [];
   const now = () => options.now?.() ?? Date.now();
 
+  const isExpired = (record: StoredApproval, clock: number): boolean =>
+    record.queueItem.expiresAt !== undefined && clock >= record.queueItem.expiresAt;
+
+  const detach = (record: StoredApproval): void => {
+    for (const [key, stored] of current) {
+      if (stored === record) current.delete(key);
+    }
+    const index = history.indexOf(record);
+    if (index !== -1) history.splice(index, 1);
+  };
+
+  const prune = (clock: number): void => {
+    for (const [key, record] of [...current.entries()]) {
+      if (isExpired(record, clock)) {
+        current.delete(key);
+        continue;
+      }
+      if (record.consumed || record.superseded) {
+        current.delete(key);
+        if (!history.includes(record)) history.push(record);
+      }
+    }
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+      const record = history[index];
+      if (record && isExpired(record, clock)) history.splice(index, 1);
+    }
+    while (history.length > HISTORY_LIMIT) history.shift();
+  };
+
+  const capHistory = (): void => {
+    while (history.length > HISTORY_LIMIT) history.shift();
+  };
+
   const findByToken = (token: string): StoredApproval | undefined => {
     const matches: StoredApproval[] = [];
     for (const record of current.values()) {
@@ -144,6 +192,7 @@ export const createClientApprovalSession = (options: {
 
   return {
     publish(state, queueOptions = {}) {
+      prune(now());
       const includeArguments = queueOptions.includeArguments === true;
       const queue = createAgentApprovalQueue(state, queueOptions);
       return queue.map((queueItem) => {
@@ -158,6 +207,7 @@ export const createClientApprovalSession = (options: {
           previous.superseded = true;
           previous.consumed = true;
           history.push(previous);
+          capHistory();
         }
         const stored: StoredApproval = {
           queueItem,
@@ -187,8 +237,11 @@ export const createClientApprovalSession = (options: {
       ) {
         throw new ClientApprovalError("invalid", "Approval decision is missing a required field.");
       }
+      assertReason(decision.reason);
+      const clock = resumeOptions.now ?? now();
       const owner = findByToken(approvalToken);
       if (!owner) {
+        prune(clock);
         throw new ClientApprovalError("forged", "The approval token does not match a pending approval.");
       }
       if (
@@ -202,15 +255,19 @@ export const createClientApprovalSession = (options: {
         );
       }
       if (owner.superseded) {
+        prune(clock);
         throw new ClientApprovalError("stale", "The approval token has been replaced.");
       }
       if (owner.consumed) {
+        prune(clock);
         throw new ClientApprovalError("replayed", "This approval decision was already used.");
       }
-      const clock = resumeOptions.now ?? now();
-      if (owner.queueItem.expiresAt !== undefined && clock >= owner.queueItem.expiresAt) {
+      if (isExpired(owner, clock)) {
+        detach(owner);
+        prune(clock);
         throw new ClientApprovalError("stale", "The approval token has expired.");
       }
+      prune(clock);
       owner.consumed = true;
       try {
         return await options.controlPlane.resumeApproval({
