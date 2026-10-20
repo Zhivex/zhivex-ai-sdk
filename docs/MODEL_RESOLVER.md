@@ -1,8 +1,9 @@
-# Optional Model Resolver (Beta)
+# Optional Model Resolver
 
 `createModelResolver()` adds an opt-in `provider/model` lookup layer without
-replacing provider factories or creating another runtime. It is available from
-`@zhivex-ai/sdk/beta` and requires three application-owned decisions:
+replacing provider factories or creating another runtime. Import it from
+`@zhivex-ai/sdk`. The `@zhivex-ai/sdk/beta` export is a deprecated alias of the
+same function. It requires three application-owned decisions:
 
 1. the immutable model catalog that defines valid identities and pricing;
 2. either an explicit adapter map or one explicitly configured backend;
@@ -15,7 +16,7 @@ only when string identifiers materially simplify application configuration.
 
 ```ts
 import { defaultModelCatalog, generateText } from "@zhivex-ai/sdk";
-import { createModelResolver } from "@zhivex-ai/sdk/beta";
+import { createModelResolver } from "@zhivex-ai/sdk";
 import { createAnthropic } from "@zhivex-ai/anthropic";
 import { createOpenAI } from "@zhivex-ai/openai";
 
@@ -77,7 +78,7 @@ catalog has accepted it:
 
 ```ts
 import { createModelCatalog } from "@zhivex-ai/sdk";
-import { createModelResolver } from "@zhivex-ai/sdk/beta";
+import { createModelResolver } from "@zhivex-ai/sdk";
 
 const catalog = createModelCatalog([
   { provider: "openai", modelId: "gpt-5.6-terra" }

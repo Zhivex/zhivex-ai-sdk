@@ -128,10 +128,12 @@ New application code can import these runtime values explicitly from
 
 Beta APIs still require changelog-quality release notes when they change, but they do not yet carry the same compatibility expectations as the stable surface.
 
-`createModelResolver()` and `ModelResolutionError` are Beta and are exposed from
-`@zhivex-ai/sdk/beta`. The resolver is an optional, instance-local
-`provider/model` lookup over an injected catalog and explicit adapters/backend;
-direct provider factories remain the canonical Stable path.
+`createModelResolver()` and `ModelResolutionError` are Stable. `@zhivex-ai/sdk/beta`
+still exports both as deprecated aliases of the same functions. The resolver is
+an optional, instance-local `provider/model` lookup over an injected catalog and
+explicit adapters or backend. `registerModelProvider()` is a separate explicit
+registry for string model ids on `generateText`. Direct provider factories remain
+supported.
 
 ## Experimental
 

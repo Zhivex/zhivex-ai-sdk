@@ -19,7 +19,6 @@ export {
   createJsonValueScorer,
   createMcpToolRegistry,
   createModelJudgeScorer,
-  createModelResolver,
   recommendAuxiliaryModel,
   createMergedAbortSignal,
   createProviderAdapter,
@@ -57,7 +56,6 @@ export {
   listFileSearchStores,
   listFiles,
   MODEL_CAPABILITY_SUPPORT_LEVELS,
-  ModelResolutionError,
   predictLongRunning,
   predictRaw,
   pruneFileWorkflowStateStore,
@@ -67,6 +65,17 @@ export {
   uploadFile,
   uploadToFileSearchStore
 } from "@zhivex-ai/core/beta";
+
+import {
+  createModelResolver as createStableModelResolver,
+  ModelResolutionError as StableModelResolutionError
+} from "@zhivex-ai/core/beta";
+
+/** @deprecated Import `createModelResolver` from `@zhivex-ai/sdk`. This beta export is the stable function. */
+export const createModelResolver = createStableModelResolver;
+
+/** @deprecated Import `ModelResolutionError` from `@zhivex-ai/sdk`. This beta export is the stable class. */
+export const ModelResolutionError = StableModelResolutionError;
 
 export type {
   AgentCapabilityDetails,

@@ -2,7 +2,6 @@ import { AgentCancellationError, assertAgentNotCancelled, cancellationAfterFailu
 import { hasDisabledMemory, withoutInvocationMemory } from "./memory.js";
 import { createAgentBudgetCoordinator, assertAgentTokenReservation } from "../agent-budget-coordinator.js";
 import { childStateObserver, loadFailureState, runCheckpoints, observeChildState, projectChildRun, reconcileChildRuns, upsertChildRun } from "./children.js";
-import { validateMaxSteps } from "../validate-max-steps.js";
 import {
   createRunViewSink,
   runViewSink,
@@ -106,6 +105,8 @@ import {
   persistFailureState,
   persistState
 } from "./state.js";
+import { resolveStepCeiling } from "../loop-controls.js";
+import { validateMaxSteps } from "../validate-max-steps.js";
 import {
   resolveContext,
   initializePendingMemory
@@ -134,6 +135,21 @@ import {
 import {
   compactAgentMessages
 } from "./compaction.js";
+
+/** Same precedence as the agent context helper. Not a public export. */
+const resolveAgentStepCeiling = (
+  input: {
+    maxSteps?: number | "unlimited";
+    stopWhen?: Parameters<typeof resolveStepCeiling>[0]["stopWhen"];
+    state?: { maxSteps?: number | "unlimited" };
+  },
+  agentMaxSteps: number | "unlimited" | undefined
+) => {
+  if (input.maxSteps !== undefined) return validateMaxSteps(input.maxSteps);
+  if (input.state?.maxSteps !== undefined) return validateMaxSteps(input.state.maxSteps);
+  if (agentMaxSteps !== undefined) return validateMaxSteps(agentMaxSteps);
+  return resolveStepCeiling({ stopWhen: input.stopWhen });
+};
 
 /** Complete receipts may settle a failed call; an uncertain prefix never frees
  * its allocation. Settlement errors cannot replace the original provider failure. */
@@ -785,6 +801,12 @@ const createGenerateOptions = <
     maxSteps,
     streamBuffer: input.streamBuffer ?? agent.streamBuffer,
     temperature: input.temperature ?? agent.temperature,
+    topP: input.topP,
+    seed: input.seed,
+    stopSequences: input.stopSequences,
+    stopWhen: input.stopWhen,
+    prepareStep: input.prepareStep,
+    activeTools: input.activeTools,
     maxTokens,
     reasoning: input.reasoning ?? agent.reasoning,
     structuredOutput:
@@ -845,7 +867,7 @@ export const runAgent = async <
     agent,
     telemetryRunId,
     invocationStartedAt,
-    validateMaxSteps(input.maxSteps !== undefined ? input.maxSteps : input.state?.maxSteps !== undefined ? input.state.maxSteps : agent.maxSteps)
+    resolveAgentStepCeiling(input, agent.maxSteps)
   );
 
   try {
@@ -1140,7 +1162,7 @@ export const streamAgent = <
       agent,
       telemetryRunId,
       invocationStartedAt,
-      validateMaxSteps(input.maxSteps !== undefined ? input.maxSteps : input.state?.maxSteps !== undefined ? input.state.maxSteps : agent.maxSteps)
+      resolveAgentStepCeiling(input, agent.maxSteps)
     );
     const context = await resolveContext(agent, invocationInput);
     if (context.state.memory === false) agent = withoutInvocationMemory(agent);

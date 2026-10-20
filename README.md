@@ -11,16 +11,44 @@ Switch models, not code. The same calls run on Bun and Node.js. Install only the
 
 ## Quick Start
 
-Install the current release from the npm `latest` tag. The `next` tag can lag `latest`, so these commands install the current stable release.
+### 1. Hello world
+
+Install the current release from the npm `latest` tag. The `next` tag can lag `latest`. Keep the API key on the server.
+
+```bash
+bun add @zhivex-ai/sdk
+```
+
+```ts
+import { generateText, openaiCompatible } from "@zhivex-ai/sdk";
+
+const apiKey = process.env.OPENAI_API_KEY;
+if (!apiKey) throw new Error("Set OPENAI_API_KEY.");
+
+openaiCompatible({
+  name: "openai",
+  baseURL: "https://api.openai.com/v1",
+  apiKey,
+  register: true
+});
+
+const { text } = await generateText({
+  model: "openai/gpt-4o-mini",
+  prompt: "Hello"
+});
+
+console.log(text);
+```
+
+`register: true` makes the `"provider/model"` string resolve. Unknown providers and a missing `apiKey` throw `ModelResolutionError` before any request. A model object from `createOpenAI()` still works. pnpm and Yarn install the same package. See the [consumer compatibility matrix](./SUPPORT.md#installation-and-consumer-compatibility).
+
+### 2. Governance
+
+Install `zod` when the app defines tool or object schemas, and install only the adapter packages you call. The call below is the same with OpenAI or Qwen. Only the model line changes. `gpt-6-astra` and `qwen3.8-flash` are both in the SDK catalog.
 
 ```bash
 bun add @zhivex-ai/sdk @zhivex-ai/openai
-npm install @zhivex-ai/sdk @zhivex-ai/openai
 ```
-
-pnpm and Yarn install the same packages. See the [consumer compatibility matrix](./SUPPORT.md#installation-and-consumer-compatibility). Keep provider keys on the server. Install `zod` when your app defines tool or object schemas. This is step 1 of the [Quickstart](./docs/QUICKSTART.md).
-
-The call below is the same with OpenAI or Qwen. Only the model line changes. `gpt-6-astra` and `qwen3.8-flash` are both in the SDK catalog.
 
 ```ts
 import { createEgressPolicy, generateText } from "@zhivex-ai/sdk";
@@ -48,7 +76,7 @@ const result = await generateText({
 console.log(result.text);
 ```
 
-`createEgressPolicy` is experimental public beta. The full governed path, including budgets, redaction, and audit records, is in the [Governance kit](./docs/GOVERNANCE.md). A mock-provider walkthrough that CI executes is `examples/sdk/governed-quickstart.ts`.
+`createEgressPolicy` is experimental public beta. The full governed path, including budgets, redaction, and audit records, is in the [Governance kit](./docs/GOVERNANCE.md). A mock-provider walkthrough that CI executes is `examples/sdk/governed-quickstart.ts`. This is also step 1 of the longer [Quickstart](./docs/QUICKSTART.md).
 
 Server runtimes only: Node.js, Bun, route handlers, or workers. Browser clients call your backend. Bedrock requires Node.js 20+, and Vertex requires Node.js 22+. See [SUPPORT.md](./SUPPORT.md).
 
@@ -87,7 +115,7 @@ Use Zhivex for a TypeScript service that calls more than one provider, needs tho
 | [Mastra](https://mastra.ai) | You want a full agent framework rather than a thin SDK layer. |
 | [OpenAI Agents SDK](https://openai.github.io/openai-agents-js/) | The product stays on OpenAI, including that SDK's multi-agent, voice, and `RunState` approvals. |
 
-Vercel AI SDK, Mastra, and OpenAI Agents also implement durable human-in-the-loop. Approvals here are (beta). Coming from Vercel AI SDK Core, start with the [migration guide](./docs/MIGRATION.md). An existing `useChat` UI can call a Zhivex backend through `@zhivex-ai/react/compat` (beta). The optional model resolver is (beta); see [MODEL_RESOLVER.md](./docs/MODEL_RESOLVER.md).
+Vercel AI SDK, Mastra, and OpenAI Agents also implement durable human-in-the-loop. Approvals here are (beta). Coming from Vercel AI SDK Core, start with the [migration guide](./docs/MIGRATION.md). An existing `useChat` UI can call a Zhivex backend through `@zhivex-ai/react/compat` (beta). The model resolver is stable. `@zhivex-ai/sdk/beta` still exports it as a deprecated alias. See [MODEL_RESOLVER.md](./docs/MODEL_RESOLVER.md).
 
 This SDK is server-side, and one person maintains it.
 
@@ -101,7 +129,7 @@ The same concepts exist for Python in the [Zhivex AI SDK for Python](https://git
 
 - [Docs site](https://sdk.zhivex.ai) and the [guide index](./docs/README.md)
 - [Quickstart](./docs/QUICKSTART.md), [governance kit](./docs/GOVERNANCE.md), [agents](./docs/AGENTS.md), [production](./docs/PRODUCTION.md), and [Next.js](./docs/NEXTJS.md)
-- [Migration](./docs/MIGRATION.md), [workflows](./docs/WORKFLOWS.md), [MCP HTTP](./docs/MCP_HTTP.md), [experimental MCP server](./docs/MCP_SERVER.md), [experimental A2A](./docs/A2A.md), and [gateway routing](./docs/GATEWAY.md)
+- [Migration](./docs/MIGRATION.md), [workflows](./docs/WORKFLOWS.md), [MCP HTTP](./docs/MCP_HTTP.md), [experimental MCP stdio](./docs/MCP_STDIO.md), [experimental MCP server](./docs/MCP_SERVER.md), [experimental A2A](./docs/A2A.md), and [gateway routing](./docs/GATEWAY.md)
 - [Examples](./examples/README.md), [stability](./STABILITY.md), [support](./SUPPORT.md), and [versioning](./VERSIONING.md)
 
 ## Supported Packages

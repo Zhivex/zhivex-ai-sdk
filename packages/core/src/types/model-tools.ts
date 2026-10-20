@@ -184,6 +184,12 @@ export interface ModelGenerateInput<TProviderOptions extends ProviderOptions = P
   toolExecution?: ToolExecutionOptions;
   temperature?: number;
   maxTokens?: number;
+  /** Nucleus sampling. Ignored, with a warning, when the model does not advertise it. */
+  topP?: number;
+  /** Provider seed. Ignored, with a warning, when the model does not advertise it. */
+  seed?: number;
+  /** Stop sequences. Ignored, with a warning, when the model does not advertise them. */
+  stopSequences?: readonly string[];
   reasoning?: ReasoningConfig;
   providerOptions?: TProviderOptions;
   structuredOutput?: StructuredOutputConfig;
@@ -454,6 +460,8 @@ export interface ToolExecutionContext<TContext = any> extends ToolRuntimeContext
   model: LanguageModel | RealtimeModel;
   /** Forward this key to side-effecting APIs to make retries externally idempotent. */
   idempotencyKey?: string;
+  /** Provider messages visible when this tool call was prepared. */
+  messages?: readonly ModelMessage[];
   request?: ModelGenerateInput;
   realtimeConfig?: RealtimeSessionConfig;
 }

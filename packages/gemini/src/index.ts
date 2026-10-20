@@ -122,6 +122,16 @@ import {
   type VideoGenerationResult
 } from "@zhivex-ai/core/provider";
 
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
+
 export interface GeminiProviderOptions {
   apiKey?: string;
   baseURL?: string;
@@ -602,7 +612,7 @@ const mapInteractionTools = (tools: ToolSet) => {
         type: "function",
         name: tool.name,
         ...(tool.description ? { description: tool.description } : {}),
-        parameters: toGeminiSchema(toJSONSchema(tool.schema))
+        parameters: toGeminiSchema(toolInputSchema(tool.schema))
       };
     }
     return mapInteractionHostedTool(tool);

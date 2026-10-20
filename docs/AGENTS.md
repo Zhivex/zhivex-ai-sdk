@@ -13,7 +13,7 @@ Related guides:
 
 ## Explicit unlimited cumulative steps
 
-`generateText`, `streamText`, `Agent` / `createAgent`, run/resume inputs, and subagent definitions accept `maxSteps: "unlimited"`. This JSON-safe opt-in removes the cumulative step ceiling until a terminal response, approval pause, cancellation, or another explicit limit stops execution. Positive safe integers retain their existing behavior; omission still resolves to one step for fresh runs (or the agent default / persisted ceiling on resume). `null`, `Infinity`, fractions, and other strings are invalid.
+`generateText`, `streamText`, `Agent` / `createAgent`, run/resume inputs, and subagent definitions accept `maxSteps: "unlimited"`. This JSON-safe opt-in removes the cumulative step ceiling until a terminal response, approval pause, cancellation, or another explicit limit stops execution. Positive safe integers retain their existing behavior; omission still resolves to one step for fresh runs (or the agent default / persisted ceiling on resume). Setting `stopWhen` without `maxSteps` uses a 20-step safety ceiling instead of an unbounded loop. `null`, `Infinity`, fractions, and other strings are invalid.
 
 ```ts
 const agent = new Agent({

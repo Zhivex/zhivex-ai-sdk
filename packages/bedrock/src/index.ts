@@ -51,6 +51,16 @@ import {
   type ToolSet
 } from "@zhivex-ai/core/provider";
 
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
+
 export interface BedrockProviderOptions {
   client?: BedrockRuntimeClient;
   /**
@@ -622,7 +632,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
             name: tool.name,
             description: tool.description,
             inputSchema: {
-              json: toJSONSchema(tool.schema)
+              json: toolInputSchema(tool.schema)
             }
           }
         })) as unknown as NonNullable<ConverseCommandInput["toolConfig"]>["tools"];
@@ -757,7 +767,7 @@ const mapOpenAITools = (tools: ModelGenerateInput["tools"]) =>
             type: "function",
             name: definition.name,
             description: definition.description,
-            parameters: toJSONSchema(definition.schema)
+            parameters: toolInputSchema(definition.schema)
           };
         }
 

@@ -7,6 +7,16 @@ import {
   type InteractionResumeInput, type InteractionsClient, type RetryOptions, type StreamEvent, type JsonValue
 } from "@zhivex-ai/core/provider";
 
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
+
 export interface VertexInteractionResumeInput extends InteractionResumeInput {
   /** Ordered native events already consumed, through lastEventId. Used locally only. */
   previousEvents?: ReadonlyArray<Record<string, JsonValue>>;
@@ -94,7 +104,7 @@ export const createVertexInteractionsClient = (
       throw new ConfigurationError("Vertex Interactions media models require location global.");
     }
     const tools = input.tools ? Object.values(toToolSet(input.tools) ?? {}).map((tool) => {
-      if (isCallableToolDefinition(tool)) return { type: "function", name: tool.name, description: tool.description, parameters: toJSONSchema(tool.schema) };
+      if (isCallableToolDefinition(tool)) return { type: "function", name: tool.name, description: tool.description, parameters: toolInputSchema(tool.schema) };
       if (tool.provider && tool.provider !== "vertex") throw new UnsupportedFeatureError("Vertex Interactions cannot use another provider's hosted tools.");
       const aliases: Record<string, string> = { googleSearch: "google_search", googleMaps: "google_maps", urlContext: "url_context", codeExecution: "code_execution", computerUse: "computer_use", vertexSearch: "retrieval" };
       const type = aliases[tool.type] ?? tool.type;

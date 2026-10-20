@@ -1,5 +1,6 @@
-import { UnsupportedFeatureError } from "./errors.js";
+import { UnsupportedFeatureError, ValidationError } from "./errors.js";
 import type { ZodTypeAny } from "zod";
+import { isJsonSchema, type JsonSchemaType } from "./json-schema.js";
 import type {
   AgentCapabilities,
   AgentSupportTier,
@@ -16,6 +17,7 @@ import type {
   StreamEvent,
   ToolCall,
   ToolDefinition,
+  ToolExecutionContext,
   ToolExecutionResult
 } from "./types.js";
 
@@ -82,13 +84,59 @@ export const getTextFromMessages = (messages: ModelMessage[]): string =>
 
 export const serializeJsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 
-export const tool = <
+type ToolSchemaInput = ZodTypeAny | JsonSchemaType;
+
+const resolveToolSchema = (schema: unknown, inputSchema: unknown): ToolSchemaInput => {
+  if (schema !== undefined && inputSchema !== undefined && schema !== inputSchema) {
+    throw new ValidationError("Pass schema or inputSchema, not two different values.");
+  }
+  const resolved = schema !== undefined ? schema : inputSchema;
+  if (resolved === undefined) {
+    throw new ValidationError("tool requires schema or inputSchema.");
+  }
+  return resolved as ToolSchemaInput;
+};
+
+export function tool<
   TSchema extends ZodTypeAny,
   TResult extends JsonValue = JsonValue,
   TContext = unknown
 >(
   definition: ToolDefinition<NoInfer<TSchema>, TResult, TContext> & { schema: TSchema }
-): ToolDefinition<TSchema, TResult, TContext> => definition;
+): ToolDefinition<TSchema, TResult, TContext>;
+export function tool<TResult extends JsonValue = JsonValue, TContext = unknown>(
+  definition: Omit<ToolDefinition<any, TResult, TContext>, "schema"> & {
+    schema?: ToolSchemaInput;
+    inputSchema?: ToolSchemaInput;
+  }
+): ToolDefinition<any, TResult, TContext>;
+export function tool(definition: {
+  name: string;
+  schema?: ToolSchemaInput;
+  inputSchema?: ToolSchemaInput;
+  [key: string]: any;
+}): ToolDefinition<any, any, any> {
+  const schema = resolveToolSchema(definition.schema, definition.inputSchema);
+  return { ...definition, schema } as ToolDefinition<any, any, any>;
+}
+
+/** Tool whose input type is unknown until the model call. `inputSchema` may be Zod or `jsonSchema()`. */
+export const dynamicTool = <TResult extends JsonValue = JsonValue, TContext = unknown>(
+  definition: Omit<ToolDefinition<any, TResult, TContext>, "schema" | "execute"> & {
+    inputSchema: ToolSchemaInput;
+    execute: (input: unknown, context?: ToolExecutionContext<TContext>) => Promise<TResult> | TResult;
+  }
+): ToolDefinition<any, TResult, TContext> => {
+  const defined = tool({
+    ...definition,
+    schema: definition.inputSchema,
+    execute: definition.execute
+  });
+  return {
+    ...defined,
+    metadata: { ...definition.metadata, dynamic: true }
+  };
+};
 
 const inferHostedToolClass = (definition: Omit<HostedToolDefinition, "kind">): HostedToolClass => {
   const normalizedType = definition.type.toLowerCase();

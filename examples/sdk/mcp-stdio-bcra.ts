@@ -13,13 +13,58 @@ import { section } from "../_shared";
 /**
  * Experimental stdio MCP client wired into an agent through the tool registry.
  *
- * Spawns the public read-only BCRA server (`npx -y mcp-bcra`) and allowlists
- * exchange-rate, variable, and entity tools. Debtor and cheque lookups are not
- * registered. Build the workspace before running so the `mcp-stdio` export resolves.
+ * Allowlists exchange-rate, variable, and entity tools. Debtor and cheque
+ * lookups are not registered. The default spawn is `npx -y mcp-bcra`. That
+ * package is not on npm; point the example at a local build instead:
  *
  *   bun run build
- *   bun run examples/sdk/mcp-stdio-bcra.ts
+ *   MCP_BCRA_COMMAND=node MCP_BCRA_ARGS="/path/to/dist/index.js" bun run examples/sdk/mcp-stdio-bcra.ts
+ *
+ * `MCP_BCRA_ARGS` is a whitespace-separated list, or a JSON string array when
+ * it starts with `[`.
  */
+
+const defaultCommand = "npx";
+
+const parseCommandArgs = (raw: string | undefined, command: string): string[] => {
+  if (raw === undefined) return command === defaultCommand ? ["-y", "mcp-bcra"] : [];
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("[")) {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
+      throw new Error("MCP_BCRA_ARGS must be a JSON array of strings or a whitespace-separated list.");
+    }
+    return parsed;
+  }
+  return trimmed.length === 0 ? [] : trimmed.split(/\s+/);
+};
+
+const formatContentPart = (part: unknown): string => {
+  if (
+    part &&
+    typeof part === "object" &&
+    (part as { type?: unknown }).type === "text" &&
+    typeof (part as { text?: unknown }).text === "string"
+  ) {
+    const text = (part as { text: string }).text.trim();
+    if (text.startsWith("{") || text.startsWith("[")) {
+      try {
+        return JSON.stringify(JSON.parse(text) as unknown, null, 2);
+      } catch {
+        return text;
+      }
+    }
+    return text;
+  }
+  return JSON.stringify(part, null, 2);
+};
+
+const formatToolOutput = (output: unknown): string => {
+  if (!output || typeof output !== "object") return JSON.stringify(output, null, 2);
+  const content = (output as { content?: unknown }).content;
+  if (!Array.isArray(content)) return JSON.stringify(output, null, 2);
+  return content.map((part) => formatContentPart(part)).join("\n");
+};
 
 const allowedTools = [
   "get-bcra-fx-currencies",
@@ -31,9 +76,10 @@ const allowedTools = [
   "get-bcra-entities"
 ];
 
+const command = process.env.MCP_BCRA_COMMAND?.trim() || defaultCommand;
 const client = createMcpStdioClient({
-  command: "npx",
-  args: ["-y", "mcp-bcra"],
+  command,
+  args: parseCommandArgs(process.env.MCP_BCRA_ARGS, command),
   timeoutMs: 30_000
 });
 
@@ -140,7 +186,10 @@ try {
 
   console.log("status:", result.status);
   console.log("text:", result.outputText);
-  console.log("tools:", result.toolResults.map((entry) => entry.toolName));
+  for (const entry of result.toolResults) {
+    console.log(`tool ${entry.toolName}:`);
+    console.log(entry.isError ? entry.error?.message ?? "tool error" : formatToolOutput(entry.output));
+  }
 } finally {
   await client.close();
 }

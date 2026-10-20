@@ -31,7 +31,8 @@ import type {
   ToolApprovalSigner,
   ToolCollection,
   ToolExecutionOptions,
-  ToolRuntimeContext
+  ToolRuntimeContext,
+  ToolSet
 } from "./model-tools.js";
 import type {
   GenerateResult,
@@ -89,14 +90,61 @@ export type GenerationRedaction =
   | GenerationRedactionPolicyOptions
   | false;
 
+export interface StopConditionContext {
+  readonly steps: readonly GenerateTextStep[];
+  readonly stepCount: number;
+}
+
+/** Return true to stop before the next model call. Tool calls from the current step still run. */
+export type StopCondition = (context: StopConditionContext) => boolean | Promise<boolean>;
+
+export interface PrepareStepInfo {
+  /** Zero-based index of the model call about to start. */
+  readonly stepNumber: number;
+  /** One-based index shared with onBeforeModelStep. */
+  readonly step: number;
+  readonly steps: readonly GenerateTextStep[];
+  readonly model: LanguageModel;
+  readonly messages: readonly ModelMessage[];
+  readonly tools?: ToolSet;
+}
+
+export interface PrepareStepResult {
+  model?: LanguageModel | string;
+  tools?: ToolCollection;
+  toolChoice?: ToolChoice;
+  system?: string;
+  messages?: ModelMessage[];
+  activeTools?: readonly string[];
+}
+
+export interface GenerateOutputOption {
+  readonly type: "text" | "object";
+  readonly schema?: import("zod").ZodTypeAny;
+  readonly name?: string;
+  readonly description?: string;
+  readonly mode?: StructuredOutputMode;
+}
+
 export type GenerateTextOptions<
   TModel extends LanguageModel = LanguageModel,
   TContext = unknown
 > = RetryOptions &
   GenerateInputSource & {
-    model: TModel;
+    /** Language model, or a `provider/model` string resolved by `modelResolver` or `registerModelProvider`. */
+    model: TModel | string;
+    /** Instance-local resolver used when `model` is a string. Wins over the process registry. */
+    modelResolver?: { model(identifier: string): TModel };
     system?: string;
     tools?: ToolCollection;
+    /** Names of tools the model may see for this call. Other registered tools are omitted. */
+    activeTools?: readonly string[];
+    /** Stops the loop when any condition returns true. Omission keeps the maxSteps default of 1. */
+    stopWhen?: StopCondition | readonly StopCondition[];
+    /** Per-step override of model, tools, system, or messages. Applies to that step only unless messages are replaced. */
+    prepareStep?: (context: PrepareStepInfo) => PrepareStepResult | undefined | Promise<PrepareStepResult | undefined>;
+    /** `Output.text()` or `Output.object({ schema })`. Tools may be set in the same call. */
+    output?: GenerateOutputOption;
     toolChoice?: ToolChoice;
     toolExecution?: ToolExecutionOptions;
     toolApprovalPolicy?: ToolApprovalPolicy<TContext>;
@@ -104,6 +152,11 @@ export type GenerateTextOptions<
     /** Resolved local approvals supplied by a durable agent runtime. */
     toolApprovalResolutions?: AgentApprovalResolution[];
     toolContext?: ToolRuntimeContext<TContext>;
+    /**
+     * Application context forwarded to `tool.execute` as `context.context`
+     * when `toolContext.context` is omitted.
+     */
+    toolsContext?: TContext;
     onToolApprovalDecision?: ToolApprovalObserver;
     /** Durable runtimes may replace the active context before each provider request. */
     prepareModelMessages?: (context: {
@@ -141,6 +194,9 @@ export type GenerateTextOptions<
     /** Streaming replay/queue limits. Full replay with overflow errors is the default. */
     streamBuffer?: BoundedReplayBroadcastOptions;
     temperature?: number;
+    topP?: number;
+    seed?: number;
+    stopSequences?: readonly string[];
     maxTokens?: number;
     reasoning?: ReasoningConfig;
     providerOptions?: ProviderOptionsOf<TModel>;
@@ -171,6 +227,8 @@ export interface GenerateTextOutput {
   toolResults: ToolExecutionResult[];
   /** Local resumable approval requests produced before any tool in the batch executes. */
   approvalRequests?: AgentApprovalRequest[];
+  /** Present when `output` is set and the call produced a terminal result. */
+  output?: unknown;
 }
 
 export type GenerateGroundedTextOptions<TModel extends GroundedLanguageModel = GroundedLanguageModel> = RetryOptions &

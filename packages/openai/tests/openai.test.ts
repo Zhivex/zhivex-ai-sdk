@@ -1712,10 +1712,65 @@ describe("openai adapter", () => {
       await expect(generateText({ model, prompt: "hello", reasoning: { effort } })).rejects.toThrow();
     }
     await expect(generateText({ model, prompt: "hello", temperature: 0.2 })).rejects.toThrow();
+    await expect(generateText({ model, prompt: "hello", topP: 0.5 })).rejects.toThrow("sampling");
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      providerOptions: { apiMode: "chat" },
+      topP: 0.5
+    })).rejects.toThrow("sampling");
+    await expect(generateText({ model, prompt: "hello", providerOptions: { top_p: 0.5 } })).rejects.toThrow("sampling");
     await expect(generateText({ model, prompt: "hello", providerOptions: { apiMode: "chat" },
       tools: { weather: tool({ name: "weather", schema: z.object({}), execute: () => "sunny" }) }
     })).rejects.toThrow("requires the Responses API");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps published Astra seed and stop requests and warns on the shared names", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const model = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })("gpt-6-astra");
+    const responsesOutput = [{ type: "message", content: [{ type: "output_text", text: "ok" }] }];
+    const chatOutput = { choices: [{ finish_reason: "stop", message: { content: "ok" } }] };
+    const bodyAt = (index: number) => JSON.parse(String((fetchMock.mock.calls[index]?.[1] as RequestInit).body)) as Record<string, unknown>;
+
+    fetchMock.mockResolvedValueOnce(Response.json({ id: "resp_seed", status: "completed", output: responsesOutput }));
+    await generateText({ model, prompt: "hello", providerOptions: { seed: 7, stop: ["END"] } });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/responses");
+    expect(bodyAt(0)).toMatchObject({ seed: 7, stop: ["END"] });
+    expect(bodyAt(0).top_p).toBeUndefined();
+
+    fetchMock.mockResolvedValueOnce(Response.json(chatOutput));
+    await generateText({ model, prompt: "hello", providerOptions: { apiMode: "chat", seed: 11, stop: "END" } });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/chat/completions");
+    expect(bodyAt(1)).toMatchObject({ seed: 11, stop: "END" });
+
+    warn.mockClear();
+    fetchMock.mockResolvedValueOnce(Response.json({ id: "resp_shared", status: "completed", output: responsesOutput }));
+    await generateText({ model, prompt: "hello", seed: 7, stopSequences: ["END"] });
+    expect(bodyAt(2).seed).toBeUndefined();
+    expect(bodyAt(2).stop).toBeUndefined();
+    const responseWarnings = warn.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(responseWarnings).toContain("does not support seed");
+    expect(responseWarnings).toContain("does not support stopSequences");
+    expect(responseWarnings).toContain("Responses API");
+
+    warn.mockClear();
+    fetchMock.mockResolvedValueOnce(Response.json(chatOutput));
+    await generateText({
+      model,
+      prompt: "hello",
+      providerOptions: { apiMode: "chat" },
+      seed: 9,
+      stopSequences: ["END"]
+    });
+    expect(String(fetchMock.mock.calls[3]?.[0])).toContain("/chat/completions");
+    expect(bodyAt(3).seed).toBeUndefined();
+    expect(bodyAt(3).stop).toBeUndefined();
+    const chatWarnings = warn.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(chatWarnings).toContain("GPT-6 Astra does not support seed");
+    expect(chatWarnings).toContain("GPT-6 Astra does not support stop sequences");
+    expect(chatWarnings).not.toContain("Responses API");
+    warn.mockRestore();
   });
 
   it("gives gpt-6.1-sol tools and vision and rejects none, minimal, sampling, and Chat tools", async () => {

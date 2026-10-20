@@ -37,6 +37,21 @@ import {
   type StreamEvent
 } from "@zhivex-ai/core/provider";
 
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
+
+const anthropicSampling = (input: ModelGenerateInput): Record<string, unknown> => ({
+  ...(input.topP !== undefined ? { top_p: input.topP } : {}),
+  ...(input.stopSequences !== undefined ? { stop_sequences: [...input.stopSequences] } : {})
+});
+
 export interface AnthropicProviderOptions {
   /** Static API key or an async provider invoked before every request. */
   apiKey?: string | AnthropicApiKeyProvider | null;
@@ -143,6 +158,7 @@ const capabilities: ModelCapabilities = {
   embeddings: false,
   reasoning: true,
   webSearch: true,
+  sampling: { topP: true, seed: false, stopSequences: true },
   agentCapabilities: {
     supportTier: "tier-b",
     toolChoiceNone: true,
@@ -797,7 +813,7 @@ const mapTools = (tools: ModelGenerateInput["tools"]) =>
           return {
             name: tool.name,
             description: tool.description,
-            input_schema: toJSONSchema(tool.schema)
+            input_schema: toolInputSchema(tool.schema)
           };
         }
 
@@ -1420,6 +1436,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
         tools: mapTools(input.tools),
         tool_choice: mapToolChoice(input.toolChoice),
         temperature: input.temperature,
+        ...anthropicSampling(input),
         max_tokens: input.maxTokens ?? 1024,
         ...(outputConfig ? { output_config: outputConfig } : {}),
         ...(thinking ? { thinking } : {})
@@ -1465,6 +1482,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
       tools: mapTools(input.tools),
       tool_choice: mapToolChoice(input.toolChoice),
       temperature: input.temperature,
+      ...anthropicSampling(input),
       max_tokens: input.maxTokens ?? 1024,
       stream: true,
       ...(outputConfig ? { output_config: outputConfig } : {}),

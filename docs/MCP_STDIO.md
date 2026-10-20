@@ -19,9 +19,16 @@ stdio only for a local server that does not speak HTTP, such as
 import { Agent, createMcpToolRegistry, toToolSet } from "@zhivex-ai/sdk";
 import { createMcpStdioClient } from "@zhivex-ai/sdk/mcp-stdio";
 
+const command = process.env.MCP_BCRA_COMMAND?.trim() || "npx";
+const args = process.env.MCP_BCRA_ARGS !== undefined
+  ? process.env.MCP_BCRA_ARGS.trim().split(/\s+/)
+  : command === "npx"
+    ? ["-y", "mcp-bcra"]
+    : [];
+
 const client = createMcpStdioClient({
-  command: "npx",
-  args: ["-y", "mcp-bcra"],
+  command,
+  args,
   timeoutMs: 20_000
 });
 
@@ -50,6 +57,19 @@ is omitted the child inherits the parent environment. When `env` is set it
 replaces that environment; copy `PATH` yourself if the executable is resolved
 from it.
 
+`examples/sdk/mcp-stdio-bcra.ts` defaults to `npx -y mcp-bcra`. That package is
+not published on npm. Override the spawn without editing the example:
+
+```bash
+MCP_BCRA_COMMAND=node MCP_BCRA_ARGS="/path/to/dist/index.js" bun run examples/sdk/mcp-stdio-bcra.ts
+```
+
+`MCP_BCRA_COMMAND` defaults to `npx`. `MCP_BCRA_ARGS` defaults to `-y mcp-bcra`
+when the command is `npx`, and to no arguments otherwise. A value that starts
+with `[` is parsed as a JSON array of strings; any other value is split on
+whitespace. The example prints tool `content` text as text, and pretty-prints
+JSON text parts.
+
 ## Protocol subset
 
 The client pins the [2025-11-25 stdio contract](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports):
@@ -61,8 +81,13 @@ requests, including sampling, roots, and elicitation, receive method-not-found.
 handshake are ignored.
 
 stderr is logging. The client keeps a bounded tail available from `stderr()`
-and can forward chunks through `onStderr`. Stderr is never parsed as JSON-RPC
-and is not copied into error messages.
+and can forward chunks through `onStderr`. Stderr is never parsed as JSON-RPC.
+`stderr()` stays the raw tail. When the child exits, `PROCESS_EXITED` keeps the
+message prefix `MCP stdio process exited.` and appends a shorter tail: at most
+40 lines and 4 KiB. That copy is passed through the SDK credential redaction
+policy (API keys, tokens, and `Authorization` bearer or basic headers) and
+literal values of secret-like environment variables. The same text is on
+`error.stderr`. JSON-RPC payloads are still omitted.
 
 `close()` is idempotent. It aborts local waits, closes stdin, waits
 `shutdownGraceMs`, sends `SIGTERM` to the child process group, waits again, then

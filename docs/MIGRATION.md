@@ -36,10 +36,10 @@ Server code stays on the server. Do not put provider keys in `NEXT_PUBLIC_` vari
 | `streamText`, then `await result.text` | `streamText`, then `await result.collect()` |
 | `instructions` on `generateText` / `streamText` | `system` on those calls. `instructions` is the agent field |
 | `maxOutputTokens` | `maxTokens` |
-| `stopWhen: isStepCount(n)` | `maxSteps: n`. Default for `generateText` and `streamText` is 1, same as `isStepCount(1)` |
-| `Output.object({ schema })` inside `generateText` / `streamText` | `generateObject` / `streamObject` with `schema` and `mode` |
-| `tool({ inputSchema, execute })`; the object key is the name | `tool({ name, schema, execute })`. The object key and `name` must be the same string |
-| `createOpenAI` from `@ai-sdk/openai`, or a gateway string such as `"openai/gpt-6-astra"` | `createOpenAI({ apiKey })` from `@zhivex-ai/openai`, then `openai("gpt-6-astra")` |
+| `stopWhen: isStepCount(n)` | `stopWhen: stepCountIs(n)` or `maxSteps: n`. Default for `generateText` and `streamText` is still 1 when both are omitted |
+| `Output.object({ schema })` inside `generateText` / `streamText` | `output: Output.object({ schema })` on the same call, including when `tools` is set. `generateObject` / `streamObject` remain supported |
+| `tool({ inputSchema, execute })`; the object key is the name | `tool({ name, schema, execute })` or `tool({ name, inputSchema, execute })`. The object key and `name` must be the same string. `inputSchema` may be Zod or `jsonSchema()` |
+| `createOpenAI` from `@ai-sdk/openai`, or a gateway string such as `"openai/gpt-6-astra"` | `openaiCompatible({ name, baseURL, apiKey, register: true })` and `model: "openai/gpt-6-astra"`, or `createOpenAI({ apiKey })("gpt-6-astra")` |
 | `embed` returns `{ embedding: number[] }` | `embed` returns `{ embeddings: number[][] }` |
 | `embedMany({ values })` | `embed({ value })` or `embedMany` (same function), with one value or an array |
 | `new ToolLoopAgent(...).generate()` | `new Agent(...).run()` or `runAgent()` |
@@ -125,7 +125,20 @@ const final = await streamed.collect();
 console.log(final.text);
 ```
 
-Messages are not interchangeable. AI SDK Core uses `content` on `ModelMessage` (`string` or an array of parts such as `{ type: "text", text }`). Zhivex uses `parts`:
+### Message format
+
+AI SDK Core `ModelMessage` stores the payload on `content`. That value is either a string or an array of parts such as `{ type: "text", text }`. Zhivex stores the payload on `parts`, and the text part field is `text`. The role names `system`, `user`, `assistant`, and `tool` match. The containers do not.
+
+| AI SDK Core | Zhivex |
+| --- | --- |
+| `{ role: "user", content: "Hello" }` | `{ role: "user", parts: [{ type: "text", text: "Hello" }] }` |
+| `{ role: "user", content: [{ type: "text", text: "Hello" }] }` | same `parts` array; do not also set `content` |
+| `{ role: "assistant", content: [{ type: "tool-call", toolCallId, toolName, input }] }` | `{ role: "assistant", parts: [{ type: "tool-call", toolCall: { id, name, input } }] }` |
+| tool result message with `content` | `{ role: "tool", parts: [{ type: "tool-result", toolResult }] }` |
+
+`generateText` does not accept AI SDK UI messages either. Convert them at the edge you own, or use the compat request parser in [AI SDK UI Compatibility](./AI_SDK_UI_COMPAT.md). Helpers `system()`, `user()`, and `assistant()` build Zhivex messages.
+
+Zhivex uses `parts`:
 
 ```ts
 import { assistant, system, user } from "@zhivex-ai/sdk";
@@ -140,20 +153,18 @@ const generated = await generateText({
 });
 ```
 
-`generateText` does not accept AI SDK UI messages. Convert them at the edge you own, or use the compat request parser described in [AI SDK UI Compatibility](./AI_SDK_UI_COMPAT.md).
-
 Other call-shape gaps on these two functions:
 
 - `timeout: { totalMs, stepMs, toolMs }` does not exist. Use `timeoutMs` for one provider operation and `abortSignal` for cancellation. Agent runs can also set `policy.timeoutMs`.
-- `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, and `seed` are not shared `generateText` options. Pass provider-specific fields through `providerOptions` only when that adapter documents them.
-- `prepareStep`, `activeTools`, `hasToolCall`, and `isLoopFinished` are not shared loop controls. The step ceiling is `maxSteps` (a positive integer or the explicit `"unlimited"` opt-in).
-- `maxSteps` defaults to 1. Omitting it does not mean "run until the model stops calling tools".
+- `topP`, `seed`, and `stopSequences` are shared `generateText` options. Adapters that advertise `capabilities.sampling` send them. Other adapters warn once and leave the option unused. `topK`, `presencePenalty`, and `frequencyPenalty` are still provider options only. Chat Completions providers that send all three are OpenAI chat mode, xAI (via the OpenAI adapter), Ollama, and `openaiCompatible` (including the Mistral and Groq presets). Anthropic sends `topP` and `stopSequences` and warns for `seed`. OpenAI Responses sends `topP` and warns for `seed` and `stopSequences`. Gemini, Vertex, Azure OpenAI, Bedrock, Qwen, OpenRouter, Z.ai, Kimi, Meta, and DeepSeek do not advertise these fields yet, so the shared options warn and are not added to the request. On OpenAI models whose family profile rejects sampling (GPT-6 Astra, GPT-6.1 Sol, and GPT-6 Sol/Luna unless reasoning effort is `"none"`), shared `topP` throws `UnsupportedFeatureError` before the request in both Chat and Responses. That matches `providerOptions.top_p` and `temperature`, which already failed locally on those models. Shared `seed` and `stopSequences` do not throw in either mode: Chat omits them with one warning when the profile rejects sampling, and Responses omits them with one warning because that API has no seed or stop field. `providerOptions.seed` and `providerOptions.stop` stay on the request, which is what published `@zhivex-ai/openai` already did.
+- `prepareStep`, `activeTools`, `stopWhen`, `stepCountIs`, and `hasToolCall` are shared loop controls. A custom predicate has the same `stopWhen` slot. `isLoopFinished` is not a separate helper; pass a predicate to `stopWhen`.
+- `maxSteps` defaults to 1 when `stopWhen` is omitted. Setting `stopWhen` without `maxSteps` runs until a condition returns true, and also stops after 20 steps. That safety ceiling matches the AI SDK `ToolLoopAgent` default. Setting `maxSteps` as well stops at the earlier limit. `maxSteps: "unlimited"` removes the ceiling.
 
 Generation recipes: [Generation](./reference/GENERATION.md).
 
 ### Structured objects
 
-Current AI SDK Core docs put structured output on `generateText` and `streamText` through `Output.object({ schema })`. That call can also use tools in the same request. Zhivex does not accept an `output` option on `generateText`. Use `generateObject` or `streamObject`. Both take a Zod `schema` and a `mode`.
+Current AI SDK Core docs put structured output on `generateText` and `streamText` through `Output.object({ schema })`. That call can also use tools in the same request. Zhivex accepts the same shape: `output: Output.object({ schema })` together with `tools`. `generateObject` and `streamObject` still take a Zod `schema` and a `mode`.
 
 `mode` is `"auto"`, `"native"`, or `"prompted"`. `"auto"` uses native structured output when `model.capabilities.structuredOutput` is true, and otherwise injects a schema prompt and validates locally. `"native"` throws `UnsupportedFeatureError` before the request when the model cannot do native structured output. Do not assume every adapter is native. The provider matrix in the [repository README](../README.md) is the list of JSON / schema behavior per provider.
 
@@ -436,7 +447,7 @@ console.log(result.state);
 
 `agent.stream()` returns `textStream` plus `collect()`, and it also emits agent lifecycle events. That stream is not an AI SDK UI message stream. For `useChat`, use the compat transport (beta) below.
 
-There is no `prepareStep` hook. `maxSteps: "unlimited"` removes the cumulative step ceiling until some other stop (a final answer, approval, cancellation, or another explicit budget). It is an opt-in, and older readers of saved runs do not understand that literal.
+`prepareStep`, `activeTools`, and `stopWhen` are optional on `agent.run()` as well as on `generateText`. They are not stored in the agent definition. `maxSteps: "unlimited"` removes the cumulative step ceiling until some other stop (a final answer, approval, cancellation, `stopWhen`, or another explicit budget). It is an opt-in, and older readers of saved runs do not understand that literal. When `stopWhen` is set and `maxSteps` is omitted, the predicate can stop the loop earlier, and a safety ceiling of 20 steps still applies. A fresh agent run records that ceiling as `maxSteps: 20` so a later resume is not stuck on the default of one step and does not continue without a bound. Pass `stopWhen` again on resume; it is not stored. Pass `maxSteps` to raise the ceiling.
 
 ### Durable sessions
 
@@ -620,17 +631,17 @@ console.log(second.output.outputText);
 
 Stay on Vercel AI SDK when the feature you need is one of the gaps below. Zhivex does not cover the AI SDK provider catalog, and it does not host the Workflow DevKit.
 
-- **Provider catalog and gateway strings.** Most `@ai-sdk/*` providers have no Zhivex adapter. Gateway model strings such as `"anthropic/claude-sonnet-5.5"` are not a `generateText` model. `createModelResolver()` (beta) only resolves adapters you configure. OpenRouter is basic (Tier C).
+- **Provider catalog and gateway strings.** Most `@ai-sdk/*` providers have no Zhivex adapter. `generateText` accepts `"provider/model"` only after `registerModelProvider()` or `openaiCompatible({ register: true })`, or when the call passes `modelResolver`. Unknown providers throw `ModelResolutionError`. There is no implicit gateway. `createModelResolver()` is stable and still requires the catalog and adapters you pass. OpenRouter is basic (Tier C). Mistral and Groq are `createMistralCompatible()` and `createGroqCompatible()` presets, not native adapters.
 - **AI SDK UI beyond the beta transport.** `useChat` works only through `@zhivex-ai/react/compat` (beta), on the `ai` 7 / `@ai-sdk/react` 4 range above. `useObject`, generative UI, and React Server Components helpers such as `streamUI` have no counterpart here. Some UI message parts are preserved as tagged provider data and are not model input; the table is in [AI SDK UI Compatibility](./AI_SDK_UI_COMPAT.md).
 - **WorkflowAgent.** Durable human approval inside a Vercel workflow does not move onto `createPostgresSessionService`. Zhivex sessions and run stores are tables your process reads. They are not a workflow runtime. Vercel, Mastra, and the OpenAI Agents SDK also document durable human-in-the-loop. The Zhivex pause/resume path is the stable agent contract; it is a different API (`requiresApproval`, `approvalMode: "interrupt"`, `resume` / `resumeAgent`).
-- **Loop control.** There is no `stopWhen`, `hasToolCall`, `isLoopFinished`, or `prepareStep`. `generateText`, `streamText`, and `Agent` stop after one step unless you set `maxSteps`. `ToolLoopAgent`’s default of 20 steps will not carry over if you only rename the class.
-- **Structured output combined with tools in one `generateText`.** `Output.object`, `Output.array`, and `Output.json` are not options on `generateText`. Use `generateObject` / `streamObject`, or `outputSchema` on an agent.
-- **Tool surface.** No `inputSchema` field, no JSON Schema `tool()` input, no dynamic tool type, no `onInputStart` / `onInputDelta` / `onInputAvailable`, no `toolsContext` / `runtimeContext`, and no `activeTools` mask. The second `execute` argument is Zhivex’s tool context.
+- **Loop control.** `generateText`, `streamText`, and `Agent` still stop after one step when `maxSteps` and `stopWhen` are both omitted. `ToolLoopAgent`’s default of 20 steps does not apply to that omission. Port an unbounded agent default to `maxSteps: 20`. When `stopWhen` is set and `maxSteps` is omitted, Zhivex adds the same 20-step safety ceiling. A predicate can stop earlier. Pass `maxSteps` to raise or remove it.
+- **Structured output helpers that are not `Output.object` or `Output.text`.** `Output.array`, `Output.json`, `Output.choice`, and `Output.enum` are not part of this SDK. Use `Output.object` or `generateObject`.
+- **Tool streaming callbacks.** There is no `onInputStart`, `onInputDelta`, or `onInputAvailable`. `inputSchema`, `jsonSchema()`, `dynamicTool()`, `toolsContext`, and `activeTools` are supported. The second `execute` argument is Zhivex’s tool context (`context`, `messages`, `abortSignal`, `toolCall`, `step`).
 - **Embeddings.** No top-level `dimensions`, no `headers`, no `maxParallelCalls`, and `embed` does not return a singular `embedding`. `embedMany` does not batch in parallel. The OpenAI adapter does not send a dimensions override.
-- **MCP stdio.** The stable MCP client is Streamable HTTP plus OAuth (`@zhivex-ai/sdk/mcp-http`). `createMcpToolRegistry` is beta. There is no stdio transport in the SDK. See [MCP HTTP](./MCP_HTTP.md).
+- **MCP stdio is experimental, not missing.** The stable MCP client is Streamable HTTP plus OAuth (`@zhivex-ai/sdk/mcp-http`). `createMcpToolRegistry` is beta. Local stdio is a separate experimental entrypoint, `@zhivex-ai/sdk/mcp-stdio` and `@zhivex-ai/core/mcp-stdio`. `createMcpStdioClient` spawns a process on Node.js and Bun. Browser bundles load a stub that throws `McpStdioError`. It is not on the package root. See [MCP HTTP](./MCP_HTTP.md) and [MCP stdio](./MCP_STDIO.md).
 - **Browser calls with a client API key.** The SDK is server-first. A browser should call your route.
-- **Call options that are provider-specific on AI SDK Core** (`topP`, `topK`, penalties, `stopSequences`, `seed`, telemetry record flags, smoothStream / experimental stream transforms) are not shared Zhivex arguments. Adapter `providerOptions` cover only what that adapter implements.
-- **Message wire format.** `content` does not replace `parts`. Copying AI SDK `ModelMessage` JSON into `generateText` will fail validation.
+- **Call options that stay provider-specific** (`topK`, presence and frequency penalties, telemetry record flags, smoothStream / experimental stream transforms) are not shared Zhivex arguments. `topP`, `seed`, and `stopSequences` are shared and warn when the selected model does not advertise them.
+- **Message wire format.** `content` does not replace `parts`. Copying AI SDK `ModelMessage` JSON into `generateText` will fail validation. See [Message format](#message-format).
 
 `getApiStability("generateText")` returns `{ symbol, stability }`, and `listApiStability()` lists every classified export. `stability` is `stable`, `beta`, or `experimental`. An unknown name returns `undefined`. Prefer that manifest over this guide when an export’s status changes.
 

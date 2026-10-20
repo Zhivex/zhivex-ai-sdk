@@ -25,6 +25,16 @@ import {
 import { inferOpenAIRealtimeMode, openAIRealtimeSupportsImageInput, realtimeCapabilities } from "./capabilities.js";
 import { jsonHeaders, parseJson, RESERVED_REQUEST_HEADERS } from "./http.js";
 
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
+
 const OPENAI_REALTIME_AUDIO_MAX_BYTES = 16 * 1024 * 1024;
 
 export const openAIRealtimeMcpMetadataKey = "openai.realtime_mcp";
@@ -68,7 +78,7 @@ const mapRealtimeTools = (input: ModelGenerateInput["tools"]) =>
             type: "function",
             name: tool.name,
             description: tool.description,
-            parameters: toJSONSchema(tool.schema)
+            parameters: toolInputSchema(tool.schema)
           };
         }
 

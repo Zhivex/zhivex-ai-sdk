@@ -4,11 +4,13 @@ import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
 import { ParseError, UnsupportedFeatureError, ValidationError } from "./errors.js";
 import { createTextMessage } from "./messages.js";
 import { generateText, streamText } from "./generate-text.js";
+import { resolveLanguageModel } from "./model-registry.js";
 import { createStructuredOutputPrompt } from "./structured-output-prompt.js";
 import type {
   GenerateObjectOptions,
   GenerateObjectOutput,
   GenerateTextOptions,
+  LanguageModel,
   ModelMessage,
   ObjectStreamEvent,
   StreamObjectResult,
@@ -203,11 +205,14 @@ const getStructuredOutput = <TSchema extends ZodTypeAny>(
       }
     : undefined;
 
-const createObjectOptions = <TSchema extends ZodTypeAny>(options: GenerateObjectOptions<TSchema>) => {
+const createObjectOptions = <TSchema extends ZodTypeAny>(
+  options: Omit<GenerateObjectOptions<TSchema>, "model"> & { model: LanguageModel }
+) => {
   const requestedMode = options.mode ?? "auto";
   const objectMode = resolveObjectMode(requestedMode, options.model.capabilities.structuredOutput);
-  const promptConfig = withStructuredPrompt(options, objectMode);
-  const structuredOutput = getStructuredOutput(options, objectMode);
+  const source = options as GenerateObjectOptions<TSchema>;
+  const promptConfig = withStructuredPrompt(source, objectMode);
+  const structuredOutput = getStructuredOutput(source, objectMode);
   // Preserve policies, hooks, tool context and retry controls from GenerateTextOptions.
   const {
     schema: _schema, mode: _mode, schemaName: _name, schemaDescription: _description,
@@ -240,10 +245,17 @@ const createObjectOptions = <TSchema extends ZodTypeAny>(options: GenerateObject
   };
 };
 
+const withResolvedModel = <TSchema extends ZodTypeAny>(
+  options: GenerateObjectOptions<TSchema>
+): GenerateObjectOptions<TSchema> & { model: LanguageModel } => ({
+  ...options,
+  model: resolveLanguageModel(options.model, options.modelResolver)
+});
+
 export const generateObject = async <TSchema extends ZodTypeAny>(
   options: GenerateObjectOptions<TSchema>
 ): Promise<GenerateObjectOutput<TSchema>> => {
-  const { objectMode, request } = createObjectOptions(options);
+  const { objectMode, request } = createObjectOptions(withResolvedModel(options));
   const textResult = await generateText(request);
   const object = parseObject(textResult.text, options.schema);
 
@@ -255,7 +267,7 @@ export const generateObject = async <TSchema extends ZodTypeAny>(
 };
 
 export const streamObject = <TSchema extends ZodTypeAny>(options: GenerateObjectOptions<TSchema>): StreamObjectResult<TSchema> => {
-  const { objectMode, request } = createObjectOptions(options);
+  const { objectMode, request } = createObjectOptions(withResolvedModel(options));
   const streamResult = streamText(request);
 
   type ObjectEvent = ObjectStreamEvent<

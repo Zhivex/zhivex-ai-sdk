@@ -34,6 +34,16 @@ import {
   type ToolSet
 } from "@zhivex-ai/core/provider";
 
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
+
 export interface KimiProviderOptions {
   apiKey?: string;
   baseURL?: string;
@@ -182,7 +192,7 @@ const kimiToolMetadata = (definition: { formulaUri: string; parameters?: JsonVal
 });
 
 const kimiFormulaToolSchema = (toolDefinition: { metadata?: Record<string, JsonValue>; schema: z.ZodTypeAny }) =>
-  toolDefinition.metadata?.["kimi.tool_schema"] ?? toJSONSchema(toolDefinition.schema);
+  toolDefinition.metadata?.["kimi.tool_schema"] ?? toolInputSchema(toolDefinition.schema);
 
 const resolveFormulaConfig = (options: KimiFormulaToolOptions) => {
   const apiKey = options.apiKey ?? process.env.KIMI_API_KEY ?? process.env.MOONSHOT_API_KEY;

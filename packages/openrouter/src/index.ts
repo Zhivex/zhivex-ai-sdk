@@ -28,6 +28,16 @@ import {
   type StreamEvent
 } from "@zhivex-ai/core/provider";
 
+const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
+
+/** Zod inputs stay on toJSONSchema so this package still loads against the oldest core in its peer range. */
+const toolInputSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema !== null && typeof schema === "object" && (schema as { [TOOL_INPUT_JSON_SCHEMA]?: unknown })[TOOL_INPUT_JSON_SCHEMA] === true) {
+    return { ...(schema as { jsonSchema: Record<string, unknown> }).jsonSchema };
+  }
+  return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
+};
+
 export interface OpenRouterProviderOptions {
   apiKey?: string;
   /** Legacy restores historical capabilities for unrecognized host model IDs. */
@@ -167,7 +177,7 @@ const mapTools = (input: ModelGenerateInput["tools"]) =>
               function: {
                 name: tool.name,
                 description: tool.description,
-                parameters: toJSONSchema(tool.schema)
+                parameters: toolInputSchema(tool.schema)
               }
             };
           }

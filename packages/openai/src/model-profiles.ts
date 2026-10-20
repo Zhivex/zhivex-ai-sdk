@@ -19,6 +19,7 @@ export const capabilities: ModelCapabilities = {
   embeddings: true,
   reasoning: true,
   webSearch: true,
+  sampling: { topP: true, seed: true, stopSequences: true },
   agentCapabilities: {
     supportTier: "tier-a",
     toolChoiceNone: true,
@@ -116,6 +117,7 @@ export const conservativeCapabilities: ModelCapabilities = {
   embeddings: false,
   reasoning: false,
   webSearch: false,
+  sampling: { topP: true, seed: true, stopSequences: true },
   agentCapabilities: {
     supportTier: "tier-c", toolChoiceNone: false, approvalRequests: false,
     hostedWebSearch: false, hostedFileSearch: false, remoteMcp: false,
@@ -303,8 +305,9 @@ export const assertOpenAIModelRequestSupported = (
     throw new UnsupportedFeatureError(`${profile.label} does not support reasoning effort "${effort}".`);
   }
   const restricted = profile.sampling === "unsupported" || effort !== "none";
-  const hasSampling = input.temperature !== undefined || raw.temperature !== undefined || raw.top_p !== undefined || raw.top_logprobs !== undefined ||
-    (options.apiMode === "chat" && raw.logprobs !== undefined) || raw.include?.includes("message.output_text.logprobs");
+  const hasSampling = input.temperature !== undefined || input.topP !== undefined || raw.temperature !== undefined || raw.top_p !== undefined || raw.top_logprobs !== undefined ||
+    (options.apiMode === "chat" && raw.logprobs !== undefined) ||
+    raw.include?.includes("message.output_text.logprobs");
   if (restricted && hasSampling) {
     throw new UnsupportedFeatureError(profile.sampling === "unsupported"
       ? `${profile.label} does not support the requested sampling or logprobs controls.`

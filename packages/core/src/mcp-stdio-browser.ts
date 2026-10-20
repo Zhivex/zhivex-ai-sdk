@@ -18,9 +18,11 @@ export type McpStdioErrorCode =
 
 export class McpStdioError extends Error {
   readonly name = "McpStdioError";
+  readonly stderr?: string;
 
-  constructor(readonly code: McpStdioErrorCode, message: string) {
+  constructor(readonly code: McpStdioErrorCode, message: string, details?: { stderr?: string }) {
     super(message);
+    if (details?.stderr) this.stderr = details.stderr;
   }
 }
 
