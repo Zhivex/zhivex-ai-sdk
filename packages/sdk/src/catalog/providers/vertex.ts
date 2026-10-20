@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const vertexCatalogFragment = defineModelCatalogFragment({
   provider: "vertex",
-  revision: "2026-10-19",
-  verifiedAt: "2026-10-19",
+  revision: "2026-10-20",
+  verifiedAt: "2026-10-20",
   pricingEffectiveAt: "2026-08-30",
   sources: [
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/sonnet-5-5",
@@ -35,7 +35,7 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     { provider: "vertex", modelId: "gemini-3.5-transcribe-live-preview" },
     { provider: "vertex", modelId: "gemini-3.5-transcribe-preview" },
     { provider: "vertex", modelId: "virtual-try-on-001" },
-    { provider: "vertex", modelId: "multimodalembedding@001" },
+    { provider: "vertex", modelId: "multimodalembedding@001", lifecycle: { retiredAt: "2027-04-01", source: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions" } },
     ...["jamba-1.5-mini", "jamba-1.5-large"].map((modelId) => ({ provider: "vertex", modelId: `ai21/${modelId}`, lifecycle: { deprecatedAt: "2025-08-27", retiredAt: "2026-02-27", source: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deprecations/partner-models" } })),
     { provider: "vertex", modelId: "gemini-omni-flash-preview" },
     { provider: "vertex", modelId: "gemini-omni-1.1-flash-preview" },
