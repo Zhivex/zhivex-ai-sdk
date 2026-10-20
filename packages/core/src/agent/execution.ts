@@ -106,6 +106,7 @@ import {
   persistState
 } from "./state.js";
 import { resolveStepCeiling } from "../loop-controls.js";
+import { validateMaxSteps } from "../validate-max-steps.js";
 import {
   resolveContext,
   initializePendingMemory
@@ -143,10 +144,12 @@ const resolveAgentStepCeiling = (
     state?: { maxSteps?: number | "unlimited" };
   },
   agentMaxSteps: number | "unlimited" | undefined
-) => resolveStepCeiling({
-  maxSteps: input.maxSteps ?? input.state?.maxSteps ?? agentMaxSteps,
-  stopWhen: input.stopWhen
-});
+) => {
+  if (input.maxSteps !== undefined) return validateMaxSteps(input.maxSteps);
+  if (input.state?.maxSteps !== undefined) return validateMaxSteps(input.state.maxSteps);
+  if (agentMaxSteps !== undefined) return validateMaxSteps(agentMaxSteps);
+  return resolveStepCeiling({ stopWhen: input.stopWhen });
+};
 
 /** Complete receipts may settle a failed call; an uncertain prefix never frees
  * its allocation. Settlement errors cannot replace the original provider failure. */

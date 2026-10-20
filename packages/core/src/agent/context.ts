@@ -1,4 +1,5 @@
 import { resolveStepCeiling } from "../loop-controls.js";
+import { validateMaxSteps } from "../validate-max-steps.js";
 import {
   createAgentHandoffMessage
 } from "../agent-handoff-contracts.js";
@@ -49,10 +50,12 @@ const resolveAgentStepCeiling = (
     state?: { maxSteps?: number | "unlimited" };
   },
   agentMaxSteps: number | "unlimited" | undefined
-): number | "unlimited" => resolveStepCeiling({
-  maxSteps: input.maxSteps ?? input.state?.maxSteps ?? agentMaxSteps,
-  stopWhen: input.stopWhen
-});
+): number | "unlimited" => {
+  if (input.maxSteps !== undefined) return validateMaxSteps(input.maxSteps);
+  if (input.state?.maxSteps !== undefined) return validateMaxSteps(input.state.maxSteps);
+  if (agentMaxSteps !== undefined) return validateMaxSteps(agentMaxSteps);
+  return resolveStepCeiling({ stopWhen: input.stopWhen });
+};
 
 const createBaseState = (
   provider: string,
