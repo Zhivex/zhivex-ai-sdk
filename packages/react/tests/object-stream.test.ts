@@ -42,4 +42,21 @@ describe("object stream events", () => {
       { type: "object-complete", object: { priority: "high" } }
     ]);
   });
+
+  it("cancels an unterminated SSE event that exceeds the size cap", async () => {
+    const encoder = new TextEncoder();
+    let cancelled = false;
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${"x".repeat(40)}`));
+      },
+      cancel() {
+        cancelled = true;
+      }
+    });
+    const response = new Response(body, { status: 200 });
+    const events = readServerSentEvents(response, { maxEventChars: 16 });
+    await expect(events.next()).rejects.toThrow(/exceeded 16 characters/);
+    expect(cancelled).toBe(true);
+  });
 });

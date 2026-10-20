@@ -76,6 +76,7 @@ export const readServerSentEvents = async function* (
   const decoder = new TextDecoder();
   let buffer = "";
   let count = 0;
+  let completed = false;
   const take = function* (rawEvent: string): Generator<unknown> {
     if (rawEvent.length > maxEventChars) {
       throw new Error(`Object stream event exceeded ${maxEventChars} characters.`);
@@ -104,12 +105,25 @@ export const readServerSentEvents = async function* (
         yield* take(rawEvent);
         separator = buffer.match(/\r?\n\r?\n/);
       }
+      // A trailing delimiter can be split across reads. Three bytes cover a
+      // partial "\r\n\r" without letting an unterminated event grow past the cap.
+      if (buffer.length > maxEventChars + 3) {
+        throw new Error(`Object stream event exceeded ${maxEventChars} characters.`);
+      }
       if (done) {
         if (buffer.trim()) yield* take(buffer);
+        completed = true;
         break;
       }
     }
   } finally {
+    if (!completed) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Keep the overflow or parse error that stopped the read.
+      }
+    }
     reader.releaseLock();
   }
 };
