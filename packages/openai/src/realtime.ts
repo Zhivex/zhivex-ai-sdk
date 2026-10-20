@@ -24,7 +24,13 @@ import {
 } from "@zhivex-ai/core/provider";
 import { inferOpenAIRealtimeMode, openAIRealtimeSupportsImageInput, realtimeCapabilities } from "./capabilities.js";
 import { jsonHeaders, parseJson, RESERVED_REQUEST_HEADERS } from "./http.js";
-import { assertOpenAIVoice, type OpenAIRealtimeSessionConfig } from "./voice.js";
+import {
+  assertOpenAIVoice,
+  retainOpenAIRealtimeConfig,
+  sharedRealtimeConfig,
+  type OpenAIRealtimeSessionConfig,
+  type OpenAIRealtimeSessionFor
+} from "./voice.js";
 
 const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
 
@@ -528,6 +534,10 @@ export class OpenAIRealtimeModel implements RealtimeModel {
     };
   }
 
+  connect<TConfig extends OpenAIRealtimeSessionConfig | undefined = undefined>(
+    config?: TConfig,
+    options?: RealtimeConnectOptions
+  ): Promise<OpenAIRealtimeSessionFor<TConfig>>;
   async connect(config: OpenAIRealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
     const initialConfig = this.resolveConfig(config);
     const providerOptions = initialConfig.providerOptions as Record<string, unknown> | undefined;
@@ -557,8 +567,7 @@ export class OpenAIRealtimeModel implements RealtimeModel {
       provider: this.provider,
       modelId: this.modelId,
       capabilities: this.capabilities,
-      // RealtimeSession types voice as string. Keep this object so a custom voice reaches the wire unchanged.
-      config: initialConfig as RealtimeSessionConfig,
+      config: sharedRealtimeConfig(initialConfig),
       connection,
       callbacks: {
         parseEvent: parseOpenAIRealtimeEvent,
@@ -679,6 +688,7 @@ export class OpenAIRealtimeModel implements RealtimeModel {
         ]
       }
     });
+    retainOpenAIRealtimeConfig(session, initialConfig);
     await session.initialize();
     return session;
   }

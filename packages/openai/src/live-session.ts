@@ -5,7 +5,7 @@ import {
   type AudioFrame, type RealtimeConnection, type RealtimeEventParser, type RealtimePayloadBuilder, type RealtimeContextUpdate, type RealtimeEvent,
   type RealtimeSessionConfig
 } from "@zhivex-ai/core/runtime";
-import { assertOpenAIVoice, openAIWireVoice, type OpenAIRealtimeSessionConfig } from "./voice.js";
+import { assertOpenAIVoice, openAIWireVoice, retainOpenAIRealtimeConfig, sharedRealtimeConfig, type OpenAIRealtimeSessionConfig } from "./voice.js";
 
 export const isOpenAILiveModel = (modelId: string) => /^gpt-live-1(?:-\d{4}-\d{2}-\d{2})?$/.test(modelId);
 
@@ -112,7 +112,7 @@ export function createLiveSession(modelId: string, resolved: OpenAIRealtimeSessi
     };
     const session = new CallbackRealtimeSession({
       provider: "openai", modelId: modelId, capabilities: liveCapabilities,
-      config: resolved as RealtimeSessionConfig, connection, initializationTimeoutMs: options.timeoutMs ?? 15_000,
+      config: sharedRealtimeConfig(resolved), connection, initializationTimeoutMs: options.timeoutMs ?? 15_000,
       closeTimeoutMs: resolved.providerOptions?.closeTimeoutMs as number | undefined,
       callbacks: {
         parseEvent,
@@ -144,7 +144,7 @@ export function createLiveSession(modelId: string, resolved: OpenAIRealtimeSessi
         buildClosePayloads: () => [{ type: "session.close" }]
       }
     });
-    return session;
+    return retainOpenAIRealtimeConfig(session, resolved);
 }
 
 export function resolveLiveWebRTCConfig(config: OpenAIRealtimeSessionConfig = {}) {

@@ -8,7 +8,7 @@ import { OpenAIRealtimeModel, openAIRealtimeMcpMetadataKey, resolveOpenAIRealtim
 export { OpenAIRealtimeModel, openAIRealtimeMcpMetadataKey } from "./realtime.js";
 import { OpenAIEmbeddingModel, OpenAITranscriptionModel, OpenAISpeechModel, toUint8Array } from "./resource-models.js";
 export { OpenAISpeechModel } from "./resource-models.js";
-export type { OpenAICustomVoice, OpenAIRealtimeSessionConfig, OpenAIVoice } from "./voice.js";
+export type { OpenAICustomVoice, OpenAIRealtimeSession, OpenAIRealtimeSessionConfig, OpenAIRealtimeSessionFor, OpenAIVoice } from "./voice.js";
 import { OpenAIAgentsClient } from "./agents.js";
 export { OpenAIAgentsClient } from "./agents.js";
 export type { OpenAIAgentSessionInput, OpenAIAgentSession, OpenAIAgentEvent, OpenAIAgentsPage, OpenAIAgentsRequestOptions } from "./agents.js";
