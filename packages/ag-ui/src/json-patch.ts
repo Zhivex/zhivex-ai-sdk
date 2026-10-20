@@ -43,13 +43,8 @@ const pointerSegments = (path: string): string[] => {
   return path.slice(1).split("/").map(decodePointer);
 };
 
-const rejectForbiddenSegment = (segment: string): void => {
-  if (segment === "__proto__") {
-    throw new Error(`JSON pointer segment "${segment}" is not allowed.`);
-  }
-  if (segment === "constructor" || segment === "prototype") {
-    throw new Error(`JSON pointer segment "${segment}" is not allowed.`);
-  }
+const rejectForbiddenSegment = (segment: string): never => {
+  throw new Error(`JSON pointer segment "${segment}" is not allowed.`);
 };
 
 const parseArrayIndex = (
@@ -80,57 +75,78 @@ const parseArrayIndex = (
   return index;
 };
 
-const childAt = (parent: unknown, segment: string, path: string): unknown => {
-  if (segment === "__proto__") {
-    throw new Error(`JSON pointer segment "${segment}" is not allowed.`);
+const copyRecord = (source: Record<string, unknown>): Record<string, unknown> => {
+  const copy: Record<string, unknown> = {};
+  for (const key of Object.keys(source)) {
+    if (key !== "__proto__") {
+      copy[key] = source[key];
+    }
+  }
+  return copy;
+};
+
+const recordWith = (source: Record<string, unknown>, segment: string, value: unknown): Record<string, unknown> => {
+  const copy = copyRecord(source);
+  if (segment !== "__proto__") {
+    copy[segment] = value;
+  }
+  return copy;
+};
+
+const recordWithout = (source: Record<string, unknown>, segment: string): Record<string, unknown> => {
+  const copy: Record<string, unknown> = {};
+  for (const key of Object.keys(source)) {
+    if (key !== segment && key !== "__proto__") {
+      copy[key] = source[key];
+    }
+  }
+  return copy;
+};
+
+const applyOperation = (node: unknown, segments: readonly string[], operation: AgUiJsonPatchOperation): unknown => {
+  if (segments.length === 0) {
+    if (operation.op === "remove") {
+      throw new Error("Cannot remove the JSON patch root.");
+    }
+    return operation.value;
+  }
+  const segment = segments[0]!;
+  const rest = segments.slice(1);
+  const atLeaf = rest.length === 0;
+  if (segment !== "__proto__") {
+    if (segment === "constructor" || segment === "prototype") {
+      rejectForbiddenSegment(segment);
+    }
+    if (Array.isArray(node)) {
+      const index = parseArrayIndex(segment, atLeaf ? operation.op : "replace", node.length);
+      const copy = node.slice();
+      if (atLeaf) {
+        if (operation.op === "remove") copy.splice(index, 1);
+        else if (operation.op === "add") copy.splice(index, 0, operation.value);
+        else copy.splice(index, 1, operation.value);
+        return copy;
+      }
+      copy.splice(index, 1, applyOperation(node[index], rest, operation));
+      return copy;
+    }
+    if (isPlainObject(node)) {
+      if (!atLeaf && !Object.prototype.hasOwnProperty.call(node, segment)) {
+        throw new Error(`JSON patch path "${operation.path}" does not exist.`);
+      }
+      if (atLeaf && operation.op === "remove") return recordWithout(node, segment);
+      const nextValue = atLeaf ? operation.value : applyOperation(node[segment], rest, operation);
+      return recordWith(node, segment, nextValue);
+    }
+    throw new Error(`JSON patch path "${operation.path}" does not exist.`);
   }
   rejectForbiddenSegment(segment);
-  if (Array.isArray(parent)) {
-    return parent[parseArrayIndex(segment, "replace", parent.length)];
-  }
-  if (!isPlainObject(parent) || !Object.prototype.hasOwnProperty.call(parent, segment)) {
-    throw new Error(`JSON patch path "${path}" does not exist.`);
-  }
-  return parent[segment];
 };
 
 /** Applies the add, remove, and replace operations this adapter emits. */
 export const applyJsonPatch = (document: unknown, operations: readonly AgUiJsonPatchOperation[]): unknown => {
   let current = JSON.parse(JSON.stringify(document)) as unknown;
   for (const operation of operations) {
-    const segments = pointerSegments(operation.path);
-    if (segments.length === 0) {
-      if (operation.op === "remove") {
-        throw new Error("Cannot remove the JSON patch root.");
-      }
-      current = operation.value;
-      continue;
-    }
-    if (!isPlainObject(current) && !Array.isArray(current)) {
-      throw new Error(`JSON patch path "${operation.path}" does not exist.`);
-    }
-    const parentSegments = segments.slice(0, -1);
-    const leaf = segments.at(-1)!;
-    let parent: unknown = current;
-    for (const segment of parentSegments) {
-      parent = childAt(parent, segment, operation.path);
-    }
-    if (Array.isArray(parent)) {
-      rejectForbiddenSegment(leaf);
-      const index = parseArrayIndex(leaf, operation.op, parent.length);
-      if (operation.op === "remove") parent.splice(index, 1);
-      else if (operation.op === "add") parent.splice(index, 0, operation.value);
-      else parent[index] = operation.value;
-    } else if (isPlainObject(parent)) {
-      if (leaf === "__proto__") {
-        throw new Error(`JSON pointer segment "${leaf}" is not allowed.`);
-      }
-      rejectForbiddenSegment(leaf);
-      if (operation.op === "remove") delete parent[leaf];
-      else parent[leaf] = operation.value;
-    } else {
-      throw new Error(`JSON patch path "${operation.path}" does not exist.`);
-    }
+    current = applyOperation(current, pointerSegments(operation.path), operation);
   }
   return current;
 };

@@ -14,6 +14,7 @@ describe("applyJsonPatch", () => {
       expect(() => applyJsonPatch(document, [{ op: "add", path: `/safe/${segment}`, value: { polluted: true } }])).toThrow(/not allowed/);
       expect(() => applyJsonPatch(document, [{ op: "add", path: `/safe/${segment}/polluted`, value: true }])).toThrow(/not allowed/);
       expect(() => applyJsonPatch(document, [{ op: "replace", path: `/items/0/${segment}`, value: true }])).toThrow(/not allowed/);
+      expect(() => applyJsonPatch(document, [{ op: "replace", path: `/items/${segment}`, value: true }])).toThrow(/not allowed/);
     }
     expect(prototypeValue("polluted")).toBe(beforeProto);
     expect(document).toEqual({ safe: { nested: true }, items: [{ ok: true }] });
@@ -44,5 +45,18 @@ describe("applyJsonPatch", () => {
     expect(() => applyJsonPatch(document, [{ op: "replace", path: "/items/1e2", value: "c" }])).toThrow(/invalid/);
     expect(() => applyJsonPatch(document, [{ op: "add", path: "/items/0/nope", value: true }])).toThrow(/does not exist/);
     expect(document).toEqual({ items: ["a"] });
+  });
+
+  it("updates nested objects without sharing the input", () => {
+    const document = { run: { status: "running", nested: { a: 1 } }, extra: true };
+    expect(applyJsonPatch(document, [
+      { op: "remove", path: "/extra" },
+      { op: "replace", path: "/run/status", value: "completed" },
+      { op: "add", path: "/run/nested/b", value: 2 }
+    ])).toEqual({ run: { status: "completed", nested: { a: 1, b: 2 } } });
+    expect(applyJsonPatch("root", [{ op: "replace", path: "", value: { ok: true } }])).toEqual({ ok: true });
+    expect(() => applyJsonPatch({ ok: true }, [{ op: "remove", path: "" }])).toThrow(/root/);
+    expect(() => applyJsonPatch({ ok: true }, [{ op: "replace", path: "ok", value: false }])).toThrow(/Invalid JSON pointer/);
+    expect(document).toEqual({ run: { status: "running", nested: { a: 1 } }, extra: true });
   });
 });
