@@ -44,7 +44,10 @@ const pointerSegments = (path: string): string[] => {
 };
 
 const rejectForbiddenSegment = (segment: string): void => {
-  if (segment === "__proto__" || segment === "constructor" || segment === "prototype") {
+  if (segment === "__proto__") {
+    throw new Error(`JSON pointer segment "${segment}" is not allowed.`);
+  }
+  if (segment === "constructor" || segment === "prototype") {
     throw new Error(`JSON pointer segment "${segment}" is not allowed.`);
   }
 };
@@ -78,6 +81,9 @@ const parseArrayIndex = (
 };
 
 const childAt = (parent: unknown, segment: string, path: string): unknown => {
+  if (segment === "__proto__") {
+    throw new Error(`JSON pointer segment "${segment}" is not allowed.`);
+  }
   rejectForbiddenSegment(segment);
   if (Array.isArray(parent)) {
     return parent[parseArrayIndex(segment, "replace", parent.length)];
@@ -116,9 +122,10 @@ export const applyJsonPatch = (document: unknown, operations: readonly AgUiJsonP
       else if (operation.op === "add") parent.splice(index, 0, operation.value);
       else parent[index] = operation.value;
     } else if (isPlainObject(parent)) {
-      if (leaf === "__proto__" || leaf === "constructor" || leaf === "prototype") {
+      if (leaf === "__proto__") {
         throw new Error(`JSON pointer segment "${leaf}" is not allowed.`);
       }
+      rejectForbiddenSegment(leaf);
       if (operation.op === "remove") delete parent[leaf];
       else parent[leaf] = operation.value;
     } else {
