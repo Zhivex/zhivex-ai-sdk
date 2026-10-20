@@ -41,6 +41,7 @@ The following packages are intended for npm consumers:
 - `@zhivex-ai/gateway`
 - `@zhivex-ai/sandbox-docker`
 - `@zhivex-ai/trace-viewer`
+- `@zhivex-ai/ag-ui`
 
 ## Installation And Consumer Compatibility
 
@@ -55,7 +56,7 @@ CI builds once, then installs actual `npm pack` tarballs in a new temporary proj
 | Yarn Classic | 1.22.22 | Node.js 24.21.0 | Yarn node_modules |
 | Bun | 1.3.7 | Bun 1.3.7 | Bun node_modules |
 
-The matrix packs every publishable package with npm 10.9.4, installs all 20 tarballs together with required React peers and optional Markdown/virtualization peers, imports every JavaScript export, verifies every top-level installed package file against the packed inputs, and checks the installed `zhivex-ai` CLI version through the selected manager. It runs the deterministic golden path (generation, Agent, file-backed Runner sessions across recreated instances, and React transport), plus a TypeScript 5.9.3 NodeNext consumer typecheck with `@types/node` 22.19.0 and `skipLibCheck`. Lifecycle scripts are disabled. Temporary projects have no workspaces, aliases, overrides, or resolutions. Manager versions, runtime versions, entrypoint counts, and tarball SHA-256 hashes are printed in CI logs. Direct registry dependency versions are pinned; transitive dependencies are resolved afresh, so this is also a check against current dependency compatibility.
+The matrix packs every publishable package with npm 10.9.4, installs all 22 tarballs together with required React peers and optional Markdown/virtualization peers, imports every JavaScript export, verifies every top-level installed package file against the packed inputs, and checks the installed `zhivex-ai` CLI version through the selected manager. It runs the deterministic golden path (generation, Agent, file-backed Runner sessions across recreated instances, and React transport), plus a TypeScript 5.9.3 NodeNext consumer typecheck with `@types/node` 22.19.0 and `skipLibCheck`. Lifecycle scripts are disabled. Temporary projects have no workspaces, aliases, overrides, or resolutions. Manager versions, runtime versions, entrypoint counts, and tarball SHA-256 hashes are printed in CI logs. Direct registry dependency versions are pinned; transitive dependencies are resolved afresh, so this is also a check against current dependency compatibility.
 
 Internal semver dependencies are resolved normally by each manager. Some managers install separate registry copies instead of reusing top-level `file:` tarballs; the harness records their requested ranges, resolved versions, and source. Every top-level export is imported from the checkout's packed artifact, while end-to-end SDK execution can use those registry dependencies. The existing npm certification also exercises the combined packed dependency graph. This matrix does not force all nested dependencies onto unpublished checkout builds.
 

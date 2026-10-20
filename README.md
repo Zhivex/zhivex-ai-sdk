@@ -155,6 +155,7 @@ The same concepts exist for Python in the [Zhivex AI SDK for Python](https://git
 - `@zhivex-ai/gateway`: in-process policy routing and fallback across registered adapters.
 - `@zhivex-ai/sandbox-docker`: experimental reference Docker execution environment for workspace agents.
 - `@zhivex-ai/trace-viewer`: local read-only viewer for governance ledgers and OpenTelemetry span files.
+- `@zhivex-ai/ag-ui`: opt-in AG-UI 1.0 stream adapter and client approval gate. It is not part of `@zhivex-ai/sdk`.
 
 ## Repository Layout
 
@@ -181,6 +182,7 @@ packages/
   gateway/        Routing and fallback package
   sandbox-docker/ Reference Docker execution environment
   trace-viewer/   Local ledger and OpenTelemetry span viewer
+  ag-ui/          Opt-in AG-UI stream adapter and client approval gate
 ```
 
 Development uses Bun workspaces, TypeScript project references, and Vitest. See [CONTRIBUTING.md](./CONTRIBUTING.md).

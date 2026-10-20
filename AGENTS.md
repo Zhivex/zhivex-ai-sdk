@@ -27,6 +27,7 @@
 - `packages/gateway`: gateway / routing layer.
 - `packages/sandbox-docker`: experimental reference Docker execution environment for workspace agents.
 - `packages/trace-viewer`: local read-only viewer for governance ledgers and OpenTelemetry span files.
+- `packages/ag-ui`: opt-in AG-UI 1.0 stream adapter and client approval gate. It does not change `@zhivex-ai/core` or `@zhivex-ai/sdk`.
 - `.changeset/`: versioning and release configuration.
 - `README.md`: main source of usage examples and public-facing expectations.
 
@@ -53,6 +54,7 @@ Packages currently publishable to npm:
 - `@zhivex-ai/gateway`
 - `@zhivex-ai/sandbox-docker`
 - `@zhivex-ai/trace-viewer`
+- `@zhivex-ai/ag-ui`
 
 ## Stack and Commands
 
