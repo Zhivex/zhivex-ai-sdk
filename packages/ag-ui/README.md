@@ -57,6 +57,8 @@ record.ledger;
 
 State snapshots use the public run view: status, steps, usage, and output text. They do not include messages, approval arguments, signatures, raw provider payloads, scope, or credentials.
 
+Every model tool call, including an approval-gated one, streams its JSON arguments to the client through `TOOL_CALL_ARGS`. `includeArguments` only controls the separate `zhivex.approval.pause` event; if a tool's inputs must stay server-side, filter those events before sending them.
+
 The interrupt metadata carries `provider`, `approvalRequestId`, `name`, and `kind`. The approval bearer token is not placed on the AG-UI event. `session.publish` returns a separate `zhivex.approval.pause` event for the browser. A logged AG-UI stream cannot approve a run by itself.
 
 ## Approval security
