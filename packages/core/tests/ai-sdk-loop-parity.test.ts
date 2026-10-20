@@ -440,7 +440,7 @@ describe("loop controls, output, and tools", () => {
     expect(result.status).toBe("completed");
     expect(result.outputText).toBe("done");
     expect(result.state.steps).toHaveLength(3);
-    expect(result.state.maxSteps).toBe("unlimited");
+    expect(result.state.maxSteps).toBe(20);
     expect(executions).toBe(2);
 
     const capped = new Agent({
@@ -453,6 +453,47 @@ describe("loop controls, output, and tools", () => {
     const stopped = await capped.run({ prompt: "go", stopWhen: stepCountIs(4) });
     expect(stopped.state.steps).toHaveLength(1);
     expect(stopped.state.maxSteps).toBe(1);
+  });
+
+  it("stops a never-true stopWhen at the default 20-step ceiling", async () => {
+    const ceiling = 20;
+    let executions = 0;
+    let telemetrySteps: number | "unlimited" | undefined;
+    const read = tool({
+      name: "read",
+      schema: z.object({}),
+      execute: () => {
+        executions += 1;
+        return "ok";
+      }
+    });
+    const agent = new Agent({
+      model: mock(Array.from({ length: ceiling }, (_, index) => toolResult(readCall(String(index + 1))))),
+      tools: { read },
+      onTelemetryEvent: {
+        startInvocation: (event) => {
+          telemetrySteps = event.maxSteps;
+        }
+      }
+    });
+    const result = await agent.run({ prompt: "go", stopWhen: () => false });
+    expect(result.status).toBe("failed");
+    expect(result.state.maxSteps).toBe(ceiling);
+    expect(result.state.steps).toHaveLength(ceiling);
+    expect(result.state.finishReason).toBe("tool-calls");
+    expect(result.state.error?.message).toBe("Agent exhausted maxSteps before reaching a terminal response.");
+    expect(executions).toBe(ceiling);
+    expect(telemetrySteps).toBe(ceiling);
+
+    const raised = await generateText({
+      model: mock(Array.from({ length: 3 }, (_, index) => toolResult(readCall(`extra-${index}`)))),
+      prompt: "go",
+      maxSteps: 3,
+      stopWhen: () => false,
+      tools: { read: tool({ name: "read", schema: z.object({}), execute: () => "ok" }) }
+    });
+    expect(raised.steps).toHaveLength(3);
+    expect(raised.finishReason).toBe("tool-calls");
   });
 
   it("returns Output.object and Output.text without adding output to old calls", async () => {

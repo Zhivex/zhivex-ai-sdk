@@ -17,12 +17,19 @@ export const hasToolCall = (name?: string): StopCondition => ({ steps }) => step
   ))
 );
 
+/**
+ * Safety ceiling when `stopWhen` is set and `maxSteps` is omitted.
+ * Matches the AI SDK `ToolLoopAgent` default of 20 steps. An explicit
+ * `maxSteps`, including `"unlimited"`, still overrides it.
+ */
+const DEFAULT_STOP_WHEN_MAX_STEPS = 20;
+
 export const resolveStepCeiling = (options: {
   maxSteps?: number | "unlimited";
   stopWhen?: StopCondition | readonly StopCondition[];
 }): number | "unlimited" => {
   if (options.maxSteps !== undefined) return validateMaxSteps(options.maxSteps);
-  if (options.stopWhen !== undefined) return "unlimited";
+  if (options.stopWhen !== undefined) return DEFAULT_STOP_WHEN_MAX_STEPS;
   return validateMaxSteps(undefined);
 };
 

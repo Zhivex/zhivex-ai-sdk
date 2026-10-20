@@ -78,25 +78,50 @@ const toolInputSchema = (schema: unknown): Record<string, unknown> => {
   return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
 };
 
-const openAIChatSampling = (input: ModelGenerateInput): Record<string, unknown> => ({
-  ...(input.topP !== undefined ? { top_p: input.topP } : {}),
-  ...(input.seed !== undefined ? { seed: input.seed } : {}),
-  ...(input.stopSequences !== undefined ? { stop: [...input.stopSequences] } : {})
-});
+const openAISamplingWarnings = new Set<string>();
 
-const openAIResponsesSamplingWarnings = new Set<string>();
-
-const warnOpenAIResponsesSampling = (option: "seed" | "stopSequences", detail: string) => {
-  const key = `openai:${option}`;
-  if (openAIResponsesSamplingWarnings.has(key)) return;
-  openAIResponsesSamplingWarnings.add(key);
+const warnOpenAISampling = (option: "seed" | "stopSequences", detail: string) => {
+  const key = `openai:${option}:${detail}`;
+  if (openAISamplingWarnings.has(key)) return;
+  openAISamplingWarnings.add(key);
   console.warn(`Provider "openai" does not support ${option}. ${detail} The option was ignored.`);
 };
 
+/** Model profiles that already reject sampling. `topP` still throws in assertOpenAIModelRequestSupported. */
+const openAISamplingRejected = (
+  modelId: string,
+  input: ModelGenerateInput,
+  bodyOptions: Record<string, any>
+) => {
+  const profile = resolveOpenAIModelProfile(modelId);
+  if (profile.sampling === "allowed") return null;
+  const effort = input.reasoning?.effort ?? bodyOptions.reasoning?.effort ?? bodyOptions.reasoning_effort;
+  return profile.sampling === "unsupported" || effort !== "none" ? profile.label : null;
+};
+
+const openAIChatSampling = (
+  modelId: string,
+  input: ModelGenerateInput,
+  bodyOptions: Record<string, any>
+): Record<string, unknown> => {
+  const rejected = openAISamplingRejected(modelId, input, bodyOptions);
+  if (rejected) {
+    if (input.seed !== undefined) warnOpenAISampling("seed", `${rejected} does not support seed.`);
+    if (input.stopSequences !== undefined) {
+      warnOpenAISampling("stopSequences", `${rejected} does not support stop sequences.`);
+    }
+  }
+  return {
+    ...(input.topP !== undefined ? { top_p: input.topP } : {}),
+    ...(!rejected && input.seed !== undefined ? { seed: input.seed } : {}),
+    ...(!rejected && input.stopSequences !== undefined ? { stop: [...input.stopSequences] } : {})
+  };
+};
+
 const openAIResponsesSampling = (input: ModelGenerateInput): Record<string, unknown> => {
-  if (input.seed !== undefined) warnOpenAIResponsesSampling("seed", "The Responses API does not accept seed.");
+  if (input.seed !== undefined) warnOpenAISampling("seed", "The Responses API does not accept seed.");
   if (input.stopSequences !== undefined) {
-    warnOpenAIResponsesSampling("stopSequences", "The Responses API does not accept stop sequences.");
+    warnOpenAISampling("stopSequences", "The Responses API does not accept stop sequences.");
   }
   return input.topP !== undefined ? { top_p: input.topP } : {};
 };
@@ -2484,7 +2509,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
               response_format: mapStructuredOutput(input) ?? options.bodyOptions.response_format,
               temperature: input.temperature,
-              ...openAIChatSampling(input),
+              ...openAIChatSampling(this.modelId, input, options.bodyOptions),
               ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
               ...mapChatReasoning(input),
               stream: false
@@ -2591,7 +2616,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             ...(input.toolChoice ? { tool_choice: mapToolChoice(input.toolChoice) } : {}),
             response_format: mapStructuredOutput(input) ?? options.bodyOptions.response_format,
             temperature: input.temperature,
-            ...openAIChatSampling(input),
+            ...openAIChatSampling(this.modelId, input, options.bodyOptions),
             ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
             ...mapChatReasoning(input),
             stream: true,

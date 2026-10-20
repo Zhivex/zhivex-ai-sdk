@@ -105,8 +105,8 @@ import {
   persistFailureState,
   persistState
 } from "./state.js";
+import { resolveStepCeiling } from "../loop-controls.js";
 import {
-  resolveAgentStepCeiling,
   resolveContext,
   initializePendingMemory
 } from "./context.js";
@@ -134,6 +134,19 @@ import {
 import {
   compactAgentMessages
 } from "./compaction.js";
+
+/** Same precedence as the agent context helper. Not a public export. */
+const resolveAgentStepCeiling = (
+  input: {
+    maxSteps?: number | "unlimited";
+    stopWhen?: Parameters<typeof resolveStepCeiling>[0]["stopWhen"];
+    state?: { maxSteps?: number | "unlimited" };
+  },
+  agentMaxSteps: number | "unlimited" | undefined
+) => resolveStepCeiling({
+  maxSteps: input.maxSteps ?? input.state?.maxSteps ?? agentMaxSteps,
+  stopWhen: input.stopWhen
+});
 
 /** Complete receipts may settle a failed call; an uncertain prefix never frees
  * its allocation. Settlement errors cannot replace the original provider failure. */

@@ -1,4 +1,4 @@
-import { validateMaxSteps } from "../validate-max-steps.js";
+import { resolveStepCeiling } from "../loop-controls.js";
 import {
   createAgentHandoffMessage
 } from "../agent-handoff-contracts.js";
@@ -41,17 +41,18 @@ import {
   applyApprovalResponses
 } from "./approvals.js";
 
-/** Explicit maxSteps wins. stopWhen with no explicit ceiling is not the default of 1. */
-export const resolveAgentStepCeiling = (
-  input: { maxSteps?: number | "unlimited"; stopWhen?: unknown; state?: { maxSteps?: number | "unlimited" } },
+/** Explicit maxSteps wins. stopWhen alone uses the shared safety ceiling, not 1 and not unlimited. */
+const resolveAgentStepCeiling = (
+  input: {
+    maxSteps?: number | "unlimited";
+    stopWhen?: Parameters<typeof resolveStepCeiling>[0]["stopWhen"];
+    state?: { maxSteps?: number | "unlimited" };
+  },
   agentMaxSteps: number | "unlimited" | undefined
-): number | "unlimited" => {
-  if (input.maxSteps !== undefined) return validateMaxSteps(input.maxSteps);
-  if (input.state?.maxSteps !== undefined) return validateMaxSteps(input.state.maxSteps);
-  if (agentMaxSteps !== undefined) return validateMaxSteps(agentMaxSteps);
-  if (input.stopWhen !== undefined) return "unlimited";
-  return validateMaxSteps(undefined);
-};
+): number | "unlimited" => resolveStepCeiling({
+  maxSteps: input.maxSteps ?? input.state?.maxSteps ?? agentMaxSteps,
+  stopWhen: input.stopWhen
+});
 
 const createBaseState = (
   provider: string,

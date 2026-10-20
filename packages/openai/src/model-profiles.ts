@@ -306,7 +306,7 @@ export const assertOpenAIModelRequestSupported = (
   }
   const restricted = profile.sampling === "unsupported" || effort !== "none";
   const hasSampling = input.temperature !== undefined || input.topP !== undefined || raw.temperature !== undefined || raw.top_p !== undefined || raw.top_logprobs !== undefined ||
-    (options.apiMode === "chat" && (input.seed !== undefined || input.stopSequences !== undefined || raw.logprobs !== undefined)) ||
+    (options.apiMode === "chat" && raw.logprobs !== undefined) ||
     raw.include?.includes("message.output_text.logprobs");
   if (restricted && hasSampling) {
     throw new UnsupportedFeatureError(profile.sampling === "unsupported"
