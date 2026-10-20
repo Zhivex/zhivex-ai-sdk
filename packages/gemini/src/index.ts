@@ -830,7 +830,14 @@ const assertGeminiRealtimeTranscribeConfig = (config: RealtimeSessionConfig, mod
   }
 };
 
+const rejectObjectVoice = (voice: unknown) => {
+  if (voice !== undefined && typeof voice !== "string") {
+    throw new UnsupportedFeatureError('Provider "gemini" accepts string voice names only.');
+  }
+};
+
 const assertGeminiRealtimeConfig = (config: RealtimeSessionConfig, modelId: string) => {
+  rejectObjectVoice(config.voice);
   assertGeminiRealtimeTranslateConfig(config, modelId);
   assertGeminiRealtimeTranscribeConfig(config, modelId);
 
@@ -2483,6 +2490,7 @@ class GeminiSpeechModel implements SpeechModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<SpeechResult> {
+    rejectObjectVoice(input.voice);
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
@@ -2531,6 +2539,7 @@ class GeminiSpeechModel implements SpeechModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<AsyncIterable<SpeechResult>> {
+    rejectObjectVoice(input.voice);
     const { signal, cleanup } = withTimeoutSignal(input);
     const response = await withRetry(
       () =>

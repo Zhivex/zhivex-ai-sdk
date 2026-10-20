@@ -153,6 +153,16 @@ describe("trusted Live WebRTC server contract", () => {
     const payload = JSON.parse(request.body); expect(payload.transport).toEqual({ type: "webrtc", sdp: fixture.offer });
     expect(payload.session).toMatchObject({ model: "gpt-live-1", delegation: { type: "client" }, store: false, client: { data_channel: { allowed_client_events: ["session.close", "session.input_audio.mute", "session.input_audio.unmute"] } } });
     expect(payload.session.audio.format).toBeUndefined();
+    expect(payload.session.audio.output.voice).toBe("marin");
+  });
+  it("sends a custom GPT-Live WebRTC voice object unchanged", async () => {
+    const fetcher = vi.fn(async () => Response.json(fixture.answer, { status: 201 }));
+    const custom = { id: "voice_123" };
+    await create({ apiKey: "server-only", offerSdp: fixture.offer, fetch: fetcher, session: { voice: custom } });
+    const body = String((fetcher.mock.calls[0] as any[])[1].body);
+    const payload = JSON.parse(body);
+    expect(payload.session.audio.output.voice).toStrictEqual(custom);
+    expect(body).toContain('"voice":{"id":"voice_123"}');
   });
   it("binds a known ID for cleanup before rejecting a malformed answer or late cancellation", async () => {
     const bind = vi.fn(), controller = new AbortController();

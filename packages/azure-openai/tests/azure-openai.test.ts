@@ -863,6 +863,20 @@ describe("azure openai adapter", () => {
     });
 
     expect(Array.from(result.audio)).toEqual([4, 5, 6]);
+    expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body)).voice).toBe("alloy");
+  });
+
+  it("rejects custom voice objects", async () => {
+    const provider = createAzureOpenAI({
+      apiKey: "test",
+      endpoint: "https://example.openai.azure.com",
+      fetch: fetchMock as typeof fetch
+    });
+    await expect(provider.speechModel!("gpt-4o-mini-tts").generateSpeech({
+      input: "hello",
+      voice: { id: "voice_123" } as never
+    })).rejects.toThrow(/string voice names only/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("enforces configured Azure speech response limits", async () => {

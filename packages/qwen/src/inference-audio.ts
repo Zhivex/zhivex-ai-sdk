@@ -95,6 +95,9 @@ export class QwenCloudSpeechModel implements SpeechModel<QwenCloudSpeechOptions>
     private readonly factory: RealtimeConnectionFactory = openWebSocketConnection) {}
 
   async streamSpeech(input: SpeechModelInput<QwenCloudSpeechOptions>): Promise<AsyncIterable<SpeechResult>> {
+    if (input.voice !== undefined && typeof input.voice !== "string") {
+      throw new UnsupportedFeatureError('Provider "qwen" accepts string voice names only.');
+    }
     if (!input.input.trim()) throw new ConfigurationError("Qwen speech requires nonempty text.");
     const parameters = { ...(input.providerOptions ?? {}) };
     const format = parameters.format ?? "mp3";

@@ -1,6 +1,7 @@
-import { ValidationError, decodeBase64WithLimit, encodeAudioFrame, type RealtimeSessionConfig, type RealtimeSessionCallbacks } from "@zhivex-ai/core/provider";
+import { ValidationError, decodeBase64WithLimit, encodeAudioFrame, type RealtimeSessionCallbacks } from "@zhivex-ai/core/provider";
+import type { OpenAIRealtimeSessionConfig } from "./voice.js";
 /** Node/server audio codec. Kept outside the browser protocol graph. */
-export function liveAudioCallbacks(resolved: RealtimeSessionConfig): Pick<RealtimeSessionCallbacks, "buildAudioPayloads"> & { parseOutputAudio: RealtimeSessionCallbacks["parseEvent"] } {
+export function liveAudioCallbacks(resolved: OpenAIRealtimeSessionConfig): Pick<RealtimeSessionCallbacks, "buildAudioPayloads"> & { parseOutputAudio: RealtimeSessionCallbacks["parseEvent"] } {
   const parseOutputAudio: RealtimeSessionCallbacks["parseEvent"] = payload => {
     if (typeof payload.delta !== "string") throw new ValidationError("Invalid GPT-Live audio delta.");
     const audio = decodeBase64WithLimit(payload.delta, { maxBytes: 16 * 1024 * 1024, provider: "openai", endpoint: "live/sessions" });

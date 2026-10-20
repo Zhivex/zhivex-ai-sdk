@@ -2346,6 +2346,15 @@ describe("qwen adapter", () => {
     expect(fetchMock.mock.calls[4]?.[1]?.headers).toMatchObject({ "X-DashScope-Async": "enable" });
   });
 
+  it("rejects custom voice objects", async () => {
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(provider.speechModel!("qwen3-tts-flash").generateSpeech({
+      input: "hello",
+      voice: { id: "voice_123" } as never
+    })).rejects.toThrow(/string voice names only/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("limits decoded Qwen base64 audio and omits the encoded payload from rawResponse", async () => {
     const encoded = Buffer.from([1, 2, 3, 4]).toString("base64");
     fetchMock.mockResolvedValueOnce(

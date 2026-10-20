@@ -48,6 +48,9 @@ const mcpServer = (server: QwenRealtimeMCPServer) => {
 
 /** Validates cloud-specific fields and combines native MCP with the shared function-tool mapper. */
 export const mapQwenCloudRealtimeSession = (id: string, config: RealtimeSessionConfig, base: Record<string, any>) => {
+  if (config.voice !== undefined && typeof config.voice !== "string") {
+    throw new UnsupportedFeatureError('Provider "qwen" accepts string voice names only.');
+  }
   const options = config.providerOptions as QwenCloudRealtimeOptions | undefined;
   const omni = isQwenOmni38Realtime(id);
   const output: Record<string, any> = { ...base };

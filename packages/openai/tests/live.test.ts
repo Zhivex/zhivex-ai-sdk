@@ -45,6 +45,27 @@ describe("GPT-Live client delegation", () => {
     await session.close();
   });
 
+  it("keeps the marin default and sends a custom GPT-Live voice object unchanged", async () => {
+    const named = setup();
+    named.connection.autoStart = false;
+    const namedConnect = named.model.connect();
+    await vi.waitFor(() => expect(named.connection.sent).toHaveLength(1));
+    expect(named.connection.sent[0]).toMatchObject({ type: "session.start", session: { audio: { output: { voice: "marin" } } } });
+    named.connection.push({ type: "session.started", session: { id: "live_123" } });
+    await (await namedConnect).close();
+
+    const customVoice = { id: "voice_123" };
+    const custom = setup();
+    custom.connection.autoStart = false;
+    const customConnect = custom.model.connect({ voice: customVoice });
+    await vi.waitFor(() => expect(custom.connection.sent).toHaveLength(1));
+    const session = (custom.connection.sent[0] as { session: { audio: { output: { voice: unknown } } } }).session;
+    expect(session.audio.output.voice).toBe(customVoice);
+    expect(JSON.stringify(custom.connection.sent[0])).toContain('"voice":{"id":"voice_123"}');
+    custom.connection.push({ type: "session.started", session: { id: "live_123" } });
+    await (await customConnect).close();
+  });
+
   it("streams continuous PCM, preserves transcripts and IDs, and waits for final usage", async () => {
     const { connection, model } = setup();
     const session = await model.connect();

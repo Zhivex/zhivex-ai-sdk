@@ -485,6 +485,9 @@ export class XAISpeechModel implements SpeechModel<XAISpeechOptions> {
   }
 
   async generateSpeech(input: SpeechModelInput<XAISpeechOptions>): Promise<SpeechResult> {
+    if (input.voice !== undefined && typeof input.voice !== "string") {
+      throw new UnsupportedFeatureError('Provider "xai" accepts string voice names only.');
+    }
     if (!input.input.trim()) {
       throw new ConfigurationError('Provider "xai" text-to-speech requires text.');
     }

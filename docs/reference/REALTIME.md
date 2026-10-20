@@ -55,6 +55,8 @@ const voiceAgent = await openai.realtimeModel!("gpt-realtime-2.1").connect({
   }
 });
 
+Named voices such as `"marin"` stay strings. A saved OpenAI custom voice is `{ id: "voice_123" }` on Realtime and GPT-Live `session.audio.output.voice`. Omitting `voice` still selects `"marin"` for GPT-Live.
+
 const translation = await openai.realtimeModel!("gpt-realtime-translate").connect({
   translation: {
     sourceLanguage: "en",

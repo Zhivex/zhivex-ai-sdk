@@ -2631,6 +2631,9 @@ class QwenSpeechModel implements SpeechModel {
   ) {}
 
   async generateSpeech(input: { input: string; voice?: string; providerOptions?: Record<string, unknown>; abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<SpeechResult> {
+    if (input.voice !== undefined && typeof input.voice !== "string") {
+      throw new UnsupportedFeatureError('Provider "qwen" accepts string voice names only.');
+    }
     const { signal, cleanup, abort } = withTimeoutSignal(input);
     const providerOptions = { ...(input.providerOptions ?? {}) };
     const nestedInput =
@@ -3149,7 +3152,14 @@ const assertQwenRealtimeConfig = (config: RealtimeSessionConfig) => {
   }
 };
 
+const rejectObjectVoice = (voice: unknown) => {
+  if (voice !== undefined && typeof voice !== "string") {
+    throw new UnsupportedFeatureError('Provider "qwen" accepts string voice names only.');
+  }
+};
+
 const mapRealtimeSession = (config: RealtimeSessionConfig) => {
+  rejectObjectVoice(config.voice);
   assertQwenRealtimeConfig(config);
   return {
     ...(config.providerOptions ?? {}),

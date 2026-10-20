@@ -24,6 +24,7 @@ import {
 } from "@zhivex-ai/core/provider";
 import { inferOpenAIRealtimeMode, openAIRealtimeSupportsImageInput, realtimeCapabilities } from "./capabilities.js";
 import { jsonHeaders, parseJson, RESERVED_REQUEST_HEADERS } from "./http.js";
+import { assertOpenAIVoice, type OpenAIRealtimeSessionConfig } from "./voice.js";
 
 const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
 
@@ -131,7 +132,8 @@ const mapRealtimeAudioFormat = (mediaType: string | undefined, sampleRateHz: num
       }
     : undefined;
 
-const mapRealtimeSessionConfig = (config: RealtimeSessionConfig, modelId?: string) => {
+const mapRealtimeSessionConfig = (config: OpenAIRealtimeSessionConfig, modelId?: string) => {
+  assertOpenAIVoice(config.voice);
   const mode = inferOpenAIRealtimeMode(modelId ?? "", config.mode);
   const tools = mapRealtimeTools(toToolSet(config.tools));
   const audio = {
@@ -507,7 +509,7 @@ export class OpenAIRealtimeModel implements RealtimeModel {
     this.capabilities = realtimeCapabilities(modelId);
   }
 
-  private resolveConfig(config: RealtimeSessionConfig): RealtimeSessionConfig {
+  private resolveConfig(config: OpenAIRealtimeSessionConfig): OpenAIRealtimeSessionConfig {
     if (config.delegation) throw new UnsupportedFeatureError("Client delegation requires a GPT-Live model.");
     const mode = inferOpenAIRealtimeMode(this.modelId, config.mode);
     if (mode !== "conversation" && (config.tools || config.toolChoice)) {
@@ -526,7 +528,7 @@ export class OpenAIRealtimeModel implements RealtimeModel {
     };
   }
 
-  async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
+  async connect(config: OpenAIRealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
     const initialConfig = this.resolveConfig(config);
     const providerOptions = initialConfig.providerOptions as Record<string, unknown> | undefined;
     const headers = resolveOpenAIRealtimeHeaders(this.apiKey, providerOptions);
@@ -555,7 +557,8 @@ export class OpenAIRealtimeModel implements RealtimeModel {
       provider: this.provider,
       modelId: this.modelId,
       capabilities: this.capabilities,
-      config: initialConfig,
+      // RealtimeSession types voice as string. Keep this object so a custom voice reaches the wire unchanged.
+      config: initialConfig as RealtimeSessionConfig,
       connection,
       callbacks: {
         parseEvent: parseOpenAIRealtimeEvent,
@@ -680,7 +683,7 @@ export class OpenAIRealtimeModel implements RealtimeModel {
     return session;
   }
 
-  async createBrowserToken(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions): Promise<RealtimeTokenResult> {
+  async createBrowserToken(config: OpenAIRealtimeSessionConfig = {}, options?: RealtimeConnectOptions): Promise<RealtimeTokenResult> {
     const resolvedConfig = this.resolveConfig(config);
     const providerOptions = { ...(resolvedConfig.providerOptions ?? {}) };
     const expiresAfter = providerOptions.expires_after;

@@ -29,6 +29,9 @@ const object = (value: unknown, name: string): Record<string, unknown> => {
 
 /** Qwen-specific options use the documented session.update field names. */
 export function liveTranslateSession(config: RealtimeSessionConfig): Record<string, unknown> {
+  if (config.voice !== undefined && typeof config.voice !== "string") {
+    throw new UnsupportedFeatureError('Provider "qwen" accepts string voice names only.');
+  }
   const extra = config.providerOptions ?? {};
   for (const key of ["modalities", "input_audio_format", "output_audio_format", "sample_rate", "turn_detection", "input_audio_transcription", "tools", "enable_search", "instructions", "voice"]) {
     if (extra[key] !== undefined) throw new UnsupportedFeatureError(`LiveTranslate 3.8 does not accept legacy session field ${key}.`);
