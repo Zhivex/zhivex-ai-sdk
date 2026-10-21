@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { calculateModelCost, createModelCatalog } from "@zhivex-ai/core";
 import {
   applyUIMessageChunk,
   chatReducer,
@@ -95,6 +96,89 @@ describe("chat reducer", () => {
       outputTokens: 2,
       totalTokens: 6
     });
+    expect(state.usage).not.toHaveProperty("cacheWriteTokensDetails");
+  });
+
+  it("sums cache write lifetimes across finishes and prices them like the raw response", () => {
+    const catalog = createModelCatalog([{
+      provider: "openai",
+      modelId: "guide",
+      inputCostPer1kTokens: 0.001,
+      cachedInputCostPer1kTokens: 0.0001,
+      cacheWriteCostPer1kTokens: 0.00125,
+      outputCostPer1kTokens: 0
+    }], {
+      snapshotVersion: "fixture-1",
+      pricing: { version: "price-1", currency: "USD", unit: "per_1k_tokens", source: "fixture" }
+    });
+    const raw = {
+      inputTokens: 12000,
+      cachedInputTokens: 4000,
+      cacheWriteTokens: 7000,
+      cacheWriteTokensDetails: { ttl30mTokens: 3000, ttl12hTokens: 4000 },
+      outputTokens: 0,
+      totalTokens: 12000
+    };
+    let state = createInitialChatState();
+    state = applyUIMessageChunk(state, {
+      type: "finish",
+      messageId: "assistant-1",
+      finishReason: "stop",
+      usage: raw
+    });
+    state = applyUIMessageChunk(state, {
+      type: "finish",
+      messageId: "assistant-1",
+      finishReason: "stop",
+      usage: {
+        inputTokens: 100,
+        cacheWriteTokens: 40,
+        cacheWriteTokensDetails: { ttl30mTokens: 10, ttl12hTokens: 30 },
+        outputTokens: 5,
+        totalTokens: 105
+      }
+    });
+
+    expect(state.usage).toEqual({
+      inputTokens: 12100,
+      cachedInputTokens: 4000,
+      cacheWriteTokens: 7040,
+      cacheWriteTokensDetails: { ttl30mTokens: 3010, ttl12hTokens: 4030 },
+      outputTokens: 5,
+      totalTokens: 12105
+    });
+    const fromState = calculateModelCost({
+      catalog,
+      provider: "openai",
+      modelId: "guide",
+      reasoningAccounting: "included",
+      usage: {
+        inputTokens: raw.inputTokens,
+        cachedInputTokens: raw.cachedInputTokens,
+        cacheWriteTokens: raw.cacheWriteTokens,
+        cacheWriteTokensDetails: raw.cacheWriteTokensDetails,
+        outputTokens: raw.outputTokens
+      }
+    });
+    const parsed = applyUIMessageChunk(createInitialChatState(), {
+      type: "finish",
+      messageId: "assistant-1",
+      finishReason: "stop",
+      usage: {
+        ...raw,
+        cacheWriteTokensDetails: { ...raw.cacheWriteTokensDetails, ignored: true } as typeof raw.cacheWriteTokensDetails
+      }
+    });
+    const fromChat = calculateModelCost({
+      catalog,
+      provider: "openai",
+      modelId: "guide",
+      reasoningAccounting: "included",
+      usage: parsed.usage
+    });
+    expect(fromChat.amount).toBeCloseTo(0.01515);
+    expect(fromChat.amount).toBeCloseTo(fromState.amount!);
+    expect(fromChat.cacheWriteDetails?.ttl12h.amount).toBeCloseTo(0.01);
   });
 
   it("replaces a partial generated image with the final image", () => {

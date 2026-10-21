@@ -1,3 +1,4 @@
+import { priceCacheWriteLifetimes, readCacheWriteTokensDetails } from "./cache-write-usage.js";
 import type { ModelCatalog } from "./catalog.js";
 import { ValidationError } from "./errors.js";
 import { createAgentRunSnapshot, replayAgentRun, type AgentRunSnapshot } from "./agent-evaluation.js";
@@ -603,16 +604,38 @@ export const estimateTokenCost = (
       inputTokens,
       Math.max(0, normalizedUsage.cachedInputTokens ?? 0)
     );
-    const cacheWriteTokens = Math.min(
-      inputTokens - cachedInputTokens,
-      Math.max(0, normalizedUsage.cacheWriteTokens ?? 0)
-    );
+    const reportedDetails = normalizedUsage.cacheWriteTokensDetails
+      ? readCacheWriteTokensDetails(normalizedUsage.cacheWriteTokensDetails)
+      : undefined;
+    const cacheWriteTokens = reportedDetails
+      ? normalizedUsage.cacheWriteTokens ?? (reportedDetails.ttl30mTokens ?? 0) + (reportedDetails.ttl12hTokens ?? 0)
+      : Math.min(
+          inputTokens - cachedInputTokens,
+          Math.max(0, normalizedUsage.cacheWriteTokens ?? 0)
+        );
+    if (reportedDetails && cachedInputTokens + cacheWriteTokens > inputTokens) {
+      throw new ValidationError("Cache tokens exceed normalized inputTokens.");
+    }
     const uncachedInputTokens = inputTokens - cachedInputTokens - cacheWriteTokens;
+    const cacheWriteCost = reportedDetails
+      ? priceCacheWriteLifetimes({
+          cacheWriteTokens,
+          details: reportedDetails,
+          cacheWriteRatePer1kTokens: pricing.cacheWriteCostPer1kTokens ?? inputRate,
+          inputRatePer1kTokens: inputRate,
+          inputMultiplier
+        })
+      : undefined;
+    if (cacheWriteCost && !cacheWriteCost.ok) return undefined;
 
-    return inputMultiplier * (
-      (uncachedInputTokens / 1000) * inputRate +
-      (cachedInputTokens / 1000) * (cachedInputRate ?? inputRate) +
-      (cacheWriteTokens / 1000) * (cacheWriteRate ?? inputRate)
+    return (
+      inputMultiplier * (
+        (uncachedInputTokens / 1000) * inputRate +
+        (cachedInputTokens / 1000) * (cachedInputRate ?? inputRate)
+      ) +
+      (cacheWriteCost
+        ? cacheWriteCost.price.amount
+        : inputMultiplier * (cacheWriteTokens / 1000) * (cacheWriteRate ?? inputRate))
     );
   })();
   const outputCost =

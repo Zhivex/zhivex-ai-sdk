@@ -213,7 +213,7 @@ const cached = await generateText({
 });
 ```
 
-`prompt_cache_retention` remains available as a legacy alternative for older model families; do not combine it with `prompt_cache_options` for GPT-5.6. The normalized usage object exposes `cachedInputTokens` and `cacheWriteTokens` for cache cost tracking.
+`prompt_cache_retention` remains available as a legacy alternative for older model families; do not combine it with `prompt_cache_options` for GPT-5.6. `prompt_cache_options.ttl` and an explicit breakpoint `ttl` may be `"30m"` or `"12h"`. Omitting `ttl` keeps the provider's 30-minute default and still sends `{ mode: "explicit" }` for a breakpoint. The normalized usage object exposes `cachedInputTokens` and `cacheWriteTokens`. When OpenAI returns `cache_write_tokens_details`, usage also includes `cacheWriteTokensDetails` (`ttl30mTokens`, `ttl12hTokens`). 30-minute writes use the catalog cache-write rate (1.25× uncached input on GPT-5.6). 12-hour writes are priced at 2.5× the uncached input rate when that split is present. See [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
 
 The GPT-5.6 Responses integration also includes Programmatic Tool Calling and the Multi-agent beta. Programmatic callable tools declare their permitted caller and optional output schema through `openAIProgrammaticTool()`. Multi-agent mode adds the required beta header automatically and keeps the root agent's final answer:
 

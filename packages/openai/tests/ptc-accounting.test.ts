@@ -22,6 +22,48 @@ describe("PTC internal request accounting", () => {
     await expect(f.model.generate({ ...input(), maxTokens: 3 })).rejects.toMatchObject({ usage, usageComplete: true, effectsPossible: true, retryable: false, providerRequestCount: 1 });
     expect(f.fetch).toHaveBeenCalledTimes(1);
   });
+  it("sums cache write lifetimes across PTC responses and keeps them on a later failure", async () => {
+    const detailed = (inputTokens: number, outputTokens: number, ttl30m: number, ttl12h: number) => Response.json({
+      id: "resp_program",
+      status: "completed",
+      output: inputTokens === 4
+        ? [{ type: "program_output", call_id: "call_program", result: "{}", status: "completed" }]
+        : [{ type: "message", content: [{ type: "output_text", text: "done" }] }],
+      usage: {
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        total_tokens: inputTokens + outputTokens,
+        input_tokens_details: {
+          cache_write_tokens: ttl30m + ttl12h,
+          cache_write_tokens_details: { ttl_30m_tokens: ttl30m, ttl_12h_tokens: ttl12h }
+        }
+      }
+    });
+    const f = fixture();
+    f.fetch.mockResolvedValueOnce(detailed(4, 3, 3, 1)).mockResolvedValueOnce(detailed(2, 2, 1, 1));
+    const result = await f.model.generate({ ...input(), maxTokens: 5 });
+    expect(result.usage).toMatchObject({
+      inputTokens: 6,
+      outputTokens: 5,
+      totalTokens: 11,
+      cacheWriteTokens: 6,
+      cacheWriteTokensDetails: { ttl30mTokens: 4, ttl12hTokens: 2 }
+    });
+
+    f.fetch.mockReset();
+    f.fetch.mockResolvedValueOnce(detailed(4, 3, 3, 1)).mockRejectedValue(new Error("network down"));
+    const error = await f.model.generate(input()).catch((caught) => caught);
+    expect(error).toMatchObject({
+      confirmedUsage: {
+        inputTokens: 4,
+        outputTokens: 3,
+        totalTokens: 7,
+        cacheWriteTokens: 4,
+        cacheWriteTokensDetails: { ttl30mTokens: 3, ttl12hTokens: 1 }
+      },
+      usageComplete: false
+    });
+  });
   it("retains confirmed usage when a later dispatch fails without retrying paid work", async () => {
     const f = fixture(); f.fetch.mockResolvedValueOnce(program()).mockRejectedValue(new Error("network down"));
     const error = await f.model.generate(input()).catch(error => error);

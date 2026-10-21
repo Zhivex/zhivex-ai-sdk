@@ -138,6 +138,11 @@ export interface AgUiTokenUsage {
   reasoningTokens?: number;
   cachedInputTokens?: number;
   cacheWriteInputTokens?: number;
+  /** Lifetime split for cache writes. Omitted when the source usage has no split. */
+  cacheWriteTokensDetails?: {
+    ttl30mTokens?: number;
+    ttl12hTokens?: number;
+  };
 }
 
 export type AgUiEvent =

@@ -424,15 +424,33 @@ const budgetFailure = (reason: string, metadata: Record<string, JsonValue>): Age
   metadata
 });
 
+const mergeCacheWriteTokensDetails = (
+  current: TokenUsage["cacheWriteTokensDetails"],
+  incoming: TokenUsage["cacheWriteTokensDetails"]
+): TokenUsage["cacheWriteTokensDetails"] | undefined => {
+  if (!current && !incoming) return undefined;
+  const sumCounter = (left: number | undefined, right: number | undefined) =>
+    left === undefined && right === undefined ? undefined : (left ?? 0) + (right ?? 0);
+  const ttl30mTokens = sumCounter(current?.ttl30mTokens, incoming?.ttl30mTokens);
+  const ttl12hTokens = sumCounter(current?.ttl12hTokens, incoming?.ttl12hTokens);
+  if (ttl30mTokens === undefined && ttl12hTokens === undefined) return undefined;
+  return {
+    ...(ttl30mTokens !== undefined ? { ttl30mTokens } : {}),
+    ...(ttl12hTokens !== undefined ? { ttl12hTokens } : {})
+  };
+};
+
 const addUsage = (usage: TokenUsage | undefined, next: TokenUsage | undefined): TokenUsage | undefined => {
   if (!usage && !next) {
     return undefined;
   }
+  const cacheWriteTokensDetails = mergeCacheWriteTokensDetails(usage?.cacheWriteTokensDetails, next?.cacheWriteTokensDetails);
 
   return {
     inputTokens: (usage?.inputTokens ?? 0) + (next?.inputTokens ?? 0) || undefined,
     cachedInputTokens: (usage?.cachedInputTokens ?? 0) + (next?.cachedInputTokens ?? 0) || undefined,
     cacheWriteTokens: (usage?.cacheWriteTokens ?? 0) + (next?.cacheWriteTokens ?? 0) || undefined,
+    ...(cacheWriteTokensDetails ? { cacheWriteTokensDetails } : {}),
     outputTokens: (usage?.outputTokens ?? 0) + (next?.outputTokens ?? 0) || undefined,
     reasoningTokens: (usage?.reasoningTokens ?? 0) + (next?.reasoningTokens ?? 0) || undefined,
     totalTokens: (usage?.totalTokens ?? 0) + (next?.totalTokens ?? 0) || undefined

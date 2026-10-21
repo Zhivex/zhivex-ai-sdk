@@ -84,7 +84,13 @@ describe("toAgUiEvents", () => {
           maxSteps: 3,
           outputText: "Hello world",
           pendingApprovals: [],
-          usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5, cacheWriteTokens: 1 }
+          usage: {
+            inputTokens: 3,
+            outputTokens: 2,
+            totalTokens: 5,
+            cacheWriteTokens: 7,
+            cacheWriteTokensDetails: { ttl30mTokens: 3, ttl12hTokens: 4 }
+          }
         }
       }
     ];
@@ -135,7 +141,8 @@ describe("toAgUiEvents", () => {
         inputTokens: 3,
         outputTokens: 2,
         totalTokens: 5,
-        cacheWriteInputTokens: 1
+        cacheWriteInputTokens: 7,
+        cacheWriteTokensDetails: { ttl30mTokens: 3, ttl12hTokens: 4 }
       }]
     });
     const snapshot = agui.find((event) => event.type === "STATE_SNAPSHOT");

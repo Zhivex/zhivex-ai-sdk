@@ -604,7 +604,14 @@ describe("otel observability", () => {
           currentStep: 1,
           maxSteps: 4,
           outputText: "hello",
-          pendingApprovals: []
+          pendingApprovals: [],
+          usage: {
+            inputTokens: 12,
+            outputTokens: 2,
+            totalTokens: 14,
+            cacheWriteTokens: 7,
+            cacheWriteTokensDetails: { ttl30mTokens: 3, ttl12hTokens: 4 }
+          }
         }
       }
     ];
@@ -622,6 +629,8 @@ describe("otel observability", () => {
       "zhivex.run_id": "run_1"
     });
     expect(tracer.spans[0]?.span.attributes["gen_ai.agent.id"]).toBeUndefined();
+    expect(tracer.spans[0]?.span.attributes["zhivex.usage_cache_write_ttl_30m_tokens"]).toBe(3);
+    expect(tracer.spans[0]?.span.attributes["zhivex.usage_cache_write_ttl_12h_tokens"]).toBe(4);
     expect(tracer.spans[0]?.span.events.some((entry) => entry.name === "memory-loaded")).toBe(true);
     expect(tracer.spans[0]?.span.events.some((entry) => entry.name === "tool-approval")).toBe(true);
     expect(tracer.spans[0]?.span.ended).toBe(true);
@@ -667,7 +676,9 @@ describe("otel observability", () => {
             usage: {
               inputTokens: 20,
               outputTokens: 5,
-              totalTokens: 25
+              totalTokens: 25,
+              cacheWriteTokens: 7,
+              cacheWriteTokensDetails: { ttl30mTokens: 3, ttl12hTokens: 4 }
             }
           };
         }
@@ -704,7 +715,10 @@ describe("otel observability", () => {
       "gen_ai.request.model": "model",
       "gen_ai.response.finish_reasons": ["stop"],
       "gen_ai.usage.input_tokens": 20,
-      "gen_ai.usage.output_tokens": 5
+      "gen_ai.usage.output_tokens": 5,
+      "gen_ai.usage.cache_creation.input_tokens": 7,
+      "zhivex.usage.cache_write_ttl_30m_tokens": 3,
+      "zhivex.usage.cache_write_ttl_12h_tokens": 4
     });
     expect(tracer.spans.every((entry) => entry.span.ended)).toBe(true);
   });

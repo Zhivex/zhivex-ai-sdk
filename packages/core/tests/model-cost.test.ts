@@ -44,6 +44,102 @@ it("applies an inclusive long-context threshold at the boundary", () => {
   expect(inclusive.find("test", "inclusive")?.longContextPricing?.inputTokenThresholdInclusive).toBe(true);
 });
 
+it("prices 12-hour cache writes at 2.5x input and keeps an unsplit write on the catalog rate", () => {
+  const guide = createModelCatalog([{
+    provider: "openai",
+    modelId: "guide",
+    inputCostPer1kTokens: 0.001,
+    cachedInputCostPer1kTokens: 0.0001,
+    cacheWriteCostPer1kTokens: 0.00125,
+    outputCostPer1kTokens: 0
+  }], { snapshotVersion: "fixture-1", pricing: { version: "price-1", currency: "USD", unit: "per_1k_tokens", source: "fixture" } });
+  const priced = calculateModelCost({
+    catalog: guide,
+    provider: "openai",
+    modelId: "guide",
+    reasoningAccounting: "included",
+    usage: {
+      inputTokens: 12000,
+      cachedInputTokens: 4000,
+      cacheWriteTokens: 7000,
+      cacheWriteTokensDetails: { ttl30mTokens: 3000, ttl12hTokens: 4000 },
+      outputTokens: 0
+    }
+  });
+  expect(priced.amount).toBeCloseTo(0.01515);
+  expect(priced.components.input).toMatchObject({ tokens: 1000, amount: 0.001 });
+  expect(priced.components.cachedInput).toMatchObject({ tokens: 4000, amount: 0.0004 });
+  expect(priced.components.cacheWrite).toMatchObject({ tokens: 7000, amount: 0.01375 });
+  expect(priced.cacheWriteDetails?.ttl30m.amount).toBeCloseTo(0.00375);
+  expect(priced.cacheWriteDetails?.ttl12h.amount).toBeCloseTo(0.01);
+
+  const plain = calculateModelCost({ ...base, usage: { inputTokens: 1000, cachedInputTokens: 0, cacheWriteTokens: 300, outputTokens: 0 } });
+  const thirtyMinute = calculateModelCost({
+    ...base,
+    usage: { inputTokens: 1000, cachedInputTokens: 0, cacheWriteTokens: 300, cacheWriteTokensDetails: { ttl30mTokens: 300, ttl12hTokens: 0 }, outputTokens: 0 }
+  });
+  expect(thirtyMinute.components.cacheWrite).toEqual(plain.components.cacheWrite);
+  expect(thirtyMinute.amount).toBeCloseTo(plain.amount!);
+
+  const twelveHour = calculateModelCost({
+    ...base,
+    usage: { inputTokens: 1000, cachedInputTokens: 0, cacheWriteTokens: 300, cacheWriteTokensDetails: { ttl30mTokens: 0, ttl12hTokens: 300 }, outputTokens: 0 }
+  });
+  expect(twelveHour.components.cacheWrite?.amount).toBeCloseTo(1.5);
+  expect(twelveHour.components.cacheWrite?.ratePer1kTokens).toBeCloseTo(5);
+
+  const mixed = calculateModelCost({
+    ...base,
+    usage: { inputTokens: 1000, cachedInputTokens: 0, cacheWriteTokens: 300, cacheWriteTokensDetails: { ttl30mTokens: 100, ttl12hTokens: 200 }, outputTokens: 0 }
+  });
+  expect(mixed.components.cacheWrite?.amount).toBeCloseTo(1.3);
+
+  const longWrite = calculateModelCost({
+    ...base,
+    usage: { inputTokens: 1001, cachedInputTokens: 0, cacheWriteTokens: 100, cacheWriteTokensDetails: { ttl12hTokens: 100 }, outputTokens: 0 }
+  });
+  expect(longWrite.longContext).toBe(true);
+  expect(longWrite.components.cacheWrite?.amount).toBeCloseTo(1);
+
+  const missingInput = createModelCatalog([{
+    provider: "test", modelId: "no-input", cacheWriteCostPer1kTokens: 3, outputCostPer1kTokens: 6
+  }], { snapshotVersion: "fixture-1", pricing: { version: "price-1", currency: "USD", unit: "per_1k_tokens", source: "fixture" } });
+  const unknownTwelve = calculateModelCost({
+    catalog: missingInput,
+    provider: "test",
+    modelId: "no-input",
+    usage: { inputTokens: 100, cachedInputTokens: 0, cacheWriteTokens: 10, cacheWriteTokensDetails: { ttl12hTokens: 10 }, outputTokens: 0 }
+  });
+  expect(unknownTwelve.amount).toBeNull();
+  expect(unknownTwelve.unknownReasons).toContain("cacheWrite12h-price-missing");
+
+  const noWriteRate = createModelCatalog([{
+    provider: "test", modelId: "no-write", inputCostPer1kTokens: 2, cachedInputCostPer1kTokens: 0.5, outputCostPer1kTokens: 6
+  }], { snapshotVersion: "fixture-1", pricing: { version: "price-1", currency: "USD", unit: "per_1k_tokens", source: "fixture" } });
+  const twelveOnly = calculateModelCost({
+    catalog: noWriteRate,
+    provider: "test",
+    modelId: "no-write",
+    reasoningAccounting: "included",
+    usage: { inputTokens: 100, cachedInputTokens: 0, cacheWriteTokens: 40, cacheWriteTokensDetails: { ttl30mTokens: 0, ttl12hTokens: 40 }, outputTokens: 0 }
+  });
+  expect(twelveOnly.status).toBe("known");
+  expect(twelveOnly.components.cacheWrite?.amount).toBeCloseTo(0.2);
+
+  expect(() => calculateModelCost({
+    ...base,
+    usage: { inputTokens: 10, cacheWriteTokens: 4, cacheWriteTokensDetails: { ttl30mTokens: 1, ttl12hTokens: 1 }, outputTokens: 0 }
+  })).toThrow(/do not match/);
+  expect(() => calculateModelCost({
+    ...base,
+    usage: { inputTokens: 10, cacheWriteTokens: 1, cacheWriteTokensDetails: { ttl30mTokens: 1, extra: 1 } as never, outputTokens: 0 }
+  })).toThrow(/cacheWriteTokensDetails/);
+  expect(() => calculateModelCost({
+    ...base,
+    usage: { inputTokens: 10, cacheWriteTokens: 0, cacheWriteTokensDetails: {}, outputTokens: 0 }
+  })).toThrow(/cacheWriteTokensDetails/);
+});
+
 it("requires explicit reasoning accounting and supports additional reasoning", () => {
   const usage = { inputTokens: 100, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 10, reasoningTokens: 5 };
   expect(calculateModelCost({ ...base, usage, reasoningAccounting: undefined }).amount).toBeNull();

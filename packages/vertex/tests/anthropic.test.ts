@@ -109,6 +109,16 @@ describe("Claude on Vertex", () => {
     expect(result.usage).toMatchObject({ inputTokens: 26, cachedInputTokens: 16, cacheWriteTokens: 8 });
   });
 
+  it("forwards anthropic-user-profile-id and keeps it out of the Vertex body", async () => {
+    const fetcher = vi.fn(async () => response());
+    await provider(fetcher)("claude-sonnet-4-6").generate({
+      ...input,
+      providerOptions: { userProfileId: "uprof_011CZkZCu8hGbp5mYRQgUmz9" }
+    });
+    expect(bodyAt(fetcher)).not.toHaveProperty("userProfileId");
+    expect(new Headers(fetcher.mock.calls[0][1].headers).get("anthropic-user-profile-id")).toBe("uprof_011CZkZCu8hGbp5mYRQgUmz9");
+  });
+
   it("rejects unsupported source URLs and invalid cache controls locally", async () => {
     const fetcher = vi.fn();
     const model = provider(fetcher)("claude-sonnet-4-6");

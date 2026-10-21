@@ -1,16 +1,24 @@
+import { cacheWriteTokensDetailsFromProvider } from "./cache-write-usage.js";
 import { ConfigurationError } from "./errors.js";
 import { normalizeFinishReason } from "./messages.js";
 import { streamSSE } from "./stream.js";
 import type { JsonValue, StreamEvent, TokenUsage } from "./types.js";
 
-export const chatCompletionsUsage = (value: any): TokenUsage | undefined => value ? {
-  inputTokens: value.prompt_tokens,
-  outputTokens: value.completion_tokens,
-  totalTokens: value.total_tokens,
-  cachedInputTokens: value.prompt_tokens_details?.cached_tokens ?? value.cachedContentTokenCount,
-  reasoningTokens: value.completion_tokens_details?.reasoning_tokens ?? value.reasoning_tokens,
-  cacheWriteTokens: value.prompt_tokens_details?.cache_write_tokens
-} : undefined;
+export const chatCompletionsUsage = (value: any): TokenUsage | undefined => {
+  if (!value) return undefined;
+  const cacheWriteTokensDetails = cacheWriteTokensDetailsFromProvider(
+    value.prompt_tokens_details?.cache_write_tokens_details ?? value.input_tokens_details?.cache_write_tokens_details
+  );
+  return {
+    inputTokens: value.prompt_tokens,
+    outputTokens: value.completion_tokens,
+    totalTokens: value.total_tokens,
+    cachedInputTokens: value.prompt_tokens_details?.cached_tokens ?? value.cachedContentTokenCount,
+    reasoningTokens: value.completion_tokens_details?.reasoning_tokens ?? value.reasoning_tokens,
+    cacheWriteTokens: value.prompt_tokens_details?.cache_write_tokens,
+    ...(cacheWriteTokensDetails ? { cacheWriteTokensDetails } : {})
+  };
+};
 
 export const chatCompletionsArguments = (value: unknown): JsonValue => {
   if (typeof value !== "string" || !value.trim() || value.length > 1024 * 1024) {

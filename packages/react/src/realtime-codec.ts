@@ -13,6 +13,23 @@ export function decodeRealtimeBase64(value: string): Uint8Array {
 }
 // Copy public scalar fields instead of serializing provider objects. In particular,
 // response-complete metadata can contain tool arguments and other server-only data.
+const readCacheWriteTokensDetails = (usage: object): { ttl30mTokens?: number; ttl12hTokens?: number } | undefined => {
+  const details = (usage as { cacheWriteTokensDetails?: unknown }).cacheWriteTokensDetails;
+  if (!details || typeof details !== "object" || Array.isArray(details)) return undefined;
+  const record = details as Record<string, unknown>;
+  const read = (key: "ttl30mTokens" | "ttl12hTokens") => {
+    const value = record[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  };
+  const ttl30mTokens = read("ttl30mTokens");
+  const ttl12hTokens = read("ttl12hTokens");
+  if (ttl30mTokens === undefined && ttl12hTokens === undefined) return undefined;
+  return {
+    ...(ttl30mTokens !== undefined ? { ttl30mTokens } : {}),
+    ...(ttl12hTokens !== undefined ? { ttl12hTokens } : {})
+  };
+};
+
 const publicFields = (value: object, keys: readonly string[]): Record<string, string | number | boolean> => {
   const result: Record<string, string | number | boolean> = {};
   for (const key of keys) {
@@ -42,9 +59,15 @@ export function encodeRealtimeEvent(event: AgentLiveEvent): unknown {
       return { type: event.type, ...publicFields(event, ["delegationId", "offsetMs"]) };
     case "agent-run-update": {
       const run = publicFields(event.run, ["runId", "parentRunId", "agentId", "name", "status", "provider", "modelId", "currentStep", "maxSteps", "toolCalls", "handoffToAgentId", "startedAt", "updatedAt"]);
+      const cacheWriteTokensDetails = event.run.usage ? readCacheWriteTokensDetails(event.run.usage) : undefined;
       return { type: event.type, run: {
         ...run,
-        ...(event.run.usage ? { usage: publicFields(event.run.usage, ["inputTokens", "cachedInputTokens", "cacheWriteTokens", "outputTokens", "reasoningTokens", "totalTokens", "speed"]) } : {}),
+        ...(event.run.usage ? {
+          usage: {
+            ...publicFields(event.run.usage, ["inputTokens", "cachedInputTokens", "cacheWriteTokens", "outputTokens", "reasoningTokens", "totalTokens", "speed"]),
+            ...(cacheWriteTokensDetails ? { cacheWriteTokensDetails } : {})
+          }
+        } : {}),
         ...(event.run.budget ? { budget: publicFields(event.run.budget, ["maxTotalTokens", "maxToolCalls"]) } : {})
       } };
     }
@@ -58,6 +81,17 @@ export function decodeRealtimeEvent(value: unknown): AgentLiveEvent {
   if (event.type === "realtime-audio-output") {
     if (typeof event.audio !== "string" || typeof event.mediaType !== "string") throw new Error("Malformed audio event.");
     return { ...event, audio: decodeRealtimeBase64(event.audio) } as unknown as AgentLiveEvent;
+  }
+  if (event.type === "agent-run-update" && event.run && typeof event.run === "object" && !Array.isArray(event.run)) {
+    const run = event.run as Record<string, unknown>;
+    const usage = run.usage;
+    if (usage && typeof usage === "object" && !Array.isArray(usage) && "cacheWriteTokensDetails" in usage) {
+      const details = readCacheWriteTokensDetails(usage);
+      const nextUsage = { ...(usage as Record<string, unknown>) };
+      if (details) nextUsage.cacheWriteTokensDetails = details;
+      else delete nextUsage.cacheWriteTokensDetails;
+      return { ...event, run: { ...run, usage: nextUsage } } as unknown as AgentLiveEvent;
+    }
   }
   if (event.type === "realtime-text-delta" && typeof event.textDelta !== "string") throw new Error("Malformed text delta.");
   if (event.type === "realtime-transcript" && (typeof event.text !== "string" || !["user", "assistant"].includes(String(event.role)) || typeof event.isFinal !== "boolean")) throw new Error("Malformed transcript.");

@@ -251,6 +251,7 @@ describe("view edges", () => {
     expect(stepFirst.runs[0]?.steps[0]).toMatchObject({ index: 0, status: "completed" });
     expect(timeline?.steps[0]?.durationMs).toBe(30);
     expect(timeline?.steps[0]?.usage).toContain("cached");
+    expect(timeline?.steps[0]?.usage).not.toContain("12h");
     expect(timeline?.steps[0]?.usage).toContain("reasoning");
     expect(timeline?.toolCalls.find((tool) => tool.id === "c1")).toMatchObject({
       arguments: "omitted",
@@ -270,6 +271,28 @@ describe("view edges", () => {
     expect(renderTraceRun(empty, empty.runs[0]!)).toContain("No tool calls were recorded.");
     expect(renderTraceRun(empty, empty.runs[0]!)).toContain("No approvals were recorded.");
     expect(renderTraceList({ runs: [], warnings: [] })).toContain("No runs were found.");
+  });
+
+  it("shows cache write lifetimes in step usage", () => {
+    const view = buildTraceView({
+      ledgers: [{
+        type: "agent_run_ledger",
+        runId: "run_cache",
+        status: "completed",
+        trace: {
+          steps: [{
+            index: 0,
+            usage: {
+              inputTokens: 12000,
+              cacheWriteTokens: 7000,
+              cacheWriteTokensDetails: { ttl30mTokens: 3000, ttl12hTokens: 4000 }
+            }
+          }]
+        }
+      }]
+    });
+    expect(view.runs[0]?.steps[0]?.usage).toContain("7000 cache write");
+    expect(view.runs[0]?.steps[0]?.usage).toContain("3000 30m, 4000 12h");
   });
 });
 

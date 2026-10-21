@@ -47,10 +47,28 @@ export type HostedToolSupport = {
   metering: "provider-counter" | "derived" | "unverified";
 };
 
+/**
+ * Non-overlapping cache-write counts by minimum lifetime.
+ * OpenAI Responses reports these as `input_tokens_details.cache_write_tokens_details`.
+ * When both counters are present they sum to `cacheWriteTokens`.
+ * @see https://developers.openai.com/api/docs/guides/prompt-caching
+ */
+export interface CacheWriteTokensDetails {
+  /** Tokens written at the 30-minute minimum. Billed at the catalog cache-write rate (1.25× uncached input on GPT-5.6+). */
+  ttl30mTokens?: number;
+  /** Tokens written at the 12-hour minimum. Billed at 2.5× the uncached input rate. */
+  ttl12hTokens?: number;
+}
+
 export interface TokenUsage {
   inputTokens?: number;
   cachedInputTokens?: number;
   cacheWriteTokens?: number;
+  /**
+   * Present when the provider splits cache writes by lifetime.
+   * Omitted when the response has no split, so existing single-rate costing is unchanged.
+   */
+  cacheWriteTokensDetails?: CacheWriteTokensDetails;
   outputTokens?: number;
   reasoningTokens?: number;
   totalTokens?: number;

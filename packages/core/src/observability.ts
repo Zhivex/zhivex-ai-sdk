@@ -197,6 +197,8 @@ const usageAttributes = (usage: TokenUsage | undefined): Record<string, unknown>
   [GEN_AI.usageOutputTokens]: usage?.outputTokens,
   [GEN_AI.usageCacheReadInputTokens]: usage?.cachedInputTokens,
   [GEN_AI.usageCacheCreationInputTokens]: usage?.cacheWriteTokens,
+  "zhivex.usage.cache_write_ttl_30m_tokens": usage?.cacheWriteTokensDetails?.ttl30mTokens,
+  "zhivex.usage.cache_write_ttl_12h_tokens": usage?.cacheWriteTokensDetails?.ttl12hTokens,
   [GEN_AI.usageReasoningOutputTokens]: usage?.reasoningTokens
 });
 
@@ -705,7 +707,9 @@ export const createOtelAgentObserver = async (options: {
         "zhivex.provider_finish_reason": event.state.providerFinishReason,
         "zhivex.usage_input_tokens": event.state.usage?.inputTokens,
         "zhivex.usage_output_tokens": event.state.usage?.outputTokens,
-        "zhivex.usage_total_tokens": event.state.usage?.totalTokens
+        "zhivex.usage_total_tokens": event.state.usage?.totalTokens,
+        "zhivex.usage_cache_write_ttl_30m_tokens": event.state.usage?.cacheWriteTokensDetails?.ttl30mTokens,
+        "zhivex.usage_cache_write_ttl_12h_tokens": event.state.usage?.cacheWriteTokensDetails?.ttl12hTokens
       }, error, finishedAt);
     }
   };

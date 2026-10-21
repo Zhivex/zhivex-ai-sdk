@@ -132,6 +132,25 @@ export class ProviderToolCallError extends ZhivexAIError {
         copy[key] = count;
       }
       if (valid) {
+        const details = supplied.cacheWriteTokensDetails;
+        if (details && typeof details === "object") {
+          const copyDetails: NonNullable<TokenUsage["cacheWriteTokensDetails"]> = {};
+          let detailsValid = true;
+          for (const key of ["ttl30mTokens", "ttl12hTokens"] as const) {
+            const count = details[key];
+            if (count === undefined) continue;
+            if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+              detailsValid = false;
+              break;
+            }
+            copyDetails[key] = count;
+          }
+          const detailSum = (copyDetails.ttl30mTokens ?? 0) + (copyDetails.ttl12hTokens ?? 0);
+          const hasDetail = copyDetails.ttl30mTokens !== undefined || copyDetails.ttl12hTokens !== undefined;
+          if (detailsValid && hasDetail && (supplied.cacheWriteTokens === undefined || supplied.cacheWriteTokens === detailSum)) {
+            copy.cacheWriteTokensDetails = Object.freeze(copyDetails);
+          }
+        }
         this.confirmedUsage = Object.freeze(copy);
         this.usageComplete = options.usageComplete ?? true;
         if (this.usageComplete) this.usage = this.confirmedUsage;
