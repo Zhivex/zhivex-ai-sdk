@@ -4,7 +4,16 @@ import { createMockLanguageModel } from "../../core/src/testing.js";
 import { type TokenUsage } from "@zhivex-ai/core";
 import { createGateway } from "../src/index.js";
 
-const full: TokenUsage = { inputTokens: 100, cachedInputTokens: 80, cacheWriteTokens: 10, outputTokens: 20, reasoningTokens: 5, totalTokens: 120, speed: "fast" };
+const full: TokenUsage = {
+  inputTokens: 100,
+  cachedInputTokens: 80,
+  cacheWriteTokens: 10,
+  cacheWriteTokensDetails: { ttl30mTokens: 4, ttl12hTokens: 6 },
+  outputTokens: 20,
+  reasoningTokens: 5,
+  totalTokens: 120,
+  speed: "fast"
+};
 const fixtures = [full, { inputTokens: 0, outputTokens: 0, totalTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, speed: "standard" } as TokenUsage, { cachedInputTokens: 8, reasoningTokens: 2 } as TokenUsage, undefined];
 
 describe("gateway complete usage contract", () => {
@@ -37,5 +46,14 @@ it("preserves multi-step agent usage without adding reasoning to total twice", a
   ] });
   const gateway = createGateway({ adapters: { gemini: { name: "test", languageModel: () => model } } });
   const result = await gateway.runAgent({ primary: { provider: "gemini", modelId: "test" }, prompt: "read", maxSteps: 2, tools: { read: { name: "read", schema: z.object({}), execute: () => "ok" } } });
-  expect(result.usage).toEqual({ inputTokens: 200, cachedInputTokens: 160, cacheWriteTokens: 20, outputTokens: 40, reasoningTokens: 10, totalTokens: 240, speed: "fast" });
+  expect(result.usage).toEqual({
+    inputTokens: 200,
+    cachedInputTokens: 160,
+    cacheWriteTokens: 20,
+    cacheWriteTokensDetails: { ttl30mTokens: 8, ttl12hTokens: 12 },
+    outputTokens: 40,
+    reasoningTokens: 10,
+    totalTokens: 240,
+    speed: "fast"
+  });
 });

@@ -87,6 +87,14 @@ const toUsage = (
   if (usage.reasoningTokens !== undefined) entry.reasoningTokens = usage.reasoningTokens;
   if (usage.cachedInputTokens !== undefined) entry.cachedInputTokens = usage.cachedInputTokens;
   if (usage.cacheWriteTokens !== undefined) entry.cacheWriteInputTokens = usage.cacheWriteTokens;
+  const ttl30mTokens = usage.cacheWriteTokensDetails?.ttl30mTokens;
+  const ttl12hTokens = usage.cacheWriteTokensDetails?.ttl12hTokens;
+  if (typeof ttl30mTokens === "number" || typeof ttl12hTokens === "number") {
+    entry.cacheWriteTokensDetails = {
+      ...(typeof ttl30mTokens === "number" ? { ttl30mTokens } : {}),
+      ...(typeof ttl12hTokens === "number" ? { ttl12hTokens } : {})
+    };
+  }
   return Object.keys(entry).length > 0 ? [entry] : undefined;
 };
 

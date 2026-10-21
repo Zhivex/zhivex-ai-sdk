@@ -67,6 +67,32 @@ const isApprovalResponse = (value: unknown): value is AgentApprovalResponse =>
   isString(value.approvalRequestId) &&
   typeof value.approve === "boolean";
 
+const readCacheWriteTokensDetails = (
+  value: unknown
+): TokenUsage["cacheWriteTokensDetails"] | undefined => {
+  if (!isRecord(value)) return undefined;
+  const details: NonNullable<TokenUsage["cacheWriteTokensDetails"]> = {};
+  if (isNumber(value.ttl30mTokens)) details.ttl30mTokens = value.ttl30mTokens;
+  if (isNumber(value.ttl12hTokens)) details.ttl12hTokens = value.ttl12hTokens;
+  return details.ttl30mTokens !== undefined || details.ttl12hTokens !== undefined ? details : undefined;
+};
+
+const mergeCacheWriteTokensDetails = (
+  current: TokenUsage["cacheWriteTokensDetails"],
+  incoming: TokenUsage["cacheWriteTokensDetails"]
+): TokenUsage["cacheWriteTokensDetails"] | undefined => {
+  if (!current && !incoming) return undefined;
+  const sumCounter = (left: number | undefined, right: number | undefined) =>
+    left === undefined && right === undefined ? undefined : (left ?? 0) + (right ?? 0);
+  const ttl30mTokens = sumCounter(current?.ttl30mTokens, incoming?.ttl30mTokens);
+  const ttl12hTokens = sumCounter(current?.ttl12hTokens, incoming?.ttl12hTokens);
+  if (ttl30mTokens === undefined && ttl12hTokens === undefined) return undefined;
+  return {
+    ...(ttl30mTokens !== undefined ? { ttl30mTokens } : {}),
+    ...(ttl12hTokens !== undefined ? { ttl12hTokens } : {})
+  };
+};
+
 const toTokenUsage = (value: unknown): TokenUsage | undefined => {
   if (!isRecord(value)) {
     return undefined;
@@ -85,6 +111,8 @@ const toTokenUsage = (value: unknown): TokenUsage | undefined => {
       usage[key] = value[key];
     }
   }
+  const cacheWriteTokensDetails = readCacheWriteTokensDetails(value.cacheWriteTokensDetails);
+  if (cacheWriteTokensDetails) usage.cacheWriteTokensDetails = cacheWriteTokensDetails;
   if (value.speed === "standard" || value.speed === "fast") {
     usage.speed = value.speed;
   }
@@ -192,11 +220,16 @@ const mergeUsage = (
 
   const sum = (left: number | undefined, right: number | undefined) =>
     left === undefined && right === undefined ? undefined : (left ?? 0) + (right ?? 0);
+  const cacheWriteTokensDetails = mergeCacheWriteTokensDetails(
+    current.cacheWriteTokensDetails,
+    incoming.cacheWriteTokensDetails
+  );
 
   return {
     inputTokens: sum(current.inputTokens, incoming.inputTokens),
     cachedInputTokens: sum(current.cachedInputTokens, incoming.cachedInputTokens),
     cacheWriteTokens: sum(current.cacheWriteTokens, incoming.cacheWriteTokens),
+    ...(cacheWriteTokensDetails ? { cacheWriteTokensDetails } : {}),
     outputTokens: sum(current.outputTokens, incoming.outputTokens),
     reasoningTokens: sum(current.reasoningTokens, incoming.reasoningTokens),
     totalTokens: sum(current.totalTokens, incoming.totalTokens),

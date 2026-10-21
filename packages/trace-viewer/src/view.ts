@@ -6,6 +6,11 @@ export interface TokenUsageView {
   outputTokens?: number;
   totalTokens?: number;
   cachedInputTokens?: number;
+  cacheWriteTokens?: number;
+  cacheWriteTokensDetails?: {
+    ttl30mTokens?: number;
+    ttl12hTokens?: number;
+  };
   reasoningTokens?: number;
 }
 
@@ -92,6 +97,16 @@ const formatUsage = (usage: TokenUsageView | undefined): string | undefined => {
   if (usage.outputTokens !== undefined) parts.push(`${usage.outputTokens} out`);
   if (usage.totalTokens !== undefined) parts.push(`${usage.totalTokens} total`);
   if (usage.cachedInputTokens !== undefined) parts.push(`${usage.cachedInputTokens} cached`);
+  if (usage.cacheWriteTokens !== undefined) parts.push(`${usage.cacheWriteTokens} cache write`);
+  const ttl30mTokens = usage.cacheWriteTokensDetails?.ttl30mTokens;
+  const ttl12hTokens = usage.cacheWriteTokensDetails?.ttl12hTokens;
+  if (ttl30mTokens !== undefined || ttl12hTokens !== undefined) {
+    const lifetimes = [
+      ttl30mTokens !== undefined ? `${ttl30mTokens} 30m` : undefined,
+      ttl12hTokens !== undefined ? `${ttl12hTokens} 12h` : undefined
+    ].filter((part): part is string => part !== undefined);
+    parts.push(lifetimes.join(", "));
+  }
   if (usage.reasoningTokens !== undefined) parts.push(`${usage.reasoningTokens} reasoning`);
   return parts.length > 0 ? parts.join(" / ") : undefined;
 };
@@ -99,11 +114,21 @@ const formatUsage = (usage: TokenUsageView | undefined): string | undefined => {
 const readUsage = (value: unknown): TokenUsageView | undefined => {
   const record = asRecord(value);
   if (!record) return undefined;
+  const details = asRecord(record.cacheWriteTokensDetails);
+  const ttl30mTokens = details ? asNumber(details.ttl30mTokens) : undefined;
+  const ttl12hTokens = details ? asNumber(details.ttl12hTokens) : undefined;
   const usage: TokenUsageView = {
     inputTokens: asNumber(record.inputTokens),
     outputTokens: asNumber(record.outputTokens),
     totalTokens: asNumber(record.totalTokens),
     cachedInputTokens: asNumber(record.cachedInputTokens),
+    cacheWriteTokens: asNumber(record.cacheWriteTokens),
+    ...(ttl30mTokens !== undefined || ttl12hTokens !== undefined
+      ? { cacheWriteTokensDetails: {
+          ...(ttl30mTokens !== undefined ? { ttl30mTokens } : {}),
+          ...(ttl12hTokens !== undefined ? { ttl12hTokens } : {})
+        } }
+      : {}),
     reasoningTokens: asNumber(record.reasoningTokens)
   };
   return Object.values(usage).some((entry) => entry !== undefined) ? usage : undefined;
