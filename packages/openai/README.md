@@ -193,7 +193,9 @@ await generateText({
 
 The helper marks the content block immediately before it. Placing it before any cacheable content throws `ConfigurationError`. `prompt_cache_retention` remains available for older model families, but it is a legacy alternative to `prompt_cache_options` and should not be combined with it for GPT-5.6.
 
-For GPT-5.6, cache writes cost 1.25x the uncached input rate and cache reads receive a 90% discount. Normalized usage exposes these as `result.usage.cacheWriteTokens` and `result.usage.cachedInputTokens`; the raw response remains available when provider-specific details are needed. See [OpenAI's pricing and prompt caching notes](https://help.openai.com/en/articles/20001325-a-preview-of-gpt-5-6-sol-terra-and-luna).
+`prompt_cache_options.ttl` accepts `"30m"` or `"12h"` on the Responses API for GPT-5.6 and later. Omitting `ttl` leaves the provider default (`"30m"`) and does not add a lifetime to the request. An explicit breakpoint may carry the same `ttl`; omitting it still sends `{ mode: "explicit" }`. Any other breakpoint `ttl` fails locally. `"12h"` is documented for Responses. Passing it with `apiMode: "chat"` is forwarded, and Chat Completions support for that value is not confirmed by the Responses guide.
+
+Cache reads stay at the cached input rate. 30-minute writes use the catalog cache-write rate, which is 1.25× the uncached input rate for GPT-5.6. 12-hour writes are 2.5× the uncached input rate. When the response includes `input_tokens_details.cache_write_tokens_details`, normalized usage exposes `cacheWriteTokensDetails.ttl30mTokens` and `ttl12hTokens`, and cost uses those rates. Usage without that split stays on the single catalog write rate. See [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
 
 ## Programmatic Tool Calling
 

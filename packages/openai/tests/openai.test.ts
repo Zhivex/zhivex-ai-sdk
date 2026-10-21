@@ -1899,6 +1899,7 @@ describe("openai adapter", () => {
       cacheWriteTokens: 4,
       reasoningTokens: 6
     });
+    expect(responseResult.usage).not.toHaveProperty("cacheWriteTokensDetails");
 
     expect(fetchMock.mock.calls[1]?.[0]).toBe("https://api.openai.com/v1/chat/completions");
     const chatBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
@@ -1972,6 +1973,127 @@ describe("openai adapter", () => {
     });
     expect(body.input[0].content[0].prompt_cache_breakpoint).toEqual({ mode: "explicit" });
     expect(body.input[1].content[0].prompt_cache_breakpoint).toEqual({ mode: "explicit" });
+  });
+
+  it("forwards a 12-hour prompt cache ttl and maps cache write lifetimes", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_12h",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "cached" }] }],
+        usage: {
+          input_tokens: 12000,
+          input_tokens_details: {
+            cached_tokens: 4000,
+            cache_write_tokens: 7000,
+            cache_write_tokens_details: { ttl_30m_tokens: 3000, ttl_12h_tokens: 4000 }
+          },
+          output_tokens: 10,
+          total_tokens: 12010
+        }
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-5.6"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            {
+              type: "text",
+              text: "Stable prefix",
+              providerMetadata: {
+                openai: { prompt_cache_breakpoint: { mode: "explicit", ttl: "12h" } }
+              }
+            },
+            { type: "text", text: "Question" },
+            openAIPromptCacheBreakpoint({ ttl: "30m" })
+          ]
+        }
+      ],
+      providerOptions: {
+        prompt_cache_options: { ttl: "12h" }
+      }
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.prompt_cache_options).toEqual({ ttl: "12h" });
+    expect(body.input[0].content[0].prompt_cache_breakpoint).toEqual({ mode: "explicit", ttl: "12h" });
+    expect(body.input[0].content[1].prompt_cache_breakpoint).toEqual({ mode: "explicit", ttl: "30m" });
+    expect(result.usage).toMatchObject({
+      inputTokens: 12000,
+      cachedInputTokens: 4000,
+      cacheWriteTokens: 7000,
+      cacheWriteTokensDetails: { ttl30mTokens: 3000, ttl12hTokens: 4000 },
+      outputTokens: 10,
+      totalTokens: 12010
+    });
+  });
+
+  it("forwards a 12-hour cache ttl on Chat Completions and maps write lifetimes", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "chat" } }],
+        usage: {
+          prompt_tokens: 20,
+          prompt_tokens_details: {
+            cached_tokens: 4,
+            cache_write_tokens: 6,
+            cache_write_tokens_details: { ttl_30m_tokens: 1, ttl_12h_tokens: 5 }
+          },
+          completion_tokens: 2,
+          total_tokens: 22
+        }
+      })
+    );
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = await generateText({
+      model: provider("gpt-4o-mini"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "prefix" },
+            openAIPromptCacheBreakpoint({ ttl: "12h" })
+          ]
+        }
+      ],
+      providerOptions: {
+        prompt_cache_options: { ttl: "12h" }
+      }
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/completions");
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.prompt_cache_options).toEqual({ ttl: "12h" });
+    expect(body.messages[0].content[0].prompt_cache_breakpoint).toEqual({ mode: "explicit", ttl: "12h" });
+    expect(result.usage?.cacheWriteTokensDetails).toEqual({ ttl30mTokens: 1, ttl12hTokens: 5 });
+    expect(result.usage?.cacheWriteTokens).toBe(6);
+  });
+
+  it("rejects an unsupported explicit prompt cache breakpoint ttl before the request", async () => {
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await expect(generateText({
+      model: provider("gpt-5.6"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            {
+              type: "text",
+              text: "prefix",
+              providerMetadata: {
+                openai: { prompt_cache_breakpoint: { mode: "explicit", ttl: "1h" } }
+              }
+            }
+          ]
+        }
+      ]
+    })).rejects.toThrow(/ttl/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("forwards typed service_tier ultrafast and untyped provider options", async () => {

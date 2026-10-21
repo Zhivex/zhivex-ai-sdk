@@ -37,6 +37,7 @@ import {
   ProviderHTTPError,
   ProviderResponseTooLargeError,
   ProviderToolCallError,
+  ValidationError,
   assertTrustedEndpoint,
   resolveAudioResponseLimits,
   openWebSocketConnection,
@@ -409,9 +410,17 @@ export interface OpenAIProgrammaticToolOptions {
   outputSchema?: z.ZodTypeAny;
 }
 
+/**
+ * Responses `prompt_cache_options.ttl`.
+ * `"30m"` is the provider default. `"12h"` is the 12-hour minimum for GPT-5.6 and later.
+ * Omitting `ttl` does not send a lifetime and leaves that default in place.
+ * @see https://developers.openai.com/api/docs/guides/prompt-caching
+ */
+export type OpenAIPromptCacheTtl = "30m" | "12h";
+
 export interface OpenAIPromptCacheOptions {
   mode?: "implicit" | "explicit";
-  ttl?: "30m";
+  ttl?: OpenAIPromptCacheTtl;
 }
 
 export interface OpenAIMultiAgentOptions {
@@ -562,6 +571,8 @@ export interface OpenAIRealtimeMcpApprovalResultOptions {
 export interface OpenAIPromptCacheBreakpointData {
   type: "prompt_cache_breakpoint";
   mode: "explicit";
+  /** Overrides the request `prompt_cache_options.ttl` for this explicit breakpoint. */
+  ttl?: OpenAIPromptCacheTtl;
 }
 
 export interface OpenAIResponsesOutputData {
@@ -716,6 +727,15 @@ const isOpenAIPromptCacheBreakpointPart = (
   typeof part.data === "object" &&
   (part.data as Record<string, unknown>).type === "prompt_cache_breakpoint";
 
+const explicitPromptCacheBreakpoint = (breakpoint: unknown): { mode: "explicit"; ttl?: OpenAIPromptCacheTtl } => {
+  const record = breakpoint as Record<string, unknown>;
+  const ttl = record.ttl;
+  if (ttl !== undefined && ttl !== "30m" && ttl !== "12h") {
+    throw new ValidationError('OpenAI prompt cache breakpoint ttl must be "30m" or "12h".');
+  }
+  return ttl === "30m" || ttl === "12h" ? { mode: "explicit", ttl } : { mode: "explicit" };
+};
+
 const promptCacheBreakpointForContentPart = (part: ModelMessage["parts"][number]) => {
   const metadata = (part as ModelMessage["parts"][number] & { providerMetadata?: Record<string, unknown> })
     .providerMetadata;
@@ -725,7 +745,7 @@ const promptCacheBreakpointForContentPart = (part: ModelMessage["parts"][number]
       : metadata;
   const breakpoint = openAIMetadata?.prompt_cache_breakpoint;
   return breakpoint && typeof breakpoint === "object" && !Array.isArray(breakpoint)
-    ? { prompt_cache_breakpoint: { mode: "explicit" } }
+    ? { prompt_cache_breakpoint: explicitPromptCacheBreakpoint(breakpoint) }
     : {};
 };
 
@@ -738,12 +758,12 @@ const imageDetailForPart = (part: Extract<ModelMessage["parts"][number], { type:
   return detail === "auto" || detail === "low" || detail === "high" || detail === "original" ? detail : undefined;
 };
 
-const markLastContentBlockForPromptCaching = (content: Array<Record<string, unknown>>) => {
+const markLastContentBlockForPromptCaching = (content: Array<Record<string, unknown>>, breakpoint: unknown) => {
   const last = content.at(-1);
   if (!last) {
     throw new ConfigurationError("OpenAI prompt cache breakpoints must follow a cacheable content part.");
   }
-  last.prompt_cache_breakpoint = { mode: "explicit" };
+  last.prompt_cache_breakpoint = explicitPromptCacheBreakpoint(breakpoint);
 };
 
 const mapContentParts = (message: ModelMessage) => {
@@ -789,7 +809,7 @@ const mapContentParts = (message: ModelMessage) => {
         ...promptCacheBreakpointForContentPart(part)
       });
     } else if (isOpenAIPromptCacheBreakpointPart(part)) {
-      markLastContentBlockForPromptCaching(content);
+      markLastContentBlockForPromptCaching(content, part.data);
     }
   }
 
@@ -1462,7 +1482,7 @@ const toResponsesInput = (
           break;
         case "provider-data":
           if (isOpenAIPromptCacheBreakpointPart(part)) {
-            markLastContentBlockForPromptCaching(content);
+            markLastContentBlockForPromptCaching(content, part.data);
           }
           break;
       }
@@ -1678,29 +1698,68 @@ const attachTerminalUsage = (error: ProviderToolCallError, raw: unknown) => new 
   usage: mapResponsesUsage(raw)
 });
 
-const mapResponsesUsage = (usage: any) =>
-  usage
-    ? {
-        inputTokens: usage.input_tokens,
-        cachedInputTokens: usage.input_tokens_details?.cached_tokens,
-        cacheWriteTokens: usage.input_tokens_details?.cache_write_tokens,
-        outputTokens: usage.output_tokens,
-        reasoningTokens: usage.output_tokens_details?.reasoning_tokens,
-        totalTokens: usage.total_tokens
-      }
-    : undefined;
+const mapOpenAICacheWriteTokensDetails = (details: unknown) => {
+  if (!details || typeof details !== "object" || Array.isArray(details)) return undefined;
+  const record = details as Record<string, unknown>;
+  const read = (key: string) => typeof record[key] === "number" ? record[key] as number : undefined;
+  const ttl30mTokens = read("ttl_30m_tokens");
+  const ttl12hTokens = read("ttl_12h_tokens");
+  if (ttl30mTokens === undefined && ttl12hTokens === undefined) return undefined;
+  return {
+    ...(ttl30mTokens !== undefined ? { ttl30mTokens } : {}),
+    ...(ttl12hTokens !== undefined ? { ttl12hTokens } : {})
+  };
+};
 
-const mapChatUsage = (usage: any) =>
-  usage
-    ? {
-        inputTokens: usage.prompt_tokens,
-        cachedInputTokens: usage.prompt_tokens_details?.cached_tokens,
-        cacheWriteTokens: usage.prompt_tokens_details?.cache_write_tokens,
-        outputTokens: usage.completion_tokens,
-        reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
-        totalTokens: usage.total_tokens
-      }
-    : undefined;
+const mapResponsesUsage = (usage: any) => {
+  if (!usage) return undefined;
+  const cacheWriteTokensDetails = mapOpenAICacheWriteTokensDetails(usage.input_tokens_details?.cache_write_tokens_details);
+  return {
+    inputTokens: usage.input_tokens,
+    cachedInputTokens: usage.input_tokens_details?.cached_tokens,
+    cacheWriteTokens: usage.input_tokens_details?.cache_write_tokens,
+    ...(cacheWriteTokensDetails ? { cacheWriteTokensDetails } : {}),
+    outputTokens: usage.output_tokens,
+    reasoningTokens: usage.output_tokens_details?.reasoning_tokens,
+    totalTokens: usage.total_tokens
+  };
+};
+
+const mapChatUsage = (usage: any) => {
+  if (!usage) return undefined;
+  const cacheWriteTokensDetails = mapOpenAICacheWriteTokensDetails(usage.prompt_tokens_details?.cache_write_tokens_details);
+  return {
+    inputTokens: usage.prompt_tokens,
+    cachedInputTokens: usage.prompt_tokens_details?.cached_tokens,
+    cacheWriteTokens: usage.prompt_tokens_details?.cache_write_tokens,
+    ...(cacheWriteTokensDetails ? { cacheWriteTokensDetails } : {}),
+    outputTokens: usage.completion_tokens,
+    reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
+    totalTokens: usage.total_tokens
+  };
+};
+
+const openAIUsageCounters = (usage: {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  cacheWriteTokensDetails?: { ttl30mTokens?: number; ttl12hTokens?: number };
+}) => [
+  usage.inputTokens,
+  usage.outputTokens,
+  usage.totalTokens,
+  usage.cachedInputTokens,
+  usage.cacheWriteTokens,
+  usage.reasoningTokens,
+  usage.cacheWriteTokensDetails?.ttl30mTokens,
+  usage.cacheWriteTokensDetails?.ttl12hTokens
+];
+
+const openAIUsageCounterInvalid = (usage: ReturnType<typeof mapResponsesUsage>) =>
+  openAIUsageCounters(usage ?? {}).some((value) => value !== undefined && (!Number.isSafeInteger(value) || value < 0));
 
 const addTokenUsage = (
   left: ReturnType<typeof mapResponsesUsage>,
@@ -1710,10 +1769,33 @@ const addTokenUsage = (
   if (!right) return left;
   const sum = (a: number | undefined, b: number | undefined) =>
     a === undefined || b === undefined ? undefined : a + b;
+  const consistentDetails = (
+    writes: number | undefined,
+    details: { ttl30mTokens?: number; ttl12hTokens?: number } | undefined
+  ) => {
+    if (!details) return (writes ?? 0) === 0;
+    return writes !== undefined && (details.ttl30mTokens ?? 0) + (details.ttl12hTokens ?? 0) === writes;
+  };
+  const cacheWriteTokensDetails = consistentDetails(left.cacheWriteTokens, left.cacheWriteTokensDetails) &&
+    consistentDetails(right.cacheWriteTokens, right.cacheWriteTokensDetails) &&
+    (left.cacheWriteTokensDetails || right.cacheWriteTokensDetails)
+    ? {
+        ...(left.cacheWriteTokensDetails?.ttl30mTokens !== undefined || right.cacheWriteTokensDetails?.ttl30mTokens !== undefined
+          ? { ttl30mTokens: (left.cacheWriteTokensDetails?.ttl30mTokens ?? 0) + (right.cacheWriteTokensDetails?.ttl30mTokens ?? 0) }
+          : {}),
+        ...(left.cacheWriteTokensDetails?.ttl12hTokens !== undefined || right.cacheWriteTokensDetails?.ttl12hTokens !== undefined
+          ? { ttl12hTokens: (left.cacheWriteTokensDetails?.ttl12hTokens ?? 0) + (right.cacheWriteTokensDetails?.ttl12hTokens ?? 0) }
+          : {})
+      }
+    : undefined;
   return {
     inputTokens: sum(left.inputTokens, right.inputTokens),
     cachedInputTokens: sum(left.cachedInputTokens, right.cachedInputTokens),
     cacheWriteTokens: sum(left.cacheWriteTokens, right.cacheWriteTokens),
+    ...(cacheWriteTokensDetails &&
+      (cacheWriteTokensDetails.ttl30mTokens !== undefined || cacheWriteTokensDetails.ttl12hTokens !== undefined)
+      ? { cacheWriteTokensDetails }
+      : {}),
     outputTokens: sum(left.outputTokens, right.outputTokens),
     reasoningTokens: sum(left.reasoningTokens, right.reasoningTokens),
     totalTokens: sum(left.totalTokens, right.totalTokens)
@@ -2402,11 +2484,11 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
         const reportedUsage = mapResponsesUsage(json.usage);
         if (ptc && (!reportedUsage || ![reportedUsage.inputTokens, reportedUsage.outputTokens, reportedUsage.totalTokens].every(
           value => typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-        ) || reportedUsage.totalTokens! < reportedUsage.inputTokens! + reportedUsage.outputTokens! || Object.values(reportedUsage).some(value => value !== undefined && (!Number.isSafeInteger(value) || value < 0)))) {
+        ) || reportedUsage.totalTokens! < reportedUsage.inputTokens! + reportedUsage.outputTokens! || openAIUsageCounterInvalid(reportedUsage))) {
           throw failure("OPENAI_PTC_USAGE_UNKNOWN");
         }
         const nextUsage = addTokenUsage(accumulatedUsage, reportedUsage);
-        if (ptc && Object.values(nextUsage ?? {}).some(value => value !== undefined && !Number.isSafeInteger(value))) throw failure("OPENAI_PTC_USAGE_UNKNOWN");
+        if (ptc && openAIUsageCounterInvalid(nextUsage)) throw failure("OPENAI_PTC_USAGE_UNKNOWN");
         accumulatedUsage = nextUsage;
         if (ptc) usageComplete = true;
         if (ptc && input.maxTokens !== undefined && accumulatedUsage!.outputTokens! > input.maxTokens) throw failure("OPENAI_PTC_OUTPUT_LIMIT");
@@ -2882,10 +2964,11 @@ export const openAIRealtimeMcpApprovalResult = (
   }
 });
 
-export const openAIPromptCacheBreakpoint = () =>
+export const openAIPromptCacheBreakpoint = (breakpoint?: { ttl?: OpenAIPromptCacheTtl }) =>
   providerDataPart("openai", {
     type: "prompt_cache_breakpoint",
-    mode: "explicit"
+    mode: "explicit",
+    ...(breakpoint?.ttl ? { ttl: breakpoint.ttl } : {})
   });
 
 export const openAIComputerUseTool = (config: OpenAIComputerUseToolConfig) =>

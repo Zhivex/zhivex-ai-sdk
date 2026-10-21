@@ -221,6 +221,8 @@ breakpoints can be supplied in Anthropic protocol `provider-data` blocks. Older
 Claude 3.7 Sonnet / 3.5 Sonnet / 3 Opus reject a one-hour TTL. Cache read and write
 tokens are normalized in usage. On `global`, set `providerOptions.sessionId` to a
 stable application session ID for the `X-Vertex-Ai-Session-Id` routing header.
+`providerOptions.userProfileId` is forwarded as the `anthropic-user-profile-id`
+header and is not placed in the Vertex body.
 Neither this ID nor Anthropic credentials are serialized as model inputs.
 `VertexClaudeOptions` provides the typed options contract.
 

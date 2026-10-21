@@ -211,6 +211,65 @@ describe("anthropic adapter", () => {
     expect(headers.get("x-api-key")).toBe("sentinel-api-key");
     expect(headers.get("anthropic-workspace-id")).toBe("wrkspc_test");
     expect(headers.has("authorization")).toBe(false);
+    expect(headers.has("anthropic-user-profile-id")).toBe(false);
+  });
+
+  it("sends anthropic-user-profile-id on Messages and keeps it out of the body", async () => {
+    const profileId = "uprof_011CZkZCu8hGbp5mYRQgUmz9";
+    const message = () => Response.json({
+      content: [{ type: "text", text: "profiled" }],
+      stop_reason: "end_turn"
+    });
+    fetchMock.mockResolvedValueOnce(message());
+    const streamBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(
+          "event: content_block_delta\n" +
+            'data: {"index":0,"delta":{"type":"text_delta","text":"profiled"}}\n\n' +
+            "event: message_stop\n" +
+            'data: {"stop_reason":"end_turn"}\n\n'
+        ));
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(new Response(streamBody, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" }
+    }));
+
+    const provider = createAnthropic({
+      apiKey: "sentinel-api-key",
+      workspaceId: "wrkspc_test",
+      fetch: fetchMock as typeof fetch
+    });
+    await generateText({
+      model: provider("claude-sonnet-5"),
+      prompt: "hello",
+      providerOptions: { userProfileId: profileId }
+    });
+    const streamed = streamText({
+      model: provider("claude-sonnet-5"),
+      prompt: "hello",
+      providerOptions: { userProfileId: profileId }
+    });
+    await streamed.collect();
+
+    for (const call of fetchMock.mock.calls) {
+      const headers = new Headers(call[1]?.headers);
+      const body = JSON.parse(String(call[1]?.body));
+      expect(headers.get("anthropic-user-profile-id")).toBe(profileId);
+      expect(headers.get("anthropic-workspace-id")).toBe("wrkspc_test");
+      expect(body).not.toHaveProperty("userProfileId");
+    }
+
+    for (const userProfileId of ["", "bad id", "line\nbreak", 12]) {
+      await expect(generateText({
+        model: provider("claude-sonnet-5"),
+        prompt: "hello",
+        providerOptions: { userProfileId: userProfileId as string }
+      })).rejects.toThrow(/userProfileId/);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("resolves async API keys before every request", async () => {

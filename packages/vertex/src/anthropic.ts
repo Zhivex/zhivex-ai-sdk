@@ -78,7 +78,7 @@ export const createVertexClaudeModel = (modelId: string, endpoint: string, fetch
       }
     },
     transport: {
-      async send(body, signal, withMcpToolset, withFilesApi, betas) {
+      async send(body, signal, withMcpToolset, withFilesApi, betas, userProfileId) {
         if (withMcpToolset || withFilesApi || betas.some((beta) => !vertexBetas.has(beta) && !(sonnet55 && ["thinking-binding-controls-2026-08-01", "thinking-display-updates-2026-08-18"].includes(beta)))) {
           throw new UnsupportedFeatureError("Claude on Vertex does not expose this beta feature, remote MCP, or Files API IDs.");
         }
@@ -110,7 +110,11 @@ export const createVertexClaudeModel = (modelId: string, endpoint: string, fetch
         const action = request.stream === true ? "streamRawPredict" : "rawPredict";
         const response = await fetcher(`${endpoint}:${action}`, {
           method: "POST",
-          headers: { "content-type": "application/json", ...(sessionId ? { "X-Vertex-Ai-Session-Id": sessionId } : {}) },
+          headers: {
+            "content-type": "application/json",
+            ...(sessionId ? { "X-Vertex-Ai-Session-Id": sessionId } : {}),
+            ...(userProfileId ? { "anthropic-user-profile-id": userProfileId } : {})
+          },
           redirect: "error",
           signal,
           body: payload

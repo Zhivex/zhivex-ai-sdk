@@ -222,6 +222,12 @@ const usage = (value: unknown, path: string) => {
   for (const field of TOKEN_FIELDS) {
     if (current[field] !== undefined) integer(current[field], `${path}.${field}`);
   }
+  if (current.cacheWriteTokensDetails !== undefined) {
+    const details = record(current.cacheWriteTokensDetails, `${path}.cacheWriteTokensDetails`);
+    for (const field of ["ttl30mTokens", "ttl12hTokens"] as const) {
+      if (details[field] !== undefined) integer(details[field], `${path}.cacheWriteTokensDetails.${field}`);
+    }
+  }
   if (current.speed !== undefined && current.speed !== "standard" && current.speed !== "fast") {
     invalid(`${path}.speed`, 'must be "standard" or "fast"');
   }

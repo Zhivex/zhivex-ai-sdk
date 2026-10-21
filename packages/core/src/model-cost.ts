@@ -1,7 +1,8 @@
+import { priceCacheWriteLifetimes, readCacheWriteTokensDetails } from "./cache-write-usage.js";
 import type { ModelCatalog } from "./catalog.js";
 import { ValidationError } from "./errors.js";
 import { appliesLongContextPricing } from "./pricing.js";
-import type { TokenUsage } from "./types.js";
+import type { CacheWriteTokensDetails, TokenUsage } from "./types.js";
 
 export interface ModelCostInput {
   catalog: ModelCatalog;
@@ -27,6 +28,14 @@ export interface ModelCostValuation {
   unit: "per_1k_tokens";
   longContext: boolean | null;
   components: Partial<Record<"input" | "cachedInput" | "cacheWrite" | "output", { tokens: number; ratePer1kTokens: number | null; amount: number }>>;
+  /**
+   * Set when usage carried a lifetime split. `components.cacheWrite.amount` is the sum
+   * of these amounts. 12-hour writes use 2.5× uncached input; 30-minute writes use the catalog write rate.
+   */
+  cacheWriteDetails?: {
+    ttl30m: { tokens: number; ratePer1kTokens: number | null; amount: number };
+    ttl12h: { tokens: number; ratePer1kTokens: number | null; amount: number };
+  };
   unknownReasons: string[];
   assumptions: string[];
 }
@@ -48,7 +57,12 @@ export const calculateModelCost = (input: ModelCostInput): ModelCostValuation =>
   if (!entry) unknown("model-pricing-missing");
   if (!pricing) unknown("pricing-provenance-missing");
   const usage = input.usage;
+  let cacheWriteDetails: CacheWriteTokensDetails | undefined;
   for (const [key, value] of Object.entries(usage ?? {})) {
+    if (key === "cacheWriteTokensDetails") {
+      if (value !== undefined) cacheWriteDetails = readCacheWriteTokensDetails(value);
+      continue;
+    }
     if (key !== "speed" && value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)) throw new ValidationError(`Invalid usage counter ${key}.`);
   }
   if (usage?.speed !== undefined && !["standard", "fast"].includes(usage.speed)) throw new ValidationError("Invalid usage speed.");
@@ -58,7 +72,15 @@ export const calculateModelCost = (input: ModelCostInput): ModelCostValuation =>
     if (input.cacheAssumption === "none") { result.assumptions.push(`${key}=0 assumed`); return 0; }
     unknown(`${key}-missing`); return undefined;
   };
-  const cached = cache("cachedInputTokens"), written = cache("cacheWriteTokens");
+  const cached = cache("cachedInputTokens");
+  let written: number | undefined;
+  if (usage?.cacheWriteTokens !== undefined) written = usage.cacheWriteTokens;
+  else if (cacheWriteDetails) written = (cacheWriteDetails.ttl30mTokens ?? 0) + (cacheWriteDetails.ttl12hTokens ?? 0);
+  else written = cache("cacheWriteTokens");
+  if (cacheWriteDetails && usage?.cacheWriteTokens !== undefined &&
+    (cacheWriteDetails.ttl30mTokens ?? 0) + (cacheWriteDetails.ttl12hTokens ?? 0) !== usage.cacheWriteTokens) {
+    throw new ValidationError("Cache write lifetime tokens do not match cacheWriteTokens.");
+  }
   if (usage?.inputTokens === undefined) unknown("inputTokens-missing");
   if (usage?.outputTokens === undefined) unknown("outputTokens-missing");
   if (usage?.inputTokens !== undefined) {
@@ -80,7 +102,27 @@ export const calculateModelCost = (input: ModelCostInput): ModelCostValuation =>
   const outputMultiplier = result.longContext ? entry!.longContextPricing!.outputMultiplier : 1;
   component("input", usage?.inputTokens !== undefined && cached !== undefined && written !== undefined ? usage.inputTokens - cached - written : undefined, entry?.inputCostPer1kTokens, inputMultiplier);
   component("cachedInput", cached, entry?.cachedInputCostPer1kTokens, inputMultiplier);
-  component("cacheWrite", written, entry?.cacheWriteCostPer1kTokens, inputMultiplier);
+  if (cacheWriteDetails && written !== undefined) {
+    const priced = priceCacheWriteLifetimes({
+      cacheWriteTokens: written,
+      details: cacheWriteDetails,
+      cacheWriteRatePer1kTokens: entry?.cacheWriteCostPer1kTokens,
+      inputRatePer1kTokens: entry?.inputCostPer1kTokens,
+      inputMultiplier
+    });
+    if (!priced.ok) {
+      for (const reason of priced.reasons) unknown(reason);
+    } else {
+      result.components.cacheWrite = {
+        tokens: priced.price.tokens,
+        ratePer1kTokens: priced.price.ratePer1kTokens,
+        amount: priced.price.amount
+      };
+      result.cacheWriteDetails = priced.price.byTtl;
+    }
+  } else {
+    component("cacheWrite", written, entry?.cacheWriteCostPer1kTokens, inputMultiplier);
+  }
   component("output", usage?.outputTokens === undefined ? undefined : usage.outputTokens + (input.reasoningAccounting === "additional" ? usage.reasoningTokens ?? 0 : 0), entry?.outputCostPer1kTokens, outputMultiplier);
   if (!result.unknownReasons.length) {
     result.amount = Object.values(result.components).reduce((sum, part) => sum + part!.amount, 0);

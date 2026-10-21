@@ -91,7 +91,11 @@ const anthropic = createAnthropic();
 ```
 
 For a personal or service-account API key that spans multiple workspaces, select the workspace with
-`workspaceId` or `ANTHROPIC_WORKSPACE_ID`:
+`workspaceId` or `ANTHROPIC_WORKSPACE_ID`. A user profile is separate and opt-in per request: set
+`providerOptions.userProfileId` to send the `anthropic-user-profile-id` header on Messages create.
+The value is not a JSON body field. Omit it and the header is absent. The profile ID must be a
+single printable line of 1–1024 characters. See
+[Anthropic user profiles](https://platform.claude.com/docs/en/manage-claude/user-profiles).
 
 ```ts
 const anthropic = createAnthropic({

@@ -11,6 +11,7 @@ import {
   type ActiveGenerationRedaction
 } from "./generation-redaction.js";
 
+import { mergeCacheWriteTokensDetails } from "./cache-write-usage.js";
 import { normalizeMessages as buildMessages } from "./normalize-messages.js";
 import { BoundedReplayBroadcast } from "./bounded-broadcast.js";
 import {
@@ -266,6 +267,11 @@ export const aggregateTokenUsage = (usages: Array<TokenUsage | undefined>): Toke
     if (usage.speed !== undefined) {
       aggregate.speed = usage.speed;
     }
+  }
+
+  const cacheWriteTokensDetails = mergeCacheWriteTokensDetails(usages);
+  if (aggregate && cacheWriteTokensDetails) {
+    aggregate.cacheWriteTokensDetails = cacheWriteTokensDetails;
   }
 
   return aggregate;

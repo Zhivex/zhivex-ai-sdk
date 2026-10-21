@@ -96,6 +96,25 @@ const validState = (): AgentRunState => ({
 });
 
 describe("agent run state validation", () => {
+  it("preserves a cache write lifetime split and rejects a negative counter", () => {
+    const state = validState();
+    state.usage = {
+      inputTokens: 10,
+      cacheWriteTokens: 5,
+      cacheWriteTokensDetails: { ttl30mTokens: 2, ttl12hTokens: 3 },
+      outputTokens: 1,
+      totalTokens: 11
+    };
+    expect(normalizeAgentRunState(state).usage?.cacheWriteTokensDetails).toEqual({
+      ttl30mTokens: 2,
+      ttl12hTokens: 3
+    });
+    expect(() => normalizeAgentRunState({
+      ...validState(),
+      usage: { inputTokens: 10, cacheWriteTokensDetails: { ttl12hTokens: -1 } }
+    })).toThrow(/ttl12hTokens/);
+  });
+
   it("deeply validates and clones a complete valid state", () => {
     const state = validState();
     const normalized = normalizeAgentRunState(state);

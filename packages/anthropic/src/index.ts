@@ -109,6 +109,12 @@ export interface AnthropicLanguageModelOptions {
    * Currently supported only by Claude Opus 5.
    */
   midConversationToolChanges?: boolean;
+  /**
+   * End-customer profile ID, sent as the `anthropic-user-profile-id` header.
+   * Omit it to leave the request unattributed. This is not a general header map.
+   * @see https://platform.claude.com/docs/en/manage-claude/user-profiles
+   */
+  userProfileId?: string;
   [key: string]: unknown;
 }
 
@@ -1220,7 +1226,19 @@ interface PreparedAnthropicRequest {
   thinking?: AnthropicThinkingConfig;
   outputConfig?: AnthropicOutputConfig;
   extraBetas: string[];
+  userProfileId?: string;
 }
+
+/** Header-safe profile token. The API still rejects malformed or foreign IDs. */
+const readAnthropicUserProfileId = (value: unknown): string | undefined => {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length === 0 || value.length > 1024 || /[^\x21-\x7e]/.test(value)) {
+    throw new ValidationError(
+      'Provider "anthropic" userProfileId must be a single-line profile ID sent as the anthropic-user-profile-id header.'
+    );
+  }
+  return value;
+};
 
 const prepareAnthropicRequest = (
   modelId: string,
@@ -1283,10 +1301,12 @@ const prepareAnthropicRequest = (
   }
   const betas = providerOptions.betas ?? [];
   const midConversationToolChanges = providerOptions.midConversationToolChanges === true;
+  const userProfileId = readAnthropicUserProfileId(providerOptions.userProfileId);
   delete providerOptions.thinking;
   delete providerOptions.output_config;
   delete providerOptions.betas;
   delete providerOptions.midConversationToolChanges;
+  delete providerOptions.userProfileId;
 
   const reasoning = mapReasoning(modelId, input);
   const thinking =
@@ -1334,15 +1354,24 @@ const prepareAnthropicRequest = (
     providerOptions,
     thinking,
     outputConfig,
-    extraBetas
+    extraBetas,
+    ...(userProfileId ? { userProfileId } : {})
   };
 };
 
 /** Transport hook for hosts serving the Anthropic Messages protocol.
  * The host owns authentication, endpoint routing, and beta availability.
+ * When `userProfileId` is set, forward it as the `anthropic-user-profile-id` header.
  */
 export interface AnthropicMessagesTransport {
-  send(body: string, signal: AbortSignal, withMcpToolset: boolean, withFilesApi: boolean, betas: string[]): Promise<Response>;
+  send(
+    body: string,
+    signal: AbortSignal,
+    withMcpToolset: boolean,
+    withFilesApi: boolean,
+    betas: string[],
+    userProfileId?: string
+  ): Promise<Response>;
 }
 
 class DirectAnthropicMessagesTransport implements AnthropicMessagesTransport {
@@ -1356,7 +1385,8 @@ class DirectAnthropicMessagesTransport implements AnthropicMessagesTransport {
     auth: ResolvedAnthropicAuth,
     withMcpToolset: boolean,
     withFilesApi: boolean,
-    extraBetas: string[] = []
+    extraBetas: string[] = [],
+    userProfileId?: string
   ) {
     const betas = new Set([
       ...(withMcpToolset ? ["mcp-client-2025-11-20"] : []),
@@ -1370,7 +1400,8 @@ class DirectAnthropicMessagesTransport implements AnthropicMessagesTransport {
       "content-type": "application/json",
       ...auth.headers,
       "anthropic-version": this.anthropicVersion,
-      ...(betas.size ? { "anthropic-beta": Array.from(betas).join(",") } : {})
+      ...(betas.size ? { "anthropic-beta": Array.from(betas).join(",") } : {}),
+      ...(userProfileId ? { "anthropic-user-profile-id": userProfileId } : {})
     };
   }
 
@@ -1379,12 +1410,13 @@ class DirectAnthropicMessagesTransport implements AnthropicMessagesTransport {
     signal: AbortSignal,
     withMcpToolset: boolean,
     withFilesApi: boolean,
-    extraBetas: string[]
+    extraBetas: string[],
+    userProfileId?: string
   ) {
     const send = async (auth: ResolvedAnthropicAuth) =>
       this.fetcher(`${auth.messagesBaseURL}/messages`, {
         method: "POST",
-        headers: this.headers(auth, withMcpToolset, withFilesApi, extraBetas),
+        headers: this.headers(auth, withMcpToolset, withFilesApi, extraBetas, userProfileId),
         signal,
         body
       });
@@ -1421,7 +1453,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const mcpServers = mapMcpServers(input.tools);
-    const { providerOptions, thinking, outputConfig, extraBetas } = prepareAnthropicRequest(this.modelId, input, this.provider);
+    const { providerOptions, thinking, outputConfig, extraBetas, userProfileId } = prepareAnthropicRequest(this.modelId, input, this.provider);
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
@@ -1442,7 +1474,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
         ...(thinking ? { thinking } : {})
       });
       const response = await withResponseRetry(
-        () => this.transport.send(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas),
+        () => this.transport.send(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas, userProfileId),
         { ...input, abortSignal: signal },
         "Anthropic"
       );
@@ -1469,7 +1501,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const mcpServers = mapMcpServers(input.tools);
-    const { providerOptions, thinking, outputConfig, extraBetas } = prepareAnthropicRequest(this.modelId, input, this.provider);
+    const { providerOptions, thinking, outputConfig, extraBetas, userProfileId } = prepareAnthropicRequest(this.modelId, input, this.provider);
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
@@ -1489,7 +1521,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
       ...(thinking ? { thinking } : {})
     });
     const response = await withResponseRetry(
-      () => this.transport.send(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas),
+      () => this.transport.send(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas, userProfileId),
       { ...input, abortSignal: signal },
       "Anthropic"
     ).catch((error) => { cleanup(); throw error; });

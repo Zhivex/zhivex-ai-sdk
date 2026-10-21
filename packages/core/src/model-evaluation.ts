@@ -1,6 +1,7 @@
 import type { ZodTypeAny } from "zod";
 
 import { estimateTokenCost, type CostEstimate, type TokenPricing } from "./agent-trace.js";
+import { mergeCacheWriteTokensDetails } from "./cache-write-usage.js";
 import type { ModelCatalog, ModelCatalogEntry } from "./catalog.js";
 import { embed } from "./embed.js";
 import { ValidationError } from "./errors.js";
@@ -247,6 +248,8 @@ const sumUsage = (usages: Array<TokenUsage | undefined>): TokenUsage | undefined
   if (speeds.size === 1) {
     total.speed = [...speeds][0];
   }
+  const cacheWriteTokensDetails = mergeCacheWriteTokensDetails(present);
+  if (cacheWriteTokensDetails) total.cacheWriteTokensDetails = cacheWriteTokensDetails;
   return total;
 };
 
