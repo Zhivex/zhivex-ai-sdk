@@ -1,3 +1,4 @@
+import { mergeCacheWriteTokensDetails } from "./cache-write-usage.js";
 import { getHostedToolClass, isHostedToolDefinition } from "./messages.js";
 import type {
   AgentDefinition,
@@ -81,6 +82,11 @@ export interface AgentBudgetStatus {
   consumption: AgentBudgetConsumption;
   remaining: AgentBudgetRemaining;
   includeChildRuns: boolean;
+  /**
+   * Merged confirmed usage for this status.
+   * A cache-write lifetime split is kept only when every write in the group is consistent.
+   */
+  usage?: TokenUsage;
   /** Runs without reported usage; numeric consumption is confirmed usage, not an estimate or a reservation. */
   unknownUsageRunIds: string[];
 }
@@ -424,27 +430,11 @@ const budgetFailure = (reason: string, metadata: Record<string, JsonValue>): Age
   metadata
 });
 
-const mergeCacheWriteTokensDetails = (
-  current: TokenUsage["cacheWriteTokensDetails"],
-  incoming: TokenUsage["cacheWriteTokensDetails"]
-): TokenUsage["cacheWriteTokensDetails"] | undefined => {
-  if (!current && !incoming) return undefined;
-  const sumCounter = (left: number | undefined, right: number | undefined) =>
-    left === undefined && right === undefined ? undefined : (left ?? 0) + (right ?? 0);
-  const ttl30mTokens = sumCounter(current?.ttl30mTokens, incoming?.ttl30mTokens);
-  const ttl12hTokens = sumCounter(current?.ttl12hTokens, incoming?.ttl12hTokens);
-  if (ttl30mTokens === undefined && ttl12hTokens === undefined) return undefined;
-  return {
-    ...(ttl30mTokens !== undefined ? { ttl30mTokens } : {}),
-    ...(ttl12hTokens !== undefined ? { ttl12hTokens } : {})
-  };
-};
-
 const addUsage = (usage: TokenUsage | undefined, next: TokenUsage | undefined): TokenUsage | undefined => {
   if (!usage && !next) {
     return undefined;
   }
-  const cacheWriteTokensDetails = mergeCacheWriteTokensDetails(usage?.cacheWriteTokensDetails, next?.cacheWriteTokensDetails);
+  const cacheWriteTokensDetails = mergeCacheWriteTokensDetails([usage, next]);
 
   return {
     inputTokens: (usage?.inputTokens ?? 0) + (next?.inputTokens ?? 0) || undefined,
@@ -478,7 +468,8 @@ export const getAgentBudgetStatus = (
     }
   };
   if (includeChildRuns) collect(state.childRuns ?? []);
-  const usage = childRuns.reduce((total, childRun) => addUsage(total, childRun.usage), output?.usage ?? state.usage);
+  let usage = addUsage(undefined, output?.usage ?? state.usage);
+  for (const childRun of childRuns) usage = addUsage(usage, childRun.usage);
   const toolErrors = state.toolResults.filter((result) => result.isError).length + childRuns.reduce((total, childRun) => total + childRun.toolErrors, 0);
   const toolCalls = countToolCalls(state) + childRuns.reduce((total, childRun) => total + childRun.toolCalls, 0);
   const steps = state.currentStep + state.steps.reduce((extra, step) => extra + Math.max(0, (step.response?.providerRequestCount ?? 1) - 1), 0) + (state.error?.providerRequestCount ?? 0) + childRuns.reduce((total, childRun) => total + childRun.steps, 0);
@@ -504,6 +495,7 @@ export const getAgentBudgetStatus = (
       totalTokens: remaining(limits.maxTotalTokens, totalTokens)
     },
     includeChildRuns,
+    ...(usage ? { usage } : {}),
     unknownUsageRunIds: [
       ...((output?.usage ?? state.usage) && state.error?.usageComplete !== false && !state.compactionAttempts?.some(attempt => attempt.status !== "confirmed") ? [] : [state.runId]),
       ...childRuns.filter(child => !child.usage || child.unknownCompactionUsage || child.unknownProviderUsage).map(child => child.runId)

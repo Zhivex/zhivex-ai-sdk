@@ -8,6 +8,8 @@
 
 ### Patch Changes
 
+- Budget usage keeps a cache-write lifetime split only when every write in the group is consistent. `getAgentBudgetStatus` returns that merged `usage`. A mix of split and unsplit writes omits `cacheWriteTokensDetails` and stays on the catalog write rate.
+- `estimateTokenCost` clamps cached input and cache writes into `inputTokens` whether or not a lifetime split is present. The split is priced when its counters equal the clamped write count. Otherwise the clamped writes use the catalog cache-write rate. Malformed lifetime counters still raise `ValidationError`.
 - `generateText` and `streamText` reject duplicate tool-call IDs with `ValidationError` before approval policy and tool execution. Approval decisions are stored per call, so one call cannot overwrite another call's denial.
 - Workflow state `userId` must match the authenticated caller. A caller-supplied `sessionId` must match the state, and a state `workflowId` must match the workflow definition. Caller-supplied execution claims are ignored. A persisted step takes a 15-minute execution claim and renews it every 5 minutes while that owner is still running. Renewal is an owner-checked compare-and-swap and advances the workflow record revision. If renewal is lost, the owner fails with `ConflictError` and does not write its terminal state. A concurrent resume still fails with `ConflictError` before the step runs. The claim and the terminal state each advance the workflow record revision.
 - `toUIMessageStreamResponse`, `toUIAgentStreamResponse`, and `toUIRunnerStreamResponse` accept `includeAgentRunFinish` and forward it. The default remains `false`.

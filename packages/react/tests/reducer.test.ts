@@ -181,6 +181,102 @@ describe("chat reducer", () => {
     expect(fromChat.cacheWriteDetails?.ttl12h.amount).toBeCloseTo(0.01);
   });
 
+  it("drops a cache write split when a later finish has unsplit writes", () => {
+    const catalog = createModelCatalog([{
+      provider: "openai",
+      modelId: "guide",
+      inputCostPer1kTokens: 0.001,
+      cachedInputCostPer1kTokens: 0.0001,
+      cacheWriteCostPer1kTokens: 0.00125,
+      outputCostPer1kTokens: 0
+    }], {
+      snapshotVersion: "fixture-1",
+      pricing: { version: "price-1", currency: "USD", unit: "per_1k_tokens", source: "fixture" }
+    });
+    let state = createInitialChatState();
+    state = applyUIMessageChunk(state, {
+      type: "finish",
+      messageId: "assistant-1",
+      finishReason: "stop",
+      usage: {
+        inputTokens: 12000,
+        cachedInputTokens: 4000,
+        cacheWriteTokens: 7000,
+        cacheWriteTokensDetails: { ttl30mTokens: 3000, ttl12hTokens: 4000 },
+        outputTokens: 0,
+        totalTokens: 12000
+      }
+    });
+    state = applyUIMessageChunk(state, {
+      type: "finish",
+      messageId: "assistant-1",
+      finishReason: "stop",
+      usage: { inputTokens: 100, cacheWriteTokens: 40, outputTokens: 5, totalTokens: 105 }
+    });
+
+    expect(state.usage).toEqual({
+      inputTokens: 12100,
+      cachedInputTokens: 4000,
+      cacheWriteTokens: 7040,
+      outputTokens: 5,
+      totalTokens: 12105
+    });
+    expect(state.usage).not.toHaveProperty("cacheWriteTokensDetails");
+    const cost = calculateModelCost({
+      catalog,
+      provider: "openai",
+      modelId: "guide",
+      reasoningAccounting: "included",
+      usage: state.usage
+    });
+    expect(cost.amount).toBeCloseTo(0.01026);
+    expect(cost.cacheWriteDetails).toBeUndefined();
+  });
+
+  it("omits a mixed cache write split on a realtime run update", () => {
+    const state = applyUIMessageChunk(createInitialChatState(), {
+      type: "agent-run-update",
+      run: {
+        runId: "run-1",
+        status: "running",
+        currentStep: 1,
+        maxSteps: 2,
+        usage: {
+          inputTokens: 20,
+          cacheWriteTokens: 9,
+          cacheWriteTokensDetails: { ttl30mTokens: 2, ttl12hTokens: 3 },
+          outputTokens: 1
+        }
+      }
+    });
+    expect(state.runs?.[0]?.usage).toEqual({
+      inputTokens: 20,
+      cacheWriteTokens: 9,
+      outputTokens: 1
+    });
+  });
+
+  it("omits a finish split that does not match cacheWriteTokens", () => {
+    const state = applyUIMessageChunk(createInitialChatState(), {
+      type: "finish",
+      messageId: "assistant-1",
+      finishReason: "stop",
+      usage: {
+        inputTokens: 10,
+        cacheWriteTokens: 4,
+        cacheWriteTokensDetails: { ttl30mTokens: 1, ttl12hTokens: 1 },
+        outputTokens: 1,
+        totalTokens: 11
+      }
+    });
+    expect(state.usage).toEqual({
+      inputTokens: 10,
+      cacheWriteTokens: 4,
+      outputTokens: 1,
+      totalTokens: 11
+    });
+  });
+
   it("replaces a partial generated image with the final image", () => {
     let state = createInitialChatState();
     const imageChunk = {

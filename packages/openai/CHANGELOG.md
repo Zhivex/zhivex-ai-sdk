@@ -1,5 +1,11 @@
 # @zhivex-ai/openai
 
+## Unreleased
+
+### Patch Changes
+
+- Chat Completions ignore `prompt_cache_options.ttl` `"12h"` and warn once. The provider default remains 30 minutes. `"30m"` is still sent. Responses still accepts `"12h"`.
+
 ## 0.16.3
 
 ### Patch Changes

@@ -6,6 +6,10 @@
 
 - Chat activity `step-finish` entries now use `UIAgentStepSummary` (`index`, `status`, and optional timestamps, token usage, and `error.message`). Request messages, provider options, response text, and tool results are no longer present on that activity entry.
 
+### Patch Changes
+
+- Chat usage merges keep a cache-write lifetime split only when every write in the group is consistent. A later finish with unsplit writes omits `cacheWriteTokensDetails`. Realtime frames omit a split that does not match `cacheWriteTokens`.
+
 ## 0.9.0
 
 ### Minor Changes

@@ -567,6 +567,15 @@ export const createHierarchicalAgentTrace = async (
   };
 };
 
+/**
+ * Estimates token cost for traces and other usage reports.
+ * Cached input and cache writes are clamped so they fit in `inputTokens`.
+ * A lifetime split is priced when its counters equal that clamped write count.
+ * When they do not, the clamped writes use the catalog cache-write rate.
+ * Malformed lifetime counters still raise `ValidationError`.
+ * `calculateModelCost` rejects cache tokens that exceed input and a split that
+ * does not match `cacheWriteTokens`.
+ */
 export const estimateTokenCost = (
   usage: TokenUsage | undefined,
   pricing?: TokenPricing
@@ -607,17 +616,18 @@ export const estimateTokenCost = (
     const reportedDetails = normalizedUsage.cacheWriteTokensDetails
       ? readCacheWriteTokensDetails(normalizedUsage.cacheWriteTokensDetails)
       : undefined;
-    const cacheWriteTokens = reportedDetails
-      ? normalizedUsage.cacheWriteTokens ?? (reportedDetails.ttl30mTokens ?? 0) + (reportedDetails.ttl12hTokens ?? 0)
-      : Math.min(
-          inputTokens - cachedInputTokens,
-          Math.max(0, normalizedUsage.cacheWriteTokens ?? 0)
-        );
-    if (reportedDetails && cachedInputTokens + cacheWriteTokens > inputTokens) {
-      throw new ValidationError("Cache tokens exceed normalized inputTokens.");
-    }
+    const reportedWriteTokens = Math.max(
+      0,
+      reportedDetails
+        ? normalizedUsage.cacheWriteTokens ??
+          (reportedDetails.ttl30mTokens ?? 0) + (reportedDetails.ttl12hTokens ?? 0)
+        : normalizedUsage.cacheWriteTokens ?? 0
+    );
+    const cacheWriteTokens = Math.min(inputTokens - cachedInputTokens, reportedWriteTokens);
+    const detailsMatch = reportedDetails !== undefined &&
+      (reportedDetails.ttl30mTokens ?? 0) + (reportedDetails.ttl12hTokens ?? 0) === cacheWriteTokens;
     const uncachedInputTokens = inputTokens - cachedInputTokens - cacheWriteTokens;
-    const cacheWriteCost = reportedDetails
+    const cacheWriteCost = detailsMatch && reportedDetails
       ? priceCacheWriteLifetimes({
           cacheWriteTokens,
           details: reportedDetails,

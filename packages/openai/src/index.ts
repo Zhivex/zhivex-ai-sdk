@@ -91,6 +91,30 @@ const warnOpenAISampling = (option: "seed" | "stopSequences", detail: string) =>
   console.warn(`Provider "openai" does not support ${option}. ${detail} The option was ignored.`);
 };
 
+const openAIChatCacheTtlWarnings = new Set<string>();
+
+const warnOpenAIChatPromptCacheTtl = () => {
+  const key = 'openai:prompt_cache_options.ttl:12h:chat';
+  if (openAIChatCacheTtlWarnings.has(key)) return;
+  openAIChatCacheTtlWarnings.add(key);
+  console.warn(
+    'Provider "openai" does not support prompt_cache_options.ttl "12h" on Chat Completions. The option was ignored.'
+  );
+};
+
+/** Chat Completions support for a 12-hour cache TTL is unconfirmed, so that value is ignored. */
+const openAIChatBodyOptions = (options: OpenAILanguageModelOptions): OpenAILanguageModelOptions => {
+  const cache = options.prompt_cache_options;
+  if (cache?.ttl !== "12h") return options;
+  warnOpenAIChatPromptCacheTtl();
+  const rest = { ...cache };
+  delete rest.ttl;
+  const next: OpenAILanguageModelOptions = { ...options };
+  if (Object.keys(rest).length === 0) delete next.prompt_cache_options;
+  else next.prompt_cache_options = rest;
+  return next;
+};
+
 /** Model profiles that already reject sampling. `topP` still throws in assertOpenAIModelRequestSupported. */
 const openAISamplingRejected = (
   modelId: string,
@@ -412,7 +436,8 @@ export interface OpenAIProgrammaticToolOptions {
 
 /**
  * Responses `prompt_cache_options.ttl`.
- * `"30m"` is the provider default. `"12h"` is the 12-hour minimum for GPT-5.6 and later.
+ * `"30m"` is the provider default. `"12h"` is the 12-hour minimum for GPT-5.6 and later on Responses.
+ * Chat Completions ignore `"12h"` and leave the provider default in place.
  * Omitting `ttl` does not send a lifetime and leaves that default in place.
  * @see https://developers.openai.com/api/docs/guides/prompt-caching
  */
@@ -2587,7 +2612,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             headers: options.headers,
             signal,
             body: JSON.stringify({
-              ...options.bodyOptions,
+              ...openAIChatBodyOptions(options.bodyOptions),
               model: this.modelId,
               messages: mapMessages(input.messages, input.toolResultFormat),
               tools: mapTools(input.tools),
@@ -2694,7 +2719,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
           headers: options.headers,
           signal,
           body: JSON.stringify({
-            ...options.bodyOptions,
+            ...openAIChatBodyOptions(options.bodyOptions),
             model: this.modelId,
             messages: mapMessages(input.messages, input.toolResultFormat),
             tools: mapTools(input.tools),

@@ -22,7 +22,7 @@ it("keeps a cache write lifetime split only when every write in the group is con
   expect(dropped).not.toHaveProperty("cacheWriteTokensDetails");
 });
 
-it("prices a reported lifetime split in trace estimates and still clamps an unsplit write", () => {
+it("prices a matching lifetime split and clamps cache writes that exceed input", () => {
   const pricing = {
     inputCostPer1kTokens: 0.001,
     cachedInputCostPer1kTokens: 0.0001,
@@ -42,10 +42,19 @@ it("prices a reported lifetime split in trace estimates and still clamps an unsp
     { inputTokens: 10, cachedInputTokens: 8, cacheWriteTokens: 5 },
     { inputCostPer1kTokens: 1 }
   ).inputCost).toBeCloseTo(0.01);
-  expect(() => estimateTokenCost(
+  expect(estimateTokenCost(
     { inputTokens: 10, cachedInputTokens: 8, cacheWriteTokens: 5, cacheWriteTokensDetails: { ttl30mTokens: 5 } },
     { inputCostPer1kTokens: 1 }
-  )).toThrow(/exceed/);
+  ).inputCost).toBeCloseTo(0.01);
+  expect(estimateTokenCost(
+    {
+      inputTokens: 100,
+      cacheWriteTokens: 10,
+      cacheWriteTokensDetails: { ttl30mTokens: 4, ttl12hTokens: 2 },
+      outputTokens: 0
+    },
+    { inputCostPer1kTokens: 1, cacheWriteCostPer1kTokens: 3 }
+  ).inputCost).toBeCloseTo(0.12);
 });
 
 it("maps Chat Completions cache write lifetimes and omits the split when the wire object has none", () => {
