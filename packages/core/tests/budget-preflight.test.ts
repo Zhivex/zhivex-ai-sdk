@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { createModelCatalog } from "../src/catalog.js";
+import { calculateModelCost } from "../src/model-cost.js";
 import {
   createBudgetGuard,
   evaluateAgentBudgetPreflight,
@@ -127,6 +129,83 @@ describe("preventive agent budgets", () => {
       remaining: 0,
       required: 1,
       operation: "tool"
+    });
+  });
+
+  it("drops a cache write split when a child write has no lifetime split", () => {
+    const catalog = createModelCatalog([{
+      provider: "test",
+      modelId: "model",
+      inputCostPer1kTokens: 1,
+      cacheWriteCostPer1kTokens: 1.25,
+      outputCostPer1kTokens: 1
+    }], {
+      snapshotVersion: "fixture-1",
+      pricing: { version: "price-1", currency: "USD", unit: "per_1k_tokens", source: "fixture" }
+    });
+    const state = createState({
+      usage: {
+        inputTokens: 10,
+        cacheWriteTokens: 5,
+        cacheWriteTokensDetails: { ttl30mTokens: 2, ttl12hTokens: 3 },
+        outputTokens: 1,
+        totalTokens: 11
+      },
+      childRuns: [{
+        runId: "child",
+        status: "completed",
+        outputText: "",
+        steps: 1,
+        toolCalls: 0,
+        toolErrors: 0,
+        usage: { inputTokens: 4, cacheWriteTokens: 4, outputTokens: 1, totalTokens: 5 }
+      }]
+    });
+
+    const mixed = getAgentBudgetStatus(state, {});
+    expect(mixed.usage).toEqual({
+      inputTokens: 14,
+      cacheWriteTokens: 9,
+      outputTokens: 2,
+      totalTokens: 16
+    });
+    expect(mixed.usage).not.toHaveProperty("cacheWriteTokensDetails");
+    expect(calculateModelCost({
+      catalog,
+      provider: "test",
+      modelId: "model",
+      reasoningAccounting: "included",
+      cacheAssumption: "none",
+      usage: mixed.usage
+    }).amount).toBeCloseTo(0.01825);
+
+    const consistent = getAgentBudgetStatus(createState({
+      usage: {
+        inputTokens: 10,
+        cacheWriteTokens: 5,
+        cacheWriteTokensDetails: { ttl30mTokens: 2, ttl12hTokens: 3 },
+        outputTokens: 1,
+        totalTokens: 11
+      },
+      childRuns: [{
+        runId: "child",
+        status: "completed",
+        outputText: "",
+        steps: 1,
+        toolCalls: 0,
+        toolErrors: 0,
+        usage: {
+          inputTokens: 4,
+          cacheWriteTokens: 2,
+          cacheWriteTokensDetails: { ttl30mTokens: 2 },
+          outputTokens: 1,
+          totalTokens: 5
+        }
+      }]
+    }), {});
+    expect(consistent.usage).toMatchObject({
+      cacheWriteTokens: 7,
+      cacheWriteTokensDetails: { ttl30mTokens: 4, ttl12hTokens: 3 }
     });
   });
 });

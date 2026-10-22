@@ -120,6 +120,38 @@ describe("realtime relay privacy", () => {
     expect(JSON.stringify(tampered)).not.toContain(secret);
   });
 
+  it("omits a mixed cache-write split that does not match cacheWriteTokens", () => {
+    const usage = {
+      inputTokens: 20,
+      cacheWriteTokens: 9,
+      cacheWriteTokensDetails: { ttl30mTokens: 2, ttl12hTokens: 3 },
+      outputTokens: 1
+    };
+    const run = { runId: "run-1", status: "running" as const, currentStep: 1, maxSteps: 2, usage };
+    const encoded = browserEvent({ type: "agent-run-update", run });
+    expect(encoded).toEqual({
+      type: "agent-run-update",
+      run: {
+        runId: "run-1",
+        status: "running",
+        currentStep: 1,
+        maxSteps: 2,
+        usage: { inputTokens: 20, cacheWriteTokens: 9, outputTokens: 1 }
+      }
+    });
+    const decoded = decodeRealtimeEvent({
+      type: "agent-run-update",
+      run: {
+        runId: "run-1",
+        usage: { cacheWriteTokens: 9, cacheWriteTokensDetails: { ttl30mTokens: 2, ttl12hTokens: 3 } }
+      }
+    });
+    expect(decoded).toMatchObject({
+      run: { usage: { cacheWriteTokens: 9 } }
+    });
+    expect((decoded as { run: { usage: object } }).run.usage).not.toHaveProperty("cacheWriteTokensDetails");
+  });
+
   it("does not serialize objects smuggled into scalar fields or custom toJSON methods", () => {
     expect(browserEvent({ type: "realtime-start", sessionId: { toJSON: () => secret }, toJSON: () => ({ secret }) })).toEqual({ type: "realtime-start" });
     expect(browserEvent({ type: "agent-run-update", run: { runId: "run-1", status: "running", currentStep: 0, maxSteps: 1, usage: { totalTokens: Infinity } } })).toEqual({

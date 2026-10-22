@@ -77,19 +77,45 @@ const readCacheWriteTokensDetails = (
   return details.ttl30mTokens !== undefined || details.ttl12hTokens !== undefined ? details : undefined;
 };
 
+const cacheWriteDetailSum = (details: NonNullable<TokenUsage["cacheWriteTokensDetails"]>) =>
+  (details.ttl30mTokens ?? 0) + (details.ttl12hTokens ?? 0);
+
+/**
+ * Keeps a lifetime split only when every write in the group has a consistent split.
+ * A write that reports `cacheWriteTokens` without that split drops the group's split,
+ * so merged chat usage stays on the catalog write rate.
+ */
 const mergeCacheWriteTokensDetails = (
-  current: TokenUsage["cacheWriteTokensDetails"],
-  incoming: TokenUsage["cacheWriteTokensDetails"]
+  usages: Array<TokenUsage | undefined>
 ): TokenUsage["cacheWriteTokensDetails"] | undefined => {
-  if (!current && !incoming) return undefined;
-  const sumCounter = (left: number | undefined, right: number | undefined) =>
-    left === undefined && right === undefined ? undefined : (left ?? 0) + (right ?? 0);
-  const ttl30mTokens = sumCounter(current?.ttl30mTokens, incoming?.ttl30mTokens);
-  const ttl12hTokens = sumCounter(current?.ttl12hTokens, incoming?.ttl12hTokens);
-  if (ttl30mTokens === undefined && ttl12hTokens === undefined) return undefined;
+  const present = usages.filter((usage): usage is TokenUsage => usage !== undefined);
+  if (!present.some((usage) => usage.cacheWriteTokensDetails)) return undefined;
+  const consistent = (usage: TokenUsage) => {
+    const details = usage.cacheWriteTokensDetails;
+    if (!details) return (usage.cacheWriteTokens ?? 0) === 0;
+    return usage.cacheWriteTokens !== undefined && cacheWriteDetailSum(details) === usage.cacheWriteTokens;
+  };
+  if (present.some((usage) => !consistent(usage))) return undefined;
+  let saw30m = false;
+  let saw12h = false;
+  let ttl30mTokens = 0;
+  let ttl12hTokens = 0;
+  for (const usage of present) {
+    const details = usage.cacheWriteTokensDetails;
+    if (!details) continue;
+    if (details.ttl30mTokens !== undefined) {
+      saw30m = true;
+      ttl30mTokens += details.ttl30mTokens;
+    }
+    if (details.ttl12hTokens !== undefined) {
+      saw12h = true;
+      ttl12hTokens += details.ttl12hTokens;
+    }
+  }
+  if (!saw30m && !saw12h) return undefined;
   return {
-    ...(ttl30mTokens !== undefined ? { ttl30mTokens } : {}),
-    ...(ttl12hTokens !== undefined ? { ttl12hTokens } : {})
+    ...(saw30m ? { ttl30mTokens } : {}),
+    ...(saw12h ? { ttl12hTokens } : {})
   };
 };
 
@@ -112,7 +138,12 @@ const toTokenUsage = (value: unknown): TokenUsage | undefined => {
     }
   }
   const cacheWriteTokensDetails = readCacheWriteTokensDetails(value.cacheWriteTokensDetails);
-  if (cacheWriteTokensDetails) usage.cacheWriteTokensDetails = cacheWriteTokensDetails;
+  if (
+    cacheWriteTokensDetails &&
+    (usage.cacheWriteTokens === undefined || cacheWriteDetailSum(cacheWriteTokensDetails) === usage.cacheWriteTokens)
+  ) {
+    usage.cacheWriteTokensDetails = cacheWriteTokensDetails;
+  }
   if (value.speed === "standard" || value.speed === "fast") {
     usage.speed = value.speed;
   }
@@ -220,10 +251,7 @@ const mergeUsage = (
 
   const sum = (left: number | undefined, right: number | undefined) =>
     left === undefined && right === undefined ? undefined : (left ?? 0) + (right ?? 0);
-  const cacheWriteTokensDetails = mergeCacheWriteTokensDetails(
-    current.cacheWriteTokensDetails,
-    incoming.cacheWriteTokensDetails
-  );
+  const cacheWriteTokensDetails = mergeCacheWriteTokensDetails([current, incoming]);
 
   return {
     inputTokens: sum(current.inputTokens, incoming.inputTokens),

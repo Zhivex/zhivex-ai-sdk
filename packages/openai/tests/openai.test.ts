@@ -2032,22 +2032,22 @@ describe("openai adapter", () => {
     });
   });
 
-  it("forwards a 12-hour cache ttl on Chat Completions and maps write lifetimes", async () => {
-    fetchMock.mockResolvedValueOnce(
-      Response.json({
-        choices: [{ finish_reason: "stop", message: { content: "chat" } }],
-        usage: {
-          prompt_tokens: 20,
-          prompt_tokens_details: {
-            cached_tokens: 4,
-            cache_write_tokens: 6,
-            cache_write_tokens_details: { ttl_30m_tokens: 1, ttl_12h_tokens: 5 }
-          },
-          completion_tokens: 2,
-          total_tokens: 22
-        }
-      })
-    );
+  it("ignores a 12-hour cache ttl on Chat Completions and still maps write lifetimes", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const chatResponse = {
+      choices: [{ finish_reason: "stop", message: { content: "chat" } }],
+      usage: {
+        prompt_tokens: 20,
+        prompt_tokens_details: {
+          cached_tokens: 4,
+          cache_write_tokens: 6,
+          cache_write_tokens_details: { ttl_30m_tokens: 1, ttl_12h_tokens: 5 }
+        },
+        completion_tokens: 2,
+        total_tokens: 22
+      }
+    };
+    fetchMock.mockResolvedValueOnce(Response.json(chatResponse));
 
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
     const result = await generateText({
@@ -2062,16 +2062,54 @@ describe("openai adapter", () => {
         }
       ],
       providerOptions: {
-        prompt_cache_options: { ttl: "12h" }
+        apiMode: "chat",
+        prompt_cache_options: { mode: "explicit", ttl: "12h" }
       }
     });
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/completions");
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
-    expect(body.prompt_cache_options).toEqual({ ttl: "12h" });
+    expect(body.prompt_cache_options).toEqual({ mode: "explicit" });
     expect(body.messages[0].content[0].prompt_cache_breakpoint).toEqual({ mode: "explicit", ttl: "12h" });
     expect(result.usage?.cacheWriteTokensDetails).toEqual({ ttl30mTokens: 1, ttl12hTokens: 5 });
     expect(result.usage?.cacheWriteTokens).toBe(6);
+    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      'prompt_cache_options.ttl "12h" on Chat Completions'
+    );
+
+    warn.mockClear();
+    fetchMock.mockResolvedValueOnce(Response.json(chatResponse));
+    await generateText({
+      model: provider("gpt-4o-mini"),
+      prompt: "again",
+      providerOptions: { prompt_cache_options: { ttl: "30m" } }
+    });
+    const thirtyMinute = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(thirtyMinute.prompt_cache_options).toEqual({ ttl: "30m" });
+    expect(warn).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValueOnce(new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"chat"},"finish_reason":null}]}\n\n' +
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\n' +
+            "data: [DONE]\n\n"
+          ));
+          controller.close();
+        }
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } }
+    ));
+    await streamText({
+      model: provider("gpt-4o-mini"),
+      prompt: "stream",
+      providerOptions: { apiMode: "chat", prompt_cache_options: { ttl: "12h" } }
+    }).collect();
+    const streamed = JSON.parse(String((fetchMock.mock.calls[2]?.[1] as RequestInit).body));
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain("/chat/completions");
+    expect(streamed.prompt_cache_options).toBeUndefined();
+    warn.mockRestore();
   });
 
   it("rejects an unsupported explicit prompt cache breakpoint ttl before the request", async () => {

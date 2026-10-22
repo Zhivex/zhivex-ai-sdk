@@ -24,10 +24,15 @@ const readCacheWriteTokensDetails = (usage: object): { ttl30mTokens?: number; tt
   const ttl30mTokens = read("ttl30mTokens");
   const ttl12hTokens = read("ttl12hTokens");
   if (ttl30mTokens === undefined && ttl12hTokens === undefined) return undefined;
-  return {
+  const parsed = {
     ...(ttl30mTokens !== undefined ? { ttl30mTokens } : {}),
     ...(ttl12hTokens !== undefined ? { ttl12hTokens } : {})
   };
+  const total = (usage as { cacheWriteTokens?: unknown }).cacheWriteTokens;
+  if (typeof total === "number" && Number.isFinite(total) && (ttl30mTokens ?? 0) + (ttl12hTokens ?? 0) !== total) {
+    return undefined;
+  }
+  return parsed;
 };
 
 const publicFields = (value: object, keys: readonly string[]): Record<string, string | number | boolean> => {
