@@ -105,6 +105,8 @@ export const createVertexClaudeModel = (modelId: string, endpoint: string, fetch
           }
         }
         if (request.tools?.some((tool: any) => tool.type === "computer_20250124")) betaFeatures.add("computer-use-2025-01-24");
+        // Google Cloud can also set anthropic_version to "2026-10-21". This host stays on
+        // "vertex-2023-10-16", so the Messages API 2026-10-21 sampling and block rules do not apply.
         const payload = JSON.stringify({ ...request, anthropic_version: "vertex-2023-10-16", ...(betaFeatures.size ? { anthropic_beta: [...betaFeatures] } : {}) });
         if (new TextEncoder().encode(payload).byteLength > 30_000_000) throw new ConfigurationError("Vertex Claude request exceeds the 30 MB payload limit.");
         const action = request.stream === true ? "streamRawPredict" : "rawPredict";

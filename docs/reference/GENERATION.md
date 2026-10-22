@@ -87,6 +87,7 @@ Provider compatibility for the common `reasoning` option:
   - Claude Opus 5 supports `low`, `medium`, `high`, `xhigh`, and `max` effort, adaptive thinking by default, native structured output, files, a 1M-token context window, and up to 128K output tokens
   - omit `thinking` to use Opus 5's default adaptive thinking; `thinking.disabled` is valid only with `low`, `medium`, or `high`, and manual `thinking.enabled + budget_tokens` is rejected
   - Opus 5 accepts only default sampling (`temperature: 1`, `top_p >= 0.99`, and no `top_k`) and does not support assistant prefill
+  - Opt-in `anthropicVersion: "2026-10-21"` rejects `temperature`, `top_p`, and `top_k` on every model, including those defaults. The default header remains `2023-06-01`, which keeps the sampling rules above. See the [Anthropic adapter](../../packages/anthropic/README.md#api-version).
   - for `xhigh` and `max`, Anthropic recommends starting with `maxTokens: 64_000` and tuning with evals
   - `providerOptions.speed = "fast"` adds the required fast-mode beta header automatically; fast mode is a separately provisioned, premium-priced research preview
   - `providerOptions.fallbacks = "default"` enables Anthropic-managed refusal fallback; explicit fallback arrays remain available with up to three unique models

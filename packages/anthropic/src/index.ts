@@ -47,10 +47,34 @@ const toolInputSchema = (schema: unknown): Record<string, unknown> => {
   return toJSONSchema(schema as Parameters<typeof toJSONSchema>[0]) as Record<string, unknown>;
 };
 
+const ANTHROPIC_API_VERSION_2023_06_01 = "2023-06-01";
+const ANTHROPIC_API_VERSION_2026_10_21 = "2026-10-21";
+
 const anthropicSampling = (input: ModelGenerateInput): Record<string, unknown> => ({
   ...(input.topP !== undefined ? { top_p: input.topP } : {}),
   ...(input.stopSequences !== undefined ? { stop_sequences: [...input.stopSequences] } : {})
 });
+
+/**
+ * Parameters removed by Messages API version 2026-10-21.
+ * Any explicit value, including temperature=1 and top_p>=0.99, is a 400.
+ */
+const samplingParametersRemovedByApiVersion = (
+  input: ModelGenerateInput,
+  providerOptions: AnthropicLanguageModelOptions
+) => {
+  const names: string[] = [];
+  if (input.temperature !== undefined) {
+    names.push("temperature");
+  }
+  if (input.topP !== undefined || providerOptions.top_p !== undefined) {
+    names.push("top_p");
+  }
+  if (providerOptions.top_k !== undefined) {
+    names.push("top_k");
+  }
+  return names;
+};
 
 export interface AnthropicProviderOptions {
   /** Static API key or an async provider invoked before every request. */
@@ -66,6 +90,14 @@ export interface AnthropicProviderOptions {
   /** Workspace selected by a multi-workspace API key. */
   workspaceId?: string | null;
   baseURL?: string;
+  /**
+   * Messages API version sent as the `anthropic-version` header.
+   * Defaults to `2023-06-01`. Set `2026-10-21` to opt into that version.
+   * On `2026-10-21` the adapter rejects `temperature`, `top_p`, and `top_k`
+   * (including defaults) and rejects direct assistant documents and non-empty
+   * citations on user text blocks before the request.
+   * @see https://platform.claude.com/docs/en/api/migration-2026-10-21
+   */
   anthropicVersion?: string;
   fetch?: typeof globalThis.fetch;
   allowUnsafeEndpoints?: boolean;
@@ -295,6 +327,23 @@ const supportsAnthropicStructuredOutput = (modelId: string) => {
     /^claude-haiku-4-5(?:[-@]|$)/.test(normalized) ||
     /^claude-(?:opus|sonnet|haiku)-5(?:[-@]|$)/.test(normalized) ||
     isClaudeMythosClass5Model(normalized)
+  );
+};
+
+const bedrockClaudeModelId = (modelId: string) => {
+  const normalized = normalizeModelId(modelId);
+  const arn = normalized.match(/(?:foundation-model|inference-profile)\/([^/]+)$/);
+  const raw = arn?.[1] ?? normalized;
+  return raw.replace(/^(?:global|us|eu|apac|jp|au|in)\./, "").replace(/^anthropic\./, "");
+};
+
+/** Bedrock exposes 2026-10-21 only for Claude 4.7 and later, not for Opus 4.6 and earlier. */
+const bedrockAcceptsAnthropicApiVersion20261021 = (modelId: string) => {
+  const id = bedrockClaudeModelId(modelId);
+  return (
+    /^claude-(?:opus|sonnet|haiku)-4-(?:[7-9]|[1-9]\d)(?:[-@]|$)/.test(id) ||
+    /^claude-(?:opus|sonnet|haiku)-[5-9](?:[-@.]|$)/.test(id) ||
+    /^claude-(?:fable|mythos)(?:-|$)/.test(id)
   );
 };
 
@@ -812,6 +861,52 @@ const mapMessages = (modelId: string, messages: ModelMessage[]) =>
       };
     });
 
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Non-empty citations on a user text block, including text nested in search_result. */
+const textBlockHasUserCitations = (block: unknown): boolean => {
+  if (!isPlainRecord(block)) {
+    return false;
+  }
+  if (block.type === "text" && Array.isArray(block.citations) && block.citations.length > 0) {
+    return true;
+  }
+  if (block.type === "search_result" && Array.isArray(block.content)) {
+    return block.content.some(textBlockHasUserCitations);
+  }
+  return false;
+};
+
+const assertAnthropic20261021Messages = (messages: Array<{ role: string; content: unknown }>) => {
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) {
+      continue;
+    }
+    if (
+      message.role === "assistant" &&
+      message.content.some((block) => isPlainRecord(block) && block.type === "document")
+    ) {
+      throw new UnsupportedFeatureError(
+        'Provider "anthropic" API version "2026-10-21" rejects a document block placed directly in an assistant message. Send the document in a user message. A document nested inside another block, such as a tool result, is still accepted. To keep direct assistant documents, stay on anthropicVersion "2023-06-01".'
+      );
+    }
+    if (message.role === "user" && message.content.some(textBlockHasUserCitations)) {
+      throw new UnsupportedFeatureError(
+        'Provider "anthropic" API version "2026-10-21" rejects a non-empty citations array on a text block in a user message, including inside a search_result block. Citations on assistant text and citations.enabled on documents or search results are still accepted. Remove the user-message citations, or keep anthropicVersion at "2023-06-01".'
+      );
+    }
+  }
+};
+
+const mapRequestMessages = (modelId: string, messages: ModelMessage[], anthropicVersion: string) => {
+  const mapped = mapMessages(modelId, messages);
+  if (anthropicVersion === ANTHROPIC_API_VERSION_2026_10_21) {
+    assertAnthropic20261021Messages(mapped);
+  }
+  return mapped;
+};
+
 const mapTools = (tools: ModelGenerateInput["tools"]) =>
   tools
     ? Object.values(tools).map((tool) => {
@@ -1037,7 +1132,8 @@ const assertAnthropicRequestCompatibility = (
   outputConfig: AnthropicOutputConfig | undefined,
   providerOptions: AnthropicLanguageModelOptions,
   betas: string[],
-  midConversationToolChanges: boolean
+  midConversationToolChanges: boolean,
+  anthropicVersion: string
 ) => {
   if (supportsAnthropicModernControls(modelId) && thinking?.type === "enabled") {
     throw new UnsupportedFeatureError(
@@ -1097,6 +1193,15 @@ const assertAnthropicRequestCompatibility = (
     throw new ValidationError(
       `Provider "anthropic" cannot combine "thinking.disabled" with "output_config.effort=${effort}" for Claude Opus 5.`
     );
+  }
+
+  if (anthropicVersion === ANTHROPIC_API_VERSION_2026_10_21) {
+    const removed = samplingParametersRemovedByApiVersion(input, providerOptions);
+    if (removed.length > 0) {
+      throw new UnsupportedFeatureError(
+        `Provider "anthropic" API version "2026-10-21" rejects ${removed.join(", ")} on every model, including default values such as temperature=1 and top_p>=0.99. Omit temperature, top_p, and top_k, or keep anthropicVersion at "2023-06-01".`
+      );
+    }
   }
 
   if (
@@ -1243,7 +1348,8 @@ const readAnthropicUserProfileId = (value: unknown): string | undefined => {
 const prepareAnthropicRequest = (
   modelId: string,
   input: ModelGenerateInput,
-  provider = "anthropic"
+  provider = "anthropic",
+  anthropicVersion = ANTHROPIC_API_VERSION_2023_06_01
 ): PreparedAnthropicRequest => {
   const providerOptions = { ...(input.providerOptions ?? {}) } as AnthropicLanguageModelOptions;
   if (
@@ -1302,6 +1408,15 @@ const prepareAnthropicRequest = (
   const betas = providerOptions.betas ?? [];
   const midConversationToolChanges = providerOptions.midConversationToolChanges === true;
   const userProfileId = readAnthropicUserProfileId(providerOptions.userProfileId);
+  if (
+    provider === "bedrock" &&
+    anthropicVersion === ANTHROPIC_API_VERSION_2026_10_21 &&
+    !bedrockAcceptsAnthropicApiVersion20261021(modelId)
+  ) {
+    throw new UnsupportedFeatureError(
+      `Amazon Bedrock accepts API version "2026-10-21" only for Claude 4.7 and later. Model "${modelId}" must keep anthropicVersion "2023-06-01". InvokeModel and Converse requests that set anthropic_version to "bedrock-2023-05-31" are a different contract and are not this header.`
+    );
+  }
   delete providerOptions.thinking;
   delete providerOptions.output_config;
   delete providerOptions.betas;
@@ -1332,7 +1447,8 @@ const prepareAnthropicRequest = (
     outputConfig,
     providerOptions,
     betas,
-    midConversationToolChanges
+    midConversationToolChanges,
+    anthropicVersion
   );
 
   const extraBetas = [
@@ -1445,7 +1561,8 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     readonly modelId: string,
     private readonly transport: AnthropicMessagesTransport,
     readonly provider = "anthropic",
-    overrides: Partial<ModelCapabilities> = {}
+    overrides: Partial<ModelCapabilities> = {},
+    private readonly anthropicVersion = ANTHROPIC_API_VERSION_2023_06_01
   ) {
     this.capabilities = { ...modelCapabilities(modelId), ...overrides };
   }
@@ -1453,7 +1570,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const mcpServers = mapMcpServers(input.tools);
-    const { providerOptions, thinking, outputConfig, extraBetas, userProfileId } = prepareAnthropicRequest(this.modelId, input, this.provider);
+    const { providerOptions, thinking, outputConfig, extraBetas, userProfileId } = prepareAnthropicRequest(this.modelId, input, this.provider, this.anthropicVersion);
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
@@ -1463,7 +1580,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
         ...providerOptions,
         model: this.modelId,
         system: systemPromptFromMessages(this.modelId, input.messages),
-        messages: mapMessages(this.modelId, input.messages),
+        messages: mapRequestMessages(this.modelId, input.messages, this.anthropicVersion),
         ...(mcpServers ? { mcp_servers: mcpServers } : {}),
         tools: mapTools(input.tools),
         tool_choice: mapToolChoice(input.toolChoice),
@@ -1501,7 +1618,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const mcpServers = mapMcpServers(input.tools);
-    const { providerOptions, thinking, outputConfig, extraBetas, userProfileId } = prepareAnthropicRequest(this.modelId, input, this.provider);
+    const { providerOptions, thinking, outputConfig, extraBetas, userProfileId } = prepareAnthropicRequest(this.modelId, input, this.provider, this.anthropicVersion);
     const usesFilesApi = input.messages.some((message) =>
       message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
     );
@@ -1509,7 +1626,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
       ...providerOptions,
       model: this.modelId,
       system: systemPromptFromMessages(this.modelId, input.messages),
-      messages: mapMessages(this.modelId, input.messages),
+      messages: mapRequestMessages(this.modelId, input.messages, this.anthropicVersion),
       ...(mcpServers ? { mcp_servers: mcpServers } : {}),
       tools: mapTools(input.tools),
       tool_choice: mapToolChoice(input.toolChoice),
@@ -1647,8 +1764,21 @@ export const createAnthropicMessagesModel = (options: {
   transport: AnthropicMessagesTransport;
   provider?: string;
   capabilities?: Partial<ModelCapabilities>;
+  /**
+   * Messages API version this host sends. Omit it to keep `2023-06-01` rules.
+   * Pass `2026-10-21` only when the host actually sends that version.
+   * On Amazon Bedrock that version exists only for Claude 4.7 and later.
+   * Vertex Claude stays on body `anthropic_version: "vertex-2023-10-16"` and does not pass this option.
+   */
+  anthropicVersion?: string;
 }): LanguageModel<AnthropicLanguageModelOptions> =>
-  new AnthropicLanguageModel(options.modelId, options.transport, options.provider, options.capabilities);
+  new AnthropicLanguageModel(
+    options.modelId,
+    options.transport,
+    options.provider,
+    options.capabilities,
+    options.anthropicVersion ?? ANTHROPIC_API_VERSION_2023_06_01
+  );
 
 /** Native Beta resources, preserving Anthropic permission policies and event payloads. */
 export type AnthropicManagedAgentsClient = Pick<Anthropic["beta"], "agents" | "environments" | "sessions">;
@@ -1682,7 +1812,7 @@ export const createAnthropic = (
     baseURLIsExplicit,
     credentialFetcher: fetcher
   });
-  const anthropicVersion = options.anthropicVersion ?? "2023-06-01";
+  const anthropicVersion = options.anthropicVersion ?? ANTHROPIC_API_VERSION_2023_06_01;
   // Reuse the installed native SDK for the rapidly evolving managed resource
   // schema, but keep credential resolution and redirect policy owned by Zhivex.
   const managedFetch: typeof globalThis.fetch = async (request, init) => {
@@ -1716,7 +1846,13 @@ export const createAnthropic = (
 
   return createProviderAdapter({
     name: "anthropic",
-    languageModel: (modelId) => new AnthropicLanguageModel(modelId, new DirectAnthropicMessagesTransport(auth, anthropicVersion, fetcher)),
+    languageModel: (modelId) => new AnthropicLanguageModel(
+      modelId,
+      new DirectAnthropicMessagesTransport(auth, anthropicVersion, fetcher),
+      "anthropic",
+      {},
+      anthropicVersion
+    ),
     rawFetch,
     get managedAgents() {
       if (!managedClient) {

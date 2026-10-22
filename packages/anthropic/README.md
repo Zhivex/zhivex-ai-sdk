@@ -122,6 +122,33 @@ auth token, explicit/named profile, federation environment, then the active prof
 `profile` suppresses ambient `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`. API keys take precedence
 over Bearer credentials when both are explicitly configured.
 
+## API version
+
+`createAnthropic()` sends `anthropic-version: 2023-06-01` unless you set `anthropicVersion`. That default is unchanged. `2023-06-01` remains a supported API version; Anthropic has not announced a deprecation for it.
+
+```ts
+const anthropic = createAnthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  anthropicVersion: "2026-10-21"
+});
+```
+
+Opt in to the October 21, 2026 Messages API with `anthropicVersion: "2026-10-21"`. On that version the adapter rejects the settings Anthropic returns as HTTP 400, before the request is sent:
+
+- `temperature`, shared `topP`, `providerOptions.top_p`, and `providerOptions.top_k`, including `temperature: 1` and `top_p >= 0.99`
+- a `document` block placed directly in an assistant message (user documents stay allowed; a document nested inside another block, such as a tool result, stays allowed)
+- a non-empty `citations` array on a `text` block in a user message, including inside a `search_result` block (citations on assistant text, and `citations: { enabled: true }` on documents or search results, stay allowed)
+
+Those failures are `UnsupportedFeatureError`, the same error used for other unsupported Claude sampling and prefill settings. The adapter does not drop the fields. Dropping `temperature` would silently sample at the API default of 1.0, and dropping a document or citation would discard caller content. Remove the setting, or keep `anthropicVersion` at `2023-06-01` when the request depends on it. Requests that omit the sampling parameters still sample at the API defaults, including temperature 1.0.
+
+Any other version string is forwarded as the header and keeps the `2023-06-01` validation rules. This package does not switch the default to `2026-10-21`.
+
+`@anthropic-ai/sdk` stays pinned at `0.135.0`. Managed Agents use that client and receive the same `anthropic-version` header. This adapter does not rewrite native managed-agent request bodies.
+
+Amazon Bedrock Converse in `@zhivex-ai/bedrock` does not send this header. It keeps AWS Converse `inferenceConfig`. Anthropic's `2026-10-21` version on Bedrock exists only for Claude 4.7 and later, and only on the Messages API. A custom Messages transport built with `createAnthropicMessagesModel({ provider: "bedrock", anthropicVersion: "2026-10-21" })` gets the same local checks, and model ids older than Claude 4.7 are rejected for that version. Claude on Vertex stays on body field `anthropic_version: "vertex-2023-10-16"` and is not opted into `2026-10-21`.
+
+See [Migrating to API version 2026-10-21](https://platform.claude.com/docs/en/api/migration-2026-10-21) and [API versions](https://platform.claude.com/docs/en/api/versioning).
+
 ## Claude Opus 5
 
 ```ts
@@ -216,7 +243,7 @@ See [Anthropic's migration contract](https://platform.claude.com/docs/en/models/
 
 ## Reusing the Messages protocol for cloud hosts
 
-`createAnthropicMessagesModel({ modelId, transport, provider, capabilities })` is an advanced adapter-building helper. It reuses Claude message, tool, reasoning, structured-output, and stream mapping without resolving direct Anthropic credentials. The `AnthropicMessagesTransport.send(body, signal, withMcpToolset, withFilesApi, betas)` callback owns authentication, routing, unsupported-feature checks, and HTTP status handling. Capability overrides are shallow; cloud hosts must constrain them to their own supported contract. Application code should use `createAnthropic()` for the direct API or `createVertex()` from `@zhivex-ai/vertex` for Claude on Google Cloud.
+`createAnthropicMessagesModel({ modelId, transport, provider, capabilities, anthropicVersion })` is an advanced adapter-building helper. It reuses Claude message, tool, reasoning, structured-output, and stream mapping without resolving direct Anthropic credentials. The `AnthropicMessagesTransport.send(body, signal, withMcpToolset, withFilesApi, betas)` callback owns authentication, routing, unsupported-feature checks, and HTTP status handling. Capability overrides are shallow; cloud hosts must constrain them to their own supported contract. Omit `anthropicVersion` to keep `2023-06-01` sampling and block rules. Pass `"2026-10-21"` only when the host sends that version. On Amazon Bedrock, pass it only for Claude 4.7 and later. Application code should use `createAnthropic()` for the direct API or `createVertex()` from `@zhivex-ai/vertex` for Claude on Google Cloud.
 
 ### Generation retries
 
