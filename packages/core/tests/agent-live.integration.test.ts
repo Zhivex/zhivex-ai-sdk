@@ -261,63 +261,89 @@ describeCertification("live agent providers with real Postgres durability", () =
     });
 
     it(`${provider.name} streams a real agent run and persists the final state`, async () => {
-      const client = createPostgresIntegrationClient(postgresUrl!);
-      try {
-        const store = createPostgresAgentRunStore({ client, tableName: runTable });
-        const completionToken = `agent-${provider.name}-stream-ok`;
-        const agent = createAgent({
-          id: `live-${provider.name}-stream-agent`,
-          model: provider.createModel(),
-          instructions: `Reply exactly with the requested certification token and nothing else.`,
-          maxSteps: 1,
-          maxTokens: provider.textMaxTokens ?? 128,
-          reasoning: providerReasoning(provider.name),
-          providerOptions: providerOptions(provider.name),
-          store
-        });
-        const scope = {
-          tenantId: "agent-live-certification",
-          userId: provider.name,
-          namespace: "stream"
-        };
-        const result = streamAgent(agent, {
-          prompt: `Reply exactly: ${completionToken}`,
-          scope,
-          idempotencyKey: `stream-${provider.name}-${Date.now()}`
-        });
-        const textChunks: string[] = [];
-        const eventTypes: string[] = [];
+      const completionToken = "zx-stream-cert-7f3k-ok";
+      const reasoning = providerReasoning(provider.name);
+      const spellingAttempts = 3;
+      const mismatches: string[] = [];
 
-        await Promise.all([
-          (async () => {
-            for await (const chunk of result.textStream) textChunks.push(chunk);
-          })(),
-          (async () => {
-            for await (const event of result.eventStream) eventTypes.push(event.type);
-          })()
-        ]);
-        const final = await result.collect();
+      for (let attempt = 1; attempt <= spellingAttempts; attempt += 1) {
+        const client = createPostgresIntegrationClient(postgresUrl!);
+        try {
+          const store = createPostgresAgentRunStore({ client, tableName: runTable });
+          const agent = createAgent({
+            id: `live-${provider.name}-stream-agent`,
+            model: provider.createModel(),
+            instructions: "Reply exactly with the requested certification token and nothing else.",
+            maxSteps: 1,
+            maxTokens: provider.textMaxTokens ?? 128,
+            reasoning,
+            // DeepSeek's registry entry omits temperature because thinking is the
+            // default and temperature is rejected only while thinking is enabled.
+            // This certification disables reasoning for DeepSeek and Qwen, so
+            // temperature 0 applies here only. Gemini is unchanged.
+            ...(reasoning?.effort === "none" ? { temperature: 0 } : {}),
+            providerOptions: providerOptions(provider.name),
+            store
+          });
+          const scope = {
+            tenantId: "agent-live-certification",
+            userId: provider.name,
+            namespace: "stream"
+          };
+          const result = streamAgent(agent, {
+            prompt: `Reply exactly: ${completionToken}`,
+            scope,
+            idempotencyKey: `stream-${provider.name}-${attempt}-${Date.now()}`
+          });
+          const textChunks: string[] = [];
+          const eventTypes: string[] = [];
 
-        expect(final.status, final.outputText).toBe("completed");
-        expect(textChunks.join("").toLowerCase()).toContain(completionToken);
-        expect(final.outputText.toLowerCase()).toContain(completionToken);
-        expect(eventTypes).toEqual(
-          expect.arrayContaining([
-            "agent-run-start",
-            "agent-step-start",
-            "text-delta",
-            "finish",
-            "agent-step-finish",
-            "agent-run-finish"
-          ])
-        );
-        await expect(store.load(final.state.runId, scope)).resolves.toMatchObject({
-          status: "completed",
-          outputText: expect.stringContaining(completionToken)
-        });
-      } finally {
-        await client.close();
+          await Promise.all([
+            (async () => {
+              for await (const chunk of result.textStream) textChunks.push(chunk);
+            })(),
+            (async () => {
+              for await (const event of result.eventStream) eventTypes.push(event.type);
+            })()
+          ]);
+          const final = await result.collect();
+          const streamedText = textChunks.join("");
+
+          expect(final.status, final.outputText).toBe("completed");
+          expect(textChunks.length, streamedText).toBeGreaterThan(0);
+          expect(final.outputText).toBe(streamedText);
+          expect(eventTypes).toEqual(
+            expect.arrayContaining([
+              "agent-run-start",
+              "agent-step-start",
+              "text-delta",
+              "finish",
+              "agent-step-finish",
+              "agent-run-finish"
+            ])
+          );
+          await expect(store.load(final.state.runId, scope)).resolves.toMatchObject({
+            status: "completed",
+            outputText: streamedText
+          });
+
+          if (streamedText.trim().toLowerCase() === completionToken) {
+            return;
+          }
+
+          const mismatch =
+            `${provider.name} attempt ${attempt}/${spellingAttempts} token mismatch. ` +
+            `received=${JSON.stringify(streamedText)}`;
+          console.warn(mismatch);
+          mismatches.push(mismatch);
+        } finally {
+          await client.close();
+        }
       }
+
+      expect.fail(
+        `${provider.name} did not reproduce ${completionToken} in ${spellingAttempts} attempts.\n${mismatches.join("\n")}`
+      );
     });
   }
 

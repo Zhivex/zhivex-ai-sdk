@@ -14,12 +14,12 @@ describeTextIntegration("generateText capability integration", () => {
     it(`${provider.name} generates text with the common SDK contract`, async () => {
       const result = await generateText({
         model: provider.createModel(),
-        prompt: `Reply with exactly: integration-${provider.name}-text-ok`,
+        prompt: "Reply with exactly: zx-text-cert-7f3k-ok",
         ...(provider.omitTemperature ? {} : { temperature: provider.temperature ?? 0 }),
         maxTokens: provider.textMaxTokens ?? 32
       });
 
-      expect(result.text.toLowerCase()).toContain(`integration-${provider.name}-text-ok`);
+      expect(result.text.toLowerCase()).toContain("zx-text-cert-7f3k-ok");
       expect(result.finishReason).toBeDefined();
       expect(result.usage?.totalTokens ?? result.usage?.inputTokens ?? 0).toBeGreaterThan(0);
     });
@@ -32,7 +32,7 @@ describeStreamingIntegration("streamText capability integration", () => {
     it(`${provider.name} streams text with the common SDK contract`, async () => {
       const result = streamText({
         model: provider.createModel(),
-        prompt: `Reply with exactly: integration-${provider.name}-stream-ok`,
+        prompt: "Reply with exactly: zx-stream-cert-7f3k-ok",
         ...(provider.omitTemperature ? {} : { temperature: provider.temperature ?? 0 }),
         maxTokens: provider.textMaxTokens ?? 32
       });
@@ -44,7 +44,7 @@ describeStreamingIntegration("streamText capability integration", () => {
 
       const final = await result.collect();
       expect(chunks.join("")).not.toHaveLength(0);
-      expect(final.text.toLowerCase()).toContain(`integration-${provider.name}-stream-ok`);
+      expect(final.text.toLowerCase()).toContain("zx-stream-cert-7f3k-ok");
       expect(final.finishReason).toBeDefined();
     });
   }
