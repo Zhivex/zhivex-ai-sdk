@@ -2811,6 +2811,9 @@ class OpenAIGroundedLanguageModel implements GroundedLanguageModel {
 export interface OpenAIProvider extends CallableProviderAdapter<LanguageModel<OpenAILanguageModelOptions>> {
   rawFetch: typeof globalThis.fetch;
   agents: OpenAIAgentsClient;
+  /** GA Decisions API. `experimentalDecisionModel` remains a deprecated alias. */
+  decisionModel(modelId?: string): import("@zhivex-ai/core").DecisionModel;
+  /** @deprecated Decisions is generally available. Use `decisionModel`. */
   experimentalDecisionModel(modelId?: string): import("@zhivex-ai/core").DecisionModel;
   speechModel(modelId: string): OpenAISpeechModel;
   realtimeModel(modelId: string): OpenAIRealtimeModel | OpenAILiveModel;
@@ -2852,6 +2855,7 @@ export const createOpenAI = (
 
   return createProviderAdapter({
     name: "openai",
+    decisionModel: (modelId = "gpt-6-luna") => createOpenAIDecisionModel(modelId, { apiKey, baseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints }),
     experimentalDecisionModel: (modelId = "gpt-6-luna") => createOpenAIDecisionModel(modelId, { apiKey, baseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints }),
     languageModel: (modelId) => {
       if (modelId.startsWith("gpt-live-")) throw new UnsupportedFeatureError("GPT-Live is a voice model; use openai.realtimeModel(modelId).");

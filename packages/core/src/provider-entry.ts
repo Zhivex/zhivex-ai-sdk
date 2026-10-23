@@ -84,5 +84,5 @@ export type {
   OpenAICompatibleToolCallBuffer
 } from "./openai-compatible.js";
 
-export type { DecisionQuestion, DecisionQuestions, DecisionEvidence, DecisionInput, DecisionCapabilities, DecisionAnswer, DecisionResult, DecisionModel } from "./decisions.js";
+export type { DecisionImageDetail, DecisionPromptCacheBreakpoint, DecisionPromptCacheOptions, DecisionTextPart, DecisionImagePart, DecisionJsonPart, DecisionContentPart, DecisionQuestionPart, DecisionQuestionInstructions, DecisionScoreLevel, DecisionToolStatus, DecisionInputMessage, DecisionQuestion, DecisionQuestions, DecisionEvidence, DecisionInput, DecisionCapabilities, DecisionAnswer, DecisionResult, DecisionModel } from "./decisions.js";
 export { experimentalDecisionHelpers } from "./decision-helpers.js";

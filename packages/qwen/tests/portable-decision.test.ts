@@ -6,6 +6,7 @@ it('advertises and rejects unsupported boolean choices, images and refusals', as
   expect(model.capabilities).toMatchObject({ perQuestionRefusal: false, choiceValueTypes: ['string'], inputTypes: ['text'], textParts: false });
   await expect(model.decide({ ...decisionInput, input: [{ type: 'image', dataURL: 'data:image/png;base64,AAAA' }] })).rejects.toThrow();
   await expect(model.decide({ input: 'test', questions: { x: { type: 'choice', instructions: 'Pick', choices: [{ value: true, description: 'True' }, { value: false, description: 'False' }] } } })).rejects.toThrow();
+  await expect(model.decide({ ...decisionInput, promptCacheKey: 'tenant', safetyIdentifier: 'user-1' })).rejects.toThrow();
   expect(fetcher).not.toHaveBeenCalled();
 });
 

@@ -1,9 +1,11 @@
-# Experimental portable Decisions
+# Portable Decisions
 
-`DecisionModel` is an experimental contract exported as types from core and SDK.
-OpenAI and Qwen expose `experimentalDecisionModel()`. This does not change
-`LanguageModel`, chat selection, `scoreTarget`, or the native Qwen
-`decisionModel().decide({ state, questions })` extension.
+`DecisionModel` is a portable contract exported as types from core and SDK.
+OpenAI's Decisions API is generally available: use `openai.decisionModel('gpt-6-luna')`.
+`openai.experimentalDecisionModel()` remains a deprecated alias of that same model.
+Qwen's portable adapter stays `experimentalDecisionModel()` because its native
+decision API is still preview. This does not change `LanguageModel`, chat
+selection, `scoreTarget`, or the native Qwen `decisionModel().decide({ state, questions })` extension.
 
 ```ts
 import { createOpenAI } from '@zhivex-ai/openai';
@@ -18,7 +20,7 @@ const qwen = createQwen({
 const gateway = createGateway({
   adapters: {},
   decisions: {
-    primary: { model: openai.experimentalDecisionModel('gpt-6-luna') },
+    primary: { model: openai.decisionModel('gpt-6-luna') },
     backup: { model: qwen.experimentalDecisionModel('decision-model-preview') }
   }
 });
@@ -57,7 +59,7 @@ console.log(result.provenance, result.routing);
 | Predicate | `probability` | `noul` mapped to probability |
 | Choice values | strings and booleans, kept distinct | nonempty strings |
 | Score | fractional, zero-based level indices | fractional, zero-based criteria indices |
-| Evidence | string or ordered text/inline image parts | string |
+| Evidence | string, text/image/JSON parts, or message and tool history | string |
 | Per-question refusal | preserved as `{ type: 'refusal' }` | not supported by native contract |
 | Request ID / server latency | absent unless actually supplied by adapter | native values |
 
@@ -96,7 +98,12 @@ stop further attempts and bound settlement even if a custom fetch ignores its
 signal; such a fetch remains responsible for stopping underlying I/O. Transport
 errors and HTTP bodies are sanitized. Requests and responses are bounded to 1 MiB;
 IDs, answer types, distributions, score ranges, labels and token quantities are
-validated. Hosted image URLs are rejected; OpenAI accepts at most 128 inline base64 images per request; this is checked before network.
+validated. OpenAI accepts at most 128 images per request, counted across shared
+input and question instructions, as data URLs or public HTTP(S) URLs. A data URL
+still has to use the `dataURL` field; putting an HTTP URL in `dataURL` is rejected.
+Qwen's portable adapter still accepts text only. Cache keys, cache options, and
+`safetyIdentifier` are OpenAI-only and fail validation for adapters that do not
+advertise them. Question names stay required so answers remain addressable.
 
 For request-local spend admission, configure a conservative `reserveUSD` on each
 destination and set `maxReservedUSD` on the request. Unknown reservations fail
@@ -117,15 +124,19 @@ minimum experimental surface.
 ## Provider evidence and pricing
 
 OpenAI's [guide](https://developers.openai.com/api/docs/guides/decisions) and
-[create reference](https://developers.openai.com/api/reference/resources/decisions/methods/create),
-checked October 6, 2026, describe public beta, only `gpt-6-luna`, typed choices,
-inline images, per-question refusals and usage. Decisions input costs USD 0.10 per
-million tokens; no output, cache-read or cache-write charges apply. Regional
-processing premiums and long-context input multipliers still apply. The linked
-[pricing table](https://developers.openai.com/api/docs/pricing) currently specifies
-a 10% regional processing uplift and a 2x long-context input multiplier. These rates
-are specific to Decisions and must not be copied from/to chat catalog prices.
-This implementation deliberately does not encode a universal all-in rate.
+[create reference](https://developers.openai.com/api/reference/typescript/resources/decisions/methods/create),
+checked October 23, 2026, describe the GA API: only `gpt-6-luna` on the request,
+text, images, JSON, and message history, per-question images, prompt-cache
+controls, `safety_identifier`, score-level descriptions, and usage that includes
+cache reads and cache writes. The response `model` is documented as the model
+used, not as an enum. This adapter accepts `gpt-6-luna` or a dated snapshot such
+as `gpt-6-luna-2026-10-22`, and still rejects any other id. Uncached Decisions
+input is USD 0.10 per million tokens. Cache hits are discounted and cache writes
+are charged at the standard `gpt-6-luna` prompt-cache rates; output tokens are
+not charged. Regional processing premiums and long-context input multipliers
+still apply. These rates are specific to Decisions and must not be copied from/to
+chat catalog prices. This implementation deliberately does not encode a universal
+all-in rate.
 
 Qwen's [native Decision API](https://docs.qwencloud.com/api-reference/decision-model-api)
 and the existing [Qwen validation evidence](./QWEN_CLOUD_DECISION.md) describe
@@ -134,8 +145,10 @@ Endpoint availability is account-specific; no alternate Qwen hostname is selecte
 automatically. The portable adapter is tested against those native fixtures.
 
 Validation for this addition is offline only. No paid inference, release or npm
-publication is part of this change. Both portable adapters and `gateway.decide`
-are experimental; the existing native Qwen API and language routing retain their
-previous contracts. Automatic chat/Code model selection is out of scope.
+publication is part of this change. OpenAI's factory is the GA `decisionModel`,
+with `experimentalDecisionModel` kept as a deprecated alias. Qwen's portable
+adapter and `gateway.decide` stay on the experimental surface. The existing
+native Qwen API and language routing retain their previous contracts. Automatic
+chat/Code model selection is out of scope.
 
 Release preparation uses the feature changeset and the repository's `updateInternalDependencies: "patch"` policy to raise OpenAI, Qwen and Gateway's Core dependency floors to the new Core version that exports the Decisions helpers. An offline temporary-workspace regression test checks the resulting manifests; feature branches do not pre-bump published versions.

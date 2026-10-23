@@ -167,6 +167,103 @@ export function prepareViduVideo(modelId: string, media: unknown, parameters: Re
   if (output.audio !== undefined && (modelId.includes("drama") || firstFrame)) throw new ConfigurationError("audio toggle is supported only by Vidu mix/ad models.");
   return output;
 }
+const PIXVERSE_MODELS = {
+  "pixverse/pixverse-v6-t2v": "t2v",
+  "pixverse/pixverse-v6-it2v": "it2v",
+  "pixverse/pixverse-v6-kf2v": "kf2v",
+  "pixverse/pixverse-v6-r2v": "r2v"
+} as const;
+type PixVerseKind = (typeof PIXVERSE_MODELS)[keyof typeof PIXVERSE_MODELS];
+/** Pixel sizes published for t2v and r2v. Tiers are billing labels; the request field is width*height. */
+const PIXVERSE_SIZES = new Set([
+  "640*360", "640*480", "640*640", "480*640", "360*640", "640*432", "432*640", "640*288",
+  "1024*576", "1024*768", "1024*1024", "768*1024", "576*1024", "1024*688", "688*1024", "1024*448",
+  "1280*720", "1108*832", "960*960", "832*1108", "720*1280", "1200*800", "800*1200", "1280*560",
+  "1920*1080", "1664*1248", "1440*1440", "1248*1664", "1080*1920", "1776*1184", "1184*1776", "1920*832"
+]);
+const PIXVERSE_OTHER_REGION = /(?:^|\.)(?:cn-beijing|cn-hongkong|ap-northeast-1|eu-central-1|dashscope-us)(?:\.|$)/;
+
+/** PixVerse V6 is published only on the Singapore (ap-southeast-1) host. Known other regional hosts fail before the request. */
+export function assertPixVerseRegion(taskBaseURL: string): void {
+  let host = "";
+  try { host = new URL(taskBaseURL).hostname.toLowerCase(); } catch { return; }
+  if (PIXVERSE_OTHER_REGION.test(host)) {
+    throw new ConfigurationError("PixVerse V6 is available only in the Singapore (ap-southeast-1) region. Use a Singapore API key and https://ap-southeast-1.maas.qwencloudapi.com/api/v1.");
+  }
+}
+
+function pixVerseImage(item: unknown, type: string): { type: string; url: string; ref_name?: string } {
+  if (!item || typeof item !== "object" || (item as { type?: unknown }).type !== type) throw new ConfigurationError(`PixVerse requires media type=${type}.`);
+  const url = (item as { url?: unknown }).url;
+  requireCloudURL(url);
+  const ref = (item as { ref_name?: unknown }).ref_name;
+  if (ref !== undefined) {
+    if (typeof ref !== "string" || ref.length < 1 || ref.length > 30 || /\s|@/.test(ref)) throw new ConfigurationError("PixVerse ref_name must be 1-30 characters without whitespace or @.");
+    return { type, url, ref_name: ref };
+  }
+  return { type, url };
+}
+
+/**
+ * Maps a PixVerse V6 task onto the published per-model body.
+ * it2v uses one image_url and resolution. kf2v uses one first_frame and one last_frame and resolution.
+ * t2v and r2v use size (width*height). r2v accepts 1-7 image_url references. Duration is 1-15 for every model.
+ */
+export function preparePixVerseVideo(modelId: string, media: unknown, parameters: Record<string, unknown>, prompt: unknown): { media?: Record<string, unknown>[]; parameters: Record<string, unknown> } {
+  const kind: PixVerseKind | undefined = PIXVERSE_MODELS[modelId as keyof typeof PIXVERSE_MODELS];
+  if (!kind) throw new ConfigurationError("Unsupported PixVerse video model.");
+  requireCloudText(prompt, "prompt", kind === "r2v" ? 2048 : 5000);
+  const output = { ...parameters };
+  if ("ratio" in output) throw new ConfigurationError("PixVerse does not support ratio. it2v and kf2v use resolution; t2v and r2v use size.");
+  if ("output_storage_uri" in output) throw new ConfigurationError("PixVerse does not support output_storage_uri.");
+  if (output.n !== undefined && output.n !== 1) throw new ConfigurationError("PixVerse produces one video per task.");
+  delete output.n;
+  const usesResolution = kind === "it2v" || kind === "kf2v";
+  const allowsShot = kind === "t2v" || kind === "it2v";
+  for (const key of Object.keys(output)) {
+    const allowed = key === "duration" || key === "audio" || key === "watermark" || key === "seed" || (usesResolution ? key === "resolution" : key === "size") || (allowsShot && key === "shot_type");
+    if (!allowed) throw new ConfigurationError(`PixVerse ${kind} does not support parameter ${key}.`);
+  }
+  const duration = output.duration;
+  if (typeof duration !== "number" || !Number.isInteger(duration) || duration < 1 || duration > 15) throw new ConfigurationError("PixVerse duration must be an integer from 1 to 15.");
+  if (usesResolution) {
+    if (!["360P", "540P", "720P", "1080P"].includes(String(output.resolution))) throw new ConfigurationError("PixVerse resolution must be 360P, 540P, 720P, or 1080P.");
+  } else if (!PIXVERSE_SIZES.has(String(output.size))) throw new ConfigurationError("PixVerse size must be a supported width*height value.");
+  if (output.audio !== undefined && typeof output.audio !== "boolean") throw new ConfigurationError("PixVerse audio must be a boolean.");
+  if (output.watermark !== undefined && typeof output.watermark !== "boolean") throw new ConfigurationError("PixVerse watermark must be a boolean.");
+  if (output.seed !== undefined && (typeof output.seed !== "number" || !Number.isInteger(output.seed) || output.seed < 0 || output.seed > 2147483647)) throw new ConfigurationError("PixVerse seed must be an integer from 0 to 2147483647.");
+  if (output.shot_type !== undefined && output.shot_type !== "single" && output.shot_type !== "multi") throw new ConfigurationError("PixVerse shot_type must be single or multi.");
+  if (kind === "t2v") {
+    if (media !== undefined) throw new ConfigurationError("PixVerse t2v does not accept images.");
+    return { parameters: output };
+  }
+  if (!Array.isArray(media)) throw new ConfigurationError(`PixVerse ${kind} requires input.media.`);
+  if (kind === "it2v") {
+    if (media.length !== 1) throw new ConfigurationError("PixVerse it2v requires exactly one image.");
+    const image = pixVerseImage(media[0], "image_url");
+    if (image.ref_name !== undefined) throw new ConfigurationError("PixVerse it2v does not accept ref_name.");
+    return { media: [image], parameters: output };
+  }
+  if (kind === "kf2v") {
+    if (media.length !== 2) throw new ConfigurationError("PixVerse kf2v requires exactly one first_frame and one last_frame.");
+    const frames = media.map(item => {
+      const type = (item as { type?: unknown })?.type;
+      if (type !== "first_frame" && type !== "last_frame") throw new ConfigurationError("PixVerse kf2v requires first_frame and last_frame.");
+      return pixVerseImage(item, type);
+    });
+    const first = frames.filter(item => item.type === "first_frame");
+    const last = frames.filter(item => item.type === "last_frame");
+    if (first.length !== 1 || last.length !== 1) throw new ConfigurationError("PixVerse kf2v requires exactly one first_frame and one last_frame.");
+    if (frames.some(item => item.ref_name !== undefined)) throw new ConfigurationError("PixVerse kf2v does not accept ref_name.");
+    return { media: frames.map(({ type, url }) => ({ type, url })), parameters: output };
+  }
+  if (media.length < 1 || media.length > 7) throw new ConfigurationError("PixVerse r2v accepts 1 to 7 reference images.");
+  const images = media.map(item => pixVerseImage(item, "image_url"));
+  const names = images.flatMap(item => item.ref_name === undefined ? [] : [item.ref_name]);
+  if (new Set(names).size !== names.length) throw new ConfigurationError("PixVerse ref_name values must be unique.");
+  return { media: images, parameters: output };
+}
+
 export function validateViduImage(input: { prompt: string; images?: unknown[]; count?: number; size?: string }, parameters: Record<string, unknown>): void {
   requireCloudText(input.prompt, "prompt", 5000);
   if ((input.images?.length ?? 0) > 14) throw new ConfigurationError("Vidu accepts at most 14 reference images.");
