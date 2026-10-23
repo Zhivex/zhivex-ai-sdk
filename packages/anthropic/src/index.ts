@@ -369,6 +369,28 @@ const modelCapabilities = (modelId: string): ModelCapabilities => ({
   reasoningEfforts: anthropicReasoningEfforts(modelId)
 });
 
+/**
+ * Messages API 2026-10-21 rejects top_p. Shared capabilities model topP, not temperature or top_k.
+ * Stop sequences and every other capability stay on the model profile.
+ */
+const capabilitiesForAnthropicVersion = (
+  modelId: string,
+  anthropicVersion: string,
+  overrides: Partial<ModelCapabilities>
+): ModelCapabilities => {
+  const resolved = { ...modelCapabilities(modelId), ...overrides };
+  if (anthropicVersion !== ANTHROPIC_API_VERSION_2026_10_21) {
+    return resolved;
+  }
+  return {
+    ...resolved,
+    sampling: {
+      ...resolved.sampling,
+      topP: false
+    }
+  };
+};
+
 const isAnthropicFileId = (value: string) => /^file_[a-z0-9]+$/i.test(value);
 
 const isHttpUrl = (value: string) => /^https?:\/\//i.test(value);
@@ -1564,18 +1586,18 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
     overrides: Partial<ModelCapabilities> = {},
     private readonly anthropicVersion = ANTHROPIC_API_VERSION_2023_06_01
   ) {
-    this.capabilities = { ...modelCapabilities(modelId), ...overrides };
+    this.capabilities = capabilitiesForAnthropicVersion(modelId, anthropicVersion, overrides);
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
-    const mcpServers = mapMcpServers(input.tools);
-    const { providerOptions, thinking, outputConfig, extraBetas, userProfileId } = prepareAnthropicRequest(this.modelId, input, this.provider, this.anthropicVersion);
-    const usesFilesApi = input.messages.some((message) =>
-      message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
-    );
 
     try {
+      const mcpServers = mapMcpServers(input.tools);
+      const { providerOptions, thinking, outputConfig, extraBetas, userProfileId } = prepareAnthropicRequest(this.modelId, input, this.provider, this.anthropicVersion);
+      const usesFilesApi = input.messages.some((message) =>
+        message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
+      );
       const body = JSON.stringify({
         ...providerOptions,
         model: this.modelId,
@@ -1617,141 +1639,146 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
 
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
-    const mcpServers = mapMcpServers(input.tools);
-    const { providerOptions, thinking, outputConfig, extraBetas, userProfileId } = prepareAnthropicRequest(this.modelId, input, this.provider, this.anthropicVersion);
-    const usesFilesApi = input.messages.some((message) =>
-      message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
-    );
-    const body = JSON.stringify({
-      ...providerOptions,
-      model: this.modelId,
-      system: systemPromptFromMessages(this.modelId, input.messages),
-      messages: mapRequestMessages(this.modelId, input.messages, this.anthropicVersion),
-      ...(mcpServers ? { mcp_servers: mcpServers } : {}),
-      tools: mapTools(input.tools),
-      tool_choice: mapToolChoice(input.toolChoice),
-      temperature: input.temperature,
-      ...anthropicSampling(input),
-      max_tokens: input.maxTokens ?? 1024,
-      stream: true,
-      ...(outputConfig ? { output_config: outputConfig } : {}),
-      ...(thinking ? { thinking } : {})
-    });
-    const response = await withResponseRetry(
-      () => this.transport.send(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas, userProfileId),
-      { ...input, abortSignal: signal },
-      "Anthropic"
-    ).catch((error) => { cleanup(); throw error; });
+    try {
+      const mcpServers = mapMcpServers(input.tools);
+      const { providerOptions, thinking, outputConfig, extraBetas, userProfileId } = prepareAnthropicRequest(this.modelId, input, this.provider, this.anthropicVersion);
+      const usesFilesApi = input.messages.some((message) =>
+        message.parts.some((part) => part.type === "file" && isAnthropicFileId(part.data))
+      );
+      const body = JSON.stringify({
+        ...providerOptions,
+        model: this.modelId,
+        system: systemPromptFromMessages(this.modelId, input.messages),
+        messages: mapRequestMessages(this.modelId, input.messages, this.anthropicVersion),
+        ...(mcpServers ? { mcp_servers: mcpServers } : {}),
+        tools: mapTools(input.tools),
+        tool_choice: mapToolChoice(input.toolChoice),
+        temperature: input.temperature,
+        ...anthropicSampling(input),
+        max_tokens: input.maxTokens ?? 1024,
+        stream: true,
+        ...(outputConfig ? { output_config: outputConfig } : {}),
+        ...(thinking ? { thinking } : {})
+      });
+      const response = await withResponseRetry(
+        () => this.transport.send(body, signal, Boolean(mcpServers?.length), usesFilesApi, extraBetas, userProfileId),
+        { ...input, abortSignal: signal },
+        "Anthropic"
+      );
 
-    return (async function* () {
-      try {
-        const toolBuffers = new Map<number, { id: string; name: string; input: string; toolsetName?: string }>();
-        let stopReason: string | undefined;
-        let usage: GenerateResult["usage"];
+      return (async function* () {
+        try {
+          const toolBuffers = new Map<number, { id: string; name: string; input: string; toolsetName?: string }>();
+          let stopReason: string | undefined;
+          let usage: GenerateResult["usage"];
 
-        for await (const event of streamSSE(response)) {
-          const json = JSON.parse(event.data);
+          for await (const event of streamSSE(response)) {
+            const json = JSON.parse(event.data);
 
-          if (event.event === "message_start") {
-            const nextUsage = mapAnthropicUsage(json.message?.usage ?? json.usage);
-            if (nextUsage) {
-              usage = mergeAnthropicUsage(usage, nextUsage);
+            if (event.event === "message_start") {
+              const nextUsage = mapAnthropicUsage(json.message?.usage ?? json.usage);
+              if (nextUsage) {
+                usage = mergeAnthropicUsage(usage, nextUsage);
+              }
             }
-          }
-          if (event.event === "content_block_delta" && json.delta?.type === "text_delta") {
-            yield { type: "text-delta", textDelta: json.delta.text } satisfies StreamEvent;
-          }
-
-          if (event.event === "content_block_start" && json.content_block?.type === "tool_use") {
-            toolBuffers.set(json.index, {
-              id: json.content_block.id,
-              name: json.content_block.name,
-              toolsetName: typeof json.content_block.toolset_name === "string" ? json.content_block.toolset_name : undefined,
-              input: ""
-            });
-          }
-
-          if (
-            event.event === "content_block_start" &&
-            typeof json.content_block?.type === "string" &&
-            json.content_block.type !== "text" &&
-            json.content_block.type !== "tool_use"
-          ) {
-            yield {
-              type: "provider-data",
-              provider: "anthropic",
-              data: json.content_block as JsonValue
-            } satisfies StreamEvent;
-          }
-
-          if (
-            event.event === "content_block_delta" &&
-            typeof json.delta?.type === "string" &&
-            json.delta.type !== "text_delta" &&
-            json.delta.type !== "input_json_delta"
-          ) {
-            yield {
-              type: "provider-data",
-              provider: "anthropic",
-              data: json.delta as JsonValue
-            } satisfies StreamEvent;
-          }
-
-          if (event.event === "content_block_delta" && json.delta?.type === "input_json_delta") {
-            const current = toolBuffers.get(json.index);
-            if (current) {
-              current.input += json.delta.partial_json;
-            }
-          }
-
-          if (event.event === "message_delta") {
-            stopReason = json.delta?.stop_reason ?? stopReason;
-            const nextUsage = mapAnthropicUsage(json.usage);
-            if (nextUsage) {
-              usage = mergeAnthropicUsage(usage, nextUsage);
+            if (event.event === "content_block_delta" && json.delta?.type === "text_delta") {
+              yield { type: "text-delta", textDelta: json.delta.text } satisfies StreamEvent;
             }
 
-            if (json.delta?.stop_details) {
+            if (event.event === "content_block_start" && json.content_block?.type === "tool_use") {
+              toolBuffers.set(json.index, {
+                id: json.content_block.id,
+                name: json.content_block.name,
+                toolsetName: typeof json.content_block.toolset_name === "string" ? json.content_block.toolset_name : undefined,
+                input: ""
+              });
+            }
+
+            if (
+              event.event === "content_block_start" &&
+              typeof json.content_block?.type === "string" &&
+              json.content_block.type !== "text" &&
+              json.content_block.type !== "tool_use"
+            ) {
               yield {
                 type: "provider-data",
                 provider: "anthropic",
-                data: {
-                  type: "stop_details",
-                  stop_details: json.delta.stop_details
-                } as JsonValue
+                data: json.content_block as JsonValue
               } satisfies StreamEvent;
             }
-          }
 
-          if (event.event === "content_block_stop") {
-            const current = toolBuffers.get(json.index);
-            if (current) {
+            if (
+              event.event === "content_block_delta" &&
+              typeof json.delta?.type === "string" &&
+              json.delta.type !== "text_delta" &&
+              json.delta.type !== "input_json_delta"
+            ) {
               yield {
-                type: "tool-call",
-                toolCall: {
-                  id: current.id,
-                  name: current.name,
-                  input: JSON.parse(current.input || "{}"),
-                  ...(current.toolsetName ? { providerMetadata: { toolset_name: current.toolsetName } } : {})
-                }
+                type: "provider-data",
+                provider: "anthropic",
+                data: json.delta as JsonValue
+              } satisfies StreamEvent;
+            }
+
+            if (event.event === "content_block_delta" && json.delta?.type === "input_json_delta") {
+              const current = toolBuffers.get(json.index);
+              if (current) {
+                current.input += json.delta.partial_json;
+              }
+            }
+
+            if (event.event === "message_delta") {
+              stopReason = json.delta?.stop_reason ?? stopReason;
+              const nextUsage = mapAnthropicUsage(json.usage);
+              if (nextUsage) {
+                usage = mergeAnthropicUsage(usage, nextUsage);
+              }
+
+              if (json.delta?.stop_details) {
+                yield {
+                  type: "provider-data",
+                  provider: "anthropic",
+                  data: {
+                    type: "stop_details",
+                    stop_details: json.delta.stop_details
+                  } as JsonValue
+                } satisfies StreamEvent;
+              }
+            }
+
+            if (event.event === "content_block_stop") {
+              const current = toolBuffers.get(json.index);
+              if (current) {
+                yield {
+                  type: "tool-call",
+                  toolCall: {
+                    id: current.id,
+                    name: current.name,
+                    input: JSON.parse(current.input || "{}"),
+                    ...(current.toolsetName ? { providerMetadata: { toolset_name: current.toolsetName } } : {})
+                  }
+                } satisfies StreamEvent;
+              }
+            }
+
+            if (event.event === "message_stop") {
+              const providerFinishReason = stopReason ?? json.stop_reason;
+              yield {
+                type: "finish",
+                finishReason: normalizeFinishReason(providerFinishReason),
+                providerFinishReason,
+                ...(usage ? { usage } : {})
               } satisfies StreamEvent;
             }
           }
-
-          if (event.event === "message_stop") {
-            const providerFinishReason = stopReason ?? json.stop_reason;
-            yield {
-              type: "finish",
-              finishReason: normalizeFinishReason(providerFinishReason),
-              providerFinishReason,
-              ...(usage ? { usage } : {})
-            } satisfies StreamEvent;
-          }
+        } finally {
+          cleanup();
         }
-      } finally {
-        cleanup();
-      }
-    })();
+      })();
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
   }
 }
 

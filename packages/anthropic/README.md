@@ -141,6 +141,8 @@ Opt in to the October 21, 2026 Messages API with `anthropicVersion: "2026-10-21"
 
 Those failures are `UnsupportedFeatureError`, the same error used for other unsupported Claude sampling and prefill settings. The adapter does not drop the fields. Dropping `temperature` would silently sample at the API default of 1.0, and dropping a document or citation would discard caller content. Remove the setting, or keep `anthropicVersion` at `2023-06-01` when the request depends on it. Requests that omit the sampling parameters still sample at the API defaults, including temperature 1.0.
 
+On `2026-10-21`, `model.capabilities.sampling.topP` is `false`. Stop sequences stay supported, and the rest of the capability object matches the same model on the default version. `temperature` and `top_k` are not shared sampling capabilities. The default version, an explicit `2023-06-01`, and any other version string still report `sampling.topP: true`.
+
 Any other version string is forwarded as the header and keeps the `2023-06-01` validation rules. This package does not switch the default to `2026-10-21`.
 
 `@anthropic-ai/sdk` stays pinned at `0.135.0`. Managed Agents use that client and receive the same `anthropic-version` header. This adapter does not rewrite native managed-agent request bodies.

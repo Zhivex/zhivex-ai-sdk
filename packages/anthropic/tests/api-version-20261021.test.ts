@@ -306,6 +306,94 @@ describe("Anthropic API version 2026-10-21", () => {
       model: "claude-opus-5"
     });
   });
+
+  it.each(["generate", "stream"] as const)(
+    "releases the timeout and abort listener when %s rejects removed sampling parameters",
+    async (method) => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      const add = vi.spyOn(controller.signal, "addEventListener");
+      const remove = vi.spyOn(controller.signal, "removeEventListener");
+      const fetcher = vi.fn(async () => response());
+      try {
+        await expect(provider(fetcher)[method]({
+          ...prompt(),
+          temperature: 1,
+          topP: 0.99,
+          timeoutMs: 60_000,
+          abortSignal: controller.signal,
+          providerOptions: { top_p: 1, top_k: 5 }
+        })).rejects.toBeInstanceOf(UnsupportedFeatureError);
+
+        const listener = add.mock.calls.find(([event]) => event === "abort")?.[1];
+        expect(listener).toEqual(expect.any(Function));
+        expect(remove).toHaveBeenCalledWith("abort", listener);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(fetcher).not.toHaveBeenCalled();
+      } finally {
+        add.mockRestore();
+        remove.mockRestore();
+        vi.useRealTimers();
+      }
+    }
+  );
+});
+
+describe("Anthropic sampling capabilities by API version", () => {
+  const fetchImpl = vi.fn(async () => response()) as typeof fetch;
+  const transport = { send: vi.fn(async () => response()) };
+  const modelIds = ["claude-3-5-sonnet", "claude-opus-4-7", "claude-sonnet-5-5"];
+
+  it("reports today's capabilities for the default version, explicit 2023-06-01, and any other version", () => {
+    for (const modelId of modelIds) {
+      const implicit = createAnthropic({ apiKey: "test", fetch: fetchImpl })(modelId);
+      const explicit = createAnthropic({ apiKey: "test", anthropicVersion: "2023-06-01", fetch: fetchImpl })(modelId);
+      const unrecognized = createAnthropic({ apiKey: "test", anthropicVersion: "2099-01-01", fetch: fetchImpl })(modelId);
+      expect(implicit.capabilities.sampling).toEqual({ topP: true, seed: false, stopSequences: true });
+      expect(explicit.capabilities).toEqual(implicit.capabilities);
+      expect(unrecognized.capabilities).toEqual(implicit.capabilities);
+
+      const host = createAnthropicMessagesModel({ modelId, transport });
+      const hostExplicit = createAnthropicMessagesModel({
+        modelId,
+        transport,
+        anthropicVersion: "2023-06-01"
+      });
+      expect(host.capabilities).toEqual(implicit.capabilities);
+      expect(hostExplicit.capabilities).toEqual(implicit.capabilities);
+    }
+  });
+
+  it("reports topP as unsupported on 2026-10-21 and keeps stop sequences and the rest of the profile", () => {
+    for (const modelId of modelIds) {
+      const current = createAnthropic({ apiKey: "test", fetch: fetchImpl })(modelId);
+      const next = createAnthropic({
+        apiKey: "test",
+        anthropicVersion: "2026-10-21",
+        fetch: fetchImpl
+      })(modelId);
+      expect(next.capabilities.sampling).toEqual({ topP: false, seed: false, stopSequences: true });
+      expect(next.capabilities).toEqual({
+        ...current.capabilities,
+        sampling: { topP: false, seed: false, stopSequences: true }
+      });
+
+      const host = createAnthropicMessagesModel({
+        modelId,
+        provider: "bedrock",
+        anthropicVersion: "2026-10-21",
+        capabilities: { vision: false },
+        transport
+      });
+      expect(host.capabilities.vision).toBe(false);
+      expect(host.capabilities.sampling).toEqual({ topP: false, seed: false, stopSequences: true });
+      expect(host.capabilities).toEqual({
+        ...current.capabilities,
+        vision: false,
+        sampling: { topP: false, seed: false, stopSequences: true }
+      });
+    }
+  });
 });
 
 describe("Bedrock Messages hosts", () => {
