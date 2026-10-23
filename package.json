@@ -94,6 +94,7 @@
     "postcss": "^8.5.28",
     "tinyglobby": "^0.2.17",
     "hono": "^4.13.13",
+    "ip-address": "^10.7.4",
     "launch-editor": "^2.14.2",
     "vite": "^8.3.5",
     "source-map-js": "^1.2.2"
