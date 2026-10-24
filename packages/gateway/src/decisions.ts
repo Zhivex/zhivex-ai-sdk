@@ -61,7 +61,7 @@ const numberUSD = (amount: DecimalUSD) => {
 export function createGatewayDecide(registry: Readonly<Record<string, GatewayDecisionTarget>> = {}, defaultTimeoutMs?: number) {
   const registrations = Object.fromEntries(Object.entries(registry).map(([id, target]) => [id, { ...target }]));
   return async (request: GatewayDecisionRequest): Promise<GatewayDecisionResult> => {
-    if (Object.keys(request).some(k => !['input', 'questions', 'abortSignal', 'timeoutMs', 'primary', 'alternatives', 'fallbackOn', 'maxAttempts', 'maxReservedUSD', 'allowedProviders', 'allowedEndpoints', 'requirePerQuestionRefusal'].includes(k))) throw new ValidationError('Unknown decision option.');
+    if (Object.keys(request).some(k => !['input', 'questions', 'abortSignal', 'timeoutMs', 'promptCacheKey', 'promptCacheOptions', 'safetyIdentifier', 'primary', 'alternatives', 'fallbackOn', 'maxAttempts', 'maxReservedUSD', 'allowedProviders', 'allowedEndpoints', 'requirePerQuestionRefusal'].includes(k))) throw new ValidationError('Unknown decision option.');
     for (const values of [request.alternatives, request.allowedProviders, request.allowedEndpoints]) {
       if (values !== undefined && (!Array.isArray(values) || !values.every(v => typeof v === 'string' && v.length > 0))) throw new ValidationError('Invalid decision destination restrictions.');
     }
@@ -71,7 +71,12 @@ export function createGatewayDecide(registry: Readonly<Record<string, GatewayDec
     const fallbackOn = [...(request.fallbackOn ?? [])];
     const ceiling = request.maxReservedUSD;
     if (!ids.every(id => typeof id === 'string' && id.length > 0) || new Set(ids).size !== ids.length || !Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > ids.length || fallbackOn.some(status => ![429, 500, 502, 503, 504].includes(status)) || ceiling !== undefined && !money(ceiling)) throw new ValidationError('Invalid decision routing controls.');
-    const input = snapshotDecision({ input: request.input, questions: request.questions, abortSignal: request.abortSignal, timeoutMs: request.timeoutMs ?? defaultTimeoutMs });
+    const input = snapshotDecision({
+      input: request.input, questions: request.questions, abortSignal: request.abortSignal, timeoutMs: request.timeoutMs ?? defaultTimeoutMs,
+      ...(request.promptCacheKey !== undefined ? { promptCacheKey: request.promptCacheKey } : {}),
+      ...(request.promptCacheOptions !== undefined ? { promptCacheOptions: request.promptCacheOptions } : {}),
+      ...(request.safetyIdentifier !== undefined ? { safetyIdentifier: request.safetyIdentifier } : {})
+    });
     // Validate EVERY selected destination before sending evidence to ANY destination.
     const targets = ids.map(id => {
       const t = Object.hasOwn(registrations, id) ? registrations[id] : undefined;

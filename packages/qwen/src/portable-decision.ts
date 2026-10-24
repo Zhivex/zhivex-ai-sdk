@@ -1,5 +1,5 @@
 import { trimTrailingSlashes } from "./url-path.js";
-import { experimentalDecisionHelpers, type DecisionModel, type DecisionCapabilities, type DecisionInput, type DecisionAnswer } from '@zhivex-ai/core/provider';
+import { experimentalDecisionHelpers, type DecisionModel, type DecisionCapabilities, type DecisionInput, type DecisionAnswer, type DecisionQuestion, type DecisionScoreLevel } from '@zhivex-ai/core/provider';
 const invalidDecision: typeof experimentalDecisionHelpers.invalidDecision = experimentalDecisionHelpers.invalidDecision;
 const snapshotDecision: typeof experimentalDecisionHelpers.snapshotDecision = experimentalDecisionHelpers.snapshotDecision;
 const validateDecision: typeof experimentalDecisionHelpers.validateDecision = experimentalDecisionHelpers.validateDecision;
@@ -17,10 +17,11 @@ export function createPortableQwenDecisionModel(modelId: string, options: QwenDe
   const validate = (input: DecisionInput) => {
     validateDecision(input, capabilities);
     const snapshot = snapshotDecision(input);
+    const instructions = (value: DecisionQuestion['instructions']): string => typeof value === 'string' ? value : invalidDecision();
     const questions: QwenDecisionQuestions = Object.fromEntries(Object.entries(snapshot.questions).map(([id, q]) => [id,
-      q.type === 'predicate' ? { type: 'noul', instructions: q.instructions }
-      : q.type === 'choice' ? { type: 'choice', instructions: q.instructions, criteria: Object.fromEntries(q.choices.map(c => [c.value, c.description])) }
-      : { type: 'score', instructions: q.instructions, criteria: q.levels }
+      q.type === 'predicate' ? { type: 'noul', instructions: instructions(q.instructions) }
+      : q.type === 'choice' ? { type: 'choice', instructions: instructions(q.instructions), criteria: Object.fromEntries(q.choices.map(c => [c.value, typeof c.description === 'string' ? c.description : invalidDecision()])) }
+      : { type: 'score', instructions: instructions(q.instructions), criteria: q.levels.map((level: DecisionScoreLevel) => typeof level === 'string' ? level : invalidDecision()) }
     ]));
     if (new TextEncoder().encode(JSON.stringify({ model: modelId, state: snapshot.input, questions })).byteLength > 1024 * 1024) invalidDecision();
     return { snapshot, questions };

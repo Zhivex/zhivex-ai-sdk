@@ -13,7 +13,7 @@ export { createQwenWorldRTC } from "./world-rtc.js";
 export type * from "./world-rtc.js";
 import type { QwenCloudRealtimeSession } from "./cloud-realtime.js";
 export type { QwenCloudRealtimeOptions, QwenRealtimeMCPServer, QwenCloudRealtimeSession } from "./cloud-realtime.js";
-import { createQwenImageTranslationModel, validateWan30, validateQwenImage21, validateQwenImage30, validateHappyHorse, prepareViduVideo, validateViduImage, type QwenImageTranslationModel } from "./cloud-media.js";
+import { createQwenImageTranslationModel, validateWan30, validateQwenImage21, validateQwenImage30, validateHappyHorse, prepareViduVideo, preparePixVerseVideo, assertPixVerseRegion, validateViduImage, type QwenImageTranslationModel } from "./cloud-media.js";
 export type * from "./cloud-media.js";
 import { createQwenWorldsClient, type QwenWorldsClient, type QwenWorldModelId } from "./worlds.js";
 export type * from "./worlds.js";
@@ -2878,20 +2878,37 @@ class QwenVideoGenerationModel implements VideoGenerationModel {
     delete providerOptions.parameters;
     delete providerOptions.model;
     const happyHorseEdit = /^happyhorse-.*-video-edit$/.test(this.modelId);
-    const media = input.image
-      ? happyHorseEdit
+    const pixverse = this.modelId.startsWith("pixverse/");
+    let media: unknown;
+    if (pixverse) {
+      if (input.image && nestedInput.media !== undefined) throw new ConfigurationError("Pass either image or providerOptions.input.media for PixVerse, not both.");
+      // it2v and r2v publish image_url. kf2v publishes first_frame plus last_frame, so a single convenience image cannot satisfy it.
+      media = input.image
+        ? [{ type: this.modelId.endsWith("-kf2v") ? "first_frame" : "image_url", url: mediaValue(input.image) }]
+        : nestedInput.media;
+    } else if (input.image) {
+      media = happyHorseEdit
         ? [...(Array.isArray(nestedInput.media) ? nestedInput.media : []), { type: "reference_image", url: mediaValue(input.image) }]
-        : [{ type: this.modelId.startsWith("vidu/") ? "image" : "first_frame", url: mediaValue(input.image) }]
-      : nestedInput.media;
+        : [{ type: this.modelId.startsWith("vidu/") ? "image" : "first_frame", url: mediaValue(input.image) }];
+    } else {
+      media = nestedInput.media;
+    }
     let parameters: Record<string, unknown> = { ...providerOptions, ...nestedParameters };
     if (input.aspectRatio !== undefined) parameters.ratio = input.aspectRatio;
     if (input.durationSeconds !== undefined) parameters.duration = input.durationSeconds;
     if (input.count !== undefined) parameters.n = input.count;
     if (input.outputStorageUri !== undefined) parameters.output_storage_uri = input.outputStorageUri;
-    const usesMedia = /^(?:wan(?:2\.7|3\.0)(?:$|-)|happyhorse-|vidu\/)/i.test(this.modelId);
+    const usesMedia = /^(?:wan(?:2\.7|3\.0)(?:$|-)|happyhorse-|vidu\/|pixverse\/)/i.test(this.modelId);
     if (/^happyhorse-/.test(this.modelId)) validateHappyHorse(this.modelId, media, parameters);
     if (/^wan3\.0-/.test(this.modelId)) validateWan30(media, parameters);
     if (this.modelId.startsWith("vidu/")) parameters = prepareViduVideo(this.modelId, media, parameters);
+    if (pixverse) {
+      if (input.negativePrompt !== undefined || nestedInput.negative_prompt !== undefined) throw new ConfigurationError("PixVerse does not support negative_prompt.");
+      assertPixVerseRegion(this.taskBaseURL);
+      const prepared = preparePixVerseVideo(this.modelId, media, parameters, input.prompt);
+      parameters = prepared.parameters;
+      media = prepared.media;
+    }
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const response = await withRetry(
@@ -2903,7 +2920,9 @@ class QwenVideoGenerationModel implements VideoGenerationModel {
             signal,
             body: JSON.stringify({
               model: this.modelId,
-              input: {
+              input: pixverse
+                ? { prompt: input.prompt, ...(media !== undefined ? { media } : {}) }
+                : {
                 ...nestedInput,
                 prompt: input.prompt,
                 negative_prompt: input.negativePrompt ?? nestedInput.negative_prompt,
@@ -2924,7 +2943,7 @@ class QwenVideoGenerationModel implements VideoGenerationModel {
         json.output?.results ??
         json.output?.videos ??
         (json.output?.video_url ? [{ url: json.output.video_url }] : []);
-      if (/^(?:wan3\.0-|happyhorse-|vidu\/)/.test(this.modelId) && !items.length &&
+      if (/^(?:wan3\.0-|happyhorse-|vidu\/|pixverse\/)/.test(this.modelId) && !items.length &&
         (typeof (json.output?.task_id ?? json.task_id) !== "string" || !(json.output?.task_id ?? json.task_id))) {
         throw new ValidationError("Qwen video submission returned neither output nor a task ID.");
       }

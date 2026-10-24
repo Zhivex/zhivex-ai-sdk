@@ -88,6 +88,17 @@ describe('explicit decision gateway', () => {
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     expect(second.fetcher).not.toHaveBeenCalled();
   });
+  it('forwards GA decision fields only when every selected model accepts them', async () => {
+    const openai = decisionFixture('openai');
+    const qwen = decisionFixture('qwen');
+    const gateway = createGateway({ adapters: {}, decisions: { primary: { model: openai.model } } });
+    const ga = { promptCacheKey: 'tenant-1', promptCacheOptions: { mode: 'explicit' as const, ttl: '30m' as const }, safetyIdentifier: 'user-1' };
+    await gateway.decide({ ...decisionInput, ...ga, primary: 'primary' });
+    expect(JSON.parse(vi.mocked(openai.fetcher).mock.calls[0]![1]!.body as string)).toMatchObject({ prompt_cache_key: 'tenant-1', prompt_cache_options: { mode: 'explicit', ttl: '30m' }, safety_identifier: 'user-1' });
+    const mixed = createGateway({ adapters: {}, decisions: { primary: { model: openai.model }, backup: { model: qwen.model } } });
+    await expect(mixed.decide({ ...decisionInput, ...ga, primary: 'primary', alternatives: ['backup'], maxAttempts: 2, fallbackOn: [503] })).rejects.toThrow();
+    expect(qwen.fetcher).not.toHaveBeenCalled();
+  });
   it('keeps language routing APIs available without registering decisions', async () => {
     const gateway = createGateway({ adapters: {} });
     expect(gateway.generate).toBeTypeOf('function'); expect(gateway.streamText).toBeTypeOf('function');
