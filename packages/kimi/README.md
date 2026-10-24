@@ -30,7 +30,30 @@ K3 always reasons. `reasoning.effort` maps to Kimi's top-level `reasoning_effort
 
 K3 uses fixed sampling values (`temperature=1`, `top_p=0.95`, `n=1`, and zero presence/frequency penalties). The adapter accepts those exact values but omits them from the request, and rejects incompatible values before calling the API.
 
-K3's 1M-token context uses automatic server-side prefix caching. The model advertises `contextCaching: true`, and Kimi `cached_tokens` usage is normalized as `usage.cachedInputTokens`.
+K3's 1M-token context uses automatic server-side prefix caching. The model advertises `contextCaching: true`. Cache hits are read from `usage.prompt_tokens_details.cached_tokens` (with a fallback to top-level `cached_tokens`) and normalized as `usage.cachedInputTokens`. Cache writes are read from `usage.prompt_tokens_details.cache_write_tokens` and normalized as `usage.cacheWriteTokens`. `completion_tokens_details.reasoning_tokens` is normalized as `usage.reasoningTokens`.
+
+## Kimi K3.1 Pro
+
+`kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` use the same K3 request contract: top-level `reasoning_effort` (`low`, `high`, `max`), `max_completion_tokens` up to 1,048,576, fixed sampling values, function tools, and base64 or `ms://` vision input. Requests still go to `https://api.moonshot.ai/v1`. `kimi-k3` remains the package default.
+
+Pass `providerOptions.prompt_cache_options` as `{ ttl: "5m" }` or `{ ttl: "1h" }` when a cache lifetime other than the upstream 5-minute default is required. `mode` accepts only `"implicit"`. Moonshot unlocks K3.1 Pro after a successful platform top-up (minimum $1); the SDK does not add an access gate.
+
+```ts
+import { generateText } from "@zhivex-ai/core";
+import { createKimi } from "@zhivex-ai/kimi";
+
+const kimi = createKimi({ apiKey: process.env.KIMI_API_KEY });
+
+await generateText({
+  model: kimi("kimi-k3.1-pro"),
+  prompt: "Review this migration.",
+  reasoning: { effort: "high" },
+  maxTokens: 16_384,
+  providerOptions: {
+    prompt_cache_options: { mode: "implicit", ttl: "1h" }
+  }
+});
+```
 
 K3 accepts `toolChoice: "auto"`, `"none"`, or `"required"`. Selecting one specific function is incompatible with always-on reasoning and is rejected locally. The adapter preserves `reasoning_content` across multi-step tool loops, including streaming calls.
 
@@ -63,7 +86,7 @@ const tools = await kimiFormulaTools({
 
 Formula tools require approval by default, reject unsafe Formula resource paths and prototype-sensitive remote tool names, return a prototype-free tool set, and apply a 30-second request timeout. Use `requiresApproval: false` only when the caller has an equivalent policy boundary. `timeoutMs` can set a positive timeout up to 10 minutes; caller and agent abort signals are propagated to both loaded and statically declared Formula tools.
 
-Built-in shortcuts include `kimiWebSearchTool()`, `kimiFetchTool()`, `kimiCodeRunnerTool()`, `kimiExcelTool()`, and `kimiDateTool()`. Current first-class model IDs are `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, and `kimi-k2.6`. Older ids such as `kimi-k2.5`, `kimi-k2-0905-preview`, and `kimi-k2-thinking` can still be passed through to the API, which documents them as retired.
+Built-in shortcuts include `kimiWebSearchTool()`, `kimiFetchTool()`, `kimiCodeRunnerTool()`, `kimiExcelTool()`, and `kimiDateTool()`. Current first-class model IDs are `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, and `kimi-k2.6`. Older ids such as `kimi-k2.5`, `kimi-k2-0905-preview`, and `kimi-k2-thinking` can still be passed through to the API, which documents them as retired.
 
 Moonshot currently marks its Formula web-search tool as being updated and not recommended for near-term production workflows. The helper remains available for compatibility, but production use should follow the current upstream status.
 

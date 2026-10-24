@@ -36,10 +36,10 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-10-20",
+      snapshotVersion: "2026-10-24",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-10-16",
+        version: "2026-10-24",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
@@ -64,7 +64,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(275);
+    expect(entries).toHaveLength(277);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
       retiredAt: "2027-04-01",
@@ -110,7 +110,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(275);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(277);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-10-15",
       verifiedAt: "2026-10-15",
@@ -405,6 +405,41 @@ describe("SDK model catalog ownership", () => {
       pricingEffectiveAt: "2026-10-14",
       modelCount: 10,
       sources: expect.arrayContaining(["https://docs.x.ai/docs/models"])
+    });
+    expect(defaultModelCatalog.find("kimi", "kimi-k3.1-pro")).toMatchObject({
+      provider: "kimi",
+      modelId: "kimi-k3.1-pro",
+      contextWindowTokens: 1_048_576,
+      contextWindowType: "combined",
+      maxOutputTokens: 1_048_576,
+      inputCostPer1kTokens: 0.002,
+      cachedInputCostPer1kTokens: 0.0002,
+      cacheWriteCostPer1kTokens: 0.002,
+      outputCostPer1kTokens: 0.01,
+      costPer1kTokens: 0.002,
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    });
+    expect(defaultModelCatalog.find("kimi", "kimi-k3.1-pro-highspeed")).toMatchObject({
+      provider: "kimi",
+      modelId: "kimi-k3.1-pro-highspeed",
+      contextWindowTokens: 1_048_576,
+      contextWindowType: "combined",
+      maxOutputTokens: 1_048_576,
+      inputCostPer1kTokens: 0.004,
+      cachedInputCostPer1kTokens: 0.0002,
+      cacheWriteCostPer1kTokens: 0.004,
+      outputCostPer1kTokens: 0.02,
+      recommendedFor: ["chat", "reasoning", "tools", "vision", "speed"]
+    });
+    expect(defaultModelCatalog.find("kimi", "kimi-k3.1-pro")?.maxInputTokens).toBeUndefined();
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "kimi")).toMatchObject({
+      revision: "2026-10-24",
+      verifiedAt: "2026-10-24",
+      modelCount: 5,
+      sources: expect.arrayContaining([
+        "https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart",
+        "https://platform.kimi.ai/docs/pricing/chat"
+      ])
     });
     expect(defaultModelCatalog.find("kimi", "kimi-k2.5")).toBeUndefined();
     expect(defaultModelCatalog.find("openrouter", "google/gemini-3.8-flash-tts")).toBeUndefined();
