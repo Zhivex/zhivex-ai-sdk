@@ -1,5 +1,19 @@
 # @zhivex-ai/gemini
 
+## 0.14.0
+
+### Minor Changes
+
+- 8e377e4: Accept `provider/model` strings, an OpenAI-compatible provider factory, and optional AI SDK loop controls (`stopWhen`, `prepareStep`, `activeTools`, `Output`, JSON Schema tools, and shared `topP` / `seed` / `stopSequences`) without changing existing call defaults. `stopWhen` without `maxSteps` uses a 20-step safety ceiling instead of one step or an unbounded loop. OpenAI family checks reject shared `topP` on models that already reject `top_p`, and warn-and-omit shared `seed` / `stopSequences` in both API modes. `Output.object` reads the final step. MCP stdio process-exit errors keep their code and message prefix and append a stderr tail that is redacted before it is truncated.
+
+### Patch Changes
+
+- d17c142: Reject non-string voice values before a request. These providers accept string voice names only, and string voices and defaults are unchanged.
+- Updated dependencies [8e377e4]
+- Updated dependencies [7a8b754]
+- Updated dependencies [f1ed0ce]
+  - @zhivex-ai/core@1.36.0
+
 ## 0.13.2
 
 ### Patch Changes

@@ -6,6 +6,21 @@
 
 - Support Claude Haiku 5.5 with adaptive thinking and effort controls, computer/browser toolsets, bound thinking, local rejection of sampling/prefill/`effort=none`, catalog pricing (including the 100k long-context tier), Bedrock/Vertex host IDs, and no managed server-side fallbacks.
 
+## 0.15.0
+
+### Minor Changes
+
+- 8e377e4: Accept `provider/model` strings, an OpenAI-compatible provider factory, and optional AI SDK loop controls (`stopWhen`, `prepareStep`, `activeTools`, `Output`, JSON Schema tools, and shared `topP` / `seed` / `stopSequences`) without changing existing call defaults. `stopWhen` without `maxSteps` uses a 20-step safety ceiling instead of one step or an unbounded loop. OpenAI family checks reject shared `topP` on models that already reject `top_p`, and warn-and-omit shared `seed` / `stopSequences` in both API modes. `Output.object` reads the final step. MCP stdio process-exit errors keep their code and message prefix and append a stderr tail that is redacted before it is truncated.
+
+### Patch Changes
+
+- b246030: Reject `temperature`, `top_p`, and `top_k`, direct assistant document blocks, and non-empty user-message citations locally when `anthropicVersion` is `2026-10-21`. On that version, `model.capabilities.sampling.topP` is false while stop sequences stay supported. The default `anthropic-version` header remains `2023-06-01`, and that version's capabilities are unchanged. Bedrock Messages hosts that opt into `2026-10-21` use the same checks, and that version is accepted there only for Claude 4.7 and later. API version `2026-10-21` is covered by unit tests only; it was not exercised in the live certification of this release.
+- f1ed0ce: Accept OpenAI prompt-cache TTL `"12h"` on Responses `prompt_cache_options` and explicit breakpoints, map `cache_write_tokens_details` into `usage.cacheWriteTokensDetails`, and price 12-hour writes at 2.5× the uncached input rate when that split is present. 30-minute writes and usage without a split keep the catalog cache-write rate. React chat state, realtime frames, AG-UI usage, trace-viewer steps, and agent span attributes keep the 30-minute and 12-hour counts. Anthropic Messages and Claude on Vertex accept an optional `userProfileId` and send it as the `anthropic-user-profile-id` header. These paths (OpenAI 12-hour prompt-cache TTL and the Anthropic `userProfileId` header) are covered by unit tests only; they were not exercised in the live certification of this release.
+- Updated dependencies [8e377e4]
+- Updated dependencies [7a8b754]
+- Updated dependencies [f1ed0ce]
+  - @zhivex-ai/core@1.36.0
+
 ## 0.14.1
 
 ### Patch Changes

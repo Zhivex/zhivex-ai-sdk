@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/trace-viewer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local read-only viewer for Zhivex governance ledgers and OpenTelemetry spans.",
   "license": "MIT",
   "type": "module",

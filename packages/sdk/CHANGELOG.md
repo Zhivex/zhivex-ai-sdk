@@ -1,5 +1,20 @@
 # @zhivex-ai/sdk
 
+## 1.35.0
+
+### Minor Changes
+
+- 8e377e4: Accept `provider/model` strings, an OpenAI-compatible provider factory, and optional AI SDK loop controls (`stopWhen`, `prepareStep`, `activeTools`, `Output`, JSON Schema tools, and shared `topP` / `seed` / `stopSequences`) without changing existing call defaults. `stopWhen` without `maxSteps` uses a 20-step safety ceiling instead of one step or an unbounded loop. OpenAI family checks reject shared `topP` on models that already reject `top_p`, and warn-and-omit shared `seed` / `stopSequences` in both API modes. `Output.object` reads the final step. MCP stdio process-exit errors keep their code and message prefix and append a stderr tail that is redacted before it is truncated.
+
+### Patch Changes
+
+- d17c142: Record the Gemini API shutdown of `gemini-3.1-flash-lite` on 2027-05-07 and the Vertex retirement of `multimodalembedding@001` on 2027-04-01. Stop recommending the Gemini API entry. Default model ids are unchanged.
+- db843bd: Record source-backed shutdown dates for catalogued Gemini API and Vertex models, stop recommending those retiring entries, and add Vertex `deepseek-ai/deepseek-v4.1-flash-maas`. Azure OpenAI `gpt-4o-mini` now retires on 2027-04-14. Default model ids are unchanged, and the new Vertex model has no invented token price.
+- Updated dependencies [8e377e4]
+- Updated dependencies [7a8b754]
+- Updated dependencies [f1ed0ce]
+  - @zhivex-ai/core@1.36.0
+
 ## 1.34.0
 
 ### Minor Changes
