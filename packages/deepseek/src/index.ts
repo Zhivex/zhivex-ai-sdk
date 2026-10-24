@@ -920,7 +920,9 @@ class DeepSeekLanguageModel implements LanguageModel<DeepSeekLanguageModelOption
       readPayload: (data) => JSON.parse(data),
       onChunk: (json, toolBuffers, state) => {
         const events: StreamEvent[] = [];
-        const choice = json.choices?.[0];
+        const choice = json.choices?.find(
+          (candidate: { index?: number }) => (candidate.index ?? 0) === 0
+        );
         const delta = choice?.delta;
         const usage = json.usage ?? choice?.usage;
         if (!choice && usage) {

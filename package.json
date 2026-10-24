@@ -97,6 +97,11 @@
     "ip-address": "^10.7.4",
     "launch-editor": "^2.14.2",
     "vite": "^8.3.5",
-    "source-map-js": "^1.2.2"
+    "source-map-js": "^1.2.2",
+    "body-parser": "^2.4.0",
+    "qs": "^6.16.1",
+    "fast-uri": "^3.1.9",
+    "happy-dom": "^21.0.4",
+    "undici": "^7.30.1"
   }
 }

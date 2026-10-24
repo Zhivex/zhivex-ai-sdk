@@ -258,6 +258,40 @@ describe("deepseek adapter", () => {
     expect(final.usage?.totalTokens).toBe(7);
   });
 
+  it("streams the choice whose index is 0 when choices are unordered", async () => {
+    fetchMock.mockResolvedValueOnce(
+      sseResponse(
+        {
+          choices: [
+            { index: 1, delta: { content: "ignore-first" } },
+            { index: 0, delta: { content: "primary" } }
+          ]
+        },
+        {
+          choices: [
+            { index: 2, delta: { content: "ignore-second" } },
+            { delta: { content: "-default" } }
+          ]
+        },
+        { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+        { usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 } },
+        "[DONE]"
+      )
+    );
+
+    const provider = createDeepSeek({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("deepseek-v4-pro"),
+      prompt: "hello"
+    });
+    const chunks: string[] = [];
+    for await (const chunk of result.textStream) chunks.push(chunk);
+    const final = await result.collect();
+
+    expect(chunks.join("")).toBe("primary-default");
+    expect(final.text).toBe("primary-default");
+  });
+
   it("supports tool calls and JSON object structured output", async () => {
     fetchMock.mockResolvedValueOnce(
       Response.json({
