@@ -1,5 +1,15 @@
 # @zhivex-ai/sandbox-docker
 
+## 0.2.1
+
+### Patch Changes
+
+- Raise the declared `@zhivex-ai/core` floor to 1.36.0. The Docker sandbox loads helpers from this Core release, and the declared minimum must match the workspace Core version.
+- Updated dependencies [8e377e4]
+- Updated dependencies [7a8b754]
+- Updated dependencies [f1ed0ce]
+  - @zhivex-ai/core@1.36.0
+
 ## 0.2.0
 
 ### Minor Changes

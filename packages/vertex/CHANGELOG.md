@@ -1,5 +1,26 @@
 # @zhivex-ai/vertex
 
+## 1.3.0
+
+### Minor Changes
+
+- 8e377e4: Accept `provider/model` strings, an OpenAI-compatible provider factory, and optional AI SDK loop controls (`stopWhen`, `prepareStep`, `activeTools`, `Output`, JSON Schema tools, and shared `topP` / `seed` / `stopSequences`) without changing existing call defaults. `stopWhen` without `maxSteps` uses a 20-step safety ceiling instead of one step or an unbounded loop. OpenAI family checks reject shared `topP` on models that already reject `top_p`, and warn-and-omit shared `seed` / `stopSequences` in both API modes. `Output.object` reads the final step. MCP stdio process-exit errors keep their code and message prefix and append a stderr tail that is redacted before it is truncated.
+
+### Patch Changes
+
+- f1ed0ce: Accept OpenAI prompt-cache TTL `"12h"` on Responses `prompt_cache_options` and explicit breakpoints, map `cache_write_tokens_details` into `usage.cacheWriteTokensDetails`, and price 12-hour writes at 2.5× the uncached input rate when that split is present. 30-minute writes and usage without a split keep the catalog cache-write rate. React chat state, realtime frames, AG-UI usage, trace-viewer steps, and agent span attributes keep the 30-minute and 12-hour counts. Anthropic Messages and Claude on Vertex accept an optional `userProfileId` and send it as the `anthropic-user-profile-id` header. These paths (OpenAI 12-hour prompt-cache TTL and the Anthropic `userProfileId` header) are covered by unit tests only; they were not exercised in the live certification of this release.
+- d17c142: Reject non-string voice values before a request. These providers accept string voice names only, and string voices and defaults are unchanged.
+- Updated dependencies [8e377e4]
+- Updated dependencies [b246030]
+- Updated dependencies [7a8b754]
+- Updated dependencies [f1ed0ce]
+- Updated dependencies [d17c142]
+- Updated dependencies [d17c142]
+  - @zhivex-ai/core@1.36.0
+  - @zhivex-ai/openai@0.17.0
+  - @zhivex-ai/anthropic@0.15.0
+  - @zhivex-ai/gemini@0.14.0
+
 ## 1.2.10
 
 ### Patch Changes
