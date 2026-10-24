@@ -306,6 +306,206 @@ describe("kimi adapter", () => {
     expect(provider("kimi-k2.6").capabilities.reasoning).toBe(true);
     expect(provider("kimi-k2.5").capabilities.reasoning).toBe(true);
     expect(provider("kimi-k2-thinking").capabilities.reasoning).toBe(true);
+    expect(provider("kimi-k3.1-pro").capabilities).toMatchObject({
+      reasoning: true,
+      reasoningEfforts: ["low", "high", "max"],
+      contextCaching: true,
+      vision: true,
+      tools: true,
+      toolChoice: true,
+      streaming: true,
+      structuredOutput: true
+    });
+    expect(provider("kimi-k3.1-pro-highspeed").capabilities).toMatchObject({
+      reasoning: true,
+      reasoningEfforts: ["low", "high", "max"],
+      contextCaching: true,
+      vision: true
+    });
+    expect(provider("kimi-k3.1-preview").capabilities.reasoning).toBe(false);
+    expect(provider("kimi-k3.1-preview").capabilities.reasoningEfforts).toBeUndefined();
+  });
+
+  it.each(["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"] as const)(
+    "applies the K3 request contract to %s",
+    async (modelId) => {
+      fetchMock.mockResolvedValueOnce(
+        Response.json({
+          choices: [{ finish_reason: "length", message: { content: "partial", reasoning_content: "thought" } }],
+          usage: {
+            prompt_tokens: 373,
+            completion_tokens: 112,
+            total_tokens: 485,
+            completion_tokens_details: { reasoning_tokens: 90 },
+            prompt_tokens_details: { cached_tokens: 100, cache_write_tokens: 256 }
+          }
+        })
+      );
+      const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+      const result = await generateText({
+        model: provider(modelId),
+        prompt: "hello",
+        reasoning: { effort: "high" },
+        maxTokens: 2048,
+        temperature: 1,
+        providerOptions: {
+          prompt_cache_options: { mode: "implicit", ttl: "1h" },
+          top_p: 0.95,
+          n: 1,
+          presence_penalty: 0,
+          frequency_penalty: 0
+        }
+      });
+
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.moonshot.ai/v1/chat/completions");
+      const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        model: modelId,
+        reasoning_effort: "high",
+        max_completion_tokens: 2048,
+        prompt_cache_options: { mode: "implicit", ttl: "1h" },
+        stream: false
+      });
+      expect(body).not.toHaveProperty("thinking");
+      expect(body).not.toHaveProperty("max_tokens");
+      expect(body).not.toHaveProperty("temperature");
+      expect(result.finishReason).toBe("length");
+      expect(result.usage).toMatchObject({
+        inputTokens: 373,
+        cachedInputTokens: 100,
+        cacheWriteTokens: 256,
+        outputTokens: 112,
+        reasoningTokens: 90,
+        totalTokens: 485
+      });
+    }
+  );
+
+  it("sends the default 5-minute cache TTL and rejects undocumented cache options for K3.1 Pro", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ choices: [{ finish_reason: "stop", message: { content: "ok" } }] }));
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("kimi-k3.1-pro");
+    await model.generate({
+      messages: [createTextMessage("user", "hello")],
+      providerOptions: { prompt_cache_options: { ttl: "5m" } }
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body.prompt_cache_options).toEqual({ ttl: "5m" });
+    expect(body).not.toHaveProperty("reasoning_effort");
+
+    const messages = [createTextMessage("user", "hello")];
+    await expect(model.generate({ messages, providerOptions: { prompt_cache_options: { ttl: "12h" as never } } })).rejects.toThrow(
+      'prompt_cache_options.ttl "5m" and "1h"'
+    );
+    await expect(model.generate({ messages, providerOptions: { prompt_cache_options: { mode: "explicit" as never } } })).rejects.toThrow(
+      'prompt_cache_options.mode "implicit"'
+    );
+    await expect(model.generate({ messages, reasoning: { effort: "medium" } })).rejects.toThrow(
+      'supports reasoning efforts "low", "high", and "max"'
+    );
+    await expect(model.generate({ messages, maxTokens: 1_048_577 })).rejects.toThrow("max completion tokens");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps K3.1 Pro vision parts and rejects public media URLs", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ choices: [{ finish_reason: "stop", message: { content: "described" } }] }));
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    await generateText({
+      model: provider("kimi-k3.1-pro"),
+      messages: [
+        {
+          role: "user",
+          parts: [
+            { type: "text", text: "Look" },
+            { type: "image", image: "iVBORw0KGgo=", mediaType: "image/png" },
+            { type: "file", data: "ms://file-video-1", mediaType: "video/mp4" }
+          ]
+        }
+      ]
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      messages: Array<{ content: Array<Record<string, unknown>> }>;
+      tools?: unknown;
+    };
+    expect(body.messages[0]?.content).toEqual([
+      { type: "text", text: "Look" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
+      { type: "video_url", video_url: { url: "ms://file-video-1" } }
+    ]);
+    expect(body.tools).toBeUndefined();
+
+    await expect(
+      generateText({
+        model: provider("kimi-k3.1-pro-highspeed"),
+        messages: [
+          {
+            role: "user",
+            parts: [{ type: "image", image: "https://example.com/image.png", mediaType: "image/png" }]
+          }
+        ]
+      })
+    ).rejects.toThrow("does not support public image or video URLs");
+  });
+
+  it("sends K3.1 Pro function tools and streams reasoning plus nested usage", async () => {
+    const responseBody = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"reasoning_content":"Think"}}]}\n\n' +
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_k31","function":{"name":"get_weather","arguments":"{\\"city\\":\\"SF\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n' +
+              'data: {"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":12,"total_tokens":52,"completion_tokens_details":{"reasoning_tokens":8},"prompt_tokens_details":{"cached_tokens":10,"cache_write_tokens":30}}}\n\n' +
+              "data: [DONE]\n\n"
+          )
+        );
+        controller.close();
+      }
+    });
+    fetchMock.mockResolvedValueOnce(
+      new Response(responseBody, { status: 200, headers: { "content-type": "text/event-stream" } })
+    );
+    const provider = createKimi({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const result = streamText({
+      model: provider("kimi-k3.1-pro"),
+      prompt: "weather",
+      reasoning: { effort: "low" },
+      maxSteps: 1,
+      toolChoice: "required",
+      tools: {
+        get_weather: tool({
+          name: "get_weather",
+          description: "Get the weather for a city",
+          schema: z.object({ city: z.string() }),
+          execute: ({ city }) => ({ city })
+        })
+      }
+    });
+    const final = await result.collect();
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
+      tool_choice: string;
+      tools: Array<{ type: string; function: { name: string; parameters: { required: string[] } } }>;
+      stream_options: { include_usage: boolean };
+      reasoning_effort: string;
+    };
+    expect(body.tool_choice).toBe("required");
+    expect(body.reasoning_effort).toBe("low");
+    expect(body.stream_options).toEqual({ include_usage: true });
+    expect(body.tools[0]).toMatchObject({
+      type: "function",
+      function: { name: "get_weather", parameters: { required: ["city"] } }
+    });
+    expect(final.messages.flatMap((message) => message.parts)).toEqual(
+      expect.arrayContaining([
+        { type: "provider-data", provider: "kimi", data: { type: "reasoning_content", reasoningContent: "Think" } },
+        { type: "tool-call", toolCall: { id: "call_k31", name: "get_weather", input: { city: "SF" } } }
+      ])
+    );
+    expect(final.usage).toMatchObject({
+      cachedInputTokens: 10,
+      cacheWriteTokens: 30,
+      reasoningTokens: 8
+    });
+    expect(final.finishReason).toBe("tool-calls");
   });
 
   it("maps Kimi K3 reasoning and token controls to the current API contract", async () => {

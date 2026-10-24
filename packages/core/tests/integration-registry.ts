@@ -164,7 +164,7 @@ const isQwen38ProductionIntegrationModel = /^qwen3\.8-(?:max|flash)$/i.test(qwen
 const kimiApiKey = process.env.KIMI_API_KEY ?? process.env.MOONSHOT_API_KEY;
 const kimiBaseURL = process.env.KIMI_BASE_URL ?? process.env.MOONSHOT_BASE_URL;
 const kimiTextModelId = process.env.KIMI_INTEGRATION_MODEL ?? "kimi-k3";
-const isKimiK3Model = /^kimi-k3(?:$|-)/i.test(kimiTextModelId);
+const isKimiK3Model = /^kimi-k3(?:$|-)/i.test(kimiTextModelId) || /^kimi-k3\.1-pro(?:-highspeed)?$/i.test(kimiTextModelId);
 
 const bedrockRegion = process.env.AWS_REGION;
 const bedrockTextModelId = process.env.BEDROCK_INTEGRATION_MODEL ?? "anthropic.claude-haiku-5-5";
