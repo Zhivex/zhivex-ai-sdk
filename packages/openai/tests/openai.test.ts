@@ -1791,6 +1791,92 @@ describe("openai adapter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("accepts gpt-6.1-terra none and max, defaults the effort to the provider, and rejects Chat tools", async () => {
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const model = provider("gpt-6.1-terra");
+    const completed = () => Response.json({
+      id: "resp_terra",
+      status: "completed",
+      output: [{ type: "message", content: [{ type: "output_text", text: "terra" }] }],
+      usage: {
+        input_tokens: 20,
+        input_tokens_details: {
+          cached_tokens: 4,
+          cache_write_tokens: 6,
+          cache_write_tokens_details: { ttl_30m_tokens: 2, ttl_12h_tokens: 4 }
+        },
+        output_tokens: 10,
+        output_tokens_details: { reasoning_tokens: 3 },
+        total_tokens: 30
+      }
+    });
+
+    await expect(generateText({ model, prompt: "hello", reasoning: { effort: "minimal" } })).rejects.toThrow("minimal");
+    await expect(generateText({ model, prompt: "hello", temperature: 0.2 })).rejects.toThrow("sampling");
+    await expect(generateText({
+      model, prompt: "hello", reasoning: { effort: "none" }, providerOptions: { apiMode: "chat" },
+      tools: { weather: tool({ name: "weather", schema: z.object({}), execute: () => "sunny" }) }
+    })).rejects.toThrow("requires the Responses API");
+    await expect(generateText({
+      model,
+      messages: [{ role: "user", parts: [{ type: "audio", data: "aGk=", mediaType: "audio/wav" }] }]
+    })).rejects.toThrow("audio input");
+    await expect(generateText({
+      model,
+      messages: [{ role: "user", parts: [{ type: "file", data: "file_video", mediaType: "video/mp4" }] }]
+    })).rejects.toThrow("video input");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValueOnce(completed());
+    const none = await generateText({
+      model, prompt: "hello", reasoning: { effort: "none" }, temperature: 0
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/responses");
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({
+      model: "gpt-6.1-terra",
+      reasoning: { effort: "none" },
+      temperature: 0
+    });
+    expect(none.usage).toMatchObject({
+      cachedInputTokens: 4,
+      cacheWriteTokens: 6,
+      cacheWriteTokensDetails: { ttl30mTokens: 2, ttl12hTokens: 4 },
+      reasoningTokens: 3
+    });
+
+    fetchMock.mockResolvedValueOnce(completed());
+    await generateText({
+      model, prompt: "hello", reasoning: { effort: "max" },
+      providerOptions: { prompt_cache_options: { ttl: "12h" } }
+    });
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toMatchObject({
+      model: "gpt-6.1-terra",
+      reasoning: { effort: "max" },
+      prompt_cache_options: { ttl: "12h" }
+    });
+
+    fetchMock.mockResolvedValueOnce(completed());
+    await generateText({
+      model,
+      messages: [{ role: "user", parts: [{ type: "image", image: "aGk=", mediaType: "image/png" }, { type: "text", text: "look" }] }]
+    });
+    const imageBody = JSON.parse(String((fetchMock.mock.calls[2]?.[1] as RequestInit).body));
+    expect(imageBody.reasoning).toBeUndefined();
+    expect(imageBody.input[0].content).toContainEqual(expect.objectContaining({ type: "input_image" }));
+
+    fetchMock.mockResolvedValueOnce(Response.json({ choices: [{ finish_reason: "stop", message: { content: "chat" } }] }));
+    await generateText({
+      model, prompt: "hello", reasoning: { effort: "medium" },
+      providerOptions: { apiMode: "chat", prompt_cache_options: { ttl: "30m" } }
+    });
+    expect(String(fetchMock.mock.calls[3]?.[0])).toContain("/chat/completions");
+    expect(JSON.parse(String((fetchMock.mock.calls[3]?.[1] as RequestInit).body))).toMatchObject({
+      model: "gpt-6.1-terra",
+      reasoning_effort: "medium",
+      prompt_cache_options: { ttl: "30m" }
+    });
+  });
+
   it("reports the current GPT-5.6, GPT-5.5, and GPT-5.4 tool capability matrix", () => {
     const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
 

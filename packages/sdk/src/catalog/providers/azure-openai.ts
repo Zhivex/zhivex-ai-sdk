@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const azureOpenaiCatalogFragment = defineModelCatalogFragment({
   provider: "azure-openai",
-  revision: "2026-10-19",
-  verifiedAt: "2026-10-19",
+  revision: "2026-10-26",
+  verifiedAt: "2026-10-26",
   pricingEffectiveAt: "2026-08-16",
   sources: [
     "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure",
@@ -11,6 +11,26 @@ export const azureOpenaiCatalogFragment = defineModelCatalogFragment({
     "https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule",
     "catalog-release:2026-08-16"],
   entries: [
+    {
+      "provider": "azure-openai",
+      "modelId": "gpt-6.1-terra",
+      "contextWindowTokens": 1050000,
+      "contextWindowType": "combined",
+      "maxInputTokens": 922000,
+      "maxOutputTokens": 128000,
+      "evidence": {
+        "contextWindowTokens": { "source": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure", "sourceType": "primary", "verifiedAt": "2026-10-26" },
+        "contextWindowType": { "source": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure", "sourceType": "primary", "verifiedAt": "2026-10-26" },
+        "maxInputTokens": { "source": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure", "sourceType": "primary", "verifiedAt": "2026-10-26" },
+        "maxOutputTokens": { "source": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure", "sourceType": "primary", "verifiedAt": "2026-10-26" }
+      },
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
     {
       "provider": "azure-openai",
       "modelId": "gpt-6.1-sol",
