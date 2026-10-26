@@ -4,6 +4,7 @@
 
 ### Patch Changes
 
+- Recognize `gpt-6.1-terra` as a text and image model with reasoning efforts `none`, `low`, `medium` (provider default), `high`, `xhigh`, and `max`. Tool calling requires the Responses API. Sampling controls require effort `none`. Audio input stays unsupported, and `video/*` file parts are rejected before the request.
 - Chat Completions ignore `prompt_cache_options.ttl` `"12h"` and warn once. The provider default remains 30 minutes. `"30m"` is still sent. Responses still accepts `"12h"`.
 
 ## 0.17.0

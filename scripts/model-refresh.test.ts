@@ -120,6 +120,8 @@ describe("September provider model contracts", () => {
     });
     expect(defaultModelCatalog.find("kimi", "kimi-k3.1-pro-highspeed")?.outputCostPer1kTokens).toBe(0.02);
     expect(defaultModelCatalog.find("openai", "gpt-6.1-sol")?.recommendedFor).toContain("tools");
+    expect(defaultModelCatalog.find("openai", "gpt-6.1-terra")?.recommendedFor).toContain("vision");
+    expect(defaultModelCatalog.find("azure-openai", "gpt-6.1-terra")).toBeDefined();
     expect(defaultModelCatalog.find("xai", "grok-4.7")?.recommendedFor).toContain("reasoning");
     expect(defaultModelCatalog.find("anthropic", "claude-mythos-5-1")?.recommendedFor).toBeUndefined();
     expect(createOllama()("qwen3.8:27b").capabilities.reasoning).toBe(true);

@@ -2,10 +2,11 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const openrouterCatalogFragment = defineModelCatalogFragment({
   provider: "openrouter",
-  revision: "2026-10-16",
-  verifiedAt: "2026-10-16",
-  pricingEffectiveAt: "2026-10-16",
+  revision: "2026-10-26",
+  verifiedAt: "2026-10-26",
+  pricingEffectiveAt: "2026-10-26",
   sources: [
+    "https://openrouter.ai/openai/gpt-6.1-terra",
     "https://openrouter.ai/api/v1/models",
     "https://openrouter.ai/meta/muse-spark-open",
     "https://research.meta.ai/blog/muse-spark-open",
@@ -13,6 +14,21 @@ export const openrouterCatalogFragment = defineModelCatalogFragment({
     "catalog-release:2026-08-16"
   ],
   entries: [
+    {
+      "provider": "openrouter",
+      "modelId": "openai/gpt-6.1-terra",
+      "maxOutputTokens": 128000,
+      "evidence": {
+        "maxOutputTokens": { "source": "https://openrouter.ai/openai/gpt-6.1-terra", "sourceType": "primary", "verifiedAt": "2026-10-26" },
+        "inputCostPer1kTokens": { "source": "https://openrouter.ai/openai/gpt-6.1-terra", "sourceType": "primary", "verifiedAt": "2026-10-26" },
+        "outputCostPer1kTokens": { "source": "https://openrouter.ai/openai/gpt-6.1-terra", "sourceType": "primary", "verifiedAt": "2026-10-26" }
+      },
+      "inputCostPer1kTokens": 0.001,
+      "cachedInputCostPer1kTokens": 0.00005,
+      "cacheWriteCostPer1kTokens": 0.00125,
+      "outputCostPer1kTokens": 0.005,
+      "recommendedFor": ["chat", "reasoning", "tools", "vision"]
+    },
     {
       "provider": "openrouter",
       "modelId": "openai/gpt-6.1-sol",

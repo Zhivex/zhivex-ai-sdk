@@ -31,10 +31,22 @@ describe("OpenAI model profile policy", () => {
       label: "GPT-6.1 Sol", defaultApi: "responses", sampling: "unsupported", toolsRequireResponses: "always",
       reasoningEfforts: ["low", "medium", "high", "xhigh", "max"]
     });
+    expect(resolveOpenAIModelProfile("gpt-6.1-terra")).toMatchObject({
+      label: "GPT-6.1 Terra", defaultApi: "responses", sampling: "effort-none", toolsRequireResponses: "always",
+      reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"]
+    });
+    expect(resolveOpenAIModelProfile("gpt-6.1-terra-2026-10-26").label).toBe("GPT-6.1 Terra");
     expect(resolveOpenAIModelProfile("gpt-6-sol")).toMatchObject({ defaultApi: "responses", sampling: "effort-none", toolsRequireResponses: "unless-effort-none" });
     const sol61 = createOpenAI({ apiKey: "test" })("gpt-6.1-sol");
     expect(sol61.capabilities).toMatchObject({ tools: true, vision: true, reasoning: true, files: true });
     expect(sol61.capabilities.agentCapabilities).toMatchObject({ multiAgent: false, toolSearch: true, computerUse: true });
+    const terra = createOpenAI({ apiKey: "test" })("gpt-6.1-terra");
+    expect(terra.capabilities).toMatchObject({
+      tools: true, vision: true, reasoning: true, files: true, explicitPromptCaching: true,
+      audioInput: false, audioOutput: false, reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"]
+    });
+    expect(terra.capabilities.agentCapabilities).toMatchObject({ multiAgent: false, toolSearch: true, computerUse: true });
+    expect(terra.capabilities.videoGeneration).toBeFalsy();
     expect(createOpenAI({ apiKey: "test" })("gpt-6.1-luna").capabilities.tools).toBe(false);
     expect(createOpenAI({ apiKey: "test" })("gpt-4-0613").capabilities.tools).toBe(true);
     expect(createOpenAI({ apiKey: "test" })("gpt-6-astra-2026-01-01-extra").capabilities.tools).toBe(false);

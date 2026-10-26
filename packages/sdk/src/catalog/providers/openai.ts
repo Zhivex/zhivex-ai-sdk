@@ -2,9 +2,9 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const openaiCatalogFragment = defineModelCatalogFragment({
   provider: "openai",
-  revision: "2026-10-15",
-  verifiedAt: "2026-10-15",
-  pricingEffectiveAt: "2026-10-13",
+  revision: "2026-10-26",
+  verifiedAt: "2026-10-26",
+  pricingEffectiveAt: "2026-10-26",
   sources: [
     "https://developers.openai.com/api/docs/models/gpt-4o-mini",
     "https://developers.openai.com/api/docs/deprecations",
@@ -13,12 +13,46 @@ export const openaiCatalogFragment = defineModelCatalogFragment({
     "https://developers.openai.com/api/docs/models/gpt-6-luna",
     "https://developers.openai.com/api/docs/models/gpt-6-astra",
     "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+    "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+    "https://developers.openai.com/api/docs/pricing",
+    "https://openai.com/index/introducing-gpt-6-1-terra",
     "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare",
     "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst",
     "https://developers.openai.com/api/docs/guides/image-generation",
     "catalog-release:2026-08-16",
     "https://developers.openai.com/api/docs/guides/live"],
   entries: [
+    {
+      "provider": "openai",
+      "modelId": "gpt-6.1-terra",
+      "contextWindowTokens": 1050000,
+      "contextWindowType": "combined",
+      "maxInputTokens": 922000,
+      "maxOutputTokens": 128000,
+      "evidence": {
+        "contextWindowTokens": { "source": "https://developers.openai.com/api/docs/models/gpt-6.1-terra", "sourceType": "primary", "verifiedAt": "2026-10-26" },
+        "contextWindowType": { "source": "https://developers.openai.com/api/docs/models/gpt-6.1-terra", "sourceType": "primary", "verifiedAt": "2026-10-26" },
+        "maxInputTokens": { "source": "https://developers.openai.com/api/docs/models/gpt-6.1-terra", "sourceType": "primary", "verifiedAt": "2026-10-26" },
+        "maxOutputTokens": { "source": "https://developers.openai.com/api/docs/models/gpt-6.1-terra", "sourceType": "primary", "verifiedAt": "2026-10-26" },
+        "inputCostPer1kTokens": { "source": "https://developers.openai.com/api/docs/pricing", "sourceType": "primary", "verifiedAt": "2026-10-26" },
+        "outputCostPer1kTokens": { "source": "https://developers.openai.com/api/docs/pricing", "sourceType": "primary", "verifiedAt": "2026-10-26" }
+      },
+      "inputCostPer1kTokens": 0.001,
+      "cachedInputCostPer1kTokens": 0.00005,
+      "cacheWriteCostPer1kTokens": 0.00125,
+      "outputCostPer1kTokens": 0.005,
+      "longContextPricing": {
+        "inputTokenThreshold": 272000,
+        "inputMultiplier": 2,
+        "outputMultiplier": 1.5
+      },
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
     {
       "provider": "openai",
       "modelId": "gpt-6.1-sol",
