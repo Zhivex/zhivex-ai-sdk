@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const qwenCatalogFragment = defineModelCatalogFragment({
   provider: "qwen",
-  revision: "2026-10-13",
-  verifiedAt: "2026-10-13",
+  revision: "2026-10-23",
+  verifiedAt: "2026-10-23",
   pricingEffectiveAt: "2026-09-18",
   sources: [
     "https://docs.qwencloud.com/api-reference/decision-model-api",
@@ -21,7 +21,12 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
     "https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models",
     "https://www.alibabacloud.com/help/en/model-studio/qwen-image-generation-and-editing-api-reference",
     "https://www.alibabacloud.com/help/en/model-studio/qwen-image-2-1-turbo",
-    "https://www.qwencloud.com/models/qwen-image-2.1-pro"
+    "https://www.qwencloud.com/models/qwen-image-2.1-pro",
+    "https://docs.qwencloud.com/developer-guides/getting-started/video-models",
+    "https://docs.qwencloud.com/api-reference/video-generation/pixverse-text-to-video/create-task",
+    "https://docs.qwencloud.com/api-reference/video-generation/pixverse-image-to-video/create-task",
+    "https://docs.qwencloud.com/api-reference/video-generation/pixverse-image-to-video-first-last/create-task",
+    "https://docs.qwencloud.com/api-reference/video-generation/pixverse-reference-to-video/create-task"
   ],
   entries: [
     // Discovery is not a claim that every account, transport or feature is live-certified.
@@ -71,6 +76,11 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
     { provider: "qwen", modelId: "vidu/viduq3-drama_reference2video" },
     { provider: "qwen", modelId: "vidu/viduq2-pro-fast_img2video" },
     { provider: "qwen", modelId: "vidu/vidu-image_reference2image" },
+    // PixVerse V6 is Singapore (ap-southeast-1) only. Prices are resolution/duration/audio rates, not token prices.
+    { provider: "qwen", modelId: "pixverse/pixverse-v6-t2v" },
+    { provider: "qwen", modelId: "pixverse/pixverse-v6-it2v" },
+    { provider: "qwen", modelId: "pixverse/pixverse-v6-kf2v" },
+    { provider: "qwen", modelId: "pixverse/pixverse-v6-r2v" },
 
     { provider: "qwen", modelId: "qwen3.8-livetranslate-flash-realtime", recommendedFor: ["vision", "speed"] },
     {

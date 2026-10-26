@@ -905,6 +905,6 @@ export type { AgentBudgetCoordinator, AgentBudgetCoordinatorOptions, AgentTokenR
 
 export type { HostedToolUsage, HostedToolSupport } from "@zhivex-ai/core";
 
-export type { DecisionQuestion, DecisionQuestions, DecisionEvidence, DecisionInput, DecisionCapabilities, DecisionAnswer, DecisionResult, DecisionModel } from "@zhivex-ai/core";
+export type { DecisionImageDetail, DecisionPromptCacheBreakpoint, DecisionPromptCacheOptions, DecisionTextPart, DecisionImagePart, DecisionJsonPart, DecisionContentPart, DecisionQuestionPart, DecisionQuestionInstructions, DecisionScoreLevel, DecisionToolStatus, DecisionInputMessage, DecisionQuestion, DecisionQuestions, DecisionEvidence, DecisionInput, DecisionCapabilities, DecisionAnswer, DecisionResult, DecisionModel } from "@zhivex-ai/core";
 
 export { experimentalDecisionHelpers } from "@zhivex-ai/core/experimental";

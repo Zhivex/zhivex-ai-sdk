@@ -2,15 +2,17 @@
 
 OpenAI adapter for Zhivex AI SDK.
 
-## GPT-6.1 Sol, GPT-6 Sol, and GPT-6 Luna
+## GPT-6.1 Sol, GPT-6.1 Terra, GPT-6 Sol, and GPT-6 Luna
 
-Use `createOpenAI()("gpt-6.1-sol")`, `createOpenAI()("gpt-6-sol")`, or `createOpenAI()("gpt-6-luna")`. All three default to the Responses API, including streaming, tools, vision, and native structured output.
+Use `createOpenAI()("gpt-6.1-sol")`, `createOpenAI()("gpt-6.1-terra")`, `createOpenAI()("gpt-6-sol")`, or `createOpenAI()("gpt-6-luna")`. All four default to the Responses API, including streaming, tools, vision, and native structured output.
 
 `gpt-6.1-sol` accepts reasoning efforts `low`, `medium` (the provider default), `high`, `xhigh`, and `max`. It does not accept `none` or `minimal`. Tool calling requires the Responses API. Sampling controls (`temperature`, `top_p`, `top_logprobs`) and logprobs are rejected before the request is sent. The OpenAI model page does not list multi-agent orchestration for this id, so `agentCapabilities.multiAgent` stays false.
 
+`gpt-6.1-terra` accepts `none`, `low`, `medium` (the provider default), `high`, `xhigh`, and `max`. Omitting `reasoning.effort` leaves that provider default in place. Tool calling requires the Responses API even when effort is `none`. Sampling controls and logprobs are accepted only when effort is `none`. Input is text and image; `audioInput` stays false, and a `video/*` file part is rejected before the request. The only published snapshot is `gpt-6.1-terra`. There is no `gpt-6.1` alias. The model page does not list multi-agent orchestration, so `agentCapabilities.multiAgent` stays false. Standard catalog rates are $1 input, $0.05 cached input, $1.25 cache write (30-minute), and $5 output per million tokens. Prompts above 272K input tokens use 2x input and cache rates and 1.5x output. See the [model page](https://developers.openai.com/api/docs/models/gpt-6.1-terra) and the [pricing page](https://developers.openai.com/api/docs/pricing).
+
 `gpt-6-sol` and `gpt-6-luna` accept `none`, `low`, `medium`, `high`, `xhigh`, and `max`. When explicitly selecting `providerOptions.apiMode: "chat"`, function calling requires `reasoning.effort: "none"`. Sampling controls and logprobs also require effort `none`. Astra retains its separate restrictions and does not accept `none`.
 
-See the official [GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model), [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol), [Sol model](https://developers.openai.com/api/docs/models/gpt-6-sol), and [Luna model](https://developers.openai.com/api/docs/models/gpt-6-luna).
+See the official [GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model), [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol), [GPT-6.1 Terra](https://developers.openai.com/api/docs/models/gpt-6.1-terra), [Sol model](https://developers.openai.com/api/docs/models/gpt-6-sol), and [Luna model](https://developers.openai.com/api/docs/models/gpt-6-luna).
 
 ## Install
 
@@ -464,12 +466,15 @@ origin/session policy, coordinate bounds and screenshots. See the
 [computer-use guide](../../docs/COMPUTER_USE.md) for provider and durability limits.
 These changes describe this source branch, not previously published packages.
 
-## Experimental Decisions
+## Decisions
 
-`openai.experimentalDecisionModel('gpt-6-luna')` implements the portable
-`DecisionModel` contract using `/decisions`, independently of chat. It supports
-predicate, typed string/boolean choice, fractional score, inline images and
-per-question refusal. See [portable Decisions](../../docs/DECISIONS.md) for the
+`openai.decisionModel('gpt-6-luna')` implements the portable `DecisionModel`
+contract on the GA `/decisions` API, independently of chat. It supports
+predicate, typed string/boolean choice, fractional score, text, public image
+URLs, inline images, JSON, message and tool history, per-question images,
+prompt-cache options, `safetyIdentifier`, score-level descriptions, and cache
+usage. `experimentalDecisionModel()` is the same function and remains available
+as a deprecated alias. See [portable Decisions](../../docs/DECISIONS.md) for the
 contract, explicit gateway fallback and separate Decisions pricing.
 
 ## Experimental GPT-Live browser WebRTC

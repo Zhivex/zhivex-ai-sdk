@@ -1,5 +1,13 @@
 # @zhivex-ai/sdk
 
+## Unreleased
+
+### Patch Changes
+
+- Add OpenAI `gpt-6.1-terra` to the release-managed catalog with a 1,050,000 combined context window, 922,000 max input tokens, 128,000 max output tokens, and standard rates of $1 input, $0.05 cached input, $1.25 30-minute cache write, and $5 output per million tokens. Prompts above 272K input tokens use 2x input and cache rates and 1.5x output. Azure OpenAI lists the same id without a token price. OpenRouter `openai/gpt-6.1-terra` records the published standard rates and leaves the long-context multiplier unset.
+- Add `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` with a 1,048,576-token combined context window and the documented input, cached-input, 5-minute cache-write, and output rates. `kimi-k3` stays the Kimi package default.
+- Add Qwen PixVerse V6 `pixverse/pixverse-v6-t2v`, `pixverse/pixverse-v6-it2v`, `pixverse/pixverse-v6-kf2v`, and `pixverse/pixverse-v6-r2v`. The default Qwen host is unchanged.
+
 ## 1.35.0
 
 ### Minor Changes

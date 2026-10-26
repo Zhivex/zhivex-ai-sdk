@@ -2415,6 +2415,17 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
     if (!this.capabilities.vision && input.messages.some(message => message.parts.some(part => part.type === "image"))) {
       throw new UnsupportedFeatureError(`OpenAI model "${this.modelId}" has no declared vision support.`);
     }
+    if (!this.capabilities.audioInput && input.messages.some(message => message.parts.some(part => part.type === "audio"))) {
+      throw new UnsupportedFeatureError(`OpenAI model "${this.modelId}" has no declared audio input support.`);
+    }
+    // No OpenAI language model advertises video input unless inputMediaTypes says so.
+    const acceptsVideo = this.capabilities.inputMediaTypes?.some((type) => {
+      const normalized = type.toLowerCase();
+      return normalized === "*/*" || normalized === "video/*" || normalized.startsWith("video/");
+    }) === true;
+    if (!acceptsVideo && input.messages.some(message => message.parts.some(part => part.type === "file" && part.mediaType.toLowerCase().startsWith("video/")))) {
+      throw new UnsupportedFeatureError(`OpenAI model "${this.modelId}" has no declared video input support.`);
+    }
     const rawFormat = options.bodyOptions.response_format as { type?: unknown } | undefined;
     const rawText = options.bodyOptions.text as { format?: { type?: unknown } } | undefined;
     const formatTypes = [rawFormat?.type, rawText?.format?.type];
@@ -2811,6 +2822,9 @@ class OpenAIGroundedLanguageModel implements GroundedLanguageModel {
 export interface OpenAIProvider extends CallableProviderAdapter<LanguageModel<OpenAILanguageModelOptions>> {
   rawFetch: typeof globalThis.fetch;
   agents: OpenAIAgentsClient;
+  /** GA Decisions API. `experimentalDecisionModel` remains a deprecated alias. */
+  decisionModel(modelId?: string): import("@zhivex-ai/core").DecisionModel;
+  /** @deprecated Decisions is generally available. Use `decisionModel`. */
   experimentalDecisionModel(modelId?: string): import("@zhivex-ai/core").DecisionModel;
   speechModel(modelId: string): OpenAISpeechModel;
   realtimeModel(modelId: string): OpenAIRealtimeModel | OpenAILiveModel;
@@ -2852,6 +2866,7 @@ export const createOpenAI = (
 
   return createProviderAdapter({
     name: "openai",
+    decisionModel: (modelId = "gpt-6-luna") => createOpenAIDecisionModel(modelId, { apiKey, baseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints }),
     experimentalDecisionModel: (modelId = "gpt-6-luna") => createOpenAIDecisionModel(modelId, { apiKey, baseURL, fetch: fetcher, allowUnsafeEndpoints: options.allowUnsafeEndpoints }),
     languageModel: (modelId) => {
       if (modelId.startsWith("gpt-live-")) throw new UnsupportedFeatureError("GPT-Live is a voice model; use openai.realtimeModel(modelId).");

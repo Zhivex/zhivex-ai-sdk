@@ -102,7 +102,7 @@ describe("Cloud protocol edge cases", () => {
   });
 });
 
-import { prepareViduVideo, validateViduImage, validateHappyHorse } from "../src/cloud-media.js";
+import { prepareViduVideo, preparePixVerseVideo, assertPixVerseRegion, validateViduImage, validateHappyHorse } from "../src/cloud-media.js";
 describe("hosted Vidu and HappyHorse profiles", () => {
   it("maps Vidu reference ratio to size with the chosen resolution", () => {
     expect(prepareViduVideo("vidu/viduq3-mix_reference2video", [{ type: "image", url: "https://images.test/a.png" }], { duration: 1, resolution: "720P", ratio: "9:16", n: 1 })).toEqual({ duration: 1, resolution: "720P", size: "720*1280" });
@@ -114,6 +114,26 @@ describe("hosted Vidu and HappyHorse profiles", () => {
     expect(() => validateViduImage({ prompt: "Blue circle", count: 1, size: "1024*1024" }, {})).not.toThrow();
     expect(() => validateViduImage({ prompt: "Blue circle", size: "512*512" }, {})).toThrow("size");
     expect(() => validateViduImage({ prompt: "Blue circle", count: 2 }, {})).toThrow("one image");
+  });
+  it("maps each PixVerse V6 model onto its published media and size fields", () => {
+    const image = "https://images.test/a.png";
+    expect(preparePixVerseVideo("pixverse/pixverse-v6-t2v", undefined, { duration: 15, size: "1920*832", audio: true, shot_type: "multi", watermark: false, seed: 0 }, "City")).toEqual({ parameters: { duration: 15, size: "1920*832", audio: true, shot_type: "multi", watermark: false, seed: 0 } });
+    expect(preparePixVerseVideo("pixverse/pixverse-v6-it2v", [{ type: "image_url", url: image }], { duration: 1, resolution: "360P", shot_type: "single" }, "Smile")).toEqual({ media: [{ type: "image_url", url: image }], parameters: { duration: 1, resolution: "360P", shot_type: "single" } });
+    expect(preparePixVerseVideo("pixverse/pixverse-v6-kf2v", [{ type: "last_frame", url: image }, { type: "first_frame", url: "https://images.test/b.webp" }], { duration: 5, resolution: "1080P", seed: 2147483647 }, "Bloom")).toEqual({ media: [{ type: "last_frame", url: image }, { type: "first_frame", url: "https://images.test/b.webp" }], parameters: { duration: 5, resolution: "1080P", seed: 2147483647 } });
+    expect(preparePixVerseVideo("pixverse/pixverse-v6-r2v", [{ type: "image_url", url: image, ref_name: "man" }], { duration: 5, size: "640*360" }, "@man waves")).toEqual({ media: [{ type: "image_url", url: image, ref_name: "man" }], parameters: { duration: 5, size: "640*360" } });
+    expect(() => preparePixVerseVideo("pixverse/pixverse-v6-t2v", undefined, { duration: 0, size: "1280*720" }, "City")).toThrow("duration");
+    expect(() => preparePixVerseVideo("pixverse/pixverse-v6-it2v", [{ type: "image_url", url: image }], { duration: 16, resolution: "720P" }, "Smile")).toThrow("duration");
+    expect(() => preparePixVerseVideo("pixverse/pixverse-v6-it2v", [{ type: "first_frame", url: image }], { duration: 5, resolution: "720P" }, "Smile")).toThrow("image_url");
+    expect(() => preparePixVerseVideo("pixverse/pixverse-v6-it2v", [{ type: "image_url", url: image }], { duration: 5, resolution: "720p" }, "Smile")).toThrow("resolution");
+    expect(() => preparePixVerseVideo("pixverse/pixverse-v6-kf2v", [{ type: "first_frame", url: image }], { duration: 5, resolution: "540P" }, "Bloom")).toThrow("first_frame");
+    expect(() => preparePixVerseVideo("pixverse/pixverse-v6-kf2v", [{ type: "first_frame", url: image }, { type: "last_frame", url: image }], { duration: 5, resolution: "540P", shot_type: "multi" }, "Bloom")).toThrow("shot_type");
+    expect(() => preparePixVerseVideo("pixverse/pixverse-v6-r2v", [], { duration: 5, size: "1280*720" }, "Refs")).toThrow("1 to 7");
+    expect(() => preparePixVerseVideo("pixverse/pixverse-v6-r2v", Array.from({ length: 8 }, () => ({ type: "image_url", url: image })), { duration: 5, size: "1280*720" }, "Refs")).toThrow("1 to 7");
+    expect(() => preparePixVerseVideo("pixverse/pixverse-v6-r2v", [{ type: "image_url", url: image, ref_name: "man" }, { type: "image_url", url: image, ref_name: "man" }], { duration: 5, size: "1280*720" }, "Refs")).toThrow("unique");
+    expect(() => preparePixVerseVideo("pixverse/pixverse-v6-t2v", [{ type: "image_url", url: image }], { duration: 5, size: "1280*720" }, "City")).toThrow("images");
+    expect(() => preparePixVerseVideo("pixverse/pixverse-v6-t2v", undefined, { duration: 5, resolution: "720P" }, "City")).toThrow("resolution");
+    expect(() => assertPixVerseRegion("https://workspace.cn-beijing.maas.aliyuncs.com/api/v1")).toThrow("Singapore");
+    expect(() => assertPixVerseRegion("https://ap-southeast-1.maas.qwencloudapi.com/api/v1")).not.toThrow();
   });
   it("enforces HappyHorse media dialect and model-specific input", () => {
     expect(() => validateHappyHorse("happyhorse-1.1-i2v", [{ type: "first_frame", url: "https://images.test/a.png" }], { duration: 3, resolution: "480P" })).not.toThrow();

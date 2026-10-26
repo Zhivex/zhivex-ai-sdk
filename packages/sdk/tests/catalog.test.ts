@@ -7,6 +7,7 @@ import {
   listDefaultModelCatalogFragments
 } from "../src/catalog.js";
 import {
+  calculateModelCost,
   defaultModelCatalog as rootDefaultModelCatalog,
   listDefaultModelCatalogFragments as listRootFragments
 } from "../src/index.js";
@@ -36,10 +37,10 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-10-20",
+      snapshotVersion: "2026-10-26",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-10-16",
+        version: "2026-10-26",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
@@ -64,7 +65,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(275);
+    expect(entries).toHaveLength(284);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
       retiredAt: "2027-04-01",
@@ -110,12 +111,12 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(275);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(284);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
-      revision: "2026-10-15",
-      verifiedAt: "2026-10-15",
-      pricingEffectiveAt: "2026-10-13",
-      sources: ["https://developers.openai.com/api/docs/models/gpt-4o-mini", "https://developers.openai.com/api/docs/deprecations", "https://developers.openai.com/api/docs/guides/conversation-state", "https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare", "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst", "https://developers.openai.com/api/docs/guides/image-generation", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
+      revision: "2026-10-26",
+      verifiedAt: "2026-10-26",
+      pricingEffectiveAt: "2026-10-26",
+      sources: ["https://developers.openai.com/api/docs/models/gpt-4o-mini", "https://developers.openai.com/api/docs/deprecations", "https://developers.openai.com/api/docs/guides/conversation-state", "https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "https://developers.openai.com/api/docs/models/gpt-6.1-terra", "https://developers.openai.com/api/docs/pricing", "https://openai.com/index/introducing-gpt-6-1-terra", "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare", "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst", "https://developers.openai.com/api/docs/guides/image-generation", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
     });
     expect(fragments.find((fragment) => fragment.provider === "zai")).toMatchObject({
       revision: "2026-08-26",
@@ -124,11 +125,15 @@ describe("SDK model catalog ownership", () => {
       modelCount: 3
     });
     expect(fragments.find((fragment) => fragment.provider === "qwen")).toMatchObject({
-      revision: "2026-10-13",
-      verifiedAt: "2026-10-13",
+      revision: "2026-10-23",
+      verifiedAt: "2026-10-23",
       pricingEffectiveAt: "2026-09-18",
-      modelCount: 77
+      modelCount: 81,
+      sources: expect.arrayContaining(["https://docs.qwencloud.com/api-reference/video-generation/pixverse-image-to-video/create-task"])
     });
+    for (const id of ["pixverse/pixverse-v6-t2v", "pixverse/pixverse-v6-it2v", "pixverse/pixverse-v6-kf2v", "pixverse/pixverse-v6-r2v"]) {
+      expect(defaultModelCatalog.find("qwen", id)).toMatchObject({ provider: "qwen", modelId: id });
+    }
     expect(Object.isFrozen(fragments[0])).toBe(true);
     expect(Object.isFrozen(fragments[0]?.sources)).toBe(true);
   });
@@ -155,8 +160,8 @@ describe("SDK model catalog ownership", () => {
       sources: expect.arrayContaining(["https://ai.google.dev/gemini-api/docs/deprecations"])
     });
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "azure-openai")).toMatchObject({
-      revision: "2026-10-19",
-      verifiedAt: "2026-10-19",
+      revision: "2026-10-26",
+      verifiedAt: "2026-10-26",
       sources: expect.arrayContaining(["https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/model-retirement-schedule"])
     });
   });
@@ -229,7 +234,7 @@ describe("SDK model catalog ownership", () => {
     }
     expect(defaultModelCatalog.find("openai", "gpt-image-2.5-flare")?.aliases).toEqual(["gpt-image-2.5-flare-2026-09-08"]);
     expect(defaultModelCatalog.find("openai", "gpt-image-2.5-sunburst")?.aliases).toEqual(["gpt-image-2.5-sunburst-2026-09-08"]);
-    for (const id of ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
+    for (const id of ["gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
       const entry = defaultModelCatalog.find("azure-openai", id);
       expect(entry).toMatchObject({ recommendedFor: ["chat", "reasoning", "tools", "vision"] });
       expect(entry?.inputCostPer1kTokens).toBeUndefined();
@@ -257,10 +262,10 @@ describe("SDK model catalog ownership", () => {
     expect(defaultModelCatalog.find("openrouter", "openai/gpt-4o-mini")?.recommendedFor).toBeUndefined();
     expect(defaultModelCatalog.find("openrouter", "openai/gpt-4o-mini")?.costPer1kTokens).toBe(0.0007);
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "openrouter")).toMatchObject({
-      revision: "2026-10-16",
-      verifiedAt: "2026-10-16",
-      pricingEffectiveAt: "2026-10-16",
-      modelCount: 11,
+      revision: "2026-10-26",
+      verifiedAt: "2026-10-26",
+      pricingEffectiveAt: "2026-10-26",
+      modelCount: 12,
       sources: expect.arrayContaining([
         "https://openrouter.ai/meta/muse-spark-open",
         "https://research.meta.ai/blog/muse-spark-open",
@@ -285,6 +290,72 @@ describe("SDK model catalog ownership", () => {
     });
     expect(defaultModelCatalog.find("openrouter", "google/gemini-nano-banana-2.1")?.inputCostPer1kTokens).toBeUndefined();
     expect(defaultModelCatalog.find("openai", "gpt-6.1-sol")?.recommendedFor).toContain("tools");
+    expect(defaultModelCatalog.find("openai", "gpt-6.1")).toBeUndefined();
+    expect(defaultModelCatalog.find("openai", "gpt-6.1-terra")).toMatchObject({
+      modelId: "gpt-6.1-terra",
+      contextWindowTokens: 1_050_000,
+      contextWindowType: "combined",
+      maxInputTokens: 922_000,
+      maxOutputTokens: 128_000,
+      inputCostPer1kTokens: 0.001,
+      cachedInputCostPer1kTokens: 0.00005,
+      cacheWriteCostPer1kTokens: 0.00125,
+      outputCostPer1kTokens: 0.005,
+      longContextPricing: { inputTokenThreshold: 272_000, inputMultiplier: 2, outputMultiplier: 1.5 },
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    });
+    const terraCost = (inputTokens: number, extra: Parameters<typeof calculateModelCost>[0]["usage"] = {}) => calculateModelCost({
+      catalog: defaultModelCatalog,
+      provider: "openai",
+      modelId: "gpt-6.1-terra",
+      reasoningAccounting: "included",
+      usage: { inputTokens, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 1_000, ...extra }
+    });
+    expect(terraCost(1_000).components.input).toMatchObject({ ratePer1kTokens: 0.001, amount: 0.001 });
+    expect(terraCost(1_000).components.output).toMatchObject({ ratePer1kTokens: 0.005, amount: 0.005 });
+    expect(terraCost(272_000).longContext).toBe(false);
+    expect(terraCost(272_001).longContext).toBe(true);
+    expect(terraCost(272_001).components.input?.ratePer1kTokens).toBeCloseTo(0.002);
+    expect(terraCost(272_001).components.output?.ratePer1kTokens).toBeCloseTo(0.0075);
+    const cached = calculateModelCost({
+      catalog: defaultModelCatalog,
+      provider: "openai",
+      modelId: "gpt-6.1-terra",
+      reasoningAccounting: "included",
+      usage: {
+        inputTokens: 1_000,
+        cachedInputTokens: 200,
+        cacheWriteTokens: 300,
+        cacheWriteTokensDetails: { ttl30mTokens: 100, ttl12hTokens: 200 },
+        outputTokens: 0
+      }
+    });
+    expect(cached.status).toBe("known");
+    expect(cached.components.cachedInput).toMatchObject({ tokens: 200, ratePer1kTokens: 0.00005 });
+    expect(cached.cacheWriteDetails?.ttl30m.ratePer1kTokens).toBeCloseTo(0.00125);
+    expect(cached.cacheWriteDetails?.ttl12h.ratePer1kTokens).toBeCloseTo(0.0025);
+    expect(defaultModelCatalog.find("azure-openai", "gpt-6.1-terra")).toMatchObject({
+      contextWindowTokens: 1_050_000,
+      maxInputTokens: 922_000,
+      maxOutputTokens: 128_000,
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    });
+    expect(defaultModelCatalog.find("azure-openai", "gpt-6.1-terra")?.inputCostPer1kTokens).toBeUndefined();
+    expect(calculateModelCost({
+      catalog: defaultModelCatalog,
+      provider: "azure-openai",
+      modelId: "gpt-6.1-terra",
+      usage: { inputTokens: 1_000, outputTokens: 1_000, cachedInputTokens: 0, cacheWriteTokens: 0 },
+      reasoningAccounting: "included"
+    }).status).toBe("unknown");
+    expect(defaultModelCatalog.find("openrouter", "openai/gpt-6.1-terra")).toMatchObject({
+      inputCostPer1kTokens: 0.001,
+      cachedInputCostPer1kTokens: 0.00005,
+      cacheWriteCostPer1kTokens: 0.00125,
+      outputCostPer1kTokens: 0.005,
+      maxOutputTokens: 128_000
+    });
+    expect(defaultModelCatalog.find("openrouter", "openai/gpt-6.1-terra")?.longContextPricing).toBeUndefined();
     expect(defaultModelCatalog.find("xai", "grok-4.7")?.recommendedFor).toContain("reasoning");
     expect(defaultModelCatalog.find("xai", "grok-4.7")).toMatchObject({
       contextWindowTokens: 500_000,
@@ -405,6 +476,41 @@ describe("SDK model catalog ownership", () => {
       pricingEffectiveAt: "2026-10-14",
       modelCount: 10,
       sources: expect.arrayContaining(["https://docs.x.ai/docs/models"])
+    });
+    expect(defaultModelCatalog.find("kimi", "kimi-k3.1-pro")).toMatchObject({
+      provider: "kimi",
+      modelId: "kimi-k3.1-pro",
+      contextWindowTokens: 1_048_576,
+      contextWindowType: "combined",
+      maxOutputTokens: 1_048_576,
+      inputCostPer1kTokens: 0.002,
+      cachedInputCostPer1kTokens: 0.0002,
+      cacheWriteCostPer1kTokens: 0.002,
+      outputCostPer1kTokens: 0.01,
+      costPer1kTokens: 0.002,
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    });
+    expect(defaultModelCatalog.find("kimi", "kimi-k3.1-pro-highspeed")).toMatchObject({
+      provider: "kimi",
+      modelId: "kimi-k3.1-pro-highspeed",
+      contextWindowTokens: 1_048_576,
+      contextWindowType: "combined",
+      maxOutputTokens: 1_048_576,
+      inputCostPer1kTokens: 0.004,
+      cachedInputCostPer1kTokens: 0.0002,
+      cacheWriteCostPer1kTokens: 0.004,
+      outputCostPer1kTokens: 0.02,
+      recommendedFor: ["chat", "reasoning", "tools", "vision", "speed"]
+    });
+    expect(defaultModelCatalog.find("kimi", "kimi-k3.1-pro")?.maxInputTokens).toBeUndefined();
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "kimi")).toMatchObject({
+      revision: "2026-10-24",
+      verifiedAt: "2026-10-24",
+      modelCount: 5,
+      sources: expect.arrayContaining([
+        "https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart",
+        "https://platform.kimi.ai/docs/pricing/chat"
+      ])
     });
     expect(defaultModelCatalog.find("kimi", "kimi-k2.5")).toBeUndefined();
     expect(defaultModelCatalog.find("openrouter", "google/gemini-3.8-flash-tts")).toBeUndefined();

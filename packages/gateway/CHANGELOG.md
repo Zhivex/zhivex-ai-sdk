@@ -1,5 +1,11 @@
 # @zhivex-ai/gateway
 
+## Unreleased
+
+### Patch Changes
+
+- Forward optional Decisions `promptCacheKey`, `promptCacheOptions`, and `safetyIdentifier` when a caller sets them. Routing defaults are unchanged.
+
 ## 1.8.1
 
 ### Patch Changes

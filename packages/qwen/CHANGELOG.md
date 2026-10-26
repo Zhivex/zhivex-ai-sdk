@@ -1,5 +1,11 @@
 # @zhivex-ai/qwen
 
+## Unreleased
+
+### Patch Changes
+
+- Accept PixVerse V6 text-to-video, image-to-video, keyframe, and reference-to-video models. Duration, resolution or size, and reference-image count are checked before the request. Known non-Singapore hosts are rejected. The default host is not rewritten.
+
 ## 0.18.0
 
 ### Minor Changes

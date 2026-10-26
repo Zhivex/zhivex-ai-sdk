@@ -121,6 +121,18 @@ const result = await generateText({
 });
 ```
 
+## OpenAI GPT-6.1 Terra
+
+`openai("gpt-6.1-terra")` selects the Responses API by default. Reasoning effort accepts `none`, `low`, `medium`, `high`, `xhigh`, and `max`. The provider default is `medium`; the adapter does not send an effort unless the caller sets one. `minimal` is rejected locally. Tool calling requires Responses, including when effort is `none` and the caller forces `apiMode: "chat"`. Sampling controls require effort `none`. Images are accepted. Audio input stays unsupported, and `video/*` file parts are rejected before fetch. The catalog records the 1,050,000 combined context window, 922,000 max input tokens, and 128,000 max output tokens, plus the standard token rates from the OpenAI pricing page. Azure OpenAI lists the same id without a published token price in this catalog. See the [GPT-6.1 Terra model page](https://developers.openai.com/api/docs/models/gpt-6.1-terra) and the [GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model).
+
+```ts
+const result = await generateText({
+  model: createOpenAI({ apiKey: process.env.OPENAI_API_KEY })("gpt-6.1-terra"),
+  prompt: "Match this product photo to the catalog entry.",
+  reasoning: { effort: "medium" }
+});
+```
+
 ## OpenAI GPT-5.6
 
 The OpenAI adapter recognizes `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. The `gpt-5.6` alias selects Sol. All GPT-5.6 variants use the Responses API by default in this adapter; pass `providerOptions.apiMode: "chat"` only when you explicitly need Chat Completions and are not using Responses-only tools or Multi-agent.

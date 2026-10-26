@@ -61,6 +61,14 @@ export interface KimiLanguageModelOptions {
   user?: string;
   max_completion_tokens?: number;
   reasoning_effort?: "low" | "high" | "max";
+  /**
+   * Automatic prefix-cache TTL. Omit to keep the provider default (`5m`).
+   * @see https://platform.kimi.ai/docs/guide/context-caching
+   */
+  prompt_cache_options?: {
+    mode?: "implicit";
+    ttl?: "5m" | "1h";
+  };
   thinking?: {
     type: "enabled" | "disabled";
     keep?: "all" | null;
@@ -136,7 +144,13 @@ const capabilities: ModelCapabilities = {
 const kimiK3Efforts = ["low", "high", "max"] as const;
 const isKimiK3Effort = (value: string): value is (typeof kimiK3Efforts)[number] =>
   (kimiK3Efforts as readonly string[]).includes(value);
-const isKimiK3Model = (modelId: string) => /^kimi-k3(?:$|-)/i.test(modelId);
+/**
+ * K3.1 Pro and K3.1 Pro Highspeed use the K3 request contract.
+ * `kimi-k3.1-pro` does not match `kimi-k3` followed by end or `-`.
+ * @see https://platform.kimi.ai/docs/api/models-overview
+ */
+const isKimiK31ProModel = (modelId: string) => /^kimi-k3\.1-pro(?:-highspeed)?$/i.test(modelId);
+const isKimiK3Model = (modelId: string) => /^kimi-k3(?:$|-)/i.test(modelId) || isKimiK31ProModel(modelId);
 const isKimiK27CodeModel = (modelId: string) => /^kimi-k2\.7-code(?:$|-)/i.test(modelId);
 const isKimiK26Model = (modelId: string) => /^kimi-k2\.6(?:$|-)/i.test(modelId);
 const supportsKimiReasoning = (modelId: string) =>
@@ -511,6 +525,7 @@ const assertKimiRequestCompatibility = (modelId: string, input: ModelGenerateInp
     validateFixedNumber("Kimi K3", "n", providerOptions.n, 1);
     validateFixedNumber("Kimi K3", "presence_penalty", providerOptions.presence_penalty, 0);
     validateFixedNumber("Kimi K3", "frequency_penalty", providerOptions.frequency_penalty, 0);
+    assertKimiPromptCacheOptions(providerOptions.prompt_cache_options);
 
     const requestedMaxTokens = input.maxTokens ?? providerOptions.max_completion_tokens;
     if (
@@ -549,6 +564,58 @@ const assertKimiRequestCompatibility = (modelId: string, input: ModelGenerateInp
   validateFixedNumber("Kimi K2.7 Code", "n", providerOptions.n, 1);
   validateFixedNumber("Kimi K2.7 Code", "presence_penalty", providerOptions.presence_penalty, 0);
   validateFixedNumber("Kimi K2.7 Code", "frequency_penalty", providerOptions.frequency_penalty, 0);
+};
+
+const assertKimiPromptCacheOptions = (value: KimiLanguageModelOptions["prompt_cache_options"]) => {
+  if (value === undefined) {
+    return;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new UnsupportedFeatureError(
+      'Provider "kimi" requires "prompt_cache_options" to be an object for Kimi K3 models.'
+    );
+  }
+  for (const key of Object.keys(value)) {
+    if (key !== "mode" && key !== "ttl") {
+      throw new UnsupportedFeatureError(
+        'Provider "kimi" only supports "prompt_cache_options.mode" and "prompt_cache_options.ttl" for Kimi K3 models.'
+      );
+    }
+  }
+  if (value.mode !== undefined && value.mode !== "implicit") {
+    throw new UnsupportedFeatureError(
+      'Provider "kimi" only supports prompt_cache_options.mode "implicit" for Kimi K3 models.'
+    );
+  }
+  if (value.ttl !== undefined && value.ttl !== "5m" && value.ttl !== "1h") {
+    throw new UnsupportedFeatureError(
+      'Provider "kimi" supports prompt_cache_options.ttl "5m" and "1h" for Kimi K3 models.'
+    );
+  }
+};
+
+const readUsageCount = (value: unknown) => (typeof value === "number" ? value : undefined);
+
+/** Chat Completions usage, including the documented prompt-token breakdown and reasoning tokens. */
+const kimiTokenUsage = (usage: {
+  prompt_tokens?: number;
+  cached_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+  completion_tokens_details?: { reasoning_tokens?: number };
+}) => {
+  const cachedFromDetails = readUsageCount(usage.prompt_tokens_details?.cached_tokens);
+  const cacheWriteTokens = readUsageCount(usage.prompt_tokens_details?.cache_write_tokens);
+  const reasoningTokens = readUsageCount(usage.completion_tokens_details?.reasoning_tokens);
+  return {
+    inputTokens: readUsageCount(usage.prompt_tokens),
+    cachedInputTokens: cachedFromDetails ?? readUsageCount(usage.cached_tokens),
+    outputTokens: readUsageCount(usage.completion_tokens),
+    totalTokens: readUsageCount(usage.total_tokens),
+    ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {})
+  };
 };
 
 const mapProviderOptions = (modelId: string, providerOptions: KimiLanguageModelOptions | undefined) => {
@@ -688,12 +755,7 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
           .join(""),
         finishReason: normalizeFinishReason(choice?.finish_reason),
         providerFinishReason: choice?.finish_reason,
-        usage: {
-          inputTokens: json.usage?.prompt_tokens,
-          cachedInputTokens: json.usage?.cached_tokens,
-          outputTokens: json.usage?.completion_tokens,
-          totalTokens: json.usage?.total_tokens
-        },
+        usage: kimiTokenUsage(json.usage ?? {}),
         rawResponse: json
       };
     });
@@ -767,17 +829,12 @@ class KimiLanguageModel implements LanguageModel<KimiLanguageModelOptions> {
       },
       onDone: (_tools, state) => {
         if (!state.finishReason) throw new ConfigurationError("Kimi stream ended without a finish reason.");
-        const lastUsage = state.usage as { prompt_tokens?: number; cached_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+        const lastUsage = state.usage as Parameters<typeof kimiTokenUsage>[0] | undefined;
         return [{
           type: "finish",
           finishReason: normalizeFinishReason(state.finishReason),
           providerFinishReason: state.finishReason,
-          usage: lastUsage ? {
-            inputTokens: lastUsage.prompt_tokens,
-            cachedInputTokens: lastUsage.cached_tokens,
-            outputTokens: lastUsage.completion_tokens,
-            totalTokens: lastUsage.total_tokens
-          } : undefined
+          usage: lastUsage ? kimiTokenUsage(lastUsage) : undefined
         }];
       }
     });

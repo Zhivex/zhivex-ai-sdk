@@ -116,7 +116,8 @@ Provider compatibility for the common `reasoning` option:
   - automatic API routing selects Chat for token budgets, audio/video inputs, structured output, and `tool_stream`; hosted tools, OCR files, and response continuations use Responses
   - older families retain the generic Responses mapping where shared `low` becomes Qwen `minimal`
 - Kimi:
-  - `kimi-k3` always reasons and maps `effort: "max"` to top-level `reasoning_effort: "max"`; lower efforts are rejected until upstream enables them
+  - `kimi-k3`, `kimi-k3.1-pro`, and `kimi-k3.1-pro-highspeed` always reason and map `effort` `low`, `high`, and `max` to top-level `reasoning_effort`; other efforts are rejected. Upstream defaults to `max` when the field is omitted
+  - those models accept `prompt_cache_options.ttl` `5m` or `1h` (`implicit` mode only). Omitting the option keeps the upstream 5-minute default
   - K2.6, K2.5, and legacy thinking models map to Kimi `thinking.enabled/disabled`; K2.7 Code uses preserved `thinking.enabled` with `keep: "all"`
   - K3 and K2.7 Code reject non-default `temperature`, `top_p`, `n`, `presence_penalty`, and `frequency_penalty` values
   - K3 maps shared `maxTokens` to `max_completion_tokens` and accepts values up to 1,048,576

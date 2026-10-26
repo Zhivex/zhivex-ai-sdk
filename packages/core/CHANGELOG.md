@@ -8,6 +8,7 @@
 
 ### Patch Changes
 
+- Widen the portable decision contract with optional prompt-cache, safety-identifier, JSON, image-URL, message-history, and score-description fields. Existing string instructions and choice descriptions still validate. New fields are accepted only when a destination advertises the matching capability.
 - Budget usage keeps a cache-write lifetime split only when every write in the group is consistent. `getAgentBudgetStatus` returns that merged `usage`. A mix of split and unsplit writes omits `cacheWriteTokensDetails` and stays on the catalog write rate.
 - `estimateTokenCost` clamps cached input and cache writes into `inputTokens` whether or not a lifetime split is present. The split is priced when its counters equal the clamped write count. Otherwise the clamped writes use the catalog cache-write rate. Malformed lifetime counters still raise `ValidationError`.
 - `generateText` and `streamText` reject duplicate tool-call IDs with `ValidationError` before approval policy and tool execution. Approval decisions are stored per call, so one call cannot overwrite another call's denial.

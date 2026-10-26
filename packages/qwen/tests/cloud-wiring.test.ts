@@ -82,6 +82,57 @@ describe("Qwen Cloud public factory wiring", () => {
     expect(call().body.parameters.duration).toBe(3);
     expect(call().init.headers).toMatchObject({ "X-DashScope-Async": "enable" });
   });
+  it("sends the published PixVerse V6 body for each model", async () => {
+    const image = { uri: "https://example.com/frame.png", mediaType: "image/png" };
+    const singapore = "https://ap-southeast-1.maas.qwencloudapi.com";
+    const cases = [
+      {
+        id: "pixverse/pixverse-v6-t2v",
+        input: { prompt: "A raccoon", durationSeconds: 5, providerOptions: { parameters: { size: "1280*720", audio: true, shot_type: "single", watermark: true, seed: 7 } } },
+        bodyInput: { prompt: "A raccoon" },
+        parameters: { duration: 5, size: "1280*720", audio: true, shot_type: "single", watermark: true, seed: 7 }
+      },
+      {
+        id: "pixverse/pixverse-v6-it2v",
+        input: { prompt: "She smiles", image, durationSeconds: 1, providerOptions: { resolution: "720P", shot_type: "multi" } },
+        bodyInput: { prompt: "She smiles", media: [{ type: "image_url", url: "https://example.com/frame.png" }] },
+        parameters: { duration: 1, resolution: "720P", shot_type: "multi" }
+      },
+      {
+        id: "pixverse/pixverse-v6-kf2v",
+        input: { prompt: "The flower blooms", durationSeconds: 15, providerOptions: { input: { media: [{ type: "first_frame", url: "https://example.com/first.jpg" }, { type: "last_frame", url: "https://example.com/last.webp" }] }, parameters: { resolution: "1080P" } } },
+        bodyInput: { prompt: "The flower blooms", media: [{ type: "first_frame", url: "https://example.com/first.jpg" }, { type: "last_frame", url: "https://example.com/last.webp" }] },
+        parameters: { duration: 15, resolution: "1080P" }
+      },
+      {
+        id: "pixverse/pixverse-v6-r2v",
+        input: { prompt: "@man plays @guitar", durationSeconds: 5, providerOptions: { input: { media: [{ type: "image_url", url: "https://example.com/man.png", ref_name: "man" }, { type: "image_url", url: "https://example.com/guitar.png", ref_name: "guitar" }] }, parameters: { size: "720*1280", audio: false } } },
+        bodyInput: { prompt: "@man plays @guitar", media: [{ type: "image_url", url: "https://example.com/man.png", ref_name: "man" }, { type: "image_url", url: "https://example.com/guitar.png", ref_name: "guitar" }] },
+        parameters: { duration: 5, size: "720*1280", audio: false }
+      }
+    ] as const;
+    for (const item of cases) {
+      const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ output: { task_id: "task-1", task_status: "PENDING" } }));
+      const qwen = createQwen({ apiKey: "test-key", baseURL: `${singapore}/compatible-mode/v1`, taskBaseURL: `${singapore}/api/v1`, fetch });
+      const result = await qwen.videoGenerationModel!(item.id).generateVideo(item.input);
+      const [url, init] = fetch.mock.calls[0]!;
+      expect(String(url)).toBe(`${singapore}/api/v1/services/aigc/video-generation/video-synthesis`);
+      expect(init?.headers).toMatchObject({ "X-DashScope-Async": "enable" });
+      expect(JSON.parse(String(init?.body))).toEqual({ model: item.id, input: item.bodyInput, parameters: item.parameters });
+      expect(result.operationName).toBe("task-1");
+    }
+  });
+  it("rejects PixVerse duration, resolution, reference count, and the wrong region before I/O", async () => {
+    const { qwen, fetch } = setup();
+    const image = { uri: "https://example.com/frame.png", mediaType: "image/png" };
+    await expect(qwen.videoGenerationModel!("pixverse/pixverse-v6-t2v").generateVideo({ prompt: "A raccoon", durationSeconds: 16, providerOptions: { size: "1280*720" } })).rejects.toThrow("duration");
+    await expect(qwen.videoGenerationModel!("pixverse/pixverse-v6-it2v").generateVideo({ prompt: "Smile", image, durationSeconds: 5, providerOptions: { resolution: "4k" } })).rejects.toThrow("resolution");
+    await expect(qwen.videoGenerationModel!("pixverse/pixverse-v6-r2v").generateVideo({ prompt: "Refs", durationSeconds: 5, providerOptions: { input: { media: Array.from({ length: 8 }, () => ({ type: "image_url", url: "https://example.com/a.png" })) }, size: "1280*720" } })).rejects.toThrow("1 to 7");
+    await expect(qwen.videoGenerationModel!("pixverse/pixverse-v6-it2v").generateVideo({ prompt: "Smile", image, durationSeconds: 5, providerOptions: { input: { media: [{ type: "image_url", url: "https://example.com/other.png" }] }, resolution: "720P" } })).rejects.toThrow("not both");
+    const beijing = createQwen({ apiKey: "test-key", baseURL: "https://cn-beijing.maas.aliyuncs.com/compatible-mode/v1", taskBaseURL: "https://cn-beijing.maas.aliyuncs.com/api/v1", fetch });
+    await expect(beijing.videoGenerationModel!("pixverse/pixverse-v6-t2v").generateVideo({ prompt: "A raccoon", durationSeconds: 5, providerOptions: { size: "1280*720" } })).rejects.toThrow("Singapore");
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("preserves lower-level media parameters when convenience fields are absent", async () => {
     const { qwen, call } = setup();
     await qwen.videoGenerationModel!("wan3.0-video").generateVideo({ prompt: "Animate", providerOptions: { input: { media: [{ type: "reference_audio", url: "https://example.com/music.wav" }], negative_prompt: "blur" }, parameters: { duration: 4, ratio: "16:9", audio: true } } });

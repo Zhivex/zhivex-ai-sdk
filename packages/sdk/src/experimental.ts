@@ -36,4 +36,4 @@ export type {
 } from "@zhivex-ai/core/experimental";
 
 export { experimentalDecisionHelpers } from "@zhivex-ai/core/experimental";
-export type { DecisionQuestion, DecisionQuestions, DecisionEvidence, DecisionInput, DecisionCapabilities, DecisionAnswer, DecisionResult, DecisionModel } from "@zhivex-ai/core/experimental";
+export type { DecisionImageDetail, DecisionPromptCacheBreakpoint, DecisionPromptCacheOptions, DecisionTextPart, DecisionImagePart, DecisionJsonPart, DecisionContentPart, DecisionQuestionPart, DecisionQuestionInstructions, DecisionScoreLevel, DecisionToolStatus, DecisionInputMessage, DecisionQuestion, DecisionQuestions, DecisionEvidence, DecisionInput, DecisionCapabilities, DecisionAnswer, DecisionResult, DecisionModel } from "@zhivex-ai/core/experimental";
