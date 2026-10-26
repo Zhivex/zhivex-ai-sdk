@@ -1,5 +1,13 @@
 # @zhivex-ai/openrouter
 
+## 0.7.1
+
+### Patch Changes
+
+- Raise the declared `@zhivex-ai/core` floor to 1.37.0. This package loads helpers from this Core release, and the declared minimum must match the workspace Core version.
+- Updated dependencies [e3f4af2]
+  - @zhivex-ai/core@1.37.0
+
 ## 0.7.0
 
 ### Minor Changes
