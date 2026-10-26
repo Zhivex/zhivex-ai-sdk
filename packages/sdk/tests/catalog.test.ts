@@ -64,7 +64,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(275);
+    expect(entries).toHaveLength(279);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
       retiredAt: "2027-04-01",
@@ -110,7 +110,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(275);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(279);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-10-15",
       verifiedAt: "2026-10-15",
@@ -124,11 +124,15 @@ describe("SDK model catalog ownership", () => {
       modelCount: 3
     });
     expect(fragments.find((fragment) => fragment.provider === "qwen")).toMatchObject({
-      revision: "2026-10-13",
-      verifiedAt: "2026-10-13",
+      revision: "2026-10-23",
+      verifiedAt: "2026-10-23",
       pricingEffectiveAt: "2026-09-18",
-      modelCount: 77
+      modelCount: 81,
+      sources: expect.arrayContaining(["https://docs.qwencloud.com/api-reference/video-generation/pixverse-image-to-video/create-task"])
     });
+    for (const id of ["pixverse/pixverse-v6-t2v", "pixverse/pixverse-v6-it2v", "pixverse/pixverse-v6-kf2v", "pixverse/pixverse-v6-r2v"]) {
+      expect(defaultModelCatalog.find("qwen", id)).toMatchObject({ provider: "qwen", modelId: id });
+    }
     expect(Object.isFrozen(fragments[0])).toBe(true);
     expect(Object.isFrozen(fragments[0]?.sources)).toBe(true);
   });

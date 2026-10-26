@@ -47,8 +47,14 @@ Version 2.0 defaults to synchronous output (`imageUrl`). Set `async: true` to re
 | HappyHorse video-edit | One `video` and up to five `reference_image` assets | Source duration/ratio retained, 720P/1080P, `audio_setting`: `auto` or `origin` |
 | Vidu Q3 mix/ad/drama | 1–7 `image` | Model-specific duration and ratio converted to `size` |
 | Vidu Q2 pro fast I2V | Exactly one `image` | 1–10 seconds, 720P/1080P; output follows source image ratio |
+| PixVerse V6 t2v | No images | `size` as `width*height`, 1–15 seconds, optional `shot_type` `single` or `multi`, audio |
+| PixVerse V6 it2v | Exactly one `image_url` | `resolution` `360P`–`1080P`, 1–15 seconds, optional `shot_type` |
+| PixVerse V6 kf2v | One `first_frame` and one `last_frame` | `resolution` `360P`–`1080P`, 1–15 seconds; no `shot_type` |
+| PixVerse V6 r2v | 1–7 `image_url` items, optional unique `ref_name` | `size` as `width*height`, prompt up to 2048 characters, 1–15 seconds |
 
 Use `providerOptions.input.media` for multiple media assets and `providerOptions.parameters` for native parameters. The ordinary `image` argument maps to the correct first-image dialect. Wan first/last frames cannot be combined with reference assets; file and link are mutually exclusive and require prompt enhancement. Vidu drama supports 16:9/9:16 and may adjust duration to fit its story; billing follows actual duration.
+
+PixVerse V6 (`pixverse/pixverse-v6-t2v`, `-it2v`, `-kf2v`, `-r2v`) is available only in Singapore. Point `baseURL` and `taskBaseURL` at `ap-southeast-1.maas.qwencloudapi.com`; a known Beijing, Hong Kong, Tokyo, Frankfurt, or Virginia host is rejected before the request. it2v sends `image_url`, not `first_frame`. kf2v needs both frames in `providerOptions.input.media`. t2v and r2v take `size` (`1280*720` and the other published `width*height` values), while it2v and kf2v take `resolution`. Duration is an integer from 1 to 15. r2v accepts 1 to 7 reference images. The model changelog describes r2v as 2 to 7; the create-task reference and the video-model table say 1 to 7, and the schema does not set a minimum of 2, so 1 is accepted and 0 or 8 is rejected. Optional `ref_name` values are unique, 1–30 characters, and referenced in the prompt as `@ref_name`. Images must be public HTTP(S) JPG, PNG, or WEBP URLs. `audio`, `watermark`, and `seed` (0 through 2147483647) are optional. `shot_type` is only valid for t2v and it2v.
 
 ```ts
 const operation = await qwen.videoGenerationModel("wan3.0-video").generateVideo({
@@ -116,6 +122,10 @@ Never send the primary API key to the browser. A travel ticket is single-use; do
 - [Vidu image API](https://docs.modelstudio.console.alibabacloud.com/en/model-studio/vidu-image-generation-api-reference)
 - [Vidu reference video API](https://docs.modelstudio.console.alibabacloud.com/en/model-studio/vidu-reference-to-video-api-reference)
 - [Vidu first-frame API](https://docs.modelstudio.console.alibabacloud.com/en/model-studio/vidu-image-to-video-api-reference)
+- [PixVerse V6 text-to-video](https://docs.qwencloud.com/api-reference/video-generation/pixverse-text-to-video/create-task)
+- [PixVerse V6 image-to-video](https://docs.qwencloud.com/api-reference/video-generation/pixverse-image-to-video/create-task)
+- [PixVerse V6 first and last frames](https://docs.qwencloud.com/api-reference/video-generation/pixverse-image-to-video-first-last/create-task)
+- [PixVerse V6 reference-to-video](https://docs.qwencloud.com/api-reference/video-generation/pixverse-reference-to-video/create-task)
 - [HappyOyster integration](https://docs.qwencloud.com/api-reference/world-model/happyoyster-integration-flow)
 - [HappyOyster Web SDK](https://docs.qwencloud.com/api-reference/world-model/happyoyster-web-sdk-api-reference)
 
