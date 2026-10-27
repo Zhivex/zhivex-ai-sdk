@@ -14,6 +14,8 @@ describe("Anthropic managed agents", () => {
       "https://api.anthropic.com/v1/agents?beta=true", "https://api.anthropic.com/v1/sessions?beta=true", "https://api.anthropic.com/v1/sessions/sess_123/events?beta=true"
     ]);
     expect(new Headers(calls[0][1].headers).get("x-api-key")).toBe("test-current");
+    expect(new Headers(calls[0][1].headers).has("authorization")).toBe(false);
+    expect(new Headers(calls[0][1].headers).get("anthropic-version")).toBe("2023-06-01");
     expect(new Headers(calls[0][1].headers).get("anthropic-beta")).toContain("managed-agents-2026-04-01");
     expect(calls[0][1].redirect).toBe("error");
     expect(JSON.parse(calls[0][1].body as string).tools[0].default_config.permission_policy).toEqual({ type: "auto" });

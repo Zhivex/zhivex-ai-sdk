@@ -9,10 +9,10 @@ import {
   type ContextManager
 } from "@opentelemetry/api";
 import {
-  BasicTracerProvider,
   InMemorySpanExporter,
-  SimpleSpanProcessor
-} from "@opentelemetry/sdk-trace-base";
+  SimpleSpanProcessor,
+  TracerProvider
+} from "@opentelemetry/sdk-trace";
 import {
   AggregationTemporality,
   InMemoryMetricExporter,
@@ -877,8 +877,8 @@ describe("otel observability", () => {
 
   it("exports a real parent-child agent trace and closes interrupted steps on cancellation", async () => {
     const exporter = new InMemorySpanExporter();
-    const provider = new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(exporter)]
+    const provider = new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter })]
     });
 
     try {
@@ -946,8 +946,8 @@ describe("otel observability", () => {
 
   it("ends real error spans exactly once with OTEL status and exception data", async () => {
     const exporter = new InMemorySpanExporter();
-    const provider = new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(exporter)]
+    const provider = new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter })]
     });
 
     try {
@@ -979,8 +979,8 @@ describe("otel observability", () => {
 
   it("does not collide concurrent model spans with the same input and timestamp", async () => {
     const exporter = new InMemorySpanExporter();
-    const provider = new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(exporter)]
+    const provider = new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter })]
     });
     const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
 
@@ -1035,8 +1035,8 @@ describe("otel observability", () => {
 
   it("closes a real stream span when the consumer stops iteration early", async () => {
     const exporter = new InMemorySpanExporter();
-    const provider = new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(exporter)]
+    const provider = new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter })]
     });
 
     try {
@@ -1239,8 +1239,8 @@ describe("otel observability", () => {
 
   it("exports exact agent invocation metrics and keeps aggregate usage in the Zhivex namespace", async () => {
     const spanExporter = new InMemorySpanExporter();
-    const traceProvider = new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(spanExporter)]
+    const traceProvider = new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter: spanExporter })]
     });
     const { exporter: metricExporter, provider: metricProvider } = createMetricSdk();
 
@@ -1361,8 +1361,8 @@ describe("otel observability", () => {
     otelContext.disable();
     expect(otelContext.setGlobalContextManager(contextManager.enable())).toBe(true);
     const exporter = new InMemorySpanExporter();
-    const provider = new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(exporter)]
+    const provider = new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter })]
     });
 
     try {
@@ -1434,8 +1434,8 @@ describe("otel observability", () => {
 
   it("records setup failures before run-start for buffered and streaming agents", async () => {
     const spanExporter = new InMemorySpanExporter();
-    const traceProvider = new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(spanExporter)]
+    const traceProvider = new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter: spanExporter })]
     });
     const { exporter: metricExporter, provider: metricProvider } = createMetricSdk();
     let modelCalls = 0;
@@ -1626,8 +1626,8 @@ describe("otel observability", () => {
 
   it("allowlists bounded scalar guardrail metadata before adding OTEL event attributes", async () => {
     const exporter = new InMemorySpanExporter();
-    const provider = new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(exporter)]
+    const provider = new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter })]
     });
 
     try {
@@ -1704,8 +1704,8 @@ describe("otel observability", () => {
 
   it("exports all client and tool GenAI metrics with the audited semantic contract", async () => {
     const spanExporter = new InMemorySpanExporter();
-    const traceProvider = new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(spanExporter)]
+    const traceProvider = new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter: spanExporter })]
     });
     const { exporter: metricExporter, provider: metricProvider } = createMetricSdk();
 

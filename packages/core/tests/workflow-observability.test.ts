@@ -7,10 +7,10 @@ import {
   PeriodicExportingMetricReader
 } from "@opentelemetry/sdk-metrics";
 import {
-  BasicTracerProvider,
   InMemorySpanExporter,
-  SimpleSpanProcessor
-} from "@opentelemetry/sdk-trace-base";
+  SimpleSpanProcessor,
+  TracerProvider
+} from "@opentelemetry/sdk-trace";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -79,8 +79,8 @@ const createTestRunner = (model = createLanguageModel()) =>
 
 const createOtelTestHarness = async () => {
   const spanExporter = new InMemorySpanExporter();
-  const tracerProvider = new BasicTracerProvider({
-    spanProcessors: [new SimpleSpanProcessor(spanExporter)]
+  const tracerProvider = new TracerProvider({
+    spanProcessors: [new SimpleSpanProcessor({ exporter: spanExporter })]
   });
   const metricExporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
   const metricReader = new PeriodicExportingMetricReader({
@@ -351,8 +351,8 @@ describe("workflow OpenTelemetry observability", () => {
 
   it("keeps workflow, agent, and model spans in one parent-child trace", async () => {
     const spanExporter = new InMemorySpanExporter();
-    const tracerProvider = new BasicTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(spanExporter)]
+    const tracerProvider = new TracerProvider({
+      spanProcessors: [new SimpleSpanProcessor({ exporter: spanExporter })]
     });
     const metricExporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
     const meterProvider = new MeterProvider({
