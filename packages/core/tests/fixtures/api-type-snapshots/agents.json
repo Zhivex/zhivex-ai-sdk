@@ -2,7 +2,7 @@
   "beta.d.ts": "07e99fd052a15b76d93e5d1c0c1c627301eb1370eb810fdb5bb4c4fe9bd0c963",
   "control-plane.d.ts": "391b2e7803ecd9c723e68c2dace50aa1af6b770284c41290a7575f19061d53b7",
   "index.d.ts": "8d0f74afd898e8457eea449d1b602befc4d5bfcb1a0be6e95c54d46591c9d864",
-  "ops.d.ts": "5251eb88a99213171c374101e8439475c526e088d74b6dca8226c5a7deb6ea8f",
+  "ops.d.ts": "6ba6baf79ac82ec35680edfb89081015eb7e2fb9191c093f1debc0d549fb4cfd",
   "realtime.d.ts": "11e50c0f738eb8e8c44e7d1e93249118e40f62b4fe626ee4156890db51ff7d4e",
   "testing.d.ts": "56cb98717e45790133b4a6a361358acc279dcfc871d0eba166aaf31cd2659df5"
 }

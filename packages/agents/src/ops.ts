@@ -20,6 +20,10 @@ export {
   createProductionTraceOptions,
   createProviderSupportDriftReport,
   createProviderSupportMatrix,
+  deriveAgentSupportTier,
+  hasApprovalCapableRemoteMcp,
+  hasRealtimeApprovalEquivalent,
+  TIER_A_MINIMUM_HOSTED_TOOLS,
   createSqliteAgentMemoryStore,
   createSqliteAgentRunStore,
   estimateAgentRunCost,
@@ -35,6 +39,7 @@ export {
 
 export type {
   AgentCapabilities,
+  TierAMinimumHostedTool,
   AgentEvaluationCase,
   AgentEvaluationCaseResult,
   AgentEvaluationExpectations,

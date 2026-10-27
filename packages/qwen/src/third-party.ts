@@ -44,7 +44,7 @@ export const thirdPartyCapabilities = (id: string): ModelCapabilities | undefine
       p.thinkingOnly ? ["minimal", "low", "medium", "high", "xhigh", "max"] :
       ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
     webSearch: !!p.hosted,
-    agentCapabilities: { supportTier: "tier-b", toolChoiceNone: true,
+    agentCapabilities: { supportTier: "tier-b", durableAgent: true, toolChoiceNone: true,
       approvalRequests: false, hostedWebSearch: !!p.hosted, hostedFileSearch: false,
       remoteMcp: false, computerUse: false, codeExecution: !!p.hosted,
       webExtraction: !!p.hosted, toolsets: false }

@@ -180,9 +180,9 @@ The SDK aims to keep the application-facing contract stable, but capability pari
 
 For production work, prefer:
 
-- Tier A providers when you need approvals, remote MCP, or the strongest hosted-agent story
-- Tier B providers when you want strong portable tool-using agents with fewer hosted-agent guarantees
-- Tier C providers when basic loops are enough and expectations are narrower
+- Tier A surfaces when you need callable tools, approval-capable remote MCP, and hosted web search, or that same approval contract on a tool-capable realtime session that already declares it
+- Tier B surfaces when you need a durable tool loop (`tools` and `durableAgent`)
+- Tier C surfaces for basic tool loops and routes that cannot call tools
 
 Provider support tiers are documented in [SUPPORT.md](./SUPPORT.md) and summarized in the repository README.
 

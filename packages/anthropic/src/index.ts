@@ -199,6 +199,7 @@ const capabilities: ModelCapabilities = {
   sampling: { topP: true, seed: false, stopSequences: true },
   agentCapabilities: {
     supportTier: "tier-b",
+    durableAgent: true,
     toolChoiceNone: true,
     approvalRequests: false,
     hostedWebSearch: true,

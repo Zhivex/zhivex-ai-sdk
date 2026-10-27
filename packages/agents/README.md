@@ -199,7 +199,7 @@ const selected = router.select({
 });
 ```
 
-Tier A means native agent building blocks such as approval-capable remote MCP or equivalent hosted tools. Tier B is strong portable tool-loop support with provider-specific gaps. Tier C is useful for basic tool loops, but not full agent positioning.
+Tier A requires callable tools, approval-capable remote MCP, and hosted web search, or those approvals on a tool-capable realtime session that already declares them. Tier B requires callable tools and `durableAgent`. Tier C is every other surface. `deriveAgentSupportTier()` computes the tier from those flags. Qwen 3.8 Omni Flash realtime stays Tier B until a live certification passes. Live certification is recorded separately.
 
 ## Realtime And Testing
 
