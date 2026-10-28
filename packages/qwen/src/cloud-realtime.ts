@@ -43,17 +43,23 @@ const httpsUrl = (value: string) => {
   return url.protocol === "https:" && !url.username && !url.password;
 };
 
-const validateAudioTurnDetection = (turnDetection: Record<string, unknown> | null | undefined) => {
-  if (!turnDetection?.type || ["server_vad", "smart_turn", "smart_turn_v2"].includes(String(turnDetection.type))) {
-    const urls = turnDetection?.voiceprint_audio_urls;
-    if (urls === undefined) return;
-    if (!["smart_turn", "smart_turn_v2"].includes(String(turnDetection?.type))) throw new ConfigurationError("voiceprint_audio_urls requires smart_turn or smart_turn_v2.");
-    if (!Array.isArray(urls) || urls.length < 1 || urls.length > 5 || urls.some(url => typeof url !== "string" || url.length > 4096 || !httpsUrl(url))) {
-      throw new ConfigurationError("voiceprint_audio_urls accepts 1 to 5 public HTTPS URLs without credentials.");
-    }
-    return;
+const AUDIO_TURN_TYPES = ["server_vad", "smart_turn", "smart_turn_v2"];
+
+/**
+ * Every audio realtime id accepts the documented turn types, including smart_turn_v2.
+ * Rejecting previously forwarded voiceprint URLs is limited to 3.1 Flash.
+ */
+const validateAudioTurnDetection = (turnDetection: Record<string, unknown> | null | undefined, strict: boolean) => {
+  if (turnDetection?.type && !AUDIO_TURN_TYPES.includes(String(turnDetection.type))) {
+    throw new ConfigurationError("Audio realtime supports server_vad, smart_turn, or smart_turn_v2.");
   }
-  throw new ConfigurationError("Audio realtime supports server_vad, smart_turn, or smart_turn_v2.");
+  if (!strict) return;
+  const urls = turnDetection?.voiceprint_audio_urls;
+  if (urls === undefined) return;
+  if (!["smart_turn", "smart_turn_v2"].includes(String(turnDetection?.type))) throw new ConfigurationError("voiceprint_audio_urls requires smart_turn or smart_turn_v2.");
+  if (!Array.isArray(urls) || urls.length < 1 || urls.length > 5 || urls.some(url => typeof url !== "string" || url.length > 4096 || !httpsUrl(url))) {
+    throw new ConfigurationError("voiceprint_audio_urls accepts 1 to 5 public HTTPS URLs without credentials.");
+  }
 };
 
 const mcpServer = (server: QwenRealtimeMCPServer) => {
@@ -107,11 +113,12 @@ export const mapQwenCloudRealtimeSession = (id: string, config: RealtimeSessionC
   if (isQwenAudioRealtime(id)) {
     const history = options?.max_history_turns;
     if (history !== undefined && (!Number.isInteger(history) || history < 1 || history > 50)) throw new ConfigurationError("max_history_turns must be an integer from 1 to 50.");
-    validateAudioTurnDetection(config.turnDetection);
+    const flash = isQwenAudio31RealtimeFlash(id);
+    validateAudioTurnDetection(config.turnDetection, flash);
     if (options?.output_audio && !id.startsWith("qwen-audio-3.1-")) throw new UnsupportedFeatureError("output_audio.language requires Qwen Audio 3.1.");
-    if (isQwenAudio31RealtimeFlash(id) && options && Object.prototype.hasOwnProperty.call(options, "enable_thinking")) throw new UnsupportedFeatureError("qwen-audio-3.1-realtime-flash does not support enable_thinking.");
+    if (flash && options && Object.prototype.hasOwnProperty.call(options, "enable_thinking")) throw new UnsupportedFeatureError("qwen-audio-3.1-realtime-flash does not support enable_thinking.");
     const search = options?.search_options;
-    if (search !== undefined && (search === null || typeof search !== "object" || Array.isArray(search) || search.enable_source !== undefined && typeof search.enable_source !== "boolean")) {
+    if (flash && search !== undefined && (search === null || typeof search !== "object" || Array.isArray(search) || search.enable_source !== undefined && typeof search.enable_source !== "boolean")) {
       throw new ConfigurationError("search_options.enable_source must be a boolean when search_options is set.");
     }
   }

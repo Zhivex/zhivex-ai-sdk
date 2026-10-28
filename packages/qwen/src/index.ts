@@ -3063,7 +3063,8 @@ const parseRealtimeEvent = (
   payload: Record<string, unknown>,
   fallbackRealtimeToolCallId: () => string,
   seenToolCallIds: Set<string>,
-  liveTranslate = false
+  liveTranslate = false,
+  modelId = ""
 ): RealtimeEvent[] => {
   const type = String(payload.type ?? "");
   const metadata = payload as Record<string, JsonValue>;
@@ -3123,7 +3124,8 @@ const parseRealtimeEvent = (
   if (type === "session.finished") {
     return [{ type: "realtime-end", reason: "finished", providerMetadata: metadata }];
   }
-  if (type.startsWith("voiceprint_audio_list.")) {
+  // Qwen-Audio documents these events for every audio realtime id. Other realtime models keep the .failed error path.
+  if (type.startsWith("voiceprint_audio_list.") && isQwenAudioRealtime(modelId)) {
     return [{ type: "realtime-provider-data", provider: "qwen", data: metadata }];
   }
   if (type === "error" || type.endsWith(".failed")) {
@@ -3269,7 +3271,8 @@ class QwenRealtimeModel implements RealtimeModel {
           return (cloudRealtime ? qwenCloudAudioEvent(payload, session.config) : undefined) ?? parseRealtimeEvent(
             payload,
             () => `qwen-realtime-tool-${fallbackRealtimeToolCallIndex++}`,
-            seenRealtimeToolCallIds, liveTranslate || cloudRealtime
+            seenRealtimeToolCallIds, liveTranslate || cloudRealtime,
+            this.modelId
           );
         },
         buildInitialPayloads: (value) => [{ type: "session.update", session: mapSession(value) }],
