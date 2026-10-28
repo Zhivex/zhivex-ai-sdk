@@ -1,6 +1,6 @@
 # Qwen browser WebRTC and official AOQ bridge
 
-`connectQwenWebRTC` implements the documented browser WebRTC flow for Qwen Omni realtime. `connectQwenAOQ` adapts an application-owned official native AOQ engine. Neither helper requests microphone/camera permissions automatically or loads proprietary SDK binaries.
+`connectQwenWebRTC` implements the documented browser WebRTC flow for Qwen Omni realtime. `connectQwenAOQ` adapts an application-owned official native AOQ engine. Neither helper requests microphone/camera permissions automatically or loads proprietary SDK binaries. Audio realtime IDs, including `qwen-audio-3.1-realtime-flash`, use `realtimeModel()` over WebSocket. `connectQwenWebRTC` still accepts only Qwen Omni realtime model IDs.
 
 ## Browser WebRTC
 

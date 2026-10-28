@@ -44,7 +44,9 @@ The Qwen leg intentionally uses the provider's fail-closed realtime contract:
 callable tools use automatic selection, while `toolChoice: "none"` is enforced
 locally by omitting tools. `"required"`, named-tool selection, and
 `providerOptions.enable_search: true` combined with callable tools are rejected
-before the WebSocket opens. Qwen output defaults to `modalities: ["text"]`;
+before the WebSocket opens. `qwen-audio-3.1-realtime-flash` is the exception
+and may enable callable tools together with `enable_search`. The certification
+model above is unchanged. Qwen output defaults to `modalities: ["text"]`;
 audio output is requested only when `voice` or `outputAudioMediaType` is set.
 
 For each provider the gate must prove:
