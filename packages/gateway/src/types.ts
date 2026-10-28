@@ -49,6 +49,7 @@ export type GatewayProviderId =
   | "zai"
   | "bedrock"
   | "ollama"
+  | "apple-local"
   | "azure-openai"
   | "openrouter";
 export type GatewayRoutingMode = "speed" | "balanced" | "quality";

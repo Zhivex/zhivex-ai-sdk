@@ -56,6 +56,14 @@
         "zod": "^4.6.7",
       },
     },
+    "packages/apple-local": {
+      "name": "@zhivex-ai/apple-local",
+      "version": "0.1.0",
+      "dependencies": {
+        "@zhivex-ai/core": "^1.37.0",
+        "zod": "^4.6.7",
+      },
+    },
     "packages/azure-openai": {
       "name": "@zhivex-ai/azure-openai",
       "version": "0.8.0",
@@ -556,6 +564,8 @@
     "@zhivex-ai/agents": ["@zhivex-ai/agents@workspace:packages/agents"],
 
     "@zhivex-ai/anthropic": ["@zhivex-ai/anthropic@workspace:packages/anthropic"],
+
+    "@zhivex-ai/apple-local": ["@zhivex-ai/apple-local@workspace:packages/apple-local"],
 
     "@zhivex-ai/azure-openai": ["@zhivex-ai/azure-openai@workspace:packages/azure-openai"],
 
