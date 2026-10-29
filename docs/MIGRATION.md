@@ -327,10 +327,10 @@ Tiers describe how much of the agent surface an adapter covers. They are not a q
 | `@zhivex-ai/openai`, `@zhivex-ai/azure-openai` | Tier A |
 | `@zhivex-ai/bedrock` with `runtime: "openai"` | Tier A |
 | `@zhivex-ai/xai`, `@zhivex-ai/meta`, `@zhivex-ai/anthropic`, `@zhivex-ai/gemini`, `@zhivex-ai/vertex`, `@zhivex-ai/qwen`, `@zhivex-ai/deepseek`, `@zhivex-ai/zai` | Tier B |
-| `@zhivex-ai/openrouter`, `@zhivex-ai/kimi`, `@zhivex-ai/ollama` | basic (Tier C) |
+| `@zhivex-ai/openrouter`, `@zhivex-ai/kimi`, `@zhivex-ai/ollama`, `@zhivex-ai/apple-local` | basic (Tier C) |
 | `@zhivex-ai/bedrock` Converse | Tier B |
 
-Factories you will import: `createOpenAI`, `createAzureOpenAI`, `createBedrock`, `createXAI`, `createMeta`, `createAnthropic`, `createGemini`, `createVertex`, `createQwen`, `createDeepSeek`, `createZAI`, `createOpenRouter`, `createKimi`, `createOllama`.
+Factories you will import: `createOpenAI`, `createAzureOpenAI`, `createBedrock`, `createXAI`, `createMeta`, `createAnthropic`, `createGemini`, `createVertex`, `createQwen`, `createDeepSeek`, `createZAI`, `createOpenRouter`, `createKimi`, `createOllama`, `createAppleLocal`.
 
 Many provider packages that exist in the AI SDK catalog do not have a Zhivex adapter. OpenRouter can reach some of those models and is basic (Tier C). A missing capability throws `UnsupportedFeatureError` instead of being ignored.
 

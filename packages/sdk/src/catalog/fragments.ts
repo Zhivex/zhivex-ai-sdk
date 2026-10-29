@@ -13,6 +13,7 @@ import { zaiCatalogFragment } from "./providers/zai.js";
 import { openrouterCatalogFragment } from "./providers/openrouter.js";
 import { bedrockCatalogFragment } from "./providers/bedrock.js";
 import { ollamaCatalogFragment } from "./providers/ollama.js";
+import { appleLocalCatalogFragment } from "./providers/apple-local.js";
 
 export const defaultModelCatalogFragments = Object.freeze([
   openaiCatalogFragment,
@@ -28,5 +29,6 @@ export const defaultModelCatalogFragments = Object.freeze([
   zaiCatalogFragment,
   openrouterCatalogFragment,
   bedrockCatalogFragment,
-  ollamaCatalogFragment
+  ollamaCatalogFragment,
+  appleLocalCatalogFragment
 ]);

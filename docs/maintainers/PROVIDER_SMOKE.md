@@ -85,6 +85,7 @@ Postgres gate, run `bun run test:integration:agents` as documented in
 | `bedrock-converse` | `AWS_REGION`; AWS credentials via the default provider chain, or `AWS_BEARER_TOKEN_BEDROCK` / `createBedrock({ apiKey })` for Bedrock bearer API keys |
 | `bedrock-openai` | `BEDROCK_OPENAI_BASE_URL`, plus `BEDROCK_API_KEY` or `AWS_BEARER_TOKEN_BEDROCK` |
 | `ollama` | `OLLAMA_INTEGRATION=1`; a reachable service is required, with optional `OLLAMA_HOST`, `OLLAMA_INTEGRATION_MODEL`, and `OLLAMA_INTEGRATION_EMBEDDING_MODEL`. Direct `ollama.com` also requires `OLLAMA_API_KEY` and skips structured-output and embedding smoke. Thinking smoke is enabled for recognized Qwen 3/3.5, GPT-OSS, DeepSeek R1/v3.1, and Gemma 4 model IDs. |
+| `apple-local` | Not part of Linux CI. Live certification is manual on a Mac with Apple Intelligence. See [Apple on-device provider](../APPLE_LOCAL.md). |
 | `vertex` | Gemini: API key or bearer credentials. Partners: bearer credentials. Configure `VERTEX_ACCESS_TOKEN` / `GOOGLE_ACCESS_TOKEN` with a project/base URL, or opt into ADC using `VERTEX_INTEGRATION_USE_ADC=1` with a project/base URL and no token/API-key environment variables. |
 
 For Vertex ADC testing, the Google authentication library must be able to resolve

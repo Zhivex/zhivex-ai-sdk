@@ -33,6 +33,7 @@ The following packages are intended for npm consumers:
 - `@zhivex-ai/vertex`
 - `@zhivex-ai/bedrock`
 - `@zhivex-ai/ollama`
+- `@zhivex-ai/apple-local`
 - `@zhivex-ai/openrouter`
 - `@zhivex-ai/qwen`
 - `@zhivex-ai/kimi`

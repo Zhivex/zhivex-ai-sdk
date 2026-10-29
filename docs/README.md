@@ -23,6 +23,7 @@ Guides for adopting the SDK. The [provider compatibility matrix](./reference/PRO
 - [Realtime](./reference/REALTIME.md)
 - [Media](./reference/MEDIA.md)
 - [Providers](./reference/PROVIDERS.md), including the full capability matrix
+- [Apple on-device provider](./APPLE_LOCAL.md)
 
 ## Maintenance and verification
 

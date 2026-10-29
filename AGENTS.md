@@ -19,6 +19,7 @@
 - `packages/vertex`: Vertex AI / Gemini on Vertex provider.
 - `packages/bedrock`: Amazon Bedrock provider.
 - `packages/ollama`: Ollama provider.
+- `packages/apple-local`: experimental on-device Apple Intelligence provider. It talks to a local Swift bridge and does not call a cloud API.
 - `packages/openrouter`: OpenRouter provider.
 - `packages/qwen`: Qwen provider.
 - `packages/kimi`: Kimi provider.
@@ -46,6 +47,7 @@ Packages currently publishable to npm:
 - `@zhivex-ai/vertex`
 - `@zhivex-ai/bedrock`
 - `@zhivex-ai/ollama`
+- `@zhivex-ai/apple-local`
 - `@zhivex-ai/openrouter`
 - `@zhivex-ai/qwen`
 - `@zhivex-ai/kimi`

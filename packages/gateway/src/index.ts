@@ -222,6 +222,7 @@ const GATEWAY_PROVIDERS = new Set<GatewayProviderId>([
   "zai",
   "bedrock",
   "ollama",
+  "apple-local",
   "azure-openai",
   "openrouter"
 ]);
@@ -233,7 +234,7 @@ const defaultScoreTarget = (
   config: GatewayConfig
 ) => {
   const model = target.modelId.toLowerCase();
-  const localBoost = config.routingPolicy?.mode !== "evidence" && target.provider === "ollama" ? -2 : 0;
+  const localBoost = config.routingPolicy?.mode !== "evidence" && (target.provider === "ollama" || target.provider === "apple-local") ? -2 : 0;
   const evidence = config.routingPolicy?.mode === "evidence";
   const qualityProfile = config.routingPolicy?.qualityProfiles?.find(profile => sameTarget(profile.target, target) && profile.intent === intent);
   const qualityBoost = qualityProfile ? qualityProfile.score * 4 : !evidence && (model.includes("pro") || model.includes("claude")) ? 2 : 0;

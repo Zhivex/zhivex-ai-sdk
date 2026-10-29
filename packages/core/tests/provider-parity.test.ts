@@ -19,6 +19,7 @@ import { createGemini } from "../../gemini/src/index.js";
 import { createKimi } from "../../kimi/src/index.js";
 import { createMeta } from "../../meta/src/index.js";
 import { createOllama } from "../../ollama/src/index.js";
+import { createAppleLocal } from "../../apple-local/src/index.js";
 import { createOpenAI } from "../../openai/src/index.js";
 import { createOpenRouter } from "../../openrouter/src/index.js";
 import { createQwen } from "../../qwen/src/index.js";
@@ -73,6 +74,13 @@ const bedrockOpenAI = createBedrock({
   fetch: fetchMock as typeof fetch
 });
 const ollama = createOllama({ fetch: fetchMock as typeof fetch });
+const appleLocal = createAppleLocal({
+  transport: {
+    async *send() {
+      throw new Error("Apple Local parity checks do not call the bridge.");
+    }
+  }
+});
 
 const matrixEntries: ProviderSupportMatrixEntry[] = [
   {
@@ -199,6 +207,15 @@ const matrixEntries: ProviderSupportMatrixEntry[] = [
       hostedToolSummary: "no",
       reasoningSummary: "model-dependent"
     }
+  },
+  {
+    provider: "Apple Local",
+    model: appleLocal("apple-on-device"),
+    summary: {
+      structuredOutputSummary: "native",
+      hostedToolSummary: "no",
+      reasoningSummary: "no"
+    }
   }
 ];
 
@@ -217,6 +234,7 @@ const expectedDrift: ProviderSupportDriftExpectedMatrix = {
     { provider: "openrouter", agentTier: "tier-c", portableToolLoop: true, hostedTools: true },
     { provider: "kimi", agentTier: "tier-c", portableToolLoop: true, embeddings: false },
     { provider: "ollama", agentTier: "tier-c", toolChoice: false, embeddings: true },
+    { provider: "apple-local", agentTier: "tier-c", portableToolLoop: true, toolChoice: true, embeddings: false, reasoning: false, webSearch: false },
     { provider: "bedrock", modelId: "anthropic.claude-3-5-sonnet", agentTier: "tier-b" },
     { provider: "bedrock", modelId: "openai.gpt-oss-120b-1:0", agentTier: "tier-a", remoteMcp: true }
   ]
@@ -276,6 +294,7 @@ describe("provider parity documentation", () => {
       openrouter("openai/gpt-4o-mini"),
       kimi("kimi-k3"),
       ollama("llama3.2"),
+      appleLocal("apple-on-device"),
       bedrockConverse("anthropic.claude-3-5-sonnet"),
       bedrockOpenAI("openai.gpt-oss-120b-1:0")
     ]);

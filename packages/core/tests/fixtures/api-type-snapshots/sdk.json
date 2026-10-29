@@ -6,6 +6,7 @@
   "catalog/fragment.d.ts": "65f1341b35eda2e77f120828341c74038590e6190d56ef86c00898b4b59c9a23",
   "catalog/fragments.d.ts": "72eb2f241853bc50bd992e385c06d41e5b93a79861749214b0c8e1826ed1717b",
   "catalog/providers/anthropic.d.ts": "224ed9ddd684883f9233e45b44d68f8664b86108f0e15cb600e29397d688aa00",
+  "catalog/providers/apple-local.d.ts": "d32113aecd27d875053f5f69086100f5ec37bc4c21cb9eb1f9ee2ad7009a1b58",
   "catalog/providers/azure-openai.d.ts": "a953706d94a78939b3ed147d761b76b8b9a2ceea9563d77a54aa9f293181824e",
   "catalog/providers/bedrock.d.ts": "038438836a3117bb6753e48bf5f25dcfb5ef1e32426abb63a27224d1266943a2",
   "catalog/providers/deepseek.d.ts": "937d9f436d005a8827ffdd6479ca27565c0efcd158ff3b80430e9341f73ec377",

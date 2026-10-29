@@ -7,6 +7,7 @@ This folder contains runnable TypeScript examples for the main public surfaces o
 - `sdk/`: high-level SDK and core helpers, including `sdk/governed-quickstart.ts` (mock provider, no credentials)
 - `agents/`: agent-only facade examples for `@zhivex-ai/agents`
 - `providers/`: one quick-start per provider package
+- `apple-local-bridge/`: experimental macOS helper that speaks the Apple Local JSON protocol. It is not run in Linux CI.
 - `gateway/`: routing and fallback examples
 - `sandbox-docker/`: deterministic workspace-agent example for the experimental Docker execution environment
 - `client-approvals/`: offline server and React UI for AG-UI streams, client approval, and `useObject`

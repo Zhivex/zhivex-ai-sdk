@@ -26,6 +26,7 @@
       "@zhivex-ai/gemini": ["./packages/gemini/src/index.ts"],
       "@zhivex-ai/bedrock": ["./packages/bedrock/src/index.ts"],
       "@zhivex-ai/ollama": ["./packages/ollama/src/index.ts"],
+      "@zhivex-ai/apple-local": ["./packages/apple-local/src/index.ts"],
       "@zhivex-ai/azure-openai": ["./packages/azure-openai/src/index.ts"],
       "@zhivex-ai/openrouter": ["./packages/openrouter/src/index.ts"],
       "@zhivex-ai/gateway": ["./packages/gateway/src/index.ts"],

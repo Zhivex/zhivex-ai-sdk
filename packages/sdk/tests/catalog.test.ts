@@ -37,7 +37,7 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-10-26",
+      snapshotVersion: "2026-10-28",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
         version: "2026-10-26",
@@ -65,7 +65,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(284);
+    expect(entries).toHaveLength(286);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
       retiredAt: "2027-04-01",
@@ -91,6 +91,7 @@ describe("SDK model catalog ownership", () => {
     });
     expect([...new Set(entries.map((entry) => entry.provider))].sort()).toEqual([
       "anthropic",
+      "apple-local",
       "azure-openai",
       "bedrock",
       "deepseek",
@@ -110,8 +111,8 @@ describe("SDK model catalog ownership", () => {
   it("publishes immutable provider-scoped freshness and provenance metadata", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
-    expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(284);
+    expect(fragments).toHaveLength(15);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(286);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-10-26",
       verifiedAt: "2026-10-26",

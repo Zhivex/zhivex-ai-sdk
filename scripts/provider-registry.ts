@@ -138,5 +138,14 @@ export const maintenanceProviders = [
     "defaultModel": null,
     "catalogExport": "ollamaCatalogFragment",
     "scaffoldOrder": null
+  },
+  {
+    "id": "apple-local",
+    "packageName": "@zhivex-ai/apple-local",
+    "factoryName": "createAppleLocal",
+    "envName": "APPLE_LOCAL_BRIDGE",
+    "defaultModel": null,
+    "catalogExport": "appleLocalCatalogFragment",
+    "scaffoldOrder": null
   }
 ] as const satisfies readonly MaintenanceProvider[];

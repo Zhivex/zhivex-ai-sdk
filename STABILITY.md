@@ -17,6 +17,7 @@ Supported public imports should come from published package entrypoints such as:
 - `@zhivex-ai/vertex`
 - `@zhivex-ai/bedrock`
 - `@zhivex-ai/ollama`
+- `@zhivex-ai/apple-local`
 - `@zhivex-ai/openrouter`
 - `@zhivex-ai/qwen`
 - `@zhivex-ai/kimi`
@@ -149,6 +150,7 @@ These areas are available for evaluation, but they should not be treated as long
 - `@zhivex-ai/sandbox-docker`: reference Docker `executionEnvironment` (`createDockerSandboxEnvironment`, `createDockerSandboxTools`). It is not part of `@zhivex-ai/sdk`, and it is not a hosted sandbox.
 - `@zhivex-ai/trace-viewer`: local read-only ledger and OpenTelemetry span viewer. It is not part of `@zhivex-ai/sdk`, it does not change ledger or span formats, and it is not a hosted service.
 - `@zhivex-ai/ag-ui`: opt-in AG-UI 1.0 adapter and client approval gate. It is not part of `@zhivex-ai/sdk`. It does not change core resume behavior; client decisions call the existing control-plane `resumeApproval` API.
+- `@zhivex-ai/apple-local`: experimental on-device Apple Intelligence adapter (`createAppleLocal`). It is not part of `@zhivex-ai/sdk`. It requires a local Swift bridge and does not call a cloud API.
 
 Experimental areas may change faster than the rest of the SDK. Production adopters should isolate them behind an application-owned service layer.
 The same runtime cohort is available from `@zhivex-ai/sdk/experimental`.
