@@ -1,22 +1,10 @@
 # @zhivex-ai/core
 
-## Unreleased
+## 1.37.0
 
-### Breaking Changes
+### Minor Changes
 
-- UI message streams from `toUIMessageStream`, `toUIMessageStreamResponse`, `toUIAgentStreamResponse`, and `toUIRunnerStreamResponse` omit `agent-run-finish` unless `includeAgentRunFinish` is `true`. `agent-step-finish` chunks are now a status summary (`index`, `status`, and optional timestamps, token `usage`, and `error.message`). They no longer include request messages, provider options, response text, or tool results. Set `includeAgentRunFinish: true` only for a trusted server consumer that is allowed to receive the full `AgentRunState`. `streamAgent().eventStream` is unchanged.
-
-### Patch Changes
-
-- Widen the portable decision contract with optional prompt-cache, safety-identifier, JSON, image-URL, message-history, and score-description fields. Existing string instructions and choice descriptions still validate. New fields are accepted only when a destination advertises the matching capability.
-- Budget usage keeps a cache-write lifetime split only when every write in the group is consistent. `getAgentBudgetStatus` returns that merged `usage`. A mix of split and unsplit writes omits `cacheWriteTokensDetails` and stays on the catalog write rate.
-- `estimateTokenCost` clamps cached input and cache writes into `inputTokens` whether or not a lifetime split is present. The split is priced when its counters equal the clamped write count. Otherwise the clamped writes use the catalog cache-write rate. Malformed lifetime counters still raise `ValidationError`.
-- `generateText` and `streamText` reject duplicate tool-call IDs with `ValidationError` before approval policy and tool execution. Approval decisions are stored per call, so one call cannot overwrite another call's denial.
-- Workflow state `userId` must match the authenticated caller. A caller-supplied `sessionId` must match the state, and a state `workflowId` must match the workflow definition. Caller-supplied execution claims are ignored. A persisted step takes a 15-minute execution claim and renews it every 5 minutes while that owner is still running. Renewal is an owner-checked compare-and-swap and advances the workflow record revision. If renewal is lost, the owner fails with `ConflictError` and does not write its terminal state. A concurrent resume still fails with `ConflictError` before the step runs. The claim and the terminal state each advance the workflow record revision.
-- `toUIMessageStreamResponse`, `toUIAgentStreamResponse`, and `toUIRunnerStreamResponse` accept `includeAgentRunFinish` and forward it. The default remains `false`.
-- PostgreSQL idempotency claims insert the run, the idempotency key, and any parent link in one statement. A key conflict rolls the new run back. SQLite and file claims do the same when the key write fails, and a key whose run is gone can be claimed again.
-- Runner approval resumes compare-and-swap the loaded session revision. The losing resume fails with `ConflictError` before the approved tool runs.
-- Memory, SQLite, and PostgreSQL idempotency claims are insert-only. Claiming a new idempotency key for an existing run id throws `ConflictError` and leaves the stored run unchanged.
+- e3f4af2: Widen the portable decision contract with optional prompt-cache, safety-identifier, JSON, image-URL, message-history, and score-description fields. Existing string instructions and choice descriptions still validate. New fields are accepted only when a destination advertises the matching capability. Export the new decision types `DecisionContentPart`, `DecisionImageDetail`, `DecisionImagePart`, `DecisionInputMessage`, `DecisionJsonPart`, `DecisionPromptCacheBreakpoint`, `DecisionPromptCacheOptions`, `DecisionQuestionInstructions`, `DecisionQuestionPart`, `DecisionScoreLevel`, `DecisionTextPart`, and `DecisionToolStatus`.
 
 ## 1.36.0
 

@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/meta",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Meta Model API adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -42,7 +42,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^1.36.0",
+    "@zhivex-ai/core": "^1.37.0",
     "zod": "^4.6.7"
   }
 }

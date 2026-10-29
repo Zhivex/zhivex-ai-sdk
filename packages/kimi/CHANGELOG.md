@@ -1,10 +1,12 @@
 # @zhivex-ai/kimi
 
-## Unreleased
+## 0.8.1
 
 ### Patch Changes
 
-- Apply the K3 request contract to `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed`: `reasoning_effort`, `max_completion_tokens`, cache TTL `5m` or `1h`, and nested Chat Completions usage. `kimi-k3` stays the default model.
+- e3f4af2: Apply the K3 request contract to `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed`: `reasoning_effort`, `max_completion_tokens`, cache TTL `5m` or `1h`, and nested Chat Completions usage. `kimi-k3` stays the default model.
+- Updated dependencies [e3f4af2]
+  - @zhivex-ai/core@1.37.0
 
 ## 0.8.0
 
