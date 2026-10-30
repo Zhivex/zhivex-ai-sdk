@@ -41,7 +41,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@google-cloud/aiplatform": "^7.5.0",
+    "@google-cloud/aiplatform": "^7.7.0",
     "@zhivex-ai/anthropic": "^0.15.0",
     "@zhivex-ai/core": "^1.37.0",
     "@zhivex-ai/gemini": "^0.14.0",
