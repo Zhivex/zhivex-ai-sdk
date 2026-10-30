@@ -20,6 +20,8 @@ describe("Anthropic managed agents", () => {
       expect(new Headers(init.headers).get("authorization")).toBeNull();
     }
     expect(new Headers(calls[0][1].headers).get("x-api-key")).toBe("test-current");
+    expect(new Headers(calls[0][1].headers).has("authorization")).toBe(false);
+    expect(new Headers(calls[0][1].headers).get("anthropic-version")).toBe("2023-06-01");
     expect(new Headers(calls[0][1].headers).get("anthropic-beta")).toContain("managed-agents-2026-04-01");
     expect(calls[0][1].redirect).toBe("error");
     expect(JSON.parse(calls[0][1].body as string).tools[0].default_config.permission_policy).toEqual({ type: "auto" });

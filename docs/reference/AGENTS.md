@@ -988,11 +988,13 @@ console.log(renderProviderSupportMatrix(matrix));
 console.log(createProviderSupportDriftReport(matrix, { entries: [{ provider: "openai", agentTier: "tier-a" }] }));
 ```
 
-Use the agent tiers as release guidance, not just metadata:
+Use the agent tiers as release guidance, not just metadata. `deriveAgentSupportTier()` computes the tier from capability flags, per runtime surface:
 
-- `Tier A`: choose this when you need approvals, remote MCP, or the strongest hosted-agent story.
-- `Tier B`: good default for portable tool-using agents, especially with local tools or SDK-managed MCP clients.
-- `Tier C`: keep expectations narrower; these providers work well for basic loops, but you should avoid marketing them as full hosted-agent support.
+- `Tier A`: callable tools, approval-capable remote MCP (`remoteMcp` and `approvalRequests`), and hosted web search. A tool-capable realtime session with those MCP approvals is the equivalent when the session API does not advertise hosted web search. Do not promote a surface to Tier A from documentation alone.
+- `Tier B`: callable tools and `durableAgent`, for the SDK durable agent loop. Qwen 3.8 Omni Flash realtime stays Tier B until a live certification passes.
+- `Tier C`: every other surface, including basic tool loops that leave `durableAgent` false.
+
+Live certification is independent of this tier. See the [provider matrix](./PROVIDERS.md#provider-compatibility).
 
 ## Safety Policies
 

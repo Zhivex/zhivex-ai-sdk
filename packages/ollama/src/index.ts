@@ -82,6 +82,8 @@ const capabilities: ModelCapabilities = {
   sampling: { topP: true, seed: true, stopSequences: true },
   agentCapabilities: {
     supportTier: "tier-c",
+    // Installed model artifacts vary, so this adapter does not promise the durable agent loop.
+    durableAgent: false,
     toolChoiceNone: false,
     approvalRequests: false,
     hostedWebSearch: false,

@@ -135,6 +135,13 @@ export interface ModelCapabilities {
 
 export interface AgentCapabilities {
   supportTier: AgentSupportTier;
+  /**
+   * This surface can run the SDK durable agent loop: callable tools, persisted
+   * tool results, and approval pause/resume. Independent of live certification
+   * and of hosted MCP. Tier B requires this flag together with `tools`.
+   * Leave false for basic tool loops and for surfaces that cannot call tools.
+   */
+  durableAgent?: boolean;
   toolChoiceNone: boolean;
   approvalRequests: boolean;
   hostedWebSearch: boolean;

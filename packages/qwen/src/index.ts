@@ -574,6 +574,7 @@ const qwenLanguageCapabilities = (modelId: string): ModelCapabilities => {
     agentCapabilities: {
       ...capabilities.agentCapabilities!,
       supportTier: tools && !omni ? "tier-b" : "tier-c",
+      durableAgent: Boolean(tools && !omni),
       toolChoiceNone: tools,
       hostedWebSearch: tools && !omni,
       hostedFileSearch: tools && !omni && !omni38,
@@ -3212,14 +3213,35 @@ const encodeRealtimeData = (data: string | Uint8Array | ArrayBuffer) => {
 
 class QwenRealtimeModel implements RealtimeModel {
   readonly provider = "qwen";
-  get capabilities() {
+  get capabilities(): ModelCapabilities {
     if (isQwenCloudRealtime(this.modelId)) return {
       ...realtimeCapabilities, vision: !isQwenAudioRealtime(this.modelId), webSearch: true,
-      agentCapabilities: { ...realtimeCapabilities.agentCapabilities!, hostedWebSearch: true, remoteMcp: isQwenOmni38Realtime(this.modelId) },
+      agentCapabilities: {
+        ...realtimeCapabilities.agentCapabilities!,
+        hostedWebSearch: true,
+        remoteMcp: isQwenOmni38Realtime(this.modelId),
+        // Docs describe mcp_approval_request for Omni 3.8 realtime. Approval stays
+        // off, and this surface stays Tier B, until a live certification passes.
+        approvalRequests: false,
+        durableAgent: true,
+        supportTier: "tier-b"
+      },
       realtime: { ...realtimeCapabilities.realtime!, imageInput: !isQwenAudioRealtime(this.modelId) }
     };
     if (!isLiveTranslate38(this.modelId)) return realtimeCapabilities;
-    return { ...realtimeCapabilities, tools: false, realtime: { ...realtimeCapabilities.realtime!, tools: false } };
+    return {
+      ...realtimeCapabilities,
+      tools: false,
+      agentCapabilities: {
+        ...realtimeCapabilities.agentCapabilities!,
+        durableAgent: false,
+        supportTier: "tier-c",
+        hostedWebSearch: false,
+        remoteMcp: false,
+        approvalRequests: false
+      },
+      realtime: { ...realtimeCapabilities.realtime!, tools: false }
+    };
   }
 
   constructor(

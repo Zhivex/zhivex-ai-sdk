@@ -93,6 +93,8 @@ describe("sdk public surface", () => {
     expect(sdk.agentApprovalResponsePart).toBeTypeOf("function");
     expect(sdk.getAgentCapabilities).toBeTypeOf("function");
     expect(sdk.getAgentSupportTier).toBeTypeOf("function");
+    expect(sdk.deriveAgentSupportTier).toBeTypeOf("function");
+    expect(sdk.TIER_A_MINIMUM_HOSTED_TOOLS).toEqual(["hostedWebSearch"]);
     expect(sdk.inspectProviderAgentSupport).toBeTypeOf("function");
     expect(sdk.applySafetyPolicyToAgent).toBeTypeOf("function");
     expect(sdk.judgeAgentEvaluation).toBeTypeOf("function");

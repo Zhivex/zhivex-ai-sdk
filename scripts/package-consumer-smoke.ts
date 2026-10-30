@@ -13,10 +13,6 @@ interface PackageManifest {
   exports?: Record<string, unknown> | string;
 }
 
-interface WorkspaceManifest {
-  devDependencies?: Record<string, string>;
-}
-
 interface NpmPackResult {
   filename: string;
 }
@@ -24,14 +20,14 @@ interface NpmPackResult {
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const workspaceDirectory = resolve(scriptDirectory, "..");
 const packagesDirectory = join(workspaceDirectory, "packages");
-const workspaceManifest = JSON.parse(
-  readFileSync(join(workspaceDirectory, "package.json"), "utf8")
-) as WorkspaceManifest;
-const exactDependencyVersion = (version: string) => version.replace(/^[~^]/, "");
+// Workspace unit tests use the OTel 3 devDependencies. This smoke keeps
+// certifying the optional peer against the SDK 1.x and 2.x lines, which
+// still publish @opentelemetry/sdk-trace-base and peer on
+// @opentelemetry/api <1.10.0. The API pin follows that SDK major.
+const otelSdkVersion = process.env.ZHIVEX_OTEL_SDK_VERSION ?? "2.12.0";
+const otelSdkMajor = Number.parseInt(otelSdkVersion, 10);
 const otelApiVersion = process.env.ZHIVEX_OTEL_API_VERSION
-  ?? exactDependencyVersion(workspaceManifest.devDependencies?.["@opentelemetry/api"] ?? "1.9.0");
-const otelSdkVersion = process.env.ZHIVEX_OTEL_SDK_VERSION
-  ?? exactDependencyVersion(workspaceManifest.devDependencies?.["@opentelemetry/sdk-trace-base"] ?? "2.10.0");
+  ?? (otelSdkMajor >= 3 ? "1.10.0" : "1.9.1");
 
 const hasJavaScriptExport = (target: unknown): boolean => {
   if (typeof target === "string") {

@@ -130,6 +130,8 @@ const capabilities: ModelCapabilities = {
   webSearch: false,
   agentCapabilities: {
     supportTier: "tier-c",
+    // Formula tools and thinking-mode tool choice are a basic loop, not the durable agent default.
+    durableAgent: false,
     toolChoiceNone: true,
     approvalRequests: false,
     hostedWebSearch: false,

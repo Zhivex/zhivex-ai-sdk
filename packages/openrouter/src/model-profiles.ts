@@ -16,6 +16,8 @@ const legacyCapabilities: ModelCapabilities = {
   webSearch: true,
   agentCapabilities: {
     supportTier: "tier-c",
+    // Upstream models vary. Server tools are not a durable-agent contract.
+    durableAgent: false,
     toolChoiceNone: true,
     approvalRequests: false,
     hostedWebSearch: true,
