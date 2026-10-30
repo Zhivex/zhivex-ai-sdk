@@ -2,8 +2,8 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const qwenCatalogFragment = defineModelCatalogFragment({
   provider: "qwen",
-  revision: "2026-10-23",
-  verifiedAt: "2026-10-23",
+  revision: "2026-10-28",
+  verifiedAt: "2026-10-28",
   pricingEffectiveAt: "2026-09-18",
   sources: [
     "https://docs.qwencloud.com/api-reference/decision-model-api",
@@ -15,6 +15,7 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
     "https://docs.qwencloud.com/api-reference/chat/openai-chat",
     "https://docs.qwencloud.com/api-reference/chat/openai-responses",
     "https://www.alibabacloud.com/help/en/model-studio/models",
+    "https://www.alibabacloud.com/help/en/model-studio/qwen-audio-3-1-realtime-flash",
     "https://www.qwencloud.com/models/qwen3.8-omni-flash",
     "https://docs.qwencloud.com/changelog/models",
     "https://www.qwencloud.com/models/qwen3.8-flash",
@@ -33,6 +34,22 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
     { provider: "qwen", modelId: "decision-model-preview" },
     { provider: "qwen", modelId: "qwen3.8-omni-flash-realtime" },
     { provider: "qwen", modelId: "qwen-audio-3.1-realtime-plus" },
+    // Text and audio token rates differ, and Singapore differs from Beijing, so this entry stores no single per-1k price.
+    // Context type is combined because the published max input and max output sum to the context window.
+    {
+      provider: "qwen",
+      modelId: "qwen-audio-3.1-realtime-flash",
+      contextWindowTokens: 262144,
+      contextWindowType: "combined",
+      maxInputTokens: 245760,
+      maxOutputTokens: 16384,
+      evidence: {
+        contextWindowTokens: { source: "https://www.alibabacloud.com/help/en/model-studio/qwen-audio-3-1-realtime-flash", sourceType: "primary", verifiedAt: "2026-10-28" },
+        contextWindowType: { source: "https://www.alibabacloud.com/help/en/model-studio/qwen-audio-3-1-realtime-flash", sourceType: "primary", verifiedAt: "2026-10-28" },
+        maxInputTokens: { source: "https://www.alibabacloud.com/help/en/model-studio/qwen-audio-3-1-realtime-flash", sourceType: "primary", verifiedAt: "2026-10-28" },
+        maxOutputTokens: { source: "https://www.alibabacloud.com/help/en/model-studio/qwen-audio-3-1-realtime-flash", sourceType: "primary", verifiedAt: "2026-10-28" }
+      }
+    },
     { provider: "qwen", modelId: "qwen-audio-3.0-realtime-plus" },
     { provider: "qwen", modelId: "qwen-audio-3.0-realtime-flash" },
     { provider: "qwen", modelId: "qwen-audio-3.0-tts-plus" },

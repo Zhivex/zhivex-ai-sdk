@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { QwenCloudSpeechModel, QwenCloudStreamingASRModel } from "../src/inference-audio.js";
 import { mapQwenCloudRealtimeSession, qwenCloudAudioEvent, validateQwenCloudAudioFrame } from "../src/cloud-realtime.js";
-import type { RealtimeConnectionFactory } from "@zhivex-ai/core";
+import { tool, type RealtimeConnectionFactory } from "@zhivex-ai/core";
 
 const inference = (kind: "tts" | "asr", failure?: string) => {
   const sent: any[] = [];
@@ -89,6 +90,44 @@ describe("Qwen Cloud realtime profiles", () => {
     const providerOptions = { mcpServers: [{ type: "mcp", server_label: "weather", server_url: "https://example.com/mcp" }], enable_search: true };
     expect(() => mapQwenCloudRealtimeSession("qwen3.8-omni-flash-realtime", { providerOptions }, {})).toThrow("mutually exclusive");
     expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-plus", { providerOptions }, {})).toThrow("MCP requires");
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-flash", { providerOptions }, {})).toThrow("MCP requires");
+  });
+  it("maps 3.1 Flash tools together with web search and smart_turn_v2", () => {
+    const providerOptions = { enable_search: true, search_options: { enable_source: true }, output_audio: { language: "en" } };
+    const turnDetection = { type: "smart_turn_v2", voiceprint_audio_urls: ["https://example.com/speaker.wav"] };
+    const mapped = mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-flash", { voice: "longanqian_v3.1", turnDetection, providerOptions }, {
+      ...providerOptions, voice: "longanqian_v3.1", turn_detection: turnDetection, tools: [{ type: "function", function: { name: "get_weather" } }]
+    });
+    expect(mapped).toMatchObject({ enable_search: true, search_options: { enable_source: true }, output_audio: { language: "en" }, turn_detection: turnDetection });
+    expect(mapped.tools).toEqual([{ type: "function", function: { name: "get_weather" } }]);
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-plus", { providerOptions }, { tools: [{ type: "function" }], enable_search: true })).toThrow("mutually exclusive");
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.0-realtime-flash", { providerOptions }, { tools: [{ type: "function" }], enable_search: true })).toThrow("mutually exclusive");
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-flash", { providerOptions: { enable_thinking: false } }, {})).toThrow("enable_thinking");
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-flash", { turnDetection: { type: "semantic_vad" } }, {})).toThrow("smart_turn_v2");
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-flash", { turnDetection: { type: "server_vad", voiceprint_audio_urls: ["https://example.com/a.wav"] } }, {})).toThrow("smart_turn");
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-flash", { turnDetection: { type: "smart_turn", voiceprint_audio_urls: [] } }, {})).toThrow("1 to 5");
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-flash", { turnDetection: { type: "smart_turn", voiceprint_audio_urls: Array.from({ length: 6 }, () => "https://example.com/a.wav") } }, {})).toThrow("1 to 5");
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-flash", { turnDetection: { type: "smart_turn_v2", voiceprint_audio_urls: ["http://example.com/a.wav"] } }, {})).toThrow("HTTPS");
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-flash", { turnDetection: { type: "smart_turn_v2", voiceprint_audio_urls: ["https://user:pass@example.com/a.wav"] } }, {})).toThrow("HTTPS");
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-flash", { providerOptions: { search_options: { enable_source: "yes" } } }, {})).toThrow("enable_source");
+    expect(() => mapQwenCloudRealtimeSession("qwen-audio-3.1-realtime-flash", { providerOptions: { search_options: null } }, {})).toThrow("enable_source");
+  });
+  it("keeps published audio realtime models on the previous pass-through contract", () => {
+    const published = ["qwen-audio-3.0-realtime-flash", "qwen-audio-3.0-realtime-plus", "qwen-audio-3.1-realtime-plus"];
+    const looseTurn = { type: "smart_turn_v2", voiceprint_audio_urls: ["http://example.com/a.wav", "https://user:pass@example.com/a.wav"] };
+    const serverVadUrls = { type: "server_vad", voiceprint_audio_urls: ["not-a-url"] };
+    const sixUrls = { type: "smart_turn", voiceprint_audio_urls: Array.from({ length: 6 }, () => "https://example.com/a.wav") };
+    const emptyUrls = { type: "smart_turn_v2", voiceprint_audio_urls: [] };
+    for (const id of published) {
+      expect(mapQwenCloudRealtimeSession(id, { turnDetection: looseTurn }, { turn_detection: looseTurn }).turn_detection).toEqual(looseTurn);
+      expect(mapQwenCloudRealtimeSession(id, { turnDetection: serverVadUrls }, { turn_detection: serverVadUrls }).turn_detection).toEqual(serverVadUrls);
+      expect(mapQwenCloudRealtimeSession(id, { turnDetection: sixUrls }, { turn_detection: sixUrls }).turn_detection).toEqual(sixUrls);
+      expect(mapQwenCloudRealtimeSession(id, { turnDetection: emptyUrls }, { turn_detection: emptyUrls }).turn_detection).toEqual(emptyUrls);
+      expect(mapQwenCloudRealtimeSession(id, { providerOptions: { search_options: { enable_source: "yes" } } }, { search_options: { enable_source: "yes" } }).search_options).toEqual({ enable_source: "yes" });
+      expect(mapQwenCloudRealtimeSession(id, { providerOptions: { search_options: null } }, { search_options: null }).search_options).toBeNull();
+      expect(() => mapQwenCloudRealtimeSession(id, { turnDetection: { type: "semantic_vad" } }, {})).toThrow("smart_turn_v2");
+      expect(() => mapQwenCloudRealtimeSession(id, { providerOptions: { enable_search: true } }, { tools: [{ type: "function" }], enable_search: true })).toThrow("mutually exclusive");
+    }
   });
   it("rejects incomplete multichannel samples and preserves output metadata", () => {
     expect(() => validateQwenCloudAudioFrame({ data: new Uint8Array(6), mediaType: "audio/pcm", channels: 4 }, { channels: 4 })).toThrow("complete interleaved");
@@ -131,6 +170,90 @@ describe("Qwen Cloud realtime integration", () => {
     expect(f.sent.at(-2)).toEqual({ type: "conversation.item.create", item: { type: "mcp_approval_response", approval_request_id: "opaque-request", approve: false } });
     expect(f.sent.at(-1)).toEqual({ type: "response.create" });
     await session.close();
+  });
+  it("Audio 3.1 Flash accepts tools with search and keeps a voiceprint failure open", async () => {
+    const f = await fixture("qwen-audio-3.1-realtime-flash", {
+      voice: "longanqian_v3.1",
+      turnDetection: { type: "smart_turn_v2", voiceprint_audio_urls: ["https://example.com/speaker.wav"] },
+      tools: { weather: tool({ name: "weather", schema: z.object({ city: z.string() }), execute: () => ({ ok: true }) }) },
+      providerOptions: { enable_search: true, search_options: { enable_source: true }, output_audio: { language: "en" } }
+    });
+    expect(f.sent[0]).toMatchObject({
+      type: "session.update",
+      session: {
+        voice: "longanqian_v3.1",
+        enable_search: true,
+        search_options: { enable_source: true },
+        output_audio: { language: "en" },
+        turn_detection: { type: "smart_turn_v2", voiceprint_audio_urls: ["https://example.com/speaker.wav"] },
+        tools: [{ type: "function", function: { name: "weather" } }]
+      }
+    });
+    expect(f.session.capabilities).toMatchObject({
+      tools: true, vision: false, audioInput: true, audioOutput: true, webSearch: true, reasoning: false,
+      agentCapabilities: { supportTier: "tier-b", hostedWebSearch: true, remoteMcp: false },
+      realtime: { audioInput: true, audioOutput: true, imageInput: false, tools: true }
+    });
+    const events: any[] = [];
+    const collecting = (async () => { for await (const event of f.session.eventStream()) events.push(event); })();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    f.push({ type: "voiceprint_audio_list.failed", item_id: "vp_1", reason: "unreachable" });
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "realtime-provider-data", data: expect.objectContaining({ type: "voiceprint_audio_list.failed" }) })));
+    await f.session.sendText("still open");
+    expect(f.sent.at(-2)?.type).toBe("conversation.item.create");
+    expect(f.sent.at(-1)?.type).toBe("response.create");
+    await f.session.close();
+    await collecting;
+  });
+  it("published audio realtime models still reject tools combined with web search", async () => {
+    const tools = { weather: tool({ name: "weather", schema: z.object({ city: z.string() }), execute: () => ({ ok: true }) }) };
+    for (const modelId of ["qwen-audio-3.0-realtime-flash", "qwen-audio-3.0-realtime-plus", "qwen-audio-3.1-realtime-plus"]) {
+      await expect(fixture(modelId, { tools, providerOptions: { enable_search: true } })).rejects.toThrow("cannot be enabled together");
+    }
+  });
+  it("published audio realtime models forward loose voiceprint and search fields and keep voiceprint failures open", async () => {
+    const turnDetection = { type: "smart_turn_v2", voiceprint_audio_urls: ["http://example.com/a.wav"] };
+    for (const modelId of ["qwen-audio-3.0-realtime-flash", "qwen-audio-3.0-realtime-plus", "qwen-audio-3.1-realtime-plus"]) {
+      const f = await fixture(modelId, { turnDetection, providerOptions: { search_options: { enable_source: "yes" } } });
+      expect(f.sent[0]).toMatchObject({
+        type: "session.update",
+        session: { turn_detection: turnDetection, search_options: { enable_source: "yes" } }
+      });
+      const events: any[] = [];
+      const collecting = (async () => { for await (const event of f.session.eventStream()) events.push(event); })();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      f.push({ type: "voiceprint_audio_list.in_progress", item_id: "vp_1" });
+      f.push({ type: "voiceprint_audio_list.failed", item_id: "vp_1", reason: "unreachable" });
+      await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "realtime-provider-data", data: expect.objectContaining({ type: "voiceprint_audio_list.failed" }) })));
+      expect(events.some(event => event.type === "realtime-error")).toBe(false);
+      await f.session.sendText("still open");
+      expect(f.sent.at(-1)?.type).toBe("response.create");
+      await f.session.close();
+      await collecting;
+    }
+  });
+  it("non-audio realtime models still fail the session on voiceprint_audio_list.failed", async () => {
+    const omni = await fixture("qwen3.8-omni-flash-realtime");
+    const omniEvents: any[] = [];
+    const omniCollecting = (async () => { for await (const event of omni.session.eventStream()) omniEvents.push(event); })();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    omni.push({ type: "voiceprint_audio_list.failed", item_id: "vp_1", reason: "unreachable" });
+    await vi.waitFor(() => expect(omniEvents).toContainEqual(expect.objectContaining({ type: "realtime-error", message: "Qwen realtime error" })));
+    expect(omniEvents.some(event => event.data?.type === "voiceprint_audio_list.failed")).toBe(false);
+    await expect(omni.session.sendText("closed")).rejects.toThrow("not open");
+    await omniCollecting;
+
+    const legacy = await fixture("qwen3.5-omni-plus-realtime");
+    const legacyEvents: any[] = [];
+    const legacyCollecting = (async () => { for await (const event of legacy.session.eventStream()) legacyEvents.push(event); })();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    legacy.push({ type: "voiceprint_audio_list.in_progress", item_id: "vp_1" });
+    legacy.push({ type: "voiceprint_audio_list.completed", item_id: "vp_1" });
+    legacy.push({ type: "voiceprint_audio_list.failed", item_id: "vp_1", reason: "unreachable" });
+    await vi.waitFor(() => expect(legacyEvents).toContainEqual(expect.objectContaining({ type: "realtime-error" })));
+    expect(legacyEvents.some(event => event.type === "realtime-provider-data")).toBe(false);
+    await expect(legacy.session.sendText("closed")).rejects.toThrow("not open");
+    await legacyCollecting;
   });
   it("Audio 3.1 supports manual speech turns and rejects vision/voice updates", async () => {
     const f = await fixture("qwen-audio-3.1-realtime-plus", { turnDetection: null, voice: "beth_v3.1" });

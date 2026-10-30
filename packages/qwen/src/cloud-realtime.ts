@@ -14,6 +14,8 @@ export interface QwenRealtimeMCPServer {
 export interface QwenCloudRealtimeOptions extends Record<string, unknown> {
   mcpServers?: QwenRealtimeMCPServer[];
   enable_search?: boolean;
+  /** Returned search sources. Takes effect when enable_search is true. */
+  search_options?: { enable_source?: boolean };
   max_history_turns?: number;
   enable_speech_emotion?: boolean;
   output_audio?: { language?: string };
@@ -30,8 +32,35 @@ export interface QwenCloudRealtimeSession extends RealtimeSession {
   createResponse(): Promise<void>;
 }
 export const isQwenAudioRealtime = (id: string) => /^qwen-audio-3\.[01]-realtime-(plus|flash)(?:-|$)/i.test(id);
+/** 3.1 Flash is the only audio realtime id that may enable tools and web search together. */
+export const isQwenAudio31RealtimeFlash = (id: string) => /^qwen-audio-3\.1-realtime-flash(?:-|$)/i.test(id);
 export const isQwenOmni38Realtime = (id: string) => /^qwen3\.8-omni-flash-realtime(?:-|$)/i.test(id);
 export const isQwenCloudRealtime = (id: string) => isQwenAudioRealtime(id) || isQwenOmni38Realtime(id);
+
+const httpsUrl = (value: string) => {
+  let url: URL;
+  try { url = new URL(value); } catch { return false; }
+  return url.protocol === "https:" && !url.username && !url.password;
+};
+
+const AUDIO_TURN_TYPES = ["server_vad", "smart_turn", "smart_turn_v2"];
+
+/**
+ * Every audio realtime id accepts the documented turn types, including smart_turn_v2.
+ * Rejecting previously forwarded voiceprint URLs is limited to 3.1 Flash.
+ */
+const validateAudioTurnDetection = (turnDetection: Record<string, unknown> | null | undefined, strict: boolean) => {
+  if (turnDetection?.type && !AUDIO_TURN_TYPES.includes(String(turnDetection.type))) {
+    throw new ConfigurationError("Audio realtime supports server_vad, smart_turn, or smart_turn_v2.");
+  }
+  if (!strict) return;
+  const urls = turnDetection?.voiceprint_audio_urls;
+  if (urls === undefined) return;
+  if (!["smart_turn", "smart_turn_v2"].includes(String(turnDetection?.type))) throw new ConfigurationError("voiceprint_audio_urls requires smart_turn or smart_turn_v2.");
+  if (!Array.isArray(urls) || urls.length < 1 || urls.length > 5 || urls.some(url => typeof url !== "string" || url.length > 4096 || !httpsUrl(url))) {
+    throw new ConfigurationError("voiceprint_audio_urls accepts 1 to 5 public HTTPS URLs without credentials.");
+  }
+};
 
 const mcpServer = (server: QwenRealtimeMCPServer) => {
   if (server.type !== "mcp" || !/^[a-zA-Z0-9_-]{1,64}$/.test(server.server_label)) throw new ConfigurationError("Invalid MCP server label.");
@@ -79,13 +108,19 @@ export const mapQwenCloudRealtimeSession = (id: string, config: RealtimeSessionC
   if (servers.length && !omni) throw new UnsupportedFeatureError("MCP requires Qwen 3.8 Omni Realtime.");
   if (new Set(servers.map(server => server.server_label)).size !== servers.length) throw new ConfigurationError("MCP server labels must be unique.");
   const tools = [...(base.tools ?? []), ...(config.toolChoice === "none" ? [] : servers.map(mcpServer))];
-  if (tools.length && options?.enable_search) throw new UnsupportedFeatureError("Qwen realtime tools and web search are mutually exclusive.");
+  if (tools.length && options?.enable_search && !isQwenAudio31RealtimeFlash(id)) throw new UnsupportedFeatureError("Qwen realtime tools and web search are mutually exclusive.");
   output.tools = tools.length ? tools : undefined;
   if (isQwenAudioRealtime(id)) {
     const history = options?.max_history_turns;
     if (history !== undefined && (!Number.isInteger(history) || history < 1 || history > 50)) throw new ConfigurationError("max_history_turns must be an integer from 1 to 50.");
-    if (config.turnDetection?.type && !["server_vad", "smart_turn"].includes(String(config.turnDetection.type))) throw new ConfigurationError("Audio realtime supports server_vad or smart_turn.");
+    const flash = isQwenAudio31RealtimeFlash(id);
+    validateAudioTurnDetection(config.turnDetection, flash);
     if (options?.output_audio && !id.startsWith("qwen-audio-3.1-")) throw new UnsupportedFeatureError("output_audio.language requires Qwen Audio 3.1.");
+    if (flash && options && Object.prototype.hasOwnProperty.call(options, "enable_thinking")) throw new UnsupportedFeatureError("qwen-audio-3.1-realtime-flash does not support enable_thinking.");
+    const search = options?.search_options;
+    if (flash && search !== undefined && (search === null || typeof search !== "object" || Array.isArray(search) || search.enable_source !== undefined && typeof search.enable_source !== "boolean")) {
+      throw new ConfigurationError("search_options.enable_source must be a boolean when search_options is set.");
+    }
   }
   return output;
 };
