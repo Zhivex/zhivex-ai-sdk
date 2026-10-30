@@ -42,7 +42,17 @@ await session.sendText("Say hello.");
 // Consume session.eventStream(), then close when the conversation ends.
 ```
 
-Audio 3.0 Flash/Plus and 3.1 Plus use the speech conversation protocol. Inputs are mono PCM16 at 16 kHz; outputs are PCM16 at 24 kHz. Image frames are rejected. Manual mode (`turnDetection: null`) commits final audio and optionally requests a response. VAD mode lets the server decide when to respond. Audio 3.1 additionally accepts language controls. Voice is fixed by the first session update; format and turn-detection updates are rejected after audio starts.
+Audio 3.0 Flash/Plus, 3.1 Plus, and 3.1 Flash use the speech conversation protocol. Inputs are mono PCM16 at 16 kHz; outputs are PCM16 at 24 kHz. Image frames are rejected. Manual mode (`turnDetection: null`) commits final audio and optionally requests a response. Client events list `server_vad`, `smart_turn`, and `smart_turn_v2` for all four ids, so each of them accepts `smart_turn_v2`. `voiceprint_audio_list.*` events from those four models are provider data and do not close the session. Other Qwen realtime models still treat `voiceprint_audio_list.failed` as a session error. Audio 3.1 additionally accepts `output_audio.language`. Voice is fixed by the first session update; format and turn-detection updates are rejected after audio starts. The SDK does not inject a default voice. The documented 3.1 default is `longanqian_v3.1`; pass it explicitly.
+
+`qwen-audio-3.1-realtime-flash` may enable callable tools and `providerOptions.enable_search` in the same session. Only that id checks `turnDetection.voiceprint_audio_urls` (one to five public HTTPS URLs, and only with `smart_turn` or `smart_turn_v2`) and requires `search_options.enable_source` to be a boolean when `search_options` is set. 3.0 Flash, 3.0 Plus, and 3.1 Plus still forward those fields unchanged and still reject tools together with web search. Flash also rejects `enable_thinking`. The catalog records a combined 262,144-token window, with 245,760 max input tokens and 16,384 max output tokens. It does not store one token price: text and audio rates differ, and Singapore differs from Beijing. The model page does not publish a cached-token rate or a separate web-search unit price.
+
+International (Singapore) rates for `qwen-audio-3.1-realtime-flash`, USD per million tokens:
+
+| Text input | Audio input | Text output | Audio output |
+| --- | --- | --- | --- |
+| $0.23 | $0.93 | $0.7 | $1.87 |
+
+China (Beijing) rates on the same page are $0.212 text input, $0.848 audio input, $0.636 text output, and $1.696 audio output. Text-only responses use the text output rate. When a response contains both text and audio, only audio output is billed. Browser WebRTC remains limited to Omni realtime model IDs; Audio realtime, including 3.1 Flash, uses `realtimeModel()` over WebSocket.
 
 Omni 3.8 accepts PCM16 input with 1, 2 or 4 interleaved channels. Layout must match (`mono`, `raw_mic_array`, `foa_ambix`). Output can be PCM or WAV at 8/16/24/48 kHz and event metadata reports the configured format. The default voice is Tina. Compact video (`normal`) reduces video tokens when fine detail is unnecessary; multichannel audio increases audio token cost. Set audio/video configuration before sending audio.
 

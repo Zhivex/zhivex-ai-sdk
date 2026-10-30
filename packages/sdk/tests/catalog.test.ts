@@ -37,10 +37,10 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-10-26",
+      snapshotVersion: "2026-10-28",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-10-26",
+        version: "2026-10-28",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
@@ -65,7 +65,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(284);
+    expect(entries).toHaveLength(285);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
       retiredAt: "2027-04-01",
@@ -111,7 +111,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(284);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(285);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-10-26",
       verifiedAt: "2026-10-26",
@@ -125,10 +125,10 @@ describe("SDK model catalog ownership", () => {
       modelCount: 3
     });
     expect(fragments.find((fragment) => fragment.provider === "qwen")).toMatchObject({
-      revision: "2026-10-23",
-      verifiedAt: "2026-10-23",
+      revision: "2026-10-28",
+      verifiedAt: "2026-10-28",
       pricingEffectiveAt: "2026-09-18",
-      modelCount: 81,
+      modelCount: 82,
       sources: expect.arrayContaining(["https://docs.qwencloud.com/api-reference/video-generation/pixverse-image-to-video/create-task"])
     });
     for (const id of ["pixverse/pixverse-v6-t2v", "pixverse/pixverse-v6-it2v", "pixverse/pixverse-v6-kf2v", "pixverse/pixverse-v6-r2v"]) {

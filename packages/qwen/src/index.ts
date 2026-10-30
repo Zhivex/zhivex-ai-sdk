@@ -19,7 +19,7 @@ import { createQwenWorldsClient, type QwenWorldsClient, type QwenWorldModelId } 
 export type * from "./worlds.js";
 import { QwenCloudSpeechModel, QwenCloudStreamingASRModel, isQwenCloudSpeech, isQwenCloudStreamingASR } from "./inference-audio.js";
 export type { QwenCloudSpeechOptions, QwenCloudASROptions, QwenASRTranscript } from "./inference-audio.js";
-import { isQwenCloudRealtime, isQwenAudioRealtime, isQwenOmni38Realtime, mapQwenCloudRealtimeSession, validateQwenCloudAudioFrame, qwenCloudAudioEvent, extendQwenCloudRealtimeSession } from "./cloud-realtime.js";
+import { isQwenCloudRealtime, isQwenAudioRealtime, isQwenAudio31RealtimeFlash, isQwenOmni38Realtime, mapQwenCloudRealtimeSession, validateQwenCloudAudioFrame, qwenCloudAudioEvent, extendQwenCloudRealtimeSession } from "./cloud-realtime.js";
 import { createQwenDecisionModel, type QwenDecisionModel } from "./decision.js";
 export type * from "./decision.js";
 import { assertQwenLanguageModel, isQwenTranslation, isQwenCharacter, isQwen38Open, validateQwenSpecializedText } from "./text-profiles.js";
@@ -3063,7 +3063,8 @@ const parseRealtimeEvent = (
   payload: Record<string, unknown>,
   fallbackRealtimeToolCallId: () => string,
   seenToolCallIds: Set<string>,
-  liveTranslate = false
+  liveTranslate = false,
+  modelId = ""
 ): RealtimeEvent[] => {
   const type = String(payload.type ?? "");
   const metadata = payload as Record<string, JsonValue>;
@@ -3123,6 +3124,10 @@ const parseRealtimeEvent = (
   if (type === "session.finished") {
     return [{ type: "realtime-end", reason: "finished", providerMetadata: metadata }];
   }
+  // Qwen-Audio documents these events for every audio realtime id. Other realtime models keep the .failed error path.
+  if (type.startsWith("voiceprint_audio_list.") && isQwenAudioRealtime(modelId)) {
+    return [{ type: "realtime-provider-data", provider: "qwen", data: metadata }];
+  }
   if (type === "error" || type.endsWith(".failed")) {
     const error = payload.error as Record<string, unknown> | undefined;
     return [{
@@ -3160,13 +3165,13 @@ const mapRealtimeTools = (config: RealtimeSessionConfig) => {
   });
 };
 
-const assertQwenRealtimeConfig = (config: RealtimeSessionConfig) => {
+const assertQwenRealtimeConfig = (modelId: string, config: RealtimeSessionConfig) => {
   if (config.toolChoice !== undefined && !["auto", "none"].includes(String(config.toolChoice))) {
     throw new UnsupportedFeatureError(
       "Qwen realtime supports automatic tool selection or tool disabling, but not required or named tool choice."
     );
   }
-  if (config.tools && config.providerOptions?.enable_search === true) {
+  if (config.tools && config.providerOptions?.enable_search === true && !isQwenAudio31RealtimeFlash(modelId)) {
     throw new UnsupportedFeatureError("Qwen realtime tools and providerOptions.enable_search cannot be enabled together.");
   }
 };
@@ -3177,9 +3182,9 @@ const rejectObjectVoice = (voice: unknown) => {
   }
 };
 
-const mapRealtimeSession = (config: RealtimeSessionConfig) => {
+const mapRealtimeSession = (modelId: string, config: RealtimeSessionConfig) => {
   rejectObjectVoice(config.voice);
-  assertQwenRealtimeConfig(config);
+  assertQwenRealtimeConfig(modelId, config);
   return {
     ...(config.providerOptions ?? {}),
     modalities: config.outputAudioMediaType || config.voice ? ["text", "audio"] : ["text"],
@@ -3227,9 +3232,10 @@ class QwenRealtimeModel implements RealtimeModel {
   async connect(config: RealtimeSessionConfig = {}, options?: RealtimeConnectOptions) {
     const liveTranslate = isLiveTranslate38(this.modelId);
     const cloudRealtime = isQwenCloudRealtime(this.modelId);
-    const mapSession = liveTranslate ? liveTranslateSession : cloudRealtime
-      ? (value: RealtimeSessionConfig) => mapQwenCloudRealtimeSession(this.modelId, value, mapRealtimeSession(value))
-      : mapRealtimeSession;
+    const mapSession = liveTranslate ? liveTranslateSession : (value: RealtimeSessionConfig) => {
+      const base = mapRealtimeSession(this.modelId, value);
+      return cloudRealtime ? mapQwenCloudRealtimeSession(this.modelId, value, base) : base;
+    };
     mapSession(config);
     let audioSent = false;
     let responseActive = false;
@@ -3265,7 +3271,8 @@ class QwenRealtimeModel implements RealtimeModel {
           return (cloudRealtime ? qwenCloudAudioEvent(payload, session.config) : undefined) ?? parseRealtimeEvent(
             payload,
             () => `qwen-realtime-tool-${fallbackRealtimeToolCallIndex++}`,
-            seenRealtimeToolCallIds, liveTranslate || cloudRealtime
+            seenRealtimeToolCallIds, liveTranslate || cloudRealtime,
+            this.modelId
           );
         },
         buildInitialPayloads: (value) => [{ type: "session.update", session: mapSession(value) }],
