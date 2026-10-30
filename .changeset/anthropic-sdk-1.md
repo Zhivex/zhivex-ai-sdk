@@ -2,4 +2,4 @@
 "@zhivex-ai/anthropic": patch
 ---
 
-Pin `@anthropic-ai/sdk` at 1.2.0. Messages requests still use the adapter's own body, `x-api-key`, beta headers, and `anthropic-version` (default `2023-06-01`). Managed Agents keep that header override.
+Upgrade the native Anthropic SDK to 1.3.0. Managed Agents use the native routes without the retired beta query parameter, retaining Zhivex credential resolution, redirect rejection, beta headers, and the configured API version. Messages remain on the adapter's direct transport with the 2023-06-01 default API version.

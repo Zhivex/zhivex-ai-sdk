@@ -11,8 +11,14 @@ describe("Anthropic managed agents", () => {
     await client.sessions.events.send("sess_123", { events: [{ type: "user.message", content: [{ type: "text", text: "Hello" }] }] });
     const calls = fetcher.mock.calls as unknown as [string, RequestInit][];
     expect(calls.map(([url]) => url)).toEqual([
-      "https://api.anthropic.com/v1/agents?beta=true", "https://api.anthropic.com/v1/sessions?beta=true", "https://api.anthropic.com/v1/sessions/sess_123/events?beta=true"
+      "https://api.anthropic.com/v1/agents", "https://api.anthropic.com/v1/sessions", "https://api.anthropic.com/v1/sessions/sess_123/events"
     ]);
+    for (const [url, init] of calls) {
+      expect(new URL(url).searchParams.has("beta")).toBe(false);
+      expect(new Headers(init.headers).get("anthropic-version")).toBe("2023-06-01");
+      expect(new Headers(init.headers).get("anthropic-beta")).toContain("managed-agents-2026-04-01");
+      expect(new Headers(init.headers).get("authorization")).toBeNull();
+    }
     expect(new Headers(calls[0][1].headers).get("x-api-key")).toBe("test-current");
     expect(new Headers(calls[0][1].headers).has("authorization")).toBe(false);
     expect(new Headers(calls[0][1].headers).get("anthropic-version")).toBe("2023-06-01");
@@ -45,8 +51,8 @@ describe("Anthropic managed agents", () => {
     await client.sessions.retrieve("sess_123");
     const calls = fetcher.mock.calls as [string, RequestInit][];
     expect(calls.map(([url]) => url)).toEqual([
-      "https://example.com/proxy/v1/sessions/sess_123?beta=true",
-      "https://example.com/proxy/v1/sessions/sess_123?beta=true"
+      "https://example.com/proxy/v1/sessions/sess_123",
+      "https://example.com/proxy/v1/sessions/sess_123"
     ]);
     expect(new Headers(calls[0][1].headers).get("authorization")).toBe("Bearer old-token");
     expect(new Headers(calls[1][1].headers).get("authorization")).toBe("Bearer new-token");

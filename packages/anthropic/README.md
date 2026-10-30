@@ -145,7 +145,7 @@ On `2026-10-21`, `model.capabilities.sampling.topP` is `false`. Stop sequences s
 
 Any other version string is forwarded as the header and keeps the `2023-06-01` validation rules. This package does not switch the default to `2026-10-21`.
 
-`@anthropic-ai/sdk` is pinned at `1.2.0`. That client sends `anthropic-version: 2026-10-21` and an API key as `Authorization: Bearer` on its own requests. This adapter still builds Messages requests itself and still sends the configured version, default `2023-06-01`, with an API key in `x-api-key`. Managed Agents use the same client and the same header override. This adapter does not rewrite native managed-agent request bodies.
+`@anthropic-ai/sdk` is pinned at `1.3.0`. That client sends `anthropic-version: 2026-10-21` and an API key as `Authorization: Bearer` on its own requests. This adapter still builds Messages requests itself and still sends the configured version, default `2023-06-01`, with an API key in `x-api-key`. Managed Agents use the same client and the same header override. This adapter does not rewrite native managed-agent request bodies.
 
 Amazon Bedrock Converse in `@zhivex-ai/bedrock` does not send this header. It keeps AWS Converse `inferenceConfig`. Anthropic's `2026-10-21` version on Bedrock exists only for Claude 4.7 and later, and only on the Messages API. A custom Messages transport built with `createAnthropicMessagesModel({ provider: "bedrock", anthropicVersion: "2026-10-21" })` gets the same local checks, and model ids older than Claude 4.7 are rejected for that version. Claude on Vertex stays on body field `anthropic_version: "vertex-2023-10-16"` and is not opted into `2026-10-21`.
 
