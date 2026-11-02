@@ -79,7 +79,7 @@
     "@vitest/coverage-v8": "5.0.5",
     "ai": "7.0.157",
     "happy-dom": "^21.0.3",
-    "postgres": "^3.4.9",
+    "postgres": "^4.0.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",
