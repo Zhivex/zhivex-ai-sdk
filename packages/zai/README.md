@@ -98,3 +98,9 @@ bun run test:integration:zai
 ```
 
 A skipped smoke or offline fixture test is not authenticated provider certification.
+
+GLM-5.3 FlashX (`glm-5.3-flashx`) and FlashX Legal
+(`glm-5.3-flashx-legal`) use the same native image input and mandatory thinking
+contract as Flash. Shared reasoning supports `low`, `high`, and `max`; disabling
+thinking is rejected. Both are now present in the SDK catalog with current
+input/cache/output prices. See [the Flash family contract](https://docs.z.ai/guides/vlm/glm-5.3-flash).

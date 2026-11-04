@@ -2,10 +2,13 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const qwenCatalogFragment = defineModelCatalogFragment({
   provider: "qwen",
-  revision: "2026-10-28",
-  verifiedAt: "2026-10-28",
-  pricingEffectiveAt: "2026-09-18",
+  revision: "2026-11-04",
+  verifiedAt: "2026-11-04",
+  pricingEffectiveAt: "2026-11-04",
   sources: [
+    "https://docs.qwencloud.com/changelog/models",
+    "https://docs.qwencloud.com/api-reference/audio-generation",
+    "https://docs.qwencloud.com/developer-guides/speech/realtime-streaming",
     "https://docs.qwencloud.com/api-reference/decision-model-api",
     "https://docs.qwencloud.com/developer-guides/getting-started/model-selection",
     "https://docs.qwencloud.com/developer-guides/embeddings/embedding",
@@ -17,7 +20,6 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
     "https://www.alibabacloud.com/help/en/model-studio/models",
     "https://www.alibabacloud.com/help/en/model-studio/qwen-audio-3-1-realtime-flash",
     "https://www.qwencloud.com/models/qwen3.8-omni-flash",
-    "https://docs.qwencloud.com/changelog/models",
     "https://www.qwencloud.com/models/qwen3.8-flash",
     "https://docs.qwencloud.com/developer-guides/getting-started/text-generation-models",
     "https://www.alibabacloud.com/help/en/model-studio/qwen-image-generation-and-editing-api-reference",
@@ -30,6 +32,9 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
     "https://docs.qwencloud.com/api-reference/video-generation/pixverse-reference-to-video/create-task"
   ],
   entries: [
+    { provider: "qwen", modelId: "qwen-audio-3.1-tts-flash" },
+    { provider: "qwen", modelId: "qwen-audio-3.1-tts-plus" },
+    { provider: "qwen", modelId: "qwen-audio-3.1-tts-next" },
     // Discovery is not a claim that every account, transport or feature is live-certified.
     { provider: "qwen", modelId: "decision-model-preview" },
     { provider: "qwen", modelId: "qwen3.8-omni-flash-realtime" },

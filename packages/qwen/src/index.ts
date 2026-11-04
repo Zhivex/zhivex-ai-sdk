@@ -2635,7 +2635,9 @@ class QwenSpeechModel implements SpeechModel {
     if (input.voice !== undefined && typeof input.voice !== "string") {
       throw new UnsupportedFeatureError('Provider "qwen" accepts string voice names only.');
     }
-    const { signal, cleanup, abort } = withTimeoutSignal(input);
+    const isAudioGen = this.modelId === "qwen-audio-3.1-tts-next";
+    if (isAudioGen && input.voice !== undefined) throw new UnsupportedFeatureError("Qwen TTS Next uses reference audio instead of a voice ID.");
+    if (isAudioGen && (!input.input.trim() || [...input.input].length > 3000)) throw new ConfigurationError("Qwen TTS Next requires 1–3000 characters.");
     const providerOptions = { ...(input.providerOptions ?? {}) };
     const nestedInput =
       providerOptions.input && typeof providerOptions.input === "object"
@@ -2648,10 +2650,13 @@ class QwenSpeechModel implements SpeechModel {
     delete providerOptions.input;
     delete providerOptions.parameters;
     delete providerOptions.model;
+    const endpoint = isAudioGen ? "services/audio/tts/SpeechSynthesizer" : "services/aigc/multimodal-generation/generation";
+    if (isAudioGen && (nestedInput.voice !== undefined || providerOptions.voice !== undefined || parameters !== undefined)) throw new ConfigurationError("Qwen TTS Next accepts generation fields inside input and no voice parameter.");
+    const { signal, cleanup, abort } = withTimeoutSignal(input);
     try {
       const response = await withRetry(
         () =>
-          this.fetcher(`${this.taskBaseURL}/services/aigc/multimodal-generation/generation`, {
+          this.fetcher(`${this.taskBaseURL}/${endpoint}`, {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
@@ -2660,13 +2665,12 @@ class QwenSpeechModel implements SpeechModel {
               input: {
                 ...providerOptions,
                 ...nestedInput,
-                text: input.input,
-                voice: input.voice ?? "Cherry"
+                ...(isAudioGen ? { text_prompt: input.input } : { text: input.input, voice: input.voice ?? "Cherry" })
               },
               ...(parameters ? { parameters } : {})
             })
           }),
-        input
+        isAudioGen ? { ...input, maxRetries: 0 } : input
       );
       const json = await parseJson(response, {
         maxBytes: this.responseLimits.speechJsonBytes,

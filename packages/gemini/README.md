@@ -322,3 +322,19 @@ Cancellation/truncation leaves the latest snapshot partial/unknown.
 ### Google hosted-tool ownership
 
 Import Google hosted-tool helpers from this package for new code; Core/SDK imports remain compatible. See [ownership and support boundaries](../../docs/ARCHITECTURE.md#provider-implementation-boundaries).
+
+## GenerateContent request logging
+
+GenerateContent and streamGenerateContent requests (including speech,
+transcription, images, music, and grounded text on those routes) now explicitly
+send `store: false`. Previously the SDK inherited project logging settings. This
+prevents new paid projects from silently inheriting Google's October 26, 2026
+storage default. To opt in per request, set `providerOptions: { store: true }`;
+explicit `false` is preserved and nonboolean values are rejected. No account
+settings are changed. Disabling request logging is not a general ZDR guarantee.
+
+Interactions retains its existing explicit `store`/continuation contract. Batch
+requests retain their existing provider payload contract: this change does not
+claim to disable batch logging or rewrite uploaded JSONL files. Configure batch
+logging explicitly in the project until the batch wire contract can be verified.
+See [Google's logging controls](https://aistudio.google.com/docs/logs-datasets).

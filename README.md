@@ -198,3 +198,21 @@ bun run build
 ## License
 
 MIT
+
+### November 2026 provider alignment
+
+The release-managed catalog includes GLM FlashX/Legal and Qwen TTS 3.1, current
+Meta Spark prices, GPT-5.6 Sol promotional cache/input/output rates, and Gemini
+3.8 Flash pricing. Optional `ModelCatalogEntry.pricingTerms` records verified
+promotion dates and source notes. `validThrough` means a confirmed end date;
+`guaranteedThrough` means a minimum promised duration, not an automatic expiry.
+Catalog snapshots remain immutable and never switch to future prices by clock.
+Review promotions after those dates before relying on estimates. Meta
+Contributor variants require permission to use content for training; their
+catalog prices do not opt in or replace Standard IDs.
+
+Provider packages also expose explicit Anthropic message-thread controls,
+DeepSeek Search/Fetch, and Meta's native computer protocol. Gemini GenerateContent
+routes now default to `store: false`; consumers that intentionally want request
+logging must pass `providerOptions.store: true`. See the individual package
+READMEs for privacy, route, and compatibility details.

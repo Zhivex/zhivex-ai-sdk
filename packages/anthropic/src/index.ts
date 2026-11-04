@@ -122,7 +122,17 @@ export interface AnthropicCompactionConfig {
   instructions?: string;
 }
 
+/** Explicit server-side conversation storage; not ZDR or HIPAA eligible. */
+export type AnthropicMessageThread = { type: "create" } | { type: "continue"; previous_message_id: string };
+export const anthropicThreadCreate = (): AnthropicMessageThread => ({ type: "create" });
+export const anthropicThreadContinue = (previousMessageId: string): AnthropicMessageThread => {
+  if (typeof previousMessageId !== "string" || !previousMessageId.trim()) throw new ValidationError("Message threads require a previous message ID.");
+  return { type: "continue", previous_message_id: previousMessageId };
+};
+
 export interface AnthropicLanguageModelOptions {
+  /** Opt in to ephemeral server storage. Continue with new messages only; handle 404 by replaying explicitly. */
+  thread?: AnthropicMessageThread;
   /** Request a signed summary without generating a conversation reply. */
   compaction?: AnthropicCompactionConfig;
   speed?: "standard" | "fast";
@@ -1423,6 +1433,20 @@ const prepareAnthropicRequest = (
       throw new UnsupportedFeatureError("On-demand compaction cannot combine context_management, stop sequences, structured output, or forced tools.");
     }
   }
+  const thread = providerOptions.thread;
+  if (thread !== undefined) {
+    if (provider !== "anthropic") throw new UnsupportedFeatureError("Message threads are verified only on the Anthropic host.");
+    if (!thread || !["create", "continue"].includes(thread.type) ||
+      Object.keys(thread).some(key => !["type", ...(thread.type === "continue" ? ["previous_message_id"] : [])].includes(key))) {
+      throw new ValidationError("Invalid Anthropic message thread configuration.");
+    }
+    if (thread.type === "continue") {
+      anthropicThreadContinue(thread.previous_message_id);
+      if (input.messages.some(message => message.role === "system") || input.tools !== undefined || providerOptions.system !== undefined || providerOptions.tools !== undefined) {
+        throw new ValidationError("Thread continuation accepts only new messages; omit system and tools inherited from the create request.");
+      }
+    }
+  }
   const rawThinking = providerOptions.thinking;
   const rawOutputConfig = providerOptions.output_config;
   if (providerOptions.betas !== undefined && !Array.isArray(providerOptions.betas)) {
@@ -1476,6 +1500,7 @@ const prepareAnthropicRequest = (
 
   const extraBetas = [
     ...betas,
+    ...(thread ? ["message-threads-2026-08-12"] : []),
     ...(providerOptions.compaction || signedBlocks.length ? ["compact-2026-09-04"] : []),
     ...(thinking?.display === "updates" ? ["thinking-display-updates-2026-08-18"] : []),
     ...(thinking?.block_binding ? ["thinking-binding-controls-2026-08-01"] : []),
@@ -1602,7 +1627,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
       const body = JSON.stringify({
         ...providerOptions,
         model: this.modelId,
-        system: systemPromptFromMessages(this.modelId, input.messages),
+        system: providerOptions.thread?.type === "continue" ? undefined : systemPromptFromMessages(this.modelId, input.messages),
         messages: mapRequestMessages(this.modelId, input.messages, this.anthropicVersion),
         ...(mcpServers ? { mcp_servers: mcpServers } : {}),
         tools: mapTools(input.tools),
@@ -1649,7 +1674,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
       const body = JSON.stringify({
         ...providerOptions,
         model: this.modelId,
-        system: systemPromptFromMessages(this.modelId, input.messages),
+        system: providerOptions.thread?.type === "continue" ? undefined : systemPromptFromMessages(this.modelId, input.messages),
         messages: mapRequestMessages(this.modelId, input.messages, this.anthropicVersion),
         ...(mcpServers ? { mcp_servers: mcpServers } : {}),
         tools: mapTools(input.tools),
@@ -1677,6 +1702,9 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
             const json = JSON.parse(event.data);
 
             if (event.event === "message_start") {
+              if (providerOptions.thread && typeof json.message?.id === "string") {
+                yield { type: "provider-data", provider: "anthropic", data: { type: "message-thread", messageId: json.message.id } } satisfies StreamEvent;
+              }
               const nextUsage = mapAnthropicUsage(json.message?.usage ?? json.usage);
               if (nextUsage) {
                 usage = mergeAnthropicUsage(usage, nextUsage);

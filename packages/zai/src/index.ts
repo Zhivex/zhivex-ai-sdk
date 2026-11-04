@@ -106,7 +106,7 @@ const baseCapabilities: ModelCapabilities = {
 };
 
 const isGLM53 = (modelId: string) => modelId.toLowerCase() === "glm-5.3";
-const isGLM53Flash = (modelId: string) => modelId.toLowerCase() === "glm-5.3-flash";
+const isGLM53Flash = (modelId: string) => /^glm-5\.3-flash(?:x(?:-legal)?)?$/.test(modelId.toLowerCase());
 const isGLM53Family = (modelId: string) => isGLM53(modelId) || isGLM53Flash(modelId);
 const isGLM52 = (modelId: string) => modelId.toLowerCase() === "glm-5.2";
 

@@ -718,3 +718,21 @@ Counter evidence: [Model Studio web search](https://www.alibabacloud.com/help/en
 scores and uses only the configured decision endpoint. Its text-only and string
 choice capabilities are explicit. Native `qwen.decisionModel()` is unchanged.
 See [portable Decisions](../../docs/DECISIONS.md).
+
+## Qwen Audio TTS 3.1
+
+The catalog includes `qwen-audio-3.1-tts-flash`, `qwen-audio-3.1-tts-plus`, and
+`qwen-audio-3.1-tts-next`. Flash and Plus use the existing binary inference
+transport. Next uses `speechModel("qwen-audio-3.1-tts-next").generateSpeech()` via
+`/services/audio/tts/SpeechSynthesizer`, with `input` mapped to `input.text_prompt`.
+Supply additional generation fields (format, sample_rate, channels, references)
+in `providerOptions.input`. Next accepts reference audio rather than voice IDs,
+so `voice` is rejected instead of sending the legacy Cherry default. Generated
+URLs use the existing bounded audio download and URL validation policy. Paid
+Next generations are not retried automatically.
+
+Next supports WAV/MP3/PCM output and at most 3,000 prompt characters. Up to three
+WAV/MP3/OGG Opus references may be supplied (30 seconds and 10 MB each; enforced
+by the service for remote media). Use Singapore or Beijing regional credentials.
+See [the AudioGen API](https://docs.qwencloud.com/api-reference/audio-generation)
+and [native TTS streaming](https://docs.qwencloud.com/developer-guides/speech/realtime-streaming).

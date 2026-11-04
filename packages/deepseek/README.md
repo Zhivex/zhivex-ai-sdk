@@ -173,3 +173,26 @@ requests, because the accepted history has no provider-specific reasoning state.
 Thinking-only models are excluded from the gateway history capability.
 
 Generation and streaming startup share the combined timeout/caller signal with retry backoff, so expiration cancels pending waits before another provider request.
+
+## Search and Fetch
+
+The provider exposes typed JSON clients through `search`:
+
+```ts
+import { createDeepSeek } from "@zhivex-ai/deepseek";
+const deepseek = createDeepSeek();
+const found = await deepseek.search.search({ query: "DeepSeek site:deepseek.com", count: 5, need_content: true });
+const page = await deepseek.search.fetch({ url: "https://example.com/article" });
+```
+
+These call `/v1/tools/search` and `/v1/tools/fetch` using the same bearer key.
+The search syntax and snake_case fields follow the provider contract; returned
+results preserve scores, metadata, and Markdown content. Retry, timeout, and
+abort controls use the existing client conventions. Search accepts 1–128 Unicode
+characters and 1–50 results; fetch requires an HTTP(S) URL without credentials.
+The service fetches the supplied page, not the local SDK process.
+
+Each API costs $0.75 per 1,000 successful requests producing results/content;
+empty searches, errors and timeouts are not billed. Account limits are 100 QPS
+for search and 25 QPS for fetch (plus per-domain fetch limits). The client does
+not impose an account-wide limiter. See [the official contract](https://api-docs.deepseek.com/guides/search/).

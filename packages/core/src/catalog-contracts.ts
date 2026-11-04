@@ -72,6 +72,16 @@ export interface ModelCatalogEntry {
   cacheWriteCostPer1kTokens?: number;
   outputCostPer1kTokens?: number;
   costPer1kTokens?: number;
+  /** Terms for the rates captured in this immutable snapshot; never schedules a rate change. */
+  pricingTerms?: {
+    source: string;
+    verifiedAt: string;
+    /** Last confirmed date for a rate that has an announced end. */
+    validThrough?: string;
+    /** Minimum guaranteed duration; the provider may extend the promotion. */
+    guaranteedThrough?: string;
+    notes?: string;
+  };
   longContextPricing?: LongContextPricing;
   recommendedFor?: ModelCatalogRecommendation[];
   /** Host-specific lifecycle evidence, captured at the catalog snapshot date. */
@@ -112,6 +122,7 @@ const entryFields = new Set<keyof ModelCatalogEntry>([
   "aliases",
   ...costFields,
   "longContextPricing",
+  "pricingTerms",
   "recommendedFor",
   "lifecycle",
   "contextWindowTokens", "contextWindowType", "maxInputTokens", "maxOutputTokens", "evidence", "compaction"
@@ -168,6 +179,7 @@ const cloneEntry = (entry: ModelCatalogEntry): ModelCatalogEntry => ({
   ...Object.fromEntries(["contextWindowTokens", "contextWindowType", "maxInputTokens", "maxOutputTokens"].filter(key => entry[key as keyof ModelCatalogEntry] !== undefined).map(key => [key, entry[key as keyof ModelCatalogEntry]])),
   ...(entry.evidence === undefined ? {} : { evidence: structuredClone(entry.evidence) }),
   ...(entry.compaction === undefined ? {} : { compaction: structuredClone(entry.compaction) }),
+  ...(entry.pricingTerms === undefined ? {} : { pricingTerms: { ...entry.pricingTerms } }),
   ...(entry.lifecycle === undefined ? {} : { lifecycle: { ...entry.lifecycle } }),
   ...(entry.aliases === undefined ? {} : { aliases: [...entry.aliases] }),
   ...(entry.inputCostPer1kTokens === undefined ? {} : { inputCostPer1kTokens: entry.inputCostPer1kTokens }),
@@ -207,6 +219,7 @@ const freezeEntry = (entry: ModelCatalogEntry): ModelCatalogEntry => {
     Object.freeze(entry.compaction);
   }
   entry.lifecycle && Object.freeze(entry.lifecycle);
+  entry.pricingTerms && Object.freeze(entry.pricingTerms);
   entry.aliases && Object.freeze(entry.aliases);
   entry.longContextPricing && Object.freeze(entry.longContextPricing);
   entry.recommendedFor && Object.freeze(entry.recommendedFor);
@@ -310,6 +323,21 @@ const validateEntry = (entry: ModelCatalogEntry, index: number): void => {
     if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value < 0)) {
       throw new TypeError(`${path}.${field} must be a finite, non-negative number`);
     }
+  }
+
+  if (entry.pricingTerms !== undefined) {
+    const terms = entry.pricingTerms;
+    assertRecord(terms, `${path}.pricingTerms`);
+    assertFields(terms, ["source", "verifiedAt", "validThrough", "guaranteedThrough", "notes"], `${path}.pricingTerms`);
+    assertSource(terms.source, `${path}.pricingTerms.source`);
+    assertIsoDate(terms.verifiedAt, `${path}.pricingTerms.verifiedAt`);
+    for (const key of ["validThrough", "guaranteedThrough"] as const) {
+      if (terms[key] !== undefined) {
+        assertIsoDate(terms[key], `${path}.pricingTerms.${key}`);
+        if (Date.parse(terms[key]) < Date.parse(terms.verifiedAt)) throw new TypeError(`${path}.pricingTerms.${key} precedes verification`);
+      }
+    }
+    if (terms.notes !== undefined) assertNonEmptyString(terms.notes, `${path}.pricingTerms.notes`);
   }
 
   if (entry.longContextPricing !== undefined) {

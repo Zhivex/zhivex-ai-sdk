@@ -526,11 +526,17 @@ const mapFilePartToResponsesContent = (part: Extract<ModelMessage["parts"][numbe
   };
 };
 
+const nativeComputerItem = (part: ModelMessage["parts"][number]): Record<string, unknown> | undefined => {
+  if (part.type !== "provider-data" || part.provider !== "meta" || !part.data || typeof part.data !== "object" || Array.isArray(part.data)) return undefined;
+  return ["computer_call", "computer_call_output"].includes(String(part.data.type)) ? part.data as Record<string, unknown> : undefined;
+};
+
 const toResponsesInput = (messages: ModelMessage[]) => {
   const input: Array<Record<string, unknown>> = [];
 
   for (const message of messages) {
     if (message.role === "tool") {
+      input.push(...message.parts.flatMap(part => nativeComputerItem(part) ? [nativeComputerItem(part)!] : []));
       input.push(...serializeToolOutput(message));
       continue;
     }
@@ -538,6 +544,14 @@ const toResponsesInput = (messages: ModelMessage[]) => {
     const content: Array<Record<string, unknown>> = [];
     for (const part of message.parts) {
       switch (part.type) {
+        case "provider-data": {
+          const item = nativeComputerItem(part);
+          if (item) {
+            if (content.length) input.push({ type: "message", role: message.role, content: content.splice(0) });
+            input.push(item);
+          }
+          break;
+        }
         case "text":
           content.push({
             type: message.role === "assistant" ? "output_text" : "input_text",
@@ -882,14 +896,15 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
   ) {}
 
   private usesResponsesAPI(input: ModelGenerateInput<MetaLanguageModelOptions>) {
-    return input.providerOptions?.apiMode === "responses" || hasHostedTools(input.tools) || hasFileParts(input.messages);
+    return input.providerOptions?.apiMode === "responses" || hasHostedTools(input.tools) || hasFileParts(input.messages) ||
+      input.messages.some(message => message.parts.some(part => nativeComputerItem(part) !== undefined));
   }
 
   private async generateViaResponses(
     input: ModelGenerateInput<MetaLanguageModelOptions>,
     signal: AbortSignal | undefined
   ): Promise<GenerateResult> {
-    const previousResponse = getProviderResponseId(input.messages);
+    const previousResponse = input.providerOptions?.store === false ? undefined : getProviderResponseId(input.messages);
     const messages =
       previousResponse && previousResponse.index < input.messages.length - 1
         ? input.messages.slice(previousResponse.index + 1)
@@ -977,7 +992,7 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
   async stream(input: ModelGenerateInput<MetaLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     if (this.usesResponsesAPI(input)) {
       return openOpenAICompatibleEvents(input, async (signal) => {
-        const previousResponse = getProviderResponseId(input.messages);
+        const previousResponse = input.providerOptions?.store === false ? undefined : getProviderResponseId(input.messages);
         const messages =
           previousResponse && previousResponse.index < input.messages.length - 1
             ? input.messages.slice(previousResponse.index + 1)
@@ -1325,3 +1340,37 @@ export const metaFilePart = (fileId: string, mediaType = "application/octet-stre
   mediaType,
   filename
 });
+
+/** Native Responses tool. Actions and safety checks are returned as provider-data, never executed. */
+export const metaComputerTool = () => hostedTool({ name: "computer", provider: "meta", type: "computer" });
+
+export interface MetaComputerSafetyCheck { id: string; code: string; message: string; }
+export type MetaComputerAction =
+  | { type: "click"; button: "left" | "right" | "wheel" | "back" | "forward"; x: number; y: number }
+  | { type: "double_click" | "move"; x: number; y: number }
+  | { type: "drag"; path: Array<{ x: number; y: number }> }
+  | { type: "keypress"; keys: string[] }
+  | { type: "scroll"; x: number; y: number; scroll_x: number; scroll_y: number }
+  | { type: "type"; text: string }
+  | { type: "screenshot" | "wait" };
+
+/** Supply checks only after the application has reviewed and accepted them. Receipts must be replayed unchanged. */
+export const metaComputerCallOutput = (input: {
+  callId: string;
+  imageUrl: string;
+  acknowledgedSafetyChecks?: MetaComputerSafetyCheck[];
+}) => {
+  if (typeof input.callId !== "string" || !input.callId.trim() || typeof input.imageUrl !== "string" || !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(input.imageUrl)) {
+    throw new ConfigurationError("Meta computer output requires a call ID and a base64 PNG or JPEG data URL.");
+  }
+  const base64 = input.imageUrl.slice(input.imageUrl.indexOf(",") + 1);
+  const decodedBytes = base64.length * 3 / 4 - (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0);
+  if (decodedBytes > 25 * 1024 * 1024) {
+    throw new ConfigurationError("Meta computer screenshots must not exceed 25 MiB.");
+  }
+  return providerDataPart("meta", {
+    type: "computer_call_output", call_id: input.callId,
+    acknowledged_safety_checks: (input.acknowledgedSafetyChecks ?? []).map(check => ({ ...check })),
+    output: { type: "computer_screenshot", image_url: input.imageUrl },
+  });
+};

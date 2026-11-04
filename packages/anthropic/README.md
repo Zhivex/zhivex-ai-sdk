@@ -292,3 +292,33 @@ try {
 ```
 
 `auto` is a server decision and can execute a call without human review. Use `always_ask` when a human checkpoint is required. These resources run on Anthropic's platform and do not use Zhivex's local agent persistence or approval queues. The September certification additionally exercises a real managed session, automatic permission evaluation, a successful tool result, idle state, and cleanup; see the [scoped evidence report](../../docs/maintainers/WEEKLY_PROVIDER_LIVE_2026_09_16.md). See [permission policies](https://platform.claude.com/docs/en/managed-agents/permission-policies).
+
+## Message threads (explicit opt-in)
+
+`anthropicThreadCreate()` and `anthropicThreadContinue(previousMessageId)` return
+values for `providerOptions.thread`. They add the
+`message-threads-2026-08-12` beta header in both generate and stream requests.
+Normal requests do not create threads. The API version default is unchanged.
+
+```ts
+import { createAnthropic, anthropicThreadCreate, anthropicThreadContinue } from "@zhivex-ai/anthropic";
+const model = createAnthropic()("claude-opus-5-5");
+const first = await model.generate({
+  messages: [{ role: "user", parts: [{ type: "text", text: "Remember this task." }] }],
+  providerOptions: { thread: anthropicThreadCreate() }
+});
+const id = (first.rawResponse as { id: string }).id;
+await model.generate({
+  messages: [{ role: "user", parts: [{ type: "text", text: "Continue." }] }],
+  providerOptions: { thread: anthropicThreadContinue(id) }
+});
+```
+
+Continuation takes **only new messages**. Omit system messages and tools: the
+server inherits them from creation. The caller owns history and the latest
+response ID (`rawResponse.id`; streams emit an Anthropic `provider-data` event with
+`{ type: "message-thread", messageId }` for continuation). Threads expire after 5 minutes of inactivity and are
+deleted within 1 hour after last use. They are not ZDR or HIPAA eligible. On a
+404, explicitly create a new thread with the full local history; these helpers
+never replay, switch retention, or retry an expired conversation automatically.
+See [Message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads).

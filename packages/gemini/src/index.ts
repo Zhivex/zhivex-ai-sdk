@@ -162,6 +162,8 @@ const encodeGeminiResourceName = (value: string, label: string) => {
 };
 
 export interface GeminiLanguageModelOptions {
+  /** Opt in to provider request logging. Defaults to false, regardless of project settings. */
+  store?: boolean;
   topP?: number;
   topK?: number;
   stopSequences?: string[];
@@ -227,12 +229,20 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 
+const generateContentStorage = (options: Record<string, unknown> | undefined) => {
+  const store = options?.store;
+  if (store !== undefined && typeof store !== "boolean") {
+    throw new ConfigurationError("Gemini GenerateContent store must be a boolean.");
+  }
+  return store ?? false;
+};
+
 const splitGenerationConfig = (providerOptions: Record<string, unknown> | undefined) => {
   const { generationConfig, ...rest } = providerOptions ?? {};
   return {
     generationConfig:
       generationConfig && typeof generationConfig === "object" ? (generationConfig as Record<string, unknown>) : {},
-    providerOptions: rest
+    providerOptions: { ...rest, store: generateContentStorage(rest) }
   };
 };
 
@@ -2142,6 +2152,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
             signal,
             body: JSON.stringify({
               ...input.providerOptions,
+              store: generateContentStorage(input.providerOptions),
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: mapTools(input.tools),
@@ -2187,6 +2198,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
           signal,
           body: JSON.stringify({
             ...input.providerOptions,
+            store: generateContentStorage(input.providerOptions),
             contents: mapMessages(input.messages),
             systemInstruction: systemInstruction(input.messages),
             tools: mapTools(input.tools),
@@ -2451,7 +2463,8 @@ class GeminiTranscriptionModel implements TranscriptionModel {
                   ]
                 }
               ],
-              ...input.providerOptions
+              ...input.providerOptions,
+            store: generateContentStorage(input.providerOptions)
             })
           }),
         input
@@ -2512,7 +2525,8 @@ class GeminiSpeechModel implements SpeechModel {
                   }
                 }
               },
-              ...input.providerOptions
+              ...input.providerOptions,
+            store: generateContentStorage(input.providerOptions)
             })
           }),
         input
@@ -2559,7 +2573,8 @@ class GeminiSpeechModel implements SpeechModel {
                 }
               }
             },
-            ...input.providerOptions
+            ...input.providerOptions,
+            store: generateContentStorage(input.providerOptions)
           })
         }),
       input
@@ -2859,6 +2874,7 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
             signal,
             body: JSON.stringify({
               ...input.providerOptions,
+              store: generateContentStorage(input.providerOptions),
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: [{ googleSearch: {} }],
