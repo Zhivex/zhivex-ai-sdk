@@ -333,8 +333,15 @@ storage default. To opt in per request, set `providerOptions: { store: true }`;
 explicit `false` is preserved and nonboolean values are rejected. No account
 settings are changed. Disabling request logging is not a general ZDR guarantee.
 
-Interactions retains its existing explicit `store`/continuation contract. Batch
-requests retain their existing provider payload contract: this change does not
-claim to disable batch logging or rewrite uploaded JSONL files. Configure batch
-logging explicitly in the project until the batch wire contract can be verified.
-See [Google's logging controls](https://aistudio.google.com/docs/logs-datasets).
+Interactions retains its existing explicit `store`/continuation contract. Inline
+Batch requests also default each nested `GenerateContentRequest.store` to false;
+explicit true/false is preserved per request. Metadata and caller objects remain
+unchanged. Batch-level `providerOptions.store` is rejected: Google defines store
+on each request, not on the batch envelope. Raw inline inputConfig overrides
+receive the same defaults. File-backed batches are submitted without rewriting
+or downloading uploaded JSONL: callers must include `request.store: false` in
+each JSONL line to opt out (or explicitly choose true). File contents and account
+settings stay under caller control; the SDK cannot guarantee logging opt-out for
+an opaque uploaded file.
+See [Google's logging controls](https://aistudio.google.com/docs/logs-datasets)
+and [the Batch request schema](https://ai.google.dev/api/batch-api).
