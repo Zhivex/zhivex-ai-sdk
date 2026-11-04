@@ -6,6 +6,24 @@
 
 - Support Claude Haiku 5.5 with adaptive thinking and effort controls, computer/browser toolsets, bound thinking, local rejection of sampling/prefill/`effort=none`, catalog pricing (including the 100k long-context tier), Bedrock/Vertex host IDs, and no managed server-side fallbacks.
 
+## 0.16.0
+
+### Minor Changes
+
+- 938d483: Align provider contracts and the November catalog: FlashX vision/reasoning,
+  explicit Gemini GenerateContent logging opt-out, typed DeepSeek Search/Fetch,
+  opt-in Anthropic message threads, Meta native computer protocol, Qwen TTS 3.1
+  and AudioGen routing, and verified current token/cache prices with promotion
+  terms. No implicit training consent, automatic thread replay, or future rate
+  activation is introduced.
+
+### Patch Changes
+
+- 31041cd: Upgrade the native Anthropic SDK to 1.3.0. Managed Agents use the native routes without the retired beta query parameter, retaining Zhivex credential resolution, redirect rejection, beta headers, and the configured API version. Messages remain on the adapter's direct transport with the 2023-06-01 default API version.
+- Updated dependencies [938d483]
+- Updated dependencies [e97ac3f]
+  - @zhivex-ai/core@1.38.0
+
 ## 0.15.0
 
 ### Minor Changes

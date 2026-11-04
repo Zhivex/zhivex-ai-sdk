@@ -1,5 +1,24 @@
 # @zhivex-ai/sdk
 
+## 1.37.0
+
+### Minor Changes
+
+- 938d483: Align provider contracts and the November catalog: FlashX vision/reasoning,
+  explicit Gemini GenerateContent logging opt-out, typed DeepSeek Search/Fetch,
+  opt-in Anthropic message threads, Meta native computer protocol, Qwen TTS 3.1
+  and AudioGen routing, and verified current token/cache prices with promotion
+  terms. No implicit training consent, automatic thread replay, or future rate
+  activation is introduced.
+- e97ac3f: Expose capability-derived agent support tiers and the optional durableAgent flag. Add live-certification display metadata independently of the derived tier, and correct tool-less Qwen and Gemini realtime surfaces to Tier C. Qwen Omni 3.8 realtime remains Tier B pending live certification.
+
+### Patch Changes
+
+- b4eac3d: Add Qwen Audio 3.1 Realtime Flash to the catalog and accept its documented realtime session options, including tools together with web search. Published audio realtime models also accept the documented `smart_turn_v2` turn type, and their `voiceprint_audio_list` events stay on the provider-data path. Stricter voiceprint URL and `search_options.enable_source` checks apply only to 3.1 Flash.
+- Updated dependencies [938d483]
+- Updated dependencies [e97ac3f]
+  - @zhivex-ai/core@1.38.0
+
 ## 1.36.0
 
 ### Minor Changes

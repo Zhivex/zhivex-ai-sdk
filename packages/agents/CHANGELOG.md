@@ -1,5 +1,17 @@
 # @zhivex-ai/agents
 
+## 1.13.0
+
+### Minor Changes
+
+- e97ac3f: Expose capability-derived agent support tiers and the optional durableAgent flag. Add live-certification display metadata independently of the derived tier, and correct tool-less Qwen and Gemini realtime surfaces to Tier C. Qwen Omni 3.8 realtime remains Tier B pending live certification.
+
+### Patch Changes
+
+- Updated dependencies [938d483]
+- Updated dependencies [e97ac3f]
+  - @zhivex-ai/core@1.38.0
+
 ## 1.12.0
 
 ### Minor Changes

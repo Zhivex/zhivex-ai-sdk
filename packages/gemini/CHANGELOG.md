@@ -1,5 +1,20 @@
 # @zhivex-ai/gemini
 
+## 0.14.1
+
+### Patch Changes
+
+- 938d483: Align provider contracts and the November catalog: FlashX vision/reasoning,
+  explicit Gemini GenerateContent logging opt-out, typed DeepSeek Search/Fetch,
+  opt-in Anthropic message threads, Meta native computer protocol, Qwen TTS 3.1
+  and AudioGen routing, and verified current token/cache prices with promotion
+  terms. No implicit training consent, automatic thread replay, or future rate
+  activation is introduced.
+- e97ac3f: Expose capability-derived agent support tiers and the optional durableAgent flag. Add live-certification display metadata independently of the derived tier, and correct tool-less Qwen and Gemini realtime surfaces to Tier C. Qwen Omni 3.8 realtime remains Tier B pending live certification.
+- Updated dependencies [938d483]
+- Updated dependencies [e97ac3f]
+  - @zhivex-ai/core@1.38.0
+
 ## 0.14.0
 
 ### Minor Changes
