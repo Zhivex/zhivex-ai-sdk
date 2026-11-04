@@ -118,7 +118,35 @@ export interface DeepSeekBalanceClient {
   get(input?: RetryOptions): Promise<DeepSeekBalance>;
 }
 
+export interface DeepSeekSearchInput extends RetryOptions {
+  query: string;
+  count?: number;
+  ori_question?: string | null;
+  localization?: string;
+  need_content?: boolean;
+}
+
+export interface DeepSeekSearchResult {
+  rerank_score: number;
+  title: string;
+  url: string;
+  snippet: string;
+  summary: string;
+  content: string;
+  site_name: string | null;
+  site_icon: string | null;
+  date: string | null;
+  authority: number;
+}
+
+export interface DeepSeekFetchInput extends RetryOptions { url: string; }
+export interface DeepSeekSearchClient {
+  search(input: DeepSeekSearchInput): Promise<{ results: DeepSeekSearchResult[]; rawResponse: unknown }>;
+  fetch(input: DeepSeekFetchInput): Promise<{ title: string; content: string; rawResponse: unknown }>;
+}
+
 export interface DeepSeekClients {
+  search: DeepSeekSearchClient;
   fim: DeepSeekFIMClient;
   models: DeepSeekModelsClient;
   balance: DeepSeekBalanceClient;
@@ -638,6 +666,38 @@ class DeepSeekBalanceClientImpl implements DeepSeekBalanceClient {
   }
 }
 
+class DeepSeekSearchClientImpl implements DeepSeekSearchClient {
+  constructor(private readonly apiKey: string, private readonly baseURL: string, private readonly fetcher: typeof globalThis.fetch) {}
+
+  private async request(operation: "search" | "fetch", body: Record<string, unknown>, input: RetryOptions) {
+    const { signal, cleanup } = withTimeoutSignal(input);
+    try {
+      return await requestJson(this.fetcher, `${this.baseURL.replace(/\/v1$/, "")}/v1/tools/${operation}`, {
+        method: "POST", headers: jsonHeaders(this.apiKey), signal, body: JSON.stringify(body)
+      }, operation, { ...input, abortSignal: signal });
+    } finally { cleanup(); }
+  }
+
+  async search(input: DeepSeekSearchInput) {
+    const { query, count, ori_question, localization, need_content } = input;
+    if (typeof query !== "string" || !query.trim() || [...query].length > 128) throw new ValidationError("DeepSeek query must contain 1–128 Unicode characters and cannot be blank.");
+    if (count !== undefined && (!Number.isInteger(count) || count < 1 || count > 50)) throw new ValidationError("DeepSeek count must be an integer between 1 and 50.");
+    if (ori_question != null && (typeof ori_question !== "string" || [...ori_question].length < 1 || [...ori_question].length > 128)) throw new ValidationError("DeepSeek ori_question must contain 1–128 characters.");
+    if (localization !== undefined && typeof localization !== "string") throw new ValidationError("DeepSeek localization must be a string.");
+    if (need_content !== undefined && typeof need_content !== "boolean") throw new ValidationError("DeepSeek need_content must be a boolean.");
+    const json = await this.request("search", { query, count, ori_question, localization, need_content }, input);
+    return { results: json.results as DeepSeekSearchResult[], rawResponse: json };
+  }
+
+  async fetch(input: DeepSeekFetchInput) {
+    let url: URL;
+    try { url = new URL(input.url); } catch { throw new ValidationError("DeepSeek fetch requires an HTTP(S) URL."); }
+    if (typeof input.url !== "string" || input.url.length > 8192 || !["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password) throw new ValidationError("DeepSeek fetch requires an HTTP(S) URL of at most 8192 characters without credentials.");
+    const json = await this.request("fetch", { url: input.url }, input);
+    return { title: json.title as string, content: json.content as string, rawResponse: json };
+  }
+}
+
 export const createDeepSeekClients = (options: DeepSeekClientsOptions = {}): DeepSeekClients => {
   const apiKey = options.apiKey ?? process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {
@@ -665,6 +725,7 @@ export const createDeepSeekClients = (options: DeepSeekClientsOptions = {}): Dee
   const fetcher = withManualRedirect(options.fetch ?? globalThis.fetch);
 
   return {
+    search: new DeepSeekSearchClientImpl(apiKey, baseURL, fetcher),
     fim: new DeepSeekFIMClientImpl(apiKey, betaBaseURL, fetcher),
     models: new DeepSeekModelsClientImpl(apiKey, baseURL, fetcher),
     balance: new DeepSeekBalanceClientImpl(apiKey, baseURL, fetcher),

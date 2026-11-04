@@ -2,10 +2,11 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const geminiCatalogFragment = defineModelCatalogFragment({
   provider: "gemini",
-  revision: "2026-10-20",
-  verifiedAt: "2026-10-20",
-  pricingEffectiveAt: "2026-08-30",
+  revision: "2026-11-04",
+  verifiedAt: "2026-11-04",
+  pricingEffectiveAt: "2026-11-04",
   sources: [
+    "https://aistudio.google.com/docs/pricing",
     "https://ai.google.dev/gemini-api/docs/models",
     "https://ai.google.dev/gemini-api/docs/changelog",
     "https://ai.google.dev/gemini-api/docs/latest-model",
@@ -16,6 +17,7 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     {
       provider: "gemini",
       modelId: "gemini-4-argon",
+      pricingTerms: { source: "https://aistudio.google.com/docs/pricing", verifiedAt: "2026-11-04", validThrough: "2026-11-30", notes: "From December 1: $4 input, $0.20 cached input, $20 output per million tokens. Future rates are not applied by this snapshot." },
       // Current introductory price through 2026-11-30. The catalog stores one rate;
       // from 2026-12-01 the published price is $4/$20 per 1M tokens and $0.20 cached.
       inputCostPer1kTokens: 0.002,
@@ -28,6 +30,10 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "gemini",
       "modelId": "gemini-3.8-flash",
+      inputCostPer1kTokens: 0.00075,
+      cachedInputCostPer1kTokens: 0.000075,
+      outputCostPer1kTokens: 0.00375,
+      pricingTerms: { source: "https://aistudio.google.com/docs/pricing", verifiedAt: "2026-11-04", validThrough: "2026-12-31", notes: "From January 1, 2027: $1.50 input, $0.15 cached input, $7.50 output per million tokens. Future rates are not applied by this snapshot." },
       "recommendedFor": [
         "chat",
         "reasoning",

@@ -162,6 +162,8 @@ const encodeGeminiResourceName = (value: string, label: string) => {
 };
 
 export interface GeminiLanguageModelOptions {
+  /** Opt in to provider request logging. Defaults to false, regardless of project settings. */
+  store?: boolean;
   topP?: number;
   topK?: number;
   stopSequences?: string[];
@@ -227,12 +229,20 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 
+const generateContentStorage = (options: Record<string, unknown> | undefined) => {
+  const store = options?.store;
+  if (store !== undefined && typeof store !== "boolean") {
+    throw new ConfigurationError("Gemini GenerateContent store must be a boolean.");
+  }
+  return store ?? false;
+};
+
 const splitGenerationConfig = (providerOptions: Record<string, unknown> | undefined) => {
   const { generationConfig, ...rest } = providerOptions ?? {};
   return {
     generationConfig:
       generationConfig && typeof generationConfig === "object" ? (generationConfig as Record<string, unknown>) : {},
-    providerOptions: rest
+    providerOptions: { ...rest, store: generateContentStorage(rest) }
   };
 };
 
@@ -1597,6 +1607,23 @@ class GeminiContextCachesClient implements ContextCachesClient {
   }
 }
 
+/** Batch stores are controlled by each nested GenerateContentRequest, not by the batch envelope. */
+const withGeminiBatchLogging = (batch: Record<string, unknown>) => {
+  if (batch.store !== undefined) throw new ConfigurationError("Gemini batch logging requires request.store on each GenerateContentRequest, not batch.store.");
+  const result = { ...batch };
+  for (const key of ["inputConfig", "input_config"]) {
+    const config = batch[key] as Record<string, unknown> | undefined;
+    const requests = config?.requests as { requests?: Array<{ request: unknown; metadata?: Record<string, unknown> }> } | undefined;
+    if (!Array.isArray(requests?.requests)) continue;
+    result[key] = { ...config, requests: { ...requests, requests: requests.requests.map(item => {
+      if (!item.request || typeof item.request !== "object" || Array.isArray(item.request)) throw new ConfigurationError("Gemini inline batch request must be a GenerateContentRequest object.");
+      const request = item.request as Record<string, unknown>;
+      return { ...item, request: { ...request, store: generateContentStorage(request) } };
+    }) } };
+  }
+  return result;
+};
+
 class GeminiBatchesClient implements BatchesClient {
   constructor(
     private readonly apiKey: string,
@@ -1618,7 +1645,7 @@ class GeminiBatchesClient implements BatchesClient {
             headers: { "content-type": "application/json" },
             signal,
             body: JSON.stringify({
-              batch: {
+              batch: withGeminiBatchLogging({
                 ...(input.displayName ? { displayName: input.displayName } : {}),
                 inputConfig: input.fileName
                   ? { fileName: input.fileName }
@@ -1628,7 +1655,7 @@ class GeminiBatchesClient implements BatchesClient {
                       }
                     },
                 ...(input.providerOptions ?? {})
-              }
+              })
             })
           }),
         input
@@ -2142,6 +2169,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
             signal,
             body: JSON.stringify({
               ...input.providerOptions,
+              store: generateContentStorage(input.providerOptions),
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: mapTools(input.tools),
@@ -2187,6 +2215,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
           signal,
           body: JSON.stringify({
             ...input.providerOptions,
+            store: generateContentStorage(input.providerOptions),
             contents: mapMessages(input.messages),
             systemInstruction: systemInstruction(input.messages),
             tools: mapTools(input.tools),
@@ -2451,7 +2480,8 @@ class GeminiTranscriptionModel implements TranscriptionModel {
                   ]
                 }
               ],
-              ...input.providerOptions
+              ...input.providerOptions,
+            store: generateContentStorage(input.providerOptions)
             })
           }),
         input
@@ -2512,7 +2542,8 @@ class GeminiSpeechModel implements SpeechModel {
                   }
                 }
               },
-              ...input.providerOptions
+              ...input.providerOptions,
+            store: generateContentStorage(input.providerOptions)
             })
           }),
         input
@@ -2559,7 +2590,8 @@ class GeminiSpeechModel implements SpeechModel {
                 }
               }
             },
-            ...input.providerOptions
+            ...input.providerOptions,
+            store: generateContentStorage(input.providerOptions)
           })
         }),
       input
@@ -2859,6 +2891,7 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
             signal,
             body: JSON.stringify({
               ...input.providerOptions,
+              store: generateContentStorage(input.providerOptions),
               contents: mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: [{ googleSearch: {} }],

@@ -2,9 +2,9 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const openaiCatalogFragment = defineModelCatalogFragment({
   provider: "openai",
-  revision: "2026-10-26",
-  verifiedAt: "2026-10-26",
-  pricingEffectiveAt: "2026-10-26",
+  revision: "2026-11-04",
+  verifiedAt: "2026-11-04",
+  pricingEffectiveAt: "2026-11-04",
   sources: [
     "https://developers.openai.com/api/docs/models/gpt-4o-mini",
     "https://developers.openai.com/api/docs/deprecations",
@@ -146,14 +146,15 @@ export const openaiCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "openai",
       "modelId": "gpt-5.6-sol",
+      pricingTerms: { source: "https://developers.openai.com/api/docs/pricing", verifiedAt: "2026-11-04", guaranteedThrough: "2026-11-21", notes: "Promotional rates; no end date confirmed. Cache write rate is the 30-minute tier ($10/M for 12 hours)." },
       "aliases": [
         "gpt-5.6"
       ],
-      "inputCostPer1kTokens": 0.005,
-      "cachedInputCostPer1kTokens": 0.0005,
-      "cacheWriteCostPer1kTokens": 0.00625,
-      "outputCostPer1kTokens": 0.03,
-      "costPer1kTokens": 0.005,
+      "inputCostPer1kTokens": 0.004,
+      "cachedInputCostPer1kTokens": 0.0004,
+      "cacheWriteCostPer1kTokens": 0.005,
+      "outputCostPer1kTokens": 0.02,
+      "costPer1kTokens": 0.004,
       "longContextPricing": {
         "inputTokenThreshold": 272000,
         "inputMultiplier": 2,

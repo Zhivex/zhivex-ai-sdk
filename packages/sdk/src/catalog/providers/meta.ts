@@ -2,9 +2,9 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const metaCatalogFragment = defineModelCatalogFragment({
   provider: "meta",
-  revision: "2026-10-13",
-  verifiedAt: "2026-10-13",
-  pricingEffectiveAt: "2026-10-13",
+  revision: "2026-11-04",
+  verifiedAt: "2026-11-04",
+  pricingEffectiveAt: "2026-11-04",
   sources: [
     "https://dev.meta.ai/docs/models",
     "https://dev.meta.ai/docs/pricing-rate-limits",
@@ -28,6 +28,9 @@ export const metaCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "meta",
       "modelId": "muse-spark-1.3",
+      "inputCostPer1kTokens": 0.00125,
+      "cachedInputCostPer1kTokens": 0.00015,
+      "outputCostPer1kTokens": 0.00425,
       "recommendedFor": [
         "chat",
         "reasoning",
@@ -38,6 +41,9 @@ export const metaCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "meta",
       "modelId": "muse-spark-1.3-contributor",
+      "inputCostPer1kTokens": 0.0001,
+      "cachedInputCostPer1kTokens": 2e-06,
+      "outputCostPer1kTokens": 0.0002,
       "recommendedFor": [
         "chat",
         "reasoning",
@@ -62,6 +68,9 @@ export const metaCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "meta",
       "modelId": "muse-spark-1.2-contributor",
+      "inputCostPer1kTokens": 0.0001,
+      "cachedInputCostPer1kTokens": 2e-06,
+      "outputCostPer1kTokens": 0.0002,
       "recommendedFor": [
         "chat",
         "reasoning",

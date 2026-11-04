@@ -37,10 +37,10 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-10-28",
+      snapshotVersion: "2026-11-04",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-10-28",
+        version: "2026-11-04",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
@@ -65,7 +65,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(285);
+    expect(entries).toHaveLength(290);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
       retiredAt: "2027-04-01",
@@ -111,24 +111,24 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(285);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(290);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
-      revision: "2026-10-26",
-      verifiedAt: "2026-10-26",
-      pricingEffectiveAt: "2026-10-26",
+      revision: "2026-11-04",
+      verifiedAt: "2026-11-04",
+      pricingEffectiveAt: "2026-11-04",
       sources: ["https://developers.openai.com/api/docs/models/gpt-4o-mini", "https://developers.openai.com/api/docs/deprecations", "https://developers.openai.com/api/docs/guides/conversation-state", "https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "https://developers.openai.com/api/docs/models/gpt-6.1-terra", "https://developers.openai.com/api/docs/pricing", "https://openai.com/index/introducing-gpt-6-1-terra", "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare", "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst", "https://developers.openai.com/api/docs/guides/image-generation", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
     });
     expect(fragments.find((fragment) => fragment.provider === "zai")).toMatchObject({
-      revision: "2026-08-26",
-      verifiedAt: "2026-08-26",
-      pricingEffectiveAt: "2026-08-26",
-      modelCount: 3
+      revision: "2026-11-04",
+      verifiedAt: "2026-11-04",
+      pricingEffectiveAt: "2026-11-04",
+      modelCount: 5
     });
     expect(fragments.find((fragment) => fragment.provider === "qwen")).toMatchObject({
-      revision: "2026-10-28",
-      verifiedAt: "2026-10-28",
-      pricingEffectiveAt: "2026-09-18",
-      modelCount: 82,
+      revision: "2026-11-04",
+      verifiedAt: "2026-11-04",
+      pricingEffectiveAt: "2026-11-04",
+      modelCount: 85,
       sources: expect.arrayContaining(["https://docs.qwencloud.com/api-reference/video-generation/pixverse-image-to-video/create-task"])
     });
     for (const id of ["pixverse/pixverse-v6-t2v", "pixverse/pixverse-v6-it2v", "pixverse/pixverse-v6-kf2v", "pixverse/pixverse-v6-r2v"]) {
@@ -155,8 +155,8 @@ describe("SDK model catalog ownership", () => {
     expect(defaultModelCatalog.find("azure-openai", "text-embedding-3-large")?.inputCostPer1kTokens).toBeUndefined();
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-20");
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "gemini")).toMatchObject({
-      revision: "2026-10-20",
-      verifiedAt: "2026-10-20",
+      revision: "2026-11-04",
+      verifiedAt: "2026-11-04",
       sources: expect.arrayContaining(["https://ai.google.dev/gemini-api/docs/deprecations"])
     });
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "azure-openai")).toMatchObject({

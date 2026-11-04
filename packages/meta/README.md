@@ -81,3 +81,28 @@ The SDK catalog includes `muse-spark-1.3` and `muse-spark-1.3-contributor`. Pass
 See [Meta's release announcement](https://research.meta.ai/blog/introducing-muse-spark-1-3).
 
 File uploads preserve the exact bytes of a supplied `Uint8Array` or `Buffer` view, including slices with nonzero offsets.
+
+## Native computer tool
+
+`metaComputerTool()` selects the Responses API and sends `{ type: "computer" }`.
+Native `computer_call` items, including actions, safety checks, and replay
+receipts, are preserved as Meta `provider-data` in generate and stream results.
+The SDK does not execute actions or acknowledge checks. Applications must supply
+the driver and review every pending safety check before accepting its actions.
+The durable agent `computerUse` capability remains false because this adapter
+has no automatic driver or approval loop.
+
+Return screenshots using `metaComputerCallOutput({ callId, imageUrl,
+acknowledgedSafetyChecks })` inside a user message's `parts`. The helper requires
+a base64 PNG/JPEG data URL (at most 25 MiB), and acknowledgements default to an
+empty list. Match the MIME type to the actual bytes and keep screenshot geometry
+consistent. With `providerOptions: { apiMode: "responses", store: false }`, replay
+the complete local history: the adapter preserves each native call/output and
+its opaque `meta_safety_replay_receipt` unchanged, without attaching a previous
+response ID. For server-managed state, explicitly opt in with `store: true`.
+See [Meta computer use](https://dev.meta.ai/docs/computer-use).
+
+Contributor model IDs grant Meta permission to use content for training. Their
+lower catalog prices do not enable that mode or substitute those IDs for Standard
+models. Choose them only with the required consent; explicit candidate lists in
+cost-based routing should exclude Contributor variants unless authorized.

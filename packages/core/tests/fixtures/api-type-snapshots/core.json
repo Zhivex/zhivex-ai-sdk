@@ -53,7 +53,7 @@
   "beta-entry.d.ts": "3d2150fe17c741d2e0f0b97ac8e8198d3d284f2647a6773414f9c8453edf0470",
   "bounded-broadcast.d.ts": "302547681797111f1c9abef27e341b05be16305b33031186419cb66f349bba84",
   "cache-write-usage.d.ts": "678581af1de0f03f379305d8f4aa54cd49ee3e496ddfcc69eff807ca550bb114",
-  "catalog-contracts.d.ts": "723f060cff80e278c63114833dea9fa3f7ef5f2f61ef72e46d8ea92bbf962df3",
+  "catalog-contracts.d.ts": "c3103cff2af21426f20022e263339ec9360e19de67c547ddab88041ceb97170e",
   "catalog-entry.d.ts": "fd29aef0cec0de7b82a28e4d3cb5499301dc43492d1e598fbadcafb49ac0a5f3",
   "catalog-recommendation.d.ts": "ab26880e0ab2c5248dcbf63d5911c2dc8ec29507a1bfbf6579eaed1ff2f4769e",
   "catalog.d.ts": "c7b824484e828785ce64ddf693eb5f222745ecf157c0cbea42e6f1542c4903b1",

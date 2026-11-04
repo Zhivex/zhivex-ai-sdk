@@ -2,14 +2,24 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const zaiCatalogFragment = defineModelCatalogFragment({
   provider: "zai",
-  revision: "2026-08-26",
-  verifiedAt: "2026-08-26",
-  pricingEffectiveAt: "2026-08-26",
+  revision: "2026-11-04",
+  verifiedAt: "2026-11-04",
+  pricingEffectiveAt: "2026-11-04",
   sources: [
     "https://docs.z.ai/guides/vlm/glm-5.3-flash",
     "https://docs.z.ai/guides/overview/pricing"
   ],
   entries: [
+    {
+      provider: "zai", modelId: "glm-5.3-flashx-legal",
+      inputCostPer1kTokens: 0.00037, cachedInputCostPer1kTokens: 0.000075, outputCostPer1kTokens: 0.00125,
+      recommendedFor: ["chat", "tools", "reasoning", "vision", "speed"]
+    },
+    {
+      provider: "zai", modelId: "glm-5.3-flashx",
+      inputCostPer1kTokens: 0.00037, cachedInputCostPer1kTokens: 0.000075, outputCostPer1kTokens: 0.00125,
+      recommendedFor: ["chat", "tools", "reasoning", "vision", "speed"]
+    },
     {
       "provider": "zai",
       "modelId": "glm-5.3-flash",
@@ -28,6 +38,9 @@ export const zaiCatalogFragment = defineModelCatalogFragment({
     {
       "provider": "zai",
       "modelId": "glm-5.3",
+      "inputCostPer1kTokens": 0.0014,
+      "cachedInputCostPer1kTokens": 0.00026,
+      "outputCostPer1kTokens": 0.0044,
       "recommendedFor": [
         "chat",
         "tools",
