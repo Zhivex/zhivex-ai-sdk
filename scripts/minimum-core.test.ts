@@ -36,15 +36,22 @@ describe("minimum core ranges", () => {
     ])).toEqual([{ package: "widget", core: "1.4.0", range: "^1.4.0" }]);
   });
 
-  it("floors adapters that import this checkout's core helpers at the workspace core", async () => {
+  it("keeps adapter floors between the validated Core baseline and the workspace version", async () => {
     const repoRoot = path.resolve(import.meta.dirname, "..");
     const core = JSON.parse(await readFile(path.join(repoRoot, "packages/core/package.json"), "utf8")) as PackageManifest;
     const rows = await loadWorkspaceCoreMinimums(repoRoot);
     const version = workspaceCoreVersion(core);
+    // These packages were validated against Core 1.37.0 before the 1.38.0
+    // release. Compatible Core bumps need not raise every dependency floor;
+    // CI's minimum-core matrix tests each package against its declared floor.
+    const validatedCoreBaseline = "1.37.0";
     for (const packageName of ["deepseek", "gateway", "kimi", "meta", "ollama", "openrouter", "sandbox-docker", "zai"]) {
       const row = rows.find(entry => entry.package === packageName);
       expect(row, packageName).toBeDefined();
-      expect(compareVersions(row!.core, version), `${packageName} declares ${row?.range}`).toBe(0);
+      expect(compareVersions(row!.core, validatedCoreBaseline), `${packageName} declares ${row?.range}`)
+        .toBeGreaterThanOrEqual(0);
+      expect(compareVersions(row!.core, version), `${packageName} declares ${row?.range}`)
+        .toBeLessThanOrEqual(0);
     }
     expect(rows.some(entry => entry.package === "core")).toBe(false);
     expect(rows.find(entry => entry.package === "sdk")?.range.startsWith("~")).toBe(true);

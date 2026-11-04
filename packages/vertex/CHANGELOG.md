@@ -1,5 +1,21 @@
 # @zhivex-ai/vertex
 
+## 1.3.2
+
+### Patch Changes
+
+- 1baca38: Update the Bedrock runtime client to ^3.1157.0 and the Vertex AI platform client to ^7.7.0. Adapter capabilities and model defaults are unchanged. Live provider certification remains separate from offline compatibility validation.
+- 938d483: Update the reviewed Bedrock runtime and Google authentication dependencies while
+  preserving the existing provider interfaces. Consolidates the production
+  dependency updates from PR #213 alongside the November provider alignment.
+- Updated dependencies [31041cd]
+- Updated dependencies [938d483]
+- Updated dependencies [e97ac3f]
+  - @zhivex-ai/anthropic@0.16.0
+  - @zhivex-ai/core@1.38.0
+  - @zhivex-ai/gemini@0.14.1
+  - @zhivex-ai/openai@0.18.1
+
 ## 1.3.1
 
 ### Patch Changes

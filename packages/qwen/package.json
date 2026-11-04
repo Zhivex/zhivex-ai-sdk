@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/qwen",
-  "version": "0.18.1",
+  "version": "0.19.0",
   "description": "Qwen adapter for Zhivex AI SDK.",
   "license": "MIT",
   "type": "module",
@@ -45,7 +45,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^1.37.0",
+    "@zhivex-ai/core": "^1.38.0",
     "zod": "^4.6.7"
   }
 }
