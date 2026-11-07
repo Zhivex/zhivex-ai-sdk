@@ -643,6 +643,13 @@ export interface OpenAILanguageModelOptions {
   seed?: number;
   user?: string;
   safety_identifier?: string;
+  /**
+   * Responses Daybreak selector. GPT-6-Cyber accepts only `daybreak_red`.
+   * The adapter does not fill this when it is omitted.
+   */
+  access_programs?: {
+    cyber?: "standard" | "daybreak_blue" | "daybreak_red";
+  };
   prompt_cache_key?: string;
   prompt_cache_options?: OpenAIPromptCacheOptions;
   prompt_cache_retention?: "in_memory" | "24h";

@@ -65,7 +65,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(290);
+    expect(entries).toHaveLength(293);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
       retiredAt: "2027-04-01",
@@ -111,12 +111,12 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(290);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(293);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
-      revision: "2026-11-04",
-      verifiedAt: "2026-11-04",
-      pricingEffectiveAt: "2026-11-04",
-      sources: ["https://developers.openai.com/api/docs/models/gpt-4o-mini", "https://developers.openai.com/api/docs/deprecations", "https://developers.openai.com/api/docs/guides/conversation-state", "https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "https://developers.openai.com/api/docs/models/gpt-6.1-terra", "https://developers.openai.com/api/docs/pricing", "https://openai.com/index/introducing-gpt-6-1-terra", "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare", "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst", "https://developers.openai.com/api/docs/guides/image-generation", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
+      revision: "2026-11-07",
+      verifiedAt: "2026-11-07",
+      pricingEffectiveAt: "2026-11-07",
+      sources: ["https://developers.openai.com/api/docs/models/gpt-4o-mini", "https://developers.openai.com/api/docs/deprecations", "https://developers.openai.com/api/docs/guides/conversation-state", "https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "https://developers.openai.com/api/docs/models/gpt-6-cyber", "https://developers.openai.com/api/docs/guides/daybreak", "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "https://developers.openai.com/api/docs/models/gpt-6.1-terra", "https://developers.openai.com/api/docs/pricing", "https://openai.com/index/introducing-gpt-6-1-terra", "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare", "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst", "https://developers.openai.com/api/docs/models/gpt-image-2.6-flare", "https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst", "https://developers.openai.com/api/docs/guides/image-generation", "https://developers.openai.com/api/docs/guides/image-prompting", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
     });
     expect(fragments.find((fragment) => fragment.provider === "zai")).toMatchObject({
       revision: "2026-11-04",
@@ -234,6 +234,28 @@ describe("SDK model catalog ownership", () => {
     }
     expect(defaultModelCatalog.find("openai", "gpt-image-2.5-flare")?.aliases).toEqual(["gpt-image-2.5-flare-2026-09-08"]);
     expect(defaultModelCatalog.find("openai", "gpt-image-2.5-sunburst")?.aliases).toEqual(["gpt-image-2.5-sunburst-2026-09-08"]);
+    for (const id of ["gpt-image-2.6-flare", "gpt-image-2.6-sunburst"]) {
+      const entry = defaultModelCatalog.find("openai", id);
+      expect(entry?.recommendedFor).toEqual(["vision"]);
+      expect(entry?.aliases).toBeUndefined();
+      expect(entry?.inputCostPer1kTokens).toBeUndefined();
+      expect(entry?.pricingTerms?.notes).toContain("$30/MTok");
+    }
+    expect(defaultModelCatalog.find("openai", "gpt-6-cyber")).toMatchObject({
+      contextWindowTokens: 1050000,
+      contextWindowType: "combined",
+      maxInputTokens: 922000,
+      maxOutputTokens: 128000,
+      inputCostPer1kTokens: 0.02,
+      cachedInputCostPer1kTokens: 0.002,
+      cacheWriteCostPer1kTokens: 0.025,
+      outputCostPer1kTokens: 0.1,
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    });
+    expect(defaultModelCatalog.find("openai", "gpt-6-cyber")?.longContextPricing).toBeUndefined();
+    for (const id of ["gpt-6-cyber", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst"]) {
+      expect(defaultModelCatalog.find("azure-openai", id)).toBeUndefined();
+    }
     for (const id of ["gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
       const entry = defaultModelCatalog.find("azure-openai", id);
       expect(entry).toMatchObject({ recommendedFor: ["chat", "reasoning", "tools", "vision"] });

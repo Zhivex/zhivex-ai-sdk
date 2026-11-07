@@ -1,4 +1,4 @@
-import { UnsupportedFeatureError } from "@zhivex-ai/core/provider";
+import { UnsupportedFeatureError, ValidationError } from "@zhivex-ai/core/provider";
 import type {
   ModelCapabilities,
   RealtimeSessionConfig,
@@ -63,6 +63,13 @@ export const isOpenAIGpt61SolModel = (modelId: string) =>
 export const isOpenAIGpt61TerraModel = (modelId: string) =>
   /^gpt-6\.1-terra(?:-\d{4}-\d{2}-\d{2})?$/.test(normalizeModelId(modelId));
 
+/**
+ * Exact published id. The model page lists only the `gpt-6-cyber` snapshot,
+ * so dated suffixes stay unrecognized.
+ */
+export const isOpenAIGpt6CyberModel = (modelId: string) =>
+  normalizeModelId(modelId) === "gpt-6-cyber";
+
 export const supportsOpenAIModernResponses = (modelId: string) =>
   isOpenAIGpt56Model(modelId) || isOpenAIAstraModel(modelId) || isOpenAISolLunaModel(modelId) || isOpenAIGpt61SolModel(modelId) || isOpenAIGpt61TerraModel(modelId);
 
@@ -81,6 +88,7 @@ const isOpenAIGpt54ProModel = (modelId: string) =>
 
 const supportsOpenAIToolSearch = (modelId: string) =>
   supportsOpenAIModernResponses(modelId) ||
+  isOpenAIGpt6CyberModel(modelId) ||
   isOpenAIGpt55BaseModel(modelId) ||
   isOpenAIGpt54BaseModel(modelId) ||
   isOpenAIGpt54MiniModel(modelId);
@@ -89,6 +97,7 @@ const supportsOpenAIComputerUse = supportsOpenAIToolSearch;
 
 export const supportsOpenAIShell = (modelId: string) =>
   supportsOpenAIModernResponses(modelId) ||
+  isOpenAIGpt6CyberModel(modelId) ||
   isOpenAIGpt55BaseModel(modelId) ||
   isOpenAIGpt55ProModel(modelId) ||
   isOpenAIGpt54BaseModel(modelId) ||
@@ -98,6 +107,7 @@ export const supportsOpenAIShell = (modelId: string) =>
 
 export const supportsOpenAIApplyPatchAndSkills = (modelId: string) =>
   supportsOpenAIModernResponses(modelId) ||
+  isOpenAIGpt6CyberModel(modelId) ||
   isOpenAIGpt55BaseModel(modelId) ||
   isOpenAIGpt54BaseModel(modelId) ||
   isOpenAIGpt54MiniModel(modelId) ||
@@ -109,6 +119,7 @@ const supportsOpenAIChatAudio = (modelId: string) =>
   );
 
 export const isKnownOpenAIChatModel = (modelId: string) =>
+  isOpenAIGpt6CyberModel(modelId) ||
   ["gpt-4-0613", "gpt-4-1106-preview", "gpt-4-0125-preview", "gpt-3.5-turbo-0125", "gpt-3.5-turbo-1106"].includes(normalizeModelId(modelId)) ||
   /^(?:gpt-(?:3\.5-turbo|4(?:o|\.1|\.5|-turbo)?(?:-mini|-nano)?|5(?:\.[1-6])?(?:-sol|-terra|-luna|-mini|-nano|-pro|-chat-latest)?|(?:6-(?:sol|luna|astra)|6\.1-(?:sol|terra)))|o[134](?:-mini|-pro)?)(?:$|-\d{4}-\d{2}-\d{2}$|-preview$)/.test(normalizeModelId(modelId)) || supportsOpenAIChatAudio(modelId);
 
@@ -140,7 +151,10 @@ export const modelCapabilities = (modelId: string, unknownPolicy: "conservative"
   ? { ...conservativeCapabilities, agentCapabilities: { ...conservativeCapabilities.agentCapabilities! } }
   : ({
   ...capabilities,
-  explicitPromptCaching: supportsOpenAIModernResponses(modelId),
+  ...(isOpenAIGpt6CyberModel(modelId)
+    ? { embeddings: false, jsonMode: false, parallelToolCalls: false }
+    : {}),
+  explicitPromptCaching: supportsOpenAIModernResponses(modelId) || isOpenAIGpt6CyberModel(modelId),
   files: supportsOpenAIModernResponses(modelId),
   reasoningEfforts: resolveOpenAIModelProfile(modelId).reasoningEfforts ? [...resolveOpenAIModelProfile(modelId).reasoningEfforts!] : undefined,
   reasoningModes: supportsOpenAIModernResponses(modelId) ? ["standard", "pro"] : undefined,
@@ -289,6 +303,16 @@ export const realtimeCapabilities = (
 
 /** Family policy is the single input to metadata, validation and default transport selection. */
 export const resolveOpenAIModelProfile = (modelId: string) => {
+  if (isOpenAIGpt6CyberModel(modelId)) {
+    return {
+      label: "GPT-6-Cyber",
+      defaultApi: "responses" as const,
+      modern: false,
+      reasoningEfforts: undefined,
+      sampling: "allowed" as const,
+      toolsRequireResponses: "never" as const
+    };
+  }
   const astra = isOpenAIAstraModel(modelId);
   const sol61 = isOpenAIGpt61SolModel(modelId);
   const terra61 = isOpenAIGpt61TerraModel(modelId);
@@ -306,6 +330,49 @@ export const resolveOpenAIModelProfile = (modelId: string) => {
   };
 };
 
+/**
+ * Daybreak documents `access_programs.cyber: "daybreak_red"` for GPT-6-Cyber
+ * on the Responses API. Other values are rejected. Omission is forwarded
+ * unchanged because the guide does not publish an omission default for this id.
+ */
+const assertGpt6CyberAccessProgram = (
+  modelId: string,
+  raw: Record<string, any>,
+  apiMode: string | undefined
+) => {
+  if (!isOpenAIGpt6CyberModel(modelId)) return;
+  const providerReasoning = raw.reasoning;
+  if (
+    providerReasoning &&
+    typeof providerReasoning === "object" &&
+    !Array.isArray(providerReasoning) &&
+    (providerReasoning.summary !== undefined || providerReasoning.mode !== undefined || providerReasoning.context !== undefined)
+  ) {
+    throw new UnsupportedFeatureError(
+      'GPT-6-Cyber does not publish reasoning.mode, reasoning.context, or reasoning.summary.'
+    );
+  }
+  if (!Object.hasOwn(raw, "access_programs")) return;
+  const access = raw.access_programs;
+  if (access === null || typeof access !== "object" || Array.isArray(access)) {
+    throw new ValidationError('GPT-6-Cyber "access_programs" must be an object.');
+  }
+  const record = access as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (key !== "cyber") {
+      throw new ValidationError(`GPT-6-Cyber "access_programs.${key}" is not a documented field.`);
+    }
+  }
+  if (Object.hasOwn(record, "cyber") && record.cyber !== "daybreak_red") {
+    throw new UnsupportedFeatureError('GPT-6-Cyber requires access_programs.cyber "daybreak_red".');
+  }
+  if (apiMode === "chat") {
+    throw new UnsupportedFeatureError(
+      'GPT-6-Cyber "access_programs" is documented for the Responses API, not Chat Completions.'
+    );
+  }
+};
+
 export const assertOpenAIModelRequestSupported = (
   modelId: string,
   input: ModelGenerateInput,
@@ -313,6 +380,12 @@ export const assertOpenAIModelRequestSupported = (
 ) => {
   const profile = resolveOpenAIModelProfile(modelId);
   const raw = options.bodyOptions;
+  assertGpt6CyberAccessProgram(modelId, raw, options.apiMode);
+  if (isOpenAIGpt6CyberModel(modelId) && (input.reasoning?.mode !== undefined || input.reasoning?.context !== undefined || input.reasoning?.includeThoughts)) {
+    throw new UnsupportedFeatureError(
+      'GPT-6-Cyber does not publish reasoning.mode, reasoning.context, or reasoning.summary.'
+    );
+  }
   const effort = input.reasoning?.effort ?? raw.reasoning?.effort ?? raw.reasoning_effort;
   // Existing GPT-5.6 behavior is preserved; restrictive policies apply to GPT-6.
   if (profile.sampling === "allowed") return;

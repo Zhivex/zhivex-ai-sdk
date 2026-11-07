@@ -2,9 +2,9 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const openaiCatalogFragment = defineModelCatalogFragment({
   provider: "openai",
-  revision: "2026-11-04",
-  verifiedAt: "2026-11-04",
-  pricingEffectiveAt: "2026-11-04",
+  revision: "2026-11-07",
+  verifiedAt: "2026-11-07",
+  pricingEffectiveAt: "2026-11-07",
   sources: [
     "https://developers.openai.com/api/docs/models/gpt-4o-mini",
     "https://developers.openai.com/api/docs/deprecations",
@@ -12,13 +12,18 @@ export const openaiCatalogFragment = defineModelCatalogFragment({
     "https://developers.openai.com/api/docs/models/gpt-6-sol",
     "https://developers.openai.com/api/docs/models/gpt-6-luna",
     "https://developers.openai.com/api/docs/models/gpt-6-astra",
+    "https://developers.openai.com/api/docs/models/gpt-6-cyber",
+    "https://developers.openai.com/api/docs/guides/daybreak",
     "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
     "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
     "https://developers.openai.com/api/docs/pricing",
     "https://openai.com/index/introducing-gpt-6-1-terra",
     "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare",
     "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst",
+    "https://developers.openai.com/api/docs/models/gpt-image-2.6-flare",
+    "https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst",
     "https://developers.openai.com/api/docs/guides/image-generation",
+    "https://developers.openai.com/api/docs/guides/image-prompting",
     "catalog-release:2026-08-16",
     "https://developers.openai.com/api/docs/guides/live"],
   entries: [
@@ -112,6 +117,37 @@ export const openaiCatalogFragment = defineModelCatalogFragment({
         "inputTokenThreshold": 272000,
         "inputMultiplier": 2,
         "outputMultiplier": 1.5
+      },
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
+    {
+      "provider": "openai",
+      "modelId": "gpt-6-cyber",
+      "contextWindowTokens": 1050000,
+      "contextWindowType": "combined",
+      "maxInputTokens": 922000,
+      "maxOutputTokens": 128000,
+      "evidence": {
+        "contextWindowTokens": { "source": "https://developers.openai.com/api/docs/models/gpt-6-cyber", "sourceType": "primary", "verifiedAt": "2026-11-07" },
+        "contextWindowType": { "source": "https://developers.openai.com/api/docs/models/gpt-6-cyber", "sourceType": "primary", "verifiedAt": "2026-11-07" },
+        "maxInputTokens": { "source": "https://developers.openai.com/api/docs/models/gpt-6-cyber", "sourceType": "primary", "verifiedAt": "2026-11-07" },
+        "maxOutputTokens": { "source": "https://developers.openai.com/api/docs/models/gpt-6-cyber", "sourceType": "primary", "verifiedAt": "2026-11-07" },
+        "inputCostPer1kTokens": { "source": "https://developers.openai.com/api/docs/pricing", "sourceType": "primary", "verifiedAt": "2026-11-07" },
+        "outputCostPer1kTokens": { "source": "https://developers.openai.com/api/docs/pricing", "sourceType": "primary", "verifiedAt": "2026-11-07" }
+      },
+      "inputCostPer1kTokens": 0.02,
+      "cachedInputCostPer1kTokens": 0.002,
+      "cacheWriteCostPer1kTokens": 0.025,
+      "outputCostPer1kTokens": 0.1,
+      "pricingTerms": {
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verifiedAt": "2026-11-07",
+        "notes": "Short-context prices. cacheWriteCostPer1kTokens is the 30-minute write tier at $25 per 1M tokens. 12-hour writes are $50 per 1M tokens. Long-context prices are unpublished. Daybreak Red plus separate model approval is required."
       },
       "recommendedFor": [
         "chat",
@@ -258,6 +294,30 @@ export const openaiCatalogFragment = defineModelCatalogFragment({
         "retiredAt": "2027-01-14",
         "source": "https://developers.openai.com/api/docs/deprecations"
       }
+    },
+    {
+      "provider": "openai",
+      "modelId": "gpt-image-2.6-flare",
+      "pricingTerms": {
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verifiedAt": "2026-11-07",
+        "notes": "Text input $5/MTok and cached text $1.25/MTok. Image input $8/MTok, cached image input $2/MTok, and image output $30/MTok. Those rates are not stored as one text-token price."
+      },
+      "recommendedFor": [
+        "vision"
+      ]
+    },
+    {
+      "provider": "openai",
+      "modelId": "gpt-image-2.6-sunburst",
+      "pricingTerms": {
+        "source": "https://developers.openai.com/api/docs/pricing",
+        "verifiedAt": "2026-11-07",
+        "notes": "Text input $5/MTok and cached text $1.25/MTok. Image input $8/MTok, cached image input $2/MTok, and image output $30/MTok. Those rates are not stored as one text-token price."
+      },
+      "recommendedFor": [
+        "vision"
+      ]
     },
     {
       "provider": "openai",
