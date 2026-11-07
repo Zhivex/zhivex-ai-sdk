@@ -333,4 +333,150 @@ describe("OpenAI image generation", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
   });
+
+  const imageResponse = () => Response.json({ data: [{ b64_json: Buffer.from([1]).toString("base64") }] });
+  const requestBody = () => JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body)) as Record<string, unknown>;
+
+  it("maps GPT Image 2.6 sizes and extended quality on the Image API", async () => {
+    for (const [modelId, aspectRatio, size] of [
+      ["gpt-image-2.6-flare", "16:9", "1536x864"],
+      ["gpt-image-2.6-sunburst", "9:16", "864x1536"]
+    ] as const) {
+      fetchMock.mockResolvedValueOnce(imageResponse());
+      const model = createOpenAIImageGenerationModel({ modelId, apiKey: "test", fetch: fetchMock as typeof fetch });
+      expect(model.capabilities).toMatchObject({ imageGeneration: true, vision: true, reasoning: false });
+      await model.generateImage({ prompt: "draw", aspectRatio, providerOptions: { quality: "max", complexity: "high" } });
+      expect(String(fetchMock.mock.calls.at(-1)?.[0])).toBe("https://api.openai.com/v1/images/generations");
+      expect(requestBody()).toMatchObject({ model: modelId, size, quality: "max", complexity: "high" });
+    }
+    const dated = createOpenAIImageGenerationModel({
+      modelId: "gpt-image-2.6-flare-2026-11-04",
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch
+    });
+    await expect(dated.generateImage({ prompt: "draw", providerOptions: { quality: "xhigh" } })).rejects.toThrow('image quality "xhigh"');
+    expect(() => openAIImageGenerationTool({ model: "gpt-image-2.6-sunburst", quality: "high" })).toThrow("Image API");
+  });
+
+  it("sends GPT Image 2.6 SVG and GIF generation contracts", async () => {
+    fetchMock.mockResolvedValueOnce(imageResponse());
+    const model = createOpenAIImageGenerationModel({
+      modelId: "gpt-image-2.6-flare",
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch
+    });
+    const svg = await model.generateImage({
+      prompt: "logo",
+      outputMimeType: "image/svg+xml",
+      providerOptions: { background: "transparent" }
+    });
+    expect(svg.images[0]?.mediaType).toBe("image/svg+xml");
+    expect(requestBody()).toMatchObject({ output_format: "svg", background: "transparent" });
+    expect(requestBody()).not.toHaveProperty("complexity");
+
+    await expect(model.generateImage({ prompt: "logo", outputMimeType: "image/svg+xml", count: 2 })).rejects.toThrow("count 1");
+    await expect(model.generateImage({
+      prompt: "logo",
+      outputMimeType: "image/gif",
+      providerOptions: { frame_count: 1 }
+    })).rejects.toThrow("frame_count");
+    await expect(model.generateImage({
+      prompt: "logo",
+      providerOptions: { frame_count: 4 }
+    })).rejects.toThrow("GIF output");
+
+    fetchMock.mockResolvedValueOnce(imageResponse());
+    const gif = await model.generateImage({
+      prompt: "loop",
+      size: "512x512",
+      outputMimeType: "image/gif",
+      providerOptions: { frame_count: 9, frame_duration_ms: 200, quality: "high" }
+    });
+    expect(gif.images[0]?.mediaType).toBe("image/gif");
+    expect(requestBody()).toMatchObject({
+      output_format: "gif",
+      size: "512x512",
+      frame_count: 9,
+      frame_duration_ms: 200
+    });
+    await expect(model.generateImage({
+      prompt: "loop",
+      outputMimeType: "image/gif",
+      providerOptions: { output_compression: 20 }
+    })).rejects.toThrow("output_compression");
+    const older = createOpenAIImageGenerationModel({
+      modelId: "gpt-image-2.5-flare",
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch
+    });
+    await expect(older.generateImage({ prompt: "draw", providerOptions: { complexity: "low" } })).rejects.toThrow("complexity");
+    await expect(older.generateImage({ prompt: "draw", outputMimeType: "image/svg+xml" })).rejects.toThrow("SVG");
+  });
+
+  it("sends markup-guided edits for GPT Image 2.5 and 2.6 and keeps older models on generations", async () => {
+    fetchMock.mockResolvedValueOnce(imageResponse());
+    const flare = createOpenAIImageGenerationModel({
+      modelId: "gpt-image-2.6-flare",
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch
+    });
+    const png = Buffer.from([1, 2, 3]).toString("base64");
+    await flare.generateImage({
+      prompt: "recolor the vase",
+      images: [{ data: new Uint8Array([9, 8]), mediaType: "image/webp" }],
+      outputMimeType: "image/gif",
+      providerOptions: {
+        quality: "medium",
+        complexity: "low",
+        frame_count: 2,
+        markup: { image_url: `data:image/png;base64,${png}` }
+      }
+    });
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toBe("https://api.openai.com/v1/images/edits");
+    expect(requestBody()).toMatchObject({
+      model: "gpt-image-2.6-flare",
+      output_format: "gif",
+      complexity: "low",
+      frame_count: 2,
+      images: [{ image_url: "data:image/webp;base64,CQg=" }],
+      markup: { image_url: `data:image/png;base64,${png}` }
+    });
+
+    fetchMock.mockResolvedValueOnce(imageResponse());
+    const sunburst25 = createOpenAIImageGenerationModel({
+      modelId: "gpt-image-2.5-sunburst",
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch
+    });
+    await sunburst25.generateImage({
+      prompt: "edit",
+      images: [{ providerMetadata: { file_id: "file_kitchen" }, mediaType: "image/webp" }],
+      providerOptions: { markup: { file_id: "file_overlay" } }
+    });
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain("/images/edits");
+    expect(requestBody()).toMatchObject({
+      images: [{ file_id: "file_kitchen" }],
+      markup: { file_id: "file_overlay" }
+    });
+
+    await expect(flare.generateImage({
+      prompt: "edit",
+      images: [{ data: new Uint8Array([1]), mediaType: "image/png" }],
+      providerOptions: { markup: { file_id: "file_overlay" }, mask: { file_id: "file_mask" } }
+    })).rejects.toThrow("cannot combine markup");
+    await expect(flare.generateImage({
+      prompt: "edit",
+      images: [{ data: new Uint8Array([1]), mediaType: "image/svg+xml" }]
+    })).rejects.toThrow("SVG input");
+    await expect(flare.generateImage({
+      prompt: "draw",
+      providerOptions: { input_fidelity: "high" }
+    })).rejects.toThrow("input_fidelity");
+    await expect(flare.generateImage({
+      prompt: "draw",
+      outputMimeType: "image/svg+xml",
+      images: [{ data: new Uint8Array([1]), mediaType: "image/png" }]
+    })).rejects.toThrow("generations only");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

@@ -26,14 +26,24 @@ const DEFAULT_RESPONSE_MAX_BYTES = 128 * MIB;
 const DEFAULT_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
 export type OpenAIImageOutputFormat = "png" | "jpeg" | "webp";
+export type OpenAIImageApiOutputFormat = OpenAIImageOutputFormat | "svg" | "gif";
 export type OpenAIImageSize = "auto" | `${number}x${number}`;
 export type OpenAIImageQuality = "auto" | "low" | "medium" | "high" | "xhigh" | "max" | "standard" | "hd";
+export type OpenAIImageComplexity = "low" | "medium" | "high";
+export type OpenAIImageJsonReference =
+  | { image_url: string; file_id?: never }
+  | { file_id: string; image_url?: never };
 
 export type OpenAIImageGenerationOptions = Record<string, unknown> & {
   background?: "auto" | "opaque" | "transparent";
+  complexity?: OpenAIImageComplexity;
+  frame_count?: number;
+  frame_duration_ms?: number;
+  markup?: OpenAIImageJsonReference;
+  mask?: OpenAIImageJsonReference;
   moderation?: "auto" | "low";
   output_compression?: number;
-  output_format?: OpenAIImageOutputFormat;
+  output_format?: OpenAIImageApiOutputFormat;
   quality?: OpenAIImageQuality;
   response_format?: "url" | "b64_json";
   style?: "vivid" | "natural";
@@ -170,29 +180,40 @@ const validateIntegerRange = (value: number | undefined, name: string, minimum: 
   }
 };
 
-const outputFormatFromMimeType = (mediaType: string | undefined): OpenAIImageOutputFormat | undefined => {
+const outputFormatFromMimeType = (mediaType: string | undefined): OpenAIImageApiOutputFormat | undefined => {
   if (mediaType === undefined) return undefined;
   const normalized = mediaType.trim().toLowerCase();
   if (normalized === "image/png") return "png";
   if (normalized === "image/jpeg" || normalized === "image/jpg") return "jpeg";
   if (normalized === "image/webp") return "webp";
+  if (normalized === "image/svg+xml") return "svg";
+  if (normalized === "image/gif") return "gif";
   throw new UnsupportedFeatureError(`Provider "openai" does not support image output MIME type "${mediaType}".`);
 };
 
-const mediaTypeFromOutputFormat = (format: OpenAIImageOutputFormat | undefined) =>
-  format === "jpeg" ? "image/jpeg" : format === "webp" ? "image/webp" : "image/png";
+const mediaTypeFromOutputFormat = (format: OpenAIImageApiOutputFormat | undefined) =>
+  format === "jpeg" ? "image/jpeg"
+    : format === "webp" ? "image/webp"
+      : format === "svg" ? "image/svg+xml"
+        : format === "gif" ? "image/gif"
+          : "image/png";
 
 const normalizedModelId = (modelId: string) => modelId.trim().toLowerCase();
 const isGPTImageModel = (modelId: string) => /^gpt-image(?:-|$)/.test(normalizedModelId(modelId));
 const isGPTImage2Model = (modelId: string) => /^gpt-image-2(?:-|$)/.test(normalizedModelId(modelId));
 const isGPTImage25Model = (modelId: string) =>
   /^gpt-image-2\.5-(?:flare|sunburst)(?:-\d{4}-\d{2}-\d{2})?$/.test(normalizedModelId(modelId));
+/** Published ids only. The 2.6 model pages do not list dated snapshots. */
+const isGPTImage26Model = (modelId: string) =>
+  /^gpt-image-2\.6-(?:flare|sunburst)$/.test(normalizedModelId(modelId));
+const supportsGptImageApiEdits = (modelId: string) =>
+  isGPTImage25Model(modelId) || isGPTImage26Model(modelId);
 
 const assertExtendedImageQuality = (modelId: string | undefined, quality: unknown) => {
   if (quality !== "xhigh" && quality !== "max") return;
-  if (modelId !== undefined && isGPTImage25Model(modelId)) return;
+  if (modelId !== undefined && (isGPTImage25Model(modelId) || isGPTImage26Model(modelId))) return;
   throw new UnsupportedFeatureError(
-    `Provider "openai" image quality "${quality}" is supported by gpt-image-2.5-flare and gpt-image-2.5-sunburst.`
+    `Provider "openai" image quality "${quality}" is supported by gpt-image-2.5-flare, gpt-image-2.5-sunburst, gpt-image-2.6-flare, and gpt-image-2.6-sunburst.`
   );
 };
 const isDallE2Model = (modelId: string) => /^dall-e-2(?:-|$)/.test(normalizedModelId(modelId));
@@ -230,7 +251,7 @@ const sizeFromAspectRatio = (aspectRatio: string | undefined, modelId: string): 
   };
   if (standard[normalized]) return standard[normalized];
 
-  if (isGPTImage2Model(modelId) || isGPTImage25Model(modelId)) {
+  if (isGPTImage2Model(modelId) || isGPTImage25Model(modelId) || isGPTImage26Model(modelId)) {
     if (normalized === "16:9") return "1536x864";
     if (normalized === "9:16") return "864x1536";
   }
@@ -247,6 +268,11 @@ const sanitizeMetadata = (value: Record<string, unknown>, base64Keys: string[]) 
 };
 
 const validateToolConfig = (config: OpenAIImageGenerationToolConfig) => {
+  if (config.model !== undefined && isGPTImage26Model(config.model)) {
+    throw new UnsupportedFeatureError(
+      `Provider "openai" model "${config.model}" is not available on the Responses image_generation tool. Use Image API generations or edits.`
+    );
+  }
   assertExtendedImageQuality(config.model, config.quality);
   validateIntegerRange(config.partial_images, "partial_images", 0, 3);
   validateIntegerRange(config.output_compression, "output_compression", 0, 100);
@@ -350,9 +376,115 @@ export const normalizeOpenAIImageGenerationPartialImage = (
   };
 };
 
+const MARKUP_MAX_BYTES = 50 * 1024 * 1024;
+
+const dataUrlByteLength = (dataUrl: string) => {
+  const payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  return Math.floor(payload.length * 3 / 4) - padding;
+};
+
+const assertHttpsOrImageDataUrl = (value: string, name: string, pngOnly: boolean) => {
+  if (/^https:\/\//i.test(value)) return;
+  const dataUrl = pngOnly
+    ? /^data:image\/png;base64,[a-z0-9+/]+={0,2}$/i
+    : /^data:image\/[a-z0-9][a-z0-9.+-]*;base64,[a-z0-9+/]+={0,2}$/i;
+  if (!dataUrl.test(value)) {
+    throw new ValidationError(
+      pngOnly
+        ? `The OpenAI image generation "${name}" image_url must be an HTTPS URL or a base64 image/png data URL.`
+        : `The OpenAI image generation "${name}" image_url must be an HTTPS URL or a base64 image data URL.`
+    );
+  }
+  if (/^data:image\/svg\+xml/i.test(value)) {
+    throw new UnsupportedFeatureError('Provider "openai" image edits do not accept SVG input.');
+  }
+  if (pngOnly && dataUrlByteLength(value) > MARKUP_MAX_BYTES) {
+    throw new ValidationError('The OpenAI image generation "markup" data URL exceeds the 50 MB limit.');
+  }
+};
+
+const readJsonImageReference = (value: unknown, name: string): OpenAIImageJsonReference | undefined => {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ValidationError(`The OpenAI image generation "${name}" option must be an object with image_url or file_id.`);
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== 1 || (keys[0] !== "image_url" && keys[0] !== "file_id")) {
+    throw new ValidationError(`The OpenAI image generation "${name}" option must contain exactly one of image_url or file_id.`);
+  }
+  if (keys[0] === "file_id") {
+    if (typeof record.file_id !== "string" || record.file_id.length === 0 || record.file_id.trim() !== record.file_id) {
+      throw new ValidationError(`The OpenAI image generation "${name}.file_id" must be a non-empty string.`);
+    }
+    return { file_id: record.file_id };
+  }
+  if (typeof record.image_url !== "string" || record.image_url.length === 0) {
+    throw new ValidationError(`The OpenAI image generation "${name}.image_url" must be a string.`);
+  }
+  assertHttpsOrImageDataUrl(record.image_url, name, name === "markup");
+  return { image_url: record.image_url };
+};
+
+const mediaBytes = (data: NonNullable<ImageGenerationModelInput["images"]>[number]["data"]) => {
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (typeof data !== "string" || !/^[a-z0-9+/]+={0,2}$/i.test(data)) {
+    throw new ValidationError("OpenAI image edit data must be bytes or base64.");
+  }
+  return Uint8Array.from(Buffer.from(data, "base64"));
+};
+
+const imageReferenceFromMedia = (
+  image: NonNullable<ImageGenerationModelInput["images"]>[number],
+  name: string
+): OpenAIImageJsonReference => {
+  const fileId = image.providerMetadata?.file_id;
+  const hasFileId = typeof fileId === "string" && fileId.length > 0;
+  const hasUri = typeof image.uri === "string" && image.uri.length > 0;
+  const hasData = image.data !== undefined && image.data !== "";
+  if (hasFileId && (hasUri || hasData)) {
+    throw new ValidationError(`OpenAI image edit "${name}" must contain exactly one of file_id or image data.`);
+  }
+  if (hasFileId && typeof fileId === "string") {
+    if (fileId.trim() !== fileId) {
+      throw new ValidationError(`OpenAI image edit "${name}" file_id must not have surrounding whitespace.`);
+    }
+    return { file_id: fileId };
+  }
+  if (hasUri && image.uri) {
+    if (/^data:image\/svg\+xml/i.test(image.uri) || image.mediaType.trim().toLowerCase() === "image/svg+xml") {
+      throw new UnsupportedFeatureError('Provider "openai" image edits do not accept SVG input.');
+    }
+    assertHttpsOrImageDataUrl(image.uri, name, false);
+    return { image_url: image.uri };
+  }
+  if (!hasData || image.data === undefined) {
+    throw new ValidationError(`OpenAI image edit "${name}" requires image bytes, an HTTPS URL, a data URL, or file_id.`);
+  }
+  const mediaType = image.mediaType.trim().toLowerCase();
+  if (mediaType === "image/svg+xml") {
+    throw new UnsupportedFeatureError('Provider "openai" image edits do not accept SVG input.');
+  }
+  if (!/^image\/[a-z0-9][a-z0-9.+-]*$/.test(mediaType)) {
+    throw new ValidationError(`OpenAI image edit "${name}" requires an image/* mediaType.`);
+  }
+  const bytes = mediaBytes(image.data);
+  return { image_url: `data:${mediaType};base64,${Buffer.from(bytes).toString("base64")}` };
+};
+
+const readOptionalInteger = (value: unknown, name: string) => {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number") {
+    throw new ValidationError(`The OpenAI image generation "${name}" option must be an integer.`);
+  }
+  return value;
+};
+
 export class OpenAIImageGenerationModel implements ImageGenerationModel<OpenAIImageGenerationOptions> {
   readonly provider = "openai";
-  readonly capabilities = imageGenerationCapabilities;
+  readonly capabilities: ModelCapabilities;
 
   readonly modelId: string;
   private readonly apiKey: string;
@@ -363,6 +495,10 @@ export class OpenAIImageGenerationModel implements ImageGenerationModel<OpenAIIm
 
   constructor(config: OpenAIImageGenerationModelConfig) {
     this.modelId = config.modelId;
+    this.capabilities = {
+      ...imageGenerationCapabilities,
+      vision: supportsGptImageApiEdits(config.modelId)
+    };
     this.apiKey = config.apiKey;
     this.baseURL = assertTrustedEndpoint(config.baseURL ?? "https://api.openai.com/v1", {
       label: "OpenAI image generation baseURL",
@@ -394,7 +530,8 @@ export class OpenAIImageGenerationModel implements ImageGenerationModel<OpenAIIm
       );
     }
 
-    if (input.images?.length) {
+    const editing = Boolean(input.images?.length);
+    if (editing && !supportsGptImageApiEdits(this.modelId)) {
       throw new UnsupportedFeatureError(
         'Provider "openai" image generations do not accept input images. Use the Responses image_generation tool for conversational edits.'
       );
@@ -454,8 +591,8 @@ export class OpenAIImageGenerationModel implements ImageGenerationModel<OpenAIIm
 
     const mimeOutputFormat = outputFormatFromMimeType(input.outputMimeType);
     let outputFormat = mimeOutputFormat ??
-      (providerOptions.output_format as OpenAIImageOutputFormat | undefined);
-    if (outputFormat !== undefined && !["png", "jpeg", "webp"].includes(outputFormat)) {
+      (providerOptions.output_format as OpenAIImageApiOutputFormat | undefined);
+    if (outputFormat !== undefined && !["png", "jpeg", "webp", "svg", "gif"].includes(outputFormat)) {
       throw new ValidationError(`The OpenAI image generation "output_format" option "${String(outputFormat)}" is invalid.`);
     }
 
@@ -489,12 +626,69 @@ export class OpenAIImageGenerationModel implements ImageGenerationModel<OpenAIIm
       );
     }
 
+    const complexity = providerOptions.complexity;
+    const frameCount = readOptionalInteger(providerOptions.frame_count, "frame_count");
+    const frameDuration = readOptionalInteger(providerOptions.frame_duration_ms, "frame_duration_ms");
+    const markup = readJsonImageReference(providerOptions.markup, "markup");
+    const mask = readJsonImageReference(providerOptions.mask, "mask");
+    delete providerOptions.complexity;
+    delete providerOptions.frame_count;
+    delete providerOptions.frame_duration_ms;
+    delete providerOptions.markup;
+    delete providerOptions.mask;
+
+    if (isGPTImage26Model(this.modelId)) {
+      if (providerOptions.input_fidelity !== undefined) {
+        throw new UnsupportedFeatureError('Provider "openai" GPT Image 2.6 does not accept input_fidelity.');
+      }
+      if (providerOptions.reasoning !== undefined || providerOptions.reasoning_summary !== undefined) {
+        throw new UnsupportedFeatureError('Provider "openai" GPT Image 2.6 does not support reasoning.summary.');
+      }
+    }
+    if (complexity !== undefined) {
+      if (!isGPTImage26Model(this.modelId) || (complexity !== "low" && complexity !== "medium" && complexity !== "high")) {
+        throw new UnsupportedFeatureError(
+          'Provider "openai" image complexity must be "low", "medium", or "high" on gpt-image-2.6-flare or gpt-image-2.6-sunburst.'
+        );
+      }
+    }
+    if (outputFormat === "svg" && (!isGPTImage26Model(this.modelId) || editing)) {
+      throw new UnsupportedFeatureError('Provider "openai" SVG output is supported on GPT Image 2.6 generations only.');
+    }
+    if (outputFormat === "svg" && input.count !== undefined && input.count !== 1) {
+      throw new ValidationError('OpenAI SVG image generation requires count 1.');
+    }
+    if (outputFormat === "gif" && !isGPTImage26Model(this.modelId)) {
+      throw new UnsupportedFeatureError(
+        'Provider "openai" GIF output is supported by gpt-image-2.6-flare and gpt-image-2.6-sunburst.'
+      );
+    }
+    if ((frameCount !== undefined || frameDuration !== undefined) && outputFormat !== "gif") {
+      throw new ValidationError('OpenAI image generation only supports frame_count and frame_duration_ms with GIF output.');
+    }
+    validateIntegerRange(frameCount, "frame_count", 2, 16);
+    validateIntegerRange(frameDuration, "frame_duration_ms", 20, 2000);
+    if ((markup || mask) && !editing) {
+      throw new ValidationError('OpenAI image markup and mask require an input image on the edits endpoint.');
+    }
+    if (markup && mask) {
+      throw new ValidationError('OpenAI image edits cannot combine markup with mask.');
+    }
+    if (markup && !supportsGptImageApiEdits(this.modelId)) {
+      throw new UnsupportedFeatureError(
+        'Provider "openai" markup-guided edits are supported by GPT Image 2.5 and GPT Image 2.6.'
+      );
+    }
+
     const size = input.size ?? sizeFromAspectRatio(input.aspectRatio, this.modelId);
+    const inputImages = editing
+      ? input.images!.map((image, index) => imageReferenceFromMedia(image, `images[${index}]`))
+      : undefined;
     const { signal, cleanup, abort } = withTimeoutSignal(input);
 
     try {
       const json = await withRetry(async () => {
-        const response = await this.fetcher(`${this.baseURL}/images/generations`, {
+        const response = await this.fetcher(`${this.baseURL}/images/${editing ? "edits" : "generations"}`, {
           method: "POST",
           headers: {
             ...safeCustomHeaders,
@@ -506,6 +700,12 @@ export class OpenAIImageGenerationModel implements ImageGenerationModel<OpenAIIm
             ...providerOptions,
             model: this.modelId,
             prompt: input.prompt,
+            ...(inputImages ? { images: inputImages } : {}),
+            ...(markup ? { markup } : {}),
+            ...(mask ? { mask } : {}),
+            ...(complexity !== undefined ? { complexity } : {}),
+            ...(frameCount !== undefined ? { frame_count: frameCount } : {}),
+            ...(frameDuration !== undefined ? { frame_duration_ms: frameDuration } : {}),
             n: input.count,
             size,
             output_format: outputFormat
@@ -522,7 +722,7 @@ export class OpenAIImageGenerationModel implements ImageGenerationModel<OpenAIIm
         return readJsonWithLimit<OpenAIImagesResponse>(response, {
           maxBytes: responseMaxBytes,
           provider: "openai",
-          endpoint: "images/generations",
+          endpoint: editing ? "images/edits" : "images/generations",
           abort
         });
       }, input);
