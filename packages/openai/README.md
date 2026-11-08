@@ -90,7 +90,7 @@ Use `providerOptions.safety_identifier` for a stable, non-PII identifier for the
 
 ## GPT Image 2 and hosted image generation
 
-Use the shared image contract for direct Image API generations. `gpt-image-2`, `gpt-image-2.5-flare`, and `gpt-image-2.5-sunburst` map `16:9` to `1536x864` and `9:16` to `864x1536`. Those 2.5 sizes match the custom `WIDTHxHEIGHT` limits in the image generation guide: edges are multiples of 16, the ratio stays within 1:3–3:1, and the pixel count stays inside 655,360–8,294,400. `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst`, including the `2026-09-08` snapshots, accept image qualities `low`, `medium`, `high`, `xhigh`, `max`, and `auto`. Earlier GPT Image models stop at `high`; the adapter rejects `xhigh` and `max` for those ids and for a hosted image tool that omits a 2.5 model. See the official [GPT Image 2 model page](https://developers.openai.com/api/docs/models/gpt-image-2), [GPT Image 2.5 Flare](https://developers.openai.com/api/docs/models/gpt-image-2.5-flare), [GPT Image 2.5 Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst), and [image generation guide](https://developers.openai.com/api/docs/guides/image-generation).
+Use the shared image contract for direct Image API generations. `gpt-image-2`, `gpt-image-2.5-flare`, and `gpt-image-2.5-sunburst` map `16:9` to `1536x864` and `9:16` to `864x1536`. Those 2.5 sizes match the custom `WIDTHxHEIGHT` limits in the image generation guide: edges are multiples of 16, the ratio stays within 1:3–3:1, and the pixel count stays inside 655,360–8,294,400. `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst`, including the `2026-09-08` snapshots, and `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` accept image qualities `low`, `medium`, `high`, `xhigh`, `max`, and `auto`. Earlier GPT Image models stop at `high`; the adapter rejects `xhigh` and `max` for those ids and for a hosted image tool that omits a 2.5 or 2.6 model. A hosted Responses image tool cannot select a 2.6 model. See the official [GPT Image 2 model page](https://developers.openai.com/api/docs/models/gpt-image-2), [GPT Image 2.5 Flare](https://developers.openai.com/api/docs/models/gpt-image-2.5-flare), [GPT Image 2.5 Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst), and [image generation guide](https://developers.openai.com/api/docs/guides/image-generation).
 
 ```ts
 import { generateImage } from "@zhivex-ai/core";
@@ -110,6 +110,33 @@ const result = await generateImage({
 
 console.log(result.images[0]?.mediaType);
 ```
+
+## GPT Image 2.6
+
+`gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` accept text and image input and return images through `POST /v1/images/generations` and `POST /v1/images/edits`. Chat Completions and Responses are not supported, so the hosted Responses image tool rejects these ids. No dated snapshots are published. Azure documentation does not list these ids.
+
+`complexity` accepts `low`, `medium`, or `high`. Omitting it leaves the API default, which is `high`. `16:9` maps to `1536x864`, the landscape size in the prompting guide, and `9:16` maps to `864x1536`. Other custom sizes are forwarded. The prompting guide requires both edges to be multiples of 16 and an aspect ratio from 1:3 to 3:1. It does not publish the GPT Image 2.5 pixel floor, so a documented GIF size such as `512x512` is not rejected locally.
+
+Generations accept `png`, `jpeg`, `webp`, `svg`, and `gif`. Edits accept those raster formats and `gif`, not `svg`. SVG requires count 1 and rejects `output_compression`. GIF output accepts `frame_count` from 2 through 16 and `frame_duration_ms` from 20 through 2000, and those fields are sent only when set. The API defaults are 9 frames and 200 ms, and the service rounds duration to 10 ms. JPEG and WebP still use `output_compression`.
+
+Input images on GPT Image 2.5 and 2.6 call the edits endpoint with a JSON `images` array of `{ image_url }` or `{ file_id }` objects. `providerOptions.markup` uses that same object and is edits-only. Markup and `mask` cannot be combined. A markup data URL must be `image/png` and no larger than 50 MB. The adapter does not decode the PNG, so it does not check transparency, equal dimensions, or the 16,777,216 pixel cap. GPT Image 2.6 rejects `input_fidelity` and `reasoning`. Older image models still reject input images.
+
+Published rates match GPT Image 2.5: text input $5 and cached text $1.25 per 1M tokens; image input $8, cached image input $2, and image output $30 per 1M tokens. The catalog keeps those rates in `pricingTerms` instead of one text-token price. Complexity and markup have no extra fee. SVG also bills the reference image and the tokens used to author the SVG; the guide does not publish a separate authoring price. The cached-input note for direct Images API calls names GPT Image 2 and 2.5, not 2.6.
+
+```ts
+const edited = await generateImage({
+  model: openai.imageGenerationModel!("gpt-image-2.6-sunburst"),
+  prompt: "Recolor the circled vase cobalt blue and remove the circle.",
+  images: [{ uri: "https://example.com/kitchen.webp", mediaType: "image/webp" }],
+  providerOptions: {
+    quality: "medium",
+    complexity: "low",
+    markup: { image_url: "https://example.com/overlay.png" }
+  }
+});
+```
+
+See [GPT Image 2.6 Flare](https://developers.openai.com/api/docs/models/gpt-image-2.6-flare), [GPT Image 2.6 Sunburst](https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst), the [image generation guide](https://developers.openai.com/api/docs/guides/image-generation), and the [image prompting guide](https://developers.openai.com/api/docs/guides/image-prompting).
 
 For conversational generation, edits, reference images, or progressive previews, use the provider-hosted Responses tool. Buffered and collected text calls expose final media on `result.steps.at(-1)?.response.images`; streaming calls emit typed `image-generation` events:
 
@@ -363,6 +390,31 @@ Treat every allowlisted domain as an exfiltration boundary. Prompt injection can
 Repository and full documentation:
 
 - <https://github.com/Zhivex/zhivex-ai-sdk>
+
+## GPT-6-Cyber
+
+`openai("gpt-6-cyber")` is the Daybreak Red cybersecurity model. Calling it requires organization Daybreak Red access, separate GPT-6-Cyber approval, project enablement, and API IP allowlisting. Zero Data Retention projects also need Private Safety Processing. The adapter does not grant that access.
+
+The published contract is text and image input, text output, a 1,050,000 token context window, 922,000 maximum input tokens, and 128,000 maximum output tokens. Chat Completions and Responses are both supported. The adapter selects Responses by default. Streaming, native structured output, function calling, vision, web search, and prompt caching are enabled. The Responses tool list on the model page is enabled: function calling, web search, file search, tool search, image generation, code interpreter, hosted shell, apply patch, skills, computer use, and MCP. Programmatic tool calling and multi-agent are not listed and stay off. Embeddings stay off, including `embeddingModel("gpt-6-cyber")`. JSON mode and parallel tool calls are not listed, so those explicit requests are rejected. The only published snapshot is `gpt-6-cyber`; a dated suffix stays an unknown model.
+
+The model page says reasoning tokens are supported and does not publish an effort enum. The adapter forwards `reasoning.effort` without advertising `reasoningEfforts`. It rejects `reasoning.mode`, `reasoning.context`, and `includeThoughts` (`reasoning.summary`). Shared `generateText` still rejects effort `max` when a model does not advertise it.
+
+Short-context prices are $20 input, $2 cached input, and $100 output per 1M tokens. Cache writes are $25 per 1M tokens for 30 minutes and $50 per 1M tokens for 12 hours. The catalog stores the 30-minute write rate; the existing 2.5× input calculation prices 12-hour writes. Long-context prices are unpublished, so there is no long-context multiplier. Chat Completions still ignores a 12-hour `prompt_cache_options.ttl` because that lifetime is documented for Responses.
+
+The Daybreak example sets `access_programs.cyber` to `daybreak_red` on Responses, with `safety_identifier`. The adapter forwards that object and rejects any other `cyber` value or undocumented `access_programs` field. It does not fill the field when you omit it: the guide gives an omission default for red models such as `gpt-5.6-cyber`, and does not state one for `gpt-6-cyber`. `access_programs` on Chat Completions is rejected. `providerOptions.apiMode: "chat"` still sends text. Function tools on Chat are rejected unless `reasoning.effort` is explicitly `"none"`. That gate follows the [migration guide](https://developers.openai.com/api/docs/guides/migrate-to-responses): from GPT-5.4 on, Chat tool calling is documented only with `reasoning_effort: "none"`. The Cyber model page does not publish an effort enum, so `"none"` is forwarded and is not a verified Cyber effort. Use Responses for verified tool calling. Hosted Responses tools still require Responses.
+
+```ts
+const result = await generateText({
+  model: openai("gpt-6-cyber"),
+  prompt: "Suggest a regression test for a path traversal fix.",
+  providerOptions: {
+    access_programs: { cyber: "daybreak_red" },
+    safety_identifier: "user_a17f"
+  }
+});
+```
+
+See the [GPT-6-Cyber model page](https://developers.openai.com/api/docs/models/gpt-6-cyber), the [Daybreak guide](https://developers.openai.com/api/docs/guides/daybreak), and [pricing](https://developers.openai.com/api/docs/pricing). Azure documentation does not list this id.
 
 ## GPT-6 Astra
 

@@ -15,7 +15,7 @@ import {
   type TranscriptionModel,
   type TranscriptionResult
 } from "@zhivex-ai/core/provider";
-import { capabilities, speechCapabilities, transcriptionCapabilities } from "./capabilities.js";
+import { capabilities, isOpenAIGpt6CyberModel, speechCapabilities, transcriptionCapabilities } from "./capabilities.js";
 import { jsonHeaders, parseJson } from "./http.js";
 import { openAIWireVoice, type OpenAIVoice } from "./voice.js";
 
@@ -50,6 +50,9 @@ export class OpenAIEmbeddingModel implements EmbeddingModel {
   ) {}
 
   async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
+    if (isOpenAIGpt6CyberModel(this.modelId)) {
+      throw new UnsupportedFeatureError(`Provider "openai" model "${this.modelId}" does not support embeddings.`);
+    }
     const { signal, cleanup } = withTimeoutSignal(input);
     const values = input.values.map((value) => {
       if (typeof value !== "string") {
