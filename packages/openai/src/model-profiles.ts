@@ -310,7 +310,7 @@ export const resolveOpenAIModelProfile = (modelId: string) => {
       modern: false,
       reasoningEfforts: undefined,
       sampling: "allowed" as const,
-      toolsRequireResponses: "never" as const
+      toolsRequireResponses: "unless-effort-none" as const
     };
   }
   const astra = isOpenAIAstraModel(modelId);
@@ -387,6 +387,14 @@ export const assertOpenAIModelRequestSupported = (
     );
   }
   const effort = input.reasoning?.effort ?? raw.reasoning?.effort ?? raw.reasoning_effort;
+  if (options.apiMode === "chat" && Object.keys(input.tools ?? {}).length &&
+    (profile.toolsRequireResponses === "always" || (profile.toolsRequireResponses === "unless-effort-none" && effort !== "none"))) {
+    throw new UnsupportedFeatureError(isOpenAIGpt6CyberModel(modelId)
+      ? 'GPT-6-Cyber Chat Completions rejects tool calling unless reasoning effort is explicitly "none". From GPT-5.4 on, Chat tool calling is documented only with reasoning_effort "none". The GPT-6-Cyber model page does not publish an effort enum, so use the Responses API for verified tool calling.'
+      : profile.toolsRequireResponses === "always"
+      ? `${profile.label} tool calling requires the Responses API.`
+      : `${profile.label} tool calling with reasoning requires the Responses API; Chat Completions requires effort "none".`);
+  }
   // Existing GPT-5.6 behavior is preserved; restrictive policies apply to GPT-6.
   if (profile.sampling === "allowed") return;
   if (effort !== undefined && profile.reasoningEfforts && !profile.reasoningEfforts.some(value => value === String(effort))) {
@@ -400,11 +408,5 @@ export const assertOpenAIModelRequestSupported = (
     throw new UnsupportedFeatureError(profile.sampling === "unsupported"
       ? `${profile.label} does not support the requested sampling or logprobs controls.`
       : `${profile.label} sampling and logprobs controls require reasoning effort "none".`);
-  }
-  if (options.apiMode === "chat" && Object.keys(input.tools ?? {}).length &&
-    (profile.toolsRequireResponses === "always" || (profile.toolsRequireResponses === "unless-effort-none" && effort !== "none"))) {
-    throw new UnsupportedFeatureError(profile.toolsRequireResponses === "always"
-      ? `${profile.label} tool calling requires the Responses API.`
-      : `${profile.label} tool calling with reasoning requires the Responses API; Chat Completions requires effort "none".`);
   }
 };

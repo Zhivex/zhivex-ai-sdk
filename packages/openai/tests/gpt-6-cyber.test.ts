@@ -27,7 +27,7 @@ describe("GPT-6-Cyber", () => {
       label: "GPT-6-Cyber",
       defaultApi: "responses",
       sampling: "allowed",
-      toolsRequireResponses: "never",
+      toolsRequireResponses: "unless-effort-none",
       reasoningEfforts: undefined
     });
     expect(model.capabilities).toMatchObject({
@@ -124,18 +124,36 @@ describe("GPT-6-Cyber", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("sends function tools on Chat Completions and hosted tools on Responses", async () => {
+  it("limits Chat function tools to an explicit none effort and keeps hosted tools on Responses", async () => {
     const model = provider()("gpt-6-cyber");
     const echo = tool({ name: "echo", schema: z.object({}), execute: () => "ok" });
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      tools: { echo },
+      providerOptions: { apiMode: "chat" }
+    })).rejects.toThrow('explicitly "none"');
+    await expect(generateText({
+      model,
+      prompt: "hello",
+      tools: { echo },
+      reasoning: { effort: "low" },
+      providerOptions: { apiMode: "chat" }
+    })).rejects.toThrow("GPT-5.4");
+    expect(fetchMock).not.toHaveBeenCalled();
+
     fetchMock.mockResolvedValueOnce(Response.json(chatCompleted));
     await generateText({
       model,
       prompt: "hello",
       tools: { echo },
+      reasoning: { effort: "none" },
       providerOptions: { apiMode: "chat" }
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.openai.com/v1/chat/completions");
+    expect(body()).toMatchObject({ reasoning_effort: "none" });
     expect(body().tools).toEqual([expect.objectContaining({ type: "function" })]);
+    expect(model.capabilities.reasoningEfforts).toBeUndefined();
 
     fetchMock.mockResolvedValueOnce(Response.json(completed));
     await generateText({
