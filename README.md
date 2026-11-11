@@ -216,3 +216,28 @@ DeepSeek Search/Fetch, and Meta's native computer protocol. Gemini GenerateConte
 routes now default to `store: false`; consumers that intentionally want request
 logging must pass `providerOptions.store: true`. See the individual package
 READMEs for privacy, route, and compatibility details.
+
+### November 2026 model updates
+
+The SDK catalog includes Claude Fable 5.2 / Mythos 5.2, Gemini 4 Carbon, and
+Gemini Omni 1.2 Flash. Claude 5.2 uses always-on adaptive thinking, rejects forced
+tools, and requires a 5.2 advisor. Preserve signed thinking blocks and the preceding
+conversation unchanged; prefix checks are enforced by Anthropic. Explicit
+`thinking.block_binding.prefix_mismatch_behavior: "drop_block"` opts into the
+provider's beta fallback. Fast mode uses `speed: "fast"` without a fast-mode beta.
+Mythos access remains restricted by the provider.
+
+Carbon uses `low`, `medium`, or `high` thinking and implicit caching only. Its
+catalog records the 65,536-token synchronous output limit; larger outputs require
+background long decode. Introductory token prices expire November 30, 2026;
+future rates are documented but never activated automatically.
+
+Use `gemini.interactions.create` with `modelId: "gemini-omni-1.2-flash"` for video.
+Set `responseFormat: { type: "video", duration: "15s" }` for up to 15 seconds.
+Interpolation and extension remain limited to 10 seconds per turn; the service
+validates these prompt-dependent modes. Omni 1.1 automatically routes to 1.2 from
+December 3, 2026. These additions have mocked contract coverage, not live certification.
+
+Sources: [Claude 5.2 migration](https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2),
+[Carbon](https://aistudio.google.com/docs/whats-new-gemini-4-carbon),
+[Omni](https://aistudio.google.com/docs/omni).

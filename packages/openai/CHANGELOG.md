@@ -1,5 +1,11 @@
 # @zhivex-ai/openai
 
+## 0.18.2
+
+### Patch Changes
+
+- 5abec43: Add GPT-6-Cyber and GPT Image 2.6 Flare and Sunburst, including Responses and Chat routing, Daybreak access validation, and Image API generation and edit contracts.
+
 ## 0.18.1
 
 ### Patch Changes

@@ -56,6 +56,7 @@ const validateWireRequest = (request: any, modelId: string) => {
 };
 
 export const createVertexClaudeModel = (modelId: string, endpoint: string, fetcher: typeof globalThis.fetch) => {
+  const claude52 = /^claude-(?:fable|mythos)-5-2(?:[-@]|$)/.test(modelId);
   const sonnet55 = /^claude-sonnet-5-5(?:[-@]|$)/.test(modelId);
   const browserToolset = sonnet55 || /^claude-(?:opus-4-8|(?:opus|sonnet|fable|mythos)-5(?:-1)?)(?:@|$)/.test(modelId);
   const model = createAnthropicMessagesModel({
@@ -75,19 +76,19 @@ export const createVertexClaudeModel = (modelId: string, endpoint: string, fetch
         remoteMcp: false,
         computerUse: true,
         codeExecution: false,
-        toolsets: browserToolset
+        toolsets: browserToolset || claude52
       }
     },
     transport: {
       async send(body, signal, withMcpToolset, withFilesApi, betas, userProfileId) {
-        if (withMcpToolset || withFilesApi || betas.some((beta) => !vertexBetas.has(beta) && !(sonnet55 && ["thinking-binding-controls-2026-08-01", "thinking-display-updates-2026-08-18"].includes(beta)))) {
+        if (withMcpToolset || withFilesApi || betas.some((beta) => !vertexBetas.has(beta) && !((sonnet55 || claude52) && ["thinking-binding-controls-2026-08-01", "thinking-display-updates-2026-08-18"].includes(beta)))) {
           throw new UnsupportedFeatureError("Claude on Vertex does not expose this beta feature, remote MCP, or Files API IDs.");
         }
         const { model: _model, sessionId, ...request } = JSON.parse(body);
         if (sessionId !== undefined && (typeof sessionId !== "string" || !sessionId.trim() || /[\r\n]/.test(sessionId))) throw new ConfigurationError("Vertex Claude sessionId must be a nonempty single-line string.");
         validateWireRequest(request, modelId);
         if (!browserToolset && request.tools?.some((tool: any) => tool.type === "browser_toolset_20260801")) throw new UnsupportedFeatureError(`Vertex Claude model "${modelId}" does not support the browser toolset.`);
-        if (!sonnet55 && request.tools?.some((tool: any) => tool.type === "computer_toolset_20260801")) throw new UnsupportedFeatureError("The Vertex computer toolset is currently exposed for Claude Sonnet 5.5 only.");
+        if (!sonnet55 && !claude52 && request.tools?.some((tool: any) => tool.type === "computer_toolset_20260801")) throw new UnsupportedFeatureError("The Vertex computer toolset is currently exposed for Claude Sonnet 5.5 and Fable/Mythos 5.2.");
         const betaFeatures = new Set(betas);
         if (request.context_management !== undefined) {
           const edits = request.context_management?.edits;

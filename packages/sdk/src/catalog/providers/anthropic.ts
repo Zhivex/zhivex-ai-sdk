@@ -2,10 +2,11 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const anthropicCatalogFragment = defineModelCatalogFragment({
   provider: "anthropic",
-  revision: "2026-10-13",
+  revision: "2026-11-11",
   verifiedAt: "2026-10-13",
   pricingEffectiveAt: "2026-10-13",
   sources: [
+    "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
     "https://platform.claude.com/docs/en/about-claude/pricing",
     "https://platform.claude.com/docs/en/models/haiku-5-5/overview",
     "https://platform.claude.com/docs/en/models/sonnet-5-5/overview",
@@ -14,6 +15,105 @@ export const anthropicCatalogFragment = defineModelCatalogFragment({
     "catalog-release:2026-08-16"
   ],
   entries: [
+    {
+      "provider": "anthropic",
+      "modelId": "claude-fable-5-2",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ],
+      "inputCostPer1kTokens": 0.008,
+      "cachedInputCostPer1kTokens": 0.0002,
+      "cacheWriteCostPer1kTokens": 0.01,
+      "outputCostPer1kTokens": 0.04,
+      "contextWindowTokens": 1000000,
+      "contextWindowType": "combined",
+      "maxOutputTokens": 128000,
+      "evidence": {
+        "contextWindowType": {
+          "source": "https://platform.claude.com/docs/en/build-with-claude/context-windows",
+          "sourceType": "primary",
+          "verifiedAt": "2026-11-11"
+        },
+        "contextWindowTokens": {
+          "source": "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+          "sourceType": "primary",
+          "verifiedAt": "2026-11-11"
+        },
+        "maxOutputTokens": {
+          "source": "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+          "sourceType": "primary",
+          "verifiedAt": "2026-11-11"
+        },
+        "inputCostPer1kTokens": {
+          "source": "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+          "sourceType": "primary",
+          "verifiedAt": "2026-11-11"
+        },
+        "outputCostPer1kTokens": {
+          "source": "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+          "sourceType": "primary",
+          "verifiedAt": "2026-11-11"
+        }
+      },
+      "pricingTerms": {
+        "source": "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+        "verifiedAt": "2026-11-11",
+        "notes": "Standard pricing; fast mode is $16 input/$80 output per million tokens. Mythos requires verified access."
+      }
+    },
+    {
+      "provider": "anthropic",
+      "modelId": "claude-mythos-5-2",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ],
+      "inputCostPer1kTokens": 0.008,
+      "cachedInputCostPer1kTokens": 0.0002,
+      "cacheWriteCostPer1kTokens": 0.01,
+      "outputCostPer1kTokens": 0.04,
+      "contextWindowTokens": 1000000,
+      "contextWindowType": "combined",
+      "maxOutputTokens": 128000,
+      "evidence": {
+        "contextWindowType": {
+          "source": "https://platform.claude.com/docs/en/build-with-claude/context-windows",
+          "sourceType": "primary",
+          "verifiedAt": "2026-11-11"
+        },
+        "contextWindowTokens": {
+          "source": "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+          "sourceType": "primary",
+          "verifiedAt": "2026-11-11"
+        },
+        "maxOutputTokens": {
+          "source": "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+          "sourceType": "primary",
+          "verifiedAt": "2026-11-11"
+        },
+        "inputCostPer1kTokens": {
+          "source": "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+          "sourceType": "primary",
+          "verifiedAt": "2026-11-11"
+        },
+        "outputCostPer1kTokens": {
+          "source": "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+          "sourceType": "primary",
+          "verifiedAt": "2026-11-11"
+        }
+      },
+      "pricingTerms": {
+        "source": "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+        "verifiedAt": "2026-11-11",
+        "notes": "Standard pricing; fast mode is $16 input/$80 output per million tokens. Mythos requires verified access."
+      }
+    },
+
     {
       provider: "anthropic",
       modelId: "claude-haiku-5-5",

@@ -322,3 +322,7 @@ deleted within 1 hour after last use. They are not ZDR or HIPAA eligible. On a
 404, explicitly create a new thread with the full local history; these helpers
 never replay, switch retention, or retry an expired conversation automatically.
 See [Message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads).
+
+### November 2026 additions
+
+Claude Fable 5.2 and Mythos 5.2 support adaptive thinking, binding controls, and fast mode without a fast-mode beta. Forced tools and older advisors are rejected. Use `computer_toolset_20260801` outside Bedrock. Keep conversation prefixes unchanged when replaying signed thinking; opt into `drop_block` explicitly if needed. Mythos requires provider verification; 30-day retention applies unless authorized otherwise.

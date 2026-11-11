@@ -2,10 +2,11 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const vertexCatalogFragment = defineModelCatalogFragment({
   provider: "vertex",
-  revision: "2026-10-20",
+  revision: "2026-11-11",
   verifiedAt: "2026-10-20",
   pricingEffectiveAt: "2026-08-30",
   sources: [
+    "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/sonnet-5-5",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-transcribe",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/vto/virtual-try-on-001",
@@ -32,6 +33,27 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/deepseek/deepseek-v41-flash"
   ],
   entries: [
+    {
+      "provider": "vertex",
+      "modelId": "claude-fable-5-2",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
+    {
+      "provider": "vertex",
+      "modelId": "claude-mythos-5-2",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
+
     { provider: "vertex", modelId: "gemini-3.5-transcribe-live-preview" },
     { provider: "vertex", modelId: "gemini-3.5-transcribe-preview" },
     { provider: "vertex", modelId: "virtual-try-on-001" },

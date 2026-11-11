@@ -1334,3 +1334,19 @@ describe("bedrock adapter", () => {
     });
   });
 });
+
+it.each(["global.anthropic.claude-fable-5-2", "us.anthropic.claude-mythos-5-2"])("rejects forced tools and manual thinking on %s", async (id) => {
+  sendMock.mockClear();
+  const model = createBedrock({ region: "us-east-1" })(id);
+  const messages = [{ role: "user" as const, parts: [{ type: "text" as const, text: "hello" }] }];
+  for (const options of [
+    { toolChoice: "required" as const },
+    { toolChoice: { toolName: "sum" } },
+    { providerOptions: { toolConfig: { toolChoice: { any: {} } } } },
+    { providerOptions: { additionalModelRequestFields: { thinking: { type: "disabled" } } } }
+  ]) {
+    await expect(model.generate({ messages, ...options })).rejects.toThrow();
+    await expect(model.stream({ messages, ...options })).rejects.toThrow();
+  }
+  expect(sendMock).not.toHaveBeenCalled();
+});
