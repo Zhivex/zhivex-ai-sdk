@@ -37,10 +37,10 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-11-04",
+      snapshotVersion: "2026-11-11",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-11-04",
+        version: "2026-11-11",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
@@ -65,7 +65,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(293);
+    expect(entries).toHaveLength(303);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
       retiredAt: "2027-04-01",
@@ -111,7 +111,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(293);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(303);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-11-07",
       verifiedAt: "2026-11-07",
@@ -143,8 +143,8 @@ describe("SDK model catalog ownership", () => {
     expect(entry).toMatchObject({ provider: "vertex", modelId: "claude-sonnet-4-6" });
     expect(entry?.inputCostPer1kTokens).toBeUndefined();
     expect(entry?.recommendedFor).toBeUndefined();
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "anthropic")?.revision).toBe("2026-10-13");
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "bedrock")?.revision).toBe("2026-10-15");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "anthropic")?.revision).toBe("2026-11-11");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "bedrock")?.revision).toBe("2026-11-11");
     expect(defaultModelCatalog.find("bedrock", "anthropic.claude-3-5-sonnet")).toBeUndefined();
     expect(defaultModelCatalog.find("bedrock", "anthropic.claude-sonnet-5-5")?.modelId).toBe("anthropic.claude-sonnet-5-5");
     expect(defaultModelCatalog.find("bedrock", "us.anthropic.claude-haiku-4-5-20251001-v1:0")?.modelId).toBe(
@@ -153,9 +153,9 @@ describe("SDK model catalog ownership", () => {
     expect(defaultModelCatalog.find("bedrock", "amazon.nova-2-lite-v1:0")?.modelId).toBe("amazon.nova-2-lite-v1:0");
     expect(defaultModelCatalog.find("azure-openai", "gpt-5.4-nano")?.modelId).toBe("gpt-5.4-nano");
     expect(defaultModelCatalog.find("azure-openai", "text-embedding-3-large")?.inputCostPer1kTokens).toBeUndefined();
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-10-20");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-11-11");
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "gemini")).toMatchObject({
-      revision: "2026-11-04",
+      revision: "2026-11-11",
       verifiedAt: "2026-11-04",
       sources: expect.arrayContaining(["https://ai.google.dev/gemini-api/docs/deprecations"])
     });

@@ -148,7 +148,7 @@ export interface AnthropicLanguageModelOptions {
   betas?: string[];
   /**
    * Preserves prompt-cache prefixes when an application changes its tool list between turns.
-   * Currently supported only by Claude Opus 5.
+   * Supported by Claude Opus 5 and Fable/Mythos 5.2.
    */
   midConversationToolChanges?: boolean;
   /**
@@ -248,6 +248,8 @@ const isClaudeFable5Model = (modelId: string) => /^claude-fable-5(?:[-@]|$)/.tes
 
 const isClaudeMythos5Model = (modelId: string) => /^claude-mythos-5(?:[-@]|$)/.test(normalizeModelId(modelId));
 
+const isClaude52Model = (modelId: string) => /^claude-(?:fable|mythos)-5-2(?:[-@]|$)/.test(normalizeModelId(modelId));
+
 const isClaude51Model = (modelId: string) => /^claude-(?:fable|mythos)-5-1(?:[-@]|$)/.test(normalizeModelId(modelId));
 
 const isClaudeOpus55Model = (modelId: string) => /^claude-opus-5-5(?:[-@]|$)/.test(normalizeModelId(modelId));
@@ -260,7 +262,7 @@ const isClaude55ToolsetModel = (modelId: string) =>
   isClaudeOpus55Model(modelId) || isClaudeSonnet55Model(modelId) || isClaudeHaiku55Model(modelId);
 
 const supportsBoundThinking = (modelId: string) =>
-  isClaude51Model(modelId) || isClaudeOpus55Model(modelId) || isClaudeSonnet55Model(modelId) || isClaudeHaiku55Model(modelId);
+  isClaude51Model(modelId) || isClaude52Model(modelId) || isClaudeOpus55Model(modelId) || isClaudeSonnet55Model(modelId) || isClaudeHaiku55Model(modelId);
 
 const isClaudeMythosClass5Model = (modelId: string) => isClaudeFable5Model(modelId) || isClaudeMythos5Model(modelId);
 
@@ -273,6 +275,7 @@ const supportsAnthropicModernControls = (modelId: string) =>
   isClaudeMythosClass5Model(modelId);
 
 const supportsAnthropicFastMode = (modelId: string) =>
+  isClaude52Model(modelId) ||
   /^(?:claude-opus-4-(?:7|8)|claude-opus-5)(?:[-@]|$)/.test(normalizeModelId(modelId));
 
 const supportsAnthropicTaskBudgets = (modelId: string) =>
@@ -1209,10 +1212,10 @@ const assertAnthropicRequestCompatibility = (
   }
 
   if (thinking?.display === "updates" && !supportsBoundThinking(modelId)) {
-    throw new UnsupportedFeatureError('Thinking display "updates" requires Claude Fable/Mythos 5.1, Opus 5.5, Sonnet 5.5, or Haiku 5.5.');
+    throw new UnsupportedFeatureError('Thinking display "updates" requires Claude Fable/Mythos 5.1/5.2, Opus 5.5, Sonnet 5.5, or Haiku 5.5.');
   }
   if (thinking?.block_binding && !supportsBoundThinking(modelId)) {
-    throw new UnsupportedFeatureError("Thinking block binding controls require Claude Fable/Mythos 5.1, Opus 5.5, Sonnet 5.5, or Haiku 5.5.");
+    throw new UnsupportedFeatureError("Thinking block binding controls require Claude Fable/Mythos 5.1/5.2, Opus 5.5, Sonnet 5.5, or Haiku 5.5.");
   }
   const effort = outputConfig?.effort;
   const supportedEfforts = anthropicReasoningEfforts(modelId);
@@ -1340,9 +1343,9 @@ const assertAnthropicRequestCompatibility = (
     }
   }
 
-  if (midConversationToolChanges && !isClaudeOpus5Model(modelId)) {
+  if (midConversationToolChanges && !isClaudeOpus5Model(modelId) && !isClaude52Model(modelId)) {
     throw new UnsupportedFeatureError(
-      'Provider "anthropic" only supports mid-conversation tool changes for Claude Opus 5.'
+      'Provider "anthropic" only supports mid-conversation tool changes for Claude Opus 5 and Fable/Mythos 5.2.'
     );
   }
 
@@ -1385,6 +1388,9 @@ const prepareAnthropicRequest = (
   anthropicVersion = ANTHROPIC_API_VERSION_2023_06_01
 ): PreparedAnthropicRequest => {
   const providerOptions = { ...(input.providerOptions ?? {}) } as AnthropicLanguageModelOptions;
+  if (provider === "bedrock" && isClaude52Model(modelId) && providerOptions.speed === "fast") {
+    throw new UnsupportedFeatureError("Claude Fable/Mythos 5.2 fast mode is not supported on Bedrock.");
+  }
   if (
     supportsBoundThinking(modelId) &&
     !isClaudeHaiku55Model(modelId) &&
@@ -1395,7 +1401,7 @@ const prepareAnthropicRequest = (
   ) {
     throw new UnsupportedFeatureError(`Provider "anthropic" model "${modelId}" supports only automatic or disabled tool choice.`);
   }
-  if (isClaude55ToolsetModel(modelId)) {
+  if (isClaude55ToolsetModel(modelId) || isClaude52Model(modelId)) {
     for (const tool of mapTools(input.tools) ?? []) {
       if (!("type" in tool)) continue;
       if (provider !== "bedrock" && tool.type === "computer_20251124") {
@@ -1405,6 +1411,10 @@ const prepareAnthropicRequest = (
         throw new UnsupportedFeatureError(
           `${isClaudeHaiku55Model(modelId) ? "Claude Haiku 5.5" : "Claude Sonnet 5.5"} does not support computer_20250124.`
         );
+      }
+      if (isClaude52Model(modelId) && tool.type === "advisor_20260301" &&
+          !("model" in tool && typeof tool.model === "string" && isClaude52Model(tool.model))) {
+        throw new UnsupportedFeatureError("Claude Fable/Mythos 5.2 requires a Fable 5.2 or Mythos 5.2 advisor.");
       }
       if (isClaudeSonnet55Model(modelId) && tool.type === "advisor_20260301" &&
           !("model" in tool && typeof tool.model === "string" &&
@@ -1504,7 +1514,7 @@ const prepareAnthropicRequest = (
     ...(providerOptions.compaction || signedBlocks.length ? ["compact-2026-09-04"] : []),
     ...(thinking?.display === "updates" ? ["thinking-display-updates-2026-08-18"] : []),
     ...(thinking?.block_binding ? ["thinking-binding-controls-2026-08-01"] : []),
-    ...(providerOptions.speed === "fast" ? [FAST_MODE_BETA] : []),
+    ...(providerOptions.speed === "fast" && !isClaude52Model(modelId) ? [FAST_MODE_BETA] : []),
     ...(outputConfig?.task_budget ? [TASK_BUDGETS_BETA] : []),
     ...(providerOptions.fallbacks === "default"
       ? [SERVER_SIDE_FALLBACK_DEFAULT_BETA]

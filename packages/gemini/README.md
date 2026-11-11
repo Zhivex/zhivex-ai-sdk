@@ -345,3 +345,7 @@ settings stay under caller control; the SDK cannot guarantee logging opt-out for
 an opaque uploaded file.
 See [Google's logging controls](https://aistudio.google.com/docs/logs-datasets)
 and [the Batch request schema](https://ai.google.dev/api/batch-api).
+
+### November 2026 additions
+
+Gemini 4 Carbon supports `low`, `medium`, and `high` reasoning with implicit caching only. Use Interactions for background long decode. Gemini Omni 1.2 Flash uses `provider.interactions.create({ modelId: "gemini-omni-1.2-flash", input: "A bird flying", responseFormat: { type: "video", duration: "15s" } })`. Interpolation and extension remain limited to 10 seconds per turn; up to six reference images are supported. The service enforces prompt-dependent limits. Omni 1.1 routes to 1.2 on December 3, 2026.

@@ -1540,6 +1540,10 @@ class GeminiContextCachesClient implements ContextCachesClient {
   }
 
   async create(input: ContextCacheCreateInput): Promise<CachedContent> {
+    const effectiveModel = input.providerOptions?.model ?? input.modelId;
+    if (typeof effectiveModel === "string" && effectiveModel.replace(/^models\//, "") === "gemini-4-carbon") {
+      throw new UnsupportedFeatureError("Gemini 4 Carbon supports implicit caching only.");
+    }
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const response = await withRetry(

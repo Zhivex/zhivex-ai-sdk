@@ -2,15 +2,57 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const bedrockCatalogFragment = defineModelCatalogFragment({
   provider: "bedrock",
-  revision: "2026-10-15",
+  revision: "2026-11-11",
   verifiedAt: "2026-10-15",
   sources: [
+    "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
     "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-5-5.html",
     "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html",
     "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-4-5.html",
     "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html"
   ],
   entries: [
+    {
+      "provider": "bedrock",
+      "modelId": "global.anthropic.claude-fable-5-2",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
+    {
+      "provider": "bedrock",
+      "modelId": "us.anthropic.claude-fable-5-2",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
+    {
+      "provider": "bedrock",
+      "modelId": "global.anthropic.claude-mythos-5-2",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
+    {
+      "provider": "bedrock",
+      "modelId": "us.anthropic.claude-mythos-5-2",
+      "recommendedFor": [
+        "chat",
+        "reasoning",
+        "tools",
+        "vision"
+      ]
+    },
+
     {
       provider: "bedrock",
       modelId: "anthropic.claude-haiku-5-5",

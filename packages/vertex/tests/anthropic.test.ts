@@ -316,3 +316,19 @@ describe("Sonnet 5.5 on Vertex", () => {
     expect(received).toContainEqual(expect.objectContaining({ type: "provider-data", data: { type: "signature_delta", signature: "opaque" } }));
   });
 });
+
+it.each(["claude-fable-5-2", "claude-mythos-5-2"])("supports %s computer toolsets and bound thinking on Vertex", async (id) => {
+  const fetcher = vi.fn(async () => response());
+  const model = provider(fetcher)(id);
+  await model.generate({ ...input,
+    tools: { computer: hostedTool({ provider: "anthropic", type: "computer_toolset_20260801", name: "computer" }) },
+    providerOptions: { thinking: { type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } } }
+  });
+  expect(bodyAt(fetcher, 0)).toMatchObject({
+    tools: [{ type: "computer_toolset_20260801" }],
+    thinking: { type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } },
+    anthropic_beta: expect.arrayContaining(["thinking-binding-controls-2026-08-01"])
+  });
+  await expect(model.generate({ ...input, toolChoice: "required" })).rejects.toThrow("automatic or disabled");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});

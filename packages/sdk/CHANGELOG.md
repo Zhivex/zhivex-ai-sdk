@@ -1,5 +1,16 @@
 # @zhivex-ai/sdk
 
+## 1.37.1
+
+### Patch Changes
+
+- Add Claude Fable/Mythos 5.2, Gemini 4 Carbon, and Omni 1.2 Flash to the catalog.
+  Validate Claude 5.2 forced tools, computer tools, and advisors; support bound
+  thinking and fast mode. Apply Carbon reasoning and implicit-cache rules and
+  Omni 1.2 Interactions duration validation. Record host-specific model IDs and
+  current direct-provider prices without assigning them to partner hosts.
+- 5abec43: Add GPT-6-Cyber and GPT Image 2.6 Flare and Sunburst, including Responses and Chat routing, Daybreak access validation, and Image API generation and edit contracts.
+
 ## 1.37.0
 
 ### Minor Changes

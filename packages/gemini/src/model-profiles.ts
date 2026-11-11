@@ -29,6 +29,7 @@ const profile = (efforts: GeminiTextProfile["reasoningEfforts"]): GeminiTextProf
 
 export const geminiTextProfiles: Readonly<Record<string, GeminiTextProfile>> = Object.freeze({
   // Provider default thinking level is medium when the request omits thinkingLevel.
+  "gemini-4-carbon": profile(["low", "medium", "high"]),
   "gemini-4-argon": profile(["low", "medium", "high"]),
   "gemini-3.8-flash": profile(["low", "medium", "high"]),
   "gemini-3.7-flash": profile(["low", "medium", "high"]),
@@ -97,6 +98,10 @@ export const assertCurrentGeminiGenerateInput = (
     if (isHostedToolDefinition(tool) && ["googleSearch", "google_search"].includes(tool.type) && tool.config && typeof tool.config === "object" &&
       ("max_tool_calls" in tool.config || "max_uses" in tool.config)) throw new UnsupportedFeatureError("Gemini Google Search tool-call limits are not verified.");
   }
+  if (modelId === "gemini-4-carbon" &&
+      (input.providerOptions?.cachedContent !== undefined || input.providerOptions?.cached_content !== undefined)) {
+    throw new UnsupportedFeatureError("Gemini 4 Carbon supports implicit caching only.");
+  }
   const currentProfile = textProfile(modelId);
   if (!currentProfile) {
     return;
@@ -142,6 +147,19 @@ export const assertCurrentGeminiGenerateInput = (
 
 export const assertCurrentGeminiInteractionBody = (body: Record<string, unknown>) => {
   const modelId = typeof body.model === "string" ? body.model : undefined;
+  if (modelId === "gemini-4-carbon" && (body.cachedContent !== undefined || body.cached_content !== undefined)) {
+    throw new UnsupportedFeatureError("Gemini 4 Carbon supports implicit caching only.");
+  }
+  if (modelId === "gemini-omni-1.2-flash") {
+    const format = body.response_format as Record<string, unknown> | undefined;
+    const duration = format?.duration;
+    if (duration !== undefined && (typeof duration !== "string" || !/^(?:[3-9]|1[0-5])s$/.test(duration))) {
+      throw new UnsupportedFeatureError("Gemini Omni 1.2 Flash duration must be a whole second from 3s to 15s. Interpolation and extension are limited to 10s by the service.");
+    }
+    if (body.system_instruction !== undefined || firstUnsupportedGenerationControl(body, body.generation_config)) {
+      throw new UnsupportedFeatureError("Gemini Omni 1.2 Flash does not support system instructions or sampling controls.");
+    }
+  }
   const currentProfile = modelId ? textProfile(modelId) : undefined;
   if (!currentProfile) {
     return;

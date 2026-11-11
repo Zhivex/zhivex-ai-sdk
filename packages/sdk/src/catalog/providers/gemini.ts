@@ -2,10 +2,12 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const geminiCatalogFragment = defineModelCatalogFragment({
   provider: "gemini",
-  revision: "2026-11-04",
+  revision: "2026-11-11",
   verifiedAt: "2026-11-04",
   pricingEffectiveAt: "2026-11-04",
   sources: [
+    "https://aistudio.google.com/docs/models/gemini-4-carbon",
+    "https://aistudio.google.com/docs/omni",
     "https://aistudio.google.com/docs/pricing",
     "https://ai.google.dev/gemini-api/docs/models",
     "https://ai.google.dev/gemini-api/docs/changelog",
@@ -14,6 +16,26 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     "https://ai.google.dev/gemini-api/docs/deprecations"
   ],
   entries: [
+    { provider: "gemini", modelId: "gemini-omni-1.2-flash", recommendedFor: ["vision", "speed"] },
+    {
+      provider: "gemini",
+      modelId: "gemini-4-carbon",
+      pricingTerms: { source: "https://aistudio.google.com/docs/pricing", verifiedAt: "2026-11-11", validThrough: "2026-11-30", notes: "From December 1: $4 input, $0.20 cached input, $20 output per million tokens. Future rates are not applied by this snapshot." },
+      // Current introductory price through 2026-11-30. The catalog stores one rate;
+      // from 2026-12-01 the published price is $4/$20 per 1M tokens and $0.20 cached.
+      inputCostPer1kTokens: 0.002,
+      cachedInputCostPer1kTokens: 0.0001,
+      outputCostPer1kTokens: 0.01,
+      contextWindowTokens: 1048576,
+      contextWindowType: "combined",
+      maxOutputTokens: 65536,
+      evidence: {
+        contextWindowTokens: { source: "https://aistudio.google.com/docs/models/gemini-4-carbon", sourceType: "primary", verifiedAt: "2026-11-11" },
+        contextWindowType: { source: "https://aistudio.google.com/docs/models/gemini-4-carbon", sourceType: "primary", verifiedAt: "2026-11-11" },
+        maxOutputTokens: { source: "https://aistudio.google.com/docs/models/gemini-4-carbon", sourceType: "primary", verifiedAt: "2026-11-11", conditions: ["Default synchronous output; long decode requires background execution."] }
+      },
+      recommendedFor: ["chat", "reasoning", "vision", "tools"]
+    },
     {
       provider: "gemini",
       modelId: "gemini-4-argon",

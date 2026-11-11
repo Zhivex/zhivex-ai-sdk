@@ -1132,6 +1132,17 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
         ? userRequestFields as Record<string, unknown>
         : {};
     const additionalModelRequestFields = { ...generatedFields, ...userFields };
+    if (/claude-(?:fable|mythos)-5-2(?:[:@-]|$)/.test(stripBedrockModelId(this.modelId))) {
+      const rawToolConfig = providerOptions.toolConfig as { toolChoice?: { any?: unknown; tool?: unknown } } | undefined;
+      const thinking = additionalModelRequestFields.thinking as { type?: string } | undefined;
+      if (input.toolChoice === "required" || typeof input.toolChoice === "object" ||
+          rawToolConfig?.toolChoice?.any !== undefined || rawToolConfig?.toolChoice?.tool !== undefined) {
+        throw new UnsupportedFeatureError("Claude Fable/Mythos 5.2 does not support forced tools on Bedrock.");
+      }
+      if (thinking?.type !== undefined && thinking.type !== "adaptive") {
+        throw new UnsupportedFeatureError("Claude Fable/Mythos 5.2 requires adaptive thinking on Bedrock.");
+      }
+    }
     const textFormat = mapStructuredOutput(input.structuredOutput);
     const keepTools = input.toolChoice !== "none" || historyHasToolBlocks(input.messages);
     if (input.toolChoice === "none" && keepTools && !input.tools) {

@@ -1526,7 +1526,7 @@ describe("openai adapter", () => {
   });
 
   it("rejects OpenAI apply_patch paths that escape rootDir through symlinks", async () => {
-    const { mkdir, mkdtemp, symlink, writeFile, rm } = await import("node:fs/promises");
+    const { mkdir, mkdtemp, symlink, writeFile, rm, realpath } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const nodePath = await import("node:path");
     const parent = await mkdtemp(nodePath.join(tmpdir(), "openai-contain-"));
@@ -1554,11 +1554,11 @@ describe("openai adapter", () => {
       expect(applyOperation).not.toHaveBeenCalled();
       await patch.execute?.({ operation: { type: "create_file", path: "inner/new.txt", diff: "x" } });
       expect(applyOperation).toHaveBeenCalledWith(expect.objectContaining({
-        path: nodePath.join(root, "sub", "new.txt")
+        path: nodePath.join(await realpath(root), "sub", "new.txt")
       }));
       await patch.execute?.({ operation: { type: "create_file", path: "..note.txt", diff: "x" } });
       expect(applyOperation).toHaveBeenCalledWith(expect.objectContaining({
-        path: nodePath.join(root, "..note.txt")
+        path: nodePath.join(await realpath(root), "..note.txt")
       }));
     } finally {
       await rm(parent, { recursive: true, force: true });

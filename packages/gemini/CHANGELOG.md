@@ -1,5 +1,15 @@
 # @zhivex-ai/gemini
 
+## 0.14.2
+
+### Patch Changes
+
+- Add Claude Fable/Mythos 5.2, Gemini 4 Carbon, and Omni 1.2 Flash to the catalog.
+  Validate Claude 5.2 forced tools, computer tools, and advisors; support bound
+  thinking and fast mode. Apply Carbon reasoning and implicit-cache rules and
+  Omni 1.2 Interactions duration validation. Record host-specific model IDs and
+  current direct-provider prices without assigning them to partner hosts.
+
 ## 0.14.1
 
 ### Patch Changes
