@@ -117,7 +117,14 @@ export function snapshotDecision(input: DecisionInput, maxBytes = 1024 * 1024): 
   if (new TextEncoder().encode(json).byteLength > maxBytes) invalidDecision();
   return { ...JSON.parse(json), abortSignal: input.abortSignal, timeoutMs: input.timeoutMs };
 }
-const DATA_URL = /^data:image\/(png|jpeg|webp|gif);base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const IMAGE_DATA_URL_PREFIX = /^data:image\/(png|jpeg|webp|gif);base64,/;
+function validBase64(data: string): boolean {
+  // Scan the alphabet without repeated capture groups: large payloads must not
+  // exhaust the regexp engine's stack on Node.js.
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  return data.length > 0 && data.length % 4 === 0
+    && !/[^A-Za-z0-9+/]/.test(data.slice(0, data.length - padding));
+}
 const levelLabel = (level: DecisionScoreLevel) => typeof level === 'string' ? level : level.label;
 const httpImageURL = (value: string) => {
   let url: URL;
@@ -146,7 +153,11 @@ function validateImage(part: Record<string, unknown>, capabilities: DecisionCapa
   const url = typeof part.url === 'string';
   if (dataURL === url) invalidDecision();
   if (url && !capabilities.httpImageURLs) invalidDecision();
-  if (dataURL && (!DATA_URL.test(part.dataURL as string) || (part.dataURL as string).endsWith(','))) invalidDecision();
+  if (dataURL) {
+    const value = part.dataURL as string;
+    const prefix = IMAGE_DATA_URL_PREFIX.exec(value);
+    if (!prefix || !validBase64(value.slice(prefix[0].length))) invalidDecision();
+  }
   if (url && !httpImageURL(part.url as string)) invalidDecision();
   if (part.detail !== undefined && !['low', 'high', 'auto', 'original'].includes(part.detail as string)) invalidDecision();
   if (!keys(part, ['type', dataURL ? 'dataURL' : 'url', 'detail', ...(breakpoint ? ['promptCacheBreakpoint'] : [])])) invalidDecision();
@@ -185,10 +196,7 @@ function validateMediaPart(part: Record<string, unknown>, capabilities: Decision
   if (inline === (typeof part.uri === 'string')) invalidDecision();
   if (!keys(part, ['type', 'mimeType', inline ? 'data' : 'uri', ...(['image', 'video'].includes(part.type as string) ? ['resolution'] : [])])) invalidDecision();
   if (inline) {
-    const data = part.data as string;
-    // Avoid a repeated-group regexp over large base64 payloads (stack overflow).
-    const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
-    if (!data.length || data.length % 4 || /[^A-Za-z0-9+/]/.test(data.slice(0, data.length - padding))) invalidDecision();
+    if (!validBase64(part.data as string)) invalidDecision();
   } else {
     if (!httpImageURL(part.uri as string) || new URL(part.uri as string).protocol !== 'https:') invalidDecision();
   }

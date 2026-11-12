@@ -38,3 +38,18 @@ it('uses explicit snapshot budgets while retaining the old default', () => {
   expect(() => validateDecision(request, { ...capabilities, maxInputBytes: 2 * 1024 * 1024 })).not.toThrow();
   for (const limit of [0, -1, NaN, Infinity, 151 * 1024 * 1024]) expect(() => snapshotDecision(input, limit)).toThrow();
 });
+
+it.each(['AAAA', 'AAA=', 'AA=='])('accepts legacy base64 image padding: %s', data => {
+  for (const mime of ['png', 'jpeg', 'webp', 'gif']) {
+    expect(() => validateDecision({ ...input, input: [{ type: 'image', dataURL: `data:image/${mime};base64,${data}` }] }, capabilities)).not.toThrow();
+  }
+});
+it.each(['', 'A', 'AAA', 'AAAA=', 'A===', '====', 'AA=A', 'AA!A', 'AAAA\n', 'AAAA AAA', 'AAAA,AAAA'])('rejects malformed base64 in both image representations: %j', data => {
+  for (const part of [
+    { type: 'image' as const, dataURL: `data:image/png;base64,${data}` },
+    { type: 'image' as const, data, mimeType: 'image/png' }
+  ]) expect(() => validateDecision({ ...input, input: [part] }, capabilities)).toThrow();
+});
+it.each(['data:image/svg+xml;base64,AAAA', 'data:image/png,AAAA', 'data:image/png;base64;extra,AAAA', 'prefix:data:image/png;base64,AAAA'])('preserves the legacy data URL MIME and prefix restrictions: %s', dataURL => {
+  expect(() => validateDecision({ ...input, input: [{ type: 'image', dataURL }] }, capabilities)).toThrow();
+});

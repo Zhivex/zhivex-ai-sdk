@@ -76,6 +76,13 @@ describe('Gemini Decisions', () => {
     expect(body().input[0]).toEqual({ type: 'image', data: 'AAAA', mime_type: 'image/png', resolution: 'low' });
     expect(body().questions.route.criteria).toEqual({ returns: '', support: '' });
   });
+  it('sends a large legacy dataURL image without overflowing the Node stack', async () => {
+    const { model, body, fetcher } = setup();
+    const data = 'AAAA'.repeat(3000000); // 9 MB decoded: the review's Node reproduction.
+    await model.decide({ ...input, input: [{ type: 'image', dataURL: `data:image/png;base64,${data}` }] });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(body().input).toEqual([{ type: 'image', data, mime_type: 'image/png' }]);
+  });
   it('accepts inline media larger than the legacy 1 MiB snapshot limit', async () => {
     const { model, body } = setup();
     const data = 'AAAA'.repeat(350000);
