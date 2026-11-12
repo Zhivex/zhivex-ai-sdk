@@ -23,9 +23,9 @@ const imageURL = (part: { dataURL?: string; url?: string }) => part.dataURL ?? p
 const breakpoint = (part: { promptCacheBreakpoint?: { mode: 'explicit' } }) => part.promptCacheBreakpoint ? { prompt_cache_breakpoint: { mode: 'explicit' as const } } : {};
 const mapContentPart = (part: DecisionContentPart) => part.type === 'text'
   ? { type: 'input_text', text: part.text, ...breakpoint(part) }
-  : part.type === 'image'
+  : part.type === 'image' && ('url' in part || 'dataURL' in part)
     ? { type: 'input_image', image_url: imageURL(part), ...(part.detail ? { detail: part.detail } : {}), ...breakpoint(part) }
-    : { type: 'input_json', data: part.data };
+    : part.type === 'json' ? { type: 'input_json', data: part.data } : invalidDecision();
 const mapQuestionPart = (part: DecisionQuestionPart) => part.type === 'text'
   ? { type: 'input_text', text: part.text }
   : part.type === 'image'
@@ -35,7 +35,7 @@ const mapInstructions = (instructions: DecisionQuestion['instructions']) => type
 const mapLevel = (level: DecisionScoreLevel) => typeof level === 'string' ? { label: level } : level.description ? { label: level.label, description: level.description } : { label: level.label };
 const mapToolOutput = (output: string | readonly (Extract<DecisionContentPart, { type: 'text' | 'image' }>)[]) => typeof output === 'string' ? output : output.map(part => part.type === 'text'
   ? { type: 'input_text', text: part.text, ...breakpoint(part) }
-  : { type: 'input_image', image_url: imageURL(part), ...(part.detail ? { detail: part.detail } : {}), ...breakpoint(part) });
+  : 'url' in part || 'dataURL' in part ? { type: 'input_image', image_url: imageURL(part), ...(part.detail ? { detail: part.detail } : {}), ...breakpoint(part) } : invalidDecision());
 const mapMessage = (item: DecisionInputMessage) => {
   if ('role' in item && item.role === 'user') return { role: 'user', ...(item.type ? { type: item.type } : {}), content: typeof item.content === 'string' ? item.content : item.content.map(mapContentPart) };
   if ('role' in item && item.role === 'assistant') return {

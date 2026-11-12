@@ -5,11 +5,18 @@ export type DecisionImageDetail = 'low' | 'high' | 'auto' | 'original';
 export interface DecisionPromptCacheBreakpoint { mode: 'explicit' }
 export interface DecisionPromptCacheOptions { mode?: 'implicit' | 'explicit'; ttl?: '30m' }
 export type DecisionTextPart = { type: 'text'; text: string; promptCacheBreakpoint?: DecisionPromptCacheBreakpoint };
+/** Base64 bytes or a provider-readable HTTPS URI; the SDK never downloads media. */
+export type DecisionMediaSource = { data: string; uri?: never } | { uri: string; data?: never };
+export type DecisionMediaResolution = 'low' | 'medium' | 'high' | 'ultra_high';
+export type DecisionAudioPart = { type: 'audio'; mimeType: string } & DecisionMediaSource;
+export type DecisionVideoPart = { type: 'video'; mimeType: string; resolution?: Exclude<DecisionMediaResolution, 'ultra_high'> } & DecisionMediaSource;
+export type DecisionDocumentPart = { type: 'document'; mimeType: string } & DecisionMediaSource;
 export type DecisionImagePart =
+  | ({ type: 'image'; mimeType: string; resolution?: DecisionMediaResolution } & DecisionMediaSource)
   | { type: 'image'; dataURL: string; detail?: DecisionImageDetail; promptCacheBreakpoint?: DecisionPromptCacheBreakpoint }
   | { type: 'image'; url: string; detail?: DecisionImageDetail; promptCacheBreakpoint?: DecisionPromptCacheBreakpoint };
 export type DecisionJsonPart = { type: 'json'; data: Record<string, unknown> | readonly Record<string, unknown>[] };
-export type DecisionContentPart = DecisionTextPart | DecisionImagePart | DecisionJsonPart;
+export type DecisionContentPart = DecisionTextPart | DecisionImagePart | DecisionJsonPart | DecisionAudioPart | DecisionVideoPart | DecisionDocumentPart;
 export type DecisionQuestionPart =
   | { type: 'text'; text: string }
   | { type: 'image'; dataURL: string; detail?: DecisionImageDetail }
@@ -27,7 +34,7 @@ export type DecisionInputMessage =
   | { type: 'custom_tool_call'; name: string; input: string; callId: string; id?: string; namespace?: string; status?: DecisionToolStatus }
   | { type: 'custom_tool_call_output'; callId: string; output: string | readonly (DecisionTextPart | DecisionImagePart)[]; id?: string; status?: DecisionToolStatus };
 export type DecisionQuestion =
-  | { type: 'predicate'; instructions: DecisionQuestionInstructions }
+  | { type: 'predicate'; instructions: DecisionQuestionInstructions; trueDescription?: string; falseDescription?: string }
   | { type: 'choice'; instructions: DecisionQuestionInstructions; choices: readonly { value: string | boolean; description?: string }[] }
   | { type: 'score'; instructions: DecisionQuestionInstructions; levels: readonly DecisionScoreLevel[] };
 export type DecisionQuestions = Readonly<Record<string, DecisionQuestion>>;
@@ -47,7 +54,7 @@ export interface DecisionInput {
 }
 export interface DecisionCapabilities {
   readonly questionTypes: readonly DecisionQuestion['type'][];
-  readonly inputTypes: readonly ('text' | 'image')[];
+  readonly inputTypes: readonly ('text' | 'image' | 'audio' | 'video' | 'document')[];
   readonly choiceValueTypes: readonly ('string' | 'boolean')[];
   readonly perQuestionRefusal: boolean;
   readonly textParts: boolean;
@@ -59,16 +66,22 @@ export interface DecisionCapabilities {
   readonly safetyIdentifier?: boolean;
   readonly scoreDescriptions?: boolean;
   readonly optionalChoiceDescriptions?: boolean;
+  readonly emptyChoiceDescriptions?: boolean;
+  readonly predicateDescriptions?: boolean;
+  /** Enables data/uri media blocks, independently of legacy image parts. */
+  readonly mediaInput?: boolean;
+  /** Maximum serialized input snapshot; defaults to 1 MiB for existing providers. */
+  readonly maxInputBytes?: number;
 }
 export type DecisionAnswer =
   | { type: 'refusal' }
-  | { type: 'predicate'; probability: number }
+  | { type: 'predicate'; probability: number; providerConfidence?: number }
   | { type: 'choice'; choice: string | boolean; probabilities: { value: string | boolean; probability: number }[]; providerConfidence?: number }
   | { type: 'score'; score: number; probabilities: { value: number; label: string; probability: number }[]; providerConfidence?: number };
 export interface DecisionResult {
   answers: Record<string, DecisionAnswer>;
   provenance: { provider: string; modelId: string; endpoint: string; protocol: string };
-  usage: { inputTokens: number; outputTokens?: number; totalTokens?: number; cachedInputTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number };
+  usage: { inputTokens: number; outputTokens?: number; totalTokens?: number; cachedInputTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number; inputTokensByModality?: readonly { modality: string; tokens: number }[] };
   requestId?: string;
   latencyMs?: number;
 }
@@ -88,7 +101,8 @@ export const decisionProbability = (v: unknown): v is number => typeof v === 'nu
 export function invalidDecision(): never { throw new ValidationError('Invalid experimental decision request or response.'); }
 const keys = (v: Record<string, unknown>, allowed: string[]) => Object.keys(v).every(k => allowed.includes(k));
 /** Strict JSON snapshot prevents mutation during I/O and bounds request memory. */
-export function snapshotDecision(input: DecisionInput): DecisionInput {
+export function snapshotDecision(input: DecisionInput, maxBytes = 1024 * 1024): DecisionInput {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > 150 * 1024 * 1024) invalidDecision();
   const payload: Record<string, unknown> = { input: input.input, questions: input.questions };
   if (input.promptCacheKey !== undefined) payload.promptCacheKey = input.promptCacheKey;
   if (input.promptCacheOptions !== undefined) payload.promptCacheOptions = input.promptCacheOptions;
@@ -100,7 +114,7 @@ export function snapshotDecision(input: DecisionInput): DecisionInput {
       return v;
     });
   } catch { return invalidDecision(); }
-  if (new TextEncoder().encode(json).byteLength > 1024 * 1024) invalidDecision();
+  if (new TextEncoder().encode(json).byteLength > maxBytes) invalidDecision();
   return { ...JSON.parse(json), abortSignal: input.abortSignal, timeoutMs: input.timeoutMs };
 }
 const DATA_URL = /^data:image\/(png|jpeg|webp|gif);base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
@@ -164,9 +178,26 @@ function validateInstructions(value: unknown, capabilities: DecisionCapabilities
   if (!capabilities.questionContent || !Array.isArray(value) || !value.length) invalidDecision();
   for (const part of value) validateQuestionPart(part, capabilities, budget);
 }
+function validateMediaPart(part: Record<string, unknown>, capabilities: DecisionCapabilities): void {
+  if (!capabilities.mediaInput || !capabilities.inputTypes.includes(part.type as 'image' | 'audio' | 'video' | 'document')) invalidDecision();
+  if (typeof part.mimeType !== 'string' || !(part.type === 'document' ? /^application\/[a-z0-9.+-]+$/ : new RegExp(`^${part.type}/[a-z0-9.+-]+$`)).test(part.mimeType)) invalidDecision();
+  const inline = typeof part.data === 'string';
+  if (inline === (typeof part.uri === 'string')) invalidDecision();
+  if (!keys(part, ['type', 'mimeType', inline ? 'data' : 'uri', ...(['image', 'video'].includes(part.type as string) ? ['resolution'] : [])])) invalidDecision();
+  if (inline) {
+    const data = part.data as string;
+    // Avoid a repeated-group regexp over large base64 payloads (stack overflow).
+    const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+    if (!data.length || data.length % 4 || /[^A-Za-z0-9+/]/.test(data.slice(0, data.length - padding))) invalidDecision();
+  } else {
+    if (!httpImageURL(part.uri as string) || new URL(part.uri as string).protocol !== 'https:') invalidDecision();
+  }
+  if (part.resolution !== undefined && !(part.type === 'image' ? ['low', 'medium', 'high', 'ultra_high'] : ['low', 'medium', 'high']).includes(part.resolution as string)) invalidDecision();
+}
 function validateContentPart(part: unknown, capabilities: DecisionCapabilities, budget: { images: number; breakpoints: number }): void {
   if (!decisionRecord(part) || !capabilities.textParts) invalidDecision();
   if (part.type === 'text') { if (!capabilities.inputTypes.includes('text')) invalidDecision(); validateTextPart(part, true, capabilities, budget); }
+  else if (['audio', 'video', 'document'].includes(part.type as string) || part.type === 'image' && ('data' in part || 'uri' in part || 'mimeType' in part)) validateMediaPart(part, capabilities);
   else if (part.type === 'image') { if (!capabilities.inputTypes.includes('image')) invalidDecision(); validateImage(part, capabilities, budget, true); }
   else if (part.type === 'json') { if (!capabilities.jsonInput) invalidDecision(); if (!keys(part, ['type', 'data'])) invalidDecision(); validateJsonData(part.data); }
   else invalidDecision();
@@ -242,13 +273,14 @@ export function validateDecision(input: DecisionInput, capabilities: DecisionCap
   for (const [id, q] of Object.entries(input.questions)) {
     if (!decisionText(id) || !decisionRecord(q) || !capabilities.questionTypes.includes(q.type)) invalidDecision();
     validateInstructions(q.instructions, capabilities, budget);
-    if (q.type === 'predicate') { if (!keys(q, ['type', 'instructions'])) invalidDecision(); }
+    if (q.type === 'predicate') { if (!keys(q, ['type', 'instructions', ...(capabilities.predicateDescriptions ? ['trueDescription', 'falseDescription'] : [])])) invalidDecision();
+      if (q.trueDescription !== undefined && !decisionText(q.trueDescription) || q.falseDescription !== undefined && !decisionText(q.falseDescription)) invalidDecision(); }
     else if (q.type === 'choice') {
       if (!keys(q, ['type', 'instructions', 'choices']) || !Array.isArray(q.choices) || q.choices.length < 2 || q.choices.length > 255) invalidDecision();
       const seen = new Set<string | boolean>();
       for (const c of q.choices) {
         if (!decisionRecord(c) || !keys(c, ['value', 'description']) || !capabilities.choiceValueTypes.includes(typeof c.value as 'string' | 'boolean') || typeof c.value === 'string' && !decisionText(c.value) || seen.has(c.value as string | boolean)) invalidDecision();
-        if (c.description === undefined ? !capabilities.optionalChoiceDescriptions : !decisionText(c.description)) invalidDecision();
+        if (c.description === undefined ? !capabilities.optionalChoiceDescriptions : !(capabilities.emptyChoiceDescriptions && c.description === '' || decisionText(c.description))) invalidDecision();
         seen.add(c.value as string | boolean);
       }
     } else if (q.type === 'score') {
@@ -262,7 +294,7 @@ export function validateDecision(input: DecisionInput, capabilities: DecisionCap
       if (new Set(labels).size !== labels.length) invalidDecision();
     } else invalidDecision();
   }
-  snapshotDecision(input);
+  snapshotDecision(input, capabilities.maxInputBytes);
 }
 export function validateDecisionAnswers(answers: unknown, questions: DecisionQuestions, refusal: boolean): asserts answers is Record<string, DecisionAnswer> {
   if (!decisionRecord(answers) || Object.keys(answers).length !== Object.keys(questions).length) invalidDecision();
@@ -272,8 +304,8 @@ export function validateDecisionAnswers(answers: unknown, questions: DecisionQue
     if (!decisionRecord(a)) invalidDecision();
     if (a.type === 'refusal') { if (!refusal || !keys(a, ['type'])) invalidDecision(); continue; }
     if (a.type !== q.type) invalidDecision();
-    if (q.type === 'predicate') { if (!decisionProbability(a.probability)) invalidDecision(); continue; }
     if (a.providerConfidence !== undefined && !decisionProbability(a.providerConfidence)) invalidDecision();
+    if (q.type === 'predicate') { if (!decisionProbability(a.probability)) invalidDecision(); continue; }
     if (!Array.isArray(a.probabilities)) invalidDecision();
     const expected = q.type === 'choice' ? q.choices.map(c => c.value) : q.levels.map((_, i) => i);
     if (a.probabilities.length !== expected.length) invalidDecision();

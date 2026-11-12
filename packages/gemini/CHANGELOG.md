@@ -1,5 +1,18 @@
 # @zhivex-ai/gemini
 
+## 0.15.0
+
+### Minor Changes
+
+- Add native Gemini Decisions through `createGemini().decisionModel()`, defaulting to `gemini-decision-1`. Support predicates, choices and rubric scores over text, image, audio, video and PDF evidence, inline base64 or HTTPS/Files API URIs, media resolution, predicate criteria, confidence and per-modality token usage.
+  
+  Extend portable decision contracts and capability-gated validation for multimodal inputs. Preserve the existing input limits and accepted formats of other providers. Let the gateway snapshot large requests within the tightest selected destination budget before any network attempt. Add the model to the SDK catalog, tests and usage documentation.
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.39.0
+
 ## 0.14.2
 
 ### Patch Changes

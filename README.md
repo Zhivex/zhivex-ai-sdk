@@ -241,3 +241,24 @@ December 3, 2026. These additions have mocked contract coverage, not live certif
 Sources: [Claude 5.2 migration](https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2),
 [Carbon](https://aistudio.google.com/docs/whats-new-gemini-4-carbon),
 [Omni](https://aistudio.google.com/docs/omni).
+
+## Multimodal Decisions
+
+Gemini Decisions evaluates closed questions over text, images, audio, video and
+PDF through the shared `DecisionModel` contract:
+
+```ts
+import { createGemini } from "@zhivex-ai/gemini";
+
+const result = await createGemini().decisionModel().decide({
+  input: [{ type: "document", uri: "https://example.com/invoice.pdf", mimeType: "application/pdf" }],
+  questions: { invoice: { type: "predicate", instructions: "Is this an invoice?" } }
+});
+console.log(result.answers.invoice);
+```
+
+Install `@zhivex-ai/gemini` and set `GEMINI_API_KEY`; replace the URL with your
+own accessible document. This uses `gemini-decision-1` on the Decisions endpoint.
+OpenAI and Qwen also expose decision surfaces, with provider-specific input
+capabilities. The gateway supports explicit decision routing and fallback.
+See [Gemini Decisions examples and limits](./packages/gemini/README.md#decisions-api).

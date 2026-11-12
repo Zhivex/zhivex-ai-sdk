@@ -65,7 +65,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(303);
+    expect(entries).toHaveLength(304);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
       retiredAt: "2027-04-01",
@@ -111,7 +111,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(303);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(304);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-11-07",
       verifiedAt: "2026-11-07",
@@ -550,4 +550,9 @@ describe("SDK model catalog ownership", () => {
       /import\s*\{[^}]*defaultModelCatalog[^}]*\}\s*from\s*["']@zhivex-ai\/core["']/su
     );
   });
+});
+
+it("registers Gemini Decision 1 without recommending it for chat", () => {
+  expect(defaultModelCatalog.find("gemini", "gemini-decision-1")).toMatchObject({ inputCostPer1kTokens: 0.0001, outputCostPer1kTokens: 0, contextWindowTokens: 262144 });
+  expect(defaultModelCatalog.find("gemini", "gemini-decision-1")?.recommendedFor).toBeUndefined();
 });

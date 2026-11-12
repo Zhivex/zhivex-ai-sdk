@@ -71,12 +71,16 @@ export function createGatewayDecide(registry: Readonly<Record<string, GatewayDec
     const fallbackOn = [...(request.fallbackOn ?? [])];
     const ceiling = request.maxReservedUSD;
     if (!ids.every(id => typeof id === 'string' && id.length > 0) || new Set(ids).size !== ids.length || !Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > ids.length || fallbackOn.some(status => ![429, 500, 502, 503, 504].includes(status)) || ceiling !== undefined && !money(ceiling)) throw new ValidationError('Invalid decision routing controls.');
+    const maxInputBytes = Math.min(...ids.map(id => {
+      if (!Object.hasOwn(registrations, id)) throw new ConfigurationError('Unknown decision destination.');
+      return registrations[id]!.model.capabilities.maxInputBytes ?? 1024 * 1024;
+    }));
     const input = snapshotDecision({
       input: request.input, questions: request.questions, abortSignal: request.abortSignal, timeoutMs: request.timeoutMs ?? defaultTimeoutMs,
       ...(request.promptCacheKey !== undefined ? { promptCacheKey: request.promptCacheKey } : {}),
       ...(request.promptCacheOptions !== undefined ? { promptCacheOptions: request.promptCacheOptions } : {}),
       ...(request.safetyIdentifier !== undefined ? { safetyIdentifier: request.safetyIdentifier } : {})
-    });
+    }, maxInputBytes);
     // Validate EVERY selected destination before sending evidence to ANY destination.
     const targets = ids.map(id => {
       const t = Object.hasOwn(registrations, id) ? registrations[id] : undefined;

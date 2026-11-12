@@ -1,3 +1,4 @@
+import { createGeminiDecisionModel } from "./decision.js";
 import { withManualRedirect } from "./manual-redirect.js";
 import { toBase64 } from "./encoding.js";
 import { normalizeInteractionUsage, normalizeGenerateContentUsage } from "./usage.js";
@@ -3111,6 +3112,7 @@ export const createGemini = (
   options: GeminiProviderOptions = {}
 ): CallableProviderAdapter<LanguageModel<GeminiLanguageModelOptions>> & {
   rawFetch: typeof globalThis.fetch;
+  decisionModel(modelId?: string): import("@zhivex-ai/core").DecisionModel;
 } => {
   const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   if (!apiKey) {
@@ -3144,6 +3146,7 @@ export const createGemini = (
 
   return createProviderAdapter({
     name: "gemini",
+    decisionModel: (modelId = "gemini-decision-1") => createGeminiDecisionModel(modelId, apiKey, baseURL, fetcher),
     languageModel: (modelId) => new GeminiLanguageModel(modelId, apiKey, baseURL, fetcher),
     embeddingModel: (modelId) => new GeminiEmbeddingModel(modelId, apiKey, baseURL, fetcher),
     transcriptionModel: (modelId) =>
