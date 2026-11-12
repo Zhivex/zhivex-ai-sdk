@@ -2,10 +2,12 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const geminiCatalogFragment = defineModelCatalogFragment({
   provider: "gemini",
-  revision: "2026-11-11",
+  revision: "2026-11-12",
   verifiedAt: "2026-11-04",
   pricingEffectiveAt: "2026-11-04",
   sources: [
+    "https://aistudio.google.com/docs/thinking",
+    "https://aistudio.google.com/docs/pricing#gemini-4-hydrogen",
     "https://aistudio.google.com/docs/decisions-api",
     "https://aistudio.google.com/docs/models/gemini-4-carbon",
     "https://aistudio.google.com/docs/omni",
@@ -17,6 +19,19 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     "https://ai.google.dev/gemini-api/docs/deprecations"
   ],
   entries: [
+    {
+      provider: "gemini", modelId: "gemini-4-hydrogen",
+      inputCostPer1kTokens: 0.0015, cachedInputCostPer1kTokens: 0.000075,
+      outputCostPer1kTokens: 0.0075,
+      contextWindowTokens: 1048576, contextWindowType: "combined", maxOutputTokens: 65536,
+      pricingTerms: { source: "https://aistudio.google.com/docs/pricing#gemini-4-hydrogen", verifiedAt: "2026-11-12", notes: "Standard paid tier; implicit caching only." },
+      evidence: {
+        contextWindowTokens: { source: "https://aistudio.google.com/docs/thinking", sourceType: "primary", verifiedAt: "2026-11-12" },
+        contextWindowType: { source: "https://aistudio.google.com/docs/thinking", sourceType: "primary", verifiedAt: "2026-11-12" },
+        maxOutputTokens: { source: "https://aistudio.google.com/docs/thinking", sourceType: "primary", verifiedAt: "2026-11-12", conditions: ["Single foreground segment; longer output requires background execution or client-side continuation within the shared context window."] }
+      },
+      recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
+    },
     {
       provider: "gemini", modelId: "gemini-decision-1",
       inputCostPer1kTokens: 0.0001, outputCostPer1kTokens: 0,

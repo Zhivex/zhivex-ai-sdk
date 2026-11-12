@@ -11,3 +11,12 @@ it("records November models with current direct-host prices and conservative out
   expect(defaultModelCatalog.find("gemini", "gemini-omni-1.2-flash")).toBeDefined();
   expect(defaultModelCatalog.find("gemini", "gemini-omni-1.1-flash")).toBeDefined();
 });
+
+it.each(["gemini", "vertex"])("records Hydrogen limits and standard prices on %s", (provider) => {
+  const entry = defaultModelCatalog.find(provider, "gemini-4-hydrogen");
+  expect(entry).toMatchObject({ contextWindowTokens: 1048576, contextWindowType: "combined", maxOutputTokens: 65536,
+    inputCostPer1kTokens: .0015, cachedInputCostPer1kTokens: .000075, outputCostPer1kTokens: .0075,
+    pricingTerms: { verifiedAt: "2026-11-12" } });
+  expect(entry?.pricingTerms?.validThrough).toBeUndefined();
+  if (provider === "vertex") expect(entry?.pricingTerms?.notes).toContain("Non-global");
+});

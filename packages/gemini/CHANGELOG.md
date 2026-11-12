@@ -1,5 +1,13 @@
 # @zhivex-ai/gemini
 
+## 0.15.1
+
+### Patch Changes
+
+- Add Gemini 4 Hydrogen with low, medium, high, and xhigh reasoning on Gemini and Vertex, model-specific request validation, implicit-only caching, and Vertex global/us/eu location checks. Add catalog context/output limits and current Standard pricing with host-specific evidence and non-global Vertex pricing notes.
+- Updated dependencies [8f98ad7]
+  - @zhivex-ai/core@1.39.1
+
 ## 0.15.0
 
 ### Minor Changes

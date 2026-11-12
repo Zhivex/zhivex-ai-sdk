@@ -97,16 +97,17 @@ describe("model profiles through the SDK facade", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["gemini-4-carbon", "gemini-4-argon", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
+  it.each(["gemini-4-hydrogen", "gemini-4-carbon", "gemini-4-argon", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"])(
     "keeps curated %s reasoning metadata consistent with actual requests", async (id) => {
       const fetcher = vi.fn(async () => Response.json({ candidates: [{
         content: { parts: [{ text: "ready" }] }, finishReason: "STOP"
       }] }));
       const model = createGemini({ apiKey: "test", fetch: fetcher as typeof fetch })(id);
       expect(defaultModelCatalog.find("gemini", id)).toBeDefined();
-      await generateText({ model, prompt: "hello", reasoning: { effort: "low" } });
+      const effort = id === "gemini-4-hydrogen" ? "xhigh" : "low";
+      await generateText({ model, prompt: "hello", reasoning: { effort } });
       const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
-      expect(body.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
+      expect(body.generationConfig.thinkingConfig.thinkingLevel).toBe(effort);
       const unsupported = model.capabilities.reasoningEfforts?.includes("minimal") ? "max" : "minimal";
       await expect(generateText({ model, prompt: "hello", reasoning: { effort: unsupported } })).rejects.toThrow();
       expect(fetcher).toHaveBeenCalledTimes(1);

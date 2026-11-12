@@ -430,3 +430,21 @@ request is sent, including their media capabilities and input-size limits.
 Contract source: [Google Decisions API](https://aistudio.google.com/docs/decisions-api),
 checked November 11, 2026. Offline tests cover wire mapping, validation, errors,
 and cancellation; they do not certify live model quality or latency.
+
+### Gemini 4 Hydrogen
+
+Use `provider("gemini-4-hydrogen")` with `reasoning: { effort: "xhigh" }` in
+`generateText` or `streamText`. Supported efforts are `low`, `medium`, `high`,
+and `xhigh`; omitting effort preserves Google's `high` default. Structured output,
+tools, multimodal inputs, and thought signatures use the existing Gemini contract.
+Explicit cache creation/references, thinking budgets, `minimal`/`none`, sampling
+controls, and assistant prefill are rejected before sending requests.
+
+Hydrogen shares a 1,048,576-token context across input, reasoning, and output;
+a single foreground segment supports 65,536 output tokens. For longer output use
+`provider.interactions.create({ modelId: "gemini-4-hydrogen", input: "Solve this problem", background: true, generationConfig: { thinking_level: "xhigh", max_output_tokens: 100000 } })`.
+The adapter does not automatically concatenate foreground continuation segments.
+
+See [thinking](https://aistudio.google.com/docs/thinking) and
+[pricing](https://aistudio.google.com/docs/pricing#gemini-4-hydrogen).
+Coverage uses mocked HTTP contracts; this is not live credentialed certification.

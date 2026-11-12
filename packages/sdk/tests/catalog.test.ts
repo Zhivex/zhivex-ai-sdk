@@ -37,10 +37,10 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-11-11",
+      snapshotVersion: "2026-11-12",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-11-11",
+        version: "2026-11-12",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
@@ -65,7 +65,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(304);
+    expect(entries).toHaveLength(306);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
       retiredAt: "2027-04-01",
@@ -111,7 +111,7 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(304);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(306);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
       revision: "2026-11-07",
       verifiedAt: "2026-11-07",
@@ -153,9 +153,9 @@ describe("SDK model catalog ownership", () => {
     expect(defaultModelCatalog.find("bedrock", "amazon.nova-2-lite-v1:0")?.modelId).toBe("amazon.nova-2-lite-v1:0");
     expect(defaultModelCatalog.find("azure-openai", "gpt-5.4-nano")?.modelId).toBe("gpt-5.4-nano");
     expect(defaultModelCatalog.find("azure-openai", "text-embedding-3-large")?.inputCostPer1kTokens).toBeUndefined();
-    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-11-11");
+    expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "vertex")?.revision).toBe("2026-11-12");
     expect(listDefaultModelCatalogFragments().find((fragment) => fragment.provider === "gemini")).toMatchObject({
-      revision: "2026-11-11",
+      revision: "2026-11-12",
       verifiedAt: "2026-11-04",
       sources: expect.arrayContaining(["https://ai.google.dev/gemini-api/docs/deprecations"])
     });
