@@ -2,10 +2,12 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const vertexCatalogFragment = defineModelCatalogFragment({
   provider: "vertex",
-  revision: "2026-11-11",
+  revision: "2026-11-12",
   verifiedAt: "2026-10-20",
   pricingEffectiveAt: "2026-08-30",
   sources: [
+    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-hydrogen",
+    "https://cloud.google.com/model-garden/pricing",
     "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/sonnet-5-5",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-transcribe",
@@ -33,6 +35,19 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/deepseek/deepseek-v41-flash"
   ],
   entries: [
+    {
+      provider: "vertex", modelId: "gemini-4-hydrogen",
+      inputCostPer1kTokens: 0.0015, cachedInputCostPer1kTokens: 0.000075,
+      outputCostPer1kTokens: 0.0075,
+      contextWindowTokens: 1048576, contextWindowType: "combined", maxOutputTokens: 65536,
+      pricingTerms: { source: "https://cloud.google.com/model-garden/pricing", verifiedAt: "2026-11-12", notes: "Standard global endpoint rates. Non-global: $1.65 input, $0.0825 cached input, $8.25 output per million tokens. Future cache-write charges from January 12, 2027 are not applied." },
+      evidence: {
+        contextWindowTokens: { source: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-hydrogen", sourceType: "primary", verifiedAt: "2026-11-12" },
+        contextWindowType: { source: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-hydrogen", sourceType: "primary", verifiedAt: "2026-11-12" },
+        maxOutputTokens: { source: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-hydrogen", sourceType: "primary", verifiedAt: "2026-11-12", conditions: ["Single foreground segment; longer output requires background execution or client-side continuation within the shared context window."] }
+      },
+      recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
+    },
     {
       "provider": "vertex",
       "modelId": "claude-fable-5-2",

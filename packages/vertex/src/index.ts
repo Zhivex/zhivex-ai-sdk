@@ -1193,6 +1193,7 @@ const createVertexRealtimeEventParser = (transcriptionOnly = false) => {
 const isGemini3ProModel = (modelId: string) => /^gemini-3([.-].*)?pro([.-]|$)/.test(modelId);
 
 const usesCurrentGeminiRequestRules = (modelId: string) =>
+  modelId === "gemini-4-hydrogen" ||
   modelId === "gemini-4-argon" ||
   modelId === "gemini-3.8-flash" ||
   modelId === "gemini-3.7-flash" ||
@@ -1207,7 +1208,9 @@ const currentGeminiReasoningEfforts: NonNullable<ModelCapabilities["reasoningEff
 ];
 
 const reasoningEffortsForModel = (modelId: string) =>
-  (modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash" || modelId === "gemini-3.7-flash")
+  modelId === "gemini-4-hydrogen"
+    ? (["low", "medium", "high", "xhigh"] satisfies NonNullable<ModelCapabilities["reasoningEfforts"]>)
+    : (modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash" || modelId === "gemini-3.7-flash")
     ? (["low", "medium", "high"] satisfies NonNullable<ModelCapabilities["reasoningEfforts"]>)
     : currentGeminiReasoningEfforts;
 
@@ -1218,12 +1221,12 @@ const modelCapabilities = (
   usesCurrentGeminiRequestRules(modelId)
     ? {
         ...baseCapabilities,
-        computerUse: modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash",
+        computerUse: modelId === "gemini-4-hydrogen" || modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash",
         reasoningEfforts: [...reasoningEffortsForModel(modelId)],
         agentCapabilities: baseCapabilities.agentCapabilities
           ? {
               ...baseCapabilities.agentCapabilities,
-              computerUse: modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash"
+              computerUse: modelId === "gemini-4-hydrogen" || modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash"
             }
           : undefined
       }
@@ -1268,6 +1271,10 @@ const assertCurrentGeminiGenerateInput = (
   modelId: string,
   input: ModelGenerateInput
 ) => {
+  if (modelId === "gemini-4-hydrogen" &&
+      (input.providerOptions?.cachedContent !== undefined || input.providerOptions?.cached_content !== undefined)) {
+    throw new UnsupportedFeatureError("Gemini 4 Hydrogen supports implicit caching only.");
+  }
   if (!usesCurrentGeminiRequestRules(modelId)) {
     return;
   }
@@ -1327,7 +1334,7 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
       throw new UnsupportedFeatureError(`Provider "vertex" does not support "reasoning.effort=none" for ${family} models.`);
     }
 
-    if (input.reasoning.effort === "xhigh") {
+    if (input.reasoning.effort === "xhigh" && modelId !== "gemini-4-hydrogen") {
       throw new UnsupportedFeatureError('Provider "vertex" does not support "reasoning.effort=xhigh".');
     }
 
@@ -1438,6 +1445,7 @@ class VertexContextCachesClient implements ContextCachesClient {
   async create(input: ContextCacheCreateInput): Promise<CachedContent> {
     const modelId = input.modelId.replace(/^publishers\/google\/models\//, "");
     this.assertModelLocation(modelId);
+    if (modelId === "gemini-4-hydrogen") throw new UnsupportedFeatureError("Gemini 4 Hydrogen supports implicit caching only.");
     if (input.ttl !== undefined && input.expireTime !== undefined) {
       throw new ConfigurationError("Vertex context caches accept either ttl or expireTime, not both.");
     }
@@ -2803,7 +2811,7 @@ export const createVertex = (
     const supportedLocations =
       modelId === "gemini-3.7-flash" || modelId === "gemini-3.6-flash" || modelId === "gemini-3.5-transcribe-preview" || isVertexLiveTranscribeModel(modelId) || isGeminiLiveTranslateModel(modelId)
         ? ["global"]
-        : modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash" || modelId === "gemini-3.5-flash-lite"
+        : modelId === "gemini-4-hydrogen" || modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash" || modelId === "gemini-3.5-flash-lite"
           ? ["global", "us", "eu"]
           : undefined;
     if (supportedLocations && !supportedLocations.includes(location)) {

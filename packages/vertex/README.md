@@ -1204,3 +1204,23 @@ Repository: <https://github.com/Zhivex/zhivex-ai-sdk>
 ### Google hosted-tool ownership
 
 Import Google hosted-tool helpers from this package for new code; Core/SDK imports remain compatible. See [ownership and support boundaries](../../docs/ARCHITECTURE.md#provider-implementation-boundaries).
+
+### Gemini 4 Hydrogen
+
+Use `provider("gemini-4-hydrogen")` with `reasoning: { effort: "xhigh" }` in
+`generateText` or `streamText`. Supported efforts are `low`, `medium`, `high`,
+and `xhigh`; omitting effort preserves Google's `high` default. Structured output,
+tools, multimodal inputs, and thought signatures use the existing Gemini contract.
+Explicit cache creation/references, thinking budgets, `minimal`/`none`, sampling
+controls, and assistant prefill are rejected before sending requests.
+
+Hydrogen shares a 1,048,576-token context across input, reasoning, and output;
+a single foreground segment supports 65,536 output tokens. For longer output use
+`provider.interactions.create({ modelId: "gemini-4-hydrogen", input: "Solve this problem", background: true, generationConfig: { thinking_level: "xhigh", max_output_tokens: 100000 } })`.
+The adapter does not automatically concatenate foreground continuation segments.
+
+Availability is GA in `global`, `us`, and `eu` (a short-term release with at least
+45 days of retirement notice). The catalog records Standard global pricing;
+non-global pricing is 10% higher. See the [official guide](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-hydrogen)
+and [pricing](https://cloud.google.com/model-garden/pricing). Coverage uses mocked
+HTTP contracts; this is not live credentialed certification.

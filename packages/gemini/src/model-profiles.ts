@@ -28,6 +28,8 @@ const profile = (efforts: GeminiTextProfile["reasoningEfforts"]): GeminiTextProf
 });
 
 export const geminiTextProfiles: Readonly<Record<string, GeminiTextProfile>> = Object.freeze({
+  // Hydrogen defaults to high; leave omitted thinking levels to the provider.
+  "gemini-4-hydrogen": profile(["low", "medium", "high", "xhigh"]),
   // Provider default thinking level is medium when the request omits thinkingLevel.
   "gemini-4-carbon": profile(["low", "medium", "high"]),
   "gemini-4-argon": profile(["low", "medium", "high"]),
@@ -98,9 +100,9 @@ export const assertCurrentGeminiGenerateInput = (
     if (isHostedToolDefinition(tool) && ["googleSearch", "google_search"].includes(tool.type) && tool.config && typeof tool.config === "object" &&
       ("max_tool_calls" in tool.config || "max_uses" in tool.config)) throw new UnsupportedFeatureError("Gemini Google Search tool-call limits are not verified.");
   }
-  if (modelId === "gemini-4-carbon" &&
+  if ((modelId === "gemini-4-carbon" || modelId === "gemini-4-hydrogen") &&
       (input.providerOptions?.cachedContent !== undefined || input.providerOptions?.cached_content !== undefined)) {
-    throw new UnsupportedFeatureError("Gemini 4 Carbon supports implicit caching only.");
+    throw new UnsupportedFeatureError(`Model "${modelId}" supports implicit caching only.`);
   }
   const currentProfile = textProfile(modelId);
   if (!currentProfile) {
@@ -147,8 +149,8 @@ export const assertCurrentGeminiGenerateInput = (
 
 export const assertCurrentGeminiInteractionBody = (body: Record<string, unknown>) => {
   const modelId = typeof body.model === "string" ? body.model : undefined;
-  if (modelId === "gemini-4-carbon" && (body.cachedContent !== undefined || body.cached_content !== undefined)) {
-    throw new UnsupportedFeatureError("Gemini 4 Carbon supports implicit caching only.");
+  if ((modelId === "gemini-4-carbon" || modelId === "gemini-4-hydrogen") && (body.cachedContent !== undefined || body.cached_content !== undefined)) {
+    throw new UnsupportedFeatureError(`Model "${modelId}" supports implicit caching only.`);
   }
   if (modelId === "gemini-omni-1.2-flash") {
     const format = body.response_format as Record<string, unknown> | undefined;
@@ -158,6 +160,16 @@ export const assertCurrentGeminiInteractionBody = (body: Record<string, unknown>
     }
     if (body.system_instruction !== undefined || firstUnsupportedGenerationControl(body, body.generation_config)) {
       throw new UnsupportedFeatureError("Gemini Omni 1.2 Flash does not support system instructions or sampling controls.");
+    }
+  }
+  if (modelId === "gemini-4-hydrogen") {
+    const config = (body.generation_config ?? body.generationConfig ?? {}) as Record<string, unknown>;
+    const effort = config.thinking_level ?? config.thinkingLevel;
+    if (effort !== undefined && !reasoningEffortsForModel(modelId).some((supported) => supported === String(effort).toLowerCase())) {
+      throw new UnsupportedFeatureError("Gemini 4 Hydrogen supports thinking levels low, medium, high, and xhigh.");
+    }
+    if (config.thinking_budget !== undefined || config.thinkingBudget !== undefined) {
+      throw new UnsupportedFeatureError("Gemini 4 Hydrogen requires thinking levels instead of budgets.");
     }
   }
   const currentProfile = modelId ? textProfile(modelId) : undefined;
@@ -219,7 +231,7 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
       throw new UnsupportedFeatureError(`Provider "gemini" does not support "reasoning.effort=none" for ${family} models.`);
     }
 
-    if (input.reasoning.effort === "xhigh") {
+    if (input.reasoning.effort === "xhigh" && modelId !== "gemini-4-hydrogen") {
       throw new UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=xhigh".');
     }
 

@@ -103,6 +103,32 @@ export const createVertexInteractionsClient = (
     if (input.modelId && /^(lyria-3|gemini-omni)/.test(input.modelId) && !baseURL.endsWith("/locations/global")) {
       throw new ConfigurationError("Vertex Interactions media models require location global.");
     }
+    if (input.modelId === "gemini-4-hydrogen") {
+      const location = baseURL.match(/\/locations\/([^/]+)$/)?.[1];
+      if (location && !["global", "us", "eu"].includes(location)) {
+        throw new ConfigurationError("Vertex Gemini 4 Hydrogen requires location global, us, or eu.");
+      }
+      if (input.providerOptions?.cachedContent !== undefined || input.providerOptions?.cached_content !== undefined) {
+        throw new UnsupportedFeatureError("Gemini 4 Hydrogen supports implicit caching only.");
+      }
+      const config = input.generationConfig && typeof input.generationConfig === "object" && !Array.isArray(input.generationConfig) ? input.generationConfig : {};
+      const effort = config.thinking_level ?? config.thinkingLevel;
+      if (effort !== undefined && !["low", "medium", "high", "xhigh"].includes(String(effort).toLowerCase())) {
+        throw new UnsupportedFeatureError("Gemini 4 Hydrogen supports thinking levels low, medium, high, and xhigh.");
+      }
+      if (config.thinking_budget !== undefined || config.thinkingBudget !== undefined) {
+        throw new UnsupportedFeatureError("Gemini 4 Hydrogen requires thinking levels instead of budgets.");
+      }
+      for (const source of [input.providerOptions, config]) {
+        if (source && ["temperature", "topP", "top_p", "topK", "top_k", "candidateCount", "candidate_count", "frequencyPenalty", "frequency_penalty", "presencePenalty", "presence_penalty"].some((key) => source[key] !== undefined)) {
+          throw new UnsupportedFeatureError("Gemini 4 Hydrogen uses provider-managed sampling.");
+        }
+      }
+      const last = Array.isArray(input.input) ? input.input.filter((part) => part && typeof part === "object" && Object.keys(part).length).at(-1) : undefined;
+      if (last && typeof last === "object" && (last.type === "model_output" || last.role === "model")) {
+        throw new UnsupportedFeatureError("Gemini 4 Hydrogen does not support model-output prefill.");
+      }
+    }
     const tools = input.tools ? Object.values(toToolSet(input.tools) ?? {}).map((tool) => {
       if (isCallableToolDefinition(tool)) return { type: "function", name: tool.name, description: tool.description, parameters: toolInputSchema(tool.schema) };
       if (tool.provider && tool.provider !== "vertex") throw new UnsupportedFeatureError("Vertex Interactions cannot use another provider's hosted tools.");
