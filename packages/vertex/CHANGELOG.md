@@ -1,5 +1,13 @@
 # @zhivex-ai/vertex
 
+## 1.3.4
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.39.0
+  - @zhivex-ai/gemini@0.15.0
+
 ## 1.3.3
 
 ### Patch Changes

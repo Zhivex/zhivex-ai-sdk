@@ -6,6 +6,7 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
   verifiedAt: "2026-11-04",
   pricingEffectiveAt: "2026-11-04",
   sources: [
+    "https://aistudio.google.com/docs/decisions-api",
     "https://aistudio.google.com/docs/models/gemini-4-carbon",
     "https://aistudio.google.com/docs/omni",
     "https://aistudio.google.com/docs/pricing",
@@ -16,6 +17,13 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     "https://ai.google.dev/gemini-api/docs/deprecations"
   ],
   entries: [
+    {
+      provider: "gemini", modelId: "gemini-decision-1",
+      inputCostPer1kTokens: 0.0001, outputCostPer1kTokens: 0,
+      contextWindowTokens: 262144, contextWindowType: "input",
+      pricingTerms: { source: "https://aistudio.google.com/docs/pricing#gemini-decision", verifiedAt: "2026-11-11", notes: "Decisions endpoint only; shared input is billed once per request plus question tokens. No output tokens." },
+      evidence: { contextWindowType: { source: "https://aistudio.google.com/docs/decisions-api", sourceType: "primary", verifiedAt: "2026-11-11" }, contextWindowTokens: { source: "https://aistudio.google.com/docs/decisions-api", sourceType: "primary", verifiedAt: "2026-11-11", conditions: ["Includes shared input and all questions; use decisionModel(), not languageModel()."] } }
+    },
     { provider: "gemini", modelId: "gemini-omni-1.2-flash", recommendedFor: ["vision", "speed"] },
     {
       provider: "gemini",

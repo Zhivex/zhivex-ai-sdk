@@ -140,3 +140,22 @@ it('reports a conservative reservation when the exact decimal sum is between num
   expect(result.routing.reservedUSD).toBe(1.0000000000000002);
   expect(second.fetcher).toHaveBeenCalledTimes(1);
 });
+
+it('routes large Gemini media and preflights incompatible fallbacks before I/O', async () => {
+  const { createGemini } = await import('../../gemini/src/index.js');
+  const fetcher = vi.fn(async () => Response.json({
+    answers: { q: { type: 'noul', noul: 0.9, confidence: 0.9 } },
+    usage: { total_input_tokens: 10, total_output_tokens: 0, total_tokens: 10, input_tokens_by_modality: [{ modality: 'image', tokens: 10 }] }
+  }));
+  const model = createGemini({ apiKey: 'test', fetch: fetcher }).decisionModel();
+  const backup = decisionFixture('openai');
+  const gateway = createGateway({ adapters: {}, decisions: { gemini: { model }, backup: { model: backup.model } } });
+  const request = { primary: 'gemini', input: [{ type: 'document' as const, data: 'AAAA'.repeat(350000), mimeType: 'application/pdf' }],
+    questions: { q: { type: 'predicate' as const, instructions: 'Is it an invoice?' } } };
+  expect((await gateway.decide(request)).answers.q).toEqual({ type: 'predicate', probability: 0.9, providerConfidence: 0.9 });
+  fetcher.mockClear();
+  await expect(gateway.decide({ ...request, alternatives: ['backup'] })).rejects.toThrow();
+  await expect(gateway.decide({ ...request, input: [{ ...request.input[0]!, data: 'AAAA' }], alternatives: ['backup'] })).rejects.toThrow();
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(backup.fetcher).not.toHaveBeenCalled();
+});

@@ -15,6 +15,7 @@ bun add @zhivex-ai/core @zhivex-ai/gemini
 | Surface | Support |
 | --- | --- |
 | Text, tools, structured output, audio input | `generateText()` |
+| Decisions: predicates, choices and scores over text, image, audio, video and PDF | `decisionModel("gemini-decision-1").decide()` |
 | Multimodal embeddings | `embeddingModel("gemini-embedding-2")` |
 | Text-to-speech | `generateSpeech()` and `streamSpeech()`; Gemini 3.1 TTS streams |
 | Speech-to-text | `transcribeAudio()` with Gemini 3.5 Transcribe; rich annotations remain in `rawResponse` |
@@ -349,3 +350,83 @@ and [the Batch request schema](https://ai.google.dev/api/batch-api).
 ### November 2026 additions
 
 Gemini 4 Carbon supports `low`, `medium`, and `high` reasoning with implicit caching only. Use Interactions for background long decode. Gemini Omni 1.2 Flash uses `provider.interactions.create({ modelId: "gemini-omni-1.2-flash", input: "A bird flying", responseFormat: { type: "video", duration: "15s" } })`. Interpolation and extension remain limited to 10 seconds per turn; up to six reference images are supported. The service enforces prompt-dependent limits. Omni 1.1 routes to 1.2 on December 3, 2026.
+
+## Decisions API
+
+`createGemini().decisionModel()` defaults to `gemini-decision-1` and calls
+`POST /v1beta/decisions`. This is a separate surface from `languageModel()`,
+`generateText()`, and Interactions. It evaluates closed choices and returns
+probabilities, with zero generated output tokens.
+
+```ts
+import { createGemini } from "@zhivex-ai/gemini";
+
+const model = createGemini().decisionModel("gemini-decision-1");
+const result = await model.decide({
+  input: [
+    { type: "text", text: "Review the recording and attached evidence.\n" },
+    { type: "audio", uri: "https://example.com/call.mp3", mimeType: "audio/mp3" },
+    { type: "video", uri: "https://example.com/inspection.mp4", mimeType: "video/mp4", resolution: "low" },
+    { type: "document", uri: "https://example.com/invoice.pdf", mimeType: "application/pdf" }
+  ],
+  questions: {
+    damaged: {
+      type: "predicate",
+      instructions: "Is the product damaged?",
+      trueDescription: "The product is broken or faulty.",
+      falseDescription: "Only the packaging is damaged."
+    },
+    team: {
+      type: "choice", instructions: "Which team should handle the claim?",
+      choices: [{ value: "returns", description: "Damaged products" }, { value: "billing", description: "Payment issues" }]
+    },
+    severity: { type: "score", instructions: "Rate the damage.", levels: ["None", "Cosmetic", "Unusable"] }
+  },
+  timeoutMs: 30_000
+});
+
+const answer = result.answers.damaged;
+if (answer?.type === "predicate") {
+  console.log(answer.probability, answer.providerConfidence);
+}
+console.log(result.usage.inputTokensByModality);
+```
+
+Replace the example URLs with accessible media. The SDK sends URIs directly to
+Google; it does not download, transcribe, or convert them. Uploaded Files API
+`file.uri` values work too. For local files, read bytes with Bun or Node and pass
+base64 in `data` instead of `uri`, for example
+`{ type: "document", data: pdfBase64, mimeType: "application/pdf" }`.
+Use exactly one source per block. `mimeType` must match the actual file.
+
+- Inputs support text, images (including HEIC/HEIF, BMP and TIFF), audio, video,
+  and PDF. Image/video blocks accept `resolution: "low" | "medium" | "high"`;
+  images additionally support `"ultra_high"`. Existing inline image `dataURL`
+  parts work; remote images use `uri` plus `mimeType`.
+- The shared `predicate`, `choice`, and `score` types map to Google's `noul`,
+  `choice`, and `score`. Confidence is preserved for all three. Rubric results
+  retain your labels alongside probabilities and the fractional weighted score;
+  a level with a description is sent as `"label: description"`.
+- Up to 1,000 questions, 2–255 choices or score levels, and a 262,144-token
+  context across evidence and questions. Question IDs match `[A-Za-z0-9_-]`
+  and have 1–64 characters. Choice values are strings, up to 128 characters
+  and 512 UTF-8 bytes; descriptions may be omitted or empty.
+- Instructions accept strings or text-part arrays. Adjacent text parts are sent
+  unchanged; add your own separators. Serialize JSON and conversation history
+  as text. Tools, conversation messages, media inside questions, caching,
+  streaming, Batch, Flex, and Priority aren't supported on this endpoint.
+- Inline media is limited to 100 MiB per request and PDF files to 50 MiB each;
+  the SDK bounds the serialized request at 140 MiB to allow base64 overhead.
+  Google enforces the 15 MB limit for external URLs and the token limit.
+  HTTPS and Files API URIs are supported; YouTube and `gs://` URLs are rejected.
+- Each call makes one HTTP attempt. `abortSignal` and `timeoutMs` bound the
+  operation. HTTP errors, including safety-blocked requests (400), remain
+  provider errors; there is no per-question refusal or automatic fallback.
+
+Register the returned `DecisionModel` in the gateway's `decisions` map to use
+`gateway.decide()`. All selected fallback destinations are validated before any
+request is sent, including their media capabilities and input-size limits.
+
+Contract source: [Google Decisions API](https://aistudio.google.com/docs/decisions-api),
+checked November 11, 2026. Offline tests cover wire mapping, validation, errors,
+and cancellation; they do not certify live model quality or latency.
