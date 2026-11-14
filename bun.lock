@@ -75,7 +75,7 @@
     },
     "packages/core": {
       "name": "@zhivex-ai/core",
-      "version": "1.39.1",
+      "version": "1.40.0",
       "dependencies": {
         "ws": "^8.22.1",
         "zod": "^4.6.7",
@@ -192,12 +192,12 @@
     },
     "packages/sdk": {
       "name": "@zhivex-ai/sdk",
-      "version": "1.38.1",
+      "version": "1.39.0",
       "bin": {
         "zhivex-ai": "dist/cli.js",
       },
       "dependencies": {
-        "@zhivex-ai/core": "~1.39.1",
+        "@zhivex-ai/core": "~1.40.0",
       },
     },
     "packages/trace-viewer": {

@@ -26,6 +26,6 @@ Guides for adopting the SDK. The [provider compatibility matrix](./reference/PRO
 
 ## Maintenance and verification
 
-- [Architecture](./ARCHITECTURE.md)
+- [Architecture](./ARCHITECTURE.md) and [gateway agent composition decision](./adr/0002-gateway-agent-composition.md)
 - [Maintainer guides](./maintainers/README.md)
 - [Dated local gateway measurements](./benchmarks/2026-09-14/README.md)

@@ -37,6 +37,14 @@ console.log(result.text);
 
 If you are implementing an adapter rather than running this example, `@zhivex-ai/core` can be installed on its own. Applications that want the recommended high-level entry point should use `@zhivex-ai/sdk`.
 
+### Streaming and cache limits
+
+`streamObject` accepts `snapshotIntervalChars` (default `1`) to coalesce
+`object-delta` and partial-object updates without dropping text deltas or final
+validation. `createInMemoryGenerateCache` accepts optional `maxEntries`,
+`maxBytes`, and `ttlMs` limits; no-argument calls retain their previous behavior.
+See [performance tuning](../../docs/PERFORMANCE.md) for details and measurements.
+
 ### Focused entry points
 
 Use a focused import when an application does not need the complete server

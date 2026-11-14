@@ -1,5 +1,20 @@
 # @zhivex-ai/sdk
 
+## 1.39.0
+
+### Minor Changes
+
+- Reduce repeated scanning in structured-output and SSE streams. Add optional
+  `snapshotIntervalChars` for grouped object snapshots and optional LRU entry/byte
+  limits and TTL to the in-memory generate cache. Existing event shapes, default
+  snapshot frequency, unlimited no-argument cache retention, and final schema
+  validation remain compatible.
+
+### Patch Changes
+
+- Updated dependencies
+  - @zhivex-ai/core@1.40.0
+
 ## 1.38.1
 
 ### Patch Changes

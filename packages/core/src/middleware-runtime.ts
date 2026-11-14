@@ -470,15 +470,73 @@ export const createCachedGenerateMiddleware = <TProviderOptions extends Provider
   };
 };
 
-export const createInMemoryGenerateCache = (): GenerateCache => {
-  const store = new Map<string, GenerateResult>();
-
+export const createInMemoryGenerateCache = (options: {
+  /** LRU entry limit. Omit to preserve unlimited retention. */
+  maxEntries?: number;
+  /** Maximum total UTF-8 JSON bytes of keys and values. Unserializable entries are skipped. */
+  maxBytes?: number;
+  /** Expiration since set(), in milliseconds. Reads do not extend it. */
+  ttlMs?: number;
+} = {}): GenerateCache => {
+  for (const [name, value] of Object.entries(options)) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) {
+      throw new ValidationError(`The in-memory generate cache "${name}" must be a positive safe integer.`);
+    }
+  }
+  // Preserve the original allocation and access cost when no limits are requested.
+  if (options.maxEntries === undefined && options.maxBytes === undefined && options.ttlMs === undefined) {
+    const values = new Map<string, GenerateResult>();
+    return { get: key => values.get(key), set: (key, value) => { values.set(key, value); } };
+  }
+  const store = new Map<string, { value: GenerateResult; expiresAt: number; bytes: number }>();
+  let totalBytes = 0;
+  // Separate insertion order keeps expiry pruning independent of LRU reads.
+  const expirations = new Map<string, number>();
+  const remove = (key: string) => {
+    const entry = store.get(key);
+    if (entry) totalBytes -= entry.bytes;
+    store.delete(key);
+    expirations.delete(key);
+  };
   return {
     get(key) {
-      return store.get(key);
+      const entry = store.get(key);
+      if (!entry) return undefined;
+      if (Date.now() >= entry.expiresAt) {
+        remove(key);
+        return undefined;
+      }
+      // Map insertion order is the LRU order.
+      store.delete(key);
+      store.set(key, entry);
+      return entry.value;
     },
     set(key, value) {
-      store.set(key, value);
+      let bytes = 0;
+      if (options.maxBytes !== undefined) {
+        try {
+          bytes = Buffer.byteLength(JSON.stringify(value), "utf8") + Buffer.byteLength(key, "utf8");
+        } catch {
+          remove(key);
+          return;
+        }
+      }
+      remove(key);
+      if (options.maxBytes !== undefined && bytes > options.maxBytes) return;
+      const now = Date.now();
+      // Expired entries must not evict live entries. No timers keep a process alive.
+      if (options.ttlMs !== undefined) {
+        for (const [entryKey, expiresAt] of expirations) {
+          if (now < expiresAt) break;
+          remove(entryKey);
+        }
+        expirations.set(key, now + options.ttlMs);
+      }
+      store.set(key, { value, bytes, expiresAt: options.ttlMs === undefined ? Infinity : now + options.ttlMs });
+      totalBytes += bytes;
+      while (store.size > (options.maxEntries ?? Infinity) || totalBytes > (options.maxBytes ?? Infinity)) {
+        remove(store.keys().next().value!);
+      }
     }
   };
 };

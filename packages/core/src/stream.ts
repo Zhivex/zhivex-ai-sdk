@@ -88,6 +88,8 @@ export async function* streamSSE(
 
   let buffer = "";
   let completed = false;
+  const fragments: string[] = [];
+  let fragmentChars = 0;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
 
@@ -121,18 +123,27 @@ export async function* streamSSE(
       while (true) {
         const separatorMatch = buffer.match(/\r?\n\r?\n/);
         if (!separatorMatch) {
-          if (buffer.length > maxBufferChars) {
+          if (fragmentChars + buffer.length > maxBufferChars) {
             await cancelForLimit(`SSE buffer exceeded ${maxBufferChars} characters before an event separator.`);
+          }
+          // Retain only the possible delimiter prefix for the next read. Joining
+          // the complete event on every read would still copy it quadratically.
+          if (!done && buffer.length > 3) {
+            fragments.push(buffer.slice(0, -3));
+            fragmentChars += buffer.length - 3;
+            buffer = buffer.slice(-3);
           }
           break;
         }
 
         const separatorIndex = separatorMatch.index ?? 0;
-        if (separatorIndex > maxEventChars) {
+        if (fragmentChars + separatorIndex > maxEventChars) {
           await cancelForLimit(`SSE event exceeded ${maxEventChars} characters.`);
         }
 
-        const rawEvent = buffer.slice(0, separatorIndex);
+        const rawEvent = fragments.join("") + buffer.slice(0, separatorIndex);
+        fragments.length = 0;
+        fragmentChars = 0;
         buffer = buffer.slice(separatorIndex + separatorMatch[0].length);
         const parsed = parseEvent(rawEvent);
         if (parsed) {
@@ -141,11 +152,11 @@ export async function* streamSSE(
       }
 
       if (done) {
-        if (buffer.length > maxEventChars) {
+        if (fragmentChars + buffer.length > maxEventChars) {
           await cancelForLimit(`SSE event exceeded ${maxEventChars} characters.`);
         }
 
-        const parsed = parseEvent(buffer);
+        const parsed = parseEvent(fragments.join("") + buffer);
         if (parsed) {
           yield parsed;
         }

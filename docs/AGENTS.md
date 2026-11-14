@@ -212,21 +212,7 @@ Use `toUIAgentStreamResponse()` for server routes that need UI stream chunks wit
 
 ## Sessions
 
-`Agent` runs are single-run primitives. For user-facing multi-turn apps, wrap an agent in `Runner + SessionService` from `@zhivex-ai/sdk`:
-
-```ts
-import { Agent, createFileSessionService, createRunner } from "@zhivex-ai/sdk";
-
-const runner = createRunner({
-  appName: "support-copilot",
-  agent: new Agent({ model, instructions: "Help support agents reply." }),
-  sessionService: createFileSessionService({
-    directory: ".zhivex/sessions"
-  })
-});
-```
-
-Use Postgres sessions for production serverless deployments.
+`Agent` runs are single-run primitives. For multi-turn applications, use `Runner + SessionService` from `@zhivex-ai/sdk`. The [session recipes](./reference/AGENTS.md#runner-and-sessions) contain the complete two-turn example, storage choices, schema migration and revision semantics. Use Postgres sessions for production serverless deployments.
 
 ## Multi-Agent Patterns
 

@@ -1116,8 +1116,8 @@ final hello-world transcript, without generated audio. Run
 ## Verification and remaining limits
 
 Live results are scoped to the tested model, location and project. The
-[readiness summary](../../docs/maintainers/VERTEX_READINESS.md) separates
-implementation, external blockers, quality evaluation and delivery status.
+[verification guide](../../docs/maintainers/VERTEX_READINESS.md) contains reproduction
+commands and links to the historical internal follow-up. Public limitations are listed below.
 
 | Area | Verification evidence | Remaining limitations |
 | --- | --- | --- |

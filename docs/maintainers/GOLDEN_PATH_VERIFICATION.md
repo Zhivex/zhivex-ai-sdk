@@ -6,7 +6,7 @@ Use this runbook to validate the product timing claims with a person who has not
 
 - Use a new temporary directory outside the repository.
 - Copy only `examples/next-runner`; do not copy `node_modules`, `.next`, `.zhivex`, `dist`, or a lockfile from the repository.
-- Give the participant Bun 1.3.7+, a supported Node runtime, and a bounded provider credential through a server-side secret channel.
+- Give the participant the repository-supported Bun version (currently 1.4.2+), a supported Node runtime, and a bounded provider credential through a server-side secret channel.
 - Start the clock before they read the starter README.
 - Do not coach API choices. Record only blockers and timestamps.
 
@@ -43,3 +43,7 @@ Store a record with this shape. Do not include keys, prompts, response text, use
 ```
 
 Mark the HU `Listo` only after the installed-package smoke, applicable repository gates, and at least one passing first-time-user record are linked. A skipped live run or a deterministic smoke is not live-provider certification.
+
+## Trial records
+
+Record participant trials and follow-up in the [internal historical archive in Notion](https://www.notion.so/418777b104f681a089c1c27e90679725). Keep this runbook and evidence format versioned here. The archive migration did not include individual trial results; do not interpret it as a passing trial.
